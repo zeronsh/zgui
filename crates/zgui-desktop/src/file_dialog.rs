@@ -96,8 +96,8 @@ impl fmt::Display for FileDialogError {
     }
 }
 impl std::error::Error for FileDialogError {}
-/// `None` means no selection. Linux reports portal failures as errors; the macOS
-/// backend may also return no selection when a native picker is unavailable.
+/// `None` means no selection. Linux reports portal failures as errors; macOS and
+/// Windows may also return no selection when a native picker is unavailable.
 pub type FileDialogResult<T> = Result<Option<T>, FileDialogError>;
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {
@@ -109,12 +109,15 @@ pub(crate) enum Kind {
 }
 
 /// Cloneable service for one window. Invoke from its UI executor after native creation.
-/// Linux uses an owned XDG Desktop Portal request; macOS uses native sheets.
+/// Linux uses an owned XDG Desktop Portal request; macOS uses native sheets;
+/// Windows uses native file dialogs owned by the window.
 ///
 /// On Linux, dropping a file-picker future or closing its owner requests portal
 /// dismissal and releases the native parent. On macOS, closing or suspending the
 /// owner dismisses its native sheets, including prompts. Dropping an individual
 /// macOS request future cancels delivery; its sheet remains until dismissed.
+/// On Windows, cancellation invalidates delivery but does not dismiss the native
+/// dialog. Its parent remains alive until the dialog is dismissed.
 #[derive(Clone)]
 pub struct FileDialogs {
     owner: crate::WindowHandle,
@@ -123,6 +126,19 @@ pub struct FileDialogs {
     cancellations: Rc<RefCell<Vec<Weak<std::sync::atomic::AtomicBool>>>>,
 }
 impl FileDialogs {
+    /// Return the live native window for host integrations such as embedded views.
+    ///
+    /// Returns `None` before native creation, while suspended, and after closure.
+    /// Clone this service during UI construction and call it later on the UI
+    /// executor. Release the returned `Arc` when finished: retaining it also
+    /// retains the native window after its logical owner closes.
+    pub fn native_window(&self) -> Option<Arc<Window>> {
+        if self.owner.is_closed() {
+            return None;
+        }
+        self.native.borrow().as_ref().and_then(Weak::upgrade)
+    }
+
     pub(crate) fn new(owner: crate::WindowHandle) -> Self {
         Self {
             owner,
@@ -286,6 +302,38 @@ async fn native_select(
     cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> FileDialogResult<Vec<PathBuf>> {
     background(move || crate::portal_dialog::select(kind, options, parent, cancel))?.await?
+}
+#[cfg(target_os = "windows")]
+async fn native_select(
+    kind: Kind,
+    options: FileDialogOptions,
+    parent: Arc<Window>,
+    _cancel: Arc<std::sync::atomic::AtomicBool>,
+) -> FileDialogResult<Vec<PathBuf>> {
+    // The worker owns the parent even when the UI future is cancelled; rfd
+    // stores only its raw handle, which must remain valid until Show returns.
+    background(move || {
+        let mut dialog = rfd::FileDialog::new()
+            .set_parent(parent.as_ref())
+            .set_title(options.title);
+        if let Some(directory) = options.directory {
+            dialog = dialog.set_directory(directory);
+        }
+        if let Some(name) = options.file_name {
+            dialog = dialog.set_file_name(name);
+        }
+        for filter in options.filters {
+            dialog = dialog.add_filter(filter.name, &filter.extensions);
+        }
+        match kind {
+            Kind::OpenFile => dialog.pick_file().map(|p| vec![p]),
+            Kind::OpenFiles => dialog.pick_files(),
+            Kind::Folder => dialog.pick_folder().map(|p| vec![p]),
+            Kind::Folders => dialog.pick_folders(),
+            Kind::Save => dialog.save_file().map(|p| vec![p]),
+        }
+    })?
+    .await
 }
 #[cfg(target_os = "macos")]
 async fn native_select(

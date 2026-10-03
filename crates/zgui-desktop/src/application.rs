@@ -397,11 +397,17 @@ pub struct WindowContext {
     menu_action: Option<Box<dyn FnMut(crate::MenuAction)>>,
 }
 impl WindowContext {
+    /// The live native window; unavailable during initial UI construction.
+    /// Clone `dialogs` and call its `native_window()` later for deferred access.
+    pub fn native_window(&self) -> Option<Arc<Window>> {
+        self.dialogs.native_window()
+    }
+
     /// Application command fallback after focused component action routing.
     pub fn on_menu_action(&mut self, handler: impl FnMut(crate::MenuAction) + 'static) {
         self.menu_action = Some(Box::new(handler));
     }
-    /// A rendered menu bar for Linux; macOS normally uses the system menu bar.
+    /// A rendered menu bar for Linux and Windows; macOS uses the system menu bar.
     pub fn app_menu_bar(&self) -> zgui::compose::View {
         let window = self.window.clone();
         let model = self.menu_model.clone();
@@ -466,6 +472,8 @@ impl WindowContext {
     }
 }
 pub struct Application {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    message_pump: Option<Box<dyn FnMut()>>,
     fonts: Vec<zgui_gpu::text::FontData>,
     options: WindowOptions,
     menus: Vec<crate::AppMenu>,
@@ -477,6 +485,8 @@ type ApplicationEventHandler = Box<dyn FnMut(crate::ApplicationEvent, &WindowFac
 impl Application {
     pub fn new() -> Self {
         Self {
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            message_pump: None,
             fonts: Vec::new(),
             options: WindowOptions::default(),
             menus: Vec::new(),
@@ -503,6 +513,7 @@ impl Application {
     /// macOS owns GetURL, OpenDocuments, and Reopen AppleEvent routes for the
     /// event loop lifetime while preserving its NSApplication delegate. Do not
     /// install competing handlers for these routes while this service is active.
+    /// Windows has no activation backend; opting in makes `run` return an error.
     pub fn application_id(
         mut self,
         id: impl Into<String>,
@@ -525,8 +536,35 @@ impl Application {
         self.quit_on_last_window_close = quit;
         self
     }
+    /// Run with a native-message pump, such as `CefDoMessageLoopWork`.
+    ///
+    /// On Windows the pump runs before native message dispatch, with no
+    /// application callback active. Calling a foreign pump from a UI task can
+    /// otherwise starve painting: winit requeues paints during nested callbacks.
+    /// The caller must arrange wakeups while idle, for example with a timed task.
+    /// On macOS a 10 ms default-mode timer invokes it outside winit callbacks;
+    /// pumping pauses during native modal and tracking loops.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub fn run_with_pump(
+        mut self,
+        pump: impl FnMut() + 'static,
+        build: impl FnOnce(&mut WindowContext),
+    ) -> Result<(), Box<dyn Error>> {
+        self.message_pump = Some(Box::new(pump));
+        self.run(build)
+    }
+
     pub fn run(self, build: impl FnOnce(&mut WindowContext)) -> Result<(), Box<dyn Error>> {
-        let event_loop = EventLoop::<Event>::with_user_event().build()?;
+        let mut builder = EventLoop::<Event>::with_user_event();
+        #[cfg(target_os = "windows")]
+        if let Some(mut pump) = self.message_pump {
+            use winit::platform::windows::EventLoopBuilderExtWindows;
+            builder.with_msg_hook(move |_| {
+                pump();
+                false
+            });
+        }
+        let event_loop = builder.build()?;
         let proxy = event_loop.create_proxy();
         let native_events = if let Some(id) = &self.application_id {
             let wake = proxy.clone();
@@ -581,7 +619,14 @@ impl Application {
             active: false,
             error: None,
         };
-        event_loop.run_app(&mut host)?;
+        #[cfg(target_os = "macos")]
+        let message_pump = self
+            .message_pump
+            .map(crate::message_pump_macos::MessagePump::new);
+        let result = event_loop.run_app(&mut host);
+        #[cfg(target_os = "macos")]
+        drop(message_pump);
+        result?;
         if let Some(e) = host.error.take() {
             return Err(e.into());
         }
@@ -2608,10 +2653,13 @@ mod tests {
         assert!(retained.pending.borrow().is_empty());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
-    #[ignore = "requires an owned X11 display and GPU; run alone with --test-threads=1"]
+    #[ignore = "requires a desktop and GPU; run alone with --test-threads=1"]
     fn host_suspend_recreates_native_resources_and_retains_editor_state() {
+        #[cfg(target_os = "windows")]
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        #[cfg(target_os = "linux")]
         use winit::platform::x11::EventLoopBuilderExtX11;
         struct Probe {
             factory: WindowFactory,
@@ -2621,6 +2669,8 @@ mod tests {
             fn resumed(&mut self, event_loop: &ActiveEventLoop) {
                 let handle = self.factory.allocate();
                 let mut host = Host::new(WindowOptions::default(), handle, self.factory.clone());
+                let native_provider = host.context.dialogs.clone();
+                assert!(native_provider.native_window().is_none());
                 let value = host.context.ui.signal(String::from("retained document"));
                 let editor = host.context.ui.text_input(
                     host.context.ui.root(),
@@ -2632,6 +2682,7 @@ mod tests {
                 host.create_window(event_loop).unwrap();
                 let window = Arc::downgrade(host.window.as_ref().unwrap());
                 let first_id = host.window.as_ref().unwrap().id();
+                assert_eq!(native_provider.native_window().unwrap().id(), first_id);
                 host.create_window(event_loop).unwrap();
                 assert_eq!(host.window.as_ref().unwrap().id(), first_id);
                 host.window_event(WindowEvent::Focused(true)).unwrap();
@@ -2660,6 +2711,7 @@ mod tests {
                 host.suspend(); // Platform callbacks may repeat.
                 assert!(host.window.is_none() && host.renderer.is_none() && host.adapter.is_none());
                 assert!(window.upgrade().is_none());
+                assert!(native_provider.native_window().is_none());
                 assert!(!host.native_focused && !host.ime_active);
                 assert!(host.ime_target.is_none() && host.ime_geometry.is_none());
                 assert!(host.context.ui.input.captured().is_none());
@@ -2672,6 +2724,7 @@ mod tests {
                 assert_eq!(editor.editor.borrow().text(), "updated while suspended");
                 host.create_window(event_loop).unwrap();
                 assert!(host.window.is_some() && host.renderer.is_some() && host.adapter.is_some());
+                assert!(native_provider.native_window().is_some());
                 assert!(host.force);
                 host.window_event(WindowEvent::Focused(true)).unwrap();
                 assert_eq!(host.context.ui.input.focused(), Some(editor.node));
@@ -2691,11 +2744,10 @@ mod tests {
             }
             fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
         }
-        let event_loop = EventLoop::<Event>::with_user_event()
-            .with_x11()
-            .with_any_thread(true)
-            .build()
-            .unwrap();
+        let mut builder = EventLoop::<Event>::with_user_event();
+        #[cfg(target_os = "linux")]
+        builder.with_x11();
+        let event_loop = builder.with_any_thread(true).build().unwrap();
         let factory = WindowFactory {
             fonts: Rc::new(Vec::new()),
             #[cfg(target_os = "linux")]

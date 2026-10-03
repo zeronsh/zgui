@@ -1,4 +1,4 @@
-//! Native Linux/macOS application host with GPU rendering, accessibility, clipboard,
+//! Native Linux/macOS/Windows host with GPU rendering, accessibility, clipboard,
 //! and IME. A software raster backend is available for reference and headless tests.
 //!
 //! ```no_run
@@ -22,6 +22,8 @@
 pub mod app_menu;
 mod clipboard;
 pub mod file_dialog;
+#[cfg(target_os = "macos")]
+mod message_pump_macos;
 mod native_events;
 mod native_prompt;
 #[cfg(target_os = "linux")]
