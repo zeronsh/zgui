@@ -33,7 +33,7 @@ wayland-protocols = { version = "=0.32.13", features = ["client", "unstable"] }
 muda = { version = "=0.18.0", default-features = false }
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSTextInputContext"] }
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSAppleEventManager", "NSAppleEventDescriptor", "objc2-core-services"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSDate", "NSTimer", "NSAppleEventManager", "NSAppleEventDescriptor", "objc2-core-services"] }
 
 [[bin]]
 name = "zgui-demo"

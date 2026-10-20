@@ -245,11 +245,35 @@ mod platform {
         }
     }
 }
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "windows")]
+mod platform {
+    use super::*;
+
+    pub(crate) struct NativeApplicationEvents;
+    impl NativeApplicationEvents {
+        pub(crate) fn new(id: &str, _handler: Handler) -> Result<Self, ApplicationEventError> {
+            validate_id(id)?;
+            Err(ApplicationEventError(
+                "Windows URL activation is not registered by zgui; handle launch arguments in the application".into(),
+            ))
+        }
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) use platform::NativeApplicationEvents;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_activation_is_explicitly_unsupported() {
+        let result = NativeApplicationEvents::new("org.example.Editor", Arc::new(|_| {}));
+        let Err(error) = result else {
+            panic!("Windows activation must not silently succeed without a backend");
+        };
+        assert!(error.0.contains("Windows URL activation"));
+    }
+
     #[test]
     fn application_ids_are_valid_bus_names_and_paths() {
         assert!(validate_id("org.example.Editor").is_ok());

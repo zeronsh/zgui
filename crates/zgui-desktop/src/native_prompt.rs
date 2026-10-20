@@ -92,16 +92,17 @@ pub(crate) async fn show(
     parent: Arc<Window>,
     options: PromptOptions,
 ) -> Result<PromptResponse, FileDialogError> {
-    // Linux Zenity is unparented; do not retain a native owner it never uses.
+    #[cfg(target_os = "linux")]
     drop(parent);
     crate::file_dialog::background(move || {
-        rfd::MessageDialog::new()
+        let dialog = rfd::MessageDialog::new()
             .set_title(options.title)
             .set_description(options.description)
             .set_level(options.level.into())
-            .set_buttons(options.buttons.into())
-            .show()
-            .into()
+            .set_buttons(options.buttons.into());
+        #[cfg(target_os = "windows")]
+        let dialog = dialog.set_parent(parent.as_ref());
+        dialog.show().into()
     })?
     .await
 }

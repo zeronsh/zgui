@@ -1,6 +1,6 @@
 # zgui
 
-A retained Rust GUI framework focused on **Linux and macOS**, fine-grained updates, bounded rendering resources, and low idle CPU usage. It has a platform-independent core, a wgpu renderer, and a desktop host with native input, clipboard, IME, accessibility, and multiple windows.
+A retained Rust GUI framework for **Linux, macOS and Windows**, focused on fine-grained updates, bounded rendering resources, and low idle CPU usage. It has a platform-independent core, a wgpu renderer, and a desktop host with native input, clipboard, IME, accessibility, and multiple windows.
 
 ```sh
 cargo run --release -p zgui-desktop --example components
@@ -33,7 +33,10 @@ Linux builds need the native development libraries for fontconfig, xkbcommon and
 D-Bus, plus `pkg-config` (for example `libfontconfig1-dev libxkbcommon-dev
 libdbus-1-dev pkg-config` on Debian/Ubuntu). File dialogs use the desktop's XDG
 portal; prompts use `zenity`. macOS builds use the system frameworks and Xcode
-command-line tools. See [native services](docs/platform-services.md) for backend
+command-line tools. Windows builds use the stable MSVC Rust toolchain and Visual
+Studio Build Tools with the C++ workload and Windows SDK; no GTK installation is
+needed. See [Windows support](docs/windows.md) for validation and limitations,
+and [native services](docs/platform-services.md) for backend
 behavior and cancellation guarantees.
 
 Applications describe components and children. They mount once; reactive properties update only their retained targets:

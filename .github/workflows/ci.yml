@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libxkbcommon-dev libfontconfig1-dev pkg-config
       - name: Benchmark sampler failure evidence
+        if: runner.os != 'Windows'
         run: python3 scripts/test_compare.py -v
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace --all-targets --locked

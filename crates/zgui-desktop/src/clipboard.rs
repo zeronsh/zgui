@@ -1,7 +1,7 @@
 //! Clipboard selection follows the actual native display, never environment guesses.
 //!
 //! Wayland uses the application's connection and standard data-device protocol;
-//! X11 and macOS retain arboard. Construct before the first input event so the
+//! X11, macOS and Windows retain arboard. Construct before the first input event so the
 //! Wayland worker can observe seat focus and the serial needed for selection.
 use std::error::Error;
 use winit::event_loop::OwnedDisplayHandle;
