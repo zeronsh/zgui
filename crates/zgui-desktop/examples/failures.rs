@@ -32,7 +32,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let window = cx.window.clone();
             let tasks = cx.tasks.clone();
             let ticker = cx.tasks.spawn_scoped(async move {
-                for tick in 1.. {
+                let mut tick = 0u32;
+                loop {
+                    tick += 1;
                     zgui::timer::sleep(Duration::from_millis(16)).await;
                     ticks.set(tick);
                     if !smoke {
