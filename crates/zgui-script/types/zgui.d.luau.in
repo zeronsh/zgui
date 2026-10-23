@@ -824,8 +824,8 @@ export type Styles = {
 	left: Length?,
 	-- An absolute node's inset from the start or end of a line: `left` and
 	-- `right` left to right, `right` and `left` right to left.
-	start: Length?,
-	end: Length?,
+	inset_start: Length?,
+	inset_end: Length?,
 	right: Length?,
 	bottom: Length?,
 	-- Spacing.
@@ -857,7 +857,7 @@ export type Styles = {
 	direction: Direction?,
 	-- Which way lines run in it and what it holds (HTML's `dir`): "rtl"
 	-- for Arabic, Hebrew, Persian or Urdu runs rows from the right, starts
-	-- columns and text at the right, and turns `ps`, `ms`, `start` round.
+	-- columns and text at the right, and turns `ps`, `ms`, `inset_start` round.
 	dir: ("ltr" | "rtl")?,
 	grow: number?,
 	shrink: number?,
@@ -976,8 +976,8 @@ export type StyleProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.

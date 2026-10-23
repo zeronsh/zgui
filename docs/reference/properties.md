@@ -26,8 +26,8 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `absolute` | `boolean` | `false` | out of the flow, placed by insets (see [Position](#position)) |
 | `relative` | `boolean` | `false` | a containing block for absolute descendants |
 | `top`, `left`, `right`, `bottom` | `Length` | | insets of an absolute node |
-| `start`, `end` | `Length` | | its inset from the start or end of a line (CSS's `inset-inline-start`/`-end`): `left` and `right` left to right, `right` and `left` with `dir = "rtl"` |
-| `dir` | `"ltr" \| "rtl"` | its parent's (`"ltr"` at the root) | which way lines run in it and what it holds (HTML's `dir`): `"rtl"` runs rows from the right, starts a column's children and text at the right, and turns the `ps`/`pe`, `ms`/`me`, `start`/`end` edges round; `pl`, `ml` and `left` stay on the left |
+| `inset_start`, `inset_end` | `Length` | | its inset from the start or end of a line (CSS's `inset-inline-start`/`-end`): `left` and `right` left to right, `right` and `left` with `dir = "rtl"` |
+| `dir` | `"ltr" \| "rtl"` | its parent's (`"ltr"` at the root) | which way lines run in it and what it holds (HTML's `dir`): `"rtl"` runs rows from the right, starts a column's children and text at the right, and turns the `ps`/`pe`, `ms`/`me`, `inset_start`/`inset_end` edges round; `pl`, `ml` and `left` stay on the left |
 
 ## Spacing
 

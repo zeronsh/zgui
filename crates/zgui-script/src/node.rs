@@ -1018,7 +1018,7 @@ props! {
     "w_full" => WFull: Bool, "h_full" => HFull: Bool, "aspect" => Aspect: Num,
     "absolute" => Absolute: Bool, "relative" => Relative: Bool,
     "top" => Top: Len, "left" => Left: Len, "right" => Right: Len, "bottom" => Bottom: Len,
-    "start" => Start: Len, "end" => End: Len,
+    "inset_start" => InsetStart: Len, "inset_end" => InsetEnd: Len,
     // Spacing.
     "p" => P: Len, "px" => Px: Len, "py" => Py: Len,
     "pt" => Pt: Len, "pr" => Pr: Len, "pb" => Pb: Len, "pl" => Pl: Len,

@@ -30,7 +30,7 @@ let truncated = row().w(200.).child(div().w(24.).shrink_0()).child(text("A long 
 - text starts at the right;
 - wrapping rows mirror their lines.
 
-Padding, margins and insets given as left and right (`pl`, `ml`, `left`) stay on that side, as CSS keeps them. The logical ones follow the direction: `ps`/`pe` (padding at a line's start and end), `ms`/`me` and `start`/`end` (CSS's `*-inline-start` and `*-inline-end`). Write the start and end ones for anything that should mirror. A subtree inherits its parent's direction; `.direction(Direction::Ltr)` (`dir = "ltr"`) turns part of it back (a phone number, code). A layout that sets no direction pays nothing.
+Padding, margins and insets given as left and right (`pl`, `ml`, `left`) stay on that side, as CSS keeps them. The logical ones follow the direction: `ps`/`pe` (padding at a line's start and end), `ms`/`me` and `.start()`/`.end()` insets (`inset_start`/`inset_end` in scripts; CSS's `*-inline-start` and `*-inline-end`). Write the start and end ones for anything that should mirror. A subtree inherits its parent's direction; `.direction(Direction::Ltr)` (`dir = "ltr"`) turns part of it back (a phone number, code). A layout that sets no direction pays nothing.
 
 ```rust
 use zgui::compose::prelude::*;

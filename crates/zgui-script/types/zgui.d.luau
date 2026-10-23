@@ -831,8 +831,8 @@ export type Styles = {
 	left: Length?,
 	-- An absolute node's inset from the start or end of a line: `left` and
 	-- `right` left to right, `right` and `left` right to left.
-	start: Length?,
-	end: Length?,
+	inset_start: Length?,
+	inset_end: Length?,
 	right: Length?,
 	bottom: Length?,
 	-- Spacing.
@@ -864,7 +864,7 @@ export type Styles = {
 	direction: Direction?,
 	-- Which way lines run in it and what it holds (HTML's `dir`): "rtl"
 	-- for Arabic, Hebrew, Persian or Urdu runs rows from the right, starts
-	-- columns and text at the right, and turns `ps`, `ms`, `start` round.
+	-- columns and text at the right, and turns `ps`, `ms`, `inset_start` round.
 	dir: ("ltr" | "rtl")?,
 	grow: number?,
 	shrink: number?,
@@ -983,8 +983,8 @@ export type StyleProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -1272,8 +1272,8 @@ export type Props = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -1534,8 +1534,8 @@ export type ContainerProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -1798,8 +1798,8 @@ export type ScrollProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -2069,8 +2069,8 @@ export type TextProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -2381,8 +2381,8 @@ export type RichProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -2643,8 +2643,8 @@ export type ImageProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -2913,8 +2913,8 @@ export type SvgProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -3177,8 +3177,8 @@ export type CanvasProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -3440,8 +3440,8 @@ export type CheckboxProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -3706,8 +3706,8 @@ export type InputProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -3987,8 +3987,8 @@ export type ProgressProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -4250,8 +4250,8 @@ export type SliderProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -4517,8 +4517,8 @@ export type ListProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -4812,8 +4812,8 @@ export type LayerProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -5076,8 +5076,8 @@ export type ModalProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -5349,8 +5349,8 @@ export type PopoverProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -5624,8 +5624,8 @@ export type MenuItemProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -5888,8 +5888,8 @@ export type SubmenuProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -6155,8 +6155,8 @@ export type WebViewProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -6440,8 +6440,8 @@ export type TerminalProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -6703,8 +6703,8 @@ export type SlotProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -6971,8 +6971,8 @@ export type EachOptions = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -7242,8 +7242,8 @@ export type PresenceOptions = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
-	start: Reactive<Length>?,
-	end: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
