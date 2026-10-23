@@ -56,13 +56,19 @@ def main():
                         raise RuntimeError("editor did not finish initial presentation: " + output.read_text())
                     time.sleep(.1)
                 def report():
+                    # A report once the input settled: the app reports every
+                    # 100 ms, and the first after a double click can come
+                    # between its clicks. Two the same in a row, both after
+                    # the input, are the state it left.
                     count = output.read_text().count("SELECTION ")
                     deadline = time.monotonic() + 8
-                    while output.read_text().count("SELECTION ") <= count:
+                    while True:
+                        rows = re.findall(r'^SELECTION (.*)$', output.read_text(), re.MULTILINE)
+                        if len(rows) >= count + 2 and rows[-1] == rows[-2]:
+                            break
                         if time.monotonic() > deadline or app.poll() is not None:
                             raise RuntimeError("live editor report timed out: " + output.read_text())
                         time.sleep(.05)
-                    rows = re.findall(r'^SELECTION (.*)$', output.read_text(), re.MULTILINE)
                     state = {}
                     for field in rows[-1].split():
                         name, value = field.split("=")
