@@ -81,6 +81,8 @@ jobs:
           version: 2.6.0
           args: --check crates/zgui-script
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Feature gating stays honest: the crates build without their defaults.
+      - run: cargo check -p zgui-desktop -p zgui-script --no-default-features --locked
       # zgui-script's best-practice lint over every example script.
       - name: Script lint
         run: cargo run -q -p zgui-script --bin zgui --locked -- lint crates/zgui-script/examples crates/zgui-desktop/examples
