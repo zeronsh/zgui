@@ -297,11 +297,22 @@ pub(crate) struct SelectionStyle {
 /// Make `root` a selectable region (`View::selectable(true)`).
 pub(crate) fn mount_root(ui: &mut Ui, root: NodeId, mut style: SelectionStyle) {
     ui.scene.borrow_mut().set_user_select(root, Some(true));
-    // Assistive technology finds its selection on it.
-    if ui.semantics.borrow().get(root).is_none() {
-        ui.semantics
+    // A document, as a browser's page is: assistive technology reads its
+    // text and finds its selection on it (platform text APIs, UIA's
+    // TextPattern and NSAccessibility's text ranges, serve documents, not
+    // groups). A region with a role of its own (a window, a scroll view)
+    // keeps it.
+    let role = ui.semantics.borrow().get(root).map(|node| node.role);
+    match role {
+        None => ui.semantics.borrow_mut().set(
+            root,
+            crate::semantics::SemanticNode::new(Role::Document, ""),
+        ),
+        Some(Role::Group) => ui
+            .semantics
             .borrow_mut()
-            .set(root, crate::semantics::SemanticNode::new(Role::Group, ""));
+            .update(root, |node| node.role = Role::Document),
+        Some(_) => {}
     }
     let theme = ui.theme_scope();
     let weak = ui.downgrade();

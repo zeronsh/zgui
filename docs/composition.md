@@ -139,7 +139,7 @@ the menu's Copy (`Platform::set_clipboard_rich_text`) put both on the clipboard 
 plain text alone on Wayland.
 
 Assistive technology reads the selection from the region: its semantic node
-(a group, unless the view has a role of its own) carries
+(a document, as a browser's page is, unless the view has a role of its own: a window or a scroll view keeps it) carries
 `SemanticNode::document_selection`, which the desktop host projects as an
 AccessKit text selection over the labels' text runs, so a screen reader reads
 the selected text across nodes. A selection that assistive technology sets

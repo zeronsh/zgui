@@ -22,6 +22,9 @@ pub enum Role {
     Menu,
     MenuItem,
     Image,
+    /// Text read and selected as a document: a selectable region
+    /// (`View::selectable`), as a browser's page is.
+    Document,
 }
 /// The single scrolling axis supported by a semantic scroll view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

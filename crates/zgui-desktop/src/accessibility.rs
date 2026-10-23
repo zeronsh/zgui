@@ -522,6 +522,7 @@ fn role(r: Role) -> accesskit::Role {
         Role::Menu => accesskit::Role::Menu,
         Role::MenuItem => accesskit::Role::MenuItem,
         Role::Image => accesskit::Role::Image,
+        Role::Document => accesskit::Role::Document,
     }
 }
 
@@ -1188,6 +1189,11 @@ mod document_selection_tests {
         );
         let tree = accesskit_consumer::Tree::new(update, true);
         let region = tree.state().focus().unwrap();
+        // What the platform adapters key their text interfaces on (UIA's
+        // TextPattern, NSAccessibility's text ranges): a document's.
+        assert_eq!(region.role(), accesskit::Role::Document);
+        assert!(region.supports_text_ranges(), "platform text APIs see it");
+        assert_eq!(region.document_range().text(), "Hello worldSecond line");
         let text = region.text_selection().unwrap().text();
         assert!(
             text.starts_with("world") && text.ends_with("Sec"),
@@ -1209,6 +1215,53 @@ mod document_selection_tests {
         assert_eq!(
             ui.semantics.borrow().get(root).unwrap().document_selection,
             None
+        );
+    }
+}
+
+#[cfg(test)]
+mod document_role_tests {
+    use super::*;
+    use zgui::{compose::prelude::*, semantics::Role, widgets::Ui};
+
+    #[test]
+    fn a_selectable_region_is_a_document_unless_it_has_a_role_of_its_own() {
+        let mut ui = Ui::new(400., 300.);
+        let offset = ui.signal(0.);
+        let view = ui.mount(
+            column()
+                .id("page")
+                .selectable(true)
+                .child(text("Page"))
+                .child(
+                    scroll(offset)
+                        .id("pane")
+                        .w(200.)
+                        .h(60.)
+                        .selectable(true)
+                        .child(text("Pane")),
+                ),
+        );
+        ui.prepare_frame();
+        let role = |id: &str| {
+            let node = view.find(id).unwrap();
+            ui.semantics.borrow().get(node).map(|n| n.role)
+        };
+        assert_eq!(role("page"), Some(Role::Document));
+        assert_eq!(
+            role("pane"),
+            Some(Role::ScrollView),
+            "a scroll view stays one"
+        );
+        // The window stays the tree's root, the document inside it.
+        let mut adapter = AccessibilityTree::new();
+        let update = adapter.update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "Test", 1.);
+        let tree = accesskit_consumer::Tree::new(update, true);
+        let root = tree.state().root();
+        assert_eq!(root.role(), accesskit::Role::Window);
+        assert!(
+            root.children()
+                .any(|child| child.role() == accesskit::Role::Document)
         );
     }
 }
