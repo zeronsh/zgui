@@ -176,3 +176,24 @@ fn a_virtual_lists_rows_are_one_tab_stop() {
     tab(&mut ui);
     assert_eq!(focused(&ui, &view).as_deref(), Some("after"));
 }
+
+#[test]
+fn right_to_left_the_arrows_read_the_other_way() {
+    let mut ui = Ui::new(500., 300.);
+    let view = ui.mount(
+        row()
+            .role(Role::Toolbar)
+            .rtl()
+            .child(button_named("a"))
+            .child(button_named("b"))
+            .child(button_named("c")),
+    );
+    ui.prepare_frame();
+    tab(&mut ui);
+    assert_eq!(focused(&ui, &view).as_deref(), Some("a"));
+    // "a" is at the right: Left moves on to "b".
+    press(&mut ui, Key::ArrowLeft, false);
+    assert_eq!(focused(&ui, &view).as_deref(), Some("b"));
+    press(&mut ui, Key::ArrowRight, false);
+    assert_eq!(focused(&ui, &view).as_deref(), Some("a"));
+}

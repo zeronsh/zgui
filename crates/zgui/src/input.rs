@@ -1472,11 +1472,18 @@ impl InputDispatcher {
         }
         let vertical = matches!(axis, FocusGroup::Vertical | FocusGroup::Both);
         let horizontal = matches!(axis, FocusGroup::Horizontal | FocusGroup::Both);
+        // Right to left, the next member is to the left.
+        let rtl = scene.direction(group) == crate::scene::Direction::Rtl;
+        let (left, right) = if rtl {
+            (Step::On, Step::Back)
+        } else {
+            (Step::Back, Step::On)
+        };
         let step = match key {
             Key::ArrowUp if vertical => Step::Back,
             Key::ArrowDown if vertical => Step::On,
-            Key::ArrowLeft if horizontal => Step::Back,
-            Key::ArrowRight if horizontal => Step::On,
+            Key::ArrowLeft if horizontal => left,
+            Key::ArrowRight if horizontal => right,
             Key::Home => Step::First,
             Key::End => Step::Last,
             _ => return None,
