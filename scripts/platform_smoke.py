@@ -26,23 +26,27 @@ def stop(process):
             process.wait()
 
 
-def release_documents(runtime):
-    """Unmount the document portal from the private `runtime` directory.
+def release_mounts(runtime):
+    """Unmount the FUSE filesystems session services mounted in the private
+    `runtime` directory.
 
     On a stock session bus zgui's settings read starts xdg-desktop-portal,
-    which mounts xdg-document-portal's FUSE filesystem at `runtime`/doc. A
-    killed bus leaves that mount disconnected, and the directory can't be
-    removed past it. Call once the bus is stopped.
+    which mounts xdg-document-portal's at `runtime`/doc, and GTK (IBus's
+    panel) starts gvfs, which mounts its own at `runtime`/gvfs. A killed bus
+    leaves them disconnected, and the directory can't be removed past them.
+    Call once the bus is stopped.
     """
+    prefix = os.path.realpath(runtime) + os.sep
     try:
-        if 'doc' not in os.listdir(runtime):
-            return
+        with open('/proc/mounts') as mounts:
+            points = [line.split()[1] for line in mounts]
     except OSError:
         return
     tool = shutil.which('fusermount3') or shutil.which('fusermount')
-    if tool:
-        subprocess.run([tool, '-u', '-z', os.path.join(runtime, 'doc')],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for point in points:
+        if tool and point.startswith(prefix):
+            subprocess.run([tool, '-u', '-z', point],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def wait_for_wm(env, seconds=20):

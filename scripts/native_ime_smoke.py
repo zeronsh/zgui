@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 
-from platform_smoke import release_documents, stop, wait_for_wm, use_ibus_engine, wait_for_ibus_xim
+from platform_smoke import release_mounts, stop, wait_for_wm, use_ibus_engine, wait_for_ibus_xim
 
 
 def main():
@@ -160,6 +160,6 @@ def main():
                     except ProcessLookupError:pass
             stop(wm)
             stop(xvfb)
-            release_documents(private)
+            release_mounts(private)
 
 if __name__=='__main__':main()
