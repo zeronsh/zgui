@@ -75,7 +75,7 @@ def main():
         (args.output / "checkbox.log").write_text(output)
         if app.returncode:
             raise RuntimeError(output)
-        required = ["TOGGLE checked=true activations=1", "TOGGLE checked=false activations=2", "DISABLED true", "MODEL checked=true", "CHECKBOX checked=true disabled=true activations=2", 'role: CheckBox, label: "Enable notifications"', "checked: Some(true), disabled: true"]
+        required = ["TOGGLE checked=true activations=1", "TOGGLE checked=false activations=2", "DISABLED true", "MODEL checked=true", "CHECKBOX checked=true disabled=true activations=2", 'role: CheckBox, label: "Enable notifications"', "checked: Some(true), mixed: false, disabled: true"]
         if any(item not in output for item in required) or output.count("TOGGLE ") != 2:
             raise AssertionError(output)
         result = {"platform": "X11/Xvfb", "scale": 1, "result": "pass", "checks": ["pointer label activation", "Space toggle", "disabled activation suppressed", "external model write", "checkbox semantics", "automatic close"], "limitations": "Software rendering; does not validate macOS or hardware GPUs."}
