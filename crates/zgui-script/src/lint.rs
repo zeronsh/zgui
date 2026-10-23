@@ -59,8 +59,10 @@ pub const RULES: &[(&str, &str)] = &[
     ),
 ];
 
-/// `ui.*` calls that build interface: values given to them are read at
-/// build time. The rest (`ui.state`, `ui.set`, `ui.effect`…) are not.
+/// `ui.*` calls that do not build interface (`ui.state`, `ui.set`,
+/// `ui.effect`, a file read in a handler…); the rest do, and values given to
+/// them are read at build time. Every function of `ui` in `zgui.d.luau` is
+/// one or the other (`every_ui_function_is_classified`).
 const NOT_ELEMENTS: &[&str] = &[
     "state",
     "shared",
@@ -94,6 +96,15 @@ const NOT_ELEMENTS: &[&str] = &[
     "fetch",
     "variants",
     "component",
+    "on_cleanup",
+    "now",
+    "object",
+    "call_sync",
+    "task",
+    "open_files",
+    "save_file",
+    "read_file",
+    "write_file",
 ];
 
 /// Lint every `.luau` script at `paths` (files, or directories searched).
@@ -748,6 +759,62 @@ fn is_element(callee: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Functions of `ui` that return no `Node` yet whose arguments are read
+    /// while the interface is built: a window's options, a contribution, a
+    /// document parsed into blocks.
+    const BUILDS: &[&str] = &["window", "contribute", "markdown"];
+
+    /// A function added to `ui` is either an element or listed in
+    /// `NOT_ELEMENTS`, so `untracked-get` neither flags a file written in a
+    /// click handler nor misses a new element.
+    #[test]
+    fn every_ui_function_is_classified() {
+        let types = include_str!("../types/zgui.d.luau");
+        let start = types.find("\ndeclare ui: {\n").expect("ui's declaration");
+        let body = &types[start..];
+        let body = &body[..body.find("\n}").unwrap()];
+        let mut unclassified = Vec::new();
+        for line in body.lines() {
+            let Some((name, ty)) = line.strip_prefix('\t').and_then(|l| l.split_once(": ")) else {
+                continue;
+            };
+            if !name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                || !(ty.starts_with('(') || ty.starts_with('<'))
+            {
+                continue; // A table (`ui.clipboard`) or a value (`ui.null`).
+            }
+            // Not one returning a function that returns one (`ui.component`).
+            let element =
+                (ty.ends_with("-> Node,") || ty.ends_with("-> Span,")) && !ty.contains(") -> (");
+            let listed = NOT_ELEMENTS.contains(&name);
+            assert!(
+                !(element && listed),
+                "ui.{name} returns a Node but is listed in NOT_ELEMENTS"
+            );
+            if !element && !listed && !BUILDS.contains(&name) {
+                unclassified.push(name);
+            }
+        }
+        assert!(
+            unclassified.is_empty(),
+            "add these to NOT_ELEMENTS (or to BUILDS if their arguments are read while \
+             the interface is built): {unclassified:?}"
+        );
+    }
+
+    #[test]
+    fn file_and_task_calls_in_handlers_are_not_elements() {
+        let found = rules(
+            "local body = ui.state(\"body\", \"\")\n\
+             ui.on_cleanup(function() ui.write_file(\"notes.txt\", body:get()) end)\n\
+             return ui.button {\n\
+             \ton_click = function() ui.task(save, body:get()) end,\n\
+             \t\"Save\",\n\
+             }\n",
+        );
+        assert_eq!(found, Vec::new());
+    }
 
     fn rules(source: &str) -> Vec<(u32, String)> {
         lint_source(Path::new("app.luau"), source)
