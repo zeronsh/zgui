@@ -1120,6 +1120,11 @@ impl GpuContext {
         // pool even when Vulkan is selected; macOS uses Metal.
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         descriptor.backends = wgpu::Backends::PRIMARY;
+        // zgui draws nothing indirect; the validation would compile a compute
+        // shader while creating the device, a few milliseconds of startup.
+        descriptor
+            .flags
+            .remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
         let instance = wgpu::Instance::new(descriptor.with_env());
         let surface = window
             .map(|window| instance.create_surface(window))
