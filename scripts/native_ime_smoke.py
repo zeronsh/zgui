@@ -95,11 +95,31 @@ def main():
                         'x': r'Absolute upper-left X:\s+(-?\d+)', 'y': r'Absolute upper-left Y:\s+(-?\d+)',
                         'width': r'Width:\s+(\d+)', 'height': r'Height:\s+(\d+)'}.items()}
                 origin = bounds(window)
-                def capture(stage):
+                def candidates_near(caret, deadline):
+                    """The candidate popups, once one sits at `caret`'s bottom
+                    right: IBus moves its popup after the preedit changes,
+                    so a sample taken meanwhile finds it where it was."""
+                    want = (origin['x']+caret['x']+caret['width'], origin['y']+caret['y']+caret['height'])
+                    while True:
+                        found = []
+                        listed = subprocess.run(['xdotool','search','--onlyvisible','--class','Ibus-ui-gtk3'],env=env,capture_output=True,text=True)
+                        for candidate in listed.stdout.splitlines():
+                            try: rectangle = bounds(candidate)
+                            except subprocess.CalledProcessError: continue
+                            if rectangle['width'] > 100 and rectangle['height'] > 20: found.append(rectangle)
+                        if any(abs(r['x']-want[0])<=3 and abs(r['y']-want[1])<=3 for r in found) or time.monotonic()>deadline:
+                            return found
+                        time.sleep(.1)
+                def capture(stage, follows=None):
                     # Each sample must include a fresh model/geometry tick after input.
                     time.sleep(.55)
-                    trace = (args.output/'application.log').read_text()
-                    tick = trace[trace.rfind('MODEL '):]
+                    # The app may be writing its latest tick: read until it is whole.
+                    deadline = time.monotonic()+3
+                    while True:
+                        trace = (args.output/'application.log').read_text()
+                        tick = trace[trace.rfind('MODEL '):]
+                        if (tick.count('DISPLAY ') == 2 and tick.count('CARET ') == 2) or time.monotonic()>deadline: break
+                        time.sleep(.05)
                     models = re.search(r'MODEL \d+ first=(".*?") second=(".*?") focus=', tick)
                     if models is None: raise AssertionError('Missing model sample')
                     sample = {'stage': stage, 'first': json.loads(models.group(1)), 'second': json.loads(models.group(2)), 'origin': origin, 'candidates': []}
@@ -108,22 +128,20 @@ def main():
                         sample['display_'+label] = json.loads(rendered.group(1))
                         caret = re.search(r'CARET '+label+r' Rect \{ x: ([\d.]+), y: ([\d.]+), width: ([\d.]+), height: ([\d.]+)', tick)
                         sample['caret_'+label] = dict(zip(('x','y','width','height'), map(float,caret.groups())))
-                    candidates = subprocess.run(['xdotool','search','--onlyvisible','--class','Ibus-ui-gtk3'],env=env,capture_output=True,text=True)
-                    for candidate in candidates.stdout.splitlines():
-                        rectangle = bounds(candidate)
-                        if rectangle['width'] > 100 and rectangle['height'] > 20: sample['candidates'].append(rectangle)
+                    if follows:
+                        sample['candidates'] = candidates_near(sample['caret_'+follows], time.monotonic()+3)
                     snapshots.append(sample)
                     ImageGrab.grab(xdisplay=display).save(args.output/f'ime-{stage}.png')
                     (args.output/f'windows-{stage}.log').write_text(subprocess.check_output(['xwininfo','-root','-tree'],env=env,text=True))
                 click(100,82)
                 use_ibus_engine(env,'libpinyin',ime)
-                type_text('nihao');capture(1)
+                type_text('nihao');capture(1,'first')
                 key('space');capture(2)
-                type_text('zhong');capture(3)
+                type_text('zhong');capture(3,'first')
                 key('Escape');capture(4)
-                type_text('wo');capture(5)
+                type_text('wo');capture(5,'first')
                 click(100,174);capture(6)
-                type_text('shijie');capture(7)
+                type_text('shijie');capture(7,'second')
                 key('space');capture(8)
                 app.wait(timeout=25)
             text=(args.output/'application.log').read_text()
