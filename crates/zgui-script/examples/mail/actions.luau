@@ -12,12 +12,27 @@ local function index_of(id: number): number?
 	return nil
 end
 
+-- `m` read or unread now, its mailbox's count with it: one key each, not
+-- the 4000 messages (whose list and filter would run again).
+local function set_read(m: state.Message, read: boolean)
+	local was = state.read:peek()[tostring(m.id)]
+	local unread = if was == nil then m.unread else not was
+	if unread == not read then
+		return
+	end
+	ui.batch(function()
+		state.read:set_key({ tostring(m.id) }, read)
+		local n = state.unread_counts:peek()[m.mailbox] or 0
+		state.unread_counts:set_key({ m.mailbox }, n + (if read then -1 else 1))
+	end)
+end
+
 function M.open(id: number)
 	ui.batch(function()
 		state.selected:set(id)
 		local i = index_of(id)
-		if i and state.messages:peek()[i].unread then
-			state.messages:set_key({ i, "unread" }, false)
+		if i then
+			set_read(state.messages:peek()[i], true)
 		end
 	end)
 end
@@ -32,7 +47,7 @@ end
 function M.mark_unread(id: number)
 	local i = index_of(id)
 	if i then
-		state.messages:set_key({ i, "unread" }, true)
+		set_read(state.messages:peek()[i], false)
 	end
 end
 
@@ -40,6 +55,14 @@ function M.move(id: number, mailbox: string)
 	local i = index_of(id)
 	if i then
 		ui.batch(function()
+			-- Its unread count moves with it.
+			local m = state.messages:peek()[i]
+			local read = state.read:peek()[tostring(m.id)]
+			if if read == nil then m.unread else not read then
+				local counts = state.unread_counts:peek()
+				state.unread_counts:set_key({ m.mailbox }, (counts[m.mailbox] or 1) - 1)
+				state.unread_counts:set_key({ mailbox }, (counts[mailbox] or 0) + 1)
+			end
 			state.messages:set_key({ i, "mailbox" }, mailbox)
 			if state.selected:peek() == id then
 				state.selected:set(nil)

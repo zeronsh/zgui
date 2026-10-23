@@ -285,3 +285,40 @@ fn the_compose_sheet_holds_focus_until_escape_returns_it() {
     );
     assert_eq!(h.ui.input.focused(), before, "and focus goes back");
 }
+
+#[test]
+fn reading_a_message_costs_what_changed() {
+    // Opening one marks it read: a key of its own and its mailbox's count,
+    // not the 4000 messages (whose list and filter ran again, over CI's
+    // 50 ms budget). A tighter budget than the default holds it.
+    use zgui::input::Key;
+    let limits = zgui_script::Limits {
+        call: std::time::Duration::from_millis(15),
+        ..Default::default()
+    };
+    let mut h = Harness::new(|runtime| ScriptHost::new(runtime, APP).limits(limits));
+    h.ui.scene.borrow_mut().resize(1180., 760.);
+    h.frames(2);
+    let inbox = |h: &mut Harness| {
+        h.texts()
+            .iter()
+            .skip_while(|t| t.as_str() != "Inbox")
+            .nth(1)
+            .and_then(|n| n.parse::<u32>().ok())
+            .unwrap_or(0)
+    };
+    let before = inbox(&mut h);
+    h.click("row-3");
+    h.frames(1);
+    for _ in 0..6 {
+        h.key(Key::ArrowDown);
+        h.frames(1);
+    }
+    assert_eq!(h.error(), None);
+    let read = before - inbox(&mut h);
+    assert!(
+        (1..=7).contains(&read),
+        "{before} -> {} unread",
+        before - read
+    );
+}

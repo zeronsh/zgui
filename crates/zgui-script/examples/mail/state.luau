@@ -10,6 +10,23 @@ export type Layout = "wide" | "medium" | "narrow"
 
 local M = {}
 M.messages = ui.state("messages", sample.messages(4000))
+-- Read or unread, where it differs from how a message arrived (id -> true
+-- when read, false when marked unread): opening a message changes this,
+-- not the messages, so the list and its filter do not run again.
+M.read = ui.state("read", {} :: { [string]: boolean })
+-- Unread messages by mailbox: counted once, then kept by what changes them.
+local counts: { [string]: number } = {}
+for _, m in M.messages:peek() do
+	if m.unread then
+		counts[m.mailbox] = (counts[m.mailbox] or 0) + 1
+	end
+end
+M.unread_counts = ui.state("unread_counts", counts)
+-- Whether `m` is unread now (followed, in a computed).
+function M.is_unread(m: Message): boolean
+	local read = M.read:get()[tostring(m.id)]
+	return if read == nil then m.unread else not read
+end
 M.mailbox = ui.persist("mailbox", "Inbox")
 M.selected = ui.state("selected", nil :: number?)
 M.query = ui.state("query", "")

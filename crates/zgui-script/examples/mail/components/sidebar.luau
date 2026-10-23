@@ -4,17 +4,6 @@ local actions = require("../actions")
 
 local boxes = { "Inbox", "Starred", "Sent", "Drafts", "Archive", "Trash" }
 
--- Unread counts by mailbox, computed once per change of the messages.
-local unread = ui.computed(function()
-	local counts: { [string]: number } = {}
-	for _, m in state.messages:get() do
-		if m.unread then
-			counts[m.mailbox] = (counts[m.mailbox] or 0) + 1
-		end
-	end
-	return counts
-end)
-
 local function mailbox(name: string): Node
 	return ui.row {
 		-- A choice among the mailboxes, as assistive technology reads it.
@@ -51,7 +40,7 @@ local function mailbox(name: string): Node
 		ui.text { name, grow = 1 },
 		ui.text {
 			function()
-				local n = unread:get()[name] or 0
+				local n = (state.unread_counts:get() or {})[name] or 0
 				return if n > 0 then tostring(n) else ""
 			end,
 			color = "$text.secondary",

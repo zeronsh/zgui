@@ -94,7 +94,7 @@ local function row(i: number): Node
 		ui.text {
 			function()
 				local m = message()
-				return if m and m.unread then "●" else ""
+				return if m and state.is_unread(m) then "●" else ""
 			end,
 			color = "$accent",
 			text_size = 8,
