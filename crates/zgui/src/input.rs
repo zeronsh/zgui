@@ -9,11 +9,16 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// The modifier keys held during an event.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
+    /// Shift.
     pub shift: bool,
+    /// Control.
     pub control: bool,
+    /// Alt, or Option on macOS.
     pub alt: bool,
+    /// Command on macOS, the Windows or Super key elsewhere.
     pub meta: bool,
 }
 impl Modifiers {
@@ -34,98 +39,169 @@ impl Modifiers {
         }
     }
 }
+/// A key, by what it means rather than where it is (see
+/// `EventContext::key_code` for the physical key).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Key {
+    /// Tab.
     Tab,
+    /// Enter or Return.
     Enter,
+    /// The space bar.
     Space,
+    /// Escape.
     Escape,
+    /// Backspace: deletes before the caret.
     Backspace,
+    /// Delete: deletes after the caret.
     Delete,
+    /// Left arrow.
     ArrowLeft,
+    /// Right arrow.
     ArrowRight,
+    /// Up arrow.
     ArrowUp,
+    /// Down arrow.
     ArrowDown,
+    /// Home.
     Home,
+    /// End.
     End,
+    /// Page Up.
     PageUp,
+    /// Page Down.
     PageDown,
+    /// Insert.
     Insert,
     /// Function key number (native host supplies 1–35).
     Function(u8),
+    /// A key that types a character, as the layout makes it (`"a"`, `"A"`).
     Character(String),
 }
+/// A pointer button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerButton {
+    /// The main button: a mouse's left, a trackpad's click.
     Primary,
+    /// The context button: a mouse's right, a two-finger click.
     Secondary,
+    /// The middle button or wheel press.
     Middle,
+    /// Another button, by the platform's number.
     Other(u16),
 }
 /// Complete native file transfers are rejected instead of truncated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileDropError {
+    /// More files than one drop accepts.
     TooManyFiles,
+    /// The files' data is larger than one drop accepts.
     TooLarge,
+    /// The platform's data isn't a valid file list.
     InvalidData,
+    /// The transfer didn't finish in time.
     TimedOut,
 }
 /// A trackpad scroll gesture's phase (`InputEvent::ScrollGesture`): the
 /// fingers touching and lifting, then the momentum that may follow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollGesture {
+    /// The fingers touched the trackpad.
     Began,
+    /// The fingers lifted.
     Ended,
+    /// Momentum scrolling began after the fingers lifted.
     MomentumBegan,
+    /// Momentum scrolling ended.
     MomentumEnded,
 }
+/// An input event, routed to nodes by the [`InputDispatcher`]. Positions
+/// are in window points from the top left.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputEvent {
+    /// A typed action, from a key binding or a menu (see [`crate::actions`]).
     Action(crate::actions::Action),
+    /// A drag between nodes, at one of its phases.
     Drag(DragEvent),
+    /// A file dragged from outside the window is over `x`, `y`.
     FileHover {
+        /// Across the window.
         x: f32,
+        /// Down the window.
         y: f32,
+        /// The file.
         path: std::path::PathBuf,
     },
+    /// A file dragged from outside was dropped at `x`, `y`.
     FileDrop {
+        /// Across the window.
         x: f32,
+        /// Down the window.
         y: f32,
+        /// The file.
         path: std::path::PathBuf,
     },
+    /// A file drag from outside left the window or was cancelled.
     FileHoverCancelled,
+    /// Files dropped at `x`, `y` were rejected whole, for `reason`.
     FilesDropRejected {
+        /// Across the window.
         x: f32,
+        /// Down the window.
         y: f32,
+        /// Why they were rejected.
         reason: FileDropError,
     },
     /// Paths delivered together by one native event-loop dispatch batch.
     FilesDrop {
+        /// Across the window.
         x: f32,
+        /// Down the window.
         y: f32,
+        /// The files, in the order the platform gave them.
         paths: std::sync::Arc<[std::path::PathBuf]>,
     },
+    /// A pointer button went down at `x`, `y`.
     PointerDown {
+        /// Across the window.
         x: f32,
+        /// Down the window.
         y: f32,
+        /// Which button.
         button: PointerButton,
     },
+    /// A pointer button went up at `x`, `y`.
     PointerUp {
+        /// Across the window.
         x: f32,
+        /// Down the window.
         y: f32,
+        /// Which button.
         button: PointerButton,
     },
+    /// The pointer moved to `x`, `y`.
     PointerMove {
+        /// Across the window.
         x: f32,
+        /// Down the window.
         y: f32,
     },
+    /// The pointer left the node (or the window).
     PointerLeave,
+    /// The platform took the pointer away mid-gesture: a press ends without
+    /// activating.
     PointerCancel,
+    /// The pointer entered the node.
     PointerEnter,
+    /// A wheel or trackpad scroll at `x`, `y`.
     Scroll {
+        /// Across the window.
         x: f32,
+        /// Down the window.
         y: f32,
+        /// Points to scroll across; positive moves content left.
         delta_x: f32,
+        /// Points to scroll down; positive moves content up.
         delta_y: f32,
     },
     /// A trackpad scroll gesture's phase, which the host reports around its
@@ -133,47 +209,81 @@ pub enum InputEvent {
     /// (`Ui::set_elastic_scrolling`). A mouse wheel has none. The document
     /// takes it; it goes to no node.
     ScrollGesture(ScrollGesture),
+    /// A key went down.
     KeyDown {
+        /// The key.
         key: Key,
+        /// The modifiers held.
         modifiers: Modifiers,
+        /// Whether the key is held and repeating.
         repeat: bool,
     },
+    /// A key came up.
     KeyUp {
+        /// The key.
         key: Key,
+        /// The modifiers held.
         modifiers: Modifiers,
     },
+    /// Text typed, after the keyboard layout and dead keys.
     Text(String),
+    /// An input method's composition in progress, shown in the editor
+    /// until it commits.
     ImePreedit {
+        /// The composition so far.
         text: String,
+        /// The input method's caret or selection in `text`, as UTF-8 byte
+        /// offsets.
         cursor: Option<(usize, usize)>,
     },
+    /// An input method committed this text.
     ImeCommit(String),
+    /// The node took keyboard focus.
     Focus,
+    /// The modal scope rooted at the node closed.
     FocusScopeClosed,
+    /// The node lost keyboard focus.
     Blur,
+    /// The node was activated: clicked, or Enter or Space while focused.
     Activate,
+    /// Assistive technology asks to set an editor's text.
     SetValue(String),
     /// Set committed-text selection using UTF-8 byte offsets.
     SetTextSelection {
+        /// Where the selection starts.
         anchor: usize,
+        /// Where it ends, at the caret.
         focus: usize,
     },
+    /// Assistive technology asks to set a slider's value.
     SetNumericValue(f64),
+    /// Assistive technology asks a slider to step up.
     Increment,
+    /// Assistive technology asks a slider to step down.
     Decrement,
 }
+/// Which part of its route an event is in, as the DOM's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventPhase {
+    /// Going down from the root to the target.
     Capture,
+    /// At the target.
     Target,
+    /// Going back up from the target to the root.
     Bubble,
 }
 /// Source, payload and optional window press position of a requested drag.
 type DragRequest = (NodeId, crate::actions::Action, Option<(f32, f32)>);
+/// An event on its route, as a listener gets it: what it is, where it is
+/// going, and what listeners so far decided.
 pub struct EventContext {
+    /// The event.
     pub event: InputEvent,
+    /// The node it is routed to.
     pub target: NodeId,
+    /// The node whose listener is running.
     pub current_target: NodeId,
+    /// Which part of the route it is in.
     pub phase: EventPhase,
     stopped: bool,
     immediate: bool,
@@ -242,6 +352,8 @@ impl EventContext {
             self.drag_export = Some(items.into());
         }
     }
+    /// Accept the drag over this node, so dropping it here delivers the drop.
+    /// Only while the drag is over, and not in the capture phase.
     pub fn accept_drag(&mut self) {
         if matches!(&self.event,InputEvent::Drag(event) if event.phase==DragPhase::Over)
             && self.phase != EventPhase::Capture
@@ -265,6 +377,7 @@ impl EventContext {
     pub fn key_code(&self) -> Option<&str> {
         self.key_code.as_deref()
     }
+    /// Stop the event at this node: no ancestor's listener hears it.
     pub fn stop_propagation(&mut self) {
         self.stopped = true;
     }
@@ -273,6 +386,8 @@ impl EventContext {
         self.stopped = true;
         self.immediate = true;
     }
+    /// Prevent the built-in handling (a button's activation, an editor's
+    /// edit) and tell ancestors it was handled.
     pub fn prevent_default(&mut self) {
         self.prevented = true;
         self.prevented_by.get_or_insert(self.current_target);
@@ -299,12 +414,11 @@ impl EventContext {
         self.prevent_default();
         self.stop_propagation();
     }
+    /// Focus this node once the event is delivered.
     pub fn focus(&mut self) {
         self.focus = Some(self.current_target);
     }
-    /// Capture pointer routing until the initiating button is released or the
-    /// gesture is cancelled. Captures outside pointer-down retain the current
-    /// capture button, defaulting to the primary button when none exists.
+    /// Whether a listener so far asked to capture or release the pointer.
     pub(crate) fn capture_requested(&self) -> bool {
         self.capture.is_some()
     }
@@ -312,9 +426,14 @@ impl EventContext {
     pub(crate) fn capture_target(&self) -> Option<Option<NodeId>> {
         self.capture
     }
+    /// Capture pointer routing to this node until the initiating button is
+    /// released or the gesture is cancelled. Captures outside pointer-down
+    /// retain the current capture button, defaulting to the primary button
+    /// when none exists.
     pub fn capture_pointer(&mut self) {
         self.capture = Some(Some(self.current_target));
     }
+    /// Release a pointer capture.
     pub fn release_pointer(&mut self) {
         self.capture = Some(None);
     }
@@ -325,6 +444,7 @@ impl EventContext {
         self.capture = Some(Some(self.current_target));
         self.take_pointer = Some(self.current_target);
     }
+    /// Whether a listener so far has prevented the default.
     pub fn default_prevented(&self) -> bool {
         self.prevented
     }
@@ -333,14 +453,20 @@ impl EventContext {
 /// last event: longer than the gaps between a gesture's and its momentum's
 /// events, shorter than a person's pause between gestures.
 const SCROLL_LATCH: Duration = Duration::from_millis(300);
+/// How a node takes input.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NodeInput {
+    /// Whether it can take keyboard focus.
     pub focusable: bool,
     /// CSS `pointer-events: none`: the pointer passes through the node, and
     /// through descendants that have no listeners of their own, to what is
     /// under it.
     pub pass_through: bool,
+    /// Whether it is disabled: no input reaches it or its subtree, and it
+    /// can't take focus.
     pub disabled: bool,
+    /// Its place in Tab order, as HTML's `tabindex`: positive indices first,
+    /// in order, then 0s in document order; negative leaves Tab order.
     pub tab_index: i32,
 }
 type Callback = Rc<RefCell<dyn FnMut(&mut EventContext)>>;
@@ -480,11 +606,15 @@ struct State {
     /// what it focuses shows no focus ring (`focus_visible_now`).
     pointer_modality: bool,
 }
+/// Routes input events to the nodes listening for them, and holds focus,
+/// pointer capture, modal scopes and key bindings. Clones share one
+/// state.
 #[derive(Clone, Default)]
 pub struct InputDispatcher {
     state: Rc<RefCell<State>>,
     actions: Rc<RefCell<crate::actions::Registry>>,
 }
+/// A listener on a node; dropping it removes the listener.
 #[must_use = "Keep the binding alive while the node handles input"]
 pub struct InputBinding {
     state: Weak<RefCell<State>>,
@@ -538,10 +668,14 @@ impl Drop for InputBinding {
         }
     }
 }
+/// What dispatching an event did.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DispatchResult {
+    /// The node it was routed to, if any.
     pub target: Option<NodeId>,
+    /// Whether a listener prevented its default.
     pub default_prevented: bool,
+    /// Whether focus moved.
     pub focus_changed: bool,
 }
 impl InputDispatcher {
@@ -553,6 +687,7 @@ impl InputDispatcher {
         self.state.borrow_mut().clicks.1 =
             interval.clamp(Duration::from_millis(100), Duration::from_secs(5));
     }
+    /// A dispatcher with no listeners and nothing focused.
     pub fn new() -> Self {
         Self::default()
     }
@@ -591,9 +726,11 @@ impl InputDispatcher {
     pub fn set_key_code(&self, code: Option<Rc<str>>) {
         self.state.borrow_mut().key_code = code;
     }
+    /// Whether a multi-key sequence is waiting for its next key.
     pub fn has_pending_keys(&self) -> bool {
         self.next_key_deadline().is_some()
     }
+    /// Drop the keys of a sequence in progress.
     pub fn cancel_pending_keys(&self) {
         self.actions.borrow_mut().cancel();
     }
@@ -750,6 +887,7 @@ impl InputDispatcher {
             token,
         }
     }
+    /// Whether `node` has a listener.
     pub fn has_listeners(&self, node: NodeId) -> bool {
         self.state.borrow().entries.contains_key(&node)
     }
@@ -867,6 +1005,7 @@ impl InputDispatcher {
             .or_insert_with(|| runtime.signal(disabled))
             .clone()
     }
+    /// How `node` takes input, if it is registered.
     pub fn options(&self, node: NodeId) -> Option<NodeInput> {
         self.state.borrow().options.get(&node).copied()
     }
@@ -909,6 +1048,7 @@ impl InputDispatcher {
         drop(observer);
         drop(removed);
     }
+    /// The node with keyboard focus, if any.
     pub fn focused(&self) -> Option<NodeId> {
         self.state.borrow().focused
     }
@@ -1034,9 +1174,12 @@ impl InputDispatcher {
             }
         }
     }
+    /// Whether `node` can take input now: shown, not disabled itself or by
+    /// an ancestor, not transparent, and inside the active modal scope.
     pub fn is_enabled(&self, scene: &Scene, node: NodeId) -> bool {
         self.enabled(scene, node)
     }
+    /// The node capturing the pointer, if any.
     pub fn captured(&self) -> Option<NodeId> {
         self.state.borrow().captured
     }
@@ -1048,7 +1191,6 @@ impl InputDispatcher {
             _ => state.capture_button.unwrap_or(PointerButton::Primary),
         });
     }
-    /// The active modal root, if any. Focus and pointer routing stay inside it.
     /// Make `root` a non-modal layer (toasts): what it holds takes the
     /// pointer and keys even while a modal holds focus elsewhere.
     pub fn set_layer(&self, root: NodeId, layer: bool) {
@@ -1058,6 +1200,8 @@ impl InputDispatcher {
             s.layers.push(root);
         }
     }
+    /// The active modal root, if any. Focus and pointer routing stay inside
+    /// it.
     pub fn focus_scope(&self) -> Option<NodeId> {
         self.state.borrow().scopes.last().map(|s| s.root)
     }
@@ -1237,6 +1381,8 @@ impl InputDispatcher {
             }
         }
     }
+    /// Focus `target`, or clear focus with `None`. Returns false, changing
+    /// nothing, if `target` can't take focus.
     pub fn focus(&self, scene: &Rc<RefCell<Scene>>, target: Option<NodeId>) -> bool {
         if target.is_some_and(|id| {
             !self.enabled(&scene.borrow(), id) || !self.options(id).is_some_and(|o| o.focusable)
@@ -1614,6 +1760,8 @@ impl InputDispatcher {
         };
         Some(ordered[next].0)
     }
+    /// Route `event` to `target`: capture down from the root, the target,
+    /// then bubbling up.
     pub fn dispatch_to(
         &self,
         scene: &Rc<RefCell<Scene>>,
@@ -1664,6 +1812,8 @@ impl InputDispatcher {
         }
         fallback.filter(|id| self.enabled(scene, *id))
     }
+    /// Route `event` as the platform delivers it: pointer events to what is
+    /// under the pointer or captures it, keys to the focused node.
     pub fn dispatch(&self, scene: &Rc<RefCell<Scene>>, event: InputEvent) -> DispatchResult {
         self.dispatch_impl(scene, event, None, true)
     }
