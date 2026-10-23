@@ -162,3 +162,126 @@ fn how_long_opening_a_message_takes() {
     }
     eprintln!("search keystroke: {:?}", start.elapsed() / 10);
 }
+
+/// What has keyboard focus, as assistive technology names it.
+fn focus_name(h: &Harness) -> String {
+    let id = h.ui.input.focused().expect("something has focus");
+    let semantics = h.ui.semantics.borrow();
+    let node = semantics.get(id).expect("focus has semantics");
+    let label: String = node.label.chars().take(24).collect();
+    format!("{:?} {label}", node.role)
+}
+
+#[test]
+fn the_keyboard_alone_reaches_every_part_once() {
+    use zgui::input::Key;
+    let mut h = mail(1180.);
+    h.click("row-1");
+    h.frames(1);
+    h.ui.input.focus(&h.ui.scene, None);
+    let mut stops = Vec::new();
+    for _ in 0..5 {
+        h.key(Key::Tab);
+        h.frames(1);
+        stops.push(focus_name(&h));
+    }
+    // A list box, the message list and the toolbar are one stop each: the
+    // selected mailbox, the open message, the toolbar's first action.
+    let expected = [
+        "Button New Message",
+        "ListBoxOption Inbox 426",
+        "TextInput Search",
+        "ListBoxOption Donald Knuth Oct 28 Quar",
+    ];
+    assert_eq!(stops[..4], expected.map(str::to_owned), "{stops:#?}");
+    assert!(stops[4].starts_with("Button Reply"), "{stops:#?}");
+    // Right moves along the toolbar.
+    h.key(Key::ArrowRight);
+    h.frames(1);
+    assert!(
+        focus_name(&h).starts_with("Button Star"),
+        "{}",
+        focus_name(&h)
+    );
+    // Back in the list, Down opens the next message as it moves.
+    h.key_with(
+        Key::Tab,
+        zgui::input::Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    h.frames(1);
+    let subject = h.text("subject");
+    h.key(Key::ArrowDown);
+    h.frames(1);
+    assert!(
+        focus_name(&h).starts_with("ListBoxOption Margaret"),
+        "{}",
+        focus_name(&h)
+    );
+    assert_ne!(h.text("subject"), subject, "the focused message opens");
+    // In the mailboxes, Down shows the next mailbox.
+    for _ in 0..2 {
+        h.key_with(
+            Key::Tab,
+            zgui::input::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        );
+        h.frames(1);
+    }
+    assert!(
+        focus_name(&h).starts_with("ListBoxOption Inbox"),
+        "{}",
+        focus_name(&h)
+    );
+    h.key(Key::ArrowDown);
+    h.frames(1);
+    assert!(
+        focus_name(&h).starts_with("ListBoxOption Starred"),
+        "{}",
+        focus_name(&h)
+    );
+}
+
+#[test]
+fn the_compose_sheet_holds_focus_until_escape_returns_it() {
+    use zgui::input::Key;
+    let mut h = mail(1180.);
+    h.click("row-1");
+    h.frames(1);
+    let before = h.ui.input.focused();
+    assert!(h.host.run_command("new"));
+    h.frames(2);
+    // Tab goes round the sheet's fields and buttons, and nowhere else.
+    let body = h.find("body").unwrap();
+    let mut seen = Vec::new();
+    for _ in 0..8 {
+        h.key(Key::Tab);
+        h.frames(1);
+        let id = h.ui.input.focused().expect("focus stays in the sheet");
+        let scene = h.ui.scene.borrow();
+        let sheet = scene.ancestors(body).nth(1).unwrap();
+        assert!(scene.is_within(id, sheet), "{}", focus_name(&h));
+        drop(scene);
+        seen.push(focus_name(&h));
+    }
+    assert!(
+        seen.iter().any(|s| s.starts_with("TextInput To")),
+        "{seen:#?}"
+    );
+    assert!(
+        seen.iter().any(|s| s.starts_with("Button Send")),
+        "{seen:#?}"
+    );
+    assert!(h.ui.input.focus_scope().is_some());
+    h.key(Key::Escape);
+    h.frames(2);
+    assert!(
+        h.ui.input.focus_scope().is_none(),
+        "Escape closes it: {seen:#?}"
+    );
+    assert_eq!(h.ui.input.focused(), before, "and focus goes back");
+}

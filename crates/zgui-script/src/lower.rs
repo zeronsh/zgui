@@ -1773,6 +1773,9 @@ fn styled(
         if a11y.hidden {
             view = view.accessible_hidden();
         }
+        if let Some(axis) = a11y.focus_group {
+            view = view.focus_group(axis);
+        }
     }
     if let Some(layout) = node.layout.as_ref().filter(|_| node.sizes_layout()) {
         view = layout_box(view, layout, vm, low);
@@ -2797,11 +2800,13 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         overscan,
         build: builder,
         offset,
+        keyboard,
         ..
     } = kind
     else {
         unreachable!("lower_list takes lists")
     };
+    let keyboard = *keyboard;
     let mut cx = cx.as_deref_mut();
     let offset = match offset {
         Some(offset) => bridge(need(&mut cx), offset, number, |x| Value::Num(x as f64)),
@@ -2836,6 +2841,7 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
                 |index| index,
                 move |_, index, cx| build_scoped(&vm, cx, &low, &builder, index + 1),
             )
+            .keyboard_navigation(keyboard)
         };
         match sticky {
             None => list,
@@ -2866,6 +2872,7 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
             // Each row owns what it makes, as `each` rows do.
             move |_, index, cx| build_scoped(&vm, cx, &low, &builder, index + 1),
         )
+        .keyboard_navigation(keyboard)
     }
 }
 

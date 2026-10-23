@@ -166,6 +166,7 @@ What assistive technology (VoiceOver, Narrator, Orca) reads for a node beyond wh
 | `live` | `"polite" \| "assertive" \| "off"` | `"off"` (`role = "status"`: `"polite"`) | announce changes to the text in it (`aria-live`): a count, a "Sent" note, a message arriving; `"assertive"` interrupts |
 | `description` | `string` | | read after the name, as a hint (`aria-description`) |
 | `aria_hidden` | `boolean` | `false` | leaves it and what it holds out of the accessibility tree (`aria-hidden`): decoration such as an unread dot, or what is said elsewhere |
+| `focus_group` | `"vertical" \| "horizontal" \| "both"` | `role = "listbox"`: `"vertical"`; `"toolbar"`, `"tablist"`: `"horizontal"` | one Tab stop for the focusable things inside, as ARIA's composite widgets are: Tab lands on the one last focused there (else the `selected` one, else the first), and the arrows along the axis, Home and End move among them. A field inside keeps its own arrows |
 
 ```lua
 local mailbox = ui.state("mailbox", "Inbox")

@@ -10,7 +10,9 @@ use std::{cell::RefCell, rc::Rc};
 #[derive(Default)]
 struct Rows {
     length: usize,
-    visible: Vec<(usize, NodeId)>,
+    /// Each mounted row: its index, its slot, and the item focus goes to
+    /// (the slot, or the app's row when that takes focus itself).
+    visible: Vec<(usize, NodeId, NodeId)>,
 }
 pub(crate) struct Navigation {
     pub request: Signal<(u64, usize)>,
@@ -46,6 +48,8 @@ impl Navigation {
         size: Signal<(f32, f32)>,
         geometry: Geometry,
     ) -> Self {
+        // Its rows are one Tab stop: the row last focused, while mounted.
+        ui.input.set_tab_stop_group(root);
         let request = ui.signal((0_u64, 0_usize));
         let write = request.clone();
         let rows = Rc::new(RefCell::new(Rows::default()));
@@ -61,8 +65,8 @@ impl Navigation {
             let current = rows
                 .visible
                 .iter()
-                .find(|(_, node)| *node == cx.target)
-                .map(|(index, _)| *index);
+                .find(|(_, slot, item)| *slot == cx.target || *item == cx.target)
+                .map(|(index, _, _)| *index);
             // Interactive descendants keep their own editing/control key behavior.
             if cx.target != root && current.is_none() {
                 return;
@@ -175,12 +179,62 @@ impl Navigation {
     pub fn update(&self, ui: &Ui, root: NodeId, length: usize, visible: Vec<(usize, NodeId)>) {
         let mut semantics = ui.semantics.borrow_mut();
         semantics.update(root, |node| node.size_of_set = Some(length));
-        for (index, node) in &visible {
-            let mut semantic = SemanticNode::new(Role::ListItem, "");
-            semantic.position_in_set = Some(index.saturating_add(1));
-            semantic.size_of_set = Some(length);
-            semantics.set(*node, semantic);
+        let mut rows = Vec::with_capacity(visible.len());
+        for (index, slot) in visible {
+            // An app's row that says it is the item (`role` option or list
+            // item) and takes focus is the item: focus goes to it, and it
+            // says where it is. Other controls keep their own keys.
+            let own = ui
+                .scene
+                .borrow()
+                .children(slot)
+                .first()
+                .copied()
+                .filter(|row| {
+                    ui.input.options(*row).is_some_and(|o| o.focusable)
+                        && semantics
+                            .get(*row)
+                            .is_some_and(|n| matches!(n.role, Role::ListBoxOption | Role::ListItem))
+                });
+            let (position, size) = (Some(index.saturating_add(1)), Some(length));
+            match own {
+                Some(row) => {
+                    if let Some(options) = ui.input.options(slot).filter(|o| o.focusable) {
+                        ui.input.set_options(
+                            slot,
+                            crate::input::NodeInput {
+                                focusable: false,
+                                ..options
+                            },
+                        );
+                    }
+                    semantics.remove(slot);
+                    semantics.update(row, |node| {
+                        node.position_in_set = position;
+                        node.size_of_set = size;
+                    });
+                }
+                None => {
+                    let mut semantic = SemanticNode::new(Role::ListItem, "");
+                    semantic.position_in_set = position;
+                    semantic.size_of_set = size;
+                    semantics.set(slot, semantic);
+                }
+            }
+            rows.push((index, slot, own.unwrap_or(slot)));
         }
-        *self.rows.borrow_mut() = Rows { length, visible };
+        *self.rows.borrow_mut() = Rows {
+            length,
+            visible: rows,
+        };
+    }
+    /// Where focus goes for the row in `slot`.
+    pub fn item(&self, slot: NodeId) -> NodeId {
+        self.rows
+            .borrow()
+            .visible
+            .iter()
+            .find(|(_, s, _)| *s == slot)
+            .map_or(slot, |(_, _, item)| *item)
     }
 }

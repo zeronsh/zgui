@@ -1122,6 +1122,11 @@ export type NodeProps = {
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -1355,6 +1360,9 @@ export type ListProps = Merge<Props, {
 	count: Reactive<number>?,
 	-- An interactive scrollbar over the trailing edge (none by default).
 	scrollbar: boolean?,
+	-- Its rows are one Tab stop, and the arrows, Page Up and Down, Home and
+	-- End move focus through every row (mounting it), as a list box's do.
+	keyboard: boolean?,
 	-- Builds row `index` (from 1).
 	row: (index: number) -> Node,
 	-- Every row's height in points (28 by default).

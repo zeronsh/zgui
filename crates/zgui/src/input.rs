@@ -338,6 +338,24 @@ struct Entry {
     token: u64,
     callback: Callback,
 }
+/// The arrow keys that move focus within a focus group
+/// (`InputDispatcher::set_focus_group`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusGroup {
+    /// Up and Down: a list box, a menu.
+    Vertical,
+    /// Left and Right: a toolbar, tabs.
+    Horizontal,
+    /// All four: a grid of choices.
+    Both,
+}
+/// A focus group: its arrows, and the member Tab lands on.
+#[derive(Clone, Copy)]
+struct Group {
+    /// None: one Tab stop whose arrows its owner handles (a virtual list).
+    axis: Option<FocusGroup>,
+    current: Option<NodeId>,
+}
 struct FocusScope {
     root: NodeId,
     previous: Option<NodeId>,
@@ -423,6 +441,8 @@ struct State {
     pressed: Option<NodeId>,
     key_pressed: Option<(NodeId, Key)>,
     scopes: Vec<FocusScope>,
+    /// Focus groups (`set_focus_group`): one Tab stop each.
+    groups: crate::scene::NodeMap<Group>,
     /// Non-modal layers (toasts): what they hold stays live under any modal
     /// scope (`set_layer`).
     layers: Vec<NodeId>,
@@ -849,6 +869,7 @@ impl InputDispatcher {
         }
         let observer = s.disabled_observers.remove(&node);
         s.options.remove(&node);
+        s.groups.remove(&node);
         if removed.is_some() {
             crate::shrink_sparse(&mut s.entries);
             crate::shrink_sparse(&mut s.options);
@@ -1213,6 +1234,10 @@ impl InputDispatcher {
             state.focused = target;
             state.key_pressed = None;
         }
+        // Its group's Tab stop is where focus last was in it.
+        if let Some(id) = target {
+            self.set_group_current(&scene.borrow(), id);
+        }
         if let Some(id) = old.filter(|id| scene.borrow().contains(*id)) {
             self.route(scene, id, InputEvent::Blur);
         }
@@ -1357,8 +1382,65 @@ impl InputDispatcher {
         }
         ctx
     }
-    fn next_focus(&self, scene: &Scene, reverse: bool) -> Option<NodeId> {
-        let mut stack = vec![scene.root()];
+    /// Make `root` a focus group (ARIA's composite widgets: a list box, a
+    /// toolbar, tabs), or with `None` stop: it is one Tab stop, the member
+    /// last focused in it (else the one `set_group_current` named, else
+    /// its first), and `axis`'s arrow keys, Home and End move focus among
+    /// its members, when what has focus does not use them itself.
+    pub fn set_focus_group(&self, root: NodeId, axis: Option<FocusGroup>) {
+        let mut s = self.state.borrow_mut();
+        match axis {
+            Some(axis) => {
+                let current = s.groups.get(&root).and_then(|g| g.current);
+                s.groups.insert(
+                    root,
+                    Group {
+                        axis: Some(axis),
+                        current,
+                    },
+                );
+            }
+            None => {
+                s.groups.remove(&root);
+            }
+        }
+    }
+    /// Make `root` one Tab stop, as `set_focus_group` does, leaving its
+    /// arrow keys to what owns it (a virtual list moving through rows it
+    /// mounts as it goes).
+    pub fn set_tab_stop_group(&self, root: NodeId) {
+        let mut s = self.state.borrow_mut();
+        let current = s.groups.get(&root).and_then(|g| g.current);
+        s.groups.insert(
+            root,
+            Group {
+                axis: None,
+                current,
+            },
+        );
+    }
+    /// Make `member` the one its focus group's Tab stop lands on: the
+    /// selected option, the active tab.
+    pub fn set_group_current(&self, scene: &Scene, member: NodeId) {
+        if let Some(group) = self.group_of(scene, member) {
+            let mut s = self.state.borrow_mut();
+            if let Some(g) = s.groups.get_mut(&group) {
+                g.current = Some(member);
+            }
+        }
+    }
+    /// The innermost focus group holding `id` (not `id` itself).
+    fn group_of(&self, scene: &Scene, id: NodeId) -> Option<NodeId> {
+        let s = self.state.borrow();
+        if s.groups.is_empty() || !scene.contains(id) {
+            return None;
+        }
+        scene.ancestors(id).find(|a| s.groups.contains_key(a))
+    }
+    /// The focusable, enabled nodes under `root` in document order, with
+    /// their tab index.
+    fn focusables(&self, scene: &Scene, root: NodeId) -> Vec<(NodeId, i32)> {
+        let mut stack = vec![root];
         let mut ordered = Vec::new();
         while let Some(id) = stack.pop() {
             let options = self.options(id);
@@ -1368,6 +1450,89 @@ impl InputDispatcher {
                 ordered.push((id, o.tab_index));
             }
             stack.extend(scene.children(id).iter().rev().copied());
+        }
+        ordered
+    }
+    /// The arrow, Home or End `key` moving focus within the focused node's
+    /// group: the member to focus, if the key is the group's.
+    fn group_step(&self, scene: &Scene, key: &Key) -> Option<NodeId> {
+        let focused = self.focused()?;
+        let group = self.group_of(scene, focused)?;
+        let axis = self.state.borrow().groups.get(&group)?.axis?;
+        enum Step {
+            Back,
+            On,
+            First,
+            Last,
+        }
+        let vertical = matches!(axis, FocusGroup::Vertical | FocusGroup::Both);
+        let horizontal = matches!(axis, FocusGroup::Horizontal | FocusGroup::Both);
+        let step = match key {
+            Key::ArrowUp if vertical => Step::Back,
+            Key::ArrowDown if vertical => Step::On,
+            Key::ArrowLeft if horizontal => Step::Back,
+            Key::ArrowRight if horizontal => Step::On,
+            Key::Home => Step::First,
+            Key::End => Step::Last,
+            _ => return None,
+        };
+        // Its own members: not those of a group inside it.
+        let members: Vec<_> = self
+            .focusables(scene, group)
+            .into_iter()
+            .map(|(id, _)| id)
+            .filter(|id| *id != group && self.group_of(scene, *id) == Some(group))
+            .collect();
+        let at = members.iter().position(|id| *id == focused)?;
+        match step {
+            Step::Back => at.checked_sub(1).map(|i| members[i]),
+            Step::On => members.get(at + 1).copied(),
+            Step::First => members.first().copied(),
+            Step::Last => members.last().copied(),
+        }
+        .filter(|id| *id != focused)
+    }
+    fn next_focus(&self, scene: &Scene, reverse: bool) -> Option<NodeId> {
+        let mut ordered = self.focusables(scene, scene.root());
+        // A focus group is one stop: the member that has focus, else its
+        // current, else its first.
+        if !self.state.borrow().groups.is_empty() {
+            let focused = self.focused();
+            let mut seen: Vec<NodeId> = Vec::new();
+            let mut stops = Vec::with_capacity(ordered.len());
+            for (id, index) in ordered {
+                // A focusable group root (a list taking keys before any row
+                // has focus) is its group's too: the stop only when no member
+                // can take it.
+                let own = self.state.borrow().groups.contains_key(&id);
+                let Some(group) = own.then_some(id).or_else(|| self.group_of(scene, id)) else {
+                    stops.push((id, index));
+                    continue;
+                };
+                if seen.contains(&group) {
+                    continue;
+                }
+                seen.push(group);
+                let members: Vec<_> = self
+                    .focusables(scene, group)
+                    .into_iter()
+                    .filter(|(m, _)| self.group_of(scene, *m) == Some(group))
+                    .collect();
+                let current = self
+                    .state
+                    .borrow()
+                    .groups
+                    .get(&group)
+                    .and_then(|g| g.current);
+                let stop = members
+                    .iter()
+                    .find(|(m, _)| Some(*m) == focused)
+                    .or_else(|| members.iter().find(|(m, _)| Some(*m) == current))
+                    .copied()
+                    .unwrap_or((id, index));
+                stops.push(stop);
+            }
+            ordered = stops;
         }
         ordered.sort_by_key(|(_, i)| if *i == 0 { i32::MAX } else { *i });
         if ordered.is_empty() {
@@ -1758,6 +1923,23 @@ impl InputDispatcher {
                     let next = self.next_focus(&scene.borrow(), modifiers.shift);
                     self.focus(scene, next);
                     prevented = true;
+                }
+                InputEvent::KeyDown {
+                    key:
+                        key @ (Key::ArrowUp
+                        | Key::ArrowDown
+                        | Key::ArrowLeft
+                        | Key::ArrowRight
+                        | Key::Home
+                        | Key::End),
+                    modifiers,
+                    ..
+                } if *modifiers == Modifiers::default() => {
+                    let next = self.group_step(&scene.borrow(), key);
+                    if next.is_some() {
+                        self.focus(scene, next);
+                        prevented = true;
+                    }
                 }
                 InputEvent::PointerUp {
                     button: PointerButton::Primary,

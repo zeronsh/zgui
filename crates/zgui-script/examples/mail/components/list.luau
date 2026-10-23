@@ -8,17 +8,6 @@ local shown = ui.computed(function()
 end)
 
 local offset = ui.state("offset", 0)
-local list_ref = ui.ref()
-
--- Where message `id` is in the list shown, from 1.
-local function position(id: number?): number?
-	for i, m in shown:peek() do
-		if m.id == id then
-			return i
-		end
-	end
-	return nil
-end
 
 local function row_height(): number
 	return if state.density:peek() == "compact" then 52 else 72
@@ -47,6 +36,14 @@ local function row(i: number): Node
 		end,
 		hover = { bg = "$hover" },
 		on_click = function()
+			local m = message()
+			if m then
+				actions.open(m.id)
+			end
+		end,
+		-- The arrows move focus through the rows; the one focused opens, as
+		-- a mail app's selection follows it.
+		on_focus = function()
 			local m = message()
 			if m then
 				actions.open(m.id)
@@ -204,34 +201,12 @@ return function(): Node
 			height = row_height(),
 			row = row,
 			offset = offset,
-			ref = list_ref,
 			scrollbar = true,
 			w_full = true,
 			grow = 1,
-			-- Up and Down move through the messages, as a mail app's do,
-			-- keeping the open one in view.
-			focusable = true,
-			on_key = function(e)
-				if e.key ~= "ArrowDown" and e.key ~= "ArrowUp" then
-					return false
-				end
-				local list = shown:peek()
-				local at = position(state.selected:peek()) or 0
-				local next = math.clamp(at + (if e.key == "ArrowDown" then 1 else -1), 1, #list)
-				if list[next] then
-					actions.open(list[next].id)
-					local h = row_height()
-					local top = (next - 1) * h
-					local element = list_ref:peek()
-					local view = if element then element.height or 0 else 0
-					if top < offset:peek() then
-						offset:set(top)
-					elseif top + h > offset:peek() + view then
-						offset:set(top + h - view)
-					end
-				end
-				return true
-			end,
+			-- One Tab stop; the arrows, Page Up and Down, Home and End move
+			-- through the messages, as a mail app's list does.
+			keyboard = true,
 		},
 	}
 end

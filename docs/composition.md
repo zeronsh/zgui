@@ -867,6 +867,14 @@ means, as ARIA's attributes do in HTML; a view that sets none pays nothing:
 - `.accessible_description(text)`: read after the name (`aria-description`).
 - `.accessible_hidden()`: left out with its subtree (`aria-hidden`), for
   decoration.
+- `.focus_group(FocusGroup::Vertical)` (or `Horizontal`, `Both`): one Tab stop
+  for the focusable views inside, as ARIA's composite widgets are. Tab lands on
+  the one last focused there (else the selected one, else the first), and the
+  arrows along the axis, Home and End move among them. A field inside keeps its
+  arrows. `ListBox` is vertical and `Toolbar` and `TabList` horizontal without
+  asking, and a virtual list with `keyboard_navigation(true)` is one stop too.
+- Escape in a text field (with no composition to cancel) goes on to the dialog
+  or menu around it, which closes and gives focus back.
 
 ```rust
 use zgui::{compose::prelude::*, semantics::Role};

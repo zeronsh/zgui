@@ -38,6 +38,16 @@ local function mailbox(name: string): Node
 				state.drawer:set(false)
 			end)
 		end,
+		-- The arrows move through the mailboxes (a list box is one Tab
+		-- stop); the one focused shows, as the click would.
+		on_focus = function()
+			if state.mailbox:peek() ~= name then
+				ui.batch(function()
+					state.mailbox:set(name)
+					state.selected:set(nil)
+				end)
+			end
+		end,
 		ui.text { name, grow = 1 },
 		ui.text {
 			function()

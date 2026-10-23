@@ -766,6 +766,15 @@ impl View {
         self.accessibility_mut().hidden = true;
         self
     }
+    /// One Tab stop for the focusable views inside, the arrows along
+    /// `axis` (and Home, End) moving among them, as ARIA's composite
+    /// widgets behave: Tab lands on the one last focused, or the selected
+    /// one (`selected_when`). A `ListBox` is vertical, a `Toolbar` or
+    /// `TabList` horizontal, without asking.
+    pub fn focus_group(mut self, axis: crate::input::FocusGroup) -> Self {
+        self.accessibility_mut().focus_group = Some(axis);
+        self
+    }
     /// Run `f` once this view's node and children are mounted, with a handle
     /// to that node: for code that drives the scene directly, such as an
     /// animation engine writing transforms each frame.
@@ -1739,7 +1748,8 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             if let Some((key, _)) =
                                 keys.iter().find(|(_, candidate)| *candidate == index)
                             {
-                                ui.input.focus(&ui.scene, Some(entries[key].0));
+                                let item = navigation.item(entries[key].0);
+                                ui.input.focus(&ui.scene, Some(item));
                             }
                         } else if removed_focus && ui.input.focused().is_none() {
                             ui.input.focus(&ui.scene, Some(root));
@@ -4091,6 +4101,7 @@ pub(crate) struct Accessibility {
     live: Option<Live>,
     description: Option<String>,
     hidden: bool,
+    focus_group: Option<crate::input::FocusGroup>,
 }
 fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) {
     let Accessibility {
@@ -4100,7 +4111,35 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
         live,
         description,
         hidden,
+        focus_group,
     } = accessibility;
+    // Composite widgets keep one Tab stop, as a browser's do.
+    let focus_group = focus_group.or(match role {
+        Some(Role::ListBox) => Some(crate::input::FocusGroup::Vertical),
+        Some(Role::TabList | Role::Toolbar) => Some(crate::input::FocusGroup::Horizontal),
+        _ => None,
+    });
+    if let Some(axis) = focus_group {
+        ui.input.set_focus_group(root, Some(axis));
+        // Its children mounted first: one already selected is its stop.
+        let selected = {
+            let scene = ui.scene.borrow();
+            let semantics = ui.semantics.borrow();
+            let mut pending = scene.children(root).to_vec();
+            let mut found = None;
+            while let Some(id) = pending.pop() {
+                if semantics.get(id).is_some_and(|n| n.selected == Some(true)) {
+                    found = Some(id);
+                    break;
+                }
+                pending.extend(scene.children(id).iter().copied());
+            }
+            found
+        };
+        if let Some(member) = selected {
+            ui.input.set_group_current(&ui.scene.borrow(), member);
+        }
+    }
     {
         let mut semantics = ui.semantics.borrow_mut();
         if semantics.get(root).is_none() {
@@ -4118,10 +4157,15 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
     }
     if let Some(mut selected) = selected {
         let tree = ui.semantics.clone();
+        let weak = ui.downgrade();
         ui.bind(root, move || {
             let selected = selected();
             tree.borrow_mut()
                 .update(root, |node| node.selected = Some(selected));
+            // The selected one is where Tab lands in its group.
+            if selected && let Some(ui) = weak.upgrade() {
+                ui.input.set_group_current(&ui.scene.borrow(), root);
+            }
         });
     }
 }

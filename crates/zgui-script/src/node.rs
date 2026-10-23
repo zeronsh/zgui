@@ -729,6 +729,9 @@ pub(crate) enum Kind {
         offset: Option<Signal<Value>>,
         /// `scrollbar = true`: an interactive scrollbar over its edge.
         scrollbar: bool,
+        /// `keyboard = true`: its rows are one Tab stop, and the arrows,
+        /// Page Up and Down, Home and End move focus through all of them.
+        keyboard: bool,
     },
     Switch {
         value: Source,
@@ -1554,6 +1557,19 @@ pub(crate) struct A11y {
     pub live: Option<zgui::semantics::Live>,
     pub description: Option<Rc<str>>,
     pub hidden: bool,
+    pub focus_group: Option<zgui::input::FocusGroup>,
+}
+/// `focus_group`'s axes.
+fn focus_group(axis: &str) -> mlua::Result<zgui::input::FocusGroup> {
+    use zgui::input::FocusGroup;
+    match axis {
+        "vertical" => Ok(FocusGroup::Vertical),
+        "horizontal" => Ok(FocusGroup::Horizontal),
+        "both" => Ok(FocusGroup::Both),
+        other => Err(mlua::Error::runtime(format!(
+            "`focus_group` is \"vertical\", \"horizontal\" or \"both\", not `{other}`"
+        ))),
+    }
 }
 /// `live`'s modes, as `aria-live` names them.
 fn live_mode(mode: &str) -> mlua::Result<Option<zgui::semantics::Live>> {
@@ -1601,6 +1617,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "offset",
     "follow",
     "scrollbar",
+    "keyboard",
     "src",
     "code",
     "draw",
@@ -2171,6 +2188,10 @@ fn fill_from(
             }
             "aria_hidden" => {
                 node.a11y.get_or_insert_default().hidden = lua.unpack(value)?;
+            }
+            "focus_group" => {
+                let axis: String = lua.unpack(value)?;
+                node.a11y.get_or_insert_default().focus_group = Some(focus_group(&axis)?);
             }
             name if WIDGET_FIELDS.contains(&name) => {}
             name => {
@@ -2789,6 +2810,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             build,
                             offset,
                             scrollbar: table.get::<Option<bool>>("scrollbar")?.unwrap_or(false),
+                            keyboard: table.get::<Option<bool>>("keyboard")?.unwrap_or(false),
                         },
                     ),
                     Some(&table),
