@@ -472,6 +472,12 @@ Keyed reconciliation stages new children before removing previously mounted ones
 A checkbox binds a `Signal<bool>` in both directions. Pointer activation on either
 its indicator or label, Space, Enter, and accessibility activation toggle the
 same value. External writes update its indicator and accessible checked state.
+The indicator is drawn as the platform draws one: a rounded 16-point box,
+outlined while off and filled with the theme's accent while on, its checkmark
+drawing on over 150 ms when a `TaskRunner` is present (at once without one).
+`.mixed(signal)` shows a dash and tells assistive technology "mixed" while the
+signal is true. A disabled checkbox dims to 45% unless it has a disabled style of
+its own. The box keeps its size whatever the label's typography.
 
 ```rust
 use zgui::{compose::prelude::*, widgets::Ui};

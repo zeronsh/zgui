@@ -252,6 +252,8 @@ enum Kind {
     Checkbox {
         label: String,
         value: Signal<bool>,
+        /// `View::mixed`: neither on nor off (some of a group are).
+        mixed: Option<Signal<bool>>,
     },
     Slider {
         label: String,
@@ -464,6 +466,16 @@ impl View {
     /// should not be a layout box of its own; see `Scene::set_contents`.
     pub fn contents(mut self) -> Self {
         self.contents = true;
+        self
+    }
+    /// A checkbox's mixed state, while `mixed` is true: a dash in place of
+    /// the checkmark, and "mixed" to assistive technology, as a "select
+    /// all" box shows some of its group on. Only checkboxes take it.
+    pub fn mixed(mut self, mixed: Signal<bool>) -> Self {
+        match &mut self.kind {
+            Kind::Checkbox { mixed: slot, .. } => *slot = Some(mixed),
+            _ => panic!("mixed is only supported on checkboxes"),
+        }
         self
     }
     /// Show an interactive overlay scrollbar on a scroll viewport or virtual list.
@@ -1266,6 +1278,7 @@ pub fn checkbox(label: impl Into<String>, value: Signal<bool>) -> View {
     View::new(Kind::Checkbox {
         label: label.into(),
         value,
+        mixed: None,
     })
 }
 /// A determinate progress indicator. Values normalize to 0..=1 (NaN becomes 0).
@@ -2433,7 +2446,11 @@ fn mount_element(
             }
             ui.container(parent, Layout::Row, Default::default())
         }
-        Kind::Checkbox { label, value } => {
+        Kind::Checkbox {
+            label,
+            value,
+            mixed,
+        } => {
             assert!(
                 view.children.is_empty(),
                 "checkbox views own their indicator and label"
@@ -2447,21 +2464,31 @@ fn mount_element(
             if view.variants.focus.is_none() {
                 view.variants.defaults[2] = Some(focus_ring(&view.styles));
             }
+            // Dimmed while disabled, as a native checkbox is.
+            if view.variants.disabled.is_none() {
+                view.variants.disabled = Some(Box::new(Styles::new().opacity(0.45)));
+            }
             let root = ui.container(parent, Layout::Row, Default::default());
             let mut semantics = SemanticNode::new(Role::CheckBox, label.clone());
             semantics.checked = Some(value.get());
             ui.semantics.borrow_mut().set(root, semantics);
-            let checked = value.clone();
+            let (checked, is_mixed) = (value.clone(), mixed.clone());
             let semantic_tree = ui.semantics.clone();
             ui.bind(root, move || {
                 let checked = checked.get();
-                semantic_tree
-                    .borrow_mut()
-                    .update(root, |node| node.checked = Some(checked));
+                let mixed = is_mixed.as_ref().is_some_and(|m| m.get());
+                semantic_tree.borrow_mut().update(root, |node| {
+                    node.checked = Some(checked);
+                    node.mixed = mixed;
+                });
             });
-            let checked = value.clone();
-            view.children
-                .push(text_signal(move || if checked.get() { "☑" } else { "☐" }.into()).min_w(24.));
+            // The box, drawn as the platform draws one.
+            view.children.push(crate::compose_checkbox::indicator(
+                value.clone(),
+                mixed,
+                ui.theme_scope(),
+                environment.services.get::<TaskRunner>(),
+            ));
             view.children.push(text(label));
             checkbox_value = Some(value);
             root

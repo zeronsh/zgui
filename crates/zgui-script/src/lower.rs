@@ -757,10 +757,20 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
                 }
             })
         }
-        Kind::Checkbox { label, value } => checkbox(
-            label.clone(),
-            bridge(need(&mut cx), value, Value::truthy, Value::Bool),
-        ),
+        Kind::Checkbox {
+            label,
+            value,
+            mixed,
+        } => {
+            let view = checkbox(
+                label.clone(),
+                bridge(need(&mut cx), value, Value::truthy, Value::Bool),
+            );
+            match mixed {
+                Some(mixed) => view.mixed(bridge(need(&mut cx), mixed, Value::truthy, Value::Bool)),
+                None => view,
+            }
+        }
         Kind::Input {
             label,
             value,

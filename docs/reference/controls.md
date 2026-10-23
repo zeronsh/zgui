@@ -51,12 +51,13 @@ Its element (`on_mount`, a [ref](state.md#refs)) selects text: `el:select_all()`
 
 ## checkbox
 
-A toggle showing ☑ or ☐ and its label, bound to a boolean state; a click on either, Space or Enter toggles it.
+A toggle drawn as the platform draws one, a rounded 16-point box beside its label, bound to a boolean state: outlined while off; filled with the accent while on, its checkmark drawing on; a dash while `mixed`. A click on either, Space or Enter toggles it. Its colours are the theme's `$accent`, `$accent.text`, `$input.bg` and `$border.strong`, so the system's accent shows where the host gives it. Disabled, it dims.
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
 | `value` | `State<boolean>` | required | |
 | `label` | `string` | `""` | shown beside the box, and its accessible name |
+| `mixed` | `State<boolean>` | none | neither on nor off while true: a dash, and "mixed" to assistive technology (a "select all" box with some of its group on) |
 | `on_click` | `Handler \| Action` | none | runs after the value toggled |
 | `gap`, `px`, `py` | | `6`, `4`, `4` | |
 

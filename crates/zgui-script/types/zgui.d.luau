@@ -3345,6 +3345,9 @@ export type CheckboxProps = {
 	[number]: never,
 	value: State<boolean>,
 	label: string?,
+	-- Neither on nor off while true: a dash, and "mixed" to assistive
+	-- technology (a "select all" box with some of its group on).
+	mixed: State<boolean>?,
 }
 export type InputProps = {
 	-- Size and position.

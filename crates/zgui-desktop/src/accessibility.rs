@@ -237,7 +237,9 @@ impl AccessibilityTree {
                 n.set_placeholder(placeholder.clone());
             }
             if let Some(v) = semantic.checked {
-                n.set_toggled(if v {
+                n.set_toggled(if semantic.mixed {
+                    accesskit::Toggled::Mixed
+                } else if v {
                     accesskit::Toggled::True
                 } else {
                     accesskit::Toggled::False

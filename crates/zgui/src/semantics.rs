@@ -46,6 +46,9 @@ pub struct SemanticNode {
     /// Committed-text UTF-8 byte offsets, preserving anchor/focus direction.
     pub text_selection: Option<(usize, usize)>,
     pub checked: Option<bool>,
+    /// A checkbox neither on nor off (`View::mixed`): what `checked` says
+    /// is set aside.
+    pub mixed: bool,
     pub disabled: bool,
     /// Readable and selectable, but not editable through user input.
     pub read_only: bool,
@@ -84,6 +87,7 @@ impl SemanticNode {
             value: None,
             text_selection: None,
             checked: None,
+            mixed: false,
             disabled: false,
             read_only: false,
             modal: false,

@@ -63,10 +63,19 @@ fn checkbox_input_model_semantics_and_owned_cleanup() {
         ui.semantics.borrow().get(root).unwrap().checked,
         Some(false)
     );
+    // The indicator is a drawn box, not a glyph, with no mark while off.
     let indicator = ui.scene.borrow().children(root)[0];
     assert!(
-        matches!(ui.scene.borrow().kind(indicator), NodeKind::Text { text, .. } if text.as_ref() == "☐")
+        matches!(ui.scene.borrow().kind(indicator), NodeKind::Panel { .. }),
+        "{:?}",
+        ui.scene.borrow().kind(indicator)
     );
+    assert!(drawn_mark(&ui, indicator).is_none());
+    checked.set(true);
+    ui.prepare_frame();
+    assert!(drawn_mark(&ui, indicator).is_some(), "on: a checkmark");
+    checked.set(false);
+    ui.prepare_frame();
     mounted.unmount();
     assert!(!ui.input.has_listeners(root));
     assert!(ui.semantics.borrow().get(root).is_none());
@@ -93,12 +102,12 @@ fn checkbox_inherits_typography_and_disabled_state_styles() {
             ),
     );
     let root = mounted.find("settings").unwrap();
-    for child in ui.scene.borrow().children(root) {
-        assert_eq!(ui.scene.borrow().font(*child).family, FontFamily::Monospace);
-        assert!(
-            matches!(ui.scene.borrow().kind(*child), NodeKind::Text { font_size, .. } if *font_size == 22.)
-        );
-    }
+    // Its label takes the inherited typography.
+    let label = ui.scene.borrow().children(root)[1];
+    assert_eq!(ui.scene.borrow().font(label).family, FontFamily::Monospace);
+    assert!(
+        matches!(ui.scene.borrow().kind(label), NodeKind::Text { font_size, .. } if *font_size == 22.)
+    );
     assert!(ui.input.focus(&ui.scene, Some(root)));
     assert!(
         matches!(ui.scene.borrow().kind(root), NodeKind::Panel { quad, .. } if quad.fill == rgb(0x123456))
@@ -129,7 +138,7 @@ fn checkbox_rejects_extra_children_without_leaking_partial_mounts() {
 }
 
 #[test]
-fn checkbox_indicator_expands_for_large_inherited_typography() {
+fn checkbox_indicator_keeps_its_size_beside_large_typography() {
     let mut ui = Ui::new(900., 300.);
     let checked = ui.signal(true);
     let mounted = ui.mount(column().text_size(64.).child(checkbox("Large", checked)));
@@ -138,6 +147,48 @@ fn checkbox_indicator_expands_for_large_inherited_typography() {
     let control = scene.children(mounted.node())[0];
     let indicator = scene.children(control)[0];
     let label = scene.children(control)[1];
-    assert!(scene.bounds(indicator).width > 24.);
+    // The box keeps the platform's size, as a browser's does, centred on
+    // the label's line.
+    assert_eq!(scene.bounds(indicator).width, 16.);
     assert!(scene.bounds(label).x >= scene.bounds(indicator).x + scene.bounds(indicator).width);
+}
+
+/// The checkmark (or dash) drawn in checkbox `indicator`, if any.
+fn drawn_mark(ui: &Ui, indicator: zgui::scene::NodeId) -> Option<usize> {
+    let scene = ui.scene.borrow();
+    let mut stack = vec![indicator];
+    while let Some(n) = stack.pop() {
+        if let NodeKind::Canvas(canvas) = scene.kind(n)
+            && !canvas.commands().is_empty()
+        {
+            return Some(canvas.commands().len());
+        }
+        stack.extend(scene.children(n).iter().copied());
+    }
+    None
+}
+
+#[test]
+fn a_mixed_checkbox_shows_a_dash_and_tells_assistive_technology() {
+    let mut ui = Ui::new(300., 100.);
+    let (checked, mixed) = (ui.signal(false), ui.signal(true));
+    let mounted = ui.mount(checkbox("Select all", checked.clone()).mixed(mixed.clone()));
+    ui.prepare_frame();
+    let root = mounted.node();
+    let indicator = ui.scene.borrow().children(root)[0];
+    assert!(drawn_mark(&ui, indicator).is_some(), "the dash");
+    assert!(ui.semantics.borrow().get(root).unwrap().mixed);
+    mixed.set(false);
+    ui.prepare_frame();
+    assert!(drawn_mark(&ui, indicator).is_none(), "off again");
+    assert!(!ui.semantics.borrow().get(root).unwrap().mixed);
+}
+
+#[test]
+fn a_disabled_checkbox_dims_unless_styled_otherwise() {
+    let mut ui = Ui::new(300., 100.);
+    let checked = ui.signal(true);
+    let mounted = ui.mount(checkbox("Locked", checked).disabled(true));
+    ui.prepare_frame();
+    assert_eq!(ui.scene.borrow().effects(mounted.node()).opacity, 0.45);
 }

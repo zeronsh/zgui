@@ -944,10 +944,37 @@ impl Ui {
         let label = label.into();
         let height = self.theme_scope().number_untracked(tok::CONTROL_HEIGHT);
         let (root, _, state) = self.control(parent, width, height, tok::INPUT_BG);
-        let text = self.label(root, "", fixed(width - 16., 28.));
+        // The box, drawn as the platform draws one, then the label.
+        let size = crate::compose_checkbox::SIZE;
+        let theme = self.theme_scope();
+        let (indicator, mark) = {
+            let mut scene = self.scene.borrow_mut();
+            let indicator = scene.append(
+                root,
+                NodeKind::Panel {
+                    layout: Layout::Overlay,
+                    quad: Default::default(),
+                },
+                fixed(size, size),
+            );
+            scene.set_transform(
+                indicator,
+                Transform {
+                    x: 8.,
+                    y: ((height - size) / 2.).round(),
+                },
+            );
+            let mark = scene.append(
+                indicator,
+                NodeKind::Canvas(Default::default()),
+                fixed(size, size),
+            );
+            (indicator, mark)
+        };
+        let text = self.label(root, label.clone(), fixed((width - 40.).max(0.), 28.));
         self.scene
             .borrow_mut()
-            .set_transform(text, Transform { x: 8., y: 6. });
+            .set_transform(text, Transform { x: 32., y: 6. });
         self.semantics.borrow_mut().remove(text);
         self.semantics
             .borrow_mut()
@@ -957,10 +984,33 @@ impl Ui {
         let v = value.clone();
         self.bind(root, move || {
             let checked = v.get();
-            scene.borrow_mut().set_text(
-                text,
-                format!("{}  {}", if checked { "☑" } else { "☐" }, label),
+            let (fill, edge) = if checked {
+                (theme.color(tok::ACCENT), theme.color(tok::ACCENT))
+            } else {
+                (theme.color(tok::INPUT_BG), theme.color(tok::BORDER_STRONG))
+            };
+            let mut scene = scene.borrow_mut();
+            scene.set_kind(
+                indicator,
+                NodeKind::Panel {
+                    layout: Layout::Overlay,
+                    quad: crate::scene::QuadStyle {
+                        fill,
+                        radius: 4.,
+                        border_color: edge,
+                        border_width: 1.,
+                        ..Default::default()
+                    },
+                },
             );
+            let drawn = crate::compose_checkbox::mark(
+                size,
+                false,
+                if checked { 1. } else { 0. },
+                theme.color(tok::ACCENT_TEXT),
+            );
+            scene.set_kind(mark, NodeKind::Canvas(std::sync::Arc::new(drawn)));
+            drop(scene);
             a.borrow_mut().update(root, |s| s.checked = Some(checked));
         });
         self.on_event(root, true, move |cx| {

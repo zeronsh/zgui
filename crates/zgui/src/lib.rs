@@ -35,6 +35,7 @@ pub mod affine;
 pub mod background;
 
 pub mod compose;
+mod compose_checkbox;
 mod compose_menu;
 mod compose_menu_scroll;
 mod compose_modal;
