@@ -61,7 +61,11 @@ existing interaction scheduling already integrates these methods.
 Focus changes, native blur, pointer press, composition, registration changes,
 disabling, subtree disposal and host interaction cancellation clear pending
 input. Idle views have no key deadline or polling. F1–F35 and Insert survive the
-desktop mapping alongside existing character/navigation/editing keys. The Rust
+desktop mapping alongside existing character/navigation/editing keys. On a layout of other letters (Russian, Greek, Hebrew, Arabic), a
+key pressed with Ctrl or Cmd (and not Alt, which with Ctrl is Windows' AltGr)
+whose character is outside ASCII arrives as the US letter on that key, as
+browsers and GTK take shortcuts: Ctrl and the C key copy whatever the layout
+types there, and a binding of `"c"` matches it. Typing is untouched. The Rust
 configuration API is independently designed; this is not a GPUI keymap JSON
 parser or a promise of identical precedence for every mixed-context rule set.
 

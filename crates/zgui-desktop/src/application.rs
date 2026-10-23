@@ -2769,7 +2769,8 @@ impl Host {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                let key = map_key(&event.logical_key);
+                let key = map_key(&event.logical_key)
+                    .map(|key| shortcut_key(key, event.physical_key, self.modifiers));
                 let mut prevented = false;
                 if let Some(key) = key
                     && !self.ime_active
@@ -3999,6 +4000,73 @@ fn inspector_shortcut(m: Modifiers) -> bool {
         m.control && m.alt && m.shift && !m.meta
     }
 }
+/// A shortcut's key on a layout of other letters (Russian, Greek, Hebrew,
+/// Arabic…): with Ctrl or Cmd held (and not Alt, which with Ctrl is
+/// Windows' AltGr, typing text), a character outside ASCII is the physical
+/// key's on a US layout, as browsers and GTK take shortcuts, so Ctrl+C
+/// copies whatever letter the layout puts on that key.
+fn shortcut_key(key: Key, physical: PhysicalKey, modifiers: zgui::input::Modifiers) -> Key {
+    let Key::Character(character) = &key else {
+        return key;
+    };
+    if !(modifiers.control || modifiers.meta) || modifiers.alt || character.is_ascii() {
+        return key;
+    }
+    let PhysicalKey::Code(code) = physical else {
+        return key;
+    };
+    let us = match code {
+        KeyCode::KeyA => "a",
+        KeyCode::KeyB => "b",
+        KeyCode::KeyC => "c",
+        KeyCode::KeyD => "d",
+        KeyCode::KeyE => "e",
+        KeyCode::KeyF => "f",
+        KeyCode::KeyG => "g",
+        KeyCode::KeyH => "h",
+        KeyCode::KeyI => "i",
+        KeyCode::KeyJ => "j",
+        KeyCode::KeyK => "k",
+        KeyCode::KeyL => "l",
+        KeyCode::KeyM => "m",
+        KeyCode::KeyN => "n",
+        KeyCode::KeyO => "o",
+        KeyCode::KeyP => "p",
+        KeyCode::KeyQ => "q",
+        KeyCode::KeyR => "r",
+        KeyCode::KeyS => "s",
+        KeyCode::KeyT => "t",
+        KeyCode::KeyU => "u",
+        KeyCode::KeyV => "v",
+        KeyCode::KeyW => "w",
+        KeyCode::KeyX => "x",
+        KeyCode::KeyY => "y",
+        KeyCode::KeyZ => "z",
+        KeyCode::Digit0 => "0",
+        KeyCode::Digit1 => "1",
+        KeyCode::Digit2 => "2",
+        KeyCode::Digit3 => "3",
+        KeyCode::Digit4 => "4",
+        KeyCode::Digit5 => "5",
+        KeyCode::Digit6 => "6",
+        KeyCode::Digit7 => "7",
+        KeyCode::Digit8 => "8",
+        KeyCode::Digit9 => "9",
+        KeyCode::Minus => "-",
+        KeyCode::Equal => "=",
+        KeyCode::BracketLeft => "[",
+        KeyCode::BracketRight => "]",
+        KeyCode::Backslash => "\\",
+        KeyCode::Semicolon => ";",
+        KeyCode::Quote => "'",
+        KeyCode::Backquote => "`",
+        KeyCode::Comma => ",",
+        KeyCode::Period => ".",
+        KeyCode::Slash => "/",
+        _ => return key,
+    };
+    Key::Character(us.into())
+}
 fn map_key(key: &WKey) -> Option<Key> {
     Some(match key {
         WKey::Character(k) if k.as_str() == " " => Key::Space,
@@ -4502,6 +4570,35 @@ mod tests {
         ));
         assert_eq!((options.width, options.height), (1200., 800.));
         assert_eq!(viewport.get(), (1200., 800.));
+    }
+    #[test]
+    fn shortcuts_on_other_layouts_take_the_keys_us_letters() {
+        use zgui::input::Modifiers;
+        let ctrl = Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        let key = |c: &str| Key::Character(c.into());
+        let code = |c| PhysicalKey::Code(c);
+        // Russian: Ctrl and the C key, which types с, copy.
+        assert_eq!(shortcut_key(key("с"), code(KeyCode::KeyC), ctrl), key("c"));
+        assert_eq!(shortcut_key(key("ф"), code(KeyCode::KeyA), ctrl), key("a"));
+        // A US letter, a key typed without Ctrl, and AltGr's text stay.
+        assert_eq!(shortcut_key(key("q"), code(KeyCode::KeyA), ctrl), key("q"));
+        assert_eq!(
+            shortcut_key(key("с"), code(KeyCode::KeyC), Modifiers::default()),
+            key("с")
+        );
+        let altgr = Modifiers {
+            control: true,
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(shortcut_key(key("ą"), code(KeyCode::KeyA), altgr), key("ą"));
+        assert_eq!(
+            shortcut_key(Key::Enter, code(KeyCode::Enter), ctrl),
+            Key::Enter
+        );
     }
     #[test]
     fn native_cursor_roles_distinguish_editable_and_actionable_controls() {
