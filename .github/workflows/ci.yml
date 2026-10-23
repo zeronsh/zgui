@@ -110,11 +110,20 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       # Concurrent device tests need Vulkan-Loader#1866; older distro loaders
       # can crash inside vkSetDebugUtilsObjectNameEXT. Keep debug/validation on.
-      - name: Build private patched Vulkan loader
+      # The loader is built from pinned revisions, so it is kept between
+      # runs until the script changes.
+      - uses: actions/cache@v4
+        id: vulkan-loader
         if: ${{ !cancelled() }}
-        run: |
-          scripts/build_vulkan_loader.sh "$RUNNER_TEMP/zgui-vulkan-loader"
-          printf 'LD_LIBRARY_PATH=%s/build/loader\n' "$RUNNER_TEMP/zgui-vulkan-loader" >> "$GITHUB_ENV"
+        with:
+          path: ~/zgui-vulkan-loader/build/loader
+          key: vulkan-loader-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_vulkan_loader.sh') }}
+      - name: Build private patched Vulkan loader
+        if: ${{ !cancelled() && steps.vulkan-loader.outputs.cache-hit != 'true' }}
+        run: scripts/build_vulkan_loader.sh ~/zgui-vulkan-loader
+      - name: Use the private Vulkan loader
+        if: ${{ !cancelled() }}
+        run: printf 'LD_LIBRARY_PATH=%s/zgui-vulkan-loader/build/loader\n' "$HOME" >> "$GITHUB_ENV"
       - name: Vulkan rendering and damage readback
         if: ${{ !cancelled() }}
         env:
