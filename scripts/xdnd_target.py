@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""A test-owned X11 drop target for drag probes: a GTK 3 window that takes
-XDND drops (GTK's own implementation) and prints what each one carried.
+"""A test-owned drop target for drag probes: a GTK 3 window that takes drops
+(GTK's own XDND on X11, its `wl_data_device` on Wayland with
+`GDK_BACKEND=wayland`) and prints what each one carried.
 
     xdnd_target.py TITLE X Y [--refuse]
 

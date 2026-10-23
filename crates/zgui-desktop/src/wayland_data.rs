@@ -21,11 +21,11 @@ use std::{
 use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
     protocol::{
-        wl_data_device,
+        wl_buffer, wl_compositor, wl_data_device,
         wl_data_device_manager::{self, DndAction},
         wl_data_offer, wl_data_source, wl_keyboard, wl_pointer, wl_registry,
         wl_seat::{self, Capability},
-        wl_surface,
+        wl_shm, wl_shm_pool, wl_surface,
     },
 };
 use wayland_protocols::wp::primary_selection::zv1::client::{
@@ -85,6 +85,41 @@ enum Command {
         token: String,
         window: Arc<winit::window::Window>,
     },
+    /// Hand a drag under way in `window` to the compositor
+    /// (`native_drag::begin`), carrying `data` by format, its icon `icon`.
+    Drag {
+        window: Arc<winit::window::Window>,
+        data: Vec<(&'static str, Vec<u8>)>,
+        icon: Option<crate::native_drag::DragImage>,
+        /// Where the pointer was as it left (the window's points).
+        point: (f64, f64),
+        send: Box<dyn Fn(crate::native_drag::NativeDrag) + Send>,
+    },
+}
+/// The data worker's commands, for a drag handed off (`start_drag`).
+static COMMANDS: Mutex<Option<calloop::channel::Sender<Command>>> = Mutex::new(None);
+
+/// Hand the drag under way in `window` (a Wayland window, its button down)
+/// to the compositor as a drag of the app's own (`wl_data_device.start_drag`),
+/// carrying `data` by format. False when there is no data device to.
+pub(crate) fn start_drag(
+    window: Arc<winit::window::Window>,
+    data: Vec<(&'static str, Vec<u8>)>,
+    icon: Option<crate::native_drag::DragImage>,
+    point: (f64, f64),
+    send: Box<dyn Fn(crate::native_drag::NativeDrag) + Send>,
+) -> bool {
+    COMMANDS.lock().unwrap().as_ref().is_some_and(|commands| {
+        commands
+            .send(Command::Drag {
+                window,
+                data,
+                icon,
+                point,
+                send,
+            })
+            .is_ok()
+    })
 }
 /// The selection owner writes into the stream; `bool` asks for CRLF
 /// normalization.
@@ -203,6 +238,10 @@ impl NativeData {
                     source: None,
                     primary_source: None,
                     serial: None,
+                    press: None,
+                    compositor: None,
+                    shm: None,
+                    outgoing: None,
                     drag: None,
                     completion: None,
                     activation: None,
@@ -232,6 +271,13 @@ impl NativeData {
                                 let _ = reply.send(state.load(primary));
                             }
                             Command::Activate { token, window } => state.activate(&token, &window),
+                            Command::Drag {
+                                window,
+                                data,
+                                icon,
+                                point,
+                                send,
+                            } => state.start_drag(window, data, icon, point, send),
                         }
                         let _ = state.connection.flush();
                     })
@@ -291,6 +337,7 @@ impl NativeData {
                 let _ = connection.flush();
             })
             .map_err(|e| e.to_string())?;
+        *COMMANDS.lock().unwrap() = Some(sender.clone());
         Ok(Some(Self {
             commands: sender,
             worker: Some(worker),
@@ -365,6 +412,26 @@ struct Drag {
     copy: bool,
     left: bool,
 }
+/// The app's own drag, the compositor's now.
+struct Outgoing {
+    source: wl_data_source::WlDataSource,
+    data: Vec<(&'static str, Arc<[u8]>)>,
+    send: Box<dyn Fn(crate::native_drag::NativeDrag) + Send>,
+    /// The window it came from (held while the drag lasts), and its
+    /// surface's id: back over it, the drag is zgui's.
+    _window: Arc<winit::window::Window>,
+    origin: u32,
+    icon: Option<(wl_surface::WlSurface, wl_buffer::WlBuffer)>,
+    /// Where the pointer was last seen, in the window's points.
+    point: (f64, f64),
+    /// Over its own window.
+    home: bool,
+    /// The offer of it to one of the app's windows, refused, held until
+    /// the drag leaves (destroyed sooner, the compositor cancels the drag).
+    offer: Option<wl_data_offer::WlDataOffer>,
+    /// The target took the drop (`dnd_drop_performed`).
+    performed: bool,
+}
 struct Completion {
     offer: wl_data_offer::WlDataOffer,
     accepted: std::sync::mpsc::Receiver<bool>,
@@ -389,6 +456,12 @@ struct State {
     primary_source: Option<(PrimarySource, Arc<str>)>,
     /// The latest input serial and the seat it came from.
     serial: Option<(u32, u32)>,
+    /// The latest button press's serial and seat: a drag starts from it.
+    press: Option<(u32, u32)>,
+    compositor: Option<wl_compositor::WlCompositor>,
+    shm: Option<wl_shm::WlShm>,
+    /// The app's own drag, handed to the compositor (`start_drag`).
+    outgoing: Option<Outgoing>,
     drag: Option<Drag>,
     completion: Option<Completion>,
     activation: Option<XdgActivation>,
@@ -430,6 +503,151 @@ impl State {
             {
                 seat.primary = Some(manager.get_device(&seat.seat, qh, ()));
             }
+        }
+    }
+    /// Hand the drag under way in `window` to the compositor, from the
+    /// press that began it.
+    fn start_drag(
+        &mut self,
+        window: Arc<winit::window::Window>,
+        data: Vec<(&'static str, Vec<u8>)>,
+        icon: Option<crate::native_drag::DragImage>,
+        point: (f64, f64),
+        send: Box<dyn Fn(crate::native_drag::NativeDrag) + Send>,
+    ) {
+        use crate::native_drag::NativeDrag;
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        self.end_outgoing(false);
+        let ended = |send: &dyn Fn(NativeDrag)| {
+            send(NativeDrag::Ended {
+                x: point.0,
+                y: point.1,
+                accepted: false,
+            })
+        };
+        let device = self.press.and_then(|(seat, serial)| {
+            let seat = self.seats.iter().find(|each| each.name == seat)?;
+            Some((seat.device.clone()?, serial))
+        });
+        let (Some(manager), Some((device, serial)), Ok(handle)) =
+            (&self.manager, device, window.window_handle())
+        else {
+            return ended(&*send);
+        };
+        let RawWindowHandle::Wayland(handle) = handle.as_raw() else {
+            return ended(&*send);
+        };
+        // SAFETY: winit's live surface on this connection: `window` holds
+        // it while the drag lasts.
+        let Some(origin) = (unsafe {
+            wayland_backend::client::ObjectId::from_ptr(
+                wl_surface::WlSurface::interface(),
+                handle.surface.as_ptr().cast(),
+            )
+        })
+        .ok()
+        .and_then(|id| wl_surface::WlSurface::from_id(&self.connection, id).ok()) else {
+            return ended(&*send);
+        };
+        let source = manager.create_data_source(&self.qh, ());
+        for (kind, _) in &data {
+            source.offer((*kind).into());
+        }
+        if source.version() >= 3 {
+            source.set_actions(DndAction::Copy);
+        }
+        let icon = icon.and_then(|icon| self.icon(icon));
+        device.start_drag(
+            Some(&source),
+            &origin,
+            icon.as_ref().map(|(surface, ..)| surface),
+            serial,
+        );
+        // Its content once it is the drag's icon: the grab point under the
+        // pointer.
+        let icon = icon.map(|(surface, buffer, (x, y))| {
+            if surface.version() >= 5 {
+                surface.attach(Some(&buffer), 0, 0);
+                surface.offset(-x, -y);
+            } else {
+                surface.attach(Some(&buffer), -x, -y);
+            }
+            surface.commit();
+            (surface, buffer)
+        });
+        self.outgoing = Some(Outgoing {
+            source,
+            data: data
+                .into_iter()
+                .map(|(kind, bytes)| (kind, bytes.into()))
+                .collect(),
+            send,
+            origin: origin.id().protocol_id(),
+            _window: window,
+            icon,
+            point,
+            home: false,
+            offer: None,
+            performed: false,
+        });
+    }
+    /// A drag icon of `image`'s pixels in shared memory, and its grab point
+    /// in surface coordinates.
+    fn icon(
+        &self,
+        image: crate::native_drag::DragImage,
+    ) -> Option<(wl_surface::WlSurface, wl_buffer::WlBuffer, (i32, i32))> {
+        let (compositor, shm) = (self.compositor.as_ref()?, self.shm.as_ref()?);
+        let size = image.bgra.len();
+        if size != (image.width * image.height * 4) as usize || size == 0 {
+            return None;
+        }
+        // SAFETY: a new anonymous file, owned here.
+        let fd = unsafe { libc::memfd_create(c"zgui-drag-icon".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return None;
+        }
+        // SAFETY: the descriptor just made, owned from here.
+        let mut file = File::from(unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) });
+        // ARGB8888 is premultiplied BGRA in memory on little-endian machines,
+        // as the image is.
+        file.write_all(&image.bgra).ok()?;
+        let pool = shm.create_pool(file.as_fd(), size as i32, &self.qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            image.width as i32,
+            image.height as i32,
+            image.width as i32 * 4,
+            wl_shm::Format::Argb8888,
+            &self.qh,
+            (),
+        );
+        pool.destroy();
+        let surface = compositor.create_surface(&self.qh, ());
+        // Drawn at the image's scale: as many surface points as it has.
+        let scale = image.scale.round().max(1.) as i32;
+        surface.set_buffer_scale(scale);
+        let grab = (
+            (image.grab.0 * image.scale / scale as f32).round() as i32,
+            (image.grab.1 * image.scale / scale as f32).round() as i32,
+        );
+        Some((surface, buffer, grab))
+    }
+    /// The app's own drag ends: `accepted` by another app, or not. Its host
+    /// hears it unless it already has.
+    fn end_outgoing(&mut self, accepted: bool) {
+        let Some(outgoing) = self.outgoing.take() else {
+            return;
+        };
+        let (x, y) = outgoing.point;
+        (outgoing.send)(crate::native_drag::NativeDrag::Ended { x, y, accepted });
+        if let Some(offer) = outgoing.offer {
+            offer.destroy();
+        }
+        outgoing.source.destroy();
+        if let Some((surface, buffer)) = outgoing.icon {
+            surface.destroy();
+            buffer.destroy();
         }
     }
     fn store(&mut self, primary: bool, text: String, html: Option<String>) -> Result<(), String> {
@@ -629,6 +847,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 if interface == "wl_data_device_manager" {
                     state.manager = Some(registry.bind(name, version.min(3), qh, ()));
                 }
+                if interface == "wl_compositor" {
+                    state.compositor = Some(registry.bind(name, version.min(5), qh, ()));
+                }
+                if interface == "wl_shm" {
+                    state.shm = Some(registry.bind(name, 1, qh, ()));
+                }
                 if interface == "xdg_activation_v1" {
                     state.activation = Some(registry.bind(name, 1, qh, ()));
                 }
@@ -725,6 +949,14 @@ impl Dispatch<wl_pointer::WlPointer, u32> for State {
         {
             state.serial = Some((*seat, serial));
         }
+        if let wl_pointer::Event::Button {
+            serial,
+            state: WEnum::Value(wl_pointer::ButtonState::Pressed),
+            ..
+        } = event
+        {
+            state.press = Some((*seat, serial));
+        }
     }
 }
 impl Dispatch<wl_data_source::WlDataSource, ()> for State {
@@ -737,6 +969,49 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
+            // The app's own drag.
+            wl_data_source::Event::Send { mime_type, fd }
+                if state
+                    .outgoing
+                    .as_ref()
+                    .is_some_and(|outgoing| outgoing.source == *source) =>
+            {
+                let outgoing = state.outgoing.as_ref().expect("checked above");
+                if let Some((_, bytes)) = outgoing.data.iter().find(|(kind, _)| *kind == mime_type)
+                {
+                    write_bytes(fd, bytes.clone());
+                }
+            }
+            wl_data_source::Event::DndDropPerformed => {
+                if let Some(outgoing) = &mut state.outgoing
+                    && outgoing.source == *source
+                {
+                    outgoing.performed = true;
+                }
+            }
+            wl_data_source::Event::DndFinished => {
+                if state
+                    .outgoing
+                    .as_ref()
+                    .is_some_and(|outgoing| outgoing.source == *source)
+                {
+                    state.end_outgoing(true);
+                }
+            }
+            wl_data_source::Event::Cancelled
+                if state
+                    .outgoing
+                    .as_ref()
+                    .is_some_and(|outgoing| outgoing.source == *source) =>
+            {
+                // A version 1 or 2 source hears no finish: a drop
+                // performed was taken.
+                let taken = state
+                    .outgoing
+                    .as_ref()
+                    .is_some_and(|outgoing| outgoing.performed && outgoing.source.version() < 3);
+                state.end_outgoing(taken);
+            }
             wl_data_source::Event::Send { mime_type, fd } => {
                 if let Some((current, text, html)) = &state.source
                     && current == source
@@ -859,6 +1134,19 @@ fn preferred(current: Option<usize>, kind: &str) -> Option<usize> {
 }
 /// Write a selection this process owns to a reader. On its own thread: a
 /// reader that stops reading blocks only that thread, never the worker.
+/// Write `bytes` into a drop target's pipe, off this thread.
+fn write_bytes(fd: OwnedFd, bytes: Arc<[u8]>) {
+    let _ = thread::Builder::new()
+        .name("zgui-drag-write".into())
+        .spawn(move || {
+            let _ = File::from(fd).write_all(&bytes);
+        });
+}
+wayland_client::delegate_noop!(State: ignore wl_compositor::WlCompositor);
+wayland_client::delegate_noop!(State: ignore wl_surface::WlSurface);
+wayland_client::delegate_noop!(State: ignore wl_shm::WlShm);
+wayland_client::delegate_noop!(State: ignore wl_shm_pool::WlShmPool);
+wayland_client::delegate_noop!(State: ignore wl_buffer::WlBuffer);
 fn write_selection(fd: OwnedFd, text: Arc<str>) {
     let _ = thread::Builder::new()
         .name("zgui-selection-write".into())
@@ -942,6 +1230,21 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
                 else {
                     return;
                 };
+                // The app's own drag back over one of its windows: zgui's,
+                // not taken as a drop. Over the window it came from, its
+                // host hears where.
+                if let Some(outgoing) = &mut state.outgoing {
+                    offer.proxy.accept(serial, None);
+                    if let Some(previous) = outgoing.offer.replace(offer.proxy) {
+                        previous.destroy();
+                    }
+                    outgoing.home = surface.id().protocol_id() == outgoing.origin;
+                    if outgoing.home {
+                        outgoing.point = (x, y);
+                        (outgoing.send)(crate::native_drag::NativeDrag::Moved { x, y });
+                    }
+                    return;
+                }
                 let token = state
                     .routes
                     .lock()
@@ -984,6 +1287,30 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
                     left: false,
                 });
                 let _ = connection.flush();
+            }
+            wl_data_device::Event::Motion { x, y, .. } if state.outgoing.is_some() => {
+                let outgoing = state.outgoing.as_mut().expect("checked above");
+                if outgoing.home {
+                    outgoing.point = (x, y);
+                    (outgoing.send)(crate::native_drag::NativeDrag::Moved { x, y });
+                }
+            }
+            wl_data_device::Event::Drop
+                if state
+                    .outgoing
+                    .as_ref()
+                    .is_some_and(|outgoing| outgoing.home) =>
+            {
+                // Released over its own window: zgui drops it there.
+                state.end_outgoing(false);
+            }
+            wl_data_device::Event::Leave if state.outgoing.is_some() => {
+                if let Some(outgoing) = &mut state.outgoing {
+                    outgoing.home = false;
+                    if let Some(offer) = outgoing.offer.take() {
+                        offer.destroy();
+                    }
+                }
             }
             wl_data_device::Event::Motion { x, y, .. } => {
                 if let Some(drag) = &mut state.drag {

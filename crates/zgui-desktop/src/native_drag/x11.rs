@@ -78,7 +78,7 @@ x11rb::atom_manager! {
 /// What a drag carries, by format, as other apps ask for it: files and URLs
 /// as `text/uri-list`; text as UTF-8 under its usual names (or, with no
 /// text, the URLs and paths as lines); images by their encoding.
-fn offers(items: &[DragItem]) -> Vec<(&'static str, Vec<u8>)> {
+pub(super) fn offers(items: &[DragItem]) -> Vec<(&'static str, Vec<u8>)> {
     let mut uris = Vec::new();
     let mut lines = Vec::new();
     let mut text = None;

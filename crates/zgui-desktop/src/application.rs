@@ -3122,10 +3122,20 @@ impl Host {
             return;
         }
         let image = self.popups.preview_image(drag);
+        // Wayland's icon: the preview, which shows in the window there,
+        // drawn alone.
+        #[cfg(target_os = "linux")]
+        let image = image.or_else(|| self.drawn_preview(drag));
         let (proxy, token) = (self.proxy.clone(), self.context.window.token);
-        if crate::native_drag::begin(&window, items, image, move |drag| {
+        let send = move |drag| {
             let _ = proxy.send_event(Event::NativeDrag(token, drag));
-        }) {
+        };
+        #[cfg(target_os = "linux")]
+        let begun =
+            crate::native_drag::begin(&window, items, image, (drag.x as f64, drag.y as f64), send);
+        #[cfg(not(target_os = "linux"))]
+        let begun = crate::native_drag::begin(&window, items, image, send);
+        if begun {
             zgui_gpu::present_log::log(|| "native drag begin".into());
             self.native_drag = true;
             self.popups.show_preview(&window, drag, None);
@@ -3154,6 +3164,39 @@ impl Host {
         }
         crate::window_place::move_to(window, to, &mut self.window_pending);
         self.content_origin = Some(to);
+    }
+    /// The drag's preview drawn alone, offscreen: a drag image where the
+    /// preview shows in its window (Wayland). Premultiplied BGRA at the
+    /// window's scale, with the pointer's place in it.
+    #[cfg(target_os = "linux")]
+    fn drawn_preview(
+        &self,
+        drag: &zgui::input::DragState,
+    ) -> Option<crate::native_drag::DragImage> {
+        let root = drag.preview?;
+        let context = self.renderer.as_ref()?.context();
+        let scene = self.context.ui.scene.borrow();
+        let bounds = scene.bounds(root);
+        let scale = self.scale_factor as f32;
+        let (width, height) = (
+            (bounds.width * scale).ceil().max(1.) as u32,
+            (bounds.height * scale).ceil().max(1.) as u32,
+        );
+        let mut renderer = GpuRenderer::new_with_context(width, height, &context).ok()?;
+        renderer.set_scale_factor(scale);
+        renderer.set_popup(root, bounds);
+        renderer.render(&scene, &[]).ok()?;
+        let mut bgra = renderer.readback().ok()?;
+        for pixel in bgra.as_chunks_mut::<4>().0 {
+            pixel.swap(0, 2);
+        }
+        Some(crate::native_drag::DragImage {
+            width,
+            height,
+            bgra,
+            scale,
+            grab: (drag.x - bounds.x, drag.y - bounds.y),
+        })
     }
     /// Its content's box in global coordinates.
     fn content_box(&self) -> Option<[f64; 4]> {
@@ -3834,7 +3877,11 @@ impl WindowManager {
         if (0. ..width).contains(&drag.x) && (0. ..height).contains(&drag.y) {
             return Some((Some((token, drag.x, drag.y)), drag));
         }
-        let (left, top) = source.content_origin?;
+        // Where windows have no place on screen (Wayland), out of its own
+        // window is out of the app's.
+        let Some((left, top)) = source.content_origin else {
+            return Some((None, drag));
+        };
         let over = self.window_under(left + drag.x as f64, top + drag.y as f64);
         Some((over, drag))
     }

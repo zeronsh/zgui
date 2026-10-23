@@ -235,6 +235,24 @@ the previous caret until the next key. `native_ime_smoke.py` records whether
 the window followed at once. If it did not, Down and Up make IBus lay it out
 again, the preedit unchanged, and the window must then be at the caret.
 
+## Drags out on Wayland
+
+A drag carrying what other apps take (`drag_export`) is the compositor's past
+the window it came from: the data worker, on winit's display, makes a
+`wl_data_source` with what it carries (as X11's XDND source offers it) and
+starts the drag from the press that began it (`wl_data_device.start_drag`).
+Its icon is the preview drawn once, offscreen, into shared memory, the point
+it was grabbed by under the pointer. The compositor has the pointer then, and
+says where it goes only to the window under it: back over the window it came
+from, the worker hears the drag as that window's data device, refuses it
+there (holding the offer until it leaves: destroyed sooner, wlroots cancels
+the drag), and the window's destinations hear where it is, so a release
+there drops on them. A target taking it finishes it (`dnd_finished`), and the
+source hears it accepted; a drag nothing takes is cancelled. Windows have no
+place on screen on Wayland, so out of the window a drag came from is out of
+the app, and drags between the app's windows stay in theirs.
+`wayland_drag_out_smoke.py` drags onto GTK windows of its own under sway.
+
 ## Popups on Wayland
 
 Menus, popovers, selects and tooltips show past the window as `xdg_popup`s of

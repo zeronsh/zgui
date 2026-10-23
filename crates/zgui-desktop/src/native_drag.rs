@@ -22,8 +22,12 @@
 //! X11 speaks XDND (`native_drag/x11.rs`): the pointer stays the window's
 //! (the button's implicit grab), so the manager hands it its moves, and the
 //! preview stays the window of its own it was.
-//! todo(wayland): `wl_data_device.start_drag` with a `wl_data_source`,
-//! which winit does not expose.
+//!
+//! Wayland hands it to the compositor (`wl_data_device.start_drag`, by the
+//! data worker on winit's display, from the press that began it), the
+//! preview drawn once as its icon. The compositor has the pointer then: back
+//! over the window it came from, the worker hears it as a drop target, and
+//! refuses it, so a release there drops on the window's destinations.
 use zgui::input::DragItem;
 
 /// The platform's drag, as the host hears it: in global coordinates
@@ -62,7 +66,31 @@ pub(crate) use win32::begin;
 #[cfg(target_os = "linux")]
 mod x11;
 #[cfg(target_os = "linux")]
-pub(crate) use x11::{active, begin, cancel, end_session, moved, released};
+pub(crate) use x11::{active, cancel, end_session, moved, released};
+
+/// Hand the drag under way in `window` to the platform, carrying `items`:
+/// on X11 an XDND source of zgui's (`x11`), on Wayland the compositor's drag
+/// (`wl_data_device.start_drag`, by the data worker) with `image` as its
+/// icon; `point` is where the pointer left, in the window's points.
+#[cfg(target_os = "linux")]
+pub(crate) fn begin(
+    window: &std::sync::Arc<winit::window::Window>,
+    items: &[DragItem],
+    image: Option<DragImage>,
+    point: (f64, f64),
+    send: impl Fn(NativeDrag) + Send + 'static,
+) -> bool {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let wayland = window
+        .window_handle()
+        .is_ok_and(|handle| matches!(handle.as_raw(), RawWindowHandle::Wayland(_)));
+    if !wayland {
+        return x11::begin(window, items, image, send);
+    }
+    let data = x11::offers(items);
+    !data.is_empty()
+        && crate::wayland_data::start_drag(window.clone(), data, image, point, Box::new(send))
+}
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) fn begin(
