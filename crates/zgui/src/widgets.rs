@@ -1143,9 +1143,14 @@ impl Ui {
             "slider range must be finite and increasing"
         );
         let span = max as f64 - min as f64;
-        let at_position = move |position: f32, origin: f32, width: f32| {
-            let fraction = ((position as f64 - origin as f64 - 8.) / (width as f64 - 26.).max(1.))
-                .clamp(0., 1.);
+        // `rtl`: measured from the right, where it starts.
+        let at_position = move |position: f32, origin: f32, width: f32, rtl: bool| {
+            let from_start = if rtl {
+                origin as f64 + width as f64 - position as f64
+            } else {
+                position as f64 - origin as f64
+            };
+            let fraction = ((from_start - 8.) / (width as f64 - 26.).max(1.)).clamp(0., 1.);
             (min as f64 + fraction * span).clamp(min as f64, max as f64) as f32
         };
         let theme = self.theme_scope();
@@ -1186,19 +1191,22 @@ impl Ui {
             let (width, height) = dimensions.get();
             let x = ((val as f64 - min as f64) / span * (width as f64 - 26.).max(1.)) as f32;
             let mut s = scene.borrow_mut();
+            // Right to left it fills from the right; the scene lays each
+            // part in at the right, so their translations are from there.
+            let rtl = s.direction(root) == crate::scene::Direction::Rtl;
             s.set_style(bg, fixed(width, height));
             s.set_style(fill, fixed(x, 4.));
             s.set_transform(
                 fill,
                 Transform {
-                    x: 8.,
+                    x: if rtl { -8. } else { 8. },
                     y: (height - 4.).max(0.) / 2.,
                 },
             );
             s.set_transform(
                 knob,
                 Transform {
-                    x: x + 8.,
+                    x: if rtl { -8. - x } else { x + 8. },
                     y: (height - 20.).max(0.) / 2.,
                 },
             );
@@ -1207,6 +1215,7 @@ impl Ui {
         });
         let scene = self.scene.clone();
         let mut dragging = false;
+        let rtl = move |scene: &Scene| scene.direction(root) == crate::scene::Direction::Rtl;
         self.on_event(root, true, move |cx| {
             if cx.phase != EventPhase::Target {
                 return;
@@ -1254,11 +1263,13 @@ impl Ui {
                     let x = *x;
                     cx.capture_pointer();
                     let (origin, width) = slider_content_bounds(&scene.borrow(), root);
-                    value.set(at_position(x, origin, width));
+                    let rtl = rtl(&scene.borrow());
+                    value.set(at_position(x, origin, width, rtl));
                 }
                 InputEvent::PointerMove { x, .. } if dragging => {
                     let (origin, width) = slider_content_bounds(&scene.borrow(), root);
-                    value.set(at_position(*x, origin, width));
+                    let rtl = rtl(&scene.borrow());
+                    value.set(at_position(*x, origin, width, rtl));
                 }
                 InputEvent::PointerUp {
                     button: PointerButton::Primary,
@@ -1270,9 +1281,14 @@ impl Ui {
                 }
                 InputEvent::KeyDown { key, .. } => {
                     let step = (span / 100.) as f32;
+                    // Left and right go the way it shows.
+                    let rtl = rtl(&scene.borrow());
+                    let right = if rtl { -step } else { step };
                     let next = match key {
-                        Key::ArrowLeft | Key::ArrowDown => Some(value.get() - step),
-                        Key::ArrowRight | Key::ArrowUp => Some(value.get() + step),
+                        Key::ArrowLeft => Some(value.get() - right),
+                        Key::ArrowRight => Some(value.get() + right),
+                        Key::ArrowDown => Some(value.get() - step),
+                        Key::ArrowUp => Some(value.get() + step),
                         Key::Home => Some(min),
                         Key::End => Some(max),
                         _ => None,

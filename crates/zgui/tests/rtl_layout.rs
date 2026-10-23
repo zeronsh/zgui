@@ -178,3 +178,155 @@ fn a_languages_way_from_its_tag() {
         assert_eq!(Direction::of_language(tag), Direction::Ltr, "{tag}");
     }
 }
+
+#[test]
+fn a_slider_right_to_left_fills_from_the_right_and_its_keys_go_the_way_it_shows() {
+    use zgui::input::{InputEvent, Key, Modifiers, PointerButton};
+    for rtl in [false, true] {
+        let mut ui = Ui::new(400., 300.);
+        let value = ui.signal(25.);
+        let view = ui.mount(
+            column()
+                .direction(if rtl { Direction::Rtl } else { Direction::Ltr })
+                .p(20.)
+                .child(
+                    slider("Volume", value.clone(), 0.0..=100.)
+                        .id("slider")
+                        .w(200.)
+                        .h(20.),
+                ),
+        );
+        ui.prepare_frame();
+        let root = view.find("slider").unwrap();
+        let (bounds, rail, fill, thumb) = {
+            let scene = ui.scene.borrow();
+            let parts = scene.children(root).to_vec();
+            // The rail, the fill's clip (and the fill in it), the thumb.
+            let fill = scene.children(parts[1])[0];
+            (
+                scene.bounds(root),
+                scene.bounds(parts[0]),
+                scene.visible_bounds(fill).unwrap(),
+                scene.bounds(parts[2]),
+            )
+        };
+        let inside =
+            |r: Rect| r.x >= bounds.x - 0.01 && r.x + r.width <= bounds.x + bounds.width + 0.01;
+        assert!(
+            inside(rail) && inside(fill) && inside(thumb),
+            "{rtl}: {bounds:?} {rail:?} {fill:?} {thumb:?}"
+        );
+        assert!(
+            (fill.width - rail.width * 0.25).abs() < 0.5,
+            "{rtl}: a quarter full: {fill:?}"
+        );
+        let thumb_centre = thumb.x + thumb.width / 2.;
+        if rtl {
+            assert!(
+                (fill.x + fill.width - (rail.x + rail.width)).abs() < 0.01,
+                "fills from the right: {fill:?}"
+            );
+            assert!(
+                (thumb_centre - (fill.x)).abs() < 0.5,
+                "the thumb at the fill's end"
+            );
+        } else {
+            assert!((fill.x - rail.x).abs() < 0.01);
+            assert!((thumb_centre - (fill.x + fill.width)).abs() < 0.5);
+        }
+        // Left is more right to left, less left to right.
+        ui.input.focus(&ui.scene, Some(root));
+        ui.dispatch(InputEvent::KeyDown {
+            key: Key::ArrowLeft,
+            modifiers: Modifiers::default(),
+            repeat: false,
+        });
+        assert_eq!(value.get(), if rtl { 26. } else { 24. });
+        // A press a quarter of the way from the start (its right, right to left).
+        let x = if rtl {
+            rail.x + rail.width * 0.75
+        } else {
+            rail.x + rail.width * 0.25
+        };
+        let y = rail.y;
+        ui.dispatch(InputEvent::PointerDown {
+            x,
+            y,
+            button: PointerButton::Primary,
+        });
+        ui.dispatch(InputEvent::PointerUp {
+            x,
+            y,
+            button: PointerButton::Primary,
+        });
+        assert!((value.get() - 25.).abs() < 0.5, "{rtl}: {}", value.get());
+    }
+}
+
+#[test]
+fn the_retained_slider_fills_from_the_right_right_to_left() {
+    use zgui::input::{InputEvent, Key, Modifiers};
+    for rtl in [false, true] {
+        let mut ui = Ui::new(400., 300.);
+        let parent = ui.container(ui.root(), zgui::scene::Layout::Column, Default::default());
+        if rtl {
+            ui.scene
+                .borrow_mut()
+                .set_direction(parent, Some(Direction::Rtl));
+        }
+        let value = ui.signal(50.);
+        let root = ui.slider(parent, "Volume", value.clone(), 0.0..=100., 200.);
+        ui.prepare_frame();
+        let scene = ui.scene.borrow();
+        let bounds = scene.bounds(root);
+        // The background, then the fill and the knob.
+        let parts = scene.children(root).to_vec();
+        let (fill, knob) = (scene.bounds(parts[1]), scene.bounds(parts[2]));
+        drop(scene);
+        let inside =
+            |r: Rect| r.x >= bounds.x - 0.01 && r.x + r.width <= bounds.x + bounds.width + 0.01;
+        assert!(
+            inside(fill) && inside(knob),
+            "{rtl}: {bounds:?} {fill:?} {knob:?}"
+        );
+        if rtl {
+            assert_eq!(
+                fill.x + fill.width,
+                bounds.x + bounds.width - 8.,
+                "fills from the right"
+            );
+            assert_eq!(knob.x + knob.width, fill.x, "the knob at the fill's end");
+        } else {
+            assert_eq!(fill.x, bounds.x + 8.);
+            assert_eq!(knob.x, fill.x + fill.width);
+        }
+        ui.input.focus(&ui.scene, Some(root));
+        ui.dispatch(InputEvent::KeyDown {
+            key: Key::ArrowLeft,
+            modifiers: Modifiers::default(),
+            repeat: false,
+        });
+        assert_eq!(value.get(), if rtl { 51. } else { 49. });
+    }
+}
+
+#[test]
+fn a_progress_bar_fills_from_the_right_right_to_left() {
+    for rtl in [false, true] {
+        let mut ui = Ui::new(400., 300.);
+        let view = ui.mount(
+            column()
+                .direction(if rtl { Direction::Rtl } else { Direction::Ltr })
+                .child(progress("Upload", ui.signal(0.25)).id("bar").w(200.).h(8.)),
+        );
+        ui.prepare_frame();
+        let scene = ui.scene.borrow();
+        let root = view.find("bar").unwrap();
+        let bounds = scene.bounds(root);
+        let clip = scene.children(root)[0];
+        let fill = scene.visible_bounds(scene.children(clip)[0]).unwrap();
+        assert_eq!(fill.width, 50., "{rtl}");
+        let expected = if rtl { bounds.x + 150. } else { bounds.x };
+        assert_eq!(fill.x, expected, "{rtl}: {fill:?} in {bounds:?}");
+    }
+}

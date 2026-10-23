@@ -4059,10 +4059,13 @@ fn mount_progress(ui: &mut Ui, root: NodeId, value: Signal<f32>, typography: Sig
         );
         // A translated full-size fill stays clipped to the content viewport.
         // Value-only updates therefore avoid changing layout dimensions.
+        // Right to left it fills from the right, as a browser's does.
+        let rtl = scene.direction(root) == crate::scene::Direction::Rtl;
+        let hidden = width * (1. - normalized);
         scene.set_transform(
             fill,
             Transform {
-                x: -width * (1. - normalized),
+                x: if rtl { hidden } else { -hidden },
                 y: 0.,
             },
         );
@@ -4144,11 +4147,17 @@ fn mount_slider(
             ..Default::default()
         };
         let mut scene = scene.borrow_mut();
+        // Right to left, it fills from the right, as a browser's range input
+        // does: where it shows at `p` from the left. The scene lays a child
+        // `w` wide in at the right, so its translation is from there.
+        let rtl = scene.direction(root) == crate::scene::Direction::Rtl;
+        let at = |w: f32, p: f32| if rtl { p - (width - w) } else { p };
+        let x_shown = if rtl { travel - x } else { x };
         scene.set_style(rail, fixed(travel, rail_height));
         scene.set_transform(
             rail,
             Transform {
-                x: thumb_width / 2.,
+                x: at(travel, thumb_width / 2.),
                 y: (height - rail_height) / 2.,
             },
         );
@@ -4160,17 +4169,20 @@ fn mount_slider(
             },
         );
         scene.set_style(fill, fixed(travel, rail_height));
+        // The fill, as wide as its clip, slides in from the start: its
+        // translation inside the clip is the same either way (the clip lays
+        // it in at its right, where it already is).
         scene.set_transform(
             fill,
             Transform {
-                x: x - travel,
+                x: if rtl { travel - x } else { x - travel },
                 y: 0.,
             },
         );
         scene.set_transform(
             fill_viewport,
             Transform {
-                x: thumb_width / 2.,
+                x: at(travel, thumb_width / 2.),
                 y: (height - rail_height) / 2.,
             },
         );
@@ -4178,7 +4190,7 @@ fn mount_slider(
         scene.set_transform(
             thumb,
             Transform {
-                x,
+                x: at(thumb_width, x_shown),
                 y: (height - thumb_height) / 2.,
             },
         );
@@ -4207,15 +4219,23 @@ fn mount_slider(
         {
             return;
         }
+        let rtl = scene.borrow().direction(root) == crate::scene::Direction::Rtl;
         let at_position = |x: f32| {
             let scene = scene.borrow();
             let bounds = scene.bounds(rail);
             if bounds.width <= 0. {
                 return min as f32;
             }
-            let fraction = ((x as f64 - bounds.x as f64) / bounds.width as f64).clamp(0., 1.);
+            let from_start = if rtl {
+                bounds.x as f64 + bounds.width as f64 - x as f64
+            } else {
+                x as f64 - bounds.x as f64
+            };
+            let fraction = (from_start / bounds.width as f64).clamp(0., 1.);
             (min + fraction * span).clamp(min, max) as f32
         };
+        // Left and right go the way it shows (right to left, Left is more).
+        let toward_right = if rtl { -1. } else { 1. };
         let step =
             |direction: f64| (value.get() as f64 + direction * span / 100.).clamp(min, max) as f32;
         let next = match &cx.event {
@@ -4228,8 +4248,10 @@ fn mount_slider(
             InputEvent::Increment => Some(step(1.)),
             InputEvent::Decrement => Some(step(-1.)),
             InputEvent::KeyDown { key, .. } => match key {
-                Key::ArrowLeft | Key::ArrowDown => Some(step(-1.)),
-                Key::ArrowRight | Key::ArrowUp => Some(step(1.)),
+                Key::ArrowLeft => Some(step(-toward_right)),
+                Key::ArrowRight => Some(step(toward_right)),
+                Key::ArrowDown => Some(step(-1.)),
+                Key::ArrowUp => Some(step(1.)),
                 Key::Home => Some(min as f32),
                 Key::End => Some(max as f32),
                 _ => None,
