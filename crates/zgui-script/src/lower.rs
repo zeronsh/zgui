@@ -1087,6 +1087,108 @@ fn kind_view(
             }
         }
         Kind::Separator { vertical } => separator(*vertical),
+        Kind::Tree {
+            label,
+            items,
+            open,
+            value,
+            on_open,
+            on_activate,
+        } => {
+            use zgui::compose::{TreeChildren, TreeItem};
+            let cx = need(&mut cx);
+            let open_signal = bridge(
+                cx,
+                open,
+                |v| v.list().iter().map(Value::to_string).collect::<Vec<_>>(),
+                |ids: Vec<String>| {
+                    Value::List(ids.into_iter().map(|s| Value::Str(s.into())).collect())
+                },
+            );
+            let selected = bridge(
+                cx,
+                value,
+                |v| (!matches!(v, Value::Nil)).then(|| v.to_string()),
+                |s: Option<String>| s.map_or(Value::Nil, |s| Value::Str(s.into())),
+            );
+            // An item: `{ id, label, children?, lazy? }`; one lazy without
+            // children is loading.
+            fn find<'v>(list: &'v [Value], id: &str) -> Option<&'v Value> {
+                for item in list {
+                    if item.field("id").map(Value::to_string).as_deref() == Some(id) {
+                        return Some(item);
+                    }
+                    if let Some(found) = item.field("children").and_then(|c| find(c.list(), id)) {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+            fn items_of(list: &[Value]) -> Vec<TreeItem> {
+                list.iter()
+                    .map(|item| {
+                        let id = item.field("id").map(Value::to_string).unwrap_or_default();
+                        let shown = item
+                            .field("label")
+                            .map(Value::to_string)
+                            .unwrap_or_else(|| id.clone());
+                        let parent = item.field("children").is_some_and(|c| !c.list().is_empty())
+                            || item.field("lazy").is_some_and(Value::truthy);
+                        TreeItem {
+                            id,
+                            label: shown,
+                            parent,
+                        }
+                    })
+                    .collect()
+            }
+            let source = items.clone();
+            let children = move |parent: Option<&str>| {
+                source.with(|v| match parent {
+                    None => TreeChildren::Ready(items_of(v.list())),
+                    Some(id) => match find(v.list(), id).and_then(|item| item.field("children")) {
+                        Some(c) if !c.list().is_empty() => TreeChildren::Ready(items_of(c.list())),
+                        _ if find(v.list(), id)
+                            .is_some_and(|i| i.field("lazy").is_some_and(Value::truthy)) =>
+                        {
+                            TreeChildren::Loading
+                        }
+                        _ => TreeChildren::Ready(Vec::new()),
+                    },
+                })
+            };
+            // A lazy item opened without its children: the app is asked.
+            if let Some(on_open) = on_open.clone() {
+                let (open, vm, runtime) = (open_signal.clone(), vm.clone(), cx.runtime());
+                let mut asked: std::collections::HashSet<String> = Default::default();
+                let quiet = runtime.clone();
+                cx.retain(runtime.effect(move || {
+                    let now = open.get();
+                    for id in now
+                        .iter()
+                        .filter(|id| !asked.contains(*id))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                    {
+                        asked.insert(id.clone());
+                        quiet.untracked(|| {
+                            if let Err(error) = vm.call::<()>(&on_open, id) {
+                                vm.report(error);
+                            }
+                        });
+                    }
+                    asked.retain(|id| now.contains(id));
+                }));
+            }
+            let (on_activate, vm) = (on_activate.clone(), vm.clone());
+            tree(label.clone(), children, open_signal, selected, move |id| {
+                if let Some(f) = &on_activate
+                    && let Err(error) = vm.call::<()>(f, id)
+                {
+                    vm.report(error);
+                }
+            })
+        }
         Kind::Combobox {
             label,
             text: text_state,

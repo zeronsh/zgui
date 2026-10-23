@@ -52,6 +52,7 @@ mod compose_style;
 mod compose_tabs;
 mod compose_toast;
 mod compose_tooltip;
+mod compose_tree;
 mod compose_virtual_keyboard;
 pub mod style;
 pub mod theme;

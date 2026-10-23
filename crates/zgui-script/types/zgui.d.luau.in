@@ -1529,6 +1529,24 @@ export type TabsProps = Merge<Props, {
 	on_close: ((id: string) -> boolean?)?,
 	label: string?,
 }>
+-- An item of `ui.tree`: `children` (items) open under it; `lazy = true`
+-- without children: loading until the app adds them (`on_open`).
+export type TreeNode = { id: string, label: string?, children: { TreeNode }?, lazy: boolean? }
+-- A tree (WAI-ARIA's): one Tab stop keeping focus; Up and Down move, Right
+-- opens then enters, Left closes then goes up, Home, End, typeahead, Enter
+-- activates. Virtual rows.
+export type TreeProps = Merge<Props, {
+	items: State<{ TreeNode }> | State<{ any }>,
+	-- The open items' ids, both ways.
+	open: State<{ string }>,
+	-- The current item's id, both ways.
+	value: State<string?> | State<any>,
+	-- An item opened: load its children now (a lazy one).
+	on_open: ((id: string) -> ...unknown)?,
+	-- Enter or a double click.
+	on_activate: ((id: string) -> ...unknown)?,
+	label: string?,
+}>
 export type ComboItem = string | { label: string, value: any?, detail: string? }
 -- A field with suggestions listed under it as it is typed in (WAI-ARIA's
 -- combobox): Down and Up move, Enter chooses, Escape closes or clears; a
@@ -1837,6 +1855,7 @@ declare ui: {
 	split: (props: SplitProps) -> Node,
 	segmented: (props: SegmentedProps) -> Node,
 	tabs: (props: TabsProps) -> Node,
+	tree: (props: TreeProps) -> Node,
 	combobox: (props: ComboboxProps) -> Node,
 	command_palette: (props: CommandPaletteProps) -> Node,
 	select: (props: SelectProps) -> Node,

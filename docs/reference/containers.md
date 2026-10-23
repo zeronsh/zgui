@@ -1,4 +1,4 @@
-# Containers: column, row, div, overlay, grid, split, tabs, disclosure, accordion, separator
+# Containers: column, row, div, overlay, grid, split, tabs, tree, disclosure, accordion, separator
 
 Boxes that lay out their children. Each takes one table: string keys are [properties](properties.md) and [events](events.md), array entries are children.
 
@@ -10,6 +10,7 @@ ui.overlay(props: ContainerProps?) -> Node
 ui.grid(props: ContainerProps?) -> Node
 ui.split(props: SplitProps) -> Node
 ui.tabs(props: TabsProps) -> Node
+ui.tree(props: TreeProps) -> Node
 ui.disclosure(props: DisclosureProps) -> Node
 ui.accordion(props: AccordionProps) -> Node
 ui.section(props: SectionProps) -> Node
@@ -97,6 +98,42 @@ return ui.column {
 | `reorderable` | `boolean` | `false` | |
 | `on_close` | `(id: string) -> boolean?` | none | asked before a tab closes; `false` keeps it open (an editor asking to save first) |
 | `label` | `string` | `""` | the strip's accessible name |
+
+## tree
+
+Items in a hierarchy, as WAI-ARIA's tree and Finder's sidebar. The tree is one Tab stop and keeps focus; its current item is its active descendant, which assistive technology reads with its level and its place among its siblings. Up and Down move; Right opens an item and then enters it, Left closes it and then goes to its parent (mirrored right to left); Home and End go to the ends; typing goes to the next item starting with it; Enter or a double click activates. A click chooses, and a click on the chevron opens and closes. The rows are virtual: a tree of thousands builds only what shows.
+
+```lua
+local items = ui.state("items", {
+	{ id = "src", label = "src", children = { { id = "main", label = "main.luau" } } },
+	{ id = "docs", label = "docs", lazy = true },
+} :: { TreeNode })
+local open = ui.state("open", {} :: { string })
+local current = ui.state("current", nil :: string?)
+return ui.column {
+	h = 240,
+	ui.tree {
+		label = "Files",
+		items = items,
+		open = open,
+		value = current,
+		on_open = function(id: string)
+			if id == "docs" then
+				items:set_key({ 2, "children" }, { { id = "guide", label = "guide.md" } })
+			end
+		end,
+	},
+}
+```
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `items` | `State<{ TreeNode }>` | required | `{ id, label?, children?, lazy? }` each; `lazy = true` without children shows "Loading…" until the app adds them |
+| `open` | `State<{ string }>` | required | the open items' ids, both ways |
+| `value` | `State<string?>` | required | the current item's id, both ways |
+| `on_open` | `(id: string) -> ()` | none | an item opened: load its children now |
+| `on_activate` | `(id: string) -> ()` | none | Enter or a double click |
+| `label` | `string` | `""` | its accessible name |
 
 ## disclosure, accordion, separator
 

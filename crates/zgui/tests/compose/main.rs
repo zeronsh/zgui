@@ -20,6 +20,8 @@ mod composition_split;
 mod composition_tabs;
 #[path = "../composition_toast.rs"]
 mod composition_toast;
+#[path = "../composition_tree.rs"]
+mod composition_tree;
 #[path = "../deferred_mount_failure.rs"]
 mod deferred_mount_failure;
 #[path = "../lifecycle_resources.rs"]

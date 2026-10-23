@@ -316,6 +316,53 @@ local overlays = section(
 local details = ui.state("details", false)
 local faq = ui.state("faq", "ship" :: string?)
 
+local files = ui.state(
+	"files",
+	{
+		{
+			id = "src",
+			label = "src",
+			children = {
+				{ id = "app", label = "app.luau" },
+				{ id = "components", label = "components", children = { { id = "button", label = "button.luau" } } },
+			},
+		},
+		{ id = "docs", label = "docs (loads when opened)", lazy = true },
+		{ id = "readme", label = "README.md" },
+	} :: { TreeNode }
+)
+local open_files = ui.state("open_files", { "src" } :: { string })
+local current_file = ui.state("current_file", nil :: string?)
+
+local tree_section = section(
+	"Tree",
+	"Up and Down move; Right opens then enters; Left closes then goes up; typing finds; Enter activates.",
+	ui.column {
+		w = 320,
+		h = 180,
+		ui.tree {
+			id = "files",
+			label = "Files",
+			items = files,
+			open = open_files,
+			value = current_file,
+			on_open = function(id: string)
+				if id == "docs" then
+					ui.after(300, function()
+						files:set_key(
+							{ 2, "children" },
+							{ { id = "guide", label = "guide.md" }, { id = "api", label = "api.md" } }
+						)
+					end)
+				end
+			end,
+			on_activate = function(id: string)
+				ui.toast { title = `Opened {id}` }
+			end,
+		},
+	}
+)
+
 local containers = section(
 	"Disclosure and accordion",
 	"Enter or Space toggles a section; an accordion keeps one open.",
@@ -352,6 +399,16 @@ return ui.column {
 	},
 	ui.scroll {
 		grow = 1,
-		ui.column { gap = 16, px = 16, pb = 24, controls, choosing, searching_section, overlays, containers },
+		ui.column {
+			gap = 16,
+			px = 16,
+			pb = 24,
+			controls,
+			choosing,
+			searching_section,
+			tree_section,
+			overlays,
+			containers,
+		},
 	},
 }

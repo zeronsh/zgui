@@ -6,7 +6,7 @@
 use std::rc::Rc;
 use zgui::compose::{
     ComboItem, ComboboxOptions, PaletteCommand, SelectOption, StepperOptions, Tab, TabsOptions,
-    Toast, ToastKind, Toaster, prelude::*,
+    Toast, ToastKind, Toaster, TreeChildren, TreeItem, prelude::*,
 };
 use zgui_desktop::{Application, WindowOptions};
 
@@ -248,6 +248,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ],
             );
 
+            let open_files = cx.ui.signal(vec!["src".to_owned()]);
+            let current_file = cx.ui.signal(None::<String>);
+            let tree_section = section(
+                "Tree",
+                "Up and Down move; Right opens then enters; Left closes then goes up; typing finds; Enter activates.",
+                vec![column().w(320.).h(180.).child(tree(
+                    "Files",
+                    |parent| {
+                        TreeChildren::Ready(match parent {
+                            None => vec![
+                                TreeItem::parent("src", "src"),
+                                TreeItem::parent("docs", "docs"),
+                                TreeItem::leaf("readme", "README.md"),
+                            ],
+                            Some("src") => vec![
+                                TreeItem::leaf("main", "main.rs"),
+                                TreeItem::parent("compose", "compose"),
+                            ],
+                            Some("compose") => (0..500)
+                                .map(|i| TreeItem::leaf(format!("c{i}"), format!("view_{i}.rs")))
+                                .collect(),
+                            Some("docs") => vec![TreeItem::leaf("guide", "guide.md")],
+                            Some(_) => Vec::new(),
+                        })
+                    },
+                    open_files,
+                    current_file,
+                    |_| {},
+                ))],
+            );
             let sections: Vec<(String, Rc<dyn Fn() -> View>)> = vec![
                 ("Shipping".into(), Rc::new(|| text("Ships in two days."))),
                 ("Payment".into(), Rc::new(|| text("Cards and transfers."))),
@@ -287,6 +317,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .child(controls)
                                 .child(choosing)
                                 .child(searching)
+                                .child(tree_section)
                                 .child(overlays)
                                 .child(containers),
                         ),

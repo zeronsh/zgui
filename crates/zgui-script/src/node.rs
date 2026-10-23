@@ -478,6 +478,7 @@ impl Node {
                 | Kind::Segmented { .. }
                 | Kind::Stepper { .. }
                 | Kind::Tabs { .. }
+                | Kind::Tree { .. }
                 | Kind::Select { .. }
                 | Kind::Combobox { .. }
                 | Kind::CommandPalette { .. }
@@ -523,6 +524,7 @@ impl Node {
             Kind::Split { .. } => "split",
             Kind::Separator { .. } => "separator",
             Kind::Tabs { .. } => "tabs",
+            Kind::Tree { .. } => "tree",
             Kind::Combobox { .. } => "combobox",
             Kind::CommandPalette { .. } => "command_palette",
             Kind::Select { .. } => "select",
@@ -773,6 +775,15 @@ pub(crate) enum Kind {
         open: Signal<Value>,
         commands: Option<Vec<zgui::compose::PaletteCommand>>,
         on_run: Option<Function>,
+    },
+    /// `ui.tree { items = state, open = state, value = state, … }`.
+    Tree {
+        label: String,
+        items: Signal<Value>,
+        open: Signal<Value>,
+        value: Signal<Value>,
+        on_open: Option<Function>,
+        on_activate: Option<Function>,
     },
     /// `ui.separator { vertical? }`: a line between groups.
     Separator {
@@ -1916,6 +1927,8 @@ const WIDGET_FIELDS: &[&str] = &[
     "empty",
     "commands",
     "on_run",
+    "on_open",
+    "on_activate",
 ];
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
@@ -3142,6 +3155,22 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 options,
                 placeholder: t.get::<Option<String>>("placeholder")?.unwrap_or_default(),
             })
+        })?,
+    )?;
+    ui.set(
+        "tree",
+        lua.create_function(|lua, table: Table| {
+            let kind = Kind::Tree {
+                label: label(&table)?,
+                items: expect_state(&table.get("items")?, "ui.tree's `items`")?,
+                open: expect_state(&table.get("open")?, "ui.tree's `open`")?,
+                value: expect_state(&table.get("value")?, "ui.tree's `value`")?,
+                on_open: table.get("on_open")?,
+                on_activate: table.get("on_activate")?,
+            };
+            // Not the `items` alignment style: the tree's.
+            table.raw_remove("items")?;
+            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
         })?,
     )?;
     ui.set(

@@ -383,3 +383,54 @@ impl ClickRole for Harness {
         self.frames(1);
     }
 }
+
+#[test]
+fn a_tree_opens_loads_lazily_and_activates() {
+    let mut h = Harness::inline(
+        r#"local items = ui.state("items", {
+            { id = "src", label = "src", children = { { id = "main", label = "main.luau" } } },
+            { id = "docs", label = "docs", lazy = true },
+        })
+        local open = ui.state("open", {} :: { string })
+        local current = ui.state("current", nil :: string?)
+        local opened = ui.state("opened", "")
+        return ui.column {
+            h = 300,
+            ui.tree {
+                label = "Files",
+                items = items,
+                open = open,
+                value = current,
+                on_open = function(id)
+                    if id == "docs" then
+                        items:set_key({ 2, "children" }, { { id = "guide", label = "guide.md" } })
+                    end
+                end,
+                on_activate = function(id) opened:set(id) end,
+            },
+            ui.text { id = "opened", "{opened}" },
+        }"#,
+    );
+    h.frames(2);
+    assert_eq!(h.error(), None);
+    let tree = with_role(&mut h, Role::Tree)[0];
+    h.ui.input.focus(&h.ui.scene, Some(tree));
+    h.frames(1);
+    h.key(Key::ArrowRight);
+    h.frames(1);
+    assert_eq!(with_role(&mut h, Role::TreeItem).len(), 3, "src opened");
+    h.key(Key::ArrowRight);
+    h.key(Key::Enter);
+    assert_eq!(h.text("opened"), "main");
+    h.key(Key::End);
+    h.key(Key::ArrowRight);
+    h.frames(2);
+    let labels: Vec<String> = with_role(&mut h, Role::TreeItem)
+        .iter()
+        .map(|n| h.ui.semantics.borrow().get(*n).unwrap().label.clone())
+        .collect();
+    assert!(
+        labels.contains(&"guide.md".to_owned()),
+        "loaded as it opened: {labels:?}"
+    );
+}
