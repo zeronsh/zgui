@@ -1614,17 +1614,67 @@ mod x11 {
     }
     /// macOS readies a panel here; X11's windows are made by `make`.
     pub(crate) fn warm(_: &GpuContext, _: f32) {}
-    // todo(x11): drags between windows need each window's place on screen
-    // (`XTranslateCoordinates`) and the stacking order. Until then drags
-    // stay in their window (their previews show past it).
-    pub(crate) fn content_origin(_: &Window) -> Option<(f64, f64)> {
-        None
+    thread_local! {
+        /// The app's windows, as `window_number` named them: what
+        /// `window_at` looks for.
+        static OWN: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+        /// Pixels per point of global coordinates: the last window's
+        /// (X11 has one scale for every window, `Xft.dpi`).
+        static SCALE: Cell<f64> = const { Cell::new(1.) };
     }
-    pub(crate) fn window_number(_: &Window) -> Option<isize> {
-        None
+    /// The window's content top-left in global coordinates (from the root
+    /// window's top-left, in points), which the X server translates.
+    pub(crate) fn content_origin(window: &Window) -> Option<(f64, f64)> {
+        xid(window)?;
+        let origin = window.inner_position().ok()?;
+        let scale = window.scale_factor();
+        SCALE.with(|cell| cell.set(scale));
+        Some((origin.x as f64 / scale, origin.y as f64 / scale))
     }
-    pub(crate) fn window_at(_: f64, _: f64) -> Option<isize> {
-        None
+    pub(crate) fn window_number(window: &Window) -> Option<isize> {
+        let id = xid(window)?;
+        OWN.with(|own| {
+            let mut own = own.borrow_mut();
+            if !own.contains(&id) {
+                own.push(id);
+            }
+        });
+        Some(id as isize)
+    }
+    /// The front-most window at global point `(x, y)` (any app's): one of
+    /// the app's (`window_number`), or the top-level window of another's.
+    /// The X server finds it (`XTranslateCoordinates`) by the stacking
+    /// order, past windows the pointer goes through: drag previews (an
+    /// empty input shape) and a compositor's overlay.
+    pub(crate) fn window_at(x: f64, y: f64) -> Option<isize> {
+        use x11rb::{connection::Connection, protocol::xproto::ConnectionExt};
+        let scale = SCALE.with(Cell::get);
+        let (x, y) = ((x * scale).round() as i16, (y * scale).round() as i16);
+        let own = OWN.with(|own| own.borrow().clone());
+        CONNECTION.with(|connection| {
+            let connection = connection.as_ref()?;
+            let root = connection.setup().roots.first()?.root;
+            // Down from the root, through the window manager's frame, to
+            // one of the app's windows.
+            let (mut window, mut top) = (root, None);
+            for _ in 0..8 {
+                let child = connection
+                    .translate_coordinates(root, window, x, y)
+                    .ok()?
+                    .reply()
+                    .ok()?
+                    .child;
+                if child == x11rb::NONE {
+                    break;
+                }
+                if own.contains(&child) {
+                    return Some(child as isize);
+                }
+                top.get_or_insert(child);
+                window = child;
+            }
+            top.map(|top| top as isize)
+        })
     }
     /// Whether a popup found no window ready (`make` one).
     pub(crate) fn wanted() -> bool {

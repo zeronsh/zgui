@@ -13,9 +13,14 @@
 //! `HKCU\Software\zgui\<executable>\Frames`, and reopened only where a monitor
 //! still shows its title bar. AppKit's window tabs have no Windows
 //! counterpart: `Tabbing` does nothing there.
-//! todo(x11): `XQueryPointer` could place it; the window manager may still
-//! move it. todo(wayland): the compositor places new windows, and the app
-//! cannot.
+//!
+//! X11 (`x11`): a window goes under the pointer: the pointer is the server's
+//! (`XQueryPointer`), and the window's frame the window manager's
+//! (`_NET_REQUEST_FRAME_EXTENTS`); the position is the user's
+//! (`USPosition`), which window managers keep rather than place the window
+//! themselves.
+//! todo(x11): cascading and saved frames. todo(wayland): the compositor
+//! places new windows, and the app cannot.
 
 /// AppKit's window tabs (macOS; elsewhere none): an app's windows gather as
 /// tabs of one window, as Finder's do.
@@ -154,7 +159,12 @@ mod win32;
 #[cfg(windows)]
 pub(crate) use win32::place;
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+mod x11;
+#[cfg(target_os = "linux")]
+pub(crate) use x11::place;
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) fn place(
     _: &winit::window::Window,
     _: Option<(f64, f64)>,

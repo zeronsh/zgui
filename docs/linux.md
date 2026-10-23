@@ -121,6 +121,18 @@ does not say which part). `drag_preview_smoke.py` checks the preview
 under picom: it follows the pointer past the window with nothing drawn, and
 slides back.
 
+Drags go between the app's windows, as on macOS: the host asks where each
+window's content is on the root (`XTranslateCoordinates`, kept as the window
+moves) and which window is in front at the pointer. The X server finds that
+by stacking order, down from the root through the window manager's frame,
+past windows the pointer goes through: drag previews and a compositor's
+overlay. Over another app's window covering one of the app's, the drag is
+not the app's window's. A tab torn off (released over no window of the app's)
+opens with the point it was grabbed by under the pointer. That point is
+`XQueryPointer`'s, less the frame the window manager reports
+(`_NET_REQUEST_FRAME_EXTENTS`), set as the user's position (`USPosition`) so
+window managers keep it. `drag_windows_smoke.py` checks all three.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a

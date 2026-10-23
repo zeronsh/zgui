@@ -81,7 +81,7 @@ const ROOMY: Frame = Frame(16, 16, 64, 16);
 /// A window manager's frame around a window, in pixels: left, right, top,
 /// bottom (`_NET_FRAME_EXTENTS`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct Frame(u32, u32, u32, u32);
+pub(crate) struct Frame(pub u32, pub u32, pub u32, pub u32);
 
 /// The inner size that fits `inner` and its `frame` in the `work` area
 /// (x, y, width, height), though not below `min`; `None` if it fits.
@@ -165,7 +165,7 @@ fn work_area(connection: &impl Connection, root: u32) -> Option<(i32, i32, i32, 
 /// manager answers by setting `_NET_FRAME_EXTENTS` on it (EWMH). `None`
 /// when the window manager does not say it answers (`_NET_SUPPORTED`), and
 /// after a moment's wait if it does not.
-fn frame_extents(connection: &impl Connection, root: u32, window: u32) -> Option<Frame> {
+pub(crate) fn frame_extents(connection: &impl Connection, root: u32, window: u32) -> Option<Frame> {
     let extents = atom(connection, "_NET_FRAME_EXTENTS")?;
     let request = atom(connection, "_NET_REQUEST_FRAME_EXTENTS")?;
     let supported = connection
