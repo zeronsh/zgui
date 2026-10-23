@@ -1775,10 +1775,11 @@ impl GpuRenderer {
             self.fresh = true;
         }
     }
-    pub fn resize(&mut self, width: u32, height: u32) {
+    /// Whether the size changed.
+    pub fn resize(&mut self, width: u32, height: u32) -> bool {
         let (width, height) = (width.max(1), height.max(1));
         if (width, height) == (self.width, self.height) {
-            return;
+            return false;
         }
         #[cfg(target_os = "macos")]
         if let Some(present) = &mut self.layer_present {
@@ -1834,6 +1835,7 @@ impl GpuRenderer {
             .as_ref()
             .map(|p| blit_group(&self.device, p, &self.view));
         self.fresh = true;
+        true
     }
     /// Render as `render`, without counting `damage` among what the frame
     /// changed: a repaint for comparison (`ZGUI_DAMAGE_CHECK`) must leave

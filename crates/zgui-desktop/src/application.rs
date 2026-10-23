@@ -2016,12 +2016,17 @@ impl Host {
                     .ui
                     .set_presented(self.state.visible && !self.state.minimized);
                 self.presentation.expose();
-                self.force = true;
+                // macOS keeps showing the layer's last frame: what changed
+                // while covered is the scene's damage.
+                self.force |= !cfg!(target_os = "macos");
             }
             WindowEvent::RedrawRequested => {
                 self.present_ready = true;
                 self.presentation.expose();
-                self.force = true;
+                // Other platforms may have lost the window's contents; on
+                // macOS a redraw AppKit asks for (as the window first shows)
+                // repaints only what changed.
+                self.force |= !cfg!(target_os = "macos");
                 if std::mem::take(&mut self.frame_redraw_requested) {
                     // Wayland: the compositor granted this frame. Let animations
                     // step before painting it.
@@ -2040,16 +2045,21 @@ impl Host {
                     self.presentation.expose();
                 }
                 let scale = self.scale_factor;
+                let viewport = self.context.viewport.with_untracked(|viewport| *viewport);
                 if apply_viewport(
                     &mut self.options,
                     &self.context.ui,
                     &self.context.viewport,
                     size,
                     scale,
-                ) {
-                    if let Some(renderer) = &mut self.renderer {
-                        renderer.resize(size.width, size.height);
-                    }
+                ) && (self
+                    .renderer
+                    .as_mut()
+                    .is_some_and(|renderer| renderer.resize(size.width, size.height))
+                    || self.context.viewport.with_untracked(|v| *v != viewport))
+                {
+                    // AppKit reports the size again as a window shows and as
+                    // it reaches its display: the same size repaints nothing.
                     #[cfg(target_os = "macos")]
                     {
                         self.resized_at = Some(std::time::Instant::now());
@@ -2063,6 +2073,9 @@ impl Host {
                     }
                 }
             }
+            // Reported as a window first reaches its display, unchanged.
+            WindowEvent::ScaleFactorChanged { scale_factor, .. }
+                if scale_factor == self.scale_factor => {}
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 // This event is authoritative. Some X11 XSETTINGS paths leave
                 // Window::scale_factor() stale for an existing native window.
