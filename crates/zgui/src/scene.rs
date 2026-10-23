@@ -5,6 +5,8 @@ use std::sync::{
 };
 static NEXT_SCENE_ID: AtomicU64 = AtomicU64::new(1);
 
+/// A node in a [`Scene`]. Generational: once its node is removed, an ID
+/// never names the node that reuses its slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NodeId {
     index: u32,
@@ -142,14 +144,20 @@ impl DamageGrid {
         done
     }
 }
+/// An axis-aligned rectangle in logical points, y down.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
+    /// Its left edge.
     pub x: f32,
+    /// Its top edge.
     pub y: f32,
+    /// Its width.
     pub width: f32,
+    /// Its height.
     pub height: f32,
 }
 impl Rect {
+    /// The rectangle at `x`, `y`, `width` by `height`.
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self {
             x,
@@ -158,12 +166,14 @@ impl Rect {
             height,
         }
     }
+    /// Whether the two overlap by more than an edge.
     pub fn intersects(self, other: Self) -> bool {
         self.x < other.x + other.width
             && other.x < self.x + self.width
             && self.y < other.y + other.height
             && other.y < self.y + self.height
     }
+    /// Where the two overlap, if they do by more than an edge.
     pub fn intersection(self, other: Self) -> Option<Self> {
         let x = self.x.max(other.x);
         let y = self.y.max(other.y);
@@ -171,6 +181,7 @@ impl Rect {
         let h = (self.y + self.height).min(other.y + other.height) - y;
         (w > 0.0 && h > 0.0).then(|| Self::new(x, y, w, h))
     }
+    /// The smallest rectangle holding both.
     pub fn union(self, other: Self) -> Self {
         let x = self.x.min(other.x);
         let y = self.y.min(other.y);
@@ -181,6 +192,7 @@ impl Rect {
             (self.y + self.height).max(other.y + other.height) - y,
         )
     }
+    /// Grown by `by` on every side (shrunk when negative).
     pub fn expand(self, by: f32) -> Self {
         Self::new(
             self.x - by,
@@ -193,17 +205,22 @@ impl Rect {
         Self::new(self.x + t.x, self.y + t.y, self.width, self.height)
     }
 }
+/// A colour: red, green, blue and alpha, each 0 to 255.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color(pub u8, pub u8, pub u8, pub u8);
+/// A translation, in logical points.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Transform {
+    /// Across.
     pub x: f32,
+    /// Down.
     pub y: f32,
 }
 /// Scale, rotation and skew about an origin, applied after layout and on
 /// top of the node's translation (`Transform`). Identity by default.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LocalTransform {
+    /// Across and down, about `origin`; 1 leaves it.
     pub scale: (f32, f32),
     /// Radians, clockwise on screen (positive Y down).
     pub rotate: f32,
@@ -218,6 +235,7 @@ impl Default for LocalTransform {
     }
 }
 impl LocalTransform {
+    /// No scale, rotation or skew, about the centre.
     pub const IDENTITY: Self = Self {
         scale: (1., 1.),
         rotate: 0.,
@@ -315,9 +333,13 @@ fn stretch(matrix: crate::affine::Affine) -> f32 {
 /// shadow or ring isn't cut. `Auto` is 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ClipInset {
+    /// From the top edge.
     pub top: crate::layout::Length,
+    /// From the right edge.
     pub right: crate::layout::Length,
+    /// From the bottom edge.
     pub bottom: crate::layout::Length,
+    /// From the left edge.
     pub left: crate::layout::Length,
 }
 impl ClipInset {
@@ -362,8 +384,11 @@ impl ClipInset {
 /// nothing shows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageMask {
+    /// The image whose alpha shows the subtree.
     pub image: Arc<crate::image::ImageData>,
+    /// Its top-left corner, from the node's laid-out origin.
     pub offset: (f32, f32),
+    /// Its drawn width and height.
     pub size: (f32, f32),
 }
 impl ImageMask {
@@ -382,13 +407,16 @@ const UNCLIPPED: Rect = Rect {
     width: f32::MAX / 2.,
     height: f32::MAX / 2.,
 };
+/// How a node composites: its opacity, blurs, filters and edge fades.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Effects {
+    /// Opacity, 0 to 1, multiplied down the tree.
     pub opacity: f32,
     /// Backdrop blur (CSS `backdrop-filter: blur()`), the Gaussian sigma in
     /// logical pixels: what lies behind the node, inside its bounds, blurs.
     /// Its own content stays sharp.
     pub blur_radius: f32,
+    /// Fade the top and bottom edges out over this many logical points.
     pub edge_fade: f32,
     /// Content blur (CSS `filter: blur()`), the Gaussian sigma in logical
     /// pixels: the node's own subtree, painted once as a cached layer,
@@ -464,9 +492,12 @@ pub fn compose_color(
         [column(0), column(1), column(2), column(3) + o[3]]
     }))
 }
+/// How a container lays out its children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
+    /// Side by side, from the start of the line.
     Row,
+    /// One under another.
     Column,
     /// Children stacked in the whole content box, as CSS grid lays out items
     /// sharing one area: each sized against it and aligned in it on its own,
@@ -478,18 +509,30 @@ pub enum Layout {
 /// A rectangular outer shadow. Blur radius is the Gaussian sigma in logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxShadow {
+    /// The shadow's colour.
     pub color: Color,
+    /// How far it is moved from the box.
     pub offset: Transform,
+    /// The blur's Gaussian sigma, in logical points.
     pub blur_radius: f32,
+    /// How far it is grown past the box before blurring.
     pub spread: f32,
 }
+/// How a box paints: its fill, border, corners, shadow and decoration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuadStyle {
+    /// The fill colour.
     pub fill: Color,
+    /// The corner radius, for all four corners.
     pub radius: f32,
+    /// The border's colour.
     pub border_color: Color,
+    /// The border's width on every side.
     pub border_width: f32,
+    /// One shadow under the box.
     pub shadow: Option<BoxShadow>,
+    /// What the plain fields can't say: per-side borders and corners,
+    /// gradients, images, shaders, more shadows.
     pub decoration: Option<Arc<crate::decoration::Decoration>>,
     /// Paint the border over the node's descendants (an inset stroke, as a
     /// CSS outline drawn inside): the fill paints first, the border after
@@ -505,8 +548,11 @@ pub struct QuadStyle {
 /// centred, offset `-width / 2`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Outline {
+    /// The ring's width.
     pub width: f32,
+    /// Its colour.
     pub color: Color,
+    /// How far outside the box it starts; negative draws over the box.
     pub offset: f32,
 }
 impl Outline {
@@ -569,12 +615,15 @@ impl QuadStyle {
                 .into_iter()
                 .any(|width| width.is_finite() && width > 0.)
     }
+    /// Its shadows: the decoration's, else `shadow`.
     pub fn shadows(&self) -> &[BoxShadow] {
         self.decoration
             .as_ref()
             .and_then(|d| d.shadows.as_deref())
             .unwrap_or(self.shadow.as_slice())
     }
+    /// The area it paints for a node at `bounds`: the box with its shadows
+    /// and outline.
     pub fn paint_bounds(&self, bounds: Rect) -> Rect {
         let painted = self.shadows().iter().fold(bounds, |paint, shadow| {
             paint.union(
@@ -594,41 +643,63 @@ impl QuadStyle {
         (self.border_over && self.has_border()) || self.outline.is_some_and(|o| o.visible())
     }
 }
+/// What a node is and paints.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
+    /// A box laying out its children, painting nothing itself.
     Container(Layout),
     /// A decorated container. Its border takes room inside its box, as CSS's
     /// `box-sizing: border-box` has it (`QuadStyle::layout_border`): its
     /// padding and children lay out inside it. The rest of its paint does
     /// not participate in layout.
     Panel {
+        /// How it lays out its children.
         layout: Layout,
+        /// How it paints.
         quad: QuadStyle,
     },
+    /// A filled rectangle.
     Rect(Color),
+    /// A decorated box without children.
     Quad(QuadStyle),
+    /// A decoded image.
     Image(Arc<crate::image::ImageData>),
+    /// An SVG, rasterized at its drawn size.
     Svg(Arc<crate::svg::SvgData>),
+    /// A vector drawing (see [`crate::canvas`]).
     Canvas(Arc<crate::canvas::Canvas>),
+    /// A retained CoreVideo frame (macOS).
     #[cfg(target_os = "macos")]
     NativeSurface(std::rc::Rc<crate::native_surface::NativeSurface>),
+    /// A paragraph of styled spans.
     RichText {
+        /// Its spans, shaped as one paragraph.
         text: Arc<crate::rich_text::RichText>,
     },
+    /// Plain text.
     Text {
+        /// The text.
         text: Arc<str>,
+        /// Its colour.
         color: Color,
+        /// Its font size, in logical points.
         font_size: f32,
     },
 }
+/// Lengths on each side of a box, in logical points.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Insets {
+    /// The top side.
     pub top: f32,
+    /// The right side.
     pub right: f32,
+    /// The bottom side.
     pub bottom: f32,
+    /// The left side.
     pub left: f32,
 }
 impl Insets {
+    /// `value` on every side.
     pub fn all(value: f32) -> Self {
         Self {
             top: value,
@@ -638,13 +709,20 @@ impl Insets {
         }
     }
 }
+/// Where children sit across a row's or column's axis (CSS
+/// `align-items`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Align {
+    /// A row's children aligned by their first lines' baselines.
     Baseline,
+    /// At the start.
     #[default]
     Start,
+    /// Centred.
     Center,
+    /// At the end.
     End,
+    /// Stretched across, unless they size themselves on that axis.
     Stretch,
 }
 /// Distribution along a row's or column's main axis (CSS `justify-content`),
@@ -653,12 +731,18 @@ pub enum Align {
 /// they do for one item).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Justify {
+    /// Packed at the start.
     #[default]
     Start,
+    /// Centred.
     Center,
+    /// Packed at the end.
     End,
+    /// The free space between the children, none at the ends.
     SpaceBetween,
+    /// The free space around each child: half as much at the ends.
     SpaceAround,
+    /// The free space spread evenly between the children and the ends.
     SpaceEvenly,
     /// An overlay's children fill its height, unless they size themselves
     /// there. Along a row or column it acts as `Start`, as CSS's
@@ -667,6 +751,7 @@ pub enum Justify {
 }
 /// A platform text shaper can provide accurate intrinsic and wrapped text metrics.
 pub trait TextMeasurer {
+    /// The size of `text` at `font_size`, wrapped at `max_width` if given.
     fn measure(&self, text: &str, font_size: f32, max_width: Option<f32>) -> (f32, f32);
 }
 impl<F: Fn(&str, f32, Option<f32>) -> (f32, f32)> TextMeasurer for F {
@@ -674,6 +759,9 @@ impl<F: Fn(&str, f32, Option<f32>) -> (f32, f32)> TextMeasurer for F {
         self(text, font_size, max_width)
     }
 }
+/// A node's layout style: its size, spacing, flex and alignment. The
+/// rarer options (grid, wrapping, percentages, positioning) are in
+/// `layout_options`.
 #[derive(Clone, Debug)]
 pub struct Style {
     /// Opt-in grid, wrapping, richer lengths and positioning.
@@ -695,7 +783,11 @@ pub struct Style {
     pub intrinsic_width: bool,
     /// `height` is its intrinsic height, as `intrinsic_width`.
     pub intrinsic_height: bool,
+    /// Its width in logical points; `None` sizes it by its content and
+    /// parent.
     pub width: Option<f32>,
+    /// Its height in logical points; `None` sizes it by its content and
+    /// parent.
     pub height: Option<f32>,
     /// Fraction of the definite parent content width (1.0 means 100%).
     /// Falls back to intrinsic sizing when that axis is indefinite. Pixel width wins.
@@ -703,10 +795,13 @@ pub struct Style {
     /// Fraction of the definite parent content height. Absolute children use the
     /// final parent box. Invalid/negative fractions resolve to zero; values over 1 are allowed.
     pub height_percent: Option<f32>,
+    /// Padding on every side, unless `padding_edges` is set.
     pub padding: f32,
     /// Per-edge padding, overriding `padding` when present.
     pub padding_edges: Option<Insets>,
+    /// The room between children.
     pub gap: f32,
+    /// Clip its descendants to its box (CSS `overflow: hidden`).
     pub clip: bool,
     /// Fade descendants out over these bands (top, bottom) at the edges of
     /// this node's clip, in the fragment shader: a scroll view whose content
@@ -729,14 +824,24 @@ pub struct Style {
     /// (a split pane) keeps crisp borders at every size. Its size follows
     /// its rounded edges, so boxes that share an edge still meet.
     pub snap: bool,
+    /// The smallest width it lays out at.
     pub min_width: Option<f32>,
+    /// The largest width it lays out at.
     pub max_width: Option<f32>,
+    /// The smallest height it lays out at.
     pub min_height: Option<f32>,
+    /// The largest height it lays out at.
     pub max_height: Option<f32>,
+    /// Room outside its box.
     pub margin: Insets,
+    /// Its share of its parent's free space (CSS `flex-grow`).
     pub flex_grow: f32,
+    /// How much it gives up when its parent is short of space (CSS
+    /// `flex-shrink`; 1 by default).
     pub flex_shrink: f32,
+    /// Where its children sit across its axis.
     pub align: Align,
+    /// How its children spread along its axis.
     pub justify: Justify,
     /// Request wrapping at the available content width from the text measurer.
     pub text_wrap: bool,
@@ -1085,8 +1190,10 @@ const PERCENT_HEIGHT: u8 = 16;
 /// arrows read the other way.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Direction {
+    /// Left to right.
     #[default]
     Ltr,
+    /// Right to left.
     Rtl,
 }
 /// Which way a node runs (`own`: its padding and what it holds) and the
@@ -1294,14 +1401,20 @@ struct Slot {
     generation: u32,
     node: Option<Node>,
 }
+/// What a [`Scene::flush`] did, for renderers and diagnostics.
 #[derive(Default, Debug)]
 pub struct FrameReport {
+    /// The areas to repaint, in logical points.
     pub damage: Vec<Rect>,
+    /// How many nodes were laid out again.
     pub layout_nodes: usize,
+    /// How many nodes were repainted.
     pub paint_nodes: usize,
+    /// How many nodes only composited again (moved, faded, transformed).
     pub composite_nodes: usize,
 }
 impl FrameReport {
+    /// Whether nothing changed: no damage and no work done.
     pub fn is_idle(&self) -> bool {
         self.damage.is_empty()
             && self.layout_nodes == 0
@@ -1341,7 +1454,9 @@ pub type FadeMask = (Rect, [f32; 4]);
 /// bottom-left, each at most half its shorter side.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RoundRect {
+    /// The box.
     pub rect: Rect,
+    /// Its corner radii.
     pub radii: [f32; 4],
 }
 /// The rounded clips around a paint item, innermost first: those of its
@@ -1351,16 +1466,25 @@ pub struct RoundRect {
 /// layer's space. Two cover a rounded thumbnail inside a rounded card;
 /// further out, the corners are those of the outer two.
 pub type RoundedClip = [Option<RoundRect>; 2];
+/// One thing to paint, as the paint walk yields it: a node's box, kind,
+/// text style, effects and clips, in window space.
 #[derive(Clone)]
 pub struct PaintItem<'a> {
     /// A layer (an isolated or transformed subtree) represented by its cached image.
     pub isolated: bool,
+    /// The node.
     pub id: NodeId,
+    /// Its box as laid out and translated.
     pub bounds: Rect,
+    /// What it paints.
     pub kind: &'a NodeKind,
+    /// Its text style.
     pub font: &'a crate::text_layout::FontStyle,
+    /// How its plain text wraps and overflows.
     pub text_options: crate::text_layout::TextOptions,
+    /// How it composites.
     pub effects: Effects,
+    /// The rectangle it paints within, if clipped.
     pub clip: Option<Rect>,
     /// This item paints `id`'s border alone, after its descendants
     /// (`QuadStyle::border_over`); the node's first item painted the rest.
@@ -1377,8 +1501,11 @@ pub struct PaintItem<'a> {
 pub struct PaintExtras {
     /// See `PaintItem::matrix`.
     pub matrix: Option<crate::affine::Affine>,
+    /// See `PaintItem::mask`.
     pub mask: Option<FadeMask>,
+    /// See `PaintItem::rounded`.
     pub rounded: RoundedClip,
+    /// See `PaintItem::color`.
     pub color: Option<ColorMatrix>,
 }
 impl PaintExtras {
@@ -1445,6 +1572,7 @@ type FontMeasurer =
 /// A node `Scene::walk` visits.
 #[derive(Clone, Copy, Debug)]
 pub struct WalkItem {
+    /// The node.
     pub id: NodeId,
     /// Levels below the node the walk started from.
     pub depth: usize,
@@ -1454,6 +1582,10 @@ pub struct WalkItem {
     /// The clip it paints within (its ancestors' clips and the viewport).
     pub clip: Option<Rect>,
 }
+/// A retained tree of nodes with their styles, laid out and painted
+/// incrementally: a change invalidates only the layout, paint or
+/// compositing that depends on it, and [`Scene::flush`] does that work
+/// and reports the damage.
 pub struct Scene {
     identity: u64,
     slots: Vec<Slot>,
@@ -1552,15 +1684,20 @@ pub struct Scene {
 /// cannot copy must repaint `clip` as well.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollMove {
+    /// The scroll view.
     pub node: NodeId,
+    /// The area its content moved within.
     pub clip: Rect,
+    /// How far it moved across.
     pub dx: f32,
+    /// How far it moved down.
     pub dy: f32,
     /// `flush_serial` of the flush that reported it: the copy is valid only
     /// over the frame rendered from the previous flush.
     pub serial: u64,
 }
 impl Scene {
+    /// A scene with only its root, a `width` by `height` viewport.
     pub fn new(width: f32, height: f32) -> Self {
         let root = NodeId {
             index: 0,
@@ -1676,6 +1813,7 @@ impl Scene {
         }
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
     }
+    /// Whether `id` is inert (`set_inert`): hit testing passes through it.
     pub fn is_inert(&self, id: NodeId) -> bool {
         self.inert.contains(&id)
     }
@@ -1732,6 +1870,7 @@ impl Scene {
             .map(|ink| ink.translated(offset))
             .filter(|ink| ink.width > 0. && ink.height > 0.)
     }
+    /// Whether `id` shows in a popup window of its own (`set_popup`).
     pub fn is_popup(&self, id: NodeId) -> bool {
         !self.popups.is_empty() && self.popups.contains(&id)
     }
@@ -1739,6 +1878,7 @@ impl Scene {
     pub fn identity(&self) -> u64 {
         self.identity
     }
+    /// The root node, which always exists.
     pub fn root(&self) -> NodeId {
         self.root
     }
@@ -1765,17 +1905,21 @@ impl Scene {
         }
         self.invalidate(id, COMPOSITE);
     }
+    /// Whether `id` is painted by the platform (`set_platform_painted`).
     pub fn is_platform_painted(&self, id: NodeId) -> bool {
         self.platform_nodes.contains(&id)
     }
+    /// Whether `id` is still in the scene.
     pub fn contains(&self, id: NodeId) -> bool {
         self.slots
             .get(id.index as usize)
             .is_some_and(|s| s.generation == id.generation && s.node.is_some())
     }
+    /// The number of nodes, the root included.
     pub fn len(&self) -> usize {
         self.slots.len() - self.free.len()
     }
+    /// Always false: a scene keeps its root.
     pub fn is_empty(&self) -> bool {
         false
     } // A scene always retains its root.
@@ -1787,6 +1931,8 @@ impl Scene {
         assert!(self.contains(id), "stale scene node");
         self.slots[id.index as usize].node.as_mut().unwrap()
     }
+    /// `id`'s box as laid out, translated by its own and its ancestors'
+    /// translations, in window points.
     pub fn bounds(&self, id: NodeId) -> Rect {
         // `world`'s bounds, without the opacity and clip it also works out:
         // observed bounds are read for every observed node on every frame
@@ -1818,6 +1964,8 @@ impl Scene {
                 .chain(self.ancestors(id))
                 .all(|id| own_visible(&self.node(id).style))
     }
+    /// The part of `id`'s box that shows: inside its clips and not fully
+    /// transparent; `None` when nothing does.
     pub fn visible_bounds(&self, id: NodeId) -> Option<Rect> {
         let (bounds, effects, clip) = self.world(id);
         if effects.opacity <= 0. {
@@ -1856,6 +2004,7 @@ impl Scene {
         let (_, bounds, clip, placement) = self.descend(self.node(id), transform, clip, placement);
         (bounds, clip, placement)
     }
+    /// `id`'s scale, rotation, skew and origin.
     pub fn local_transform(&self, id: NodeId) -> LocalTransform {
         self.node(id).local()
     }
@@ -1909,6 +2058,7 @@ impl Scene {
         };
         self.set_effects(id, effects);
     }
+    /// `id`'s mask, if it has one.
     pub fn mask(&self, id: NodeId) -> Option<&ImageMask> {
         self.node(id).image_mask.as_deref()
     }
@@ -1977,6 +2127,7 @@ impl Scene {
         self.node_mut(id).shader_uniforms = Some(Box::new(uniforms));
         self.invalidate(id, PAINT);
     }
+    /// `id`'s clip inset, if it has one.
     pub fn clip_inset(&self, id: NodeId) -> Option<ClipInset> {
         self.node(id).clip_inset.as_deref().copied()
     }
@@ -2195,6 +2346,7 @@ impl Scene {
                 insets.top + insets.bottom
             }
     }
+    /// The cursor over `id`: its own, else its nearest ancestor's.
     pub fn cursor_for(&self, mut id: NodeId) -> Option<crate::cursor::Cursor> {
         loop {
             let node = self.node(id);
@@ -2204,6 +2356,7 @@ impl Scene {
             id = node.parent?;
         }
     }
+    /// Show `cursor` over `id`, or with `None` its ancestors'.
     pub fn set_cursor(&mut self, id: NodeId, cursor: Option<crate::cursor::Cursor>) {
         let old = self.node(id).cursor;
         if old != cursor {
@@ -2213,9 +2366,12 @@ impl Scene {
             self.geometry_revision = self.geometry_revision.wrapping_add(1);
         }
     }
+    /// Counts changes that affect what is under the pointer (geometry,
+    /// cursors): unchanged, a host needn't hit test again.
     pub fn interaction_revision(&self) -> u64 {
         self.geometry_revision
     }
+    /// The cursor at `x`, `y`: a selectable text's, or the topmost node's.
     pub fn cursor_at(&self, x: f32, y: f32) -> Option<crate::cursor::Cursor> {
         if self.cursor_styles == 0 && !self.selectable.any() {
             return None;
@@ -2224,12 +2380,15 @@ impl Scene {
             .first()
             .and_then(|id| self.selection_cursor(*id).or_else(|| self.cursor_for(*id)))
     }
+    /// `id`'s parent; `None` for the root.
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.node(id).parent
     }
+    /// `id`'s children, in order.
     pub fn children(&self, id: NodeId) -> &[NodeId] {
         &self.node(id).children
     }
+    /// What `id` is and paints.
     pub fn kind(&self, id: NodeId) -> &NodeKind {
         &self.node(id).kind
     }
@@ -2274,6 +2433,8 @@ impl Scene {
         // Its own measurement changes kind either way.
         self.invalidate_layout(id);
     }
+    /// Whether `id` is a contents node (CSS `display: contents`): its
+    /// children lay out in its place.
     pub fn is_contents(&self, id: NodeId) -> bool {
         self.node(id).contents
     }
@@ -2377,9 +2538,11 @@ impl Scene {
             self.sync_contents(parent);
         }
     }
+    /// `id`'s own effects.
     pub fn effects(&self, id: NodeId) -> Effects {
         self.node(id).effects
     }
+    /// `id`'s own translation.
     pub fn transform(&self, id: NodeId) -> Transform {
         self.node(id).transform
     }
@@ -2469,6 +2632,8 @@ impl Scene {
         hits.reverse();
         hits
     }
+    /// The topmost node at `x`, `y`, containers included; call after
+    /// flushing layout.
     pub fn hit_test(&self, x: f32, y: f32) -> Option<NodeId> {
         self.hit_test_all(x, y).into_iter().next()
     }
@@ -2646,6 +2811,8 @@ impl Scene {
             self.invalidate(id, LAYOUT | PAINT);
         }
     }
+    /// Shape `text` at `font_size` in the default font, wrapped at
+    /// `max_width` if given.
     pub fn shape_text(
         &self,
         text: &str,
@@ -2662,6 +2829,8 @@ impl Scene {
             ))
         }
     }
+    /// Measure plain text with `measurer` (a platform shaper's metrics)
+    /// instead of the built-in estimate; text lays out again.
     pub fn set_text_measurer(&mut self, measurer: impl TextMeasurer + 'static) {
         self.text_measurer = Some(Box::new(measurer));
         self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
@@ -2680,6 +2849,7 @@ impl Scene {
             self.invalidate(id, LAYOUT | PAINT);
         }
     }
+    /// `id`'s text style.
     pub fn font(&self, id: NodeId) -> &crate::text_layout::FontStyle {
         &self.node(id).font
     }
@@ -2700,6 +2870,8 @@ impl Scene {
         self.invalidate(id, PAINT);
         self.invalidate_layout(id);
     }
+    /// Shape and measure text with `shaper` (the renderer's font system);
+    /// text lays out and paints again.
     pub fn set_font_text_shaper(
         &mut self,
         shaper: impl crate::text_layout::FontTextShaper + 'static,
@@ -2728,6 +2900,7 @@ impl Scene {
         self.rich_shaper = Some(Box::new(shaper));
         self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
     }
+    /// Shape a rich paragraph, wrapped at `width` if given.
     pub fn shape_rich_text(
         &self,
         rich: &crate::rich_text::RichText,
@@ -2800,6 +2973,7 @@ impl Scene {
     pub(crate) fn text_shaper_revision(&self) -> u64 {
         self.text_shaper_revision
     }
+    /// Shape `text` at `size` in `font`, wrapped at `width` if given.
     pub fn shape_text_with_font(
         &self,
         text: &str,
@@ -2821,6 +2995,7 @@ impl Scene {
             self.shape_text(text, size, width)
         }
     }
+    /// The size of `text` at `size` in `font`, wrapped at `width` if given.
     pub fn measure_text_with_font(
         &self,
         text: &str,
@@ -2838,6 +3013,8 @@ impl Scene {
             self.measure_text(text, size, width)
         }
     }
+    /// Change what `id` is or paints, invalidating only what the change
+    /// affects.
     pub fn set_kind(&mut self, id: NodeId, kind: NodeKind) {
         if self.node(id).kind == kind {
             return;
@@ -2915,6 +3092,7 @@ impl Scene {
             self.invalidate_layout(id);
         }
     }
+    /// Append a node of `kind` with `style` as `parent`'s last child.
     pub fn append(&mut self, parent: NodeId, kind: NodeKind, mut style: Style) -> NodeId {
         self.content_revision = self.content_revision.wrapping_add(1);
         if let Some(options) = &style.layout_options {
@@ -2999,6 +3177,8 @@ impl Scene {
         self.children_changed(parent);
         id
     }
+    /// Remove `id` and its subtree, damaging where they painted. Panics for
+    /// the root.
     pub fn remove(&mut self, id: NodeId) {
         self.content_revision = self.content_revision.wrapping_add(1);
         assert_ne!(id, self.root, "cannot remove scene root");
@@ -3065,6 +3245,7 @@ impl Scene {
             .expect("node generation exhausted");
         self.free.push(id.index);
     }
+    /// Change a text node's text. Panics if `id` isn't a text node.
     pub fn set_text(&mut self, id: NodeId, value: impl Into<Arc<str>>) {
         let value = value.into();
         let node = self.node(id);
@@ -3087,6 +3268,7 @@ impl Scene {
             self.invalidate_layout(id);
         }
     }
+    /// Change `id`'s layout style, invalidating its layout.
     pub fn set_style(&mut self, id: NodeId, style: Style) {
         self.restyle(id, style, true);
     }
@@ -3209,6 +3391,7 @@ impl Scene {
             stack.extend_from_slice(&self.node(node).children);
         }
     }
+    /// Resize the viewport (the root's box) to `width` by `height`.
     pub fn resize(&mut self, width: f32, height: f32) {
         if self.viewport.width == width && self.viewport.height == height {
             return;
@@ -5177,6 +5360,8 @@ impl Scene {
         self.layout_revision = self.layout_revision.wrapping_add(1);
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
     }
+    /// Lay out, paint and composite what changed since the last flush, and
+    /// report the damage.
     pub fn flush(&mut self) -> FrameReport {
         let mut report = FrameReport::default();
         if self.dirty.is_empty() {
@@ -5481,12 +5666,16 @@ impl Scene {
         self.node_mut(id).isolated = isolated;
         self.invalidate(id, PAINT);
     }
+    /// Whether `id` renders as a group into a cached layer (`isolated`).
     pub fn is_isolated(&self, id: NodeId) -> bool {
         self.node(id).isolated
     }
+    /// Counts changes to `id`'s layer contents: a renderer repaints its
+    /// cached layer when this changes.
     pub fn layer_revision(&self, id: NodeId) -> u64 {
         self.node(id).layer_revision
     }
+    /// The isolated nodes.
     pub fn isolated_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.slots.iter().enumerate().filter_map(|(index, slot)| {
             slot.node
@@ -5538,6 +5727,8 @@ impl Scene {
     pub fn has_backdrop_blur(&self) -> bool {
         !self.blur_nodes.is_empty()
     }
+    /// The paint items in paint order: the window's with `None` (popups left
+    /// out), or popup `root`'s alone.
     pub fn layer_items(&self, root: Option<NodeId>) -> Vec<PaintItem<'_>> {
         self.layer_items_within(root, None)
     }
@@ -5786,6 +5977,7 @@ impl Scene {
         self.walk_hints.set((deepest, result.len()));
         result
     }
+    /// Every paint item, in paint order from the root.
     pub fn paint_items(&self) -> impl Iterator<Item = PaintItem<'_>> {
         PaintIter {
             scene: self,
