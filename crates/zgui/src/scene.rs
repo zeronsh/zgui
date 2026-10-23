@@ -1068,6 +1068,13 @@ fn min_content_lines(text: &str) -> String {
     }
     lines
 }
+/// `Node::reads`: known, reads the available width, the height; has a
+/// width or height percentage in its subtree.
+const READS_KNOWN: u8 = 1;
+const READS_WIDTH: u8 = 2;
+const READS_HEIGHT: u8 = 4;
+const PERCENT_WIDTH: u8 = 8;
+const PERCENT_HEIGHT: u8 = 16;
 /// What a contents node lays out as (`Scene::set_contents`): `own` with
 /// `lead`'s place in the parent. Its margins add to the node's own. The
 /// node's visibility and clip stay its own (the lead's would also cut the
@@ -1803,7 +1810,13 @@ impl Scene {
     /// `min-width: auto` / `min-height: auto`): the smaller of its own size
     /// (when it sets one) and its content's min-content size, or 0 for one
     /// that clips, as CSS gives a scroll container.
-    fn automatic_minimum(&mut self, id: NodeId, asked: Constraints, horizontal: bool) -> f32 {
+    fn automatic_minimum(
+        &mut self,
+        id: NodeId,
+        asked: Constraints,
+        horizontal: bool,
+        base: f32,
+    ) -> f32 {
         // A `contents` node's style is the one it lays out with (its last
         // child's, with the margins added); its content, and so whether it
         // clips, is that child's.
@@ -1811,40 +1824,73 @@ impl Scene {
             return 0.;
         }
         let style = &self.node(id).style;
-        let specified = if horizontal {
-            style.width
-        } else {
-            style.height
-        };
-        let content = self.min_content(id, asked, horizontal);
+        if !horizontal {
+            // Down a column, CSS's min-content block size at the width it
+            // has: as tall as it lays out there, its own height set aside.
+            // Sized by its content, that is the height it was measured at
+            // (`base`), with no probe; given a height, its content's height
+            // at that width (a probe under its own constraints, so what it
+            // holds answers from the layout's caches).
+            let laid = self.laid_out_as(id);
+            if style.height.is_none()
+                && style.height_percent.is_none()
+                && !self.percentages_within(laid).1
+            {
+                return base;
+            }
+            // Percentage heights inside (a pane's `h_full` children) are
+            // auto for this, and its base resolved them: what its children
+            // need, walked as across.
+            let content = self.min_content(id, asked, false);
+            return base.min(content);
+        }
+        let specified = style.width;
+        let content = self.min_content(id, asked, true);
         match specified {
             Some(size) => size.min(content),
             None => content,
         }
     }
+    /// `id` measured under `probe` with its own size along an axis
+    /// (`horizontal`, or down) set aside: what its content needs, not what
+    /// it asks for. Its kept results (made with its size) are set aside too
+    /// and put back after: the probe measures it afresh and leaves nothing
+    /// behind, while what it holds answers from its own caches.
+    fn measure_unsized(&mut self, id: NodeId, probe: Constraints, horizontal: bool) -> (f32, f32) {
+        let (saved, kept) = {
+            let node = self.node_mut(id);
+            let saved = if horizontal {
+                (node.style.width.take(), node.style.width_percent.take())
+            } else {
+                (node.style.height.take(), node.style.height_percent.take())
+            };
+            let kept = (
+                node.measurement.take(),
+                std::mem::take(&mut node.alternates),
+                std::mem::take(&mut node.sizes),
+            );
+            (saved, kept)
+        };
+        let size = self.measure(id, probe);
+        let node = self.node_mut(id);
+        if horizontal {
+            (node.style.width, node.style.width_percent) = saved;
+        } else {
+            (node.style.height, node.style.height_percent) = saved;
+        }
+        (node.measurement, node.alternates, node.sizes) = kept;
+        size
+    }
     /// The min-content size of `id`'s content along an axis (`horizontal`,
-    /// or down): what it needs at the least, its own size set aside. A text
-    /// measures as narrow as it wraps, a box as its children need plus its
+    /// or down, at the width it is `asked` for): what it needs at the least,
+    /// its own size set aside. A text measures as narrow as it wraps (or as
+    /// tall as it wraps at that width), a box as its children need plus its
     /// padding and border; something that clips needs nothing.
     fn min_content(&mut self, id: NodeId, asked: Constraints, horizontal: bool) -> f32 {
         let id = self.laid_out_as(id);
         let node = self.node(id);
         let kind_is_box = matches!(node.kind, NodeKind::Container(_) | NodeKind::Panel { .. });
         if !kind_is_box || node.children.is_empty() {
-            // A leaf (text, an image, an editor): as narrow as it measures
-            // with no room, or its natural height.
-            let probe = if horizontal {
-                Constraints {
-                    width: Some(0.),
-                    force_width: None,
-                    ..Default::default()
-                }
-            } else {
-                Constraints {
-                    width: asked.force_width.or(asked.width),
-                    ..Default::default()
-                }
-            };
             if kind_is_box {
                 let insets = self.content_insets(id);
                 return if horizontal {
@@ -1853,32 +1899,20 @@ impl Scene {
                     insets.top + insets.bottom
                 };
             }
-            // Its own size set aside while it is probed: the content's
-            // need, not the size it asks for. Its kept results (made with
-            // its size) are set aside too and put back after: the probe
-            // measures afresh and leaves nothing behind.
-            let (saved, kept) = {
-                let node = self.node_mut(id);
-                let saved = if horizontal {
-                    (node.style.width.take(), node.style.width_percent.take())
-                } else {
-                    (node.style.height.take(), node.style.height_percent.take())
-                };
-                let kept = (
-                    node.measurement.take(),
-                    std::mem::take(&mut node.alternates),
-                    std::mem::take(&mut node.sizes),
-                );
-                (saved, kept)
-            };
-            let size = self.measure(id, probe);
-            let node = self.node_mut(id);
-            if horizontal {
-                (node.style.width, node.style.width_percent) = saved;
+            // A leaf (text, an image, an editor): as narrow as it measures
+            // with no room, or as tall as it lays out at its width.
+            let probe = if horizontal {
+                Constraints {
+                    width: Some(0.),
+                    ..Default::default()
+                }
             } else {
-                (node.style.height, node.style.height_percent) = saved;
-            }
-            (node.measurement, node.alternates, node.sizes) = kept;
+                Constraints {
+                    width: asked.force_width.or(asked.width),
+                    ..Default::default()
+                }
+            };
+            let size = self.measure_unsized(id, probe, horizontal);
             return if horizontal { size.0 } else { size.1 };
         }
         let layout = match node.kind {
@@ -1915,7 +1949,17 @@ impl Scene {
                 };
                 match own {
                     Some(size) => size,
-                    None => self.min_content(child, Constraints::default(), horizontal),
+                    // Down a column, at the width it is laid out at, so
+                    // text wraps there; across, with no room.
+                    None => self.min_content(
+                        child,
+                        if horizontal {
+                            Constraints::default()
+                        } else {
+                            asked
+                        },
+                        horizontal,
+                    ),
                 }
             };
             let margins = if horizontal {
@@ -3696,13 +3740,28 @@ impl Scene {
     /// until its layout is invalidated, which reaches every ancestor up to a
     /// fixed-size boundary (which reads neither).
     fn reads_available(&self, id: NodeId) -> (bool, bool) {
-        const KNOWN: u8 = 1;
-        const WIDTH: u8 = 2;
-        const HEIGHT: u8 = 4;
+        let bits = self.reads_bits(id);
+        (bits & READS_WIDTH != 0, bits & READS_HEIGHT != 0)
+    }
+    /// Whether anything in `id`'s subtree sizes itself by a percentage of a
+    /// width (or a height) above it: what a definite size given to `id`
+    /// can change beyond its own. Cached with `reads_available`.
+    fn percentages_within(&self, id: NodeId) -> (bool, bool) {
+        let bits = self.reads_bits(id);
+        (bits & PERCENT_WIDTH != 0, bits & PERCENT_HEIGHT != 0)
+    }
+    fn reads_bits(&self, id: NodeId) -> u8 {
         let node = self.node(id);
         let cached = node.reads.get();
-        if cached & KNOWN != 0 {
-            return (cached & WIDTH != 0, cached & HEIGHT != 0);
+        if cached & READS_KNOWN != 0 {
+            return cached;
+        }
+        // Percentages anywhere below, or its own.
+        let (mut percent_w, mut percent_h) = self.percent_bases(id);
+        for child in &node.children {
+            let (w, h) = self.percentages_within(*child);
+            percent_w |= w;
+            percent_h |= h;
         }
         let style = &node.style;
         let (width, height) = match &node.kind {
@@ -3751,9 +3810,13 @@ impl Scene {
             }
             _ => (false, false),
         };
-        node.reads
-            .set(KNOWN | if width { WIDTH } else { 0 } | if height { HEIGHT } else { 0 });
-        (width, height)
+        let bits = READS_KNOWN
+            | if width { READS_WIDTH } else { 0 }
+            | if height { READS_HEIGHT } else { 0 }
+            | if percent_w { PERCENT_WIDTH } else { 0 }
+            | if percent_h { PERCENT_HEIGHT } else { 0 };
+        node.reads.set(bits);
+        bits
     }
     /// `id`'s size under `constraints`, for a probe: a kept size serves,
     /// leaving whichever result `id` holds whole as it was.
@@ -4086,8 +4149,9 @@ impl Scene {
                                 let floor = match floors[i] {
                                     Some(floor) => floor,
                                     None => {
-                                        let floor =
-                                            self.automatic_minimum(*child, asked[i], horizontal);
+                                        let floor = self.automatic_minimum(
+                                            *child, asked[i], horizontal, bases[i],
+                                        );
                                         floors[i] = Some(floor);
                                         floor
                                     }
@@ -4105,6 +4169,11 @@ impl Scene {
                             if (size - wanted).abs() > 0.001 {
                                 frozen[i] = true;
                                 clamped = true;
+                            }
+                            // Held where it is (a column's text at its
+                            // content's height): as laid out, not again.
+                            if !allocated[i] && (size - main(sizes[i])).abs() < 0.001 {
+                                continue;
                             }
                             asked[i] = along(asked[i], size);
                             allocated[i] = true;
@@ -4128,6 +4197,14 @@ impl Scene {
                     for (i, child) in ids.iter().enumerate() {
                         let child_style = &self.node(*child).style;
                         if child_style.flex_grow > 0.0 || child_style.flex_shrink > 0.0 {
+                            // At its natural size with nothing in it sized by
+                            // a percentage along the axis, the allocation
+                            // changes nothing: it is not laid out again.
+                            let (percent_w, percent_h) = self.percentages_within(*child);
+                            let percent = if horizontal { percent_w } else { percent_h };
+                            if !allocated[i] && !percent {
+                                continue;
+                            }
                             asked[i] = along(asked[i], main(sizes[i]));
                             allocated[i] = true;
                             sizes[i] = self.measure(*child, asked[i]);
