@@ -1528,7 +1528,6 @@ impl ScriptHost {
             overlay()
                 .w_full()
                 .h_full()
-                .on_document_event(lower::tooltip_keys)
                 .child(app.w_full().h_full())
                 .child_when(
                     move || {

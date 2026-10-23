@@ -157,7 +157,7 @@ pub(crate) fn lower(node: &Rc<Node>, low: &Rc<Lowering>) -> View {
             tip @ crate::node::Tooltip {
                 content: Some(_), ..
             },
-        ) => tooltip(view, tip, &vm, low),
+        ) => tooltip(view, tip, low),
         _ => view,
     };
     match &node.theme {
@@ -166,256 +166,19 @@ pub(crate) fn lower(node: &Rc<Node>, low: &Rc<Lowering>) -> View {
     }
 }
 
-/// A tooltip showing: its number, what closes it, and whether it is an
-/// interactive card.
-type Showing = (u64, Rc<dyn Fn()>, bool);
-thread_local! {
-    /// Tooltips showing, and when the last one closed: within a second of
-    /// one, the next opens at once (as a tooltip provider's `timeout`).
-    static TOOLTIPS: std::cell::Cell<(usize, Option<std::time::Instant>)> =
-        const { std::cell::Cell::new((0, None)) };
-    /// The tooltip showing (one at most): its number, and what closes it.
-    static SHOWING: std::cell::RefCell<Option<Showing>> =
-        const { std::cell::RefCell::new(None) };
-    static NEXT_TOOLTIP: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-/// A key pressed anywhere in the interface (`ScriptHost::view` hears each,
-/// focused or not): the tooltip showing closes, as a
-/// browser's and the system's do, so it never covers what is typed. An
-/// interactive card closes on Escape only, so its own fields take keys.
-pub(crate) fn tooltip_keys(event: &InputEvent) {
-    let InputEvent::KeyDown { key, .. } = event else {
-        return;
-    };
-    let close = SHOWING.with(|s| {
-        let mut s = s.borrow_mut();
-        s.take_if(|(_, _, interactive)| !*interactive || *key == Key::Escape)
-    });
-    if let Some((_, close, _)) = close {
-        close();
-    }
-}
-/// Tooltip `open`'s showing ends (`shown` says whether it was showing).
-fn hide_tooltip(open: &Signal<bool>, shown: &std::cell::Cell<bool>) {
-    if !shown.replace(false) {
-        return;
-    }
-    TOOLTIPS.with(|t| {
-        let (count, _) = t.get();
-        t.set((count.saturating_sub(1), Some(std::time::Instant::now())));
-    });
-    open.set(false);
-}
-/// `anchor` with its tooltip: shown above it (unless placed otherwise)
-/// 300 ms after the pointer comes to rest on it, at once while another
-/// tooltip shows or just did, gone as the pointer leaves or presses. It
-/// takes no focus and lets the pointer through.
-fn tooltip(anchor: View, tip: &crate::node::Tooltip, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
+/// `anchor` with its tooltip: zgui's own (`View::tooltip`), its content the
+/// script's node or text in the theme's look.
+fn tooltip(anchor: View, tip: &crate::node::Tooltip, low: &Rc<Lowering>) -> View {
     use crate::node::TooltipContent;
-    use std::time::Duration;
-    use zgui::theme::tok;
-    let content = match tip.content.as_ref().expect("a tooltip's content") {
-        TooltipContent::Node(node) => lower(node, low),
-        // The theme's look: an overlay card, small text.
-        TooltipContent::Text(text) => column()
-            .px(8.)
-            .py(4.)
-            .max_w(320.)
-            .bg(tok::SURFACE_OVERLAY)
-            .border(0.5)
-            .border_color(tok::BORDER)
-            .rounded(tok::RADIUS_SM)
-            .text_size(tok::FONT_SIZE_XS)
-            .text_wrap(true)
-            .child(zgui::compose::text(text.clone())),
+    let mut core: zgui::compose::Tooltip = match tip.content.as_ref().expect("a tooltip's content")
+    {
+        TooltipContent::Node(node) => lower(node, low).into(),
+        TooltipContent::Text(text) => text.clone().into(),
     };
-    let open = low.runtime.signal(false);
-    let shown = std::rc::Rc::new(std::cell::Cell::new(false));
-    let timers = crate::node::env(&vm.lua).ok().map(|env| env.timers.clone());
-    // Its fade (in over 140 ms, out over 100, both easing out; none
-    // when it takes over from another at once).
-    let fade = low.runtime.signal(0_f32);
-    let fading: Rc<std::cell::RefCell<Option<crate::timers::Stop>>> = Rc::default();
-    let animate = {
-        let (fade, fading, timers) = (fade.clone(), fading.clone(), timers.clone());
-        move |to: f32, ms: f32, done: Option<Rc<dyn Fn()>>| {
-            fading.borrow_mut().take();
-            let from = fade.with_untracked(|v| *v);
-            let Some(timers) = timers.as_ref().filter(|_| ms > 0. && from != to) else {
-                fade.set(to);
-                if let Some(done) = done {
-                    done();
-                }
-                return;
-            };
-            let start = std::time::Instant::now();
-            let fade = fade.clone();
-            *fading.borrow_mut() = Some(timers.start(Duration::from_millis(8), true, move || {
-                let t = (start.elapsed().as_secs_f32() * 1000. / ms).min(1.);
-                fade.set(from + (to - from) * (1. - (1. - t).powi(3)));
-                if t < 1. {
-                    return true;
-                }
-                if let Some(done) = &done {
-                    done();
-                }
-                false
-            }));
-        }
-    };
-    let interactive = tip.interactive;
-    // One tooltip shows at a time: showing this one closes the last, at once.
-    let number = NEXT_TOOLTIP.with(|n| {
-        n.set(n.get() + 1);
-        n.get()
-    });
-    let set = {
-        let (open, shown, fade, fading) =
-            (open.clone(), shown.clone(), fade.clone(), fading.clone());
-        move |on: bool, instant: bool| {
-            if !on {
-                SHOWING.with(|s| {
-                    let mut s = s.borrow_mut();
-                    if s.as_ref().is_some_and(|(n, _, _)| *n == number) {
-                        *s = None;
-                    }
-                });
-                if !shown.get() {
-                    return;
-                }
-                let (open, shown) = (open.clone(), shown.clone());
-                let hide: Rc<dyn Fn()> = Rc::new(move || hide_tooltip(&open, &shown));
-                animate(0., if instant { 0. } else { 100. }, Some(hide));
-                return;
-            }
-            let close: Rc<dyn Fn()> = {
-                let (open, shown, fade, fading) =
-                    (open.clone(), shown.clone(), fade.clone(), fading.clone());
-                Rc::new(move || {
-                    fading.borrow_mut().take();
-                    fade.set(0.);
-                    hide_tooltip(&open, &shown);
-                })
-            };
-            let last = SHOWING.with(|s| s.borrow_mut().replace((number, close, interactive)));
-            if let Some((n, close_last, _)) = last
-                && n != number
-            {
-                close_last();
-            }
-            if !shown.replace(true) {
-                TOOLTIPS.with(|t| {
-                    let (count, last) = t.get();
-                    t.set((count + 1, last));
-                });
-                open.set(true);
-            }
-            animate(1., if instant { 0. } else { 140. }, None);
-        }
-    };
-    let waiting: Rc<std::cell::RefCell<Option<crate::timers::Stop>>> = Rc::default();
-    // An interactive card: the pointer may cross from the node to the card
-    // (a moment's grace) and stay on either.
-    let (over_anchor, over_card) = (
-        Rc::new(std::cell::Cell::new(false)),
-        Rc::new(std::cell::Cell::new(false)),
-    );
-    let leave = {
-        let (set, timers, waiting) = (set.clone(), timers.clone(), waiting.clone());
-        let (over_anchor, over_card) = (over_anchor.clone(), over_card.clone());
-        move || {
-            if !interactive {
-                waiting.borrow_mut().take();
-                set(false, false);
-                return;
-            }
-            let Some(timers) = &timers else {
-                return set(false, false);
-            };
-            let (set, over_anchor, over_card) =
-                (set.clone(), over_anchor.clone(), over_card.clone());
-            *waiting.borrow_mut() =
-                Some(timers.start(Duration::from_millis(120), false, move || {
-                    if !over_anchor.get() && !over_card.get() {
-                        set(false, false);
-                    }
-                    false
-                }));
-        }
-    };
-    let anchor = {
-        let (leave, over_anchor) = (leave.clone(), over_anchor.clone());
-        anchor.on_event(move |cx| {
-            if cx.phase == EventPhase::Capture {
-                return;
-            }
-            match cx.event {
-                InputEvent::PointerEnter if cx.target == cx.current_target => {
-                    over_anchor.set(true);
-                    let now = shown.get()
-                        || TOOLTIPS.with(|t| {
-                            let (count, last) = t.get();
-                            count > 0
-                                || last.is_some_and(|at| at.elapsed() < Duration::from_secs(1))
-                        });
-                    if now {
-                        // Taking over from another (or back while it fades):
-                        // no fade in from nothing.
-                        waiting.borrow_mut().take();
-                        set(true, !shown.get());
-                    } else if let Some(timers) = &timers {
-                        let set = set.clone();
-                        *waiting.borrow_mut() =
-                            Some(timers.start(Duration::from_millis(300), false, move || {
-                                set(true, false);
-                                false
-                            }));
-                    }
-                }
-                InputEvent::PointerLeave if cx.target == cx.current_target => {
-                    over_anchor.set(false);
-                    leave();
-                }
-                InputEvent::PointerDown { .. } | InputEvent::Scroll { .. } if !interactive => {
-                    waiting.borrow_mut().take();
-                    set(false, true);
-                }
-                _ => {}
-            }
-        })
-    };
-    let content = if interactive {
-        content.on_event(move |cx| {
-            if cx.phase == EventPhase::Capture || cx.target != cx.current_target {
-                return;
-            }
-            match cx.event {
-                InputEvent::PointerEnter => over_card.set(true),
-                InputEvent::PointerLeave => {
-                    over_card.set(false);
-                    leave();
-                }
-                _ => {}
-            }
-        })
-    } else {
-        content
-    };
-    let placement = tip.placement.unwrap_or(zgui::compose::Placement {
-        side: zgui::compose::PlacementSide::Top,
-        align: zgui::compose::PlacementEdge::Center,
-        offset: 6.,
-    });
-    let content = column()
-        .child(content)
-        .reactive_style(move || zgui::style::Styles::new().opacity(fade.get()));
-    zgui::compose::popover("Tooltip", open, anchor)
-        .layer()
-        .lazy()
-        .autofocus(false)
-        .placement(placement)
-        .pointer_events(interactive)
-        .child(content)
+    if let Some(placement) = tip.placement {
+        core = core.placement(placement);
+    }
+    anchor.tooltip(core.interactive(tip.interactive))
 }
 
 /// `view` under the theme scope `theme = …` asks for.

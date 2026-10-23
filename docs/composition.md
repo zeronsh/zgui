@@ -679,6 +679,21 @@ ui.mount(column()
         .child(button().child(text("Done")).on_click(move || { dismiss.set(false); }))));
 ```
 
+`view.tooltip("Copy link")` shows a tooltip over a view, as a browser's and the
+system's behave. It appears 300 ms after the pointer comes to rest on the view, or at
+once within a second of another tooltip (as a tooltip provider's `timeout`). It goes
+when the pointer leaves or presses, or when a key is pressed anywhere. One shows at a
+time, fading in over 140 ms and out over 100. It takes no focus and lets the pointer
+through. Text takes the theme's look (an overlay card, small text);
+`Tooltip::from(view)` shows a view of the app's own. `.placement(..)` moves it (above
+and centred by default), and `.interactive(true)` makes it a hover card: it stays
+while the pointer is on the view or the card, with a moment's grace to cross, takes
+clicks and typing, and closes on Escape. Delays and fades run on the window's
+`TaskRunner`; without one (a headless `Ui`) it shows and goes at once. A key closes
+it through one document listener that exists only while a tooltip shows. Call
+`.tooltip(..)` last, since what follows styles the tooltip's panel. zgui-script's
+`tooltip` property is this.
+
 `modal(label, open)` centers its panel in the current window and dims the backdrop.
 `popover(label, open, anchor)` keeps the anchor in ordinary layout and places an
 anchored modal popup below it, flipping above when needed and clamping to the

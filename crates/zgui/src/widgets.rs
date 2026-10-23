@@ -1330,6 +1330,14 @@ impl Ui {
         owner: NodeId,
         listener: impl FnMut(&InputEvent) + 'static,
     ) {
+        let guard = self.listen_document(listener);
+        self.retain(owner, guard);
+    }
+    /// `on_document_event` for as long as the returned guard is kept.
+    pub(crate) fn listen_document(
+        &self,
+        listener: impl FnMut(&InputEvent) + 'static,
+    ) -> impl Drop + 'static {
         thread_local! {
             static NEXT: Cell<u64> = const { Cell::new(0) };
         }
@@ -1341,11 +1349,10 @@ impl Ui {
             .document_listeners
             .borrow_mut()
             .push((token, Rc::new(RefCell::new(listener))));
-        let guard = DocumentListening {
+        DocumentListening {
             storage: Rc::downgrade(&self.storage),
             token,
-        };
-        self.retain(owner, guard);
+        }
     }
     /// Give `event` to the document's listeners (`on_document_event`).
     fn tell_document(&self, event: &InputEvent) {

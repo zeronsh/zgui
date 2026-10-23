@@ -39,6 +39,7 @@ mod compose_popover;
 mod compose_rich;
 mod compose_scrollbar;
 mod compose_style;
+mod compose_tooltip;
 mod compose_virtual_keyboard;
 pub mod style;
 pub mod theme;

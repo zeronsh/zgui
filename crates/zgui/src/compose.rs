@@ -64,6 +64,10 @@ impl TaskRunner {
             })
         })
     }
+    /// Run `future`; dropping the token cancels it.
+    pub(crate) fn spawn(&self, future: LocalFuture) -> TaskToken {
+        (self.0)(future)
+    }
 }
 #[derive(Default)]
 struct TaskOwner {
@@ -1054,6 +1058,7 @@ pub use crate::compose_context_menu::ContextMenuEvent;
 pub use crate::compose_modal::ModalPlacement;
 pub use crate::compose_popover::{Edge as PlacementEdge, Placement, Side as PlacementSide};
 pub use crate::compose_rich::{RichTextView, SpanHover, SpanIcon, TextSpan, rich_text, text_span};
+pub use crate::compose_tooltip::Tooltip;
 /// Reactive inline children; equal resolved content preserves paragraph layout/paint.
 pub fn rich_text_signal(compute: impl FnMut() -> Vec<TextSpan> + 'static) -> View {
     View::new(Kind::RichText(Box::new(compute)))
@@ -3821,6 +3826,9 @@ pub struct NodeHandle {
 impl NodeHandle {
     pub fn node(&self) -> NodeId {
         self.node
+    }
+    pub(crate) fn weak_ui(&self) -> WeakUi {
+        self.ui.clone()
     }
     /// Whether a text field holds keyboard focus (anywhere in this UI): a
     /// bare-key shortcut (`j`, `k`) gives way to typing then.
