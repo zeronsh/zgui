@@ -611,7 +611,7 @@ impl Styles {
         }
     }
 }
-fn merge_insets(target: &mut Insets, source: Insets, mask: u8) {
+pub(crate) fn merge_insets(target: &mut Insets, source: Insets, mask: u8) {
     if mask & 1 != 0 {
         target.top = source.top;
     }

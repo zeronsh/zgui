@@ -381,6 +381,59 @@ struct Settled {
 struct Memo {
     applied: Option<AppliedInputs>,
     settled: Option<Settled>,
+    /// The layout style the last full application gave the node: a run that
+    /// changes only box sizes and margins patches it (see `boxes`).
+    shown: Option<crate::scene::Style>,
+}
+/// Which box fields `styles` sets (width, height, margins), whatever their
+/// values: a run that sets the same ones, with other values, changes only
+/// those fields of the node's layout style.
+fn boxes(styles: &Styles) -> (bool, bool, bool) {
+    (
+        styles.width.is_some() || styles.width_percent.is_some(),
+        styles.height.is_some() || styles.height_percent.is_some(),
+        styles.margin.is_some(),
+    )
+}
+/// The box fields' values (see `boxes`).
+type Sizes = (
+    Option<f32>,
+    Option<f32>,
+    Option<f32>,
+    Option<f32>,
+    Option<crate::scene::Insets>,
+);
+fn sizes(styles: &Styles) -> Sizes {
+    (
+        styles.width,
+        styles.width_percent,
+        styles.height,
+        styles.height_percent,
+        styles.margin,
+    )
+}
+fn set_sizes(styles: &mut Styles, sizes: Sizes) {
+    (
+        styles.width,
+        styles.width_percent,
+        styles.height,
+        styles.height_percent,
+        styles.margin,
+    ) = sizes;
+}
+/// `style` with `next`'s box fields, as `apply_resolved` sets them.
+fn patch_sizes(style: &mut crate::scene::Style, next: &Styles) {
+    if next.width.is_some() || next.width_percent.is_some() {
+        style.width = next.width;
+        style.width_percent = next.width_percent;
+    }
+    if next.height.is_some() || next.height_percent.is_some() {
+        style.height = next.height;
+        style.height_percent = next.height_percent;
+    }
+    if let Some(margin) = next.margin {
+        style.margin = margin;
+    }
 }
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn mount_style_with_intrinsic(
@@ -575,6 +628,7 @@ pub(crate) fn mount_style_with_intrinsic(
             memo = Some(Box::new(Memo {
                 applied: None,
                 settled: None,
+                shown: None,
             }));
         }
         // Interaction styles that changed take their slots, their tokens
@@ -634,6 +688,7 @@ pub(crate) fn mount_style_with_intrinsic(
         if let Some(Memo {
             applied: Some(applied),
             settled: Some(last),
+            shown,
         }) = memo.as_deref_mut()
             && last.state == state
             && last.disabled == is_disabled
@@ -641,8 +696,31 @@ pub(crate) fn mount_style_with_intrinsic(
             && !swapped
         {
             let paint = produced.as_mut().map(Paint::take);
+            // A box that changes only its size or margins (a bar growing):
+            // the same fields set, other values, and no interaction style
+            // over them.
+            let resized = match (&mut produced, &last.dynamic) {
+                (Some(now), Some(then))
+                    if shown.is_some()
+                        && boxes(now) == boxes(then)
+                        && sizes(now) != sizes(then)
+                        && active_variants.iter().all(|(enabled, variant)| {
+                            !enabled
+                                || variant
+                                    .as_deref()
+                                    .is_none_or(|v| boxes(v) == (false, false, false))
+                        }) =>
+                {
+                    let new = sizes(now);
+                    set_sizes(now, sizes(then));
+                    let same = *now == *then;
+                    set_sizes(now, new);
+                    same
+                }
+                _ => false,
+            };
             let unchanged = paint.map(|p| p.set()) == last.paint
-                && produced == last.dynamic
+                && (resized || produced == last.dynamic)
                 && last
                     .parent
                     .as_ref()
@@ -657,6 +735,36 @@ pub(crate) fn mount_style_with_intrinsic(
                         })
                 });
             if unchanged {
+                if resized
+                    && let (Some(now), Some(then), Some(style)) =
+                        (&produced, &mut last.dynamic, shown.as_mut())
+                {
+                    // As `Styles::merge` lays them over the base.
+                    let next = &mut applied.0;
+                    if now.width.is_some() || now.width_percent.is_some() {
+                        next.width = now.width;
+                        next.width_percent = now.width_percent;
+                    }
+                    if now.height.is_some() || now.height_percent.is_some() {
+                        next.height = now.height;
+                        next.height_percent = now.height_percent;
+                    }
+                    if let Some(margin) = now.margin {
+                        let mask = if now.margin_sides == 0 {
+                            15
+                        } else {
+                            now.margin_sides
+                        };
+                        crate::style::merge_insets(
+                            next.margin.get_or_insert_with(Default::default),
+                            margin,
+                            mask,
+                        );
+                    }
+                    set_sizes(then, sizes(now));
+                    patch_sizes(style, next);
+                    ui.scene.borrow_mut().set_style(node, style.clone());
+                }
                 let mut resolved = Paint::of(&base);
                 if let Some(paint) = paint {
                     resolved = resolved.over(paint);
@@ -918,15 +1026,46 @@ pub(crate) fn mount_style_with_intrinsic(
             return;
         }
         // Animations mostly change paint effects or the transform, which need
-        // neither layout nor a new paint kind: update just those.
+        // neither layout nor a new paint kind, or a box's size and margins,
+        // which need only those in its layout style: update just those.
         if let Some(Memo {
             applied: Some(previous),
+            shown,
             ..
         }) = memo.as_deref_mut()
             && previous.1 == inputs.1
             && previous.2 == inputs.2
             && previous.3 == inputs.3
+            && (boxes(&previous.0) == boxes(&inputs.0) && shown.is_some()
+                || (
+                    previous.0.width,
+                    previous.0.width_percent,
+                    previous.0.height,
+                ) == (inputs.0.width, inputs.0.width_percent, inputs.0.height)
+                    && (previous.0.height_percent, previous.0.margin)
+                        == (inputs.0.height_percent, inputs.0.margin))
         {
+            let sizes = (
+                previous.0.width,
+                previous.0.width_percent,
+                previous.0.height,
+                previous.0.height_percent,
+                previous.0.margin,
+            );
+            let next = &inputs.0;
+            (
+                previous.0.width,
+                previous.0.width_percent,
+                previous.0.height,
+                previous.0.height_percent,
+                previous.0.margin,
+            ) = (
+                next.width,
+                next.width_percent,
+                next.height,
+                next.height_percent,
+                next.margin,
+            );
             let before = (
                 previous.0.opacity,
                 previous.0.blur,
@@ -967,6 +1106,19 @@ pub(crate) fn mount_style_with_intrinsic(
                 next.local_transform,
             );
             if previous.0 == *next {
+                let resized = sizes
+                    != (
+                        next.width,
+                        next.width_percent,
+                        next.height,
+                        next.height_percent,
+                        next.margin,
+                    );
+                let mut scene = ui.scene.borrow_mut();
+                if resized && let Some(style) = shown {
+                    patch_sizes(style, next);
+                    scene.set_style(node, style.clone());
+                }
                 let mut effects = originals.effects;
                 if let Some(value) = next.opacity {
                     effects.opacity = value;
@@ -989,7 +1141,6 @@ pub(crate) fn mount_style_with_intrinsic(
                 if let Some(value) = next.saturate {
                     effects.saturate = value;
                 }
-                let mut scene = ui.scene.borrow_mut();
                 scene.set_effects(node, effects);
                 apply_mask(&mut scene, node, next, &originals.mask);
                 scene.set_clip_inset(node, next.clip_inset.or(originals.inset));
@@ -997,6 +1148,13 @@ pub(crate) fn mount_style_with_intrinsic(
                 scene.set_local_transform(node, next.local_transform.resolve(originals.local));
                 return;
             }
+            (
+                previous.0.width,
+                previous.0.width_percent,
+                previous.0.height,
+                previous.0.height_percent,
+                previous.0.margin,
+            ) = sizes;
             (
                 previous.0.opacity,
                 previous.0.blur,
@@ -1016,7 +1174,7 @@ pub(crate) fn mount_style_with_intrinsic(
             Some(memo) => &*memo.applied.insert(inputs),
             None => &*first.insert(inputs),
         };
-        apply_resolved(
+        let style = apply_resolved(
             &ui,
             node,
             &originals,
@@ -1026,6 +1184,9 @@ pub(crate) fn mount_style_with_intrinsic(
             content_layout,
             layout_target.is_some(),
         );
+        if let Some(memo) = &mut memo {
+            memo.shown = Some(style);
+        }
     });
     typography
 }
@@ -1056,7 +1217,7 @@ fn apply_resolved(
     intrinsic_size: Option<(f32, f32)>,
     content_layout: Option<NodeId>,
     layout_target: bool,
-) {
+) -> crate::scene::Style {
     let mut style = originals.style.clone();
     if let Some(resolved_options) = &resolved.layout_options {
         if let Some(original) = &style.layout_options {
@@ -1188,7 +1349,7 @@ fn apply_resolved(
         effects.saturate = value;
     }
     let mut scene = ui.scene.borrow_mut();
-    scene.set_style(node, style);
+    scene.set_style(node, style.clone());
     if let Some(content) = content_layout {
         let mut content_style = scene.style(content);
         content_style.gap = resolved.gap.unwrap_or(0.);
@@ -1309,6 +1470,7 @@ fn apply_resolved(
     if let Some(uniforms) = resolved.rare().shader_uniforms {
         scene.set_shader_uniforms(node, uniforms);
     }
+    style
 }
 
 #[cfg(test)]
@@ -1467,6 +1629,50 @@ mod tests {
         assert_eq!(output.get().size, Themed::Value(24.));
         assert_eq!(stable.get(), fixed);
         assert!(ui.scene.borrow_mut().flush().layout_nodes > 0);
+    }
+    /// Runs that only resize (sizes and margins, fading too) patch the last
+    /// layout style instead of applying everything again: the node must end
+    /// as a node styled once with the last values, the base's other margin
+    /// sides kept.
+    #[test]
+    fn a_box_that_only_resizes_ends_as_one_styled_once() {
+        let mut ui = Ui::new(200., 200.);
+        let styled = |ui: &mut Ui, value: Signal<f32>| {
+            let node = ui.container(ui.root(), Layout::Column, Style::default());
+            let inherited = inherited(ui);
+            mount_style(
+                ui,
+                node,
+                color(1).ml(5.).mb(3.),
+                inherited,
+                Some(Box::new(move || {
+                    let v = value.get();
+                    Styles::new().w(v + 1.).h(v * 2.).mt(v).opacity(v / 100.)
+                })),
+                Variants::default(),
+                None,
+                false,
+            );
+            node
+        };
+        let value = ui.signal(10_f32);
+        let resized = styled(&mut ui, value.clone());
+        for v in [12., 30., 7., 41.] {
+            value.set(v);
+            ui.scene.borrow_mut().flush();
+        }
+        let last = ui.signal(41_f32);
+        let once = styled(&mut ui, last);
+        let scene = ui.scene.borrow();
+        assert_eq!(scene.style(resized), scene.style(once));
+        assert_eq!(scene.kind(resized), scene.kind(once));
+        assert_eq!(scene.effects(resized), scene.effects(once));
+        let style = scene.style(resized);
+        assert_eq!((style.width, style.height), (Some(42.), Some(82.)));
+        assert_eq!(
+            (style.margin.top, style.margin.left, style.margin.bottom),
+            (41., 5., 3.)
+        );
     }
     #[test]
     fn removing_dynamic_properties_restores_base_and_inheritance() {
