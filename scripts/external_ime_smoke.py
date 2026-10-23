@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 
 def main():
@@ -56,6 +56,7 @@ def main():
             subprocess.run(['gsettings', 'set', 'org.freedesktop.ibus.general', 'use-system-keyboard-layout', 'true'], env=env, check=True)
             with (args.output / 'openbox.log').open('w') as log:
                 wm = subprocess.Popen(['openbox'], env=env, stdout=log, stderr=log)
+            wait_for_wm(env)
             with (args.output / 'ibus.log').open('w') as log:
                 ime = subprocess.Popen(['ibus-daemon', '--xim', '--replace', '--cache=none', '--emoji-extension=disable', '--config='+memconf, '--verbose'], env=env, stdout=log, stderr=log, start_new_session=True)
             deadline = time.monotonic()+10

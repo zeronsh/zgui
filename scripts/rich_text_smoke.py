@@ -9,7 +9,7 @@ import select
 import subprocess
 import tempfile
 import time
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
             with (args.output / "openbox.log").open("w") as log:
                 wm = subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log)
                 owned.append(wm)
-            time.sleep(.3)
+            wait_for_wm(env)
             log_path = args.output / "application.log"
             with log_path.open("w") as log:
                 app = subprocess.Popen([str(args.binary.resolve()), "--smoke-test"], env=env, stdout=log, stderr=subprocess.STDOUT)

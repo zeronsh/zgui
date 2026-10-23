@@ -2,7 +2,7 @@
 """Exercise typed drag acceptance, preview rendering and Escape cancellation on X11."""
 import argparse, json, os, select, subprocess, time
 from pathlib import Path
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -17,7 +17,7 @@ def main():
         assert select.select([xvfb.stdout],[],[],10)[0], 'Xvfb startup timed out'
         env=dict(os.environ,DISPLAY=':'+xvfb.stdout.readline().strip(),DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent')
         env.pop('WAYLAND_DISPLAY',None)
-        wm=subprocess.Popen(['openbox'],env=env,stdout=logs[1],stderr=logs[1]);time.sleep(.4)
+        wm=subprocess.Popen(['openbox'],env=env,stdout=logs[1],stderr=logs[1]);wait_for_wm(env)
         app=subprocess.Popen([str(args.binary.resolve())],env=env,stdout=logs[2],stderr=logs[2])
         def xdo(*args): return subprocess.run(['xdotool',*map(str,args)],env=env,check=True,capture_output=True,text=True).stdout.strip()
         deadline=time.monotonic()+20;window=None

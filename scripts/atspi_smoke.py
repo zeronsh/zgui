@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 
 def main():
@@ -49,6 +49,7 @@ def main():
                               GSETTINGS_BACKEND="memory")
             with (args.output / "openbox.log").open("w") as log:
                 wm = subprocess.Popen(["openbox"], stdout=log, stderr=log)
+            wait_for_wm(os.environ)
             with (args.output / "a11y-bus.log").open("w") as log:
                 launcher = subprocess.Popen(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately", "--a11y=1", "--screen-reader=1"], stdout=log, stderr=log, start_new_session=True)
             import gi

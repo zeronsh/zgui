@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import time
 
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
             env.pop("WAYLAND_DISPLAY", None)
             with (args.output / "openbox.log").open("w") as log:
                 wm = subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log)
-            time.sleep(.4)
+            wait_for_wm(env)
             with (args.output / "weston.log").open("w") as log:
                 compositor = subprocess.Popen(["weston", "--backend=x11", "--renderer=pixman", "--shell=kiosk-shell.so", "--no-config", "--socket=zgui-input", "--width=900", "--height=650", "--idle-time=0"], env=env, stdout=log, stderr=log)
             deadline = time.monotonic() + 10

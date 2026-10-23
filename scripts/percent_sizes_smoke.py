@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 from PIL import Image
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 INITIAL = "Resize this window. Both panels keep half the available width, and this editor wraps without losing its text or selection."
 
@@ -35,7 +35,7 @@ def main():
                 env.pop(key, None)
             with (args.output / "openbox.log").open("w") as log:
                 wm = subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log)
-            time.sleep(.4)
+            wait_for_wm(env)
             with (args.output / "percent-sizes.log").open("w") as log:
                 app = subprocess.Popen([str(args.binary.resolve()), "--smoke-test"], env=env, stdout=log, stderr=log)
                 def xdo(*parts):

@@ -11,7 +11,7 @@ import re
 import select
 import subprocess
 import time
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 
 class XSettings:
@@ -77,7 +77,7 @@ def main():
         env.pop("WINIT_X11_SCALE_FACTOR", None)
         with (args.output / "openbox.log").open("w") as log:
             wm = subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log)
-        time.sleep(.4)
+        wait_for_wm(env)
         settings = XSettings(display)
         app = subprocess.Popen([str(args.binary.resolve()), "--smoke-test"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         def xdo(*arguments):

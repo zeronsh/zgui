@@ -8,7 +8,7 @@ import pathlib
 import select
 import subprocess
 import time
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 
 def main():
@@ -31,7 +31,7 @@ def main():
         env.pop("WAYLAND_DISPLAY", None)
         with (args.output / "openbox.log").open("w") as log:
             wm = subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log)
-        time.sleep(.4)
+        wait_for_wm(env)
         app = subprocess.Popen([str(args.binary.resolve()), "--smoke-test"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         def xdo(*arguments):
             return subprocess.check_output(["xdotool", *map(str, arguments)], env=env, text=True).strip()

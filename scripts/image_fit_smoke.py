@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import time
 from PIL import Image
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 COLORS = [(224, 48, 48), (48, 208, 80), (48, 96, 224), (48, 208, 208), (208, 48, 208), (224, 208, 48)]
 BACKGROUND = (32, 48, 64)
@@ -72,7 +72,7 @@ def main():
                 env.pop(name, None)
             with (args.output / "openbox.log").open("w") as log:
                 wm = subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log)
-            time.sleep(.4)
+            wait_for_wm(env)
             with (args.output / "image-fit.log").open("w") as log:
                 app = subprocess.Popen([str(args.binary.resolve()), "--smoke-test"], env=env, stdout=log, stderr=log)
                 def xdo(*parts):

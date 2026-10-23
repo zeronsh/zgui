@@ -13,7 +13,7 @@ import subprocess
 import time
 
 from PIL import Image
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
             env = dict(os.environ, DISPLAY=":" + display, XDG_RUNTIME_DIR="/tmp", WINIT_X11_SCALE_FACTOR="1", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
             env.pop("WAYLAND_DISPLAY", None)
             wm = subprocess.Popen(["openbox"], env=env, stdout=wlog, stderr=wlog)
-            time.sleep(.5)
+            wait_for_wm(env)
             app = subprocess.Popen([str(args.binary.resolve()), "--smoke-test"], env=env, stdout=log, stderr=log)
 
             def wait_marker(marker):

@@ -9,7 +9,7 @@ from pathlib import Path
 import select
 import subprocess
 import time
-from platform_smoke import stop
+from platform_smoke import stop, wait_for_wm
 
 
 def main():
@@ -33,7 +33,7 @@ def main():
         # requested keysym. Normalize only this owned server's three test keys.
         subprocess.run(["xmodmap", "-e", "keycode 67 = F1", "-e", "keycode 68 = F2", "-e", "keycode 71 = F5"], env=env, check=True, capture_output=True)
         wm = subprocess.Popen(["openbox"], env=env, stdout=logs[1], stderr=logs[1])
-        time.sleep(.4)
+        wait_for_wm(env)
         app = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=logs[2], stderr=logs[2])
         def xdo(*command):
             return subprocess.run(["xdotool", *map(str, command)], env=env, check=True, text=True, capture_output=True).stdout.strip()

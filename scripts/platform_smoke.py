@@ -26,6 +26,21 @@ def stop(process):
             process.wait()
 
 
+def wait_for_wm(env, seconds=20):
+    """Wait until the window manager on `env`'s display manages windows:
+    started is not ready, and a loaded machine takes longer than any sleep."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        def prop(*args):
+            return subprocess.run(["xprop", *args], env=env, capture_output=True, text=True).stdout
+        check = prop("-root", "_NET_SUPPORTING_WM_CHECK").rsplit("# ", 1)[-1].strip()
+        if check.startswith("0x") and "_NET_WM_NAME" in prop("-id", check, "_NET_WM_NAME") \
+                and "_NET_ACTIVE_WINDOW" in prop("-root", "_NET_SUPPORTED"):
+            return
+        time.sleep(.05)
+    raise RuntimeError("the window manager did not start")
+
+
 def x11(args, output):
     for tool in ("Xvfb", "openbox", "xdotool"):
         if not shutil.which(tool):
@@ -46,7 +61,7 @@ def x11(args, output):
             env.pop("WAYLAND_DISPLAY", None)
             with (output / "openbox.log").open("w") as wm_log:
                 wm = subprocess.Popen(["openbox"], env=env, stdout=wm_log, stderr=wm_log)
-                time.sleep(.5)
+                wait_for_wm(env)
                 results = []
                 for scale in (1.5, 2.0):
                     screenshot = output / f"x11-scale-{scale:g}.png"
