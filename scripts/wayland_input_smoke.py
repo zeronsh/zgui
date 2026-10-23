@@ -121,7 +121,9 @@ def main():
                     raise AssertionError(output)
             if "VIEWPORT (1000.0, 700.0)" not in output:
                 raise AssertionError("Wayland output resize not applied: " + output)
-            for event in (r"wl_pointer[#@]\d+\.button\(", r"wl_keyboard[#@]\d+\.key\(", r"xdg_toplevel[#@]\d+\.configure\(1000, 700", r"set_selection\(", r"wl_data_offer[#@]\d+\.receive\(", r"wl_data_source[#@]\d+\.send\("):
+            for event in (r"wl_pointer[#@]\d+\.button\(", r"wl_keyboard[#@]\d+\.key\(", r"xdg_toplevel[#@]\d+\.configure\(1000, 700", r"set_selection\(", r"wl_data_offer[#@]\d+\.receive\(", r"wl_data_source[#@]\d+\.send\(",
+                          # What a dock matches to the app's desktop file.
+                          r'xdg_toplevel[#@]\d+\.set_app_id\("form"\)'):
                 if not re.search(event, protocol):
                     raise AssertionError("Missing Wayland protocol evidence: " + event)
             result = {"result": "pass", "platform": "native Wayland client / Weston X11 backend / Xvfb", "client_display_unset": True, "xwayland_enabled": False, "weston": subprocess.check_output(["weston", "--version"], text=True).strip(), "checks": ["pointer editor focus", "keyboard selection replacement", "Tab focus traversal", "Wayland clipboard copy/paste", "multiline text", "disabled input suppression", "reactive width", "native Wayland resize", "automatic close"], "limitations": "Software rendering and nested compositor; does not validate physical seats, IME, hardware GPUs, or macOS."}

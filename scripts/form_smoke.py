@@ -54,6 +54,10 @@ def main():
             time.sleep(.05)
         if not window:
             raise RuntimeError("form did not open a visible window")
+        # What a dock matches to the app's desktop file: the executable's name.
+        wm_class = subprocess.check_output(["xprop", "-id", window, "WM_CLASS"], env=env, text=True)
+        if '"form", "form"' not in wm_class:
+            raise AssertionError("WM_CLASS is not the executable's name: " + wm_class)
         xdo("windowactivate", "--sync", window)
         time.sleep(.3)
         click(90, 112)

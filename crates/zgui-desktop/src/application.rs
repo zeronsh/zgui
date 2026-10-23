@@ -352,6 +352,10 @@ struct WindowRequest {
 pub struct WindowFactory {
     #[cfg(target_os = "linux")]
     file_routes: crate::wayland_data::Routes,
+    /// The application's id (`Application::application_id`): its windows'
+    /// Wayland app_id and X11 class, what docks match to its desktop file.
+    #[cfg(target_os = "linux")]
+    application_id: Option<Rc<str>>,
     fonts: Rc<Vec<zgui_gpu::text::FontData>>,
     menus: Rc<RefCell<Vec<crate::AppMenu>>>,
     pending: Rc<RefCell<VecDeque<WindowRequest>>>,
@@ -637,6 +641,8 @@ impl Application {
             fonts: Rc::new(self.fonts),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
+            #[cfg(target_os = "linux")]
+            application_id: self.application_id.as_deref().map(Rc::from),
             menus: Rc::new(RefCell::new(self.menus)),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
@@ -1677,9 +1683,12 @@ impl Host {
             return Ok(());
         }
 
-        let window = Arc::new(
-            event_loop.create_window(crate::window_info::attributes(&self.options, event_loop)?)?,
-        );
+        let window = Arc::new(event_loop.create_window(crate::window_info::attributes(
+            &self.options,
+            event_loop,
+            #[cfg(target_os = "linux")]
+            self.context.windows.application_id.as_deref(),
+        )?)?);
         #[cfg(target_os = "macos")]
         {
             content_never_moves_window();
@@ -3759,6 +3768,8 @@ mod tests {
             fonts: Rc::new(Vec::new()),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
+            #[cfg(target_os = "linux")]
+            application_id: None,
             menus: Rc::new(RefCell::new(Vec::new())),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
@@ -3894,6 +3905,8 @@ mod tests {
             fonts: Rc::new(Vec::new()),
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
+            #[cfg(target_os = "linux")]
+            application_id: None,
             menus: Rc::new(RefCell::new(Vec::new())),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),

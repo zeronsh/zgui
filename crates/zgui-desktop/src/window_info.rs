@@ -153,6 +153,7 @@ pub(crate) fn select_monitor(
 pub(crate) fn attributes(
     options: &crate::WindowOptions,
     event_loop: &ActiveEventLoop,
+    #[cfg(target_os = "linux")] application_id: Option<&str>,
 ) -> Result<WindowAttributes, String> {
     let mut attrs = Window::default_attributes()
         .with_title(&options.title)
@@ -161,6 +162,17 @@ pub(crate) fn attributes(
         .with_transparent(options.is_transparent())
         .with_decorations(options.decorations)
         .with_visible(false);
+    // Wayland's app_id and X11's WM_CLASS: what docks and task switchers
+    // match to the app's desktop file (its icon and name). The application
+    // id, else the executable's name, as desktop files usually are.
+    #[cfg(target_os = "linux")]
+    if let Some(id) = application_id.map(str::to_owned).or_else(|| {
+        let exe = std::env::current_exe().ok()?;
+        Some(exe.file_stem()?.to_str()?.to_owned())
+    }) {
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        attrs = attrs.with_name(&id, &id);
+    }
     // Windows: a title bar of the app's own is a frameless window keeping
     // the frame's shadow (the rest is `window_chrome`).
     #[cfg(windows)]
