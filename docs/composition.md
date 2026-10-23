@@ -290,7 +290,7 @@ pointer (on macOS it selects the word there, as AppKit's text views do). A
 
 `.spellcheck(true)` checks an editor's spelling as it is typed, as HTML's
 `spellcheck` attribute does, through the system's checker (`Platform::misspellings`;
-macOS's `NSSpellChecker`, nothing elsewhere yet). Misspelled words get a dotted line
+macOS's `NSSpellChecker`, Windows' `ISpellChecker`, the Linux desktop's Enchant). Misspelled words get a dotted line
 in the theme's `danger` colour, except the word the caret is in, which is still being
 typed. An edit checks again only the paragraphs it touched, and the marks elsewhere
 move with the text. On a misspelled word the context menu starts with the checker's
