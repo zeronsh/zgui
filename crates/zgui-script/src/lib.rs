@@ -89,10 +89,15 @@ pub struct Limits {
 }
 impl Default for Limits {
     fn default() -> Self {
+        // The budgets are for what a release build does in the time: zgui's
+        // own code, which a script's calls run through, is several times
+        // slower built for debugging, so debug builds have four times as
+        // long rather than failing a script that is not looping.
+        let scale = if cfg!(debug_assertions) { 4 } else { 1 };
         Self {
             memory: 32 << 20,
-            load: Duration::from_millis(500),
-            call: Duration::from_millis(50),
+            load: Duration::from_millis(500 * scale),
+            call: Duration::from_millis(50 * scale),
         }
     }
 }
