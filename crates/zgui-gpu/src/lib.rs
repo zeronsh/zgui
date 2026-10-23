@@ -7,6 +7,7 @@ use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 use zgui::scene::{Color, NodeId, NodeKind, Rect, Scene};
 
 mod effects;
+mod font_cache;
 #[cfg(target_os = "macos")]
 mod layer_present;
 #[cfg(target_os = "macos")]
@@ -1172,7 +1173,7 @@ impl GpuContext {
                 device,
                 queue,
                 info,
-                fonts: Rc::new(RefCell::new(FontSystem::new())),
+                fonts: Rc::new(RefCell::new(font_cache::system_fonts())),
                 text_cache: Default::default(),
                 quads,
                 texture_layout,

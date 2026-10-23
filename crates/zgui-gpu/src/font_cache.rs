@@ -1,0 +1,346 @@
+//! The system's fonts without reading every font file at every launch.
+//! Loading them opens and parses each installed file (about 370 files, 10 ms
+//! and 100 M instructions on macOS), and the first text in each new style
+//! read every face's weight axis from its file as well. Both are kept in a
+//! cache file, used while every font directory and file is unchanged (their
+//! modification times and sizes, as fontconfig checks its cache). Linux,
+//! where fontdb takes its directories from fontconfig, loads as before.
+use cosmic_text::{
+    FontSystem,
+    fontdb::{self, Language, Source, Stretch, Style, Weight},
+};
+use std::{
+    path::{Path, PathBuf},
+    time::UNIX_EPOCH,
+};
+
+/// Bump when fontdb or cosmic-text change what they read from a font file.
+const FORMAT: &[u8] = b"zgui system fonts 1\n";
+
+pub(crate) fn system_fonts() -> FontSystem {
+    let Some(cache) = cache_file() else {
+        return FontSystem::new();
+    };
+    if let Some(fonts) = std::fs::read(&cache).ok().and_then(|bytes| decode(&bytes)) {
+        return fonts;
+    }
+    let mut fonts = FontSystem::new();
+    if let Some(bytes) = encode(&mut fonts) {
+        // Written whole and renamed, so another process never reads half.
+        let partial = cache.with_extension(format!("{}.partial", std::process::id()));
+        let written = cache
+            .parent()
+            .is_some_and(|dir| std::fs::create_dir_all(dir).is_ok())
+            && std::fs::write(&partial, bytes).is_ok()
+            && std::fs::rename(&partial, &cache).is_ok();
+        if !written {
+            let _ = std::fs::remove_file(&partial);
+        }
+    }
+    fonts
+}
+
+fn cache_file() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/Caches/zgui/system-fonts"))
+    } else if cfg!(windows) {
+        Some(PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("zgui\\system-fonts"))
+    } else {
+        None
+    }
+}
+
+/// The directories fontdb 0.23's `load_system_fonts` reads, and directories
+/// whose contents decide that list without being read for fonts.
+fn font_roots() -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let (mut roots, mut parents) = (Vec::new(), Vec::new());
+    if cfg!(target_os = "macos") {
+        roots.extend(["/Library/Fonts", "/System/Library/Fonts"].map(PathBuf::from));
+        let assets = Path::new("/System/Library/AssetsV2");
+        if let Ok(entries) = std::fs::read_dir(assets) {
+            let mut fonts: Vec<_> = entries
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with("com_apple_MobileAsset_Font")
+                })
+                .map(|e| e.path())
+                .collect();
+            fonts.sort();
+            roots.extend(fonts);
+        }
+        parents.push(assets.to_owned());
+        roots.push("/Network/Library/Fonts".into());
+        if let Some(home) = std::env::var_os("HOME") {
+            roots.push(Path::new(&home).join("Library/Fonts"));
+        }
+    } else if cfg!(windows) {
+        let system = std::env::var_os("SYSTEMROOT").map_or("C:\\Windows".into(), PathBuf::from);
+        roots.push(system.join("Fonts"));
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            let home = Path::new(&home);
+            roots.push(home.join("AppData\\Local\\Microsoft\\Windows\\Fonts"));
+            roots.push(home.join("AppData\\Roaming\\Microsoft\\Windows\\Fonts"));
+        }
+    }
+    (roots, parents)
+}
+
+/// Every path whose change could change the loaded faces: the font
+/// directories, each directory below them, and each font file.
+fn watched(fonts: &FontSystem) -> Option<Vec<PathBuf>> {
+    let (roots, mut paths) = font_roots();
+    let mut seen = std::collections::HashSet::new();
+    let mut pending = roots;
+    while let Some(dir) = pending.pop() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                // As fontdb, through symbolic links, each directory once.
+                if path.is_dir() && std::fs::canonicalize(&path).is_ok_and(|c| seen.insert(c)) {
+                    pending.push(path);
+                }
+            }
+        }
+        paths.push(dir);
+    }
+    for face in fonts.db().faces() {
+        let Source::File(path) = &face.source else {
+            return None;
+        };
+        paths.push(path.clone());
+    }
+    paths.sort();
+    paths.dedup();
+    Some(paths)
+}
+
+/// A path's modification time and size, or zeros where it does not exist.
+fn stamp(path: &Path) -> (u64, u64) {
+    std::fs::metadata(path).map_or((0, 0), |meta| {
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok());
+        (modified.map_or(1, |d| d.as_nanos() as u64), meta.len())
+    })
+}
+
+fn encode(fonts: &mut FontSystem) -> Option<Vec<u8>> {
+    let paths = watched(fonts)?;
+    let mut out = Writer(FORMAT.to_vec());
+    out.u32(paths.len() as u32);
+    for path in &paths {
+        out.str(path.to_str()?);
+        let (modified, len) = stamp(path);
+        out.u64(modified);
+        out.u64(len);
+    }
+    let ids: Vec<_> = fonts.db().faces().map(|face| face.id).collect();
+    out.u32(ids.len() as u32);
+    for id in ids {
+        let axis = fonts.weight_axis(id);
+        let face = fonts.db().face(id)?;
+        let Source::File(path) = &face.source else {
+            return None;
+        };
+        out.str(path.to_str()?);
+        out.u32(face.index);
+        out.u32(face.families.len() as u32);
+        for (name, language) in &face.families {
+            out.str(name);
+            out.0
+                .push(u8::from(*language == Language::English_UnitedStates));
+        }
+        out.str(&face.post_script_name);
+        out.0.push(face.style as u8);
+        out.u16(face.weight.0);
+        out.u16(face.stretch.to_number());
+        out.0.push(u8::from(face.monospaced));
+        match axis {
+            Some((min, max)) => {
+                out.0.push(1);
+                out.u32(min.to_bits());
+                out.u32(max.to_bits());
+            }
+            None => out.0.push(0),
+        }
+    }
+    Some(out.0)
+}
+
+fn decode(bytes: &[u8]) -> Option<FontSystem> {
+    let mut input = Reader(bytes.strip_prefix(FORMAT)?);
+    for _ in 0..input.u32()? {
+        let path = input.str()?;
+        if stamp(Path::new(path)) != (input.u64()?, input.u64()?) {
+            return None;
+        }
+    }
+    let mut db = fontdb::Database::new();
+    let mut axes = Vec::new();
+    for _ in 0..input.u32()? {
+        let source = Source::File(input.str()?.into());
+        let index = input.u32()?;
+        let families = (0..input.u32()?)
+            .map(|_| {
+                let name = input.str()?.to_owned();
+                // Only whether a name is the US English one is kept: fontdb
+                // lists it first and nothing here reads the others' languages.
+                let english = input.u8()? == 1;
+                Some((
+                    name,
+                    if english {
+                        Language::English_UnitedStates
+                    } else {
+                        Language::Unknown
+                    },
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let post_script_name = input.str()?.to_owned();
+        let style = [Style::Normal, Style::Italic, Style::Oblique]
+            .get(input.u8()? as usize)
+            .copied()?;
+        let weight = Weight(input.u16()?);
+        let stretch = stretch(input.u16()?)?;
+        let monospaced = input.u8()? == 1;
+        let axis = match input.u8()? {
+            1 => Some((f32::from_bits(input.u32()?), f32::from_bits(input.u32()?))),
+            _ => None,
+        };
+        let id = db.push_face_info(fontdb::FaceInfo {
+            id: fontdb::ID::dummy(),
+            source,
+            index,
+            families,
+            post_script_name,
+            style,
+            weight,
+            stretch,
+            monospaced,
+        });
+        axes.push((id, axis));
+    }
+    if !input.0.is_empty() {
+        return None;
+    }
+    let mut fonts = FontSystem::new_with_db(db);
+    for (id, axis) in axes {
+        fonts.set_weight_axis(id, axis);
+    }
+    Some(fonts)
+}
+
+fn stretch(number: u16) -> Option<Stretch> {
+    use Stretch::*;
+    [
+        UltraCondensed,
+        ExtraCondensed,
+        Condensed,
+        SemiCondensed,
+        Normal,
+        SemiExpanded,
+        Expanded,
+        ExtraExpanded,
+        UltraExpanded,
+    ]
+    .get(usize::from(number).checked_sub(1)?)
+    .copied()
+}
+
+struct Writer(Vec<u8>);
+impl Writer {
+    fn u16(&mut self, v: u16) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn u32(&mut self, v: u32) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn u64(&mut self, v: u64) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn str(&mut self, s: &str) {
+        self.u32(s.len() as u32);
+        self.0.extend_from_slice(s.as_bytes());
+    }
+}
+
+struct Reader<'a>(&'a [u8]);
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        let (head, rest) = self.0.split_at_checked(n)?;
+        self.0 = rest;
+        Some(head)
+    }
+    fn u8(&mut self) -> Option<u8> {
+        Some(self.take(1)?[0])
+    }
+    fn u16(&mut self) -> Option<u16> {
+        Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
+    }
+    fn u32(&mut self) -> Option<u32> {
+        Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
+    fn u64(&mut self) -> Option<u64> {
+        Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
+    }
+    fn str(&mut self) -> Option<&'a str> {
+        let len = self.u32()? as usize;
+        std::str::from_utf8(self.take(len)?).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The cached database is the loaded one: the same faces, in the same
+    /// order (matching breaks ties by it), with the same weight axes.
+    #[test]
+    fn a_decoded_cache_holds_the_loaded_faces() {
+        let mut loaded = FontSystem::new();
+        let Some(bytes) = encode(&mut loaded) else {
+            return; // No system fonts cache on this platform.
+        };
+        let mut cached = decode(&bytes).expect("an unchanged system decodes");
+        let faces = |fonts: &FontSystem| -> Vec<_> {
+            fonts
+                .db()
+                .faces()
+                .map(|f| {
+                    let families: Vec<_> =
+                        f.families.iter().map(|(name, _)| name.clone()).collect();
+                    let source = format!("{:?}", f.source);
+                    (
+                        source,
+                        f.index,
+                        families,
+                        f.post_script_name.clone(),
+                        f.style,
+                        f.weight,
+                        f.stretch,
+                        f.monospaced,
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(faces(&loaded), faces(&cached));
+        let ids: Vec<_> = loaded.db().faces().map(|f| f.id).collect();
+        let cached_ids: Vec<_> = cached.db().faces().map(|f| f.id).collect();
+        for (a, b) in ids.into_iter().zip(cached_ids) {
+            assert_eq!(loaded.weight_axis(a), cached.weight_axis(b));
+        }
+        assert!(
+            decode(&bytes[..bytes.len() - 1]).is_none(),
+            "a truncated cache is not used"
+        );
+        // The first watched path's modification time, as if it changed.
+        let mut changed = bytes.clone();
+        let first = FORMAT.len() + 4;
+        let len = u32::from_le_bytes(changed[first..first + 4].try_into().unwrap()) as usize;
+        changed[first + 4 + len] ^= 1;
+        assert!(decode(&changed).is_none(), "a changed directory reloads");
+    }
+}

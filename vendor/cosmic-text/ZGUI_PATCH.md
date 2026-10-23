@@ -2,7 +2,7 @@
 
 Vendored from crates.io `cosmic-text` 0.19.0 (MIT OR Apache-2.0, license files
 unchanged) and applied through `[patch.crates-io]` in the workspace
-`Cargo.toml`. Only `src/shape.rs` differs; search for "zgui patch". The
+`Cargo.toml`. Changes are marked "zgui patch" or "zgui:" in the source. The
 crate's tests, benchmarks, fonts, samples and scripts are left out, and
 `check/` is new.
 
@@ -54,3 +54,14 @@ goes through `clamp_to_axis` (`src/lib.rs`), which never panics, as
 `read-fonts` guards its own. `variation_axis_tests` in zgui-gpu's
 `src/text.rs` shapes and draws a font with its `wght` or `opsz` axis
 reversed.
+
+## Font matching without reopening font files
+
+Each new family, weight and style asked for (`get_font_matches`) scored every
+installed face, and for every face of another weight mapped its file to see
+whether a `wght` axis spans the weight asked for: about 800 faces and 4 ms
+per new style on macOS, at startup and again the first time an app shows,
+say, bold or monospace. The axis range is now read once per face and kept
+(`src/font/system.rs`, "zgui patch"). `FontSystem::new_with_db`,
+`weight_axis` and `set_weight_axis` let zgui-gpu load the system's faces and
+their axes from a cache instead of opening their files (`font_cache.rs`).

@@ -30,18 +30,26 @@ pub struct FontMatchKey {
 }
 
 impl FontMatchKey {
-    fn new(attrs: &Attrs, face: &FaceInfo, db: &fontdb::Database) -> FontMatchKey {
+    fn new(
+        attrs: &Attrs,
+        face: &FaceInfo,
+        db: &fontdb::Database,
+        weight_axes: &mut HashMap<fontdb::ID, Option<(f32, f32)>>,
+    ) -> FontMatchKey {
         // TODO: smarter way of detecting emoji
         let not_emoji = !face.post_script_name.contains("Emoji");
         let font_weight_diff = attrs.weight.0.abs_diff(face.weight.0);
 
+        // zgui patch: the face's weight axis is read from its file once, not
+        // for every new family, weight and style asked for.
         let variable_weight_match = font_weight_diff != 0
-            && db.with_face_data(face.id, |font_data, face_index| {
-                let font_ref = skrifa::FontRef::from_index(font_data, face_index).ok()?;
-                let axis = font_ref.axes().get_by_tag(skrifa::Tag::new(b"wght"))?;
-                let w = attrs.weight.0 as f32;
-                Some(w >= axis.min_value() && w <= axis.max_value())
-            }) == Some(Some(true));
+            && weight_axes
+                .entry(face.id)
+                .or_insert_with(|| read_weight_axis(db, face.id))
+                .is_some_and(|(min, max)| {
+                    let w = attrs.weight.0 as f32;
+                    w >= min && w <= max
+                });
         let font_weight = face.weight.0;
         let font_stretch_diff = attrs.stretch.to_number().abs_diff(face.stretch.to_number());
         let font_stretch = face.stretch.to_number();
@@ -67,6 +75,16 @@ impl FontMatchKey {
             variable_weight_match,
         }
     }
+}
+
+/// zgui patch: a face's `wght` axis range, from its file.
+fn read_weight_axis(db: &fontdb::Database, id: fontdb::ID) -> Option<(f32, f32)> {
+    db.with_face_data(id, |font_data, face_index| {
+        let font_ref = skrifa::FontRef::from_index(font_data, face_index).ok()?;
+        let axis = font_ref.axes().get_by_tag(skrifa::Tag::new(b"wght"))?;
+        Some((axis.min_value(), axis.max_value()))
+    })
+    .flatten()
 }
 
 struct FontCachedCodepointSupportInfo {
@@ -154,6 +172,10 @@ pub struct FontSystem {
     /// Cache for font matches.
     font_matches_cache: HashMap<FontMatchAttrs, Arc<Vec<FontMatchKey>>>,
 
+    /// zgui patch: each face's `wght` axis range (`None`: not variable in
+    /// weight), read from its file the first time a match needs it.
+    weight_axes: HashMap<fontdb::ID, Option<(f32, f32)>>,
+
     /// Scratch buffer for shaping and laying out.
     pub(crate) shape_buffer: ShapeBuffer,
 
@@ -210,6 +232,32 @@ impl FontSystem {
         Self::new_with_locale_and_db_and_fallback(locale, db, PlatformFallback)
     }
 
+    /// zgui patch: a [`FontSystem`] over a database the caller loaded (from a
+    /// cache of the system's fonts, say), with [`Self::new`]'s locale and
+    /// default families.
+    pub fn new_with_db(mut db: fontdb::Database) -> Self {
+        db.set_monospace_family("Noto Sans Mono");
+        db.set_sans_serif_family("Open Sans");
+        db.set_serif_family("DejaVu Serif");
+        Self::new_with_locale_and_db_and_fallback(Self::get_locale(), db, PlatformFallback)
+    }
+
+    /// zgui patch: the face's `wght` axis range (`None`: not variable in
+    /// weight), as font matching reads it.
+    pub fn weight_axis(&mut self, id: fontdb::ID) -> Option<(f32, f32)> {
+        let db = &self.db;
+        *self
+            .weight_axes
+            .entry(id)
+            .or_insert_with(|| read_weight_axis(db, id))
+    }
+
+    /// zgui patch: gives font matching a face's `wght` axis range (from a
+    /// cache), so it need not read the face's file.
+    pub fn set_weight_axis(&mut self, id: fontdb::ID, axis: Option<(f32, f32)>) {
+        self.weight_axes.insert(id, axis);
+    }
+
     /// Create a new [`FontSystem`] with a pre-specified locale, font database and font fallback list.
     pub fn new_with_locale_and_db_and_fallback(
         locale: String,
@@ -263,6 +311,7 @@ impl FontSystem {
             per_script_monospace_font_ids,
             font_cache: HashMap::default(),
             font_matches_cache: HashMap::default(),
+            weight_axes: HashMap::default(),
             font_codepoint_support_info_cache: HashMap::default(),
             monospace_fallbacks_buffer: BTreeSet::default(),
             #[cfg(feature = "shape-run-cache")]
@@ -389,7 +438,7 @@ impl FontSystem {
                 let mut font_match_keys = self
                     .db
                     .faces()
-                    .map(|face| FontMatchKey::new(attrs, face, &self.db))
+                    .map(|face| FontMatchKey::new(attrs, face, &self.db, &mut self.weight_axes))
                     .collect::<Vec<_>>();
 
                 // Sort so we get the keys with weight_offset=0 first
@@ -415,7 +464,8 @@ impl FontSystem {
                         font_match_keys.insert(0, match_key);
                     } else if let Some(face) = self.db.face(id) {
                         // else insert in front
-                        let match_key = FontMatchKey::new(attrs, face, &self.db);
+                        let match_key =
+                            FontMatchKey::new(attrs, face, &self.db, &mut self.weight_axes);
                         font_match_keys.insert(0, match_key);
                     } else {
                         log::error!("Could not get face from db, that should've been there.");

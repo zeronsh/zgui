@@ -588,7 +588,7 @@ pub struct CpuTextRaster {
 impl Default for CpuTextRaster {
     fn default() -> Self {
         Self {
-            fonts: FontSystem::new(),
+            fonts: crate::font_cache::system_fonts(),
             swash: cosmic_text::SwashCache::new(),
         }
     }
