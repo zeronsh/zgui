@@ -422,7 +422,9 @@ fn shape_run(
 
     // zgui: a span's padding widens its first glyph (before it) and its
     // last (after it), so wrapping, hit testing and backgrounds all count it.
-    for glyph in &mut glyphs[glyph_start..] {
+    // Most text has none: then no glyph's attributes are looked up again.
+    let padded = attrs_list.has_padding();
+    for glyph in glyphs[glyph_start..].iter_mut().filter(|_| padded) {
         let attrs = attrs_list.get_span(glyph.start);
         let Some(padding) = attrs.padding_opt else {
             continue;

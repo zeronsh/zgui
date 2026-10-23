@@ -580,6 +580,12 @@ impl AttrsList {
     /// Get the attribute span for an index
     ///
     /// This returns a span that contains the index
+    /// zgui: whether the defaults or any span set padding.
+    pub fn has_padding(&self) -> bool {
+        self.defaults.padding_opt.is_some()
+            || self.spans.iter().any(|(_, attrs)| attrs.padding_opt.is_some())
+    }
+
     pub fn get_span(&self, index: usize) -> Attrs<'_> {
         self.spans
             .get(&index)
