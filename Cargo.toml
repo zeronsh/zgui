@@ -7,6 +7,7 @@ exclude = [
     "vendor/accesskit_windows",
     "vendor/cosmic-text",
     "vendor/taffy",
+    "vendor/winit",
 ]
 resolver = "2"
 
@@ -73,3 +74,6 @@ accesskit_macos = { path = "vendor/accesskit_macos" }
 # AccessKit 0.34 on Windows with headings Narrator navigates by: see
 # vendor/accesskit_windows/ZGUI_PATCH.md.
 accesskit_windows = { path = "vendor/accesskit_windows" }
+# winit 0.30.13 with a window's `xdg_surface`, the parent of Wayland popups:
+# see vendor/winit/ZGUI_PATCH.md.
+winit = { path = "vendor/winit" }
