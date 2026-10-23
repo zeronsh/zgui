@@ -4,17 +4,13 @@ use crate::{
 };
 use dbus::{
     arg::{PropMap, RefArg, Variant},
-    blocking::Connection,
     message::MatchRule,
 };
 use std::{
     io::Read,
     os::unix::ffi::{OsStrExt, OsStringExt},
     path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use winit::window::Window;
@@ -29,14 +25,14 @@ pub(crate) fn select(
     kind: Kind,
     options: FileDialogOptions,
     parent: Arc<Window>,
-    cancel: Arc<AtomicBool>,
+    cancel: Arc<crate::file_dialog::Cancel>,
 ) -> FileDialogResult<Vec<PathBuf>> {
-    if cancel.load(Ordering::Acquire) {
+    if cancel.is_cancelled() {
         return Err(FileDialogError::WindowClosed);
     }
     // This guard must be destroyed BEFORE the Arc parent, including every error return.
     let exported = Parent::new(&parent).ok_or(FileDialogError::BackendUnavailable)?;
-    let connection = Connection::new_session().map_err(unavailable)?;
+    let connection = crate::linux_dbus::session().map_err(unavailable)?;
     let mut random = [0u8; 16];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut random))
@@ -115,7 +111,7 @@ pub(crate) fn select(
             .collect();
         option(&mut values, "filters", filters);
     }
-    if cancel.load(Ordering::Acquire) {
+    if cancel.is_cancelled() {
         return Err(FileDialogError::WindowClosed);
     }
     let proxy = connection.with_proxy(
@@ -138,7 +134,7 @@ pub(crate) fn select(
     // paths on this owned connection, so either response can already be queued.
     let _expected_path = expected;
     loop {
-        if cancel.load(Ordering::Acquire) {
+        if cancel.is_cancelled() {
             let request = connection.with_proxy(SERVICE, path.clone(), Duration::from_millis(500));
             let _: Result<(), _> =
                 request.method_call("org.freedesktop.portal.Request", "Close", ());
@@ -169,9 +165,19 @@ pub(crate) fn select(
                 _ => Err(FileDialogError::BackendUnavailable),
             };
         }
-        connection
-            .process(Duration::from_millis(30))
-            .map_err(unavailable)?;
+        // Asleep until the portal answers or the request is cancelled.
+        match cancel.wake() {
+            Some(wake) => {
+                if !crate::linux_dbus::wait(&connection, wake) && !cancel.is_cancelled() {
+                    return Err(FileDialogError::BackendUnavailable);
+                }
+            }
+            None => {
+                connection
+                    .process(Duration::from_millis(30))
+                    .map_err(unavailable)?;
+            }
+        }
     }
 }
 pub(crate) fn file_uri(uri: &str) -> Option<PathBuf> {

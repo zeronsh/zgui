@@ -39,37 +39,43 @@ impl Stop {
 /// is told or the bus goes; between them the thread sleeps. The connection
 /// is one of `session`'s.
 pub(crate) fn serve(connection: &Connection, stop: &Stop) {
+    while wait(connection, stop) {}
+}
+
+/// Handle what has arrived on `connection`; if nothing had, sleep until
+/// something does or `stop` is told. False once told or the bus goes. A
+/// caller waiting for a reply its handlers record looks for it after each.
+pub(crate) fn wait(connection: &Connection, stop: &Stop) -> bool {
+    // What has arrived, read without waiting; then what handling it sent
+    // goes out.
+    let mut handled = false;
     loop {
-        // What has arrived, read without waiting; then what handling it
-        // sent goes out.
-        loop {
-            match connection.process(Duration::ZERO) {
-                Ok(true) => {}
-                Ok(false) => break,
-                Err(_) => return,
-            }
-        }
-        connection.channel().flush();
-        let watch = connection.channel().watch();
-        let mut fds = [
-            libc::pollfd {
-                fd: watch.fd,
-                events: libc::POLLIN,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: stop.0.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            },
-        ];
-        let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
-        if fds[1].revents != 0
-            || (n < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted)
-        {
-            return;
+        match connection.process(Duration::ZERO) {
+            Ok(true) => handled = true,
+            Ok(false) => break,
+            Err(_) => return false,
         }
     }
+    connection.channel().flush();
+    if handled {
+        return true;
+    }
+    let watch = connection.channel().watch();
+    let mut fds = [
+        libc::pollfd {
+            fd: watch.fd,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: stop.0.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+    !(fds[1].revents != 0
+        || (n < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted))
 }
 
 #[cfg(test)]

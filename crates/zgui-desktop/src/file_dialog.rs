@@ -123,7 +123,7 @@ pub struct FileDialogs {
     owner: crate::WindowHandle,
     native: Rc<RefCell<Option<Weak<Window>>>>,
     generation: Rc<Cell<u64>>,
-    cancellations: Rc<RefCell<Vec<Weak<std::sync::atomic::AtomicBool>>>>,
+    cancellations: Rc<RefCell<Vec<Weak<Cancel>>>>,
 }
 impl FileDialogs {
     pub(crate) fn new(owner: crate::WindowHandle) -> Self {
@@ -143,7 +143,7 @@ impl FileDialogs {
             .drain(..)
             .filter_map(|w| w.upgrade())
         {
-            token.store(true, std::sync::atomic::Ordering::Release);
+            token.cancel();
         }
         self.generation.set(self.generation.get().wrapping_add(1));
         *self.native.borrow_mut() = window.map(Arc::downgrade);
@@ -170,7 +170,7 @@ impl FileDialogs {
             .and_then(Weak::upgrade)
             .ok_or(FileDialogError::WindowUnavailable)?;
         let generation = self.generation.get();
-        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel = Arc::new(Cancel::new());
         self.cancellations
             .borrow_mut()
             .retain(|w| w.strong_count() > 0);
@@ -275,10 +275,43 @@ fn dismiss_owned_sheets(parent: &Window) {
     });
 }
 
-struct CancelOnDrop(Arc<std::sync::atomic::AtomicBool>);
+/// A request's cancellation: its future dropped or its window gone. On
+/// Linux it also wakes the thread waiting on the portal's answer.
+pub(crate) struct Cancel {
+    cancelled: std::sync::atomic::AtomicBool,
+    #[cfg(target_os = "linux")]
+    wake: Option<crate::linux_dbus::Stop>,
+}
+impl Cancel {
+    fn new() -> Self {
+        Self {
+            cancelled: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(target_os = "linux")]
+            wake: crate::linux_dbus::Stop::new(),
+        }
+    }
+    pub(crate) fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+        #[cfg(target_os = "linux")]
+        if let Some(wake) = &self.wake {
+            wake.stop();
+        }
+    }
+    #[cfg(target_os = "linux")]
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// What a thread waiting on the portal sleeps on besides it.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn wake(&self) -> Option<&crate::linux_dbus::Stop> {
+        self.wake.as_ref()
+    }
+}
+struct CancelOnDrop(Arc<Cancel>);
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
-        self.0.store(true, std::sync::atomic::Ordering::Release);
+        self.0.cancel();
     }
 }
 #[cfg(target_os = "linux")]
@@ -286,7 +319,7 @@ async fn native_select(
     kind: Kind,
     options: FileDialogOptions,
     parent: Arc<Window>,
-    cancel: Arc<std::sync::atomic::AtomicBool>,
+    cancel: Arc<Cancel>,
 ) -> FileDialogResult<Vec<PathBuf>> {
     background(move || crate::portal_dialog::select(kind, options, parent, cancel))?.await?
 }
@@ -338,7 +371,7 @@ async fn native_select(
     kind: Kind,
     options: FileDialogOptions,
     parent: Arc<Window>,
-    _cancel: Arc<std::sync::atomic::AtomicBool>,
+    _cancel: Arc<Cancel>,
 ) -> FileDialogResult<Vec<PathBuf>> {
     let owner = Owner::new(parent);
     background(move || {
@@ -370,7 +403,7 @@ async fn native_select(
     kind: Kind,
     options: FileDialogOptions,
     parent: Arc<Window>,
-    _cancel: Arc<std::sync::atomic::AtomicBool>,
+    _cancel: Arc<Cancel>,
 ) -> FileDialogResult<Vec<PathBuf>> {
     let mut dialog = rfd::AsyncFileDialog::new()
         .set_parent(parent.as_ref())
@@ -439,6 +472,29 @@ impl<T> Future for Background<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The portal's thread sleeps until the answer, or until the request is
+    /// cancelled, which wakes it at once.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cancelling_wakes_the_thread_waiting_on_the_portal() {
+        let Ok(connection) = crate::linux_dbus::session() else {
+            return; // No session bus here.
+        };
+        let cancel = Arc::new(Cancel::new());
+        let waiting = cancel.clone();
+        let started = std::time::Instant::now();
+        let thread = std::thread::spawn(move || {
+            let wake = waiting.wake().unwrap();
+            while crate::linux_dbus::wait(&connection, wake) {}
+            started.elapsed()
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!thread.is_finished(), "nothing came and nothing cancelled");
+        cancel.cancel();
+        assert!(cancel.is_cancelled());
+        assert!(thread.join().unwrap() < std::time::Duration::from_secs(5));
+    }
     #[test]
     fn invalid_filter_does_not_reach_native_cstring_conversion() {
         for filter in [
