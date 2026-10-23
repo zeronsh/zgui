@@ -75,7 +75,8 @@ local function card(plugin: state.PluginInfo): Node
 	end
 	local chips: ContainerProps = { gap = 6, flex_wrap = true, items = "center" }
 	for _, p in plugin.permissions do
-		table.insert(chips, chip(icons[PERMISSION_ICONS[p.id] or "check"], p.text or p.id))
+		local icon: icons.Name = PERMISSION_ICONS[p.id] or "check"
+		table.insert(chips, chip(icons[icon], p.text or p.id))
 	end
 	if #plugin.permissions == 0 and plugin.status ~= "broken" then
 		table.insert(chips, chip(icons.check, "Asks for nothing beyond its panels"))

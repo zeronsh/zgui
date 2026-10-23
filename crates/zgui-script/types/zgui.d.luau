@@ -993,7 +993,8 @@ export type StyleProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -1237,7 +1238,8 @@ export type Props = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -1469,7 +1471,8 @@ export type ContainerProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -1703,7 +1706,8 @@ export type ScrollProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -1942,7 +1946,8 @@ export type TextProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -2218,7 +2223,8 @@ export type RichProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -2450,7 +2456,8 @@ export type ImageProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -2690,7 +2697,8 @@ export type SvgProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -2924,7 +2932,8 @@ export type CanvasProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -3157,7 +3166,8 @@ export type CheckboxProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -3390,7 +3400,8 @@ export type InputProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -3636,7 +3647,8 @@ export type ProgressProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -3869,7 +3881,8 @@ export type SliderProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -4106,7 +4119,8 @@ export type ListProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -4364,7 +4378,8 @@ export type LayerProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -4598,7 +4613,8 @@ export type ModalProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -4841,7 +4857,8 @@ export type PopoverProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -5083,7 +5100,8 @@ export type MenuItemProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -5317,7 +5335,8 @@ export type SubmenuProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -5554,7 +5573,8 @@ export type WebViewProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -5809,7 +5829,8 @@ export type TerminalProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -6042,7 +6063,8 @@ export type SlotProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -6280,7 +6302,8 @@ export type EachOptions = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,
@@ -6521,7 +6544,8 @@ export type PresenceOptions = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,

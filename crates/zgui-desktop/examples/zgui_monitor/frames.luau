@@ -61,10 +61,11 @@ M.frames = ui.computed(function(): Shown
 	local zoomed = zoom:get()
 	local out: Shown
 	if zoomed ~= "" and layout.contains(shown, zoomed) and not (drop:get()).target then
+		local pane: string = zoomed
 		out = {
-			panes = { [zoomed] = { x = 0, y = 0, w = size.w, h = size.h } },
+			panes = { [pane] = { x = 0, y = 0, w = size.w, h = size.h } },
 			dividers = {},
-			order = { zoomed },
+			order = { pane },
 			smooth = false,
 		}
 	else

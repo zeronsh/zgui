@@ -84,6 +84,16 @@ jobs:
       # zgui-script's best-practice lint over every example script.
       - name: Script lint
         run: cargo run -q -p zgui-script --bin zgui --locked -- lint crates/zgui-script/examples crates/zgui-desktop/examples
+      # Every example script type checks (luau-lsp, the shipped ui/anime
+      # types); zgui-script's check tests run with it too.
+      - name: Script type check
+        run: |
+          dir="$RUNNER_TEMP/luau-lsp-1.70.1"
+          mkdir -p "$dir"
+          curl -fsSL https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip -o "$dir.zip"
+          unzip -q -o "$dir.zip" -d "$dir"
+          echo "LUAU_LSP=$dir/luau-lsp" >> "$GITHUB_ENV"
+          LUAU_LSP="$dir/luau-lsp" cargo run -q -p zgui-script --bin zgui --locked -- check crates/zgui-script/examples crates/zgui-desktop/examples
       - run: cargo test -p zgui -p zgui-desktop -p zgui-workload -p zgui-script --all-targets --locked
       - run: cargo test --workspace --doc --locked
       # Concurrent device tests need Vulkan-Loader#1866; older distro loaders

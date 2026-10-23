@@ -1,3 +1,6 @@
+--!nonstrict
+-- (Non-strict until the lab's untyped motion data is annotated: `zgui check`
+-- reports what strict mode would.)
 -- An agent's trace, live, matched to the Ask motion lab: the run summary
 -- connects, steps arrive (the row grows, its stem draws down, then the row
 -- fades up), labels swap from doing to done through a blur crossfade,

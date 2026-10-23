@@ -1,3 +1,6 @@
+--!nonstrict
+-- (Non-strict until the lab's untyped design nodes are annotated: `zgui check`
+-- reports what strict mode would.)
 -- The Ask motion lab's composer page: every composer state, stepped through
 -- in the lab's order, with the lab's transitions between them.
 --
@@ -799,7 +802,11 @@ function press_feedback(inst, props)
 	end
 	local hovered, pressed = false, false
 	local function el()
-		return inst.el and inst.el.mounted and inst.el
+		local mounted = inst.el
+		if mounted and mounted.mounted then
+			return mounted
+		end
+		return nil
 	end
 	props.on_hover = function(inside)
 		hovered = inside
@@ -1153,11 +1160,11 @@ local function ease_style(inst, old, n)
 		for i, key in { "pt", "pr", "pb", "pl" } do
 			num(key, z(a[i]), z(b[i]))
 		end
-		local a, b = corner_list(old), corner_list(n)
-		if a[1] ~= b[1] or a[2] ~= b[2] or a[3] ~= b[3] or a[4] ~= b[4] then
+		local ca, cb = corner_list(old), corner_list(n)
+		if ca[1] ~= cb[1] or ca[2] ~= cb[2] or ca[3] ~= cb[3] or ca[4] ~= cb[4] then
 			local radii = { duration = DUR, ease = SPRING }
 			for i, key in { "rounded_tl", "rounded_tr", "rounded_br", "rounded_bl" } do
-				radii[key] = { z(a[i]), z(b[i]) }
+				radii[key] = { z(ca[i]), z(cb[i]) }
 			end
 			anime.animate(el, table.clone(radii))
 			if inst.stroke_el then
@@ -1598,6 +1605,7 @@ do
 				return st.composer
 			end
 		end
+		return nil
 	end
 	same(Composer.base(), state("Composer · Empty"), "Empty")
 	same(Composer.base { reply = "Summarize this page", typed = true }, state("Composer · Typing"), "Typing")
@@ -1791,6 +1799,7 @@ uploads = (function()
 				return found
 			end
 		end
+		return nil
 	end
 	local function find(inst, spec)
 		if not spec then
@@ -1805,6 +1814,7 @@ uploads = (function()
 				return found
 			end
 		end
+		return nil
 	end
 	-- A design node's value changed in place: no transition.
 	local function poke(inst, fields)
@@ -2475,6 +2485,7 @@ local function named(name)
 			return i
 		end
 	end
+	return nil
 end
 local function toggle(a, b)
 	go(named(STATES[current:peek()].name == a and b or a))
@@ -2531,6 +2542,7 @@ function click(inst)
 							return true
 						end
 					end
+					return false
 				end
 				walk(live)
 			end)
@@ -2567,6 +2579,7 @@ function click(inst)
 			go(named("Composer · Empty"))
 		end
 	end
+	return nil
 end
 
 -- For recording a transition: GOTO = { from, to, slow }.

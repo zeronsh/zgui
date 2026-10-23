@@ -986,7 +986,8 @@ export type StyleProps = {
 	border_sides: Reactive<Sides>?,
 	border_color: Reactive<Color>?,
 	border_over: Reactive<boolean>?,
-	border_dash: Reactive<Pair>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
 	outline: Reactive<Num>?,
 	outline_color: Reactive<Color>?,
 	outline_offset: Reactive<Num>?,

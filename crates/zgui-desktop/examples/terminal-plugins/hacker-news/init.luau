@@ -1,3 +1,5 @@
+--!nonstrict
+-- (Non-strict until promises carry their values' types in zgui.d.luau.)
 -- Hacker News in a pane, with its own navigation: the feeds (Top, New,
 -- Best, Ask, Show), a story's discussion as a thread you can fold, the
 -- article itself, and the people who wrote them. Back goes back.

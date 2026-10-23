@@ -352,14 +352,13 @@ function M.Palette(): Node
 					key("esc"),
 				},
 				ui.div { h = 1, bg = "$terminal.key.bg" },
-				ui.column {
+				ui.scroll {
 					px = "$space.2",
 					pb = "$space.2",
 					items = "stretch",
 					max_h = 380,
 					shrink = 1,
 					min_h = 0,
-					overflow = "scroll",
 					-- Unkeyed: a plugin's new title rebuilds its row.
 					ui.each(rows, function(r: Row): Node
 						if r.section then

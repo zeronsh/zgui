@@ -15,6 +15,15 @@ local format = require("@lib/format")
 -- Room for the marker at the plot's edges.
 local INSET = 6
 
+-- A metric's series in a sample history, and its hue.
+local function series_of(history: data.History, metric: format.Metric): data.Series
+	return if metric == "cpu" then history.cpu elseif metric == "gpu" then history.gpu else history.mem
+end
+local function hue_of(metric: format.Metric): string
+	local hues = theme.hues
+	return if metric == "cpu" then hues.cpu elseif metric == "gpu" then hues.gpu else hues.mem
+end
+
 export type Props = {
 	metric: format.Metric,
 	title: string,
@@ -26,7 +35,7 @@ export type Props = {
 
 return ui.component(function(props: Props)
 	local metric, history, hover = props.metric, props.history, props.hover
-	local hue = theme.hues[metric]
+	local hue = hue_of(metric)
 	local floor = if metric == "mem" then 64 else 10
 	local capacity = state.capacity
 	local width = ui.use_state(0)
@@ -36,7 +45,7 @@ return ui.component(function(props: Props)
 
 	local function series(): data.Series
 		local h = history:get()
-		return if h then h[metric] else {}
+		return if h then series_of(h, metric) else {}
 	end
 	local function step(w: number): number
 		return math.max(w - 2 * INSET, 1) / (capacity - 1)

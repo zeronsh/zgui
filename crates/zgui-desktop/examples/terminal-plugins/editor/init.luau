@@ -1,3 +1,5 @@
+--!nonstrict
+-- (Non-strict until promises carry their values' types in zgui.d.luau.)
 -- Editor: a text editor in a pane. Open a file (⌘O), edit it with its
 -- lines numbered, save it (⌘S, ⇧⌘S for elsewhere). A changed file shows a
 -- dot; opening another asks first.

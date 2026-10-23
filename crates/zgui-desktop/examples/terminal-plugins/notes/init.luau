@@ -1,3 +1,5 @@
+--!nonstrict
+-- (Non-strict until promises carry their values' types in zgui.d.luau.)
 -- Notes: a notepad in a pane, kept per pane across launches. It asks for
 -- nothing: it only shows its panel (`panels` in plugin.json), opened from
 -- ⌘K. zterm gives the component its pane in `props.slot`.
