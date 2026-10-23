@@ -197,7 +197,10 @@ fn a_popovers_trigger_says_it_opens_a_dialog_and_whether_it_shows() {
         .borrow()
         .iter()
         .any(|(_, n)| n.role == Role::Dialog && n.modal);
-    assert!(modal, "it traps focus, so it is modal to assistive technology");
+    assert!(
+        modal,
+        "it traps focus, so it is modal to assistive technology"
+    );
     open.set(false);
     ui.prepare_frame();
     assert_eq!(state(&ui), (Some(PopupKind::Dialog), Some(false)));
