@@ -163,6 +163,7 @@ enum WindowCommand {
     Visible(bool),
     Focus,
     MaxFrameRate(Option<f64>),
+    LoseGpu,
     ContextMenu {
         entries: Vec<crate::AppMenuEntry>,
         x: f64,
@@ -196,6 +197,7 @@ impl WindowState {
             WindowCommand::MinSize(value) => options.min_size = *value,
             WindowCommand::Drag
             | WindowCommand::RefreshInfo
+            | WindowCommand::LoseGpu
             | WindowCommand::ContextMenu { .. } => {}
             WindowCommand::Title(title) => options.title.clone_from(title),
             WindowCommand::Size(width, height) => {
@@ -302,6 +304,12 @@ impl WindowHandle {
     /// [`crate::WindowInfo`] again.
     pub fn refresh_window_info(&self) {
         self.command(WindowCommand::RefreshInfo);
+    }
+    /// Lose the window's GPU device, as a driver reset or a removed GPU
+    /// would, for tests of recovery: the window makes a new renderer and
+    /// draws on. Other windows on the same device recover alike.
+    pub fn debug_lose_gpu(&self) {
+        self.command(WindowCommand::LoseGpu);
     }
     /// Queue a validated application menu action for this window's focused UI.
     pub fn dispatch_menu_action(&self, action: impl Into<crate::MenuAction>) {
@@ -770,6 +778,7 @@ impl Application {
             #[cfg(target_os = "macos")]
             native_menu,
             hosts: HashMap::from([(token, root)]),
+            panics: Vec::new(),
             native: HashMap::new(),
             drag_over: Cell::new(None),
             carrying: None,
@@ -1026,6 +1035,11 @@ struct Host {
     context: WindowContext,
     window: Option<Arc<Window>>,
     renderer: Option<GpuRenderer>,
+    /// When to try making a renderer again after the GPU device was lost
+    /// (`recover_renderer`), while none could be made.
+    renderer_retry: Option<std::time::Instant>,
+    /// The banner saying something failed (`show_error`), once one has.
+    error_banner: Option<(Signal<String>, zgui::compose::ViewHandle)>,
     adapter: Option<accesskit_winit::Adapter>,
     tree: AccessibilityTree,
     proxy: EventLoopProxy<Event>,
@@ -1267,6 +1281,8 @@ impl Host {
             context,
             window: None,
             renderer: None,
+            renderer_retry: None,
+            error_banner: None,
             adapter: None,
             tree: AccessibilityTree::new(),
             proxy,
@@ -1519,6 +1535,26 @@ impl Host {
         }
     }
     fn draw(&mut self) -> Result<(), Box<dyn Error>> {
+        if self
+            .renderer_retry
+            .is_some_and(|at| at <= std::time::Instant::now())
+        {
+            self.recover_renderer();
+        }
+        match self.draw_frame() {
+            Err(error)
+                if error
+                    .downcast_ref::<zgui_gpu::GpuError>()
+                    .is_some_and(zgui_gpu::GpuError::is_device_lost) =>
+            {
+                eprintln!("zgui: {error}; making a new renderer");
+                self.recover_renderer();
+                Ok(())
+            }
+            other => other,
+        }
+    }
+    fn draw_frame(&mut self) -> Result<(), Box<dyn Error>> {
         self.sync_ime_cancellation();
         let Some(window) = self.window.clone() else {
             self.context.ui.cancel_interactions();
@@ -1949,6 +1985,110 @@ impl Host {
     }
 }
 impl Host {
+    /// A renderer for `window`: on a context another window made, when its
+    /// adapter suits the window, else on one of its own, which the app's
+    /// fonts are installed in and other windows may share.
+    fn make_renderer(&mut self, window: &Arc<Window>) -> Result<GpuRenderer, Box<dyn Error>> {
+        let contexts = self.context.windows.gpu_contexts.borrow().clone();
+        for context in contexts {
+            match self.native.renderer_for(window.clone(), Some(&context)) {
+                Ok(renderer) => return Ok(renderer),
+                Err(error) if error.is_surface_incompatible() => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let renderer = self.native.renderer_for(window.clone(), None)?;
+        for font in self.context.windows.fonts.iter() {
+            font.install(&mut renderer.text_system().borrow_mut());
+        }
+        self.context
+            .windows
+            .gpu_contexts
+            .borrow_mut()
+            .push(renderer.context());
+        Ok(renderer)
+    }
+    /// Say in the window that something failed (a contained panic): a
+    /// banner over its content, read out by assistive technology, which a
+    /// click dismisses; a later failure replaces its text.
+    fn show_error(&mut self, message: &str) {
+        let text = format!("Something went wrong: {message}");
+        if let Some((shown, _)) = &self.error_banner {
+            shown.set(text);
+        } else {
+            let shown = self.context.ui.signal(text);
+            let (read, hide, hidden) = (shown.clone(), shown.clone(), shown.clone());
+            use zgui::{
+                compose::div,
+                style::{Styled, Styles},
+            };
+            let view = self.context.ui.mount(
+                div()
+                    .absolute()
+                    .top(8.)
+                    .left(8.)
+                    .right(8.)
+                    .p(10.)
+                    .rounded(8.)
+                    .bg(zgui::style::rgb(0x6b2222))
+                    .text_color(zgui::style::rgb(0xffffff))
+                    .text_size(13.)
+                    .live(zgui::semantics::Live::Assertive)
+                    .reactive_style(move || {
+                        if hidden.get().is_empty() {
+                            Styles::new().hidden()
+                        } else {
+                            Styles::new()
+                        }
+                    })
+                    .on_click(move || {
+                        hide.set(String::new());
+                    })
+                    .child(zgui::compose::text_signal(move || read.get())),
+            );
+            self.error_banner = Some((shown, view));
+        }
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+    /// The GPU device was lost (a driver reset, a GPU removed): a renderer
+    /// on a new context, its text and background set up again, and the
+    /// window drawn in full. Until one can be made, the window keeps its
+    /// state and tries again a second later.
+    fn recover_renderer(&mut self) {
+        self.renderer_retry = None;
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        self.renderer = None;
+        self.context
+            .windows
+            .gpu_contexts
+            .borrow_mut()
+            .retain(|context| context.lost().is_none());
+        match self.make_renderer(&window) {
+            Ok(mut renderer) => {
+                renderer.set_scale_factor(self.scale_factor as f32);
+                if self.options.is_transparent() {
+                    renderer.set_background(zgui::scene::Color(0, 0, 0, 0));
+                } else if let Some(background) = self.applied_background {
+                    renderer.set_background(background);
+                }
+                renderer.install_text(&mut self.context.ui.scene.borrow_mut());
+                self.context.ui.refresh_text_geometry();
+                self.renderer = Some(renderer);
+                self.force = true;
+                eprintln!("zgui: drawing again on a new GPU renderer");
+                window.request_redraw();
+            }
+            Err(error) => {
+                eprintln!("zgui: no GPU renderer yet ({error}); trying again");
+                self.renderer_retry =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
+            }
+        }
+    }
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), Box<dyn Error>> {
         if self.window.is_some() {
             return Ok(());
@@ -2047,33 +2187,7 @@ impl Host {
             &window,
             self.proxy.clone(),
         );
-        let contexts = self.context.windows.gpu_contexts.borrow().clone();
-        let mut shared_renderer = None;
-        for context in contexts {
-            match self.native.renderer_for(window.clone(), Some(&context)) {
-                Ok(renderer) => {
-                    shared_renderer = Some(renderer);
-                    break;
-                }
-                Err(error) if error.is_surface_incompatible() => continue,
-                Err(error) => return Err(error.into()),
-            }
-        }
-        let mut renderer = match shared_renderer {
-            Some(renderer) => renderer,
-            None => {
-                let renderer = self.native.renderer_for(window.clone(), None)?;
-                for font in self.context.windows.fonts.iter() {
-                    font.install(&mut renderer.text_system().borrow_mut());
-                }
-                self.context
-                    .windows
-                    .gpu_contexts
-                    .borrow_mut()
-                    .push(renderer.context());
-                renderer
-            }
-        };
+        let mut renderer = self.make_renderer(&window)?;
         self.scale_factor = window.scale_factor();
         renderer.set_scale_factor(self.scale_factor as f32);
         let themes = self.context.ui.theme().clone();
@@ -2253,6 +2367,12 @@ impl Host {
                 .context
                 .window_info
                 .refresh(window, self.options.titlebar),
+            WindowCommand::LoseGpu => {
+                if let Some(renderer) = &self.renderer {
+                    renderer.context().debug_lose_device();
+                }
+                window.request_redraw();
+            }
             WindowCommand::Title(title) => window.set_title(&title),
             WindowCommand::Size(width, height) => {
                 let (width, height) = self
@@ -3521,6 +3641,9 @@ struct WindowManager {
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::app_menu::NativeMenu>,
     hosts: HashMap<u64, Host>,
+    /// When the last contained panics were (`contain`): many close together
+    /// end the app.
+    panics: Vec<std::time::Instant>,
     native: HashMap<WindowId, u64>,
     /// The window a drag was last found over and its content's box in global
     /// coordinates, and when: while the pointer stays in it, it still is,
@@ -3877,8 +4000,8 @@ impl Drop for WindowManager {
         pending.clear();
     }
 }
-impl ApplicationHandler<Event> for WindowManager {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+impl WindowManager {
+    fn resumed_turn(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "macos")]
         if let Some(events) = &self._native_events {
             events.install();
@@ -3950,14 +4073,14 @@ impl ApplicationHandler<Event> for WindowManager {
             self.fail(event_loop, e);
         }
     }
-    fn suspended(&mut self, _: &ActiveEventLoop) {
+    fn suspended_turn(&mut self) {
         self.active = false;
         self.native.clear();
         for host in self.hosts.values_mut() {
             host.suspend();
         }
     }
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
+    fn user_event_turn(&mut self, event_loop: &ActiveEventLoop, event: Event) {
         match event {
             Event::Quit => event_loop.exit(),
             Event::Application(event, token) => {
@@ -4231,7 +4354,12 @@ impl ApplicationHandler<Event> for WindowManager {
             self.about_to_wait(event_loop);
         }
     }
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event_turn(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        event: WindowEvent,
+    ) {
         // A popup window's input goes to its parent's host (X11).
         #[cfg(target_os = "linux")]
         if crate::popup_window::route(id, &event) {
@@ -4276,7 +4404,7 @@ impl ApplicationHandler<Event> for WindowManager {
             self.carry_drag(token);
         }
     }
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn about_to_wait_turn(&mut self, event_loop: &ActiveEventLoop) {
         // A close request must terminate even while native surfaces are suspended.
         let closed: Vec<_> = self
             .hosts
@@ -4341,6 +4469,14 @@ impl ApplicationHandler<Event> for WindowManager {
         }
         let mut ready = false;
         for host in self.hosts.values_mut() {
+            // A renderer lost with its GPU device, due another try.
+            if host
+                .renderer_retry
+                .is_some_and(|at| at <= std::time::Instant::now())
+                && let Some(window) = &host.window
+            {
+                window.request_redraw();
+            }
             let drop_event = match host.pending_file_drops.take() {
                 Ok(Some(paths)) => Some(InputEvent::FilesDrop {
                     x: host.cursor.0,
@@ -4378,6 +4514,7 @@ impl ApplicationHandler<Event> for WindowManager {
                     host.presentation.deadline(),
                     host.context.ui.next_interaction_deadline(),
                     host.frame_deadline,
+                    host.renderer_retry,
                     host.touch.hold_deadline(),
                     host.trim_at,
                     match host.startup_trim {
@@ -4396,6 +4533,68 @@ impl ApplicationHandler<Event> for WindowManager {
         } else {
             ControlFlow::Wait
         });
+    }
+}
+
+/// The event loop's turns, each contained (`WindowManager::contain`).
+impl ApplicationHandler<Event> for WindowManager {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.contain(event_loop, None, |this| this.resumed_turn(event_loop));
+    }
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        self.contain(event_loop, None, |this| this.suspended_turn());
+    }
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
+        self.contain(event_loop, None, |this| {
+            this.user_event_turn(event_loop, event)
+        });
+    }
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let token = self.native.get(&id).copied();
+        self.contain(event_loop, token, |this| {
+            this.window_event_turn(event_loop, id, event)
+        });
+    }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.contain(event_loop, None, |this| this.about_to_wait_turn(event_loop));
+    }
+}
+impl WindowManager {
+    /// Run one turn of the event loop. A panic in it (an app's handler or
+    /// effect) is contained: the panic hook has logged it, its window (or
+    /// every window, when the turn was no one window's) says so in a
+    /// banner, and the app keeps running; zgui's state stays consistent
+    /// across an unwind (its borrows, subscriptions and focus recover).
+    /// Panics that keep coming (20 within a second) end the app instead.
+    fn contain(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        token: Option<u64>,
+        turn: impl FnOnce(&mut Self),
+    ) {
+        let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| turn(self)))
+        else {
+            return;
+        };
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic".into());
+        let now = std::time::Instant::now();
+        self.panics
+            .retain(|at| now.duration_since(*at) < std::time::Duration::from_secs(1));
+        self.panics.push(now);
+        if self.panics.len() >= 20 {
+            self.fail(event_loop, format!("panicking repeatedly: {message}"));
+            return;
+        }
+        eprintln!("zgui: contained a panic ({message}); the app keeps running");
+        for (key, host) in self.hosts.iter_mut() {
+            if token.is_none_or(|token| token == *key) {
+                host.show_error(&message);
+            }
+        }
     }
 }
 /// The layout inspector's toggle, with I: Ctrl+Option+Cmd on macOS (no
@@ -5118,6 +5317,7 @@ mod tests {
             #[cfg(target_os = "macos")]
             native_menu: None,
             hosts: HashMap::new(),
+            panics: Vec::new(),
             native: HashMap::new(),
             drag_over: Cell::new(None),
             carrying: None,

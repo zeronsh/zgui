@@ -220,6 +220,17 @@ Use `cx.windows.open(options, builder)` to create another window. An application
 
 `cx.on_close_requested(|| bool)` handles native close requests and `window.request_close()`: return false to keep the window open, for example while a save-confirmation dialog is shown. `window.close()` closes immediately and bypasses that policy. `cx.on_closed(|| ...)` runs once during window disposal. Asynchronous confirmation should reject the initial request and call `close` after the user completes it.
 
+## When something fails
+
+An app keeps running through what goes wrong while it runs, where that is safe:
+
+- **A panic** in an event handler, an effect or a task is contained by the desktop host: the panic hook logs it as usual, the window shows a banner saying what went wrong (a click dismisses it; assistive technology reads it out), and the app goes on. zgui keeps its state consistent across the unwind: borrows, subscriptions and focus recover. Panics that keep coming (20 within a second) end the app with the last one's message, rather than spin.
+- **A lost GPU device** (a driver reset, an external GPU removed) fails the window's frames with `GpuError::is_device_lost`; the window makes a renderer on a new device and draws again in full, with its state as it was. Until one can be made it tries again each second. `WindowHandle::debug_lose_gpu()` loses it on purpose, for tests. A lost or outdated surface is recreated without either.
+- **A script's runtime error** is logged and shown over the window in debug builds (`ScriptHost::error`); the rest of the script keeps working.
+- **A missing image** draws empty in its place, its error reported as a script error is; a font that isn't installed falls back to the system's.
+
+Other errors (a window that can't be made, layout that never settles) still end the app with the error, as before.
+
 ## Future templates
 
 The proposed `service`, `provider`, `view`, `slot`, and event syntax remains a future compiler front end. The current Rust API does not imitate that syntax. A compiler can lower providers to `provide`/`provide_with`, state to `Context::state`, views to `component`, keyed loops to `keyed`, visible list windows to the component virtual-list constructors, and event actions to view handlers and component-owned tasks. Slots must retain lexical service/state captures while attaching their mounted subtree to the receiving view's ownership. See [architecture](architecture.md) for the concrete lowering table and retained cost model.

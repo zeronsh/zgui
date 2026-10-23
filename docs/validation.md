@@ -19,6 +19,27 @@ The software differential tests compare incremental output against a cleared ful
 
 Surface acquisition uses the same bounded recovery policy exercised by injected Lost, Outdated, Timeout, Occluded, recreation-error and validation-error tests. Desktop presentation retains skipped frames, retries timeouts after 16/32/64 ms without rerendering, then sleeps until new damage or exposure. Occlusion waits for visibility. Focus lifecycle tests cover repeated deactivation, removed/disabled targets, consumed restoration state and canceled pointer presses. These deterministic tests do not substitute for native OS suspension or real driver surface-loss testing.
 
+## Soak and failure checks
+
+`crates/zgui-script/tests/soak.rs` uses an app for a while, headless: each cycle mounts a large tree (rows with tooltips and context menus), opens a menu, a popover and a modal, streams markdown, switches theme and direction, draws on the GPU where there is one, and every few cycles hot-reloads its script, then closes everything. After a warm-up, scene nodes, effects and semantic nodes must be what they were a reload period earlier, and the Luau heap, the GPU's caches and allocations, file descriptors, Mach ports and the physical footprint must stay within what the warm-up reached. CI runs 12 cycles (two seconds) on Linux and macOS. A long run:
+
+```sh
+ZGUI_SOAK_CYCLES=600 cargo test --release -p zgui-script --test soak -- --nocapture
+```
+
+Measured on macOS (M-series, Metal), 600 cycles: everything zgui holds is flat from the first cycles; the footprint grows 8 MB over the first 300 cycles (the allocator and the driver warming up) and then not at all.
+
+`examples/desktop_soak.rs` does the same with real windows: each cycle opens three (a large tree each, a menu and a popover open, which macOS shows in popup windows, a tooltip, a prompt sheet), closes them, and prints the process's footprint, descriptors, ports and threads; `scripts/desktop_soak.py` judges that they level off:
+
+```sh
+cargo build --release -p zgui-desktop --example desktop_soak
+python3 scripts/desktop_soak.py target/release/examples/desktop_soak --cycles 300
+```
+
+It opens windows for the whole run (a cycle a second); leave the machine to it.
+
+`examples/failures.rs` fails twice while it animates, for `scripts/failures_smoke.py` (a Linux native smoke): a task panics, which the host contains and shows in a banner, then its GPU device is lost (`WindowHandle::debug_lose_gpu`), and it makes a new renderer and draws on. `crates/zgui-gpu/tests/device_loss.rs` checks the renderer's side; `crates/zgui-script/tests/failures.rs` a script's runtime error, a missing image and a missing font.
+
 ## Linux native checks
 
 Native examples run under Xvfb with Openbox, using llvmpipe Vulkan:

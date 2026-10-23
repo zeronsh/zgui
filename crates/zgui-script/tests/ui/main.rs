@@ -5,6 +5,8 @@
 #![allow(clippy::duplicate_mod)]
 #[path = "../container_queries.rs"]
 mod container_queries;
+#[path = "../failures.rs"]
+mod failures;
 #[path = "../layout_gaps.rs"]
 mod layout_gaps;
 #[path = "../layout_motion.rs"]

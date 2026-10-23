@@ -75,5 +75,9 @@ name = "ui"
 path = "tests/ui/main.rs"
 
 [[test]]
+name = "soak"
+path = "tests/soak.rs"
+
+[[test]]
 name = "bundle"
 path = "tests/bundle.rs"

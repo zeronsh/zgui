@@ -24,6 +24,7 @@ SMOKES = [
     ("component-host", "python3 scripts/component_host_smoke.py {bin}/component_workload --output {out}", True),
     ("gallery", "python3 scripts/desktop_smoke.py {bin}/gallery", True),
     ("windows", "timeout 30s {bin}/windows --smoke-test", True),
+    ("failures", "python3 scripts/failures_smoke.py {bin}/failures", True),
     ("window-controls", "timeout 30s {bin}/window_controls --smoke-test", True),
     ("form", "python3 scripts/form_smoke.py {bin}/form", True),
     ("checkbox", "python3 scripts/checkbox_smoke.py {bin}/checkbox --output {out}", True),

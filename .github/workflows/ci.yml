@@ -153,6 +153,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test -p zgui -p zgui-desktop -p zgui-workload --all-targets --locked
+      # The soak (an app used for a while holds what it did), on Metal.
+      - run: cargo test -p zgui-script --test soak --locked
       - run: cargo test --workspace --doc --locked
       - name: Metal rendering and damage readback
         if: ${{ !cancelled() }}

@@ -1140,6 +1140,9 @@ pub struct GpuContext {
     inner: Rc<GpuContextInner>,
 }
 struct GpuContextInner {
+    /// Why the device was lost (driver reset, removal, `debug_lose_device`):
+    /// set from wgpu's callback, from any thread.
+    lost: Arc<std::sync::Mutex<Option<String>>>,
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
@@ -1247,6 +1250,42 @@ impl GpuContext {
         // command buffers as were ever alive at once, for good.
         queue.submit([]);
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        // A lost device (a driver reset, a GPU removed) fails what follows
+        // instead of panicking, as wgpu's default handler does: renders
+        // then return `GpuError::is_device_lost`, and the host makes a new
+        // renderer. Other errors are logged; a validation error is a bug,
+        // which still panics in debug builds.
+        let lost: Arc<std::sync::Mutex<Option<String>>> = Arc::default();
+        {
+            let lost = lost.clone();
+            device.set_device_lost_callback(move |reason, message| {
+                let mut slot = lost.lock().unwrap_or_else(|p| p.into_inner());
+                if slot.is_none() {
+                    if message.is_empty() {
+                        eprintln!("zgui: the GPU device was lost ({reason:?})");
+                    } else {
+                        eprintln!("zgui: the GPU device was lost ({reason:?}): {message}");
+                    }
+                    *slot = Some(if message.is_empty() {
+                        format!("{reason:?}")
+                    } else {
+                        message
+                    });
+                }
+            });
+        }
+        {
+            let lost = lost.clone();
+            device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
+                if lost.lock().map_or(true, |lost| lost.is_some()) {
+                    return;
+                }
+                if cfg!(debug_assertions) && matches!(error, wgpu::Error::Validation { .. }) {
+                    panic!("wgpu: {error}");
+                }
+                eprintln!("zgui: GPU error: {error}");
+            }));
+        }
         let (texture_layout, viewport_layout, quad_shader, quad_layout) =
             create_quad_pipelines(&device);
         let quads = QuadPipelines {
@@ -1260,6 +1299,7 @@ impl GpuContext {
         };
         Ok(Self {
             inner: Rc::new(GpuContextInner {
+                lost,
                 instance,
                 adapter,
                 device,
@@ -1276,6 +1316,22 @@ impl GpuContext {
             }),
         })
     }
+    /// Why its device was lost, once it is: every renderer on it then
+    /// fails with `GpuError::is_device_lost`, and a new context is needed.
+    pub fn lost(&self) -> Option<String> {
+        self.inner
+            .lost
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+    /// Lose the device, as a driver reset would: for tests of recovery.
+    pub fn debug_lose_device(&self) {
+        self.inner.device.destroy();
+        let _ = self.inner.device.poll(wgpu::PollType::Poll);
+        let mut lost = self.inner.lost.lock().unwrap_or_else(|p| p.into_inner());
+        lost.get_or_insert_with(|| "destroyed for a test".into());
+    }
     /// Whether `other` is this context (a clone of it), on the same device.
     pub fn shares_device(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.inner, &other.inner)
@@ -1290,6 +1346,15 @@ impl GpuContext {
     }
 }
 impl GpuError {
+    /// The device was lost (`GpuContext::lost`): `reason` says why.
+    pub fn device_lost(reason: &str) -> Self {
+        Self(format!("GPU device lost: {reason}"))
+    }
+    /// Whether the device was lost: drop the renderer and make another on
+    /// a new context.
+    pub fn is_device_lost(&self) -> bool {
+        self.0.starts_with("GPU device lost")
+    }
     /// Whether a window's surface can't be drawn with the context's adapter
     /// (make a context for that window instead).
     pub fn is_surface_incompatible(&self) -> bool {
@@ -2026,6 +2091,9 @@ impl GpuRenderer {
         Ok(stats)
     }
     fn render_inner(&mut self, scene: &Scene, damage: &[Rect]) -> Result<GpuStats, GpuError> {
+        if let Some(reason) = self.context.lost() {
+            return Err(GpuError::device_lost(&reason));
+        }
         loop {
             match self.render_once(scene, damage) {
                 Err(error)
@@ -5652,6 +5720,9 @@ impl GpuRenderer {
         &mut self,
         before_present: impl FnOnce(),
     ) -> Result<PresentationStatus, GpuError> {
+        if let Some(reason) = self.context.lost() {
+            return Err(GpuError::device_lost(&reason));
+        }
         #[cfg(target_os = "macos")]
         if self.layer_present.is_some() {
             return self.present_layer(before_present);
@@ -5930,6 +6001,9 @@ impl GpuRenderer {
     }
     /// The target's pixels, RGBA, a row at a time.
     pub fn readback(&self) -> Result<Vec<u8>, GpuError> {
+        if let Some(reason) = self.context.lost() {
+            return Err(GpuError::device_lost(&reason));
+        }
         self.flush_pending();
         self.read_texture(&self.target)
     }
