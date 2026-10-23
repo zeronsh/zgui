@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.12"
 taffy = { version = "=0.9.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 stacker = "0.1.25"

@@ -119,16 +119,20 @@ fn style(style: &Style, layout: Layout, leaf: bool) -> t::Style {
                 .or_else(|| style.height_percent.map(Length::Percent))
                 .map_or(t::Dimension::auto(), dim),
         },
+        // Unset, CSS's automatic minimum (`auto`): a flex item shrinks no
+        // further than its min-content size, and one that clips (a scroll
+        // container, `overflow` below) to 0.
         min_size: t::Size {
             width: options
                 .min_width
                 .or_else(|| style.min_width.map(Length::Px))
-                .map_or(t::Dimension::length(0.), dim),
+                .map_or(t::Dimension::auto(), dim),
             height: options
                 .min_height
                 .or_else(|| style.min_height.map(Length::Px))
-                .map_or(t::Dimension::length(0.), dim),
+                .map_or(t::Dimension::auto(), dim),
         },
+        overflow: overflow(super::clips(style)),
         max_size: t::Size {
             width: options
                 .max_width
@@ -262,6 +266,19 @@ fn stacked(mut mapped: t::Style) -> t::Style {
     }
     mapped.justify_self = mapped.align_self.take();
     mapped
+}
+/// Taffy's overflow for a node that clips, or not: clipping on either axis
+/// makes it a scroll container, whose automatic minimum is 0.
+fn overflow(clips: bool) -> taffy::geometry::Point<taffy::style::Overflow> {
+    let overflow = if clips {
+        taffy::style::Overflow::Hidden
+    } else {
+        taffy::style::Overflow::Visible
+    };
+    taffy::geometry::Point {
+        x: overflow,
+        y: overflow,
+    }
 }
 fn available(value: Option<f32>) -> t::AvailableSpace {
     value.map_or(t::AvailableSpace::MaxContent, |v| {
@@ -537,6 +554,9 @@ impl Scene {
             .iter()
             .map(|child| {
                 let mut mapped = style(&self.node(*child).style, Layout::Column, true);
+                // A `contents` child clips as the child it lays out as.
+                mapped.overflow =
+                    overflow(super::clips(&self.node(self.laid_out_as(*child)).style));
                 if layout == Layout::Overlay && root_options.display != Some(ViewDisplay::Grid) {
                     mapped = stacked(mapped);
                 }

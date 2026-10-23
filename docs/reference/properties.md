@@ -42,7 +42,7 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | --- | --- | --- | --- |
 | `direction` | `"row" \| "row_reverse" \| "column" \| "column_reverse"` | `column` (`row` in a row) | |
 | `grow` | `number` | `0` | share of the free space along the parent's axis |
-| `shrink` | `number` | `0` | share of an overflow given up; `0` means it never shrinks |
+| `shrink` | `number` | `0` | share of an overflow given up; `0` means it never shrinks. It shrinks no further than its content needs unless `min_w`/`min_h` say otherwise |
 | `basis` | `Length` | its size | |
 | `flex_wrap`, `wrap_reverse` | `boolean` | `false` | wrap children onto lines |
 | `items` | `"start" \| "center" \| "end" \| "baseline" \| "stretch"` | `"stretch"` | children across the axis: stretched to the container's width (a column's) or height (a row's) unless they size themselves there, as in CSS |
@@ -202,7 +202,7 @@ return ui.column {
 
 - A state or function whose value does not fit the property (a string for `w` that is not a length, a boolean for `bg`) is ignored at run time; a literal that does not fit is an error. In the editor both are type errors.
 - `hover`, `active`, `focus`, `disabled` and `context_menu_style` take plain values: a state, function or binding in them is an error. To animate on hover, animate the base style from `on_hover`.
-- Children start at the start: no stretching (`items = "start"`), no shrinking (`shrink = 0`), no wrapping text (`wrap = false`).
+- Children stretch across their container (`items = "stretch"`), but never shrink (`shrink = 0`) and text does not wrap (`wrap = false`) unless asked. A child that shrinks stops at its content's narrowest (CSS's `min-width: auto`: a text's longest word), unless it clips (`overflow`, a scroll) or sets `min_w = 0`.
 - `gap` is points only; `gap_x` and `gap_y` take percentages.
 - A transparent border still takes its width; a ring that must not move content is `border_over = true`.
 - `bg_fit` and the shape of `mask`, `bg_shader` and `shader_params` are read once, as literals.

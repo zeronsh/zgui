@@ -980,6 +980,30 @@ fn keep_sizes(sizes: &mut Vec<ProbeSize>, evicted: Vec<ProbeSize>) {
     sizes.splice(0..0, evicted);
     sizes.truncate(PROBE_SIZES);
 }
+/// Whether a node clips its content on either axis, which makes it a
+/// scroll container to CSS: its automatic minimum is 0.
+pub(crate) fn clips(style: &Style) -> bool {
+    style.clip
+        || style
+            .layout_options
+            .as_deref()
+            .is_some_and(|o| o.clip_x == Some(true) || o.clip_y == Some(true))
+}
+/// `text` with a line break at each opportunity to break one (UAX #14):
+/// its widest line is its min-content width. Spaces ending a line hang
+/// outside it, as CSS lets them.
+fn min_content_lines(text: &str) -> String {
+    let mut lines = String::with_capacity(text.len() + 16);
+    let mut start = 0;
+    for (end, _) in unicode_linebreak::linebreaks(text) {
+        if start > 0 {
+            lines.push('\n');
+        }
+        lines.push_str(text[start..end].trim_end());
+        start = end;
+    }
+    lines
+}
 /// What a contents node lays out as (`Scene::set_contents`): `own` with
 /// `lead`'s place in the parent. Its margins add to the node's own. The
 /// node's visibility and clip stay its own (the lead's would also cut the
@@ -1697,6 +1721,149 @@ impl Scene {
         }
     }
     /// An explicit cursor inherits through visual ancestors, including disabled regions.
+    /// What `id` lays out as: itself, or for a `contents` node its last
+    /// child (in turn).
+    pub(crate) fn laid_out_as(&self, mut id: NodeId) -> NodeId {
+        loop {
+            let node = self.node(id);
+            match node.children.last() {
+                Some(last) if node.contents => id = *last,
+                _ => return id,
+            }
+        }
+    }
+    /// A flex child's automatic minimum along the main axis (CSS's
+    /// `min-width: auto` / `min-height: auto`): the smaller of its own size
+    /// (when it sets one) and its content's min-content size, or 0 for one
+    /// that clips, as CSS gives a scroll container.
+    fn automatic_minimum(&mut self, id: NodeId, asked: Constraints, horizontal: bool) -> f32 {
+        // A `contents` node's style is the one it lays out with (its last
+        // child's, with the margins added); its content, and so whether it
+        // clips, is that child's.
+        if clips(&self.node(self.laid_out_as(id)).style) {
+            return 0.;
+        }
+        let style = &self.node(id).style;
+        let specified = if horizontal {
+            style.width
+        } else {
+            style.height
+        };
+        let content = self.min_content(id, asked, horizontal);
+        match specified {
+            Some(size) => size.min(content),
+            None => content,
+        }
+    }
+    /// The min-content size of `id`'s content along an axis (`horizontal`,
+    /// or down): what it needs at the least, its own size set aside. A text
+    /// measures as narrow as it wraps, a box as its children need plus its
+    /// padding and border; something that clips needs nothing.
+    fn min_content(&mut self, id: NodeId, asked: Constraints, horizontal: bool) -> f32 {
+        let id = self.laid_out_as(id);
+        let node = self.node(id);
+        let kind_is_box = matches!(node.kind, NodeKind::Container(_) | NodeKind::Panel { .. });
+        if !kind_is_box || node.children.is_empty() {
+            // A leaf (text, an image, an editor): as narrow as it measures
+            // with no room, or its natural height.
+            let probe = if horizontal {
+                Constraints {
+                    width: Some(0.),
+                    force_width: None,
+                    ..Default::default()
+                }
+            } else {
+                Constraints {
+                    width: asked.force_width.or(asked.width),
+                    ..Default::default()
+                }
+            };
+            if kind_is_box {
+                let insets = self.content_insets(id);
+                return if horizontal {
+                    insets.left + insets.right
+                } else {
+                    insets.top + insets.bottom
+                };
+            }
+            // Its own size set aside while it is probed: the content's
+            // need, not the size it asks for. Its kept results (made with
+            // its size) are set aside too and put back after: the probe
+            // measures afresh and leaves nothing behind.
+            let (saved, kept) = {
+                let node = self.node_mut(id);
+                let saved = if horizontal {
+                    (node.style.width.take(), node.style.width_percent.take())
+                } else {
+                    (node.style.height.take(), node.style.height_percent.take())
+                };
+                let kept = (
+                    node.measurement.take(),
+                    std::mem::take(&mut node.alternates),
+                    std::mem::take(&mut node.sizes),
+                );
+                (saved, kept)
+            };
+            let size = self.measure(id, probe);
+            let node = self.node_mut(id);
+            if horizontal {
+                (node.style.width, node.style.width_percent) = saved;
+            } else {
+                (node.style.height, node.style.height_percent) = saved;
+            }
+            (node.measurement, node.alternates, node.sizes) = kept;
+            return if horizontal { size.0 } else { size.1 };
+        }
+        let layout = match node.kind {
+            NodeKind::Container(layout) | NodeKind::Panel { layout, .. } => layout,
+            _ => unreachable!(),
+        };
+        let (gap, children) = (node.style.gap, node.children.clone());
+        let along = matches!(
+            (layout, horizontal),
+            (Layout::Row, true) | (Layout::Column, false)
+        );
+        let mut total = 0_f32;
+        let mut count = 0;
+        for child in children {
+            // A `contents` child's style is the one it lays out with.
+            let style = self.node(child).style.clone();
+            if style.absolute {
+                continue;
+            }
+            let need = if clips(&self.node(self.laid_out_as(child)).style) {
+                0.
+            } else {
+                let own = if horizontal {
+                    style.width
+                } else {
+                    style.height
+                };
+                match own {
+                    Some(size) => size,
+                    None => self.min_content(child, Constraints::default(), horizontal),
+                }
+            };
+            let margins = if horizontal {
+                style.margin.left + style.margin.right
+            } else {
+                style.margin.top + style.margin.bottom
+            };
+            let need = (need + margins).max(0.);
+            total = if along { total + need } else { total.max(need) };
+            count += 1;
+        }
+        if along && count > 1 {
+            total += gap * (count - 1) as f32;
+        }
+        let insets = self.content_insets(id);
+        total
+            + if horizontal {
+                insets.left + insets.right
+            } else {
+                insets.top + insets.bottom
+            }
+    }
     pub fn cursor_for(&self, mut id: NodeId) -> Option<crate::cursor::Cursor> {
         loop {
             let node = self.node(id);
@@ -3766,6 +3933,10 @@ impl Scene {
                 {
                     let bases: Vec<_> = sizes.iter().copied().map(main).collect();
                     let mut frozen = vec![false; ids.len()];
+                    // CSS's automatic minimum (`min-width: auto`): a child
+                    // shrinks no further than its min-content size, unless it
+                    // clips (a scroll container's is 0) or sets its own.
+                    let mut floors: Vec<Option<f32>> = vec![None; ids.len()];
                     for _ in 0..=ids.len() {
                         let used: f32 = sizes
                             .iter()
@@ -3800,12 +3971,41 @@ impl Scene {
                             if weights[i] == 0.0 {
                                 continue;
                             }
-                            let s = &self.node(*child).style;
                             let wanted = main(sizes[i]) + remaining * weights[i] / weight;
-                            let size = if horizontal {
-                                dimension(wanted, s.min_width, s.max_width)
+                            let (own_min, set_elsewhere) = {
+                                let s = &self.node(*child).style;
+                                let options = s.layout_options.as_deref();
+                                if horizontal {
+                                    (s.min_width, options.is_some_and(|o| o.min_width.is_some()))
+                                } else {
+                                    (
+                                        s.min_height,
+                                        options.is_some_and(|o| o.min_height.is_some()),
+                                    )
+                                }
+                            };
+                            // A minimum the child sets (in points or as a
+                            // percentage) is its own; only an unset one is
+                            // automatic.
+                            let min = if remaining < 0.0 && own_min.is_none() && !set_elsewhere {
+                                let floor = match floors[i] {
+                                    Some(floor) => floor,
+                                    None => {
+                                        let floor =
+                                            self.automatic_minimum(*child, asked[i], horizontal);
+                                        floors[i] = Some(floor);
+                                        floor
+                                    }
+                                };
+                                Some(floor)
                             } else {
-                                dimension(wanted, s.min_height, s.max_height)
+                                own_min
+                            };
+                            let s = &self.node(*child).style;
+                            let size = if horizontal {
+                                dimension(wanted, min, s.max_width)
+                            } else {
+                                dimension(wanted, min, s.max_height)
                             };
                             if (size - wanted).abs() > 0.001 {
                                 frozen[i] = true;
@@ -4026,7 +4226,17 @@ impl Scene {
                 if let Some(size) = self.node(id).text_size.get().find(limit, revision) {
                     size
                 } else {
-                    let size = if style.text_options != Default::default() {
+                    let size = if limit == Some(0.) && style.text_options == Default::default() {
+                        // No room at all is a min-content probe: lines break
+                        // at every opportunity, as CSS's min-content does,
+                        // and never inside a word.
+                        let lines: Arc<str> = min_content_lines(text).into();
+                        let font = &self.node(id).font;
+                        match &self.font_measurer {
+                            Some(measure) => measure(&lines, *font_size, None, font),
+                            None => self.measure_text_with_font(&lines, *font_size, None, font),
+                        }
+                    } else if style.text_options != Default::default() {
                         let runs = if text.is_empty() {
                             Vec::new()
                         } else {

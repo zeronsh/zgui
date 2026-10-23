@@ -12,6 +12,16 @@ let stretched = column().w(240.).child(button().child(text("Save"))).child(div()
 let hugging = column().items_start().child(button().child(text("Save")));
 ```
 
+**A child that shrinks stops at its content's narrowest, as CSS's `min-width: auto` does.** In a row too narrow for its children, a child with `flex_shrink` gives way only down to its min-content width: the longest word of a text, an unwrappable label's whole width, a box's children's needs plus its padding. Its siblings shrink further. A child that clips (`scroll`, `overflow_hidden`) may shrink to nothing, as a CSS scroll container does. A minimum the child sets is its own: `.min_w(0.)` (`min_w = 0`) lets a truncated label or a pane shrink past its content, as CSS needs `min-width: 0`. Columns do the same with heights.
+
+```rust
+use zgui::compose::prelude::*;
+// The sidebar gives way; the title keeps its words whole.
+let bar = row().w(200.).child(div().w(180.).flex_shrink(1.)).child(text("Unbreakable").flex_shrink(1.));
+// A truncated title shrinks past its text.
+let truncated = row().w(200.).child(text("A long title").truncate().flex_shrink(1.).min_w(0.));
+```
+
 Grids and wrapping rows:
 
 ```rust

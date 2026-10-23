@@ -4481,6 +4481,7 @@ dependencies = [
  "objc2-core-video",
  "stacker",
  "taffy",
+ "unicode-linebreak",
  "unicode-segmentation",
 ]
 
