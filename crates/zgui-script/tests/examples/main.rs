@@ -15,5 +15,7 @@ mod frame_profiler;
 mod mail_example;
 #[path = "../monitor_example.rs"]
 mod monitor_example;
+#[path = "../sketch_example.rs"]
+mod sketch_example;
 #[path = "../terminal_example.rs"]
 mod terminal_example;
