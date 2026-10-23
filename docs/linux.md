@@ -158,6 +158,15 @@ commit), so a compositor that places the input method's popup from it can
 follow the scroll. A caret scrolled out of the window's top is given as at
 its top edge.
 
+The same holds as a word is typed. IBus lays out its candidate window, and
+moves it to the last spot it was given, each time the candidate list changes.
+The spot for the new preedit's caret comes after that, from the app. When the
+app is rendering a frame as the preedit arrives (a slow software renderer
+under load), the spot can come after IBus's layout, and the window stays at
+the previous caret until the next key. `native_ime_smoke.py` records whether
+the window followed at once. If it did not, Down and Up make IBus lay it out
+again, the preedit unchanged, and the window must then be at the caret.
+
 ## Popups on Wayland: what it would take
 
 On X11 popups show in windows of their own (see the X11 popups PR, #179); on
