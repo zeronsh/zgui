@@ -184,6 +184,8 @@ pub(crate) struct RareStyles {
     pub(crate) fade_insets_x: Option<[f32; 2]>,
     pub(crate) fade_overflow: Option<bool>,
     pub(crate) snap: Option<bool>,
+    /// `Styled::direction`: which way its lines run.
+    pub(crate) direction: Option<crate::scene::Direction>,
     pub(crate) border_style: Option<crate::decoration::BorderStyle>,
     /// `Styled::border_over`.
     pub(crate) border_over: Option<bool>,
@@ -223,6 +225,7 @@ impl RareStyles {
         fade_insets_x: None,
         fade_overflow: None,
         snap: None,
+        direction: None,
         border_style: None,
         border_over: None,
         outline: None,
@@ -272,6 +275,9 @@ impl RareStyles {
         }
         if other.snap.is_some() {
             self.snap = other.snap;
+        }
+        if other.direction.is_some() {
+            self.direction = other.direction;
         }
         if other.border_over.is_some() {
             self.border_over = other.border_over;
@@ -1728,6 +1734,50 @@ pub trait Styled: Sized {
     /// its size follows its rounded edges.
     fn snap(mut self, value: bool) -> Self {
         self.styles_mut().rare_mut().snap = Some(value);
+        self
+    }
+    /// Which way lines run in it and what it holds (CSS's `direction`):
+    /// right to left, rows run from the right, a column's children start at
+    /// its right, text starts at the right, and the `ps`/`pe`, `ms`/`me`,
+    /// `start`/`end` edges follow. `pl`, `ml` and `left` stay on the left.
+    fn direction(mut self, value: crate::scene::Direction) -> Self {
+        self.styles_mut().rare_mut().direction = Some(value);
+        self
+    }
+    /// `direction(Direction::Rtl)`: Arabic, Hebrew, Persian, Urdu.
+    fn rtl(self) -> Self {
+        self.direction(crate::scene::Direction::Rtl)
+    }
+    /// Padding at the start of a line (CSS's `padding-inline-start`): the
+    /// left left to right, the right right to left.
+    fn ps(mut self, value: impl Into<crate::layout::Length>) -> Self {
+        self.styles_mut().layout_options_mut().padding_inline.start = Some(value.into());
+        self
+    }
+    /// Padding at the end of a line (`padding-inline-end`).
+    fn pe(mut self, value: impl Into<crate::layout::Length>) -> Self {
+        self.styles_mut().layout_options_mut().padding_inline.end = Some(value.into());
+        self
+    }
+    /// A margin at the start of a line (`margin-inline-start`).
+    fn ms(mut self, value: impl Into<crate::layout::Length>) -> Self {
+        self.styles_mut().layout_options_mut().margin_inline.start = Some(value.into());
+        self
+    }
+    /// A margin at the end of a line (`margin-inline-end`).
+    fn me(mut self, value: impl Into<crate::layout::Length>) -> Self {
+        self.styles_mut().layout_options_mut().margin_inline.end = Some(value.into());
+        self
+    }
+    /// An absolute node's inset from the start of a line
+    /// (`inset-inline-start`): `left` left to right, `right` right to left.
+    fn start(mut self, value: impl Into<crate::layout::Length>) -> Self {
+        self.styles_mut().layout_options_mut().inset_inline.start = Some(value.into());
+        self
+    }
+    /// Its inset from the end of a line (`inset-inline-end`).
+    fn end(mut self, value: impl Into<crate::layout::Length>) -> Self {
+        self.styles_mut().layout_options_mut().inset_inline.end = Some(value.into());
         self
     }
     /// Fade all four edges (CSS order: top, right, bottom, left), each band

@@ -822,6 +822,10 @@ export type Styles = {
 	relative: boolean?,
 	top: Length?,
 	left: Length?,
+	-- An absolute node's inset from the start or end of a line: `left` and
+	-- `right` left to right, `right` and `left` right to left.
+	start: Length?,
+	end: Length?,
 	right: Length?,
 	bottom: Length?,
 	-- Spacing.
@@ -832,6 +836,10 @@ export type Styles = {
 	pr: Length?,
 	pb: Length?,
 	pl: Length?,
+	-- Padding at the start or end of a line (CSS's `padding-inline-start`,
+	-- `-end`), following `dir`; `pl` and `pr` stay left and right.
+	ps: Length?,
+	pe: Length?,
 	m: Length?,
 	mx: Length?,
 	my: Length?,
@@ -839,11 +847,18 @@ export type Styles = {
 	mr: Length?,
 	mb: Length?,
 	ml: Length?,
+	-- Margins at the start or end of a line, following `dir`.
+	ms: Length?,
+	me: Length?,
 	gap: Num?,
 	gap_x: Length?,
 	gap_y: Length?,
 	-- Flex and grid.
 	direction: Direction?,
+	-- Which way lines run in it and what it holds (HTML's `dir`): "rtl"
+	-- for Arabic, Hebrew, Persian or Urdu runs rows from the right, starts
+	-- columns and text at the right, and turns `ps`, `ms`, `start` round.
+	dir: ("ltr" | "rtl")?,
 	grow: number?,
 	shrink: number?,
 	basis: Length?,
@@ -961,6 +976,8 @@ export type StyleProps = {
 	relative: Reactive<boolean>?,
 	top: Reactive<Length>?,
 	left: Reactive<Length>?,
+	start: Reactive<Length>?,
+	end: Reactive<Length>?,
 	right: Reactive<Length>?,
 	bottom: Reactive<Length>?,
 	-- Spacing.
@@ -971,6 +988,8 @@ export type StyleProps = {
 	pr: Reactive<Length>?,
 	pb: Reactive<Length>?,
 	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
 	m: Reactive<Length>?,
 	mx: Reactive<Length>?,
 	my: Reactive<Length>?,
@@ -978,11 +997,14 @@ export type StyleProps = {
 	mr: Reactive<Length>?,
 	mb: Reactive<Length>?,
 	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
 	gap: Reactive<Num>?,
 	gap_x: Reactive<Length>?,
 	gap_y: Reactive<Length>?,
 	-- Flex and grid.
 	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
 	grow: Reactive<number>?,
 	shrink: Reactive<number>?,
 	basis: Reactive<Length>?,

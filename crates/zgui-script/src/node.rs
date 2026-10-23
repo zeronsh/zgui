@@ -1018,13 +1018,17 @@ props! {
     "w_full" => WFull: Bool, "h_full" => HFull: Bool, "aspect" => Aspect: Num,
     "absolute" => Absolute: Bool, "relative" => Relative: Bool,
     "top" => Top: Len, "left" => Left: Len, "right" => Right: Len, "bottom" => Bottom: Len,
+    "start" => Start: Len, "end" => End: Len,
     // Spacing.
     "p" => P: Len, "px" => Px: Len, "py" => Py: Len,
     "pt" => Pt: Len, "pr" => Pr: Len, "pb" => Pb: Len, "pl" => Pl: Len,
+    "ps" => Ps: Len, "pe" => Pe: Len,
     "m" => M: Len, "mx" => Mx: Len, "my" => My: Len,
     "mt" => Mt: Len, "mr" => Mr: Len, "mb" => Mb: Len, "ml" => Ml: Len,
+    "ms" => Ms: Len, "me" => Me: Len,
     "gap" => Gap: Num, "gap_x" => GapX: Len, "gap_y" => GapY: Len,
     // Flex and grid.
+    "dir" => Dir: Str,
     "direction" => Direction: Str, "grow" => Grow: Num, "shrink" => Shrink: Num, "basis" => Basis: Len,
     "flex_wrap" => FlexWrap: Bool, "wrap_reverse" => WrapReverse: Bool,
     "items" => Items: Str, "justify" => Justify: Str, "self" => AlignSelf: Str, "content" => AlignContent: Str,
@@ -2259,7 +2263,18 @@ pub(crate) fn pointer_events(value: &Value) -> Option<bool> {
 pub(crate) fn specificity(prop: Prop) -> u8 {
     match prop {
         Prop::Px | Prop::Py | Prop::Mx | Prop::My | Prop::GapX | Prop::GapY | Prop::Corners => 1,
-        Prop::Pt | Prop::Pr | Prop::Pb | Prop::Pl | Prop::Mt | Prop::Mr | Prop::Mb | Prop::Ml => 2,
+        Prop::Pt
+        | Prop::Pr
+        | Prop::Pb
+        | Prop::Pl
+        | Prop::Ps
+        | Prop::Pe
+        | Prop::Mt
+        | Prop::Mr
+        | Prop::Mb
+        | Prop::Ml
+        | Prop::Ms
+        | Prop::Me => 2,
         Prop::RoundedTl
         | Prop::RoundedTr
         | Prop::RoundedBr

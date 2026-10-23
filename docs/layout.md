@@ -24,6 +24,20 @@ let bar = row().w(200.).child(div().w(180.)).child(text("Unbreakable"));
 let truncated = row().w(200.).child(div().w(24.).shrink_0()).child(text("A long title").truncate().min_w(0.));
 ```
 
+**Right to left.** `.rtl()` (`dir = "rtl"`) runs a subtree's lines from the right, as CSS's `direction: rtl` does, for Arabic, Hebrew, Persian and Urdu:
+- rows run from the right;
+- a column's and an overlay's children start at the right;
+- text starts at the right;
+- wrapping rows mirror their lines.
+
+Padding, margins and insets given as left and right (`pl`, `ml`, `left`) stay on that side, as CSS keeps them. The logical ones follow the direction: `ps`/`pe` (padding at a line's start and end), `ms`/`me` and `start`/`end` (CSS's `*-inline-start` and `*-inline-end`). Write the start and end ones for anything that should mirror. A subtree inherits its parent's direction; `.direction(Direction::Ltr)` (`dir = "ltr"`) turns part of it back (a phone number, code). A layout that sets no direction pays nothing.
+
+```rust
+use zgui::compose::prelude::*;
+// "مرحبا" at the right, the avatar at the start (the right), 12 points in.
+let header = row().rtl().gap(8.).ps(12.).child(div().size(32., 32.)).child(text("مرحبا"));
+```
+
 Grids and wrapping rows:
 
 ```rust

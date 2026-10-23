@@ -1404,6 +1404,9 @@ fn apply_resolved(
     }
     let mut scene = ui.scene.borrow_mut();
     scene.set_style(node, style.clone());
+    if let Some(direction) = resolved.rare().direction {
+        scene.set_direction(node, Some(direction));
+    }
     if let Some(content) = content_layout {
         let mut content_style = scene.style(content);
         content_style.gap = resolved.gap.unwrap_or(0.);

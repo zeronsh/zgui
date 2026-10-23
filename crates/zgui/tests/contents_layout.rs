@@ -476,3 +476,31 @@ fn a_switch_marked_contents_passes_its_childs_flex_through() {
     );
     assert_eq!(bounds(&ui, "footer").y, 66.);
 }
+
+#[test]
+fn contents_wrappers_lay_out_as_if_absent_right_to_left_too() {
+    use zgui::scene::Direction;
+    for seed in 1..=40_u64 {
+        let seed = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let (mut plain, mut a) = build(seed, false);
+        let (mut wrapped, mut b) = build(seed, true);
+        plain.set_direction(a.containers[0], Some(Direction::Rtl));
+        wrapped.set_direction(b.containers[0], Some(Direction::Rtl));
+        plain.flush();
+        wrapped.flush();
+        assert_same(&plain, &a, &wrapped, &b, &format!("rtl seed {seed:x}"));
+        for step in 0..25 {
+            mutate(&mut plain, &mut a, step, false);
+            mutate(&mut wrapped, &mut b, step, true);
+            plain.flush();
+            wrapped.flush();
+            assert_same(
+                &plain,
+                &a,
+                &wrapped,
+                &b,
+                &format!("rtl seed {seed:x}, step {step}"),
+            );
+        }
+    }
+}

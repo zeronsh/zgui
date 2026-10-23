@@ -69,6 +69,27 @@ impl EdgeLengths {
         }
     }
 }
+/// Lengths at the start and end of a line (CSS's logical `-inline-start`
+/// and `-inline-end`): left and right left to right, right and left right
+/// to left.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct InlineEdges {
+    pub start: Option<Length>,
+    pub end: Option<Length>,
+}
+impl InlineEdges {
+    pub fn merge(&mut self, other: Self) {
+        if other.start.is_some() {
+            self.start = other.start;
+        }
+        if other.end.is_some() {
+            self.end = other.end;
+        }
+    }
+    pub fn is_empty(self) -> bool {
+        self.start.is_none() && self.end.is_none()
+    }
+}
 /// Sparse options shared by scene layout and fluent style refinement. Unspecified
 /// properties preserve ordinary retained-layout defaults. Grid tracks use equal
 /// fractional shares, matching GPUI's `grid_cols`/`grid_rows` public surface.
@@ -97,6 +118,11 @@ pub struct LayoutOptions {
     pub inset: EdgeLengths,
     pub margin: EdgeLengths,
     pub padding: EdgeLengths,
+    /// Insets, margins and padding at the start and end of a line, which
+    /// follow the direction (`Scene::set_direction`).
+    pub inset_inline: InlineEdges,
+    pub margin_inline: InlineEdges,
+    pub padding_inline: InlineEdges,
     pub min_width: Option<Length>,
     pub max_width: Option<Length>,
     pub min_height: Option<Length>,
@@ -137,6 +163,14 @@ impl LayoutOptions {
             ] {
                 length(value);
             }
+        }
+        for edges in [
+            &mut self.inset_inline,
+            &mut self.margin_inline,
+            &mut self.padding_inline,
+        ] {
+            length(&mut edges.start);
+            length(&mut edges.end);
         }
         if let Some(ratio) = &mut self.aspect_ratio {
             *ratio = finite(*ratio).max(0.);
@@ -183,5 +217,14 @@ impl LayoutOptions {
         self.inset.merge(other.inset);
         self.margin.merge(other.margin);
         self.padding.merge(other.padding);
+        self.inset_inline.merge(other.inset_inline);
+        self.margin_inline.merge(other.margin_inline);
+        self.padding_inline.merge(other.padding_inline);
+    }
+    /// Whether it sets anything at a line's start or end.
+    pub fn has_inline(&self) -> bool {
+        !(self.inset_inline.is_empty()
+            && self.margin_inline.is_empty()
+            && self.padding_inline.is_empty())
     }
 }

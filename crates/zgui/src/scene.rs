@@ -921,6 +921,11 @@ struct Node {
     /// Lays out as its last child (`Scene::set_contents`): `style` is then
     /// derived, its own kept in `Scene::contents_styles`.
     contents: bool,
+    /// Its lines run right to left (`Scene::set_direction`, its own or its
+    /// parent's): `style` is then laid out mirrored (`laid_out_style`).
+    rtl: bool,
+    /// Its font's alignment was `Start`, made `Right` while `rtl`.
+    align_start: bool,
 }
 impl Node {
     fn local(&self) -> LocalTransform {
@@ -1075,6 +1080,125 @@ const READS_WIDTH: u8 = 2;
 const READS_HEIGHT: u8 = 4;
 const PERCENT_WIDTH: u8 = 8;
 const PERCENT_HEIGHT: u8 = 16;
+/// Which way a node's lines run (CSS's `direction`), inherited by its
+/// subtree: rows run from the right, text starts at the right, and the
+/// arrows read the other way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Direction {
+    #[default]
+    Ltr,
+    Rtl,
+}
+/// Whether `style` lays out as given, or by `laid_out_style`.
+fn laid_out_as_given(style: &Style, rtl: bool) -> bool {
+    !rtl && !style
+        .layout_options
+        .as_deref()
+        .is_some_and(|o| o.has_inline())
+}
+/// What a node given `style` lays out by. Right to left (`rtl`) it is laid
+/// out left to right and its children mirrored in its box after
+/// (`arrange`), so its left and right edges trade places here and come out
+/// where they were given, as CSS keeps them physical. A line's start and
+/// end (`*_inline`) are its left and right in that left-to-right layout:
+/// right and left once mirrored. Points go where the plain lengths are,
+/// which keeps the node off the flex-options path.
+fn laid_out_style(mut style: Style, rtl: bool) -> Style {
+    if laid_out_as_given(&style, rtl) {
+        return style;
+    }
+    let flip = |i: &mut Insets| std::mem::swap(&mut i.left, &mut i.right);
+    let flip_lengths =
+        |e: &mut crate::layout::EdgeLengths| std::mem::swap(&mut e.left, &mut e.right);
+    if rtl {
+        flip(&mut style.margin);
+        if let Some(padding) = &mut style.padding_edges {
+            flip(padding);
+        }
+        if let Some(options) = &mut style.layout_options {
+            let options = Arc::make_mut(options);
+            flip_lengths(&mut options.inset);
+            flip_lengths(&mut options.margin);
+            flip_lengths(&mut options.padding);
+        }
+    }
+    let Some(mut options) = style
+        .layout_options
+        .as_deref()
+        .copied()
+        .filter(|o| o.has_inline())
+    else {
+        return style;
+    };
+    use crate::layout::Length;
+    let (padding, margin, inset) = (
+        options.padding_inline,
+        options.margin_inline,
+        options.inset_inline,
+    );
+    options.padding_inline = Default::default();
+    options.margin_inline = Default::default();
+    options.inset_inline = Default::default();
+    for (value, left) in [(padding.start, true), (padding.end, false)] {
+        match value {
+            Some(Length::Px(v)) => {
+                let edges = style
+                    .padding_edges
+                    .get_or_insert(Insets::all(style.padding));
+                *if left {
+                    &mut edges.left
+                } else {
+                    &mut edges.right
+                } = v;
+                *if left {
+                    &mut options.padding.left
+                } else {
+                    &mut options.padding.right
+                } = None;
+            }
+            Some(other) => {
+                *if left {
+                    &mut options.padding.left
+                } else {
+                    &mut options.padding.right
+                } = Some(other)
+            }
+            None => {}
+        }
+    }
+    for (value, left) in [(margin.start, true), (margin.end, false)] {
+        match value {
+            Some(Length::Px(v)) => {
+                *if left {
+                    &mut style.margin.left
+                } else {
+                    &mut style.margin.right
+                } = v;
+                *if left {
+                    &mut options.margin.left
+                } else {
+                    &mut options.margin.right
+                } = None;
+            }
+            Some(other) => {
+                *if left {
+                    &mut options.margin.left
+                } else {
+                    &mut options.margin.right
+                } = Some(other)
+            }
+            None => {}
+        }
+    }
+    if inset.start.is_some() {
+        options.inset.left = inset.start;
+    }
+    if inset.end.is_some() {
+        options.inset.right = inset.end;
+    }
+    style.layout_options = (!options.is_empty()).then(|| Arc::new(options));
+    style
+}
 /// What a contents node lays out as (`Scene::set_contents`): `own` with
 /// `lead`'s place in the parent. Its margins add to the node's own. The
 /// node's visibility and clip stay its own (the lead's would also cut the
@@ -1395,6 +1519,12 @@ pub struct Scene {
     /// default: their own paint, clip and margins; the rest of what lays
     /// them out is their last child's.
     contents_styles: NodeMap<Style>,
+    /// The style a node was given, where it lays out by another
+    /// (`laid_out_style`: it runs right to left, or sets a line's start or
+    /// end): `Scene::style` returns it.
+    given_styles: NodeMap<Style>,
+    /// Directions nodes set themselves (`set_direction`); others inherit.
+    directions: NodeMap<Direction>,
     /// Subtrees hit testing skips (`set_inert`): usually none.
     inert: Vec<NodeId>,
     /// Text selection's settings and highlights (`set_user_select`).
@@ -1460,6 +1590,8 @@ impl Scene {
                     promoted: false,
                     scroll_copy: false,
                     contents: false,
+                    rtl: false,
+                    align_start: false,
                     layer_revision: 0,
                 }),
             }],
@@ -1506,6 +1638,8 @@ impl Scene {
             geometry_revision: 0,
             cursor_styles: 0,
             contents_styles: Default::default(),
+            given_styles: Default::default(),
+            directions: Default::default(),
             inert: Vec::new(),
             selectable: Default::default(),
         }
@@ -2088,6 +2222,8 @@ impl Scene {
     pub fn style(&self, id: NodeId) -> Style {
         if self.node(id).contents {
             self.contents_styles.get(&id).cloned().unwrap_or_default()
+        } else if let Some(given) = self.given_styles.get(&id) {
+            given.clone()
         } else {
             self.node(id).style.clone()
         }
@@ -2107,7 +2243,8 @@ impl Scene {
             return;
         }
         if contents {
-            let own = self.node(id).style.clone();
+            let own = self.style(id);
+            self.given_styles.remove(&id);
             self.keep_contents_style(id, own);
             self.node_mut(id).contents = true;
             self.contents_count += 1;
@@ -2116,13 +2253,75 @@ impl Scene {
             let own = self.contents_styles.remove(&id).unwrap_or_default();
             self.node_mut(id).contents = false;
             self.contents_count -= 1;
-            self.apply_style(id, own);
+            self.restyle(id, own, true);
         }
         // Its own measurement changes kind either way.
         self.invalidate_layout(id);
     }
     pub fn is_contents(&self, id: NodeId) -> bool {
         self.node(id).contents
+    }
+    /// Which way `id`'s lines run, for it and what it holds (CSS's
+    /// `direction`), or with `None` as its parent's: right to left, its
+    /// children lie from the right (rows run from the right, a column's
+    /// start is its right), text starts at the right, and `*_inline` edges
+    /// follow. Padding, margins and insets given as left and right stay
+    /// where they were given, as CSS keeps them.
+    pub fn set_direction(&mut self, id: NodeId, direction: Option<Direction>) {
+        if self.directions.get(&id).copied() == direction {
+            return;
+        }
+        match direction {
+            Some(direction) => {
+                self.directions.insert(id, direction);
+            }
+            None => {
+                self.directions.remove(&id);
+            }
+        }
+        let inherited = self
+            .node(id)
+            .parent
+            .is_some_and(|parent| self.node(parent).rtl);
+        self.refresh_direction(id, inherited);
+    }
+    /// The way `id`'s lines run, its own or inherited.
+    pub fn direction(&self, id: NodeId) -> Direction {
+        if self.node(id).rtl {
+            Direction::Rtl
+        } else {
+            Direction::Ltr
+        }
+    }
+    /// `id` under a parent running right to left (`inherited`) or not: it,
+    /// and what of its subtree changes way, lay out again.
+    fn refresh_direction(&mut self, id: NodeId, inherited: bool) {
+        let rtl = self
+            .directions
+            .get(&id)
+            .map_or(inherited, |d| *d == Direction::Rtl);
+        if self.node(id).rtl == rtl {
+            return;
+        }
+        self.node_mut(id).rtl = rtl;
+        // Children first: a contents node lays out as its last child.
+        for child in self.node(id).children.clone() {
+            self.refresh_direction(child, rtl);
+        }
+        if self.node(id).contents {
+            self.sync_contents(id);
+        } else {
+            let given = self.style(id);
+            self.restyle(id, given, true);
+        }
+        if self.node(id).align_start {
+            let mut font = self.node(id).font.clone();
+            font.align = crate::text_layout::TextAlign::Start;
+            self.set_font(id, font);
+        }
+        self.damage_subtree(id);
+        self.invalidate_layout(id);
+        self.node_mut(id).arrange_dirty = true;
     }
     /// A contents node's own style; the default (most have it) is not kept.
     fn keep_contents_style(&mut self, id: NodeId, own: Style) {
@@ -2136,6 +2335,7 @@ impl Scene {
     /// last child's.
     fn sync_contents(&mut self, id: NodeId) {
         let own = self.contents_styles.get(&id).cloned().unwrap_or_default();
+        let own = laid_out_style(own, self.node(id).rtl);
         let style = match self.node(id).children.last() {
             Some(lead) => contents_style(own, &self.node(*lead).style),
             None => own,
@@ -2457,10 +2657,16 @@ impl Scene {
     /// Font changes affect shaping, layout, paint and retained layer contents.
     pub fn set_font(&mut self, id: NodeId, mut font: crate::text_layout::FontStyle) {
         font.weight = font.weight.clamp(1, 1000);
-        if self.node(id).font == font {
+        // Text starts at the right of a line that runs right to left.
+        let start = font.align == crate::text_layout::TextAlign::Start;
+        if start && self.node(id).rtl {
+            font.align = crate::text_layout::TextAlign::Right;
+        }
+        if self.node(id).font == font && self.node(id).align_start == start {
             return;
         }
         self.damage_subtree(id);
+        self.node_mut(id).align_start = start;
         self.node_mut(id).font = font;
         self.invalidate(id, PAINT);
         self.invalidate_layout(id);
@@ -2691,6 +2897,13 @@ impl Scene {
         self.node(parent);
         self.relative_count += usize::from(style.relative);
         let overflow_fade = style.fade_overflow;
+        // It runs as its parent does until it says otherwise.
+        let rtl = self.node(parent).rtl;
+        let given = (!laid_out_as_given(&style, rtl)).then(|| style.clone());
+        let style = match given {
+            Some(_) => laid_out_style(style, rtl),
+            None => style,
+        };
         let node = Node {
             cursor: None,
             parent: Some(parent),
@@ -2720,6 +2933,8 @@ impl Scene {
             promoted: false,
             scroll_copy: false,
             contents: false,
+            rtl,
+            align_start: false,
             layer_revision: 0,
         };
         let id = if let Some(index) = self.free.pop() {
@@ -2740,6 +2955,9 @@ impl Scene {
             }
         };
         self.node_mut(parent).children.push(id);
+        if let Some(given) = given {
+            self.given_styles.insert(id, given);
+        }
         if overflow_fade {
             self.overflow_fades.push((id, [0.; 4]));
         }
@@ -2785,6 +3003,12 @@ impl Scene {
         if node.contents {
             self.contents_styles.remove(&id);
             self.contents_count -= 1;
+        }
+        if !self.given_styles.is_empty() {
+            self.given_styles.remove(&id);
+        }
+        if !self.directions.is_empty() {
+            self.directions.remove(&id);
         }
         self.transformed -= usize::from(node.transformed());
         self.filtered -= usize::from(node.filtered());
@@ -2874,6 +3098,14 @@ impl Scene {
             if self.contents_count > 0 && self.node(id).contents {
                 self.set_contents_style(id, style);
                 return;
+            }
+            let rtl = self.node(id).rtl;
+            if !laid_out_as_given(&style, rtl) {
+                let laid = laid_out_style(style.clone(), rtl);
+                self.given_styles.insert(id, style);
+                style = laid;
+            } else if !self.given_styles.is_empty() {
+                self.given_styles.remove(&id);
             }
         }
         let old = &self.node(id).style;
@@ -4667,7 +4899,12 @@ impl Scene {
         // node's result as it is.
         for at in 0..count {
             let cache = self.node(id).measurement.as_ref().unwrap();
-            let ((child, rect), constraints) = (cache.children[at], cache.child_constraints[at]);
+            let ((child, mut rect), constraints) =
+                (cache.children[at], cache.child_constraints[at]);
+            // Right to left: laid out left to right, mirrored in its box.
+            if self.node(id).rtl {
+                rect.x = bounds.width - rect.x - rect.width;
+            }
             // Cached: promotes the matching result; evicted: re-measures.
             if let Some(constraints) = constraints {
                 self.measure_full(child, constraints);
@@ -4763,20 +5000,29 @@ impl Scene {
                     Some(Length::Auto) => 0.,
                     None => px,
                 };
-                let (left, right) = (
+                let (mut left, mut right) = (
                     inset(options.inset.left, width),
                     inset(options.inset.right, width),
                 );
+                // Its style runs mirrored right to left; placed here, not
+                // mirrored after, its insets and margins are as given.
+                let rtl = self.node(id).rtl;
+                if rtl {
+                    std::mem::swap(&mut left, &mut right);
+                }
                 let (top, bottom) = (
                     inset(options.inset.top, height),
                     inset(options.inset.bottom, height),
                 );
-                let m = Insets {
+                let mut m = Insets {
                     top: margin(options.margin.top, style.margin.top),
                     right: margin(options.margin.right, style.margin.right),
                     bottom: margin(options.margin.bottom, style.margin.bottom),
                     left: margin(options.margin.left, style.margin.left),
                 };
+                if rtl {
+                    std::mem::swap(&mut m.left, &mut m.right);
+                }
                 let sized_w = (style.width.is_some() && !style.intrinsic_width)
                     || style.width_percent.is_some();
                 let sized_h = (style.height.is_some() && !style.intrinsic_height)

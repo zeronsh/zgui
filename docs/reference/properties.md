@@ -26,13 +26,17 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `absolute` | `boolean` | `false` | out of the flow, placed by insets (see [Position](#position)) |
 | `relative` | `boolean` | `false` | a containing block for absolute descendants |
 | `top`, `left`, `right`, `bottom` | `Length` | | insets of an absolute node |
+| `start`, `end` | `Length` | | its inset from the start or end of a line (CSS's `inset-inline-start`/`-end`): `left` and `right` left to right, `right` and `left` with `dir = "rtl"` |
+| `dir` | `"ltr" \| "rtl"` | its parent's (`"ltr"` at the root) | which way lines run in it and what it holds (HTML's `dir`): `"rtl"` runs rows from the right, starts a column's children and text at the right, and turns the `ps`/`pe`, `ms`/`me`, `start`/`end` edges round; `pl`, `ml` and `left` stay on the left |
 
 ## Spacing
 
 | Property | Type | Default | |
 | --- | --- | --- | --- |
 | `p`, `px`, `py`, `pt`, `pr`, `pb`, `pl` | `Length` | `0` (a button: `px = 12, py = 8`) | padding; later keys refine earlier ones, a percentage counts from the containing block's width |
+| `ps`, `pe` | `Length` | | padding at the start and end of a line (CSS's `padding-inline-start`/`-end`), which follow `dir` |
 | `m`, `mx`, `my`, `mt`, `mr`, `mb`, `ml` | `Length` | `0` | margins; `"auto"` takes the remaining space |
+| `ms`, `me` | `Length` | | margins at the start and end of a line (`margin-inline-start`/`-end`), which follow `dir` |
 | `gap` | `number` | `0` (a button: `6`) | between children |
 | `gap_x`, `gap_y` | `Length` | | per axis (a grid's or a wrapping row's) |
 
