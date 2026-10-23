@@ -81,13 +81,15 @@ impl FileEvents {
         })
     }
 
-    /// Watch `paths` (and their directories) from now on, instead of what was
-    /// watched before. Watching what is already watched opens nothing again,
-    /// unless a file was replaced (its descriptor still names the old one).
-    pub fn watch(&mut self, mut paths: Vec<PathBuf>, replaced: bool) {
+    /// Watch `paths` (and their directories) and the entries of `whole`
+    /// from now on, instead of what was watched before. Watching what is
+    /// already watched opens nothing again, unless a file was replaced (its
+    /// descriptor still names the old one).
+    pub fn watch(&mut self, mut paths: Vec<PathBuf>, whole: Vec<PathBuf>, replaced: bool) {
         let mut dirs: Vec<PathBuf> = paths
             .iter()
             .filter_map(|path| path.parent().map(PathBuf::from))
+            .chain(whole)
             .collect();
         dirs.sort();
         dirs.dedup();

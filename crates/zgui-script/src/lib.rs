@@ -37,6 +37,9 @@ mod file_events;
 #[cfg(windows)]
 #[path = "file_events_windows.rs"]
 mod file_events;
+#[cfg(target_os = "linux")]
+#[path = "file_events_linux.rs"]
+mod file_events;
 mod io;
 pub mod lint;
 mod lower;
@@ -1410,8 +1413,8 @@ impl ScriptHost {
         }
     }
     /// Reloads when script files change. Spawn this on the window's tasks
-    /// during development: on macOS and Windows it waits for the system to
-    /// say a file changed, elsewhere it stats them `every` so often. In a debug
+    /// during development: on macOS, Windows and Linux it waits for the
+    /// system to say a file changed, elsewhere it stats them `every` so often. In a debug
     /// build it also turns on type checks after each reload (see
     /// `check_on_reload`) when luau-lsp is installed and nothing chose
     /// otherwise.
@@ -1431,7 +1434,7 @@ impl ScriptHost {
             // A bundle never changes; the plugins beside it (on the disk)
             // are watched as any file is.
             // The kernel says when a file changes; nothing runs meanwhile.
-            #[cfg(any(target_os = "macos", windows))]
+            #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             if let Some(mut events) = file_events::FileEvents::new() {
                 // A reload (new plugins) has the watched files looked at again.
                 let (rewatch, mut rewatched) = zgui::task::latest::<()>();
@@ -1440,7 +1443,7 @@ impl ScriptHost {
                 loop {
                     // After a change, open them again: a file an editor
                     // replaced is a new file.
-                    events.watch(host.watched_files(), heard);
+                    events.watch(host.watched_files(), host.watched_dirs(), heard);
                     if host.0.checker.borrow().is_some() {
                         // A type check runs on a thread of its own: look for
                         // its result as often as files were polled.
@@ -1492,12 +1495,24 @@ impl ScriptHost {
     }
     /// Every file a reload depends on: the scripts, what they required, the
     /// images they read and the theme files.
-    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+    #[cfg_attr(
+        not(any(target_os = "macos", windows, target_os = "linux")),
+        allow(dead_code)
+    )]
     fn watched_files(&self) -> Vec<PathBuf> {
         let mut files: Vec<PathBuf> = self.stamps().into_iter().map(|(path, _)| path).collect();
         files.extend(self.0.assets.files());
         files.extend(zgui::theme::Themes::of(&self.0.runtime).files());
         files
+    }
+    /// The directories whose every entry a reload depends on: the plugins',
+    /// so the first plugin dropped into an empty one loads.
+    #[cfg_attr(
+        not(any(target_os = "macos", windows, target_os = "linux")),
+        allow(dead_code)
+    )]
+    fn watched_dirs(&self) -> Vec<PathBuf> {
+        self.0.plugin_dir.iter().cloned().collect()
     }
 
     /// The mounted interface, with an error banner above it.

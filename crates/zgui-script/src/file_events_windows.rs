@@ -131,13 +131,14 @@ impl FileEvents {
         })
     }
 
-    /// Watch `paths` (through their directories) from now on, instead of
-    /// what was watched before. A directory notices a replaced file, so
-    /// `replaced` changes nothing here.
-    pub fn watch(&mut self, paths: Vec<PathBuf>, _replaced: bool) {
+    /// Watch `paths` (through their directories) and the entries of `whole`
+    /// from now on, instead of what was watched before. A directory notices
+    /// a replaced file, so `replaced` changes nothing here.
+    pub fn watch(&mut self, paths: Vec<PathBuf>, whole: Vec<PathBuf>, _replaced: bool) {
         let mut dirs: Vec<PathBuf> = paths
             .iter()
             .filter_map(|path| path.parent().map(PathBuf::from))
+            .chain(whole)
             .collect();
         dirs.sort();
         dirs.dedup();
