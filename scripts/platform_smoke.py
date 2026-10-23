@@ -50,6 +50,10 @@ def dump_display(env, output, pid=None):
     report = run("xwininfo", "-root", "-tree") + run("xprop", "-root")
     if pid:
         report += run("xdotool", "search", "--pid", str(pid))
+        # Where a window that never showed is stuck (zgui shows a window once
+        # its renderer exists). Runners restrict ptrace to descendants.
+        report += run("sudo", "-n", "gdb", "-q", "-batch", "-p", str(pid),
+                      "-ex", "thread apply all bt 25")
     (output / "display.log").write_text(f"DISPLAY={env.get('DISPLAY')}\n" + report)
     subprocess.run(["import", "-window", "root", str(output / "display.png")], env=env,
                    capture_output=True, timeout=10)

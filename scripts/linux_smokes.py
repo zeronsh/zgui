@@ -171,6 +171,23 @@ def main():
     # A fresh runner builds font caches on first use: once, here, rather
     # than in every probe of the first wave at the same time.
     subprocess.run(["fc-cache"], check=False)
+    # Likewise shaders: zgui shows a window once its renderer exists, and on
+    # the software Vulkan driver a cold shader cache in each of the first
+    # probes at once took longer than their wait for the window. Every probe
+    # shares one cache, warmed by one window first.
+    os.environ.setdefault("MESA_SHADER_CACHE_DIR", str(args.output / "zgui-mesa-shader-cache"))
+    warm = args.output / "zgui-warm-shaders"
+    warm.mkdir(exist_ok=True)
+    with (warm / "desktop.log").open("w") as log:
+        try:
+            helpers, env = desktop(log)
+            subprocess.run([str(args.binaries / "windows"), "--smoke-test"], env=env, stdout=log,
+                           stderr=log, timeout=60, check=False)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+            print(f"shader warm-up failed: {error!r}", file=log)
+            helpers = []
+        for helper in helpers:
+            helper.terminate()
     jobs = max(1, args.jobs)
 
     def staggered(index, smoke):

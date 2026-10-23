@@ -5,6 +5,7 @@ dbus-x11
 fcitx5
 fcitx5-chinese-addons
 fonts-droid-fallback
+gdb
 gir1.2-atspi-2.0
 gir1.2-gtk-3.0
 grim
