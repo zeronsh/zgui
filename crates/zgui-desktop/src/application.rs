@@ -3158,6 +3158,20 @@ impl Host {
         let Some(drag) = input.drag_state() else {
             return;
         };
+        // No place on screen (Wayland): the compositor moves the window
+        // from here (`xdg_toplevel.move`, as a title bar's drag), holding
+        // the pointer until it is let go, so zgui's drag ends now.
+        #[cfg(target_os = "linux")]
+        if self.content_origin.is_none()
+            && let Some(window) = self.window.clone()
+            && window
+                .display_handle()
+                .is_ok_and(|handle| matches!(handle.as_raw(), RawDisplayHandle::Wayland(_)))
+        {
+            let _ = window.drag_window();
+            self.context.ui.cancel_interactions();
+            return;
+        }
         let (Some(window), Some((left, top))) = (&self.window, self.content_origin) else {
             return;
         };

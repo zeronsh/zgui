@@ -250,8 +250,13 @@ the drag), and the window's destinations hear where it is, so a release
 there drops on them. A target taking it finishes it (`dnd_finished`), and the
 source hears it accepted; a drag nothing takes is cancelled. Windows have no
 place on screen on Wayland, so out of the window a drag came from is out of
-the app, and drags between the app's windows stay in theirs.
-`wayland_drag_out_smoke.py` drags onto GTK windows of its own under sway.
+the app, and drags between the app's windows stay in theirs. A window's only
+tab (`drag_moves_window`) has the compositor move its window, as a title
+bar's drag does (`xdg_toplevel.move`): the compositor holds the pointer from
+there until it is let go, so zgui's drag ends as the move begins, and the
+tab cannot merge into another window's strip (where that is, only the
+compositor knows). `wayland_drag_out_smoke.py` drags onto GTK windows of its
+own under sway, and drags a window's only tab.
 
 ## Popups on Wayland
 

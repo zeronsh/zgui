@@ -14,7 +14,9 @@ Checks that:
   there, the drag stays zgui's: the target gets nothing, and the source
   hears it not accepted;
 - over a target that refuses it (and hears it move), let go there, nothing
-  is dropped, not accepted."""
+  is dropped, not accepted;
+- a window's only tab (`drag_moves_window`) moves its window, the
+  compositor moving it as the pointer goes."""
 import argparse
 import json
 import os
@@ -77,7 +79,8 @@ def main():
                 "for_window [title=\"Drag\"] move position 0 0\n"
                 "for_window [title=\"Other\"] move position 900 0\n"
                 "for_window [title=\"Takes drops\"] move position 0 600\n"
-                "for_window [title=\"Refuses drops\"] move position 500 600\n" % OUTPUT)
+                "for_window [title=\"Refuses drops\"] move position 500 600\n"
+                "for_window [title=\"Solo\"] move position 900 600\n" % OUTPUT)
             sway, _ = launch("sway", ["sway", "--unsupported-gpu", "-c", config], env)
             sockets = lambda: [p for p in pathlib.Path(private).glob("wayland-*") if p.suffix != ".lock"]
             display = until("sway's socket", sockets, 10)[0].name
@@ -145,6 +148,38 @@ def main():
             checks["refused: heard it move"] = "MOTION" in refuses_log.read_text()
             checks["refused: nothing dropped"] = "RECEIVED" not in refuses_log.read_text()
             checks["refused: not accepted"] = app_log.read_text().count("DRAG_END accepted=false") == 2
+            # A window's only tab moves the window: the compositor's move,
+            # following the pointer from where the drag began.
+            sway_socket = str(next(pathlib.Path(private).glob("sway-ipc*.sock")))
+
+            def solo():
+                tree = json.loads(subprocess.run(["swaymsg", "-s", sway_socket, "-t", "get_tree"], env=env,
+                                                 capture_output=True, text=True).stdout)
+                nodes = [tree]
+                while nodes:
+                    node = nodes.pop()
+                    if node.get("name") == "Solo":
+                        return node["rect"]["x"], node["rect"]["y"]
+                    nodes += node.get("nodes", []) + node.get("floating_nodes", [])
+                return None
+
+            before = until("the Solo window", solo)
+            start = (before[0] + CHIP[0], before[1] + CHIP[1])
+            end = (start[0] - 300, start[1] + 150)
+            pointer.move_to(*start, *OUTPUT)
+            time.sleep(.2)
+            pointer.button(True)
+            time.sleep(.05)
+            glide(start, end)
+            time.sleep(.3)
+            pointer.button(False)
+            until("the tab's end", lambda: "TAB_END solo" in app_log.read_text())
+            time.sleep(.3)
+            after = solo()
+            moved = (after[0] - before[0], after[1] - before[1])
+            checks["only tab moved its window by"] = moved
+            # Less what the pointer moved before the drag began.
+            checks["only tab moves its window"] = (abs(moved[0] + 300) <= 30 and abs(moved[1] - 150) <= 30)
             checks["app alive"] = app.poll() is None
             pointer.close()
 
@@ -152,7 +187,7 @@ def main():
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
         print("PASS: Wayland drags out of zgui: a GTK target takes the text under its icon; back home and over "
-              "a refusing target nothing drops")
+              "a refusing target nothing drops; a window's only tab moves its window")
     finally:
         for process in reversed(processes):
             stop(process)

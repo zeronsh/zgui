@@ -10,7 +10,7 @@ On macOS a zgui app's menus, drags and windows behave as AppKit's do, past the e
 | Drag out to other apps | `View::drag_export` / Luau `drag_export` | macOS, Windows, X11, Wayland |
 | Drags between the app's windows | any drag and drop; `DragEvent::visiting` | macOS, X11 |
 | Tear a tab off into a window of its own | `View::on_drag_outside`, `WindowOptions::under_pointer` | macOS, X11; Windows places the new window |
-| A window's only tab moves the window | `View::drag_moves_window` | macOS, X11 |
+| A window's only tab moves the window | `View::drag_moves_window` | macOS, X11; Wayland moves it, without merging into another window's strip |
 | Window menu, ⌘`, AppKit tabs | `WindowOptions::{tabbing, tabbing_identifier}` | macOS |
 | New windows cascading from the front one | a window with no position | macOS, Windows, X11 |
 | Windows reopening where they were left | `WindowOptions::frame_autosave` / Luau `ui.window { frame_autosave }` | macOS, Windows, X11; Wayland keeps the size and maximized state |
