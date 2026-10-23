@@ -92,18 +92,33 @@ def wait_for_ibus_xim(env, seconds=20):
 def use_ibus_engine(env, engine, daemon, seconds=20):
     """Switch IBus to `engine` and wait until it is the engine and its
     process (a child of `daemon`, this probe's ibus-daemon) runs: keys sent
-    before then reach no engine."""
-    subprocess.run(["ibus", "engine", engine], env=env, check=True)
+    before then reach no engine.
+
+    IBus's panel picks its first engine as it starts, asynchronously, and
+    whichever switch comes second cancels the other ("Set global engine
+    failed: Operation was cancelled"). So wait (briefly) for the panel's
+    choice first, and switch again while `engine` isn't the one IBus reports.
+    (`ibus engine` fails, silently, for the engine already set, so the
+    command's status says nothing.)"""
+    def current():
+        return subprocess.run(["ibus", "engine"], env=env, capture_output=True, text=True).stdout.strip()
+
     deadline = time.monotonic() + seconds
+    settled = time.monotonic() + 5
+    while not current() and time.monotonic() < settled:
+        time.sleep(.05)
     while True:
-        current = subprocess.run(["ibus", "engine"], env=env, capture_output=True, text=True).stdout.strip()
+        now = current()
+        if now != engine:
+            subprocess.run(["ibus", "engine", engine], env=env, capture_output=True)
+            now = current()
         running = subprocess.run(["pgrep", "-P", str(daemon.pid), "-f", "ibus-engine-" + engine],
                                  capture_output=True).returncode == 0
-        if current == engine and running:
+        if now == engine and running:
             time.sleep(.3)
             return
         if time.monotonic() > deadline:
-            raise RuntimeError(f"IBus engine {engine} did not start ({current!r})")
+            raise RuntimeError(f"IBus engine {engine} did not start ({now!r})")
         time.sleep(.05)
 
 
