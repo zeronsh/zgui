@@ -5,11 +5,47 @@ use core::ops::Range;
 use crate::{AttrsOwned, HashMap, ShapeGlyph};
 
 /// Key for caching shape runs.
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShapeRunKey {
     pub text: String,
     pub default_attrs: AttrsOwned,
+    /// zgui patch: `default_attrs`'s hash, kept with them (see
+    /// `ShapeRunKey::set_defaults`): a key is hashed for every word shaped,
+    /// and hashing the attributes (a family name among them) each time
+    /// cost more than the text.
+    pub default_attrs_hash: u64,
     pub attrs_spans: Vec<(Range<usize>, AttrsOwned)>,
+}
+
+impl ShapeRunKey {
+    /// A key for `text` under `defaults`.
+    pub fn new(text: String, default_attrs: AttrsOwned) -> Self {
+        let mut key = Self {
+            text,
+            default_attrs_hash: 0,
+            default_attrs,
+            attrs_spans: Vec::new(),
+        };
+        key.default_attrs_hash = Self::hash_attrs(&key.default_attrs);
+        key
+    }
+    /// Set the default attributes, and their hash with them.
+    pub fn set_defaults(&mut self, default_attrs: AttrsOwned) {
+        self.default_attrs_hash = Self::hash_attrs(&default_attrs);
+        self.default_attrs = default_attrs;
+    }
+    fn hash_attrs(attrs: &AttrsOwned) -> u64 {
+        use core::hash::{BuildHasher, BuildHasherDefault};
+        BuildHasherDefault::<rustc_hash::FxHasher>::default().hash_one(attrs)
+    }
+}
+
+impl core::hash::Hash for ShapeRunKey {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.text.hash(state);
+        self.default_attrs_hash.hash(state);
+        self.attrs_spans.hash(state);
+    }
 }
 
 /// A helper structure for caching shape runs.

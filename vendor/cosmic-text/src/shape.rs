@@ -469,16 +469,12 @@ fn shape_run_cached(
             key.text.clear();
             key.text.push_str(&line[run_range.clone()]);
             if key.default_attrs.as_attrs() != defaults {
-                key.default_attrs = AttrsOwned::new(&defaults);
+                key.set_defaults(AttrsOwned::new(&defaults));
             }
             key.attrs_spans.clear();
             key
         }
-        None => ShapeRunKey {
-            text: line[run_range.clone()].to_string(),
-            default_attrs: AttrsOwned::new(&defaults),
-            attrs_spans: Vec::new(),
-        },
+        None => ShapeRunKey::new(line[run_range.clone()].to_string(), AttrsOwned::new(&defaults)),
     };
     for (attrs_range, attrs) in attrs_list.spans.overlapping(&run_range) {
         if attrs == &key.default_attrs {
