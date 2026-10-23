@@ -7,11 +7,26 @@ use super::{
 use std::collections::HashMap;
 
 /// A text selection's highlight on one text node: rectangles from its box's
-/// origin, painted under its glyphs and within its box.
+/// origin, painted under its glyphs and within its box, with their corner
+/// `radius`; with `text_color`, the glyphs whose centres they hold paint in
+/// it (CSS `::selection { color }`), from the glyphs already laid out.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextHighlight {
     pub color: Color,
     pub rects: Vec<Rect>,
+    pub text_color: Option<Color>,
+    pub radius: f32,
+}
+impl TextHighlight {
+    /// The colour a glyph centred at (`x`, `y`) in the node's box paints in,
+    /// if the selection recolours it.
+    pub fn glyph_color(&self, x: f32, y: f32) -> Option<Color> {
+        self.text_color.filter(|_| {
+            self.rects
+                .iter()
+                .any(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+        })
+    }
 }
 
 #[derive(Default)]
@@ -110,9 +125,10 @@ impl Scene {
             None => self.selectable.highlights.remove(&id),
         };
         let new = self.selectable.highlights.get(&id);
-        // A colour change repaints all of it; otherwise what was or is
-        // highlighted, but not both.
-        let recolored = old.as_ref().map(|h| h.color) != new.map(|h| h.color);
+        // A change of colour or shape repaints all of it; otherwise what was
+        // or is highlighted, but not both.
+        let look = |h: &TextHighlight| (h.color, h.text_color, h.radius.to_bits());
+        let recolored = old.as_ref().map(look) != new.map(look);
         let changed: Vec<Rect> = match (&old, new) {
             (Some(old), Some(new)) if !recolored => old
                 .rects

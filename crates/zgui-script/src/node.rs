@@ -66,6 +66,8 @@ pub(crate) struct Node {
     /// `selectable = true`: the pointer selects the text in it (`false`
     /// keeps a part of a selectable node out).
     pub selectable: Option<bool>,
+    /// `selection_color`, `selected_text_color`: few nodes have them.
+    pub selection_colors: Option<Box<[Option<Source>; 2]>>,
     /// `tooltip = "text" | node`, `tooltip_placement`: shown over it while
     /// the pointer rests on it. Boxed: few nodes have one.
     pub tooltip: Option<Box<Tooltip>>,
@@ -408,6 +410,7 @@ impl Node {
             shader_tokens: [None; 4],
             window_drag: false,
             selectable: None,
+            selection_colors: None,
             tooltip: None,
             source: None,
             theme: None,
@@ -1602,6 +1605,11 @@ fn fill(lua: &Lua, mut node: Node, table: Option<&Table>) -> mlua::Result<Node> 
             "focusable" => node.focusable = Some(lua.unpack(value)?),
             "window_drag" => node.window_drag = lua.unpack(value)?,
             "selectable" => node.selectable = lua.unpack(value)?,
+            "selection_color" | "selected_text_color" => {
+                let at = usize::from(key == "selected_text_color");
+                node.selection_colors.get_or_insert_default()[at] =
+                    Some(source(lua, Ty::Color, &key, value)?);
+            }
             "tooltip" => {
                 let content = match value {
                     mlua::Value::Nil => None,

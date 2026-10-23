@@ -163,6 +163,21 @@ makes the selection the primary selection (middle-click paste), on X11 and
 Wayland, once a gesture ends (`Ui::is_selecting_text` says whether one is
 still making it).
 
+The highlight is styled as CSS's `::selection` is. Its background is the
+theme's `selection` token (`selection.inactive` while the window is at the
+back). The glyphs inside it repaint in `selection.text` (`selection.text.inactive`),
+which is transparent by default, so they keep their own colours. Its rects
+round by `selection.radius` (0). Override them for a subtree with
+`theme_scope(ThemeOverride::new().with(tok::SELECTION_TEXT, color), view)`,
+or on one region with `.selection_color(color)` and `.selected_text_color(color)`
+(`_when` variants follow reactive reads), which hold in either window state. A
+glyph recolours when its centre lies in a highlight rect, from the glyphs
+already laid out on the GPU and software paths: changing a colour or the
+selection reshapes and lays out nothing, and repaints only the highlighted
+rects. Measured with retired instructions (`selection_headless`), a drag costs
+308.3 k per move with text recolouring against 307.8 k without it, and an idle
+frame with a selection still costs nothing.
+
 The highlight paints under the glyphs in the theme's `selection` colour, or
 `selection.inactive` while the window is in the background (desktop hosts call
 `Ui::set_window_active`). It follows layout and reshaping. Removing a selected

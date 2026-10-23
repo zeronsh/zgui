@@ -178,7 +178,7 @@ struct Shown {
 pub(crate) struct State {
     /// Mounted selectable regions and their highlight colours (in a
     /// focused window, and in one at the back).
-    roots: HashMap<NodeId, (Color, Color)>,
+    roots: HashMap<NodeId, Palette>,
     root: Option<NodeId>,
     anchor: Option<TextPoint>,
     focus: Option<TextPoint>,
@@ -265,8 +265,37 @@ impl Drop for RootGuard {
     }
 }
 
+/// A region's highlight, in a focused window (`[0]`) and one at the back
+/// (`[1]`): its background, the selected glyphs' colour (none keeps their
+/// own) and the corner radius.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Palette {
+    background: [Color; 2],
+    text: [Option<Color>; 2],
+    radius: f32,
+}
+impl Palette {
+    fn highlight(&self, inactive: bool, rects: Vec<Rect>) -> TextHighlight {
+        let at = usize::from(inactive);
+        TextHighlight {
+            color: self.background[at],
+            rects,
+            text_color: self.text[at],
+            radius: self.radius,
+        }
+    }
+}
+
+/// A region's own highlight colours (`View::selection_color`,
+/// `selected_text_color`), over the theme's, in either window state.
+#[derive(Default)]
+pub(crate) struct SelectionStyle {
+    pub(crate) background: Option<Box<dyn FnMut() -> Color>>,
+    pub(crate) text: Option<Box<dyn FnMut() -> Color>>,
+}
+
 /// Make `root` a selectable region (`View::selectable(true)`).
-pub(crate) fn mount_root(ui: &mut Ui, root: NodeId) {
+pub(crate) fn mount_root(ui: &mut Ui, root: NodeId, mut style: SelectionStyle) {
     ui.scene.borrow_mut().set_user_select(root, Some(true));
     // Assistive technology finds its selection on it.
     if ui.semantics.borrow().get(root).is_none() {
@@ -277,10 +306,25 @@ pub(crate) fn mount_root(ui: &mut Ui, root: NodeId) {
     let theme = ui.theme_scope();
     let weak = ui.downgrade();
     ui.bind(root, move || {
-        let colors = (
-            theme.color(tok::SELECTION),
-            theme.color(tok::SELECTION_INACTIVE),
-        );
+        // Transparent selected-text colours keep the glyphs' own.
+        let text = |color: Color| (color.3 > 0).then_some(color);
+        let mut colors = Palette {
+            background: [
+                theme.color(tok::SELECTION),
+                theme.color(tok::SELECTION_INACTIVE),
+            ],
+            text: [
+                text(theme.color(tok::SELECTION_TEXT)),
+                text(theme.color(tok::SELECTION_TEXT_INACTIVE)),
+            ],
+            radius: theme.number(tok::SELECTION_RADIUS).max(0.),
+        };
+        if let Some(background) = &mut style.background {
+            colors.background = [background(); 2];
+        }
+        if let Some(color) = &mut style.text {
+            colors.text = [text(color()); 2];
+        }
         let Some(ui) = weak.upgrade() else {
             return;
         };
@@ -774,10 +818,7 @@ impl Ui {
         let semantic_root = selected.filter(|_| document.is_some());
         let previous = std::mem::replace(&mut state.semantic_root, semantic_root);
         let old = std::mem::replace(&mut state.shown, shown.clone());
-        let color = colors.map(|(active, inactive)| match state.inactive {
-            true => inactive,
-            false => active,
-        });
+        let inactive = state.inactive;
         {
             let scene = self.scene.borrow();
             state.synced = (
@@ -806,7 +847,7 @@ impl Ui {
                 scene.set_text_highlight(gone.node, None);
             }
         }
-        let Some(color) = color else {
+        let Some(palette) = colors else {
             return;
         };
         for part in &shown {
@@ -828,7 +869,7 @@ impl Ui {
             };
             self.scene
                 .borrow_mut()
-                .set_text_highlight(part.node, Some(TextHighlight { color, rects }));
+                .set_text_highlight(part.node, Some(palette.highlight(inactive, rects)));
         }
         let gesture = self.selection_state().borrow().gesture.is_some();
         if !gesture {

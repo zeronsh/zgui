@@ -3295,19 +3295,31 @@ impl GpuRenderer {
                         shaped.atlas_epoch = self.atlas_epoch;
                         stats.geometry_rebuilds += 1;
                     }
-                    // A text selection, under the glyphs.
-                    if let Some(highlight) = scene.text_highlight(item.id) {
-                        quads.extend(highlight.rects.iter().map(|r| Quad {
-                            rect: [bounds.x + r.x, bounds.y + r.y, r.width, r.height],
-                            uv: [0.; 4],
-                            color: rgba(highlight.color, item.effects.opacity),
-                            fade,
-                            options: [item.effects.edge_fade, 0., 0., 0.],
-                            shape: [0.; 4],
-                            border: [0.; 4],
-                            mask: NO_MASK,
+                    // A text selection, under the glyphs; rounded, its box
+                    // rides in `fade`, as a rounded run background's does.
+                    let highlight = scene.text_highlight(item.id);
+                    if let Some(highlight) = highlight {
+                        quads.extend(highlight.rects.iter().map(|r| {
+                            let rect = [bounds.x + r.x, bounds.y + r.y, r.width, r.height];
+                            let rounded = highlight.radius > 0.;
+                            Quad {
+                                rect,
+                                uv: [0.; 4],
+                                color: rgba(highlight.color, item.effects.opacity),
+                                fade: if rounded { rect } else { fade },
+                                options: [item.effects.edge_fade, 0., 0., 0.],
+                                shape: if rounded {
+                                    [highlight.radius, 0., 0., 1.]
+                                } else {
+                                    [0.; 4]
+                                },
+                                border: [0.; 4],
+                                mask: NO_MASK,
+                            }
                         }));
                     }
+                    // Its selected glyphs, in the selected-text colour.
+                    let selected = highlight.filter(|h| h.text_color.is_some());
                     for cached in &shaped.quads {
                         let mut quad = *cached;
                         quad.rect[0] += bounds.x;
@@ -3316,7 +3328,15 @@ impl GpuRenderer {
                             quad.fade[0] += bounds.x;
                             quad.fade[1] += bounds.y;
                         }
-                        quad.color = if rich.is_some() {
+                        let recolor = selected.filter(|_| cached.options[1] > 0.5).and_then(|h| {
+                            h.glyph_color(
+                                cached.rect[0] + cached.rect[2] * 0.5,
+                                cached.rect[1] + cached.rect[3] * 0.5,
+                            )
+                        });
+                        quad.color = if let Some(color) = recolor {
+                            rgba(color, item.effects.opacity)
+                        } else if rich.is_some() {
                             [
                                 cached.color[0],
                                 cached.color[1],

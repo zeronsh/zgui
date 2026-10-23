@@ -1622,6 +1622,33 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
     if let Some(selectable) = node.selectable {
         view = view.selectable(selectable);
     }
+    if let Some(colors) = &node.selection_colors {
+        // A token (`"$accent"`) follows the node's theme; anything that
+        // does not resolve keeps the theme's own colour.
+        let theme = match cx.as_deref().map(Context::theme) {
+            Some(theme) => theme,
+            None => zgui::theme::Themes::of(&low.runtime).root().clone(),
+        };
+        for (at, color) in colors.iter().enumerate() {
+            let Some(color) = color else {
+                continue;
+            };
+            let (color, vm, theme) = (resolve_owned(color), vm.clone(), theme.clone());
+            let fallback = [tok::SELECTION, tok::SELECTION_TEXT][at];
+            let follow = move || match resolve(&color, Ty::Color, None, &vm) {
+                Some(Lit::Color(color)) => color,
+                Some(Lit::Token(t)) => theme
+                    .get(t)
+                    .color()
+                    .unwrap_or_else(|| theme.color(fallback)),
+                _ => theme.color(fallback),
+            };
+            view = match at {
+                0 => view.selection_color_when(follow),
+                _ => view.selected_text_color_when(follow),
+            };
+        }
+    }
     match &node.pointer_events {
         Some(Source::Lit(Lit::Bool(enabled))) => view = view.pointer_events(*enabled),
         Some(source) => {

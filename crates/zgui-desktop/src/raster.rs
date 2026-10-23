@@ -41,6 +41,8 @@ pub struct Raster {
     scratch: Vec<u32>,
     background: u32,
     origin: (f32, f32),
+    /// The selection on the text being drawn, which recolours its glyphs.
+    selected: Option<zgui::scene::TextHighlight>,
 }
 impl Raster {
     /// Register an additional validated font and invalidate retained glyph shapes.
@@ -72,6 +74,7 @@ impl Raster {
             scratch: Vec::new(),
             background: 0x10141c,
             origin: (0., 0.),
+            selected: None,
         }
     }
     pub fn resize(&mut self, width: usize, height: usize) {
@@ -149,7 +152,7 @@ impl Raster {
                     if item.effects.blur_radius > 0. {
                         self.blur(visible, item.effects.blur_radius.ceil().min(64.) as usize);
                     }
-                    // A text selection, under the glyphs.
+                    // A text selection, under the glyphs, and what recolours them.
                     if let Some(highlight) = scene.text_highlight(item.id) {
                         for r in &highlight.rects {
                             let rect = Rect::new(
@@ -158,8 +161,23 @@ impl Raster {
                                 r.width,
                                 r.height,
                             );
-                            self.rect(rect, clip, tint(highlight.color, item.color), item.effects);
+                            let color = tint(highlight.color, item.color);
+                            if highlight.radius > 0. {
+                                let style = zgui::scene::QuadStyle {
+                                    fill: color,
+                                    radius: highlight.radius,
+                                    ..Default::default()
+                                };
+                                self.quad(item.id, rect, clip, style, item.effects);
+                            } else {
+                                self.rect(rect, clip, color, item.effects);
+                            }
                         }
+                        self.selected =
+                            highlight.text_color.map(|text| zgui::scene::TextHighlight {
+                                text_color: Some(tint(text, item.color)),
+                                ..highlight.clone()
+                            });
                     }
                     match item.kind {
                         NodeKind::Rect(color) => {
@@ -276,6 +294,7 @@ impl Raster {
                         _ => {}
                     }
                 }
+                self.selected = None;
                 self.mix_corners(&item.rounded, corners);
             }
         }
@@ -312,6 +331,7 @@ impl Raster {
             scratch: Vec::new(),
             background,
             origin: (x, y),
+            selected: None,
         };
         let mut black = make(0);
         let mut white = make(0xffffff);
@@ -747,6 +767,7 @@ impl Raster {
         for (x, y, color, image) in &images.0 {
             let gx = bounds.x.floor() as i32 + x + image.placement.left;
             let gy = bounds.y.floor() as i32 + y - image.placement.top;
+            let color = &selected_ink(&self.selected, bounds, gx, gy, image, *color);
             for by in 0..image.placement.height as usize {
                 let py = gy + by as i32;
                 if py < y0 as i32 || py >= y1 as i32 {
@@ -833,6 +854,7 @@ impl Raster {
         for (x, y, image) in &self.styled_glyphs[&key] {
             let gx = bounds.x.floor() as i32 + x + image.placement.left;
             let gy = bounds.y.floor() as i32 + y - image.placement.top;
+            let color = selected_ink(&self.selected, bounds, gx, gy, image, color);
             for by in 0..image.placement.height as usize {
                 let py = gy + by as i32;
                 if py < y0 as i32 || py >= y1 as i32 {
@@ -909,6 +931,16 @@ impl Raster {
             }
             let gx = x.floor() as i32 + m.xmin;
             let gy = baseline.floor() as i32 - m.height as i32 - m.ymin;
+            let color = self
+                .selected
+                .as_ref()
+                .and_then(|h| {
+                    h.glyph_color(
+                        gx as f32 + m.width as f32 * 0.5 - bounds.x,
+                        gy as f32 + m.height as f32 * 0.5 - bounds.y,
+                    )
+                })
+                .unwrap_or(color);
             for by in 0..m.height {
                 let py = gy + by as i32;
                 if py < y0 as i32 || py >= y1 as i32 {
@@ -1046,6 +1078,61 @@ fn edge_alpha(y: f32, bounds: Rect, fade: f32) -> f32 {
 mod tests {
     use super::*;
     use zgui::scene::{Effects, Layout, NodeKind, Style, Transform};
+    #[test]
+    fn a_selection_recolours_the_glyphs_it_holds_and_rounds_its_highlight() {
+        let mut scene = Scene::new(120., 40.);
+        let node = scene.append(
+            scene.root(),
+            NodeKind::Text {
+                text: "MMMMMM".into(),
+                color: Color(255, 255, 255, 255),
+                font_size: 20.,
+            },
+            Style {
+                width: Some(120.),
+                height: Some(30.),
+                ..Default::default()
+            },
+        );
+        let _ = scene.flush();
+        let channels = |p: u32| [(p >> 16) as u8, (p >> 8) as u8, p as u8];
+        let mut raster = Raster::new(120, 40);
+        let full = [Rect::new(0., 0., 120., 40.)];
+        raster.render(&scene, &full);
+        let plain = raster.pixels.clone();
+        scene.set_text_highlight(
+            node,
+            Some(zgui::scene::TextHighlight {
+                color: Color(0, 0, 255, 255),
+                rects: vec![Rect::new(0., 0., 36., 30.)],
+                text_color: Some(Color(255, 0, 0, 255)),
+                radius: 6.,
+            }),
+        );
+        let _ = scene.flush();
+        raster.render(&scene, &full);
+        let ink = |from: usize, to: usize, test: fn([u8; 3]) -> bool| {
+            (0..30).any(|y| (from..to).any(|x| test(channels(raster.pixels[y * 120 + x]))))
+        };
+        assert!(
+            ink(0, 30, |p| p[0] > 200 && p[1] < 80 && p[2] < 80),
+            "red glyphs"
+        );
+        assert!(
+            !ink(0, 30, |p| p[0] > 200 && p[1] > 200 && p[2] > 200),
+            "none white"
+        );
+        assert!(
+            ink(40, 120, |p| p[0] > 200 && p[1] > 200 && p[2] > 200),
+            "white glyphs"
+        );
+        assert_eq!(
+            channels(raster.pixels[0]),
+            channels(plain[0]),
+            "a rounded corner"
+        );
+        assert_eq!(channels(raster.pixels[120 + 18]), [0, 0, 255]);
+    }
     #[test]
     fn panel_background_border_and_children_have_correct_paint_order() {
         use zgui::scene::{Insets, QuadStyle};
@@ -1880,4 +1967,25 @@ mod outline_tests {
         assert_eq!(at(&raster, 21, 40), 0xffffff);
         assert_eq!(at(&raster, 23, 40), 0xff0000);
     }
+}
+
+/// A glyph image's ink colour: the selection's text colour where the glyph's
+/// centre lies in the highlight on its node at `bounds`.
+fn selected_ink(
+    selected: &Option<zgui::scene::TextHighlight>,
+    bounds: Rect,
+    gx: i32,
+    gy: i32,
+    image: &cosmic_text::SwashImage,
+    color: Color,
+) -> Color {
+    selected
+        .as_ref()
+        .and_then(|h| {
+            h.glyph_color(
+                gx as f32 + image.placement.width as f32 * 0.5 - bounds.x,
+                gy as f32 + image.placement.height as f32 * 0.5 - bounds.y,
+            )
+        })
+        .unwrap_or(color)
 }

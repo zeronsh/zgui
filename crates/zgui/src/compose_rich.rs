@@ -221,6 +221,16 @@ impl RichTextView {
         self.view = self.view.selectable(selectable);
         self
     }
+    /// The highlight behind selected text (see `View::selection_color`).
+    pub fn selection_color(mut self, color: Color) -> Self {
+        self.view = self.view.selection_color(color);
+        self
+    }
+    /// The selected text's colour (see `View::selected_text_color`).
+    pub fn selected_text_color(mut self, color: Color) -> Self {
+        self.view = self.view.selected_text_color(color);
+        self
+    }
 }
 impl Styled for RichTextView {
     fn styles_mut(&mut self) -> &mut Styles {

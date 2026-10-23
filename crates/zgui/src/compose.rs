@@ -326,6 +326,8 @@ pub struct View {
     window_drag: bool,
     /// `View::selectable`.
     selectable: Option<bool>,
+    /// `View::selection_color`, `selected_text_color`: few views have them.
+    selection_style: Option<Box<crate::selection::SelectionStyle>>,
     /// Conditional children (`child_when`), mounted after the others.
     conditional: Vec<RegionBuilder>,
 }
@@ -435,6 +437,7 @@ impl View {
             line_numbers: None,
             window_drag: false,
             selectable: None,
+            selection_style: None,
             conditional: Vec::new(),
         }
     }
@@ -770,6 +773,35 @@ impl View {
         self.selectable = Some(selectable);
         self
     }
+    /// The highlight behind this selectable region's selected text, in place
+    /// of the theme's `selection` (and `selection.inactive`), as CSS's
+    /// `::selection { background }` does. For a selectable view.
+    pub fn selection_color(self, color: crate::scene::Color) -> Self {
+        self.selection_color_when(move || color)
+    }
+    /// `selection_color`, following the reactive values it reads.
+    pub fn selection_color_when(
+        mut self,
+        color: impl FnMut() -> crate::scene::Color + 'static,
+    ) -> Self {
+        self.selection_style.get_or_insert_default().background = Some(Box::new(color));
+        self
+    }
+    /// The colour of this selectable region's selected text, in place of
+    /// the theme's `selection.text`, as CSS's `::selection { color }` does;
+    /// transparent keeps each glyph's own. Glyphs recolour as they are laid
+    /// out: nothing is shaped again.
+    pub fn selected_text_color(self, color: crate::scene::Color) -> Self {
+        self.selected_text_color_when(move || color)
+    }
+    /// `selected_text_color`, following the reactive values it reads.
+    pub fn selected_text_color_when(
+        mut self,
+        color: impl FnMut() -> crate::scene::Color + 'static,
+    ) -> Self {
+        self.selection_style.get_or_insert_default().text = Some(Box::new(color));
+        self
+    }
     // Wrapper properties refine the component's actual root without an extra layout box.
     fn refine(self, mut inner: View) -> View {
         if self.trigger_id.is_some() {
@@ -896,6 +928,9 @@ impl View {
         inner.window_drag |= self.window_drag;
         if self.selectable.is_some() {
             inner.selectable = self.selectable;
+        }
+        if self.selection_style.is_some() {
+            inner.selection_style = self.selection_style;
         }
         inner.mounted.extend(self.mounted);
         inner.conditional.extend(self.conditional);
@@ -2453,7 +2488,14 @@ fn mount_element(
         ui.scene.borrow_mut().set_contents(root, true);
     }
     match view.selectable {
-        Some(true) => crate::selection::mount_root(ui, root),
+        Some(true) => crate::selection::mount_root(
+            ui,
+            root,
+            view.selection_style
+                .take()
+                .map(|style| *style)
+                .unwrap_or_default(),
+        ),
         Some(false) => ui.scene.borrow_mut().set_user_select(root, Some(false)),
         None => {}
     }

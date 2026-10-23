@@ -231,6 +231,13 @@ schema! {
     MENU_HOVER: Color = "menu.hover" => "over({menu.bg}, {hover})",
     /// Selected text while its window is in the background.
     SELECTION_INACTIVE: Color = "selection.inactive" => "alpha({text.secondary}, 0.25)",
+    /// The colour of selected text's glyphs (CSS `::selection { color }`):
+    /// transparent, the default, keeps each glyph's own colour.
+    SELECTION_TEXT: Color = "selection.text" => "alpha({text.primary}, 0)",
+    /// Selected text's glyphs while its window is in the background.
+    SELECTION_TEXT_INACTIVE: Color = "selection.text.inactive" => "{selection.text}",
+    /// The corner radius of selected text's highlight.
+    SELECTION_RADIUS: Number = "selection.radius" => "0",
 }
 
 struct Registry {

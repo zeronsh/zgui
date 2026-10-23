@@ -177,3 +177,62 @@ fn bidi_and_emoji_select_by_logical_order_and_whole_clusters() {
     );
     assert_eq!(ui.selected_text(), "👩\u{200d}💻");
 }
+
+#[test]
+fn selected_glyphs_repaint_in_the_selected_text_colour_and_highlights_round() {
+    use zgui::{scene::Color, theme::ThemeOverride};
+    let mut gpu = GpuRenderer::new(320, 160).unwrap();
+    let mut ui = Ui::new(320., 160.);
+    gpu.install_text(&mut ui.scene.borrow_mut());
+    ui.refresh_text_geometry();
+    ui.mount(theme_scope(
+        ThemeOverride::new().with(tok::SELECTION_RADIUS, 8.),
+        column()
+            .size(320., 160.)
+            .p(10.)
+            .bg(rgb(0x000000))
+            .text_color(rgb(0xffffff))
+            .text_size(24.)
+            .selectable(true)
+            .selection_color(Color(0, 0, 255, 255))
+            .selected_text_color(Color(255, 0, 0, 255))
+            .child(text("MMMMMMMM")),
+    ));
+    let before = render(&ui, &mut gpu);
+    let node = {
+        let scene = ui.scene.borrow();
+        let column = scene.children(scene.root())[0];
+        scene.children(column)[0]
+    };
+    // The first half: its glyphs red on blue, the rest still white.
+    assert!(ui.select_text(
+        zgui::selection::TextPoint { node, offset: 0 },
+        zgui::selection::TextPoint { node, offset: 4 },
+    ));
+    let selected = render(&ui, &mut gpu);
+    let rect = ui.scene.borrow().text_highlight(node).unwrap().rects[0];
+    let bounds = ui.scene.borrow().bounds(node);
+    let pixel = |x: f32, y: f32| {
+        let at = (y.round() as usize * 320 + x.round() as usize) * 4;
+        [selected[at], selected[at + 1], selected[at + 2]]
+    };
+    let (left, top) = (bounds.x + rect.x, bounds.y + rect.y);
+    let row = |from: f32, to: f32| {
+        (from as usize..to as usize).map(|x| (x, pixel(x as f32, top + rect.height / 2.)))
+    };
+    assert!(
+        row(left, left + rect.width).any(|(_, p)| p[0] > 200 && p[1] < 60 && p[2] < 60),
+        "selected glyphs are red"
+    );
+    assert!(
+        row(left + rect.width + 2., bounds.x + bounds.width - 2.)
+            .any(|(_, p)| p[0] > 200 && p[1] > 200 && p[2] > 200),
+        "unselected glyphs stay white"
+    );
+    // Rounded: a corner shows what is under it, its top edge's middle
+    // (above the glyphs) the highlight.
+    assert_eq!(pixel(left + 0.5, top + 0.5), [0, 0, 0], "a rounded corner");
+    assert_eq!(pixel(left + rect.width / 2., top + 1.5), [0, 0, 255]);
+    ui.clear_text_selection();
+    assert!(render(&ui, &mut gpu) == before);
+}

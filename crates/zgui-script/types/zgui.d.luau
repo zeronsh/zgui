@@ -187,6 +187,8 @@ export type ColorToken =
 	| "$menu.bg"
 	| "$menu.hover"
 	| "$selection.inactive"
+	| "$selection.text"
+	| "$selection.text.inactive"
 export type NumberToken =
 	"$glass.blur"
 	| "$font.size.xs"
@@ -222,6 +224,7 @@ export type NumberToken =
 	| "$motion.duration.fast"
 	| "$motion.duration.normal"
 	| "$motion.duration.slow"
+	| "$selection.radius"
 export type FontToken = "$font.sans"
 	| "$font.mono"
 export type ShadowToken = "$shadow.sm"
@@ -309,6 +312,9 @@ export type TokenName =
 	| "menu.bg"
 	| "menu.hover"
 	| "selection.inactive"
+	| "selection.text"
+	| "selection.text.inactive"
+	| "selection.radius"
 
 -- "#rgb", "#rrggbb", "#rrggbbaa", "rgb(…)", "rgba(…)", "hsl(…)", a few
 -- names, 0xrrggbb, or a colour token ("$text.secondary"; `ColorToken`
@@ -1067,6 +1073,11 @@ export type NodeProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -1301,6 +1312,11 @@ export type Props = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -1528,6 +1544,11 @@ export type ContainerProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -1754,6 +1775,11 @@ export type ScrollProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -1985,6 +2011,11 @@ export type TextProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -2256,6 +2287,11 @@ export type RichProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -2483,6 +2519,11 @@ export type ImageProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -2718,6 +2759,11 @@ export type SvgProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -2947,6 +2993,11 @@ export type CanvasProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3175,6 +3226,11 @@ export type CheckboxProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3403,6 +3459,11 @@ export type InputProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3644,6 +3705,11 @@ export type ProgressProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -3872,6 +3938,11 @@ export type SliderProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4104,6 +4175,11 @@ export type ListProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4357,6 +4433,11 @@ export type LayerProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4586,6 +4667,11 @@ export type ModalProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -4824,6 +4910,11 @@ export type PopoverProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5061,6 +5152,11 @@ export type MenuItemProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5290,6 +5386,11 @@ export type SubmenuProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5522,6 +5623,11 @@ export type WebViewProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -5772,6 +5878,11 @@ export type TerminalProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -6000,6 +6111,11 @@ export type SlotProps = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -6233,6 +6349,11 @@ export type EachOptions = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.
@@ -6469,6 +6590,11 @@ export type PresenceOptions = {
 	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
 	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
 	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
 	-- Shown over it while the pointer rests on it (after 300 ms; at once
 	-- within a second of another): text in the theme's look, or a node of
 	-- the app's own. Above it, centred, unless `tooltip_placement` says.

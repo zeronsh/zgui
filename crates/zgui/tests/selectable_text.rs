@@ -820,3 +820,66 @@ fn extending_past_a_scroll_viewport_with_the_keyboard_scrolls_it() {
         offset.get()
     );
 }
+
+#[test]
+fn selected_text_keeps_its_colour_unless_styled_and_regions_override_the_theme() {
+    use zgui::{scene::Color, theme::ThemeOverride, theme::tok};
+    let mut ui = Ui::new(400., 300.);
+    let tint = ui.signal(Color(255, 0, 0, 255));
+    let followed = tint.clone();
+    ui.mount(
+        column().w(300.).text_size(10.).line_height(20.).children([
+            column().selectable(true).child(text("Plain")),
+            column()
+                .selectable(true)
+                .selection_color(Color(0, 0, 255, 128))
+                .selected_text_color_when(move || followed.get())
+                .child(text("Styled")),
+            theme_scope(
+                ThemeOverride::new()
+                    .with(tok::SELECTION_TEXT, Color(0, 255, 0, 255))
+                    .with(tok::SELECTION_RADIUS, 3.),
+                column().selectable(true).child(text("Scoped")),
+            ),
+        ]),
+    );
+    ui.prepare_frame();
+    let [plain, styled, scoped] = texts(&ui)[..] else {
+        panic!()
+    };
+    let highlight = |ui: &Ui, node| {
+        assert!(ui.select_all_text(node));
+        ui.scene.borrow().text_highlight(node).unwrap().clone()
+    };
+    let default = highlight(&ui, plain);
+    assert_eq!(default.text_color, None, "glyphs keep their colour");
+    assert_eq!(default.radius, 0.);
+    let own = highlight(&ui, styled);
+    assert_eq!(own.color, Color(0, 0, 255, 128));
+    assert_eq!(own.text_color, Some(Color(255, 0, 0, 255)));
+    // The region's colours hold in a window at the back too.
+    ui.set_window_active(false);
+    let behind = ui.scene.borrow().text_highlight(styled).unwrap().clone();
+    assert_eq!(
+        (behind.color, behind.text_color),
+        (own.color, own.text_color)
+    );
+    ui.set_window_active(true);
+    tint.set(Color(255, 255, 0, 255));
+    ui.prepare_frame();
+    assert_eq!(
+        ui.scene.borrow().text_highlight(styled).unwrap().text_color,
+        Some(Color(255, 255, 0, 255)),
+        "a reactive colour follows"
+    );
+    let themed = highlight(&ui, scoped);
+    assert_eq!(themed.text_color, Some(Color(0, 255, 0, 255)));
+    assert_eq!(themed.radius, 3.);
+    // A glyph recolours when its centre is in a highlight rectangle.
+    let r = themed.rects[0];
+    assert_eq!(
+        themed.glyph_color(r.x + 1., r.y + 1.),
+        Some(Color(0, 255, 0, 255))
+    );
+    assert_eq!(themed.glyph_color(r.x + r.width + 5., r.y + 1.), None);
+}
