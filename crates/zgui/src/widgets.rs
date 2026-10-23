@@ -25,14 +25,19 @@ struct Owned {
 }
 /// An editor's box size, style, shaper revision and content insets.
 type EditorGeometry = (Rect, Style, u64, Insets);
+/// A mounted text editor (a `text_input` or `text_area`): its editing
+/// model and the value it is bound to, for hosts, tests and commands.
 #[derive(Clone)]
 pub struct EditorHandle {
     multiline: bool,
     read_only: Rc<Cell<bool>>,
     /// Retained caret geometry for native IME candidate-window placement.
     pub caret: NodeId,
+    /// The editor's root node.
     pub node: NodeId,
+    /// The editing model: text, selection, undo and composition.
     pub editor: Rc<RefCell<TextEditor>>,
+    /// The value it is bound to; edits set it.
     pub value: Signal<String>,
     refresh: Rc<dyn Fn()>,
     typography: Rc<RefCell<(Color, f32, FontStyle)>>,
@@ -131,6 +136,7 @@ impl EditorHandle {
     pub(crate) fn text(&self) -> String {
         self.editor.borrow().text().to_owned()
     }
+    /// Select all the text.
     pub fn select_all(&self) {
         let end = self.editor.borrow().text().len();
         self.set_selection(0, end);
@@ -266,9 +272,11 @@ impl EditorHandle {
         }
     }
 
+    /// Lay out and repaint the editor from its model again.
     pub fn refresh(&self) {
         (self.refresh)();
     }
+    /// The selected text, for the clipboard; empty in a password field.
     pub fn copy(&self) -> String {
         // A password field's text never leaves it.
         if self.hint.secure.get() {
@@ -291,6 +299,8 @@ impl EditorHandle {
         }
         text
     }
+    /// Replace the selection with `text`, as the person pasting it would. A
+    /// single-line editor joins its lines; a read-only one ignores it.
     pub fn paste(&self, text: &str) {
         if self.is_read_only() {
             return;
@@ -307,6 +317,7 @@ impl EditorHandle {
 /// Layout notifications repeatedly changed their own allocation without settling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayoutFeedbackError {
+    /// How many layout passes ran before giving up.
     pub passes: usize,
 }
 impl std::fmt::Display for LayoutFeedbackError {
@@ -328,9 +339,13 @@ impl Drop for FramePreparationGuard<'_> {
 
 /// One retained document. Application code keeps returned node IDs as stable widget handles.
 pub struct Ui {
+    /// The reactive runtime its signals and effects live in.
     pub runtime: Runtime,
+    /// The retained scene: nodes, styles and layout.
     pub scene: Rc<RefCell<Scene>>,
+    /// Routes input to nodes and keeps focus.
     pub input: InputDispatcher,
+    /// The accessibility tree hosts project to the platform.
     pub semantics: Rc<RefCell<Semantics>>,
     storage: Rc<UiStorage>,
 }
@@ -557,6 +572,7 @@ pub struct WeakUi {
     storage: Weak<UiStorage>,
 }
 impl WeakUi {
+    /// The `Ui`, if it still exists.
     pub fn upgrade(&self) -> Option<Ui> {
         self.storage.upgrade().map(Ui::from_storage)
     }
@@ -653,6 +669,7 @@ impl Drop for UiStorage {
     }
 }
 impl Ui {
+    /// A `width` by `height` document on a runtime of its own.
     pub fn new(width: f32, height: f32) -> Self {
         Self::with_runtime(Runtime::new(), width, height)
     }
@@ -796,12 +813,15 @@ impl Ui {
             .resources
             .push(Box::new(resource));
     }
+    /// The document's root node.
     pub fn root(&self) -> NodeId {
         self.scene.borrow().root()
     }
+    /// A signal holding `value`, on this document's runtime.
     pub fn signal<T: 'static>(&self, value: T) -> Signal<T> {
         self.runtime.signal(value)
     }
+    /// Append a container laid out by `layout` under `parent`.
     pub fn container(&mut self, parent: NodeId, layout: Layout, style: Style) -> NodeId {
         let n = self
             .scene
@@ -810,6 +830,8 @@ impl Ui {
         self.storage.owned.borrow_mut().entry(n).or_default();
         n
     }
+    /// Append a line of text under `parent`, in the theme's text colour and
+    /// size, which assistive technology reads as a label.
     pub fn label(&mut self, parent: NodeId, text: impl Into<String>, style: Style) -> NodeId {
         let text = text.into();
         let theme = self.theme_scope();
@@ -828,6 +850,7 @@ impl Ui {
         self.storage.owned.borrow_mut().entry(n).or_default();
         n
     }
+    /// A [`Ui::label`] whose text follows `value`.
     pub fn label_signal(&mut self, parent: NodeId, value: Signal<String>, style: Style) -> NodeId {
         let n = self.label(parent, "", style);
         let scene = self.scene.clone();
@@ -840,6 +863,8 @@ impl Ui {
         });
         n
     }
+    /// Run `f` now and whenever what it reads changes, for as long as `owner`
+    /// is mounted.
     pub fn bind(&mut self, owner: NodeId, mut f: impl FnMut() + 'static) {
         assert!(
             self.scene.borrow().contains(owner),
@@ -878,6 +903,8 @@ impl Ui {
                 .push(effect);
         });
     }
+    /// Listen for input at `node` for as long as it is mounted. `focusable`
+    /// applies when this is the node's first listener.
     pub fn on_event(
         &mut self,
         node: NodeId,
@@ -932,6 +959,8 @@ impl Ui {
         });
         (root, bg, state)
     }
+    /// Append a button labelled `label`, `width` wide, that runs `clicked`
+    /// when activated by pointer or keyboard.
     pub fn button(
         &mut self,
         parent: NodeId,
@@ -976,6 +1005,7 @@ impl Ui {
         });
         root
     }
+    /// Append a checkbox labelled `label` that toggles `value`.
     pub fn checkbox(
         &mut self,
         parent: NodeId,
@@ -1242,6 +1272,8 @@ impl Ui {
         });
         root
     }
+    /// Append a progress bar `width` wide showing `value` from 0 to 1 (NaN
+    /// shows as 0).
     pub fn progress(
         &mut self,
         parent: NodeId,
@@ -1275,6 +1307,8 @@ impl Ui {
         });
         root
     }
+    /// Disable `node` or enable it again: a disabled node takes no input or
+    /// focus, and assistive technology reports it disabled.
     pub fn set_disabled(&mut self, node: NodeId, disabled: bool) {
         self.input.set_disabled(&self.scene, node, disabled);
         // Cleanup and observer callbacks may remove the node or change its state.
@@ -1551,6 +1585,9 @@ impl Ui {
                 .popup_screens
                 .with_untracked(|screens| !screens.is_empty())
     }
+    /// Where popups may show beyond the window: each screen's usable area,
+    /// in window points from the content's top left (the desktop host sets
+    /// it). Empty keeps popups inside the window.
     pub fn set_popup_screens(&self, screens: Vec<Rect>) {
         if self
             .storage
@@ -1787,6 +1824,8 @@ impl Ui {
     pub(crate) fn observe_text_geometry_revision(&self) -> Signal<u64> {
         self.storage.text_geometry_revision.clone()
     }
+    /// Lay out every editor's text again, after the font backend or display
+    /// scale changed.
     pub fn refresh_text_geometry(&self) {
         let revision = self.storage.text_geometry_revision.get();
         self.storage
@@ -1803,6 +1842,7 @@ impl Ui {
     pub fn is_editor(&self, id: NodeId) -> bool {
         self.storage.editors.borrow().contains_key(&id)
     }
+    /// The editor that has keyboard focus, if one does.
     pub fn focused_editor(&self) -> Option<EditorHandle> {
         self.input
             .focused()
@@ -1825,6 +1865,8 @@ impl Ui {
     pub(crate) fn request_window_gesture(&self, gesture: WindowGesture) {
         self.storage.window_gesture.set(Some(gesture));
     }
+    /// Deliver `event` after preparing the frame's layout. Panics if layout
+    /// doesn't settle; [`Ui::try_dispatch`] returns the error instead.
     pub fn dispatch(&mut self, event: InputEvent) -> crate::input::DispatchResult {
         self.try_dispatch(event)
             .unwrap_or_else(|error| panic!("{error}"))
@@ -2053,6 +2095,8 @@ impl Ui {
         drop(old);
         self.input.dispatch(&self.scene, InputEvent::PointerCancel);
     }
+    /// Remove `node` and its subtree, disposing their effects, listeners and
+    /// semantics. Focus within it moves on to what remains.
     pub fn remove(&mut self, node: NodeId) {
         if !self.scene.borrow().contains(node) {
             return;
@@ -2152,6 +2196,7 @@ impl Ui {
         }
     }
 }
+/// A style `width` by `height` points.
 pub fn fixed(width: f32, height: f32) -> Style {
     Style {
         width: Some(width),
@@ -3557,6 +3602,9 @@ impl Ui {
             )
             .default_prevented
     }
+    /// Route an assistive technology's request to set `node`'s numeric value
+    /// (a slider's) through the widget's normal input guards. Returns whether
+    /// the request was handled.
     pub fn set_accessible_numeric_value(&mut self, node: NodeId, value: f64) -> bool {
         self.input
             .dispatch_to(&self.scene, node, InputEvent::SetNumericValue(value))
@@ -3746,6 +3794,7 @@ fn surface(theme: &ThemeScope, color: Color) -> NodeKind {
     })
 }
 impl Ui {
+    /// Append `image` under `parent`, which assistive technology names `alt`.
     pub fn image(
         &mut self,
         parent: NodeId,
@@ -3763,6 +3812,7 @@ impl Ui {
             .set(n, SemanticNode::new(Role::Image, alt));
         n
     }
+    /// Append a decorated box (fill, border, corners, shadow) under `parent`.
     pub fn quad(&mut self, parent: NodeId, quad: crate::scene::QuadStyle, style: Style) -> NodeId {
         let n = self
             .scene
