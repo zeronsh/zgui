@@ -74,6 +74,10 @@ jobs:
       - name: Benchmark sampler failure evidence
         run: python3 scripts/test_compare.py -v
       - run: cargo fmt --all -- --check
+      # Integration tests build one binary per area (autotests = false): a
+      # test file no group lists would never run.
+      - name: Every test file in a test binary
+        run: python3 scripts/check_test_groups.py
       # Luau scripts, as stylua.toml and .styluaignore have them.
       - uses: JohnnyMorganz/stylua-action@v4
         with:

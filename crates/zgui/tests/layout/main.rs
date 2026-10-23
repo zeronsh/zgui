@@ -28,5 +28,7 @@ mod layout_growing_boxes;
 mod panel_layout;
 #[path = "../resize_regions.rs"]
 mod resize_regions;
+#[path = "../rtl_layout.rs"]
+mod rtl_layout;
 #[path = "../wrapped_text_in_capped_box.rs"]
 mod wrapped_text_in_capped_box;

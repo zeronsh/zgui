@@ -11,6 +11,8 @@ mod layout_gaps;
 mod layout_motion;
 #[path = "../regions.rs"]
 mod regions;
+#[path = "../rtl.rs"]
+mod rtl;
 #[path = "../selection.rs"]
 mod selection;
 #[path = "../stack.rs"]
