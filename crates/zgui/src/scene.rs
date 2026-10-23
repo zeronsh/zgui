@@ -1920,11 +1920,35 @@ impl Scene {
         if current.len() != children.len() {
             return false;
         }
-        let unique: std::collections::HashSet<_> = children.iter().copied().collect();
-        if unique.len() != children.len() || !current.iter().all(|id| unique.contains(id)) {
+        let place: std::collections::HashMap<NodeId, usize> =
+            current.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        let Some(places) = children
+            .iter()
+            .map(|id| place.get(id).copied())
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        // The same children, each once.
+        let mut seen = vec![false; places.len()];
+        if places
+            .iter()
+            .any(|&i| std::mem::replace(&mut seen[i], true))
+        {
             return false;
         }
-        self.damage_subtree(parent);
+        let mut moved = vec![true; places.len()];
+        for index in longest_increasing(&places) {
+            moved[index] = false;
+        }
+        // Paint order changes only for the children that moved past others
+        // (a keyed list's new row, appended and put in its place): they
+        // repaint where they are, the rest stay as they were.
+        for (child, moved) in children.iter().zip(moved) {
+            if moved {
+                self.damage_subtree(*child);
+            }
+        }
         self.node_mut(parent).children.copy_from_slice(children);
         self.invalidate_layout(parent);
         self.children_changed(parent);
@@ -6815,6 +6839,32 @@ fn finite_effects(mut effects: Effects) -> Effects {
     effects.saturate = factor(effects.saturate);
     effects
 }
+/// The indices of a longest strictly increasing subsequence of `values`
+/// (patience sorting, n log n).
+fn longest_increasing(values: &[usize]) -> Vec<usize> {
+    // `tails[k]`: the index of the smallest last value of an increasing run
+    // of length k + 1; `previous`: each index's predecessor in its run.
+    let mut tails: Vec<usize> = Vec::new();
+    let mut previous = vec![usize::MAX; values.len()];
+    for (index, value) in values.iter().enumerate() {
+        let at = tails.partition_point(|&tail| values[tail] < *value);
+        if at > 0 {
+            previous[index] = tails[at - 1];
+        }
+        if at == tails.len() {
+            tails.push(index);
+        } else {
+            tails[at] = index;
+        }
+    }
+    let mut run = Vec::with_capacity(tails.len());
+    let mut index = tails.last().copied().unwrap_or(usize::MAX);
+    while index != usize::MAX {
+        run.push(index);
+        index = previous[index];
+    }
+    run
+}
 fn own_visible(style: &Style) -> bool {
     style.layout_options.as_deref().is_none_or(|options| {
         options.visible != Some(false) && options.display != Some(crate::layout::Display::None)
@@ -6887,6 +6937,40 @@ mod local_transform_tests {
             && (a.y - b.y).abs() <= 1.
             && (a.width - b.width).abs() <= 2.
             && (a.height - b.height).abs() <= 2.
+    }
+    /// Reordering repaints the children whose paint order changed against
+    /// the others, not the whole parent: in an overlay of four overlapping
+    /// boxes, moving the last to second repaints it alone.
+    #[test]
+    fn reordering_damages_only_the_children_that_moved() {
+        let mut scene = Scene::new(400., 300.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let boxes: Vec<_> = (0..4)
+            .map(|i| {
+                let id = scene.append(
+                    scene.root(),
+                    NodeKind::Rect(Color(1, 2, 3, 255)),
+                    fixed(40., 40.),
+                );
+                scene.set_transform(
+                    id,
+                    Transform {
+                        x: 20. * i as f32,
+                        y: 0.,
+                    },
+                );
+                id
+            })
+            .collect();
+        scene.flush();
+        let (a, b, c, d) = (boxes[0], boxes[1], boxes[2], boxes[3]);
+        assert!(scene.reorder_children(scene.root(), &[a, d, b, c]));
+        let frame = scene.flush();
+        assert_eq!(union(&frame.damage), Rect::new(60., 0., 40., 40.));
+        assert_eq!(scene.children(scene.root()), &[a, d, b, c]);
+        // Not a reordering of the same children: refused, nothing changes.
+        assert!(!scene.reorder_children(scene.root(), &[a, a, b, c]));
+        assert!(scene.flush().damage.is_empty());
     }
     /// Written together, a translation and effects leave the node, its layer
     /// and the pixels to repaint as the two setters one after the other do.
