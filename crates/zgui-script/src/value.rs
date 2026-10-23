@@ -492,11 +492,17 @@ pub(crate) fn convert(value: mlua::Value, old: Option<&Value>) -> mlua::Result<V
 fn table(t: &Table, old: Option<&Value>) -> mlua::Result<Value> {
     let len = t.raw_len();
     let mut keyed: Vec<(String, mlua::Value)> = Vec::new();
-    for pair in t.pairs::<mlua::Value, mlua::Value>() {
-        let (key, value) = pair?;
+    // One walk, unprotected per step: a computed's list of thousands of
+    // rows is converted every time it runs.
+    let mut items: Vec<(usize, mlua::Value)> = Vec::with_capacity(len);
+    t.for_each(|key: mlua::Value, value: mlua::Value| {
         match key {
-            mlua::Value::Integer(i) if i >= 1 && i as usize <= len => {}
-            mlua::Value::Number(n) if n.fract() == 0. && n >= 1. && n as usize <= len => {}
+            mlua::Value::Integer(i) if i >= 1 && i as usize <= len => {
+                items.push((i as usize, value))
+            }
+            mlua::Value::Number(n) if n.fract() == 0. && n >= 1. && n as usize <= len => {
+                items.push((n as usize, value))
+            }
             mlua::Value::String(k) => keyed.push((k.to_string_lossy(), value)),
             other => {
                 return Err(mlua::Error::runtime(format!(
@@ -505,7 +511,8 @@ fn table(t: &Table, old: Option<&Value>) -> mlua::Result<Value> {
                 )));
             }
         }
-    }
+        Ok(())
+    })?;
     if !keyed.is_empty() {
         if len > 0 {
             return Err(mlua::Error::runtime(
@@ -544,13 +551,21 @@ fn table(t: &Table, old: Option<&Value>) -> mlua::Result<Value> {
         });
     }
     let was = old.map_or(&[][..], Value::list);
-    let mut items = Vec::with_capacity(len);
-    for (i, item) in t.sequence_values::<mlua::Value>().enumerate() {
-        items.push(convert(item?, was.get(i))?);
+    // The array part comes in order; items run up to the first hole, as a
+    // sequence does.
+    if !items.is_sorted_by_key(|(i, _)| *i) {
+        items.sort_unstable_by_key(|(i, _)| *i);
+    }
+    let mut list = Vec::with_capacity(items.len());
+    for (at, (i, item)) in items.into_iter().enumerate() {
+        if i != at + 1 {
+            break;
+        }
+        list.push(convert(item, was.get(at))?);
     }
     Ok(match old {
-        Some(old @ Value::List(o)) if o.len() == items.len() && o[..] == items[..] => old.clone(),
-        _ => Value::List(items.into()),
+        Some(old @ Value::List(o)) if o.len() == list.len() && o[..] == list[..] => old.clone(),
+        _ => Value::List(list.into()),
     })
 }
 impl FromLua for Value {
@@ -571,6 +586,7 @@ pub(crate) fn to_lua(value: &Value, lua: &Lua, frozen: bool) -> mlua::Result<mlu
         Value::Str(s) => lua.create_string(&**s).map(mlua::Value::String),
         Value::List(items) => {
             let table = lua.create_table_with_capacity(items.len(), 0)?;
+            count_items(items.len());
             for (i, item) in items.iter().enumerate() {
                 table.raw_set(i + 1, to_lua(item, lua, frozen)?)?;
             }
@@ -581,6 +597,7 @@ pub(crate) fn to_lua(value: &Value, lua: &Lua, frozen: bool) -> mlua::Result<mlu
             let table = lua.create_table_with_capacity(0, fields.len())?;
             for (key, value) in fields.iter() {
                 table.raw_set(&**key, to_lua(value, lua, frozen)?)?;
+                count_items(1);
             }
             // Empty, it stays an object going back (`ui.object`).
             if fields.is_empty() {
@@ -602,12 +619,22 @@ impl IntoLua for Value {
 
 thread_local! {
     static CONVERTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static ITEMS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 /// How many tables state values have been converted into for scripts on
 /// this thread, ever: for budgets (a delta's work must not grow with what
 /// did not change).
 pub fn tables_converted() -> u64 {
     CONVERTED.get()
+}
+/// How many items and fields those tables were given, ever: the work a
+/// conversion does, which a table converted whole counts once in
+/// `tables_converted` however many rows it holds.
+pub fn values_converted() -> u64 {
+    ITEMS.get()
+}
+fn count_items(n: usize) {
+    ITEMS.set(ITEMS.get() + n as u64);
 }
 
 /// Values this large (items and fields, counted all the way down) are
@@ -637,21 +664,24 @@ fn large(value: &Value) -> bool {
 }
 /// Give a new VM its cache of converted values.
 pub(crate) fn install_cache(lua: &Lua) {
-    let weak = |mode: &str| -> mlua::Result<mlua::RegistryKey> {
+    let weak = |mode: &str| -> mlua::Result<Table> {
         let t = lua.create_table()?;
         let meta = lua.create_table()?;
         meta.raw_set("__mode", mode)?;
         t.set_metatable(Some(meta))?;
-        lua.create_registry_value(t)
+        Ok(t)
     };
-    let tables = lua
-        .create_table()
-        .and_then(|t| lua.create_registry_value(t));
-    if let (Ok(tables), Ok(ids)) = (tables, weak("k")) {
+    let tables = lua.create_table();
+    let clone = lua
+        .globals()
+        .get::<Table>("table")
+        .and_then(|t| t.get::<mlua::Function>("clone"));
+    if let (Ok(tables), Ok(ids), Ok(clone)) = (tables, weak("k"), clone) {
         lua.set_app_data(Converted {
             held: Default::default(),
             tables,
             ids,
+            clone,
             weight: std::cell::Cell::new(0),
             swept: std::cell::Cell::new(0),
         });
@@ -667,11 +697,14 @@ pub(crate) fn install_cache(lua: &Lua) {
 struct Converted {
     /// id → the value and its `weight`.
     held: std::cell::RefCell<HashMap<usize, (Value, usize)>>,
-    /// id → table, while `held` holds its value.
-    tables: mlua::RegistryKey,
+    /// id → table, while `held` holds its value. (Handles, not registry
+    /// keys: looked up for every row converted.)
+    tables: Table,
     /// table → id, weak keys: a read-only table given back (a computed
     /// returning a row it read) is its value again, without a walk.
-    ids: mlua::RegistryKey,
+    ids: Table,
+    /// Luau's `table.clone`: a table copied in C (see `derive`).
+    clone: mlua::Function,
     /// The `weight` of what is held.
     weight: std::cell::Cell<usize>,
     /// The `weight` of what was held after the last sweep.
@@ -690,12 +723,19 @@ fn weight(value: &Value) -> usize {
             _ => Box::new(std::iter::empty()),
         }
     }
+    1 + children(value).map(part_weight).sum::<usize>()
+}
+/// What a part adds to its container's `weight`: 1 for a large one (cached,
+/// and weighed, on its own), all of a small one.
+fn part_weight(value: &Value) -> usize {
     fn all(value: &Value) -> usize {
-        1 + children(value).map(all).sum::<usize>()
+        1 + match value {
+            Value::List(items) => items.iter().map(all).sum::<usize>(),
+            Value::Map(fields) => fields.iter().map(|(_, v)| all(v)).sum::<usize>(),
+            _ => 0,
+        }
     }
-    1 + children(value)
-        .map(|v| if large(v) { 1 } else { all(v) })
-        .sum::<usize>()
+    if large(value) { 1 } else { all(value) }
 }
 pub(crate) fn identity(value: &Value) -> usize {
     match value {
@@ -727,7 +767,7 @@ fn shared_part(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
         return to_lua(value, lua, true);
     };
     let id = identity(value);
-    let tables: Table = lua.registry_value(&cache.tables)?;
+    let tables = cache.tables.clone();
     if let mlua::Value::Table(t) = tables.raw_get::<mlua::Value>(id_key(id))? {
         return Ok(mlua::Value::Table(t));
     }
@@ -736,6 +776,7 @@ fn shared_part(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
     let table = match value {
         Value::List(items) => {
             let table = lua.create_table_with_capacity(items.len(), 0)?;
+            count_items(items.len());
             for (i, item) in items.iter().enumerate() {
                 table.raw_set(i + 1, shared_part(item, lua)?)?;
             }
@@ -745,17 +786,31 @@ fn shared_part(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
             let table = lua.create_table_with_capacity(0, fields.len())?;
             for (key, value) in fields.iter() {
                 table.raw_set(&**key, shared_part(value, lua)?)?;
+                count_items(1);
             }
             table
         }
         _ => unreachable!("shared parts are lists and tables"),
     };
     table.set_readonly(true);
-    let cache = lua.app_data_ref::<Converted>().expect("checked above");
-    tables.raw_set(id_key(id), &table)?;
-    let ids: Table = lua.registry_value(&cache.ids)?;
-    ids.raw_set(&table, id_key(id))?;
-    let added = weight(value);
+    file(lua, value, &table)?;
+    Ok(mlua::Value::Table(table))
+}
+/// Cache `table` (read-only) as `value`'s, for `shared_part` to find, and
+/// sweep what nothing else holds as the cache grows.
+fn file(lua: &Lua, value: &Value, table: &Table) -> mlua::Result<()> {
+    file_weighed(lua, value, table, weight(value))
+}
+/// `file`, with `value`'s `weight` known.
+fn file_weighed(lua: &Lua, value: &Value, table: &Table, added: usize) -> mlua::Result<()> {
+    let Some(cache) = lua.app_data_ref::<Converted>() else {
+        return Ok(());
+    };
+    let id = identity(value);
+    let tables = cache.tables.clone();
+    tables.raw_set(id_key(id), table)?;
+    let ids = cache.ids.clone();
+    ids.raw_set(table, id_key(id))?;
     cache.held.borrow_mut().insert(id, (value.clone(), added));
     cache.weight.set(cache.weight.get() + added);
     // Sweep as the cache doubles in weight: amortized, each conversion pays
@@ -793,7 +848,121 @@ fn shared_part(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
             tables.raw_set(id_key(id), mlua::Value::Nil)?;
         }
     }
-    Ok(mlua::Value::Table(table))
+    Ok(())
+}
+/// The cached table of `value`, if it has one.
+fn cached(lua: &Lua, value: &Value) -> mlua::Result<Option<Table>> {
+    let Some(cache) = lua.app_data_ref::<Converted>() else {
+        return Ok(None);
+    };
+    let tables = cache.tables.clone();
+    Ok(
+        match tables.raw_get::<mlua::Value>(id_key(identity(value)))? {
+            mlua::Value::Table(t) => Some(t),
+            _ => None,
+        },
+    )
+}
+/// After a write that kept most of a long list (`set_key` on a row, `push`),
+/// its table for scripts: the old one's, copied in C, with only the items
+/// that changed converted. Converting every row again made one write to a
+/// list of thousands cost each script reading it as much as building it.
+pub(crate) fn derive(lua: &Lua, old: &Value, new: &Value) -> mlua::Result<()> {
+    let (Value::List(before), Value::List(after)) = (old, new) else {
+        return Ok(());
+    };
+    if Rc::ptr_eq(before, after) || after.len() < before.len() || !large(new) {
+        return Ok(());
+    }
+    let changed = before
+        .iter()
+        .zip(after.iter())
+        .filter(|(a, b)| !same_item(a, b))
+        .count()
+        + (after.len() - before.len());
+    // Mostly new: converting it whole is as cheap.
+    if changed * 4 > after.len() || cached(lua, new)?.is_some() {
+        return Ok(());
+    }
+    let Some(base) = cached(lua, old)? else {
+        return Ok(());
+    };
+    let clone = match lua.app_data_ref::<Converted>() {
+        Some(cache) => cache.clone.clone(),
+        None => return Ok(()),
+    };
+    let table: Table = clone.call(base)?;
+    table.set_readonly(false);
+    for (i, (a, b)) in before.iter().zip(after.iter()).enumerate() {
+        if !same_item(a, b) {
+            table.raw_set(i + 1, shared_part(b, lua)?)?;
+            count_items(1);
+        }
+    }
+    for (i, b) in after.iter().enumerate().skip(before.len()) {
+        table.raw_set(i + 1, shared_part(b, lua)?)?;
+        count_items(1);
+    }
+    table.set_readonly(true);
+    CONVERTED.set(CONVERTED.get() + 1);
+    // Its weight from the old one's: only what changed is weighed.
+    let old_weight = lua
+        .app_data_ref::<Converted>()
+        .and_then(|cache| cache.held.borrow().get(&identity(old)).map(|(_, w)| *w));
+    let added = match old_weight {
+        Some(w) => {
+            let changed = before
+                .iter()
+                .zip(after.iter())
+                .filter(|(a, b)| !same_item(a, b));
+            let (gone, came) = changed.fold((0, 0), |(g, c), (a, b)| {
+                (g + part_weight(a), c + part_weight(b))
+            });
+            let appended: usize = after[before.len()..].iter().map(part_weight).sum();
+            w - gone + came + appended
+        }
+        None => weight(new),
+    };
+    file_weighed(lua, new, &table, added)
+}
+/// Whether two list items convert to the same script value: one table, or
+/// equal plain values.
+fn same_item(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::List(a), Value::List(b)) => Rc::ptr_eq(a, b),
+        (Value::Map(a), Value::Map(b)) => Rc::ptr_eq(a, b),
+        (Value::List(_) | Value::Map(_), _) | (_, Value::List(_) | Value::Map(_)) => false,
+        (a, b) => a == b,
+    }
+}
+/// A computed's result, `table` as the script returned it, kept as its
+/// value's table (a copy, read-only, the script's own left as it is): every
+/// script reading the computed gets it back without converting it again.
+/// Only for one whose tables are read-only already (rows of a state), whose
+/// copy no later change of the script's can reach.
+pub(crate) fn remember(lua: &Lua, table: &Table, value: &Value) -> mlua::Result<()> {
+    if table.is_readonly() || !large(value) || cached(lua, value)?.is_some() {
+        return Ok(());
+    }
+    let mut frozen = true;
+    table.for_each(|_: mlua::Value, v: mlua::Value| {
+        if let mlua::Value::Table(t) = v
+            && !t.is_readonly()
+        {
+            frozen = false;
+        }
+        Ok(())
+    })?;
+    if !frozen {
+        return Ok(());
+    }
+    let clone = match lua.app_data_ref::<Converted>() {
+        Some(cache) => cache.clone.clone(),
+        None => return Ok(()),
+    };
+    let copy: Table = clone.call(table)?;
+    copy.set_readonly(true);
+    file(lua, value, &copy)
 }
 /// How many values a VM's conversion cache holds.
 pub(crate) fn converted_len(lua: &Lua) -> usize {
@@ -806,7 +975,7 @@ fn converted_from(t: &Table, lua: &Lua) -> Option<Value> {
         return None;
     }
     let cache = lua.app_data_ref::<Converted>()?;
-    let ids: Table = lua.registry_value(&cache.ids).ok()?;
+    let ids = &cache.ids;
     let mlua::Value::LightUserData(id) = ids.raw_get::<mlua::Value>(t).ok()? else {
         return None;
     };
@@ -908,7 +1077,10 @@ impl State {
     }
     /// Writes what `f` makes of the current value.
     fn change(&self, lua: &Lua, f: impl FnOnce(&Value) -> mlua::Result<Value>) -> mlua::Result<()> {
-        let next = self.0.with_untracked(f)?;
+        let old = self.0.with_untracked(Clone::clone);
+        let next = f(&old)?;
+        // Before anything reads it: its table from the old one's.
+        let _ = derive(lua, &old, &next);
         self.write(lua, next);
         Ok(())
     }

@@ -554,3 +554,54 @@ fn timers_fire_on_their_clock_and_stop() {
     }
     assert_eq!(h.text("out"), "3 1", "every stopped at 3, after fired once");
 }
+
+/// Items converted for scripts per `set_key` on one row of a list of `n`
+/// rows that a filter computed and a list of its rows read.
+fn converted_per_row_write(n: usize) -> u64 {
+    let h = Harness::inline(&format!(
+        r#"local rows = {{}}
+        for i = 1, {n} do
+            rows[i] = {{ id = i, box = if i % 2 == 0 then "inbox" else "sent", unread = false }}
+        end
+        local messages = ui.state("messages", rows)
+        local shown = ui.computed(function()
+            local out = {{}}
+            for _, m in messages:get() do
+                if m.box == "inbox" then table.insert(out, m) end
+            end
+            return out
+        end)
+        local tick = 0
+        ui.command {{ id = "tick", run = function()
+            tick += 1
+            local i = (tick * 7) % {n} + 1
+            messages:set_key({{ i, "unread" }}, not messages:peek()[i].unread)
+        end }}
+        return ui.list {{ h = 200, height = 20, count = function() return #shown:get() end,
+            row = function(i)
+                return ui.text {{ function() local m = shown:get()[i]; return if m and m.unread then "*" else "-" end }}
+            end,
+        }}"#
+    ));
+    h.frames(2);
+    let before = zgui_script::values_converted();
+    let writes = 20;
+    for _ in 0..writes {
+        assert!(h.host.run_command("tick"));
+        h.frame();
+    }
+    (zgui_script::values_converted() - before) / writes
+}
+
+#[test]
+fn a_row_written_in_a_long_list_converts_the_row_not_the_list() {
+    // Each write: the list's table copied from the last one's with the new
+    // row in it, the row's fields, and the filter's result kept as the
+    // table its readers get.
+    let (short, long) = (converted_per_row_write(400), converted_per_row_write(4000));
+    assert_eq!(
+        short, long,
+        "a write converts as much with 4,000 rows as with 400"
+    );
+    assert!(short <= 8, "a write converts {short} items");
+}

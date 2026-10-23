@@ -61,7 +61,7 @@ pub use calls::{Request, Response};
 pub use command::Command;
 pub use design::DesignLint;
 pub use persist::app_data_dir;
-pub use value::{ElementHandle, PathKey, Shared, Store, Value, tables_converted};
+pub use value::{ElementHandle, PathKey, Shared, Store, Value, tables_converted, values_converted};
 pub use windows::Window;
 
 use mlua::{Lua, VmState};

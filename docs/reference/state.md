@@ -71,7 +71,7 @@ local tabs = ui.state("tabs", {} :: { Tab })
 | `remove(index: number): item?` | removes and returns the item; nil, and nothing changes, outside the list | |
 | `len(): number` | the list's length (0 for anything else); tracked as `get` is | |
 
-`set_key`, `patch`, `insert`, `push` and `remove` copy only the path they change, sharing the rest with the old value; prefer them to `update` for large state. A write of an equal value notifies nobody.
+`set_key`, `patch`, `insert`, `push` and `remove` copy only the path they change, sharing the rest with the old value; prefer them to `update` for large state. Scripts reading a long list after `set_key` on one row (or a `push`) get its table back with only that row converted, and a computed that returns rows of a state (a filter) hands its readers the table it built: a write to one message of thousands costs the scripts reading them only their own loops. A write of an equal value notifies nobody.
 
 ## Actions
 

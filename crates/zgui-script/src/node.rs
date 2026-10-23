@@ -3640,7 +3640,18 @@ pub(crate) fn computed(_: &Lua, env: &Env, f: Function) -> Signal<Value> {
     // build and its `on_mount`s.
     let effect = env.runtime.effect_now(move || {
         if let Some(vm) = vm.upgrade() {
-            match vm.call::<Value>(&f, ()) {
+            // Against what it was: unchanged parts keep their values.
+            let old = out.with_untracked(Clone::clone);
+            let result = vm.call::<mlua::Value>(&f, ()).and_then(|returned| {
+                let table = returned.as_table().cloned();
+                let value = crate::value::convert(returned, Some(&old))?;
+                if let Some(table) = table {
+                    // Readers get the table back, not a conversion.
+                    let _ = crate::value::remember(&vm.lua, &table, &value);
+                }
+                Ok(value)
+            });
+            match result {
                 Ok(v) => {
                     out.set(v);
                 }
