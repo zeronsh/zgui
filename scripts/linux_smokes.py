@@ -59,6 +59,7 @@ SMOKES = [
     ("native-platform", "python3 scripts/native_platform_smoke.py {bin}/native_platform --output {out}", False),
     ("keyboard-layout", "python3 scripts/keyboard_layout_smoke.py {bin}/primary_selection --output {out}", False),
     ("popup-windows", "python3 scripts/popup_windows_smoke.py {bin}/popup_probe --output {out}", False),
+    ("drag-preview", "python3 scripts/drag_preview_smoke.py {bin}/drag_drop --output {out}", False),
     ("zenity-dialog", "python3 scripts/zenity_dialog_smoke.py {bin}/platform_services --output {out}", False),
     ("launch-token", "python3 scripts/launch_token_smoke.py {bin}/gallery {bin}/native_platform --output {out}", False),
     ("double-click-time", "python3 scripts/double_click_time_smoke.py {bin}/primary_selection --output {out}", False),

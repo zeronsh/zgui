@@ -109,6 +109,18 @@ moves into place; closed, it moves off and is unmapped. On Wayland popups stay
 inside their window: `xdg_popup` is not something winit exposes.
 `popup_windows_smoke.py` checks a menu past its window's edge.
 
+A drag's preview shows in such a window too, so it follows the pointer past
+its window, over other windows. It is drawn once; as the pointer moves,
+`PopupHost::follow` moves its window (`XMoveWindow`), drawing nothing, in it
+or in the window it came from. Its input shape is empty, so the pointer goes
+through it to what is under it. When nothing takes the drag, a thread with
+its own connection slides it back to its source over 200 ms, easing out, then
+hides it. Without a compositor, the X server asks each window that a moving
+preview uncovers to repaint (Expose), and zgui repaints the whole window (winit
+does not say which part). `drag_preview_smoke.py` checks the preview
+under picom: it follows the pointer past the window with nothing drawn, and
+slides back.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a

@@ -1335,13 +1335,21 @@ mod x11 {
         window: Arc<Window>,
         renderer: Option<GpuRenderer>,
         revision: Option<u64>,
+        /// Where it shows: its box in the parent's coordinates.
         rect: Option<Rect>,
+        /// A drag preview's: its box's offset from where the scene lays the
+        /// preview out (its shadow's margin), to move it with the drag.
+        preview: Option<(f32, f32)>,
     }
     thread_local! {
         static HIDDEN: RefCell<Vec<Popup>> = const { RefCell::new(Vec::new()) };
         static TARGETS: RefCell<HashMap<WindowId, Rc<Target>>> = RefCell::new(HashMap::new());
         /// A popup found no window ready: make one where the event loop is.
         static WANTED: Cell<bool> = const { Cell::new(false) };
+        /// Drag previews sliding back to their source, each moved by a
+        /// thread of its own until it is home and hidden.
+        static SLIDING: RefCell<Vec<(std::thread::JoinHandle<()>, Popup)>> =
+            const { RefCell::new(Vec::new()) };
         static ON: bool = std::env::var_os("ZGUI_POPUP_WINDOWS").is_none_or(|v| v != "0");
     }
 
@@ -1509,9 +1517,8 @@ mod x11 {
     /// macOS readies a panel here; X11's windows are made by `make`.
     pub(crate) fn warm(_: &GpuContext, _: f32) {}
     // todo(x11): drags between windows need each window's place on screen
-    // (`XTranslateCoordinates`) and the stacking order; drag previews in
-    // windows of their own need `PopupHost::follow`. Until then drags stay
-    // in their window and previews in its scene (`Ui::set_popup_previews`).
+    // (`XTranslateCoordinates`) and the stacking order. Until then drags
+    // stay in their window (their previews show past it).
     pub(crate) fn content_origin(_: &Window) -> Option<(f64, f64)> {
         None
     }
@@ -1523,6 +1530,7 @@ mod x11 {
     }
     /// Whether a popup found no window ready (`make` one).
     pub(crate) fn wanted() -> bool {
+        reap();
         WANTED.with(|wanted| wanted.replace(false))
     }
     /// Have a hidden popup window ready, if none is.
@@ -1557,6 +1565,7 @@ mod x11 {
                     renderer: None,
                     revision: None,
                     rect: None,
+                    preview: None,
                 });
             }
         });
@@ -1658,9 +1667,10 @@ mod x11 {
             context: &GpuContext,
             scale: f32,
             full: bool,
-            _: Option<&zgui::input::DragState>,
-            _: Option<zgui::input::DragEnded>,
+            drag: Option<&zgui::input::DragState>,
+            ended: Option<zgui::input::DragEnded>,
         ) -> Result<(), GpuError> {
+            reap();
             if (self.shown.is_empty() && scene.popups().is_empty()) || !x11(parent) {
                 return Ok(());
             }
@@ -1677,7 +1687,29 @@ mod x11 {
                 }
                 let (root, popup) = self.shown.swap_remove(index);
                 zgui_gpu::present_log::log(|| format!("popup hide {root:?}"));
-                release(popup);
+                // A drag nothing took: its preview slides back to its
+                // source, as drag images do. A taken one goes.
+                let back = ended
+                    .filter(|ended| {
+                        ended.preview == Some(root) && !ended.accepted && !ended.outside
+                    })
+                    .filter(|ended| scene.contains(ended.source))
+                    .zip(popup.preview.zip(popup.rect))
+                    .zip(parent.inner_position().ok());
+                match back {
+                    Some(((ended, ((dx, dy), rect)), origin)) => {
+                        let source = scene.bounds(ended.source);
+                        let at = |x: f32, y: f32| {
+                            PhysicalPosition::new(
+                                origin.x + (x * scale).round() as i32,
+                                origin.y + (y * scale).round() as i32,
+                            )
+                        };
+                        let from = at(rect.x, rect.y);
+                        slide_back(popup, from, at(source.x + dx, source.y + dy));
+                    }
+                    None => release(popup),
+                }
             }
             let Ok(origin) = parent.inner_position() else {
                 return Ok(());
@@ -1712,8 +1744,29 @@ mod x11 {
                 let renderer = popup.renderer.as_mut().expect("made above");
                 renderer.set_popup(root, bounds);
                 let rect = renderer.plane_rect().unwrap_or(bounds);
-                let moved = popup.rect != Some(rect);
-                if moved {
+                // A drag preview's window goes where the drag puts it (and
+                // `follow` moves it between frames); its frame is drawn
+                // where the scene has it.
+                let preview = drag.filter(|drag| drag.preview == Some(root)).map(|drag| {
+                    let laid = scene.bounds(root);
+                    let (x, y) = drag.preview_origin.unwrap_or((laid.x, laid.y));
+                    (rect.x - laid.x, rect.y - laid.y, x, y)
+                });
+                if new {
+                    popup.preview = preview.map(|(dx, dy, ..)| (dx, dy));
+                    // The pointer goes through it, to what is under it.
+                    if popup.preview.is_some() {
+                        pass_through(&popup.window, true);
+                    }
+                }
+                let frame = match preview {
+                    Some((dx, dy, x, y)) => Rect::new(x + dx, y + dy, rect.width, rect.height),
+                    None => rect,
+                };
+                let resized = popup
+                    .rect
+                    .is_none_or(|old| (old.width, old.height) != (rect.width, rect.height));
+                if resized {
                     // The window to the popup's box, in whole device pixels,
                     // before its surface draws at that size.
                     let size = PhysicalSize::new(
@@ -1722,21 +1775,21 @@ mod x11 {
                     );
                     let _ = popup.window.request_inner_size(size);
                 }
-                // Popups are small: one that changed is drawn whole.
+                // Popups are small: one that changed is drawn whole. One that
+                // only moved (a drag preview) is not drawn again.
                 let revision = scene.layer_revision(root);
-                if new || full || moved || popup.revision != Some(revision) {
+                if new || full || resized || popup.revision != Some(revision) {
                     popup.revision = Some(revision);
+                    zgui_gpu::present_log::log(|| format!("popup draw {root:?}"));
                     renderer.repaint_all();
                     renderer.render(scene, &[])?;
                     renderer.present()?;
                 }
                 // Onto the screen once its frame is there.
-                if moved {
-                    popup.window.set_outer_position(PhysicalPosition::new(
-                        origin.x + (rect.x * scale).round() as i32,
-                        origin.y + (rect.y * scale).round() as i32,
-                    ));
+                if popup.rect != Some(frame) {
+                    place(&popup.window, origin, frame, scale);
                 }
+                let rect = frame;
                 popup.rect = Some(rect);
                 TARGETS.with(|targets| {
                     let mut targets = targets.borrow_mut();
@@ -1762,7 +1815,33 @@ mod x11 {
             Ok(())
         }
         /// Hide every popup (the window closes or goes away).
-        pub fn follow(&mut self, _: &Window, _: &zgui::input::DragState) {}
+        /// Move the drag preview's window to where `drag` puts it, drawing
+        /// nothing (between frames, as the pointer moves): the X server
+        /// moves it (`XMoveWindow`).
+        pub fn follow(&mut self, parent: &Window, drag: &zgui::input::DragState) {
+            let (Some(root), Some((x, y))) = (drag.preview, drag.preview_origin) else {
+                return;
+            };
+            let Some((_, popup)) = self.shown.iter_mut().find(|(shown, _)| *shown == root) else {
+                return;
+            };
+            let (Some((dx, dy)), Some(rect), Ok(origin)) =
+                (popup.preview, popup.rect, parent.inner_position())
+            else {
+                return;
+            };
+            let frame = Rect::new(x + dx, y + dy, rect.width, rect.height);
+            if popup.rect == Some(frame) {
+                return;
+            }
+            place(&popup.window, origin, frame, parent.scale_factor() as f32);
+            popup.rect = Some(frame);
+            TARGETS.with(|targets| {
+                if let Some(target) = targets.borrow().get(&popup.window.id()) {
+                    target.origin.set((frame.x, frame.y));
+                }
+            });
+        }
         pub fn preview_image(
             &self,
             _: &zgui::input::DragState,
@@ -1793,11 +1872,22 @@ mod x11 {
             }
         }
     }
+    /// Show `window` at `frame` (the parent's points), the parent's content
+    /// at `origin` (physical, on the root).
+    fn place(window: &Window, origin: PhysicalPosition<i32>, frame: Rect, scale: f32) {
+        window.set_outer_position(PhysicalPosition::new(
+            origin.x + (frame.x * scale).round() as i32,
+            origin.y + (frame.y * scale).round() as i32,
+        ));
+    }
     /// Hide `popup` (parked off screen, unmapped), and keep it made if few
     /// are.
     fn release(mut popup: Popup) {
         popup.window.set_outer_position(PARKED);
         popup.window.set_visible(false);
+        if popup.preview.take().is_some() {
+            pass_through(&popup.window, false);
+        }
         popup.revision = None;
         popup.rect = None;
         TARGETS.with(|targets| targets.borrow_mut().remove(&popup.window.id()));
@@ -1807,5 +1897,90 @@ mod x11 {
                 hidden.push(popup);
             }
         });
+    }
+    /// Whether the pointer goes through `window` (an empty input shape) to
+    /// the window under it, or (`on` false) it takes it again.
+    fn pass_through(window: &Window, on: bool) {
+        use x11rb::{
+            connection::Connection,
+            protocol::shape::{self, SK, SO},
+        };
+        let Some(id) = xid(window) else {
+            return;
+        };
+        CONNECTION.with(|connection| {
+            let Some(connection) = connection else {
+                return;
+            };
+            let _ = if on {
+                shape::rectangles(
+                    connection,
+                    SO::SET,
+                    SK::INPUT,
+                    x11rb::protocol::xproto::ClipOrdering::UNSORTED,
+                    id,
+                    0,
+                    0,
+                    &[],
+                )
+            } else {
+                // No mask: the window's whole box again.
+                shape::mask(connection, SO::SET, SK::INPUT, id, 0, 0, x11rb::NONE)
+            };
+            let _ = connection.flush();
+        });
+    }
+    /// How long a drag preview takes to slide back (as AppKit's do).
+    const SLIDE: std::time::Duration = std::time::Duration::from_millis(200);
+    /// Slide a drag preview's `popup` from `from` to `to` (on the root,
+    /// physical), easing out, then hide it: moved by a thread with a
+    /// connection of its own, the parent drawing nothing; put back in the
+    /// pool once home (`reap`).
+    fn slide_back(popup: Popup, from: PhysicalPosition<i32>, to: PhysicalPosition<i32>) {
+        use x11rb::{
+            connection::Connection, protocol::xproto::ConnectionExt, wrapper::ConnectionExt as _,
+        };
+        let Some(id) = xid(&popup.window) else {
+            return release(popup);
+        };
+        let slide = std::thread::spawn(move || {
+            let Ok((connection, _)) = x11rb::connect(None) else {
+                return;
+            };
+            let start = std::time::Instant::now();
+            loop {
+                let t = (start.elapsed().as_secs_f32() / SLIDE.as_secs_f32()).min(1.);
+                let ease = 1. - (1. - t) * (1. - t);
+                let along = |from: i32, to: i32| from + ((to - from) as f32 * ease).round() as i32;
+                let aux = x11rb::protocol::xproto::ConfigureWindowAux::new()
+                    .x(along(from.x, to.x))
+                    .y(along(from.y, to.y));
+                let _ = connection.configure_window(id, &aux);
+                let _ = connection.flush();
+                if t >= 1. {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
+            // Hidden before the window is shown again from the pool.
+            let _ = connection.unmap_window(id);
+            let _ = connection.sync();
+        });
+        SLIDING.with(|sliding| sliding.borrow_mut().push((slide, popup)));
+    }
+    /// Put back in the pool the previews home from sliding.
+    fn reap() {
+        let home: Vec<Popup> = SLIDING.with(|sliding| {
+            let mut sliding = sliding.borrow_mut();
+            if sliding.is_empty() {
+                return Vec::new();
+            }
+            let (home, still) = sliding
+                .drain(..)
+                .partition(|(slide, _)| slide.is_finished());
+            *sliding = still;
+            home.into_iter().map(|(_, popup)| popup).collect()
+        });
+        home.into_iter().for_each(release);
     }
 }

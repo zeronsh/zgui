@@ -1601,6 +1601,9 @@ impl Host {
                     self.latch.rendering(std::time::Instant::now());
                 }
                 if let Some(renderer) = &mut self.renderer {
+                    zgui_gpu::present_log::log(|| {
+                        format!("render forced={forced} rects={}", damage.len())
+                    });
                     let stats = renderer.render(&scene, damage)?;
                     self.native.render(&scene, damage)?;
                     if let Some(frame) = &mut self.damage_check {
@@ -2025,6 +2028,12 @@ impl Host {
                 RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
             )
         });
+        // X11 drag previews show in windows of their own too, moved by the
+        // server as the pointer moves (`PopupHost::follow`).
+        #[cfg(target_os = "linux")]
+        self.context
+            .ui
+            .set_popup_previews(self.x11 && crate::popup_window::enabled());
         let adapter = accesskit_winit::Adapter::with_event_loop_proxy(
             event_loop,
             &window,
