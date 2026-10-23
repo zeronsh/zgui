@@ -1,10 +1,14 @@
 //! What building, mounting and tearing down an ordinary interface costs a
 //! script against the same interface in Rust, headless: `N` rows of two
 //! texts, padded, rounded and coloured, in a column. Counts instructions
-//! retired by phase (macOS), and times them.
+//! retired by phase (macOS), allocations, and times them.
 //! Run: cargo run --release -p zgui-script --example mount_bench
 //! (`N` sets the row count, 2,000 by default; `ONLY=luau|rust` runs one.)
-use std::time::{Duration, Instant};
+use std::{
+    alloc::{GlobalAlloc, Layout, System},
+    sync::atomic::{AtomicU64, Ordering::Relaxed},
+    time::{Duration, Instant},
+};
 use zgui::{compose::prelude::*, scene::Color, widgets::Ui};
 use zgui_script::ScriptHost;
 
@@ -32,16 +36,37 @@ fn instructions() -> u64 {
     0
 }
 
+/// Counts the allocations made (`realloc` counts as one).
+struct Counting;
+static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Relaxed);
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Relaxed);
+        unsafe { System.realloc(ptr, layout, size) }
+    }
+}
+#[global_allocator]
+static GLOBAL: Counting = Counting;
+
 #[derive(Default)]
 struct Phase {
     instructions: u64,
+    allocations: u64,
     time: Duration,
 }
 fn measure<T>(phase: &mut Phase, f: impl FnOnce() -> T) -> T {
-    let (start, at) = (instructions(), Instant::now());
+    let (start, allocations, at) = (instructions(), ALLOCATIONS.load(Relaxed), Instant::now());
     let value = f();
     phase.time += at.elapsed();
     phase.instructions += instructions() - start;
+    phase.allocations += ALLOCATIONS.load(Relaxed) - allocations;
     value
 }
 
@@ -112,7 +137,7 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(2000);
     let only = std::env::var("ONLY").ok();
-    println!("{n} rows; instructions (M) and time per phase:");
+    println!("{n} rows; instructions (M), allocations per node and time per phase:");
     for (name, luau) in [("luau", true), ("rust", false)] {
         if only.as_deref().is_some_and(|only| only != name) {
             continue;
@@ -122,8 +147,9 @@ fn main() {
         let (phases, nodes) = run(luau, n);
         let cell = |p: &Phase| {
             format!(
-                "{:8.1} M {:7.2} ms",
+                "{:8.1} M {:5.1} {:7.2} ms",
                 p.instructions as f64 / 1e6,
+                p.allocations as f64 / nodes as f64,
                 p.time.as_secs_f64() * 1e3
             )
         };

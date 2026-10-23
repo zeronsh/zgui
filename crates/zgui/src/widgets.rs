@@ -18,7 +18,8 @@ use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Default)]
 struct Owned {
-    effects: Vec<Effect>,
+    /// Most nodes own one effect: inline, it costs no allocation.
+    effects: smallvec::SmallVec<[Effect; 1]>,
     bindings: Vec<InputBinding>,
     resources: Vec<Box<dyn Any>>,
 }
@@ -776,7 +777,7 @@ impl Ui {
         let n = self.scene.borrow_mut().append(
             parent,
             NodeKind::Text {
-                text: text.clone().into(),
+                text: text.as_str().into(),
                 color: theme.color_untracked(tok::TEXT_PRIMARY),
                 font_size: theme.number_untracked(tok::FONT_SIZE_MD),
             },

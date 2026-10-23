@@ -9,6 +9,7 @@ unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.12"
 taffy = { version = "=0.9.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 stacker = "0.1.25"
+smallvec = "1.16"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = "0.3.2"

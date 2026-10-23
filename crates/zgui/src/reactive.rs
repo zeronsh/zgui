@@ -10,7 +10,8 @@ type EffectId = u64;
 trait Dependency {
     fn unsubscribe(&self, id: EffectId);
 }
-type Callback = Rc<RefCell<Box<dyn FnMut()>>>;
+/// One allocation: the closure lives in the `Rc` itself.
+type Callback = Rc<RefCell<dyn FnMut()>>;
 struct Subscription {
     source: Weak<dyn Dependency>,
     /// Identity of the signal, for finding an existing subscription on re-read.
@@ -23,7 +24,8 @@ struct EffectRecord {
     /// Signals this effect subscribes to. A re-run marks each one it reads
     /// again; afterwards only the ones it stopped reading are unsubscribed,
     /// so a steady effect leaves every subscriber set untouched.
-    dependencies: Vec<Subscription>,
+    /// Inline for the few most effects read: no allocation of its own.
+    dependencies: smallvec::SmallVec<[Subscription; 2]>,
     run: u64,
 }
 /// Effect ids are unique integers; a multiplicative hash beats SipHash here.
@@ -109,8 +111,8 @@ impl Runtime {
         self.inner.effects.borrow_mut().insert(
             id,
             EffectRecord {
-                callback: Rc::new(RefCell::new(Box::new(callback))),
-                dependencies: Vec::new(),
+                callback: Rc::new(RefCell::new(callback)),
+                dependencies: Default::default(),
                 run: 0,
             },
         );
@@ -134,17 +136,17 @@ impl Runtime {
         self.inner
             .next
             .set(id.checked_add(1).expect("effect identifiers exhausted"));
-        let callback: Callback = Rc::new(RefCell::new(Box::new(callback)));
+        let callback: Callback = Rc::new(RefCell::new(callback));
         self.inner.effects.borrow_mut().insert(
             id,
             EffectRecord {
                 callback: callback.clone(),
-                dependencies: Vec::new(),
+                dependencies: Default::default(),
                 run: 1,
             },
         );
         let previous = self.inner.active.replace(Some(id));
-        callback.borrow_mut()();
+        (*callback.borrow_mut())();
         self.inner.active.set(previous);
         Effect {
             id,
@@ -197,7 +199,7 @@ impl Runtime {
                 continue;
             };
             self.inner.active.set(Some(id));
-            callback.borrow_mut()();
+            (*callback.borrow_mut())();
             self.inner.active.set(None);
             // Drop subscriptions this run no longer read. The record may be
             // gone if the callback disposed its own effect.

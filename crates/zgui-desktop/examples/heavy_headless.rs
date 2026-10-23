@@ -1,15 +1,39 @@
 //! The heavy dashboard (see zgui_workload::heavy) offscreen: the windowed
 //! `heavy_workload`'s view at a Retina scale, ticked as fast as it renders,
-//! reporting CPU per tick by phase, damage and renderer memory.
+//! reporting CPU and allocations per tick by phase, damage and renderer
+//! memory.
 //! Run: ZGUI_MODE=both TICKS=900 cargo run --release -p zgui-desktop --example heavy_headless
 //! (`SCALE` sets the device scale, 2 by default.)
-use std::time::{Duration, Instant};
+use std::{
+    alloc::{GlobalAlloc, Layout, System},
+    sync::atomic::{AtomicU64, Ordering::Relaxed},
+    time::{Duration, Instant},
+};
 use zgui::widgets::Ui;
 use zgui_gpu::GpuRenderer;
 use zgui_workload::{Mode, heavy::*};
 
 #[path = "support/heavy_view.rs"]
 mod view;
+
+/// Counts the allocations made (`realloc` counts as one).
+struct Counting;
+static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Relaxed);
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Relaxed);
+        unsafe { System.realloc(ptr, layout, size) }
+    }
+}
+#[global_allocator]
+static GLOBAL: Counting = Counting;
 
 fn env<T: std::str::FromStr>(name: &str, default: T) -> T {
     std::env::var(name)
@@ -37,8 +61,11 @@ fn main() {
     ui.mount(view::dashboard(live.clone(), scroll.clone(), log.clone()));
     let (mut update, mut layout, mut render) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
     let (mut damaged, mut nodes) = (0_u64, 0_usize);
+    // Allocations by phase: update, layout, render.
+    let mut allocations = [0_u64; 3];
     for tick in 0..ticks {
         let started = Instant::now();
+        let at_start = ALLOCATIONS.load(Relaxed);
         if tick > 0 {
             work.tick();
             ui.runtime.batch(|| {
@@ -52,16 +79,22 @@ fn main() {
             });
         }
         let updated = Instant::now();
+        let at_update = ALLOCATIONS.load(Relaxed);
         ui.prepare_frame();
         let report = ui.scene.borrow_mut().flush();
         let laid = Instant::now();
+        let at_layout = ALLOCATIONS.load(Relaxed);
         let stats = gpu.render(&ui.scene.borrow(), &report.damage).unwrap();
         // A window presents every frame; readback only settles the GPU.
         if tick % 60 == 0 {
             gpu.readback().unwrap();
         }
         let done = Instant::now();
+        let at_render = ALLOCATIONS.load(Relaxed);
         if tick >= 60 {
+            allocations[0] += at_update - at_start;
+            allocations[1] += at_layout - at_update;
+            allocations[2] += at_render - at_layout;
             update += updated - started;
             layout += laid - updated;
             render += done - laid;
@@ -83,7 +116,8 @@ fn main() {
         "{mode:?}: update {:.3} + layout {:.3} + render {:.3} = {:.3} ms/tick, \
          layout nodes {:.0}/tick, damaged {:.2} Mpx/tick, scene nodes {}, \
          atlas {:.1} MB, images {:.1} MB, shaped {:.1} MB, prepared {:.1}+{:.1} MB, device {:.1} MB, \
-         texts shaped {:.1}/tick, cache hits {:.1}/tick",
+         texts shaped {:.1}/tick, cache hits {:.1}/tick, \
+         allocations {:.0}+{:.0}+{:.0}/tick",
         ms(update),
         ms(layout),
         ms(render),
@@ -100,5 +134,8 @@ fn main() {
             .map_or(0., |b| b as f64 / 1048576.),
         shaped as f64 / ticks as f64,
         hits as f64 / ticks as f64,
+        allocations[0] as f64 / measured,
+        allocations[1] as f64 / measured,
+        allocations[2] as f64 / measured,
     );
 }

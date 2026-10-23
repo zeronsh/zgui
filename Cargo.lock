@@ -4479,6 +4479,7 @@ version = "0.1.0"
 dependencies = [
  "objc2-core-foundation",
  "objc2-core-video",
+ "smallvec",
  "stacker",
  "taffy",
  "unicode-linebreak",
@@ -4584,6 +4585,7 @@ dependencies = [
  "mlua",
  "pulldown-cmark",
  "serde_json",
+ "smallvec",
  "windows",
  "zgui",
  "zgui-desktop",

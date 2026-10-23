@@ -10,6 +10,21 @@ pub struct NodeId {
     index: u32,
     generation: u32,
 }
+/// What measuring a container works in, per child, kept for the next one
+/// (`Scene::scratch`): laying out allocates none of it once warm.
+#[derive(Default)]
+struct Scratch {
+    ids: Vec<NodeId>,
+    absolute: Vec<NodeId>,
+    asked: Vec<Constraints>,
+    sizes: Vec<(f32, f32)>,
+    allocated: Vec<bool>,
+    bases: Vec<f32>,
+    frozen: Vec<bool>,
+    floors: Vec<Option<f32>>,
+    weights: Vec<f32>,
+    margins: Vec<Insets>,
+}
 /// A map keyed by node. Ids are small integers with a generation: a
 /// multiplicative hash beats SipHash on them, and mounting or removing a
 /// node touches several such maps.
@@ -1283,6 +1298,8 @@ pub struct Scene {
     layout_pass: u64,
     /// How deep the measure running now is (`crate::deep`).
     measure_depth: u32,
+    /// Measures' working sets, one per level deep (`Scratch`).
+    scratch: Vec<Scratch>,
     content_revision: u64,
     /// The deepest stack and the item count of the last paint walk
     /// (`layer_items_within`): the next one starts at those sizes.
@@ -1413,6 +1430,7 @@ impl Scene {
             layout_revision: 0,
             layout_pass: 0,
             measure_depth: 0,
+            scratch: Vec::new(),
             content_revision: 0,
             walk_hints: Default::default(),
             layout_roots: Vec::new(),
@@ -3795,25 +3813,33 @@ impl Scene {
         let (mut width, mut height) = match layout {
             None => self.leaf_size(id, &style, available_w),
             Some(layout) => {
-                let (absolute, ids): (Vec<_>, Vec<_>) = self
-                    .node(id)
-                    .children
-                    .iter()
-                    .copied()
-                    .partition(|child| self.node(*child).style.absolute);
-                // Those whose containing block is further up are placed by it.
-                let absolute: Vec<_> = match self.relative_count {
-                    0 => absolute,
-                    _ => {
-                        let mut kept = Vec::with_capacity(absolute.len());
-                        for child in absolute {
-                            if !self.escapes(child) {
-                                kept.push(child);
-                            }
-                        }
-                        kept
+                // One set per level of the recursion, back in the pool as
+                // this measure ends.
+                let Scratch {
+                    mut ids,
+                    mut absolute,
+                    mut asked,
+                    mut sizes,
+                    mut allocated,
+                    mut bases,
+                    mut frozen,
+                    mut floors,
+                    mut weights,
+                    mut margins,
+                } = self.scratch.pop().unwrap_or_default();
+                ids.clear();
+                absolute.clear();
+                for &child in &self.node(id).children {
+                    if self.node(child).style.absolute {
+                        absolute.push(child);
+                    } else {
+                        ids.push(child);
                     }
-                };
+                }
+                // Those whose containing block is further up are placed by it.
+                if self.relative_count != 0 {
+                    absolute.retain(|child| !self.escapes(*child));
+                }
                 let horizontal = layout == Layout::Row;
                 // The axes a child fills (stretch), unless it sizes itself
                 // there: a row's or column's cross axis by `align`; an
@@ -3865,22 +3891,23 @@ impl Scene {
                 };
                 // What each child's size was last asked under: its place is
                 // that result's (see `store_measurement`).
-                let mut asked: Vec<_> = ids
-                    .iter()
-                    .map(|child| {
-                        let (width, height) = filled(self, *child);
-                        Constraints {
-                            force_width: width,
-                            force_height: height,
-                            ..natural
-                        }
-                    })
-                    .collect();
-                let mut sizes: Vec<_> = (0..ids.len())
-                    .map(|i| self.measure(ids[i], asked[i]))
-                    .collect();
+                asked.clear();
+                asked.extend(ids.iter().map(|child| {
+                    let (width, height) = filled(self, *child);
+                    Constraints {
+                        force_width: width,
+                        force_height: height,
+                        ..natural
+                    }
+                }));
+                sizes.clear();
+                for i in 0..ids.len() {
+                    let size = self.measure(ids[i], asked[i]);
+                    sizes.push(size);
+                }
                 // Children whose main size flex distribution decided.
-                let mut allocated = vec![false; ids.len()];
+                allocated.clear();
+                allocated.resize(ids.len(), false);
                 let main_margin = |s: &Style| {
                     if horizontal {
                         s.margin.left + s.margin.right
@@ -3931,12 +3958,15 @@ impl Scene {
                 if layout != Layout::Overlay
                     && let Some(limit) = main_limit
                 {
-                    let bases: Vec<_> = sizes.iter().copied().map(main).collect();
-                    let mut frozen = vec![false; ids.len()];
+                    bases.clear();
+                    bases.extend(sizes.iter().copied().map(main));
+                    frozen.clear();
+                    frozen.resize(ids.len(), false);
                     // CSS's automatic minimum (`min-width: auto`): a child
                     // shrinks no further than its min-content size, unless it
                     // clips (a scroll container's is 0) or sets its own.
-                    let mut floors: Vec<Option<f32>> = vec![None; ids.len()];
+                    floors.clear();
+                    floors.resize(ids.len(), None);
                     for _ in 0..=ids.len() {
                         let used: f32 = sizes
                             .iter()
@@ -3948,20 +3978,17 @@ impl Scene {
                         if remaining.abs() < 0.001 {
                             break;
                         }
-                        let weights: Vec<_> = ids
-                            .iter()
-                            .enumerate()
-                            .map(|(i, child)| {
-                                let s = &self.node(*child).style;
-                                if frozen[i] {
-                                    0.0
-                                } else if remaining > 0.0 {
-                                    s.flex_grow.max(0.0)
-                                } else {
-                                    s.flex_shrink.max(0.0) * bases[i]
-                                }
-                            })
-                            .collect();
+                        weights.clear();
+                        weights.extend(ids.iter().enumerate().map(|(i, child)| {
+                            let s = &self.node(*child).style;
+                            if frozen[i] {
+                                0.0
+                            } else if remaining > 0.0 {
+                                s.flex_grow.max(0.0)
+                            } else {
+                                s.flex_shrink.max(0.0) * bases[i]
+                            }
+                        }));
                         let weight: f32 = weights.iter().sum();
                         if weight <= 0.0 {
                             break;
@@ -4041,7 +4068,8 @@ impl Scene {
                 }
                 // The children's extent: across rows (or columns) and gaps,
                 // and the widest (or tallest), with their margins.
-                let margins: Vec<Insets> = ids.iter().map(|c| self.node(*c).style.margin).collect();
+                margins.clear();
+                margins.extend(ids.iter().map(|c| self.node(*c).style.margin));
                 let extent = |sizes: &[(f32, f32)]| {
                     let (mut natural_w, mut natural_h) = (0.0_f32, 0.0_f32);
                     for (i, m) in margins.iter().enumerate() {
@@ -4173,7 +4201,7 @@ impl Scene {
                     child_constraints.push(Some(asked[i]));
                     cursor += main(sizes[i]) + main_margin(&s) + style.gap + extra_gap;
                 }
-                for child in absolute {
+                for &child in &absolute {
                     let margin = self.node(child).style.margin;
                     let placed = Constraints {
                         width: Some((inner_w - margin.left - margin.right).max(0.0)),
@@ -4189,6 +4217,18 @@ impl Scene {
                         Rect::new(padding.left + margin.left, padding.top + margin.top, w, h),
                     ));
                 }
+                self.scratch.push(Scratch {
+                    ids,
+                    absolute,
+                    asked,
+                    sizes,
+                    allocated,
+                    bases,
+                    frozen,
+                    floors,
+                    weights,
+                    margins,
+                });
                 (natural_w, natural_h)
             }
         };
@@ -4387,8 +4427,7 @@ impl Scene {
         if !self.node(id).arrange_dirty && self.node(id).bounds == bounds {
             return;
         }
-        let children = cache.children.clone();
-        let child_constraints = cache.child_constraints.clone();
+        let count = cache.children.len().min(cache.child_constraints.len());
         let changed = self.node(id).bounds != bounds;
         if changed || self.node(id).arrange_dirty {
             report.layout_nodes += 1;
@@ -4401,7 +4440,11 @@ impl Scene {
             self.node_mut(id).bounds = bounds;
             self.invalidate(id, PAINTED);
         }
-        for ((child, rect), constraints) in children.into_iter().zip(child_constraints) {
+        // Read in place, not copied out: laying a child out leaves this
+        // node's result as it is.
+        for at in 0..count {
+            let cache = self.node(id).measurement.as_ref().unwrap();
+            let ((child, rect), constraints) = (cache.children[at], cache.child_constraints[at]);
             // Cached: promotes the matching result; evicted: re-measures.
             if let Some(constraints) = constraints {
                 self.measure_full(child, constraints);

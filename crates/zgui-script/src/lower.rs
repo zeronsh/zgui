@@ -1289,7 +1289,7 @@ fn styled(
 ) -> View {
     // Literal styles apply once. Anything that can change, and an element's
     // animated values, share one reactive style.
-    let mut statics = Vec::with_capacity(node.props.len());
+    let mut statics: smallvec::SmallVec<[(Prop, Lit); 8]> = smallvec::SmallVec::new();
     let mut dynamic = Vec::new();
     for (prop, source) in &node.props {
         match source {
@@ -1542,13 +1542,20 @@ fn styled(
             run(&handler, &vm, &actions, keys);
         });
     }
-    // The node's handle, for local pointer coordinates and elements.
-    let handle: Rc<OnceCell<NodeHandle>> = Rc::default();
-    if node.events().any_input() {
-        view = with_events(view, node, vm, low, handle.clone());
+    // The node's handle, for local pointer coordinates and elements: made
+    // only for what reads it.
+    let events = node.events();
+    let handle: Option<Rc<OnceCell<NodeHandle>>> = (element.is_some()
+        || events.any_input()
+        || events.any_drag()
+        || events.drag_preview.is_some())
+    .then(Rc::default);
+    let handle_for = || handle.clone().expect("made for what reads it");
+    if events.any_input() {
+        view = with_events(view, node, vm, low, handle_for());
     }
-    if node.events().any_drag() || node.events().drag_preview.is_some() {
-        view = with_drag(view, node, vm, low, handle.clone());
+    if events.any_drag() || events.drag_preview.is_some() {
+        view = with_drag(view, node, vm, low, handle_for());
     }
     if let Some(style) = &node.events().context_menu_style {
         view = view.context_menu_style(apply_all(Styles::new(), style));
@@ -1625,6 +1632,7 @@ fn styled(
             node.events().visible.clone(),
             vm.clone(),
         );
+        let handle = handle_for();
         view = view.on_mount(move |mounted| {
             let _ = handle.set(mounted.clone());
             let Some(element) = element else { return };

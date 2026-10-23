@@ -22,6 +22,7 @@ mlua = { version = "0.12.2", features = ["luau"] }
 serde_json = "1"
 # Markdown for `ui.markdown` and `zgui_script::markdown`.
 pulldown-cmark = { version = "0.13", default-features = false }
+smallvec = "1.16"
 
 # The script time budget counts the thread's CPU time (clock_gettime).
 [target.'cfg(unix)'.dependencies]
