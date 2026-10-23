@@ -613,6 +613,35 @@ fn layout_boxes_take_a_reflow_at_once() {
 }
 
 #[test]
+fn a_reflow_leaves_timers_running() {
+    // A reflow drops the box's own animation; a timer, which animates no
+    // element, is not the box's and still completes.
+    let mut h = Harness::inline(
+        r##"local width = ui.state("width", 80)
+        local done = ui.state("done", false)
+        anime.createTimer { duration = 200, onComplete = function() done:set(true) end }
+        local cells = {}
+        for i = 1, 4 do table.insert(cells, ui.div { w = 20, h = 20, shrink = 0 }) end
+        return ui.column {
+            ui.column { id = "box", w = width, layout = "height", layout_ease = "linear", layout_duration = 100,
+                ui.row { w_full = true, flex_wrap = true, cells } },
+            ui.button { id = "narrow", w = 10, h = 10, on_click = function() width:set(40) end },
+            ui.show(function() return done:get() end, ui.div { id = "done", w = 1, h = 1 }),
+        }"##,
+    );
+    h.ui.prepare_frame();
+    h.settle();
+    h.frame();
+    h.click("narrow");
+    h.ui.prepare_frame();
+    h.settle();
+    h.frame();
+    h.run_ms(300.);
+    h.ui.prepare_frame();
+    assert!(h.find("done").is_some(), "the timer completed");
+}
+
+#[test]
 fn layout_boxes_still_ease_content_that_widens_them() {
     // A box sized by its content (a bubble) that gains a wider line grows in
     // both directions: that is new content, not a reflow, so it eases.

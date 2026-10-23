@@ -1301,10 +1301,13 @@ impl Engine {
     pub(crate) fn remove_targets(&self, targets: &[Target]) {
         for clip in self.playing_clips() {
             let mut tracks = clip.tracks.borrow_mut();
+            let had = tracks.len();
             tracks.retain(|t| !targets.iter().any(|g| g.same(&t.target)));
-            let empty = tracks.is_empty();
+            // A clip left with nothing to animate ends; one that never had
+            // a track (a timer) is not about these targets and plays on.
+            let emptied = had > 0 && tracks.is_empty();
             drop(tracks);
-            if empty && !clip.is_timeline.get() {
+            if emptied && !clip.is_timeline.get() {
                 clip.cancel();
             }
         }
