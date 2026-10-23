@@ -57,6 +57,7 @@ pub enum WebProfile {
 /// [`WebViewOptions::scripts`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserScript {
+    /// The JavaScript.
     pub source: String,
     /// Only in the top frame, not in iframes.
     pub main_frame_only: bool,
@@ -70,19 +71,27 @@ pub struct UserScript {
 pub struct SchemeRequest {
     /// The [`WebView::id`] of the page asking.
     pub web_view: u64,
+    /// The URL asked for.
     pub url: String,
     /// The top page the request is made for (empty when the platform does
     /// not say): a site that embeds or fetches the scheme's URLs shows here.
     pub main_document_url: String,
+    /// The HTTP method (`GET`, `POST`).
     pub method: String,
+    /// The request's headers.
     pub headers: Vec<(String, String)>,
+    /// The request's body.
     pub body: Vec<u8>,
 }
 
+/// The answer to a [`SchemeRequest`], as an HTTP response.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SchemeResponse {
+    /// The HTTP status (200 for OK).
     pub status: u16,
+    /// The response's headers (`Content-Type`).
     pub headers: Vec<(String, String)>,
+    /// The response's body.
     pub body: Vec<u8>,
 }
 
@@ -95,6 +104,7 @@ impl SchemeResponder {
     pub fn new(deliver: impl FnOnce(Option<SchemeResponse>) + Send + 'static) -> Self {
         Self(Some(Box::new(deliver)))
     }
+    /// Answer the request with `response`.
     pub fn respond(mut self, response: SchemeResponse) {
         if let Some(deliver) = self.0.take() {
             deliver(Some(response));
@@ -126,10 +136,13 @@ impl std::fmt::Debug for SchemeResponder {
 /// keep each other alive.
 #[derive(Clone)]
 pub struct SchemeHandler {
+    /// The scheme served, without `:` (`myapp`).
     pub scheme: String,
+    /// Called for each request in the scheme.
     pub serve: Rc<dyn Fn(SchemeRequest, SchemeResponder)>,
 }
 impl SchemeHandler {
+    /// Serve `scheme` with `serve`.
     pub fn new(
         scheme: impl Into<String>,
         serve: impl Fn(SchemeRequest, SchemeResponder) + 'static,
@@ -156,6 +169,7 @@ impl PartialEq for SchemeHandler {
 /// A navigation about to start, for [`WebView::set_navigation_policy`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavigationRequest {
+    /// Where it goes.
     pub url: String,
     /// The top frame navigates (not an iframe).
     pub main_frame: bool,
@@ -168,11 +182,17 @@ pub struct NavigationRequest {
 /// What started a navigation ([`NavigationRequest::kind`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavigationKind {
+    /// A link was followed.
     Link,
+    /// A form was submitted.
     FormSubmission,
+    /// Back or forward through history.
     BackForward,
+    /// The page reloaded.
     Reload,
+    /// A form was submitted again (a reload or history step after a POST).
     FormResubmission,
+    /// Anything else: a script, a redirect, the app.
     Other,
 }
 /// Whether `scheme` can be one an app serves (see [`SchemeHandler`]): its
@@ -197,15 +217,19 @@ pub fn is_app_scheme(scheme: &str) -> bool {
         && !BUILT_IN.contains(&scheme)
 }
 
+/// How a web view is made: its background, profile, user agent, page
+/// messages and windows, scripts and schemes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WebViewOptions {
     /// Draw no page background of the view's own: the node's (and what lies
     /// under it) shows where the page is transparent.
     pub transparent: bool,
+    /// Where it keeps cookies and site data.
     pub profile: WebProfile,
     /// Allow Web Inspector (Safari's Develop menu, [`WebView::open_devtools`]).
     /// Defaults on in debug builds.
     pub inspectable: bool,
+    /// The user agent string pages see; `None` keeps the platform's.
     pub user_agent: Option<String>,
     /// Pages may post to the app: `window.webkit.messageHandlers.zgui
     /// .postMessage(value)` arrives as [`WebViewEvent::Message`] (JSON).
@@ -237,23 +261,31 @@ impl Default for WebViewOptions {
 /// A page in a web view's history.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HistoryItem {
+    /// Its URL.
     pub url: String,
+    /// Its title.
     pub title: String,
 }
 
 /// A page's navigation state, kept by the controller.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WebViewState {
+    /// The page's URL.
     pub url: String,
+    /// The page's title.
     pub title: String,
+    /// Whether a page is loading.
     pub loading: bool,
     /// Estimated load progress, 0 to 1.
     pub progress: f64,
+    /// Whether there is a page to go back to.
     pub can_go_back: bool,
+    /// Whether there is a page to go forward to.
     pub can_go_forward: bool,
     /// The pages back and forward from this one, nearest first: what a
     /// browser's held back and forward buttons list.
     pub back_list: Vec<HistoryItem>,
+    /// The pages forward from this one, nearest first.
     pub forward_list: Vec<HistoryItem>,
     /// The page has keyboard focus.
     pub focused: bool,
@@ -261,26 +293,40 @@ pub struct WebViewState {
     pub error: Option<String>,
 }
 
+/// What happened in a page, as the platform reports it (see
+/// [`WebView::on_event`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum WebViewEvent {
+    /// A navigation started.
     NavigationStarted {
+        /// Where to.
         url: String,
     },
     /// The new page's content started arriving: its URL is final.
     NavigationCommitted {
+        /// The final URL.
         url: String,
     },
+    /// A navigation finished loading.
     NavigationFinished {
+        /// The page's URL.
         url: String,
     },
+    /// A navigation failed.
     NavigationFailed {
+        /// Where it was going.
         url: String,
+        /// Why it failed.
         error: String,
     },
+    /// The page's title changed.
     TitleChanged {
+        /// The new title.
         title: String,
     },
+    /// The page's URL changed (a redirect, or a same-page navigation).
     UrlChanged {
+        /// The new URL.
         url: String,
     },
     /// A page message (see [`WebViewOptions::messages`]), as JSON, with
@@ -288,6 +334,7 @@ pub enum WebViewEvent {
     /// iframe), can post one: check `origin` (and `main_frame`) before
     /// acting on a message that does anything.
     Message {
+        /// The message, as JSON.
         body: String,
         /// The sending frame's origin: `https://example.com`,
         /// `myapp://settings` (a port only when it is not the scheme's own).
@@ -295,7 +342,10 @@ pub enum WebViewEvent {
         /// Sent by the top frame, not an iframe.
         main_frame: bool,
     },
+    /// A page asked to open a window (see [`WebViewOptions::new_windows`]);
+    /// nothing opened.
     NewWindowRequested {
+        /// What it asked to open.
         url: String,
     },
     /// The page's process ended (crashed or was killed); reload to recover.
@@ -307,23 +357,35 @@ pub type ScriptResult = Result<String, String>;
 
 /// What a controller asks of its platform view.
 pub enum WebViewCommand {
+    /// Load a URL.
     LoadUrl(String),
+    /// Show HTML (see [`WebView::load_html`]).
     LoadHtml {
+        /// The document.
         html: String,
+        /// What its relative URLs and origin resolve against.
         base_url: Option<String>,
     },
+    /// Reload the page.
     Reload,
+    /// Stop loading.
     Stop,
+    /// Go back a page.
     GoBack,
+    /// Go forward a page.
     GoForward,
     /// Go `n` pages through history: negative back, positive forward.
     GoToHistory(i32),
+    /// Evaluate JavaScript in the page.
     Evaluate {
+        /// The script.
         script: String,
+        /// What gets its result, if anything.
         reply: Option<Box<dyn FnOnce(ScriptResult)>>,
     },
     /// Give the page keyboard focus, or take it back (`false`).
     Focus(bool),
+    /// Open Web Inspector.
     OpenDevtools,
     /// Page zoom (1 is 100%).
     SetZoom(f64),
@@ -353,7 +415,9 @@ impl std::fmt::Debug for WebViewCommand {
 
 /// A platform's page (implemented by the desktop host).
 pub trait WebViewBackend {
+    /// Carry out `command`.
     fn run(&self, command: WebViewCommand);
+    /// The backend as `Any`, for the host to downcast.
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -383,6 +447,7 @@ pub struct WebView(Rc<Inner>);
 #[derive(Clone)]
 pub struct WeakWebView(Weak<Inner>);
 impl WeakWebView {
+    /// The controller, if it still exists.
     pub fn upgrade(&self) -> Option<WebView> {
         self.0.upgrade().map(WebView)
     }
@@ -415,6 +480,8 @@ impl std::fmt::Debug for WebView {
     }
 }
 impl WebView {
+    /// A controller for a page made with `options`. Commands queue until a
+    /// platform page attaches (`attach`).
     pub fn new(runtime: &Runtime, options: WebViewOptions) -> Self {
         let id = NEXT_ID.with(|next| {
             let id = next.get() + 1;
@@ -440,9 +507,11 @@ impl WebView {
     pub fn id(&self) -> u64 {
         self.0.id
     }
+    /// The options it was made with.
     pub fn options(&self) -> &WebViewOptions {
         &self.0.options
     }
+    /// A reference that doesn't keep the controller alive.
     pub fn downgrade(&self) -> WeakWebView {
         WeakWebView(Rc::downgrade(&self.0))
     }
@@ -450,24 +519,31 @@ impl WebView {
     pub fn state(&self) -> Signal<WebViewState> {
         self.0.state.clone()
     }
+    /// The page's URL (reactive, as `state` is).
     pub fn url(&self) -> String {
         self.0.state.with(|state| state.url.clone())
     }
+    /// The page's title (reactive).
     pub fn title(&self) -> String {
         self.0.state.with(|state| state.title.clone())
     }
+    /// Whether a page is loading (reactive).
     pub fn loading(&self) -> bool {
         self.0.state.with(|state| state.loading)
     }
+    /// Estimated load progress, 0 to 1 (reactive).
     pub fn progress(&self) -> f64 {
         self.0.state.with(|state| state.progress)
     }
+    /// Whether there is a page to go back to (reactive).
     pub fn can_go_back(&self) -> bool {
         self.0.state.with(|state| state.can_go_back)
     }
+    /// Whether there is a page to go forward to (reactive).
     pub fn can_go_forward(&self) -> bool {
         self.0.state.with(|state| state.can_go_forward)
     }
+    /// Whether the page has keyboard focus (reactive).
     pub fn focused(&self) -> bool {
         self.0.state.with(|state| state.focused)
     }
@@ -519,6 +595,7 @@ impl WebView {
     pub fn is_closed(&self) -> bool {
         self.0.closed.get()
     }
+    /// Navigate to `url`. The state shows it at once; the page confirms it.
     pub fn load_url(&self, url: impl Into<String>) {
         let url = url.into();
         *self.0.src.borrow_mut() = Some(url.clone());
@@ -546,15 +623,19 @@ impl WebView {
             base_url: base_url.map(Into::into),
         });
     }
+    /// Reload the page.
     pub fn reload(&self) {
         self.run(WebViewCommand::Reload);
     }
+    /// Stop loading.
     pub fn stop(&self) {
         self.run(WebViewCommand::Stop);
     }
+    /// Go back a page.
     pub fn go_back(&self) {
         self.run(WebViewCommand::GoBack);
     }
+    /// Go forward a page.
     pub fn go_forward(&self) {
         self.run(WebViewCommand::GoForward);
     }
@@ -563,9 +644,11 @@ impl WebView {
     pub fn go_to_history(&self, n: i32) {
         self.run(WebViewCommand::GoToHistory(n));
     }
+    /// The pages back from this one, nearest first (reactive).
     pub fn back_list(&self) -> Vec<HistoryItem> {
         self.0.state.with(|state| state.back_list.clone())
     }
+    /// The pages forward from this one, nearest first (reactive).
     pub fn forward_list(&self) -> Vec<HistoryItem> {
         self.0.state.with(|state| state.forward_list.clone())
     }
@@ -600,6 +683,7 @@ impl WebView {
     pub fn open_devtools(&self) {
         self.run(WebViewCommand::OpenDevtools);
     }
+    /// Zoom the page (1 is 100%).
     pub fn set_zoom(&self, zoom: f64) {
         self.run(WebViewCommand::SetZoom(zoom));
     }
@@ -649,6 +733,7 @@ impl WebView {
         self.0.attached.set(false);
         backend
     }
+    /// The platform page, while one is attached.
     pub fn backend(&self) -> Option<Rc<dyn WebViewBackend>> {
         self.0.backend.borrow().clone()
     }
