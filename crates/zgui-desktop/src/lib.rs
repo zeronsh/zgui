@@ -70,6 +70,7 @@ pub use application::{
 
 mod scoped_task;
 mod scroll_resample;
+mod system_colors;
 pub use scoped_task::ScopedTask;
 
 #[cfg(doctest)]

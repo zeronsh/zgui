@@ -532,3 +532,41 @@ fn interaction_styles_that_change_swap_and_follow_the_theme() {
     ui.dispatch(InputEvent::PointerMove { x: 10., y: 10. });
     assert_eq!(fill(&ui, node), RED, "swapped while not in effect");
 }
+
+#[test]
+fn system_tokens_apply_over_built_in_themes_and_under_the_apps() {
+    let runtime = Runtime::new();
+    let themes = Themes::of(&runtime);
+    let red = Color(255, 0, 0, 255);
+    let builtin = themes.root().color(tok::SELECTION);
+    themes.set_system_tokens([(tok::SELECTION.0, red.into())]);
+    assert_eq!(
+        themes.root().color(tok::SELECTION),
+        red,
+        "the built-in yields"
+    );
+    let scoped = themes
+        .root()
+        .child(ThemeOverride::new().with(tok::SELECTION, Color(0, 255, 0, 255)));
+    assert_eq!(
+        scoped.color(tok::SELECTION),
+        Color(0, 255, 0, 255),
+        "a scope keeps its own"
+    );
+    themes.register(
+        Theme::from_json(
+            r##"{ "name": "app", "type": "dark", "tokens": { "selection": "#0000ff" } }"##,
+        )
+        .unwrap(),
+    );
+    themes.set("app").unwrap();
+    assert_eq!(
+        themes.root().color(tok::SELECTION),
+        Color(0, 0, 255, 255),
+        "an app theme keeps its own"
+    );
+    themes.set(DARK).unwrap();
+    assert_eq!(themes.root().color(tok::SELECTION), red);
+    themes.set_system_tokens([]);
+    assert_eq!(themes.root().color(tok::SELECTION), builtin);
+}

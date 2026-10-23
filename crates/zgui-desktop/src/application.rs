@@ -1733,6 +1733,7 @@ impl Host {
         if let Some(appearance) = window.theme() {
             themes.set_system_appearance(appearance_of(appearance));
         }
+        crate::system_colors::sync(&self.context.ui);
         renderer.install_text(&mut self.context.ui.scene.borrow_mut());
         self.context.ui.refresh_text_geometry();
         self.renderer = Some(renderer);
@@ -2246,8 +2247,11 @@ impl Host {
                     .ui
                     .theme()
                     .set_system_appearance(appearance_of(appearance));
+                crate::system_colors::sync(&self.context.ui);
             }
             WindowEvent::Focused(true) => {
+                // The user may have changed the accent while it was at the back.
+                crate::system_colors::sync(&self.context.ui);
                 zgui_gpu::present_log::log(|| "window-focus true".into());
                 // AppKit may have reset the cursor while another app had it.
                 self.native_cursor = None;

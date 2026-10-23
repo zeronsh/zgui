@@ -178,6 +178,14 @@ rects. Measured with retired instructions (`selection_headless`), a drag costs
 308.3 k per move with text recolouring against 307.8 k without it, and an idle
 frame with a selection still costs nothing.
 
+On macOS the desktop host gives `selection` and `selection.inactive` the
+system's own selection colours (`NSColor.selectedTextBackgroundColor`,
+`unemphasizedSelectedTextBackgroundColor`). They follow the user's accent,
+re-read when the window activates or the appearance changes. They apply over
+the built-in themes only, so an app theme or `theme_scope` that sets these
+tokens keeps its own (`Themes::set_system_tokens`). Windows and Linux keep the
+theme's colours for now.
+
 The highlight paints under the glyphs in the theme's `selection` colour, or
 `selection.inactive` while the window is in the background (desktop hosts call
 `Ui::set_window_active`). It follows layout and reshaping. Removing a selected

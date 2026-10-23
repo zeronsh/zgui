@@ -86,6 +86,9 @@ struct State {
     files: Vec<Watched>,
     /// Where theme files come from, when not the disk (`set_reader`).
     reader: Option<ThemeReader>,
+    /// What the platform sets (`Themes::set_system_tokens`): the system's
+    /// selection colours, say.
+    system: Vec<(TokenId, Arc<Expr>)>,
 }
 impl State {
     /// Every token's expression under `name`: declarations, then the
@@ -114,7 +117,16 @@ impl State {
         if !chain.iter().any(|t| Arc::ptr_eq(t, builtin)) {
             chain.push(builtin);
         }
-        for theme in chain.iter().rev() {
+        // The built-in base, then what the system sets over it, then the
+        // app's themes: an app theme that sets a token keeps it.
+        let mut themes = chain.iter().rev();
+        if let Some(base) = themes.next() {
+            apply(&mut out, &base.tokens);
+        }
+        for (id, expr) in &self.system {
+            set(&mut out, *id, expr.clone());
+        }
+        for theme in themes {
             apply(&mut out, &theme.tokens);
         }
         out
@@ -544,6 +556,7 @@ impl Themes {
                 appearance: Appearance::Dark,
                 files: Vec::new(),
                 reader: None,
+                system: Vec::new(),
             }),
             current: runtime.signal(DARK.into()),
         });
@@ -642,6 +655,24 @@ impl Themes {
     }
     pub fn system_appearance(&self) -> Appearance {
         self.shared.state.borrow().appearance
+    }
+    /// Values the platform gives tokens (the desktop host calls this): the
+    /// system's selection colours on macOS. They apply over the built-in
+    /// themes, and under app themes and `theme_scope` overrides, which keep
+    /// what they set. An empty list returns the tokens to the themes'.
+    pub fn set_system_tokens(&self, tokens: impl IntoIterator<Item = (TokenId, TokenInput)>) {
+        let system: Vec<(TokenId, Arc<Expr>)> = tokens
+            .into_iter()
+            .map(|(id, value)| (id, Arc::new(value.0)))
+            .collect();
+        {
+            let mut state = self.shared.state.borrow_mut();
+            if state.system == system {
+                return;
+            }
+            state.system = system;
+        }
+        self.refresh();
     }
     fn apply_appearance(&self) {
         let changed = {
