@@ -1220,7 +1220,7 @@ impl Engine {
                 self.put(&target, &key, &V::Num(total), unit.as_deref());
             }
         }
-        let dirty = std::mem::take(&mut *self.dirty.borrow_mut());
+        let mut dirty = std::mem::take(&mut *self.dirty.borrow_mut());
         if dirty.is_empty() {
             return;
         }
@@ -1247,6 +1247,13 @@ impl Engine {
                 index += 1;
             }
         }
+        // The list keeps its capacity for the next frame's elements.
+        dirty.clear();
+        let mut queue = self.dirty.borrow_mut();
+        if queue.is_empty() {
+            *queue = dirty;
+        }
+        drop(queue);
         for element in restyle {
             element.revision.update(|r| *r = r.wrapping_add(1));
         }
