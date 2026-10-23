@@ -208,9 +208,10 @@ jobs:
       # Clippy compiles what `cargo check` would, and lints the Windows-only
       # code Linux and macOS never build; WebView2 (off by default) with it.
       - run: cargo clippy --workspace --all-targets --features zgui-desktop/webview2 --locked -- -D warnings
-      - run: cargo test -p zgui -p zgui-desktop --lib --locked
-      # Bundled script paths: caught a Windows separator bug.
-      - run: cargo test -p zgui-script --test bundle --locked
+      # zgui-script's unit tests (its file events wait on Windows' own
+      # notifications) and its bundled script paths (caught a Windows
+      # separator bug), in one run.
+      - run: cargo test -p zgui -p zgui-desktop -p zgui-script --lib --test bundle --locked
       # Direct3D 12 on WARP (no GPU on the runner): pixel tests of what the
       # D3D shader compiler alone gets wrong (coarse derivatives, #38).
       - run: cargo test -p zgui-gpu --test borders --test transforms --test rounded_clip --locked
