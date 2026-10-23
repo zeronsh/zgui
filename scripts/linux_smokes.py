@@ -163,6 +163,7 @@ def main():
         print("\n".join(name for name, _, _ in smokes))
         return
     smokes.sort(key=lambda s: -COST.get(s[0], 10))
+    args.output.mkdir(parents=True, exist_ok=True)
     group = os.environ.get("GITHUB_ACTIONS") == "true"
     failures, results = [], []
     started = time.monotonic()
