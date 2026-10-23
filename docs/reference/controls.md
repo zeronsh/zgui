@@ -1,4 +1,4 @@
-# Controls: button, input, textarea, checkbox, slider, progress, segmented, stepper, select
+# Controls: button, input, textarea, checkbox, slider, progress, segmented, stepper, select, combobox, command_palette
 
 Controls take keyboard focus, show it with an accent ring, and (except `button`) bind a state both ways: the control shows the state, and the user's changes write it. They take any [property](properties.md) and [event](events.md); their defaults below are only defaults.
 
@@ -12,6 +12,8 @@ ui.progress(props: ProgressProps) -> Node
 ui.segmented(props: SegmentedProps) -> Node
 ui.stepper(props: StepperProps) -> Node
 ui.select(props: SelectProps) -> Node
+ui.combobox(props: ComboboxProps) -> Node
+ui.command_palette(props: CommandPaletteProps) -> Node
 ```
 
 Every control dims while `disabled` (to 45% opacity, as native controls do) unless it says how it looks then.
@@ -116,6 +118,52 @@ A button showing the chosen option that opens a menu of them over itself, the ch
 | `options` | `{ string \| number \| { label, value, disabled } }` | required | a bare string or number is its own value; a disabled option shows but can't be chosen |
 | `placeholder` | `string` | `""` | shown while no option is chosen |
 | `label` | `string` | `""` | its accessible name |
+
+## combobox
+
+A field with suggestions listed under it as it is typed in, as WAI-ARIA's editable combobox. Focus stays in the field: typing shows the list with its first option highlighted, Down and Up (and Page Down and Up) move the highlight, which assistive technology hears as the field's active descendant, Enter chooses, Escape closes the list (and, closed, clears the field); a click on an option chooses it. Choosing sets `value` to its value and the field to its label. The options are the app's, for the text now: a computed filtering a list, or a state an async call fills (with `loading` while it does). The list is virtual: thousands of options build only what shows.
+
+```lua
+local query = ui.state("query", "")
+local city = ui.state("city", nil :: string?)
+local cities = { "Paris", "Prague", "Porto", "Lisbon" }
+local matches = ui.computed(function()
+	local q = string.lower(query:get())
+	local out = {}
+	for _, c in cities do
+		if string.find(string.lower(c), q, 1, true) then
+			table.insert(out, { label = c, value = string.lower(c) })
+		end
+	end
+	return out
+end)
+return ui.combobox { label = "City", text = query, items = matches, value = city, w = 240 }
+```
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `text` | `State<string>` | required | what the field holds, both ways |
+| `items` | `State<{ string \| { label, value?, detail? } }>` | required | the options to show; a `detail` shows after the label |
+| `value` | `State<any>` | none | the chosen option's value |
+| `loading` | `State<boolean>` | none | while true, the list says it is searching |
+| `empty` | `string` | `"No results"` | what the list says with no options |
+
+## command_palette
+
+A field over a list of commands near the window's top, filtered by a fuzzy match as it is typed in (the letters in order; words' starts and runs of letters rank first), as VS Code's and Raycast's: Up and Down move, Enter runs the highlighted command after the palette closes, Escape closes it. Without `commands` it lists the app's own (`ui.command`), with their menus and shortcuts, and runs the chosen one as its menu item would.
+
+```lua
+local open = ui.state("palette", false)
+ui.command { id = "palette", title = "Command Palette", menu = "View", key = "cmd+shift+p", run = function() open:set(true) end }
+ui.command { id = "theme", title = "Toggle Theme", menu = "View", run = function() end }
+return ui.command_palette { open = open }
+```
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `open` | `State<boolean>` | required | |
+| `commands` | `{ { id, title?, detail?, shortcut? } }` | the app's commands | |
+| `on_run` | `(id: string) -> ()` | runs the app's command | |
 
 ## progress
 

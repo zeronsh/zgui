@@ -5150,9 +5150,11 @@ impl Ui {
         mounted
     }
 }
+pub use crate::compose_combobox::{ComboItem, ComboboxOptions, combobox};
 pub use crate::compose_controls::{
     StepperOptions, accordion, disclosure, segmented, separator, stepper,
 };
+pub use crate::compose_palette::{PaletteCommand, command_palette, fuzzy_score};
 pub use crate::compose_select::{SelectOption, select};
 pub use crate::compose_split::{SplitOptions, split};
 pub use crate::compose_tabs::{CloseTab, Tab, TabsOptions, tabs};
@@ -5160,14 +5162,17 @@ pub use crate::compose_tabs::{CloseTab, Tab, TabsOptions, tabs};
 /// Common imports for component application code.
 pub mod prelude {
     pub use super::{
+        ComboItem, ComboboxOptions, SelectOption, Tab, TabsOptions, combobox, select, tabs,
+    };
+    pub use super::{
         Context, Slot, VariableHeights, View, button, checkbox, column, component, div, image,
         image_signal, keyed, measured_rows, measured_virtual_list, menu, menu_item, modal, overlay,
         popover, progress, provide, provide_with, row, scroll, scroll_x, scrollbar, slider,
         submenu, switch, text, text_area, text_input, text_signal, variable_virtual_list,
         virtual_list,
     };
+    pub use super::{PaletteCommand, command_palette};
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
-    pub use super::{SelectOption, Tab, TabsOptions, select, tabs};
     pub use super::{SplitOptions, split};
     pub use super::{StepperOptions, accordion, disclosure, segmented, separator, stepper};
     pub use super::{animated_image, animated_image_controlled, async_image, canvas};

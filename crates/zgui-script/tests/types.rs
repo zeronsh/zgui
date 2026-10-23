@@ -379,6 +379,8 @@ const ELEMENT_PROPS: &[&str] = &[
     "SeparatorProps",
     "TabsProps",
     "SelectProps",
+    "ComboboxProps",
+    "CommandPaletteProps",
     "ListProps",
     "ModalProps",
     "PopoverProps",

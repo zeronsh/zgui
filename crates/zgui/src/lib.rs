@@ -37,10 +37,12 @@ pub mod background;
 
 pub mod compose;
 mod compose_checkbox;
+mod compose_combobox;
 mod compose_controls;
 mod compose_menu;
 mod compose_menu_scroll;
 mod compose_modal;
+mod compose_palette;
 mod compose_popover;
 mod compose_rich;
 mod compose_scrollbar;

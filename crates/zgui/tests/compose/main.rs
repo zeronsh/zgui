@@ -4,6 +4,8 @@
 mod composition;
 #[path = "../composition_checkbox.rs"]
 mod composition_checkbox;
+#[path = "../composition_combobox.rs"]
+mod composition_combobox;
 #[path = "../composition_controls.rs"]
 mod composition_controls;
 #[path = "../composition_initial_failure.rs"]

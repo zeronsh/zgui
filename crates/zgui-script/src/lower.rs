@@ -134,6 +134,8 @@ pub(crate) struct Lowering {
     pub inspector: Rc<std::cell::RefCell<Option<zgui::inspect::Inspector>>>,
     /// How deep the lowering running now is (`zgui::deep`).
     pub depth: std::cell::Cell<u32>,
+    /// The app's commands, for a command palette listing them.
+    pub commands: Rc<crate::command::Commands>,
 }
 
 pub(crate) fn lower(node: &Rc<Node>, low: &Rc<Lowering>) -> View {
@@ -384,6 +386,51 @@ fn controlled_input(
         }
     };
     (text, listener)
+}
+
+/// A command's keys (`cmd+shift+s`) as a menu shows them: ⇧⌘S on macOS,
+/// Ctrl+Shift+S elsewhere.
+fn shortcut_label(keys: &str) -> String {
+    let parts: Vec<&str> = keys.split('+').collect();
+    let (mods, key) = parts.split_at(parts.len().saturating_sub(1));
+    let key = key.first().map(|k| k.to_uppercase()).unwrap_or_default();
+    if cfg!(target_os = "macos") {
+        let mut out = String::new();
+        for (name, glyph) in [("ctrl", "⌃"), ("alt", "⌥"), ("shift", "⇧"), ("cmd", "⌘")] {
+            if mods.contains(&name) {
+                out.push_str(glyph);
+            }
+        }
+        out + &key
+    } else {
+        let mut out: Vec<String> = Vec::new();
+        for (name, word) in [
+            ("cmd", "Ctrl"),
+            ("ctrl", "Ctrl"),
+            ("alt", "Alt"),
+            ("shift", "Shift"),
+        ] {
+            if mods.contains(&name) && !out.iter().any(|w| w == word) {
+                out.push(word.into());
+            }
+        }
+        out.push(key);
+        out.join("+")
+    }
+}
+
+/// `value` as a typed signal that follows it, one way (an app's list).
+fn follow_with<T: PartialEq + Clone + 'static>(
+    cx: &mut Context,
+    value: &Signal<Value>,
+    from: impl Fn(&Value) -> T + 'static,
+) -> Signal<T> {
+    let typed = cx.state(value.with_untracked(&from));
+    let (v, t) = (value.clone(), typed.clone());
+    cx.retain(cx.runtime().effect(move || {
+        t.set(v.with(&from));
+    }));
+    typed
 }
 
 /// `bridge`, converting with closures (a value to its index among options).
@@ -1040,6 +1087,96 @@ fn kind_view(
             }
         }
         Kind::Separator { vertical } => separator(*vertical),
+        Kind::Combobox {
+            label,
+            text: text_state,
+            value,
+            items,
+            loading,
+            empty,
+        } => {
+            let cx = need(&mut cx);
+            let text_signal = bridge(cx, text_state, |v| v.to_string(), |s| Value::Str(s.into()));
+            let value_signal = match value {
+                Some(value) => bridge(
+                    cx,
+                    value,
+                    |v| (!matches!(v, Value::Nil)).then(|| v.to_string()),
+                    |s: Option<String>| s.map_or(Value::Nil, |s| Value::Str(s.into())),
+                ),
+                None => cx.state(None),
+            };
+            // Each option: `{ value, label, detail? }`, or text alone.
+            let item_of = |item: &Value| match item {
+                Value::Map(_) => {
+                    let shown = item
+                        .field("label")
+                        .map(Value::to_string)
+                        .unwrap_or_default();
+                    let mut option = zgui::compose::ComboItem::new(
+                        item.field("value").map_or(shown.clone(), Value::to_string),
+                        shown,
+                    );
+                    option.detail = item.field("detail").map(Value::to_string);
+                    option
+                }
+                other => zgui::compose::ComboItem::new(other.to_string(), other.to_string()),
+            };
+            // The list is the app's: followed, never written.
+            let items_signal = follow_with(cx, items, move |v: &Value| {
+                v.list().iter().map(item_of).collect::<Vec<_>>()
+            });
+            let mut options = zgui::compose::ComboboxOptions::default();
+            if let Some(loading) = loading {
+                options.loading = Some(bridge(cx, loading, Value::truthy, Value::Bool));
+            }
+            if let Some(empty) = empty {
+                options.empty = empty.clone();
+            }
+            combobox(
+                label.clone(),
+                text_signal,
+                value_signal,
+                items_signal,
+                options,
+            )
+        }
+        Kind::CommandPalette {
+            open,
+            commands,
+            on_run,
+        } => {
+            let open = bridge(need(&mut cx), open, Value::truthy, Value::Bool);
+            let listed = commands.clone();
+            let registry = low.commands.clone();
+            let list = move || match &listed {
+                Some(list) => list.clone(),
+                // The app's menu commands, with their menus and keys.
+                None => registry.list.with(|all| {
+                    all.iter()
+                        .filter(|c| !c.separator && !c.id.is_empty())
+                        .map(|c| {
+                            let mut command =
+                                zgui::compose::PaletteCommand::new(c.id.clone(), c.title.clone())
+                                    .detail(c.menu.clone());
+                            command.shortcut = c.key.as_deref().map(shortcut_label);
+                            command
+                        })
+                        .collect()
+                }),
+            };
+            let (on_run, vm, registry) = (on_run.clone(), vm.clone(), low.commands.clone());
+            command_palette(open, list, move |id| match &on_run {
+                Some(f) => {
+                    if let Err(error) = vm.call::<()>(f, id) {
+                        vm.report(error);
+                    }
+                }
+                None => {
+                    registry.run(id);
+                }
+            })
+        }
         Kind::Tabs {
             label,
             items,

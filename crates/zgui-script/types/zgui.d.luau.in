@@ -1520,6 +1520,34 @@ export type TabsProps = Merge<Props, {
 	on_close: ((id: string) -> boolean?)?,
 	label: string?,
 }>
+export type ComboItem = string | { label: string, value: any?, detail: string? }
+-- A field with suggestions listed under it as it is typed in (WAI-ARIA's
+-- combobox): Down and Up move, Enter chooses, Escape closes or clears; a
+-- click chooses. Focus stays in the field; the list is virtual.
+export type ComboboxProps = Merge<Props, {
+	-- What the field holds, both ways.
+	text: State<string>,
+	-- The app's options for the text now: a computed filtering, or a state
+	-- an async fetch fills.
+	items: State<{ ComboItem }> | State<{ any }>,
+	-- The chosen option's value, written as one is chosen.
+	value: State<any>?,
+	-- While true, the list says it is searching.
+	loading: State<boolean>?,
+	-- What the list says with no options ("No results").
+	empty: string?,
+	label: string?,
+}>
+export type PaletteCommand = { id: string, title: string?, detail: string?, shortcut: string? }
+-- A field over a list of commands, filtered by a fuzzy match: Up and Down
+-- move, Enter runs, Escape closes. Without `commands`, the app's own
+-- (`ui.command`), each run as its menu item would be.
+export type CommandPaletteProps = Merge<Props, {
+	open: State<boolean>,
+	commands: { PaletteCommand }?,
+	-- Given the chosen id; without it, the app's command runs.
+	on_run: ((id: string) -> ...unknown)?,
+}>
 export type SelectOption = string | number | { label: string, value: any?, disabled: boolean? }
 -- A button showing the chosen option that opens a menu of them over
 -- itself; closed, typing chooses (as a native select), Down opens it.
@@ -1800,6 +1828,8 @@ declare ui: {
 	split: (props: SplitProps) -> Node,
 	segmented: (props: SegmentedProps) -> Node,
 	tabs: (props: TabsProps) -> Node,
+	combobox: (props: ComboboxProps) -> Node,
+	command_palette: (props: CommandPaletteProps) -> Node,
 	select: (props: SelectProps) -> Node,
 	stepper: (props: StepperProps) -> Node,
 	disclosure: (props: DisclosureProps) -> Node,

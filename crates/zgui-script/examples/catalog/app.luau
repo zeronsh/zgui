@@ -138,6 +138,83 @@ local choosing = section(
 	}
 )
 
+-- Combobox and command palette --------------------------------------------
+
+local query = ui.state("query", "")
+local city = ui.state("city", nil :: string?)
+local searching = ui.state("searching", false)
+local found = ui.state("found", {} :: { ComboItem })
+local CITIES = {
+	"Amsterdam",
+	"Athens",
+	"Barcelona",
+	"Berlin",
+	"Lisbon",
+	"London",
+	"Madrid",
+	"Paris",
+	"Porto",
+	"Prague",
+	"Rome",
+	"Vienna",
+}
+-- As an async search would: the answer a moment after the query.
+ui.effect(function()
+	local q = string.lower(query:get())
+	searching:set(true)
+	ui.after(150, function()
+		local out: { ComboItem } = {}
+		for _, c in CITIES do
+			if string.find(string.lower(c), q, 1, true) then
+				table.insert(out, { label = c, value = string.lower(c), detail = "Europe" })
+			end
+		end
+		found:set(out)
+		searching:set(false)
+	end)
+end)
+local palette = ui.state("palette", false)
+ui.command {
+	id = "palette",
+	title = "Command Palette",
+	menu = "View",
+	key = "cmd+shift+p",
+	run = function()
+		palette:set(true)
+	end,
+}
+ui.command {
+	id = "toggle-rtl",
+	title = "Toggle Right to Left",
+	menu = "View",
+	run = function()
+		rtl:set(not rtl:peek())
+	end,
+}
+ui.command {
+	id = "toggle-dark",
+	title = "Toggle Dark",
+	menu = "View",
+	run = function()
+		dark:set(not dark:peek())
+	end,
+}
+
+local searching_section = section(
+	"Combobox and command palette",
+	"The combobox searches as typed (Down and Up move, Enter chooses, focus stays in the field); ⇧⌘P opens the palette of the app's commands.",
+	ui.combobox { id = "city", label = "City", text = query, items = found, value = city, loading = searching, w = 260 },
+	ui.text {
+		function()
+			local c = city:get()
+			return if c then `Chosen: {c}` else "Nothing chosen"
+		end,
+		color = "$text.secondary",
+	},
+	ui.button { id = "open-palette", "Command palette…", on_click = ui.set(palette, true) },
+	ui.command_palette { open = palette }
+)
+
 -- Overlays ----------------------------------------------------------------
 
 local menu_open = ui.state("menu_open", false)
@@ -256,6 +333,6 @@ return ui.column {
 	},
 	ui.scroll {
 		grow = 1,
-		ui.column { gap = 16, px = 16, pb = 24, controls, choosing, overlays, containers },
+		ui.column { gap = 16, px = 16, pb = 24, controls, choosing, searching_section, overlays, containers },
 	},
 }

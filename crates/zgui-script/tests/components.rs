@@ -281,3 +281,64 @@ fn a_select_chooses_values_from_its_menu_and_by_typing() {
     h.frames(2);
     assert_eq!(h.text("chosen"), "2");
 }
+
+#[test]
+fn a_combobox_suggests_from_a_computed_and_chooses() {
+    let mut h = Harness::inline(
+        r#"local query = ui.state("query", "")
+        local city = ui.state("city", nil :: string?)
+        local cities = { "Paris", "Prague", "Porto", "Lisbon" }
+        local matches = ui.computed(function()
+            local q = string.lower(query:get())
+            local out = {}
+            for _, c in cities do
+                if string.sub(string.lower(c), 1, #q) == q then
+                    table.insert(out, { label = c, value = string.lower(c), detail = "Europe" })
+                end
+            end
+            return out
+        end)
+        return ui.column {
+            ui.combobox { id = "city", label = "City", text = query, items = matches, value = city },
+            ui.text { id = "chosen", function() return tostring(city:get()) end },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let field = with_role(&mut h, Role::ComboBox)[0];
+    h.ui.input.focus(&h.ui.scene, Some(field));
+    h.ui.dispatch(zgui::input::InputEvent::Text("pr".into()));
+    h.settle();
+    h.frames(2);
+    let options = with_role(&mut h, Role::ListBoxOption);
+    assert_eq!(options.len(), 1, "Prague alone");
+    h.key(Key::Enter);
+    assert_eq!(h.text("chosen"), "prague");
+}
+
+#[test]
+fn the_command_palette_lists_and_runs_the_apps_commands() {
+    let mut h = Harness::inline(
+        r#"local open = ui.state("open", true)
+        local ran = ui.state("ran", "")
+        ui.command { id = "save", title = "Save", menu = "File", key = "cmd+s", run = function() ran:set("save") end }
+        ui.command { id = "theme", title = "Toggle Theme", menu = "View", run = function() ran:set("theme") end }
+        return ui.column {
+            ui.command_palette { open = open },
+            ui.text { id = "ran", "{ran}" },
+        }"#,
+    );
+    h.frames(2);
+    assert_eq!(h.error(), None);
+    assert_eq!(with_role(&mut h, Role::ListBoxOption).len(), 2);
+    let shortcut = if cfg!(target_os = "macos") {
+        "⌘S"
+    } else {
+        "Ctrl+S"
+    };
+    assert!(h.texts().contains(&shortcut.to_owned()), "{:?}", h.texts());
+    h.ui.dispatch(zgui::input::InputEvent::Text("tt".into()));
+    h.settle();
+    h.frames(1);
+    h.key(Key::Enter);
+    assert_eq!(h.text("ran"), "theme");
+}

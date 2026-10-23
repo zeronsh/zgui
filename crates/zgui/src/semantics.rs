@@ -189,6 +189,9 @@ pub struct SemanticNode {
     pub radio: bool,
     /// The keys that do what it does, as its menu shows them ("⌘C").
     pub shortcut: Option<String>,
+    /// The option a combobox's field has highlighted, while focus stays in
+    /// the field (`aria-activedescendant`).
+    pub active_descendant: Option<NodeId>,
 }
 impl SemanticNode {
     /// A node of `role` named `label`, everything else unset.
@@ -222,6 +225,7 @@ impl SemanticNode {
             hidden: false,
             radio: false,
             shortcut: None,
+            active_descendant: None,
         }
     }
 }

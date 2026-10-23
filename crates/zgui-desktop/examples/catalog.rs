@@ -4,7 +4,10 @@
 //! same through `ui.*`.
 //! Run: cargo run -p zgui-desktop --example catalog
 use std::rc::Rc;
-use zgui::compose::{SelectOption, StepperOptions, Tab, TabsOptions, prelude::*};
+use zgui::compose::{
+    ComboItem, ComboboxOptions, PaletteCommand, SelectOption, StepperOptions, Tab, TabsOptions,
+    prelude::*,
+};
 use zgui_desktop::{Application, WindowOptions};
 
 /// A titled card with a hint and its controls in a row.
@@ -51,6 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ]);
             let document = ui.signal("readme".to_owned());
             let fruit = ui.signal("banana".to_owned());
+            let query = ui.signal(String::new());
+            let city = ui.signal(None::<String>);
+            let cities = ui.signal(Vec::<ComboItem>::new());
+            let palette = ui.signal(false);
+            let ran = ui.signal(String::from("Nothing run yet"));
             let details = ui.signal(false);
             let faq = ui.signal(Some(0usize));
 
@@ -129,6 +137,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             SelectOption::new("cherry", "Cherry"),
                         ],
                         "Choose a fruit",
+                    ),
+                ],
+            );
+            let (shown_ran, opener) = (ran.clone(), palette.clone());
+            let searching = section(
+                "Combobox and command palette",
+                "The combobox suggests as typed (focus stays in the field); the palette filters commands by a fuzzy match.",
+                vec![
+                    component(move |cx| {
+                        // The app filters; an async search would set the list later.
+                        const CITIES: &[&str] = &[
+                            "Amsterdam", "Athens", "Berlin", "Lisbon", "London", "Paris", "Prague", "Rome",
+                        ];
+                        let (q, list) = (query.clone(), cities.clone());
+                        cx.retain(cx.runtime().effect(move || {
+                            let q = q.get().to_lowercase();
+                            list.set(
+                                CITIES
+                                    .iter()
+                                    .filter(|c| c.to_lowercase().contains(&q))
+                                    .map(|c| ComboItem::new(c.to_lowercase(), *c).detail("Europe"))
+                                    .collect(),
+                            );
+                        }));
+                        column().w(260.).child(combobox(
+                            "City",
+                            query.clone(),
+                            city.clone(),
+                            cities.clone(),
+                            ComboboxOptions::default(),
+                        ))
+                    }),
+                    button()
+                        .on_click(move || {
+                            opener.set(true);
+                        })
+                        .child(text("Command palette…")),
+                    text_signal(move || shown_ran.get()).text_color(tok::TEXT_SECONDARY),
+                    command_palette(
+                        palette,
+                        || {
+                            vec![
+                                PaletteCommand::new("open", "Open File…").detail("File").shortcut("⌘O"),
+                                PaletteCommand::new("save", "Save").detail("File").shortcut("⌘S"),
+                                PaletteCommand::new("theme", "Toggle Theme").detail("View"),
+                                PaletteCommand::new("zoom", "Zoom In").detail("View").shortcut("⌘="),
+                            ]
+                        },
+                        move |id| {
+                            ran.set(format!("Ran {id}"));
+                        },
                     ),
                 ],
             );
@@ -214,6 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .pb(24.)
                                 .child(controls)
                                 .child(choosing)
+                                .child(searching)
                                 .child(overlays)
                                 .child(containers),
                         ),

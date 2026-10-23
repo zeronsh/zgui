@@ -256,6 +256,9 @@ impl AccessibilityTree {
                 n.set_label(semantic.label.clone());
                 semantic.value.as_deref()
             };
+            if let Some(active) = semantic.active_descendant.filter(|a| visible.contains(a)) {
+                n.set_active_descendant(self.id(active));
+            }
             if let Some(shortcut) = &semantic.shortcut {
                 n.set_keyboard_shortcut(shortcut.clone());
             }

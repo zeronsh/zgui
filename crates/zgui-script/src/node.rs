@@ -479,6 +479,8 @@ impl Node {
                 | Kind::Stepper { .. }
                 | Kind::Tabs { .. }
                 | Kind::Select { .. }
+                | Kind::Combobox { .. }
+                | Kind::CommandPalette { .. }
                 | Kind::Disclosure { .. }
                 | Kind::Accordion { .. }
                 | Kind::List { .. }
@@ -521,6 +523,8 @@ impl Node {
             Kind::Split { .. } => "split",
             Kind::Separator { .. } => "separator",
             Kind::Tabs { .. } => "tabs",
+            Kind::Combobox { .. } => "combobox",
+            Kind::CommandPalette { .. } => "command_palette",
             Kind::Select { .. } => "select",
             Kind::Segmented { .. } => "segmented",
             Kind::Stepper { .. } => "stepper",
@@ -753,6 +757,22 @@ pub(crate) enum Kind {
         /// Each option's value, what it shows, and whether it is disabled.
         options: Vec<(Value, String, bool)>,
         placeholder: String,
+    },
+    /// `ui.combobox { text = state, items = state, value?, loading?, … }`.
+    Combobox {
+        label: String,
+        text: Signal<Value>,
+        value: Option<Signal<Value>>,
+        items: Signal<Value>,
+        loading: Option<Signal<Value>>,
+        empty: Option<String>,
+    },
+    /// `ui.command_palette { open = state, commands?, on_run? }`: the app's
+    /// commands, unless it lists its own.
+    CommandPalette {
+        open: Signal<Value>,
+        commands: Option<Vec<zgui::compose::PaletteCommand>>,
+        on_run: Option<Function>,
     },
     /// `ui.separator { vertical? }`: a line between groups.
     Separator {
@@ -1792,6 +1812,16 @@ fn a11y_role(name: &str) -> Option<zgui::semantics::Role> {
 /// Rows past which `ui.each` suggests `ui.list`.
 const LONG_EACH: usize = 1000;
 
+/// `{ id, title?, detail?, shortcut? }`: a command a palette lists.
+fn palette_command(c: &Table) -> mlua::Result<zgui::compose::PaletteCommand> {
+    let id: String = c.get("id")?;
+    let title: Option<String> = c.get("title")?;
+    let mut command = zgui::compose::PaletteCommand::new(id.clone(), title.unwrap_or(id));
+    command.detail = c.get("detail")?;
+    command.shortcut = c.get("shortcut")?;
+    Ok(command)
+}
+
 /// What a disclosure's summary shows: text, or a node of the app's.
 pub(crate) enum Summary {
     Text(String),
@@ -1881,6 +1911,11 @@ const WIDGET_FIELDS: &[&str] = &[
     "reorderable",
     "on_close",
     "panel",
+    "text",
+    "loading",
+    "empty",
+    "commands",
+    "on_run",
 ];
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
@@ -3107,6 +3142,48 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 options,
                 placeholder: t.get::<Option<String>>("placeholder")?.unwrap_or_default(),
             })
+        })?,
+    )?;
+    ui.set(
+        "combobox",
+        lua.create_function(|lua, table: Table| {
+            let optional_state = |key: &str| -> mlua::Result<Option<Signal<Value>>> {
+                match table.get::<mlua::Value>(key)? {
+                    mlua::Value::Nil => Ok(None),
+                    v => expect_state(&v, &format!("ui.combobox's `{key}`")).map(Some),
+                }
+            };
+            let kind = Kind::Combobox {
+                label: label(&table)?,
+                text: expect_state(&table.get("text")?, "ui.combobox's `text`")?,
+                value: optional_state("value")?,
+                items: expect_state(&table.get("items")?, "ui.combobox's `items`")?,
+                loading: optional_state("loading")?,
+                empty: table.get("empty")?,
+            };
+            // Not the `items` alignment style: the options.
+            table.raw_remove("items")?;
+            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
+        })?,
+    )?;
+    ui.set(
+        "command_palette",
+        lua.create_function(|lua, table: Table| {
+            let open = expect_state(&table.get("open")?, "ui.command_palette's `open`")?;
+            let commands = match table.get::<Option<Table>>("commands")? {
+                None => None,
+                Some(list) => Some(
+                    list.sequence_values::<Table>()
+                        .map(|c| palette_command(&c?))
+                        .collect::<mlua::Result<Vec<_>>>()?,
+                ),
+            };
+            let kind = Kind::CommandPalette {
+                open,
+                commands,
+                on_run: table.get("on_run")?,
+            };
+            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
         })?,
     )?;
     ui.set(
