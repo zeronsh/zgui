@@ -1,9 +1,9 @@
 //! The platform's own colours and settings, which the themes take over their
 //! built-in values (`Themes::set_system_tokens`): the text selection's, so a
 //! selection looks as the system draws one and follows the user's accent,
-//! and on Windows high contrast, animations turned off and the text size. An
-//! app theme or `theme_scope` that sets these tokens keeps its own; the text
-//! size scales the font tokens of every theme.
+//! and on Windows and Linux high contrast, animations turned off and the
+//! text size. An app theme or `theme_scope` that sets these tokens keeps its
+//! own; the text size scales the font tokens of every theme.
 use zgui::{
     scene::Color,
     theme::{TokenId, TokenInput, tok},
@@ -14,7 +14,8 @@ use zgui::{
 /// its own text fields (WinUI's, the new Notepad's), with white text over it.
 /// On Windows also high contrast (`windows_contrast`) and animations turned
 /// off (`windows_motion`). On Linux the user's accent (`linux_appearance`,
-/// the settings portal), translucent as GTK and KDE draw a selection.
+/// the settings portal), translucent as GTK and KDE draw a selection, and
+/// high contrast and reduced motion.
 /// Empty where zgui reads none, and the built-in themes apply.
 fn tokens() -> Vec<(TokenId, TokenInput)> {
     #[cfg(target_os = "macos")]
@@ -272,6 +273,9 @@ pub(crate) fn sync(ui: &zgui::widgets::Ui) {
     ui.theme().set_system_tokens(tokens());
     #[cfg(windows)]
     ui.theme().set_system_text_scale(windows_text_scale());
+    #[cfg(target_os = "linux")]
+    ui.theme()
+        .set_system_text_scale(crate::linux_appearance::current().text_scale.unwrap_or(1.));
 }
 
 /// Windows' "Text size" (Settings, Accessibility): 1 to 2.25, scaling text

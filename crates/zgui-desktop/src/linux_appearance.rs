@@ -1,7 +1,9 @@
 //! The desktop's appearance settings on Linux, from the XDG settings portal
 //! (`org.freedesktop.portal.Settings`, which GNOME, KDE and others back):
 //! dark or light, the accent colour (the text selection takes it), high
-//! contrast, and reduced motion (or GNOME's animations turned off). They
+//! contrast, reduced motion (or GNOME's animations turned off) and GNOME's
+//! text size (`text-scaling-factor`, Large Text in its accessibility
+//! settings), which scales the themes' font tokens. They
 //! are read at start, before the first window shows, and a thread follows
 //! `SettingChanged`; the event loop then gives them to every window's
 //! themes.
@@ -37,6 +39,8 @@ pub(crate) struct Appearance {
     pub contrast: bool,
     /// Reduced motion (`reduced-motion`), or GNOME's animations turned off.
     pub reduced_motion: bool,
+    /// GNOME's text size, as a factor (`text-scaling-factor`).
+    pub text_scale: Option<f32>,
 }
 
 static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
@@ -44,6 +48,7 @@ static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
     accent: None,
     contrast: false,
     reduced_motion: false,
+    text_scale: None,
 });
 
 /// The settings as last read (the default until the portal answers).
@@ -133,6 +138,7 @@ fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
         (APPEARANCE, "contrast"),
         (APPEARANCE, "reduced-motion"),
         (GNOME, "enable-animations"),
+        (GNOME, "text-scaling-factor"),
     ] {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -181,6 +187,7 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
         (APPEARANCE, "reduced-motion") => appearance.reduced_motion = value.as_u64() == Some(1),
         // A bool's RefArg reads as an integer.
         (GNOME, "enable-animations") => appearance.reduced_motion = value.as_i64() == Some(0),
+        (GNOME, "text-scaling-factor") => appearance.text_scale = value.as_f64().map(|s| s as f32),
         _ => {}
     }
 }
@@ -223,6 +230,8 @@ mod tests {
         assert!(!a.reduced_motion, "GNOME's animations on");
         apply(&mut a, GNOME, "enable-animations", &false);
         assert!(a.reduced_motion);
+        apply(&mut a, GNOME, "text-scaling-factor", &1.25f64);
+        assert_eq!(a.text_scale, Some(1.25), "Large Text");
         apply(&mut a, "org.example", "contrast", &0u32);
         assert!(a.contrast, "other namespaces change nothing");
     }

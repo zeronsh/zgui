@@ -434,6 +434,16 @@ that changed and restyles in place, and `watch(every)` polls them (a script
 host does this along with its scripts). A file that stops reading keeps its
 last good theme and reports the error.
 
+The desktop host also gives the themes the system's own settings, read at
+startup and followed live: the selection colour (the user's accent on
+macOS, Windows and Linux), high contrast, animations turned off (the motion
+durations are zero) and the text size (the font tokens scale). On Linux they
+come from the XDG settings portal, as GTK and Qt apps read them: dark or
+light, the accent, contrast and reduced motion from
+`org.freedesktop.appearance`, and GNOME's animations and Large Text. Windows'
+are listed in [the Windows notes](windows.md#system-settings). An app theme
+or `theme_scope` that sets a token keeps its own value.
+
 ### App tokens and unknown tokens
 
 An app names its own tokens in its own namespace (`terminal.pane`,

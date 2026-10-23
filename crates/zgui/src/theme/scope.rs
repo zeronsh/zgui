@@ -697,14 +697,11 @@ impl Themes {
     pub fn system_appearance(&self) -> Appearance {
         self.shared.state.borrow().appearance
     }
-    /// Values the platform gives tokens (the desktop host calls this): the
-    /// system's selection colours on macOS. They apply over the built-in
-    /// themes, and under app themes and `theme_scope` overrides, which keep
-    /// what they set. An empty list returns the tokens to the themes'.
     /// The system's text size, as a factor (the desktop host calls this):
-    /// Windows' "Text size" (Settings, Accessibility). It scales the font
-    /// size and line height tokens (`font.size.*`, `font.line.*`) whichever
-    /// theme sets them; a size a view sets in points stays, as CSS's `px`.
+    /// Windows' "Text size" (Settings, Accessibility), GNOME's
+    /// `text-scaling-factor`. It scales the font size and line height tokens
+    /// (`font.size.*`, `font.line.*`) whichever theme sets them; a size a
+    /// view sets in points stays, as CSS's `px`.
     pub fn set_system_text_scale(&self, scale: f32) {
         let scale = if scale.is_finite() {
             scale.clamp(0.5, 4.)
@@ -723,6 +720,10 @@ impl Themes {
     pub fn system_text_scale(&self) -> f32 {
         self.shared.state.borrow().text_scale
     }
+    /// Values the platform gives tokens (the desktop host calls this): the
+    /// system's selection colours on macOS. They apply over the built-in
+    /// themes, and under app themes and `theme_scope` overrides, which keep
+    /// what they set. An empty list returns the tokens to the themes'.
     pub fn set_system_tokens(&self, tokens: impl IntoIterator<Item = (TokenId, TokenInput)>) {
         let system: Vec<(TokenId, Arc<Expr>)> = tokens
             .into_iter()
