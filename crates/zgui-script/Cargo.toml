@@ -24,5 +24,16 @@ libc = "0.2"
 name = "zgui"
 path = "src/bin/zgui.rs"
 
+# Named apart from zgui-gpu's `layout_bench` and zgui-desktop's `web_view`:
+# examples share one output directory, and Windows cannot link two
+# executables (and their .pdb) to one path at once.
+[[example]]
+name = "script_layout_bench"
+path = "examples/layout_bench.rs"
+
+[[example]]
+name = "script_web_view"
+path = "examples/web_view.rs"
+
 [dev-dependencies]
 zgui-desktop = { path = "../zgui-desktop" }

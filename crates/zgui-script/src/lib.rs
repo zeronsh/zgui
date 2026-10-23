@@ -175,8 +175,49 @@ fn thread_cpu() -> Duration {
         Duration::ZERO
     }
 }
+/// CPU time this thread has used. Windows advances it a scheduler tick
+/// (about 15.6 ms) at a time, so it reads up to a tick short: a runaway
+/// script stops that much later.
+#[cfg(windows)]
+fn thread_cpu() -> Duration {
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentThread() -> *mut std::ffi::c_void;
+        fn GetThreadTimes(
+            thread: *mut std::ffi::c_void,
+            creation: *mut FileTime,
+            exit: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+    }
+    let [mut creation, mut exit, mut kernel, mut user] = Default::default();
+    // SAFETY: Fills four FILETIMEs for this thread (a pseudo handle).
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    } != 0;
+    // FILETIME durations count 100 ns intervals.
+    let time = |t: &FileTime| Duration::from_nanos(((t.high as u64) << 32 | t.low as u64) * 100);
+    if ok {
+        time(&kernel) + time(&user)
+    } else {
+        Duration::ZERO
+    }
+}
 /// Without a thread CPU clock, wall time stands in.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn thread_cpu() -> Duration {
     thread_local! { static START: Instant = Instant::now(); }
     START.with(|s| s.elapsed())

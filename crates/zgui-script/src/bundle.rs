@@ -14,7 +14,10 @@
 //! static UI: zgui_script::Bundle = zgui_script::include_bundle!("app");
 //! let host = ScriptHost::bundled(&runtime, &UI, "app.luau");
 //! ```
-use std::path::{Path, PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 /// A bundle's files, by path from its root (`/`-separated).
 pub struct Bundle {
@@ -34,8 +37,17 @@ pub struct BundleFile {
 
 impl Bundle {
     /// `path`'s place in the bundle ("" for its root), if it is under it.
-    fn rel<'p>(&self, path: &'p Path) -> Option<&'p str> {
-        let rest = path.to_str()?.strip_prefix(self.root)?;
+    /// Paths made on Windows separate with `\`; the bundle's with `/`.
+    fn rel<'p>(&self, path: &'p Path) -> Option<Cow<'p, str>> {
+        let path = path.to_str()?;
+        if cfg!(windows) && path.contains('\\') {
+            let path = path.replace('\\', "/");
+            return self.rest(&path).map(|rest| Cow::Owned(rest.to_owned()));
+        }
+        self.rest(path).map(Cow::Borrowed)
+    }
+    fn rest<'p>(&self, path: &'p str) -> Option<&'p str> {
+        let rest = path.strip_prefix(self.root)?;
         if rest.is_empty() {
             Some(rest)
         } else {
@@ -47,7 +59,7 @@ impl Bundle {
         let rel = self.rel(path)?;
         let at = self
             .files
-            .binary_search_by(|file| file.path.cmp(rel))
+            .binary_search_by(|file| (*file.path).cmp(&rel))
             .ok()?;
         Some(self.files[at].bytes)
     }
@@ -65,7 +77,7 @@ impl Bundle {
     /// Whether `path` holds files.
     pub(crate) fn is_dir(&self, path: &Path) -> bool {
         self.rel(path)
-            .is_some_and(|rel| self.under(rel).next().is_some())
+            .is_some_and(|rel| self.under(&rel).next().is_some())
     }
     /// The files directly in directory `path`.
     pub(crate) fn list(&self, path: &Path) -> Vec<PathBuf> {
@@ -73,7 +85,7 @@ impl Bundle {
             return Vec::new();
         };
         let skip = if rel.is_empty() { 0 } else { rel.len() + 1 };
-        self.under(rel)
+        self.under(&rel)
             .map(|file| &file.path[skip..])
             .filter(|name| !name.contains('/'))
             .map(|name| path.join(name))

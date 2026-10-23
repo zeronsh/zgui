@@ -1725,10 +1725,12 @@ fn border_over_reaches_the_scene() {
 
 #[test]
 fn bg_image_paints_and_survives_an_animated_bg() {
+    // In a Luau string, so `/` even on Windows (a `\` would escape).
     let png = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../docs/images/components.png"
-    );
+    )
+    .replace('\\', "/");
     let mut h = common::Harness::inline(&format!(
         r##"return ui.div {{ id = "d", w = 40, h = 40, bg = "#000000", rounded = 8, bg_image = "{png}", bg_fit = "cover",
             on_mount = function(el) anime.animate(el, {{ backgroundColor = "#ff0000", duration = 50 }}) end }}"##

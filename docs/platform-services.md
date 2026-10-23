@@ -3,7 +3,8 @@
 `WindowContext::dialogs` provides asynchronous open-file, open-files, open-folder,
 open-folders, and save-file selection. Linux uses XDG Desktop Portal with native
 Wayland/X11 parent identifiers and owned cancellable requests. An unavailable
-portal reports `BackendUnavailable`. macOS uses native AppKit sheets. The UI thread remains
+portal reports `BackendUnavailable`. macOS uses native AppKit sheets; Windows
+uses native owned file dialogs. The UI thread remains
 available while the user chooses a path. Selecting a save destination does not
 create or overwrite the file.
 
@@ -38,6 +39,10 @@ Dropping an individual request future cancels delivery but does not itself dismi
 its sheet. Backend failures there may also appear as no selection. Prompts have
 the separate backend limitations described below. No callback runs on a worker.
 
+On Windows, cancelling a future or closing/suspending the owner invalidates
+delivery but does not dismiss the native dialog. The backend retains its parent
+until the dialog is dismissed, and backend errors may also appear as no selection.
+
 The portal cancellation contract follows the [official Request interface](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Request.html).
 
 Filters contain extensions without a leading dot. Native platform extension
@@ -51,7 +56,7 @@ alone does not provide file selection.
 `Application::menus` accepts validated `AppMenu` trees containing actions,
 submenus, and separators. Action identifiers must be nonempty and unique across
 the tree. Items can be disabled. macOS presents this model in its native
-application menu. Linux has no universal native app menubar for a winit window;
+application menu. Linux and Windows use the rendered menu implementation;
 mount `cx.app_menu_bar()` in the content layout for retained, accessible menus
 with keyboard traversal, disabled-item skipping, Escape dismissal, focus
 restoration, and nested submenus. `has_native_app_menu()` exposes the distinction.
@@ -86,9 +91,9 @@ close during replacement.
 accessible checked state and native macOS checkmark. Update its state in the
 command callback; choosing the item does not mutate the application model.
 `MenuAccelerator::primary(Key::Character("s".into()))` uses Command on macOS and
-Control on Linux. Explicit logical key/modifier combinations are also supported;
+Control on Linux and Windows. Explicit logical key/modifier combinations are also supported;
 letters/digits, named navigation keys, and F1–F35 are accepted. Duplicate shortcuts
-are rejected. Linux shortcuts register through scoped root keymaps, preserving
+are rejected. Linux and Windows shortcuts register through scoped root keymaps, preserving
 focused component bindings and typed-action precedence; disabled entries have no
 binding and replacement unregisters previous shortcuts. macOS displays and
 handles the same shortcuts in the native menu. Standard native OS-role items
@@ -110,9 +115,17 @@ Dependencies include exact `rfd 0.17.2` (MIT), `open 5.4.4`, Linux `dbus 0.9.12`
 
 Native prompts use `cx.dialogs.prompt(PromptOptions::new(title, body).buttons(PromptButtons::OkCancel)).await`. Results are typed `PromptResponse` values and retain the same owner-generation cancellation rules as file pickers. On Linux this uses the `zenity` executable from the user's desktop installation; unlike file pickers it is not an XDG portal and rfd's Linux prompt backend does not attach the native parent. A missing prompt backend can be reported as cancellation by rfd. macOS uses an AppKit alert attached to the parent window. Applications requiring strict modal blocking or backend-failure distinction should not infer those guarantees from this API.
 
+Windows prompts use an owned native message box on a worker, keeping the native
+parent alive until dismissal. Cancellation invalidates result delivery without
+dismissing that message box.
+
 `open_url("https://example.com").await` asks the OS default handler to open a URI on a worker. It rejects malformed schemes and control characters. Success means the launcher accepted the request, not that the remote resource loaded.
 
 `Application::application_id("org.example.Editor")?.on_application_event(...)` delivers typed `ApplicationEvent::OpenUrls` and `Reopen` callbacks on the UI thread. Linux owns the corresponding session-bus name and implements `org.freedesktop.Application.Open` and `Activate` at the application ID's slash-separated object path. Install the application's `.desktop` file, URI MIME associations, and D-Bus activation service separately for OS launching; this library does not modify the user's registration. macOS owns AppleEvent handlers for URL/document opens and reopen while preserving winit's application delegate. Routes are installed again after native launch initialization and removed on teardown. URL schemes still require the application's bundle `CFBundleURLTypes` registration. These callbacks are opt-in through the application ID. Native Mac reopen and OS URL launch/delivery have been observed: a test receiver registered in the user's Applications directory received the exact `zgui-smoke:accepted` URL in its retained UI after the launcher returned success. Earlier missing-registration failures are preserved. This test-only registration does not add application packaging to the framework.
+
+Windows has no native application-activation backend. Opting into
+`Application::application_id` makes `run` return an explicit error; applications
+must handle launch arguments and register URI schemes themselves.
 
 Applications that remain available after their last window closes can set `quit_on_last_window_close(false)` and create windows through the event callback's `WindowFactory`; `WindowFactory::quit()` exits explicitly. Result delivery to closed windows is suppressed. Retaining the application does not retain a closed window's UI.
 

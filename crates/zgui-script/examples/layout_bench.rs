@@ -3,7 +3,7 @@
 //! the rows' old places, the reorder), the frame whose layout applies it
 //! (the rows' new places and the moves' start), the frames that move the
 //! rows, and checks nothing runs once they settle.
-//! Run: cargo run --release -p zgui-script --example layout_bench
+//! Run: cargo run --release -p zgui-script --example script_layout_bench
 use std::{
     cell::RefCell,
     rc::Rc,

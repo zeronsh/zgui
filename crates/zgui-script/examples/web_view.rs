@@ -1,5 +1,5 @@
 //! A web page in a Luau interface, with a frosted popover over it.
-//! Run: cargo run --release -p zgui-script --example web_view
+//! Run: cargo run --release -p zgui-script --example script_web_view
 //! Edit `examples/web_view/app.luau` and save to reload it.
 use std::{path::Path, time::Duration};
 use zgui_desktop::{Application, Glass, Titlebar, WindowOptions};

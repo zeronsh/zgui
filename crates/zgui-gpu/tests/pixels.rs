@@ -538,14 +538,13 @@ fn isolated_opacity_composites_once_and_retains_transformed_subtrees() {
     let stats = gpu.render(&scene, &d).unwrap();
     assert_eq!(stats.layer_repaints, 1);
     let p = gpu.readback().unwrap();
-    assert_eq!(
-        &p[(10 * 80 + 12) * 4..(10 * 80 + 12) * 4 + 4],
-        &[0, 0, 128, 128]
-    );
-    assert_eq!(
+    // Half of 255 rounds either way, by GPU.
+    let half = &p[(10 * 80 + 12) * 4..(10 * 80 + 12) * 4 + 4];
+    assert!(near(half, &[0, 0, 128, 128]), "{half:?}");
+    assert!(near(
         &p[(10 * 80 + 2) * 4..(10 * 80 + 2) * 4 + 4],
         &[128, 0, 0, 128]
-    );
+    ));
     scene.set_transform(group, Transform { x: 30., y: 5. });
     scene.set_effects(
         group,
@@ -559,10 +558,10 @@ fn isolated_opacity_composites_once_and_retains_transformed_subtrees() {
     assert_eq!(stats.layer_repaints, 0);
     assert_eq!(stats.layer_cache_hits, 1);
     let p = gpu.readback().unwrap();
-    assert_eq!(
+    assert!(near(
         &p[(10 * 80 + 42) * 4..(10 * 80 + 42) * 4 + 4],
         &[0, 0, 64, 64]
-    );
+    ));
     assert_eq!(&p[..4], &[0, 0, 0, 0]);
     scene.set_kind(top, NodeKind::Rect(Color(0, 255, 0, 255)));
     let d = scene.flush().damage;
@@ -611,7 +610,8 @@ fn nested_layers_apply_opacity_at_each_boundary_and_invalidate_ancestors() {
     );
     let d = scene.flush().damage;
     assert_eq!(gpu.render(&scene, &d).unwrap().layer_repaints, 2);
-    assert_eq!(&gpu.readback().unwrap()[..4], &[64, 0, 0, 64]);
+    let quarter = &gpu.readback().unwrap()[..4];
+    assert!(near(quarter, &[64, 0, 0, 64]), "{quarter:?}");
     scene.set_transform(inner, Transform { x: 5., y: 5. });
     let d = scene.flush().damage;
     let stats = gpu.render(&scene, &d).unwrap();
@@ -621,10 +621,10 @@ fn nested_layers_apply_opacity_at_each_boundary_and_invalidate_ancestors() {
     let d = scene.flush().damage;
     assert_eq!(gpu.render(&scene, &d).unwrap().layer_repaints, 2);
     let p = gpu.readback().unwrap();
-    assert_eq!(
+    assert!(near(
         &p[(10 * 64 + 10) * 4..(10 * 64 + 10) * 4 + 4],
         &[0, 64, 0, 64]
-    );
+    ));
 }
 
 #[test]
@@ -5326,4 +5326,9 @@ fn wide_backdrop_blur_matches_a_full_size_gaussian() {
         worst <= 2.,
         "within 2/255 of the exact blur, was {worst:.2}"
     );
+}
+
+/// Equal within a unit: GPUs round halves differently.
+fn near(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.abs_diff(*b) <= 1)
 }

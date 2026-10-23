@@ -205,8 +205,18 @@ fn group_opacity_applies_once_to_a_rotated_layer() {
     scene.set_local_transform(group, rotated(FRAC_PI_4));
     let (_, p) = render(&mut gpu, &mut scene);
     // Blue over red, then halved once: no red shows through.
-    assert_eq!(pixel(&p, 100, 100), [0, 0, 128, 128]);
-    assert_eq!(pixel(&p, 100, 75), [0, 0, 128, 128]);
+    // Half of 255 rounds either way, by GPU.
+    let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 1);
+    assert!(
+        near(pixel(&p, 100, 100), [0, 0, 128, 128]),
+        "{:?}",
+        pixel(&p, 100, 100)
+    );
+    assert!(
+        near(pixel(&p, 100, 75), [0, 0, 128, 128]),
+        "{:?}",
+        pixel(&p, 100, 75)
+    );
 }
 
 #[test]

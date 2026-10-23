@@ -403,7 +403,7 @@ The `ui.tween(state, opts)`, `ui.spring(state, opts)` and `ui.loop(opts)` bindin
 
 Writing to the scene directly is the floor for the work itself; the engine is below it because it skips values that did not change. What remains is the scene's own invalidation.
 
-`layout_bench` reverses 1,000 rows of three heights in a scroll view (same machine, release, mean of 20):
+`script_layout_bench` (`cargo run --release -p zgui-script --example script_layout_bench`) reverses 1,000 rows of three heights in a scroll view (same machine, release, mean of 20):
 
 | | the change | its layout frame | each moving frame |
 | --- | --- | --- | --- |

@@ -1,4 +1,4 @@
-//! Native Linux/macOS application host with GPU rendering, accessibility, clipboard,
+//! Native Linux/macOS/Windows host with GPU rendering, accessibility, clipboard,
 //! and IME. A software raster backend is available for reference and headless tests.
 //!
 //! ```no_run

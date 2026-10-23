@@ -1,0 +1,3 @@
+# One line ending everywhere: tests and include_str! compare sources byte
+# for byte, and Windows checkouts would otherwise get CRLF (core.autocrlf).
+* text=auto eol=lf

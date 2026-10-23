@@ -11,6 +11,7 @@ use zgui_workload::animation::*;
 mod view;
 
 /// The process's CPU time so far, every thread, user and system.
+#[cfg(unix)]
 fn cpu_time() -> Duration {
     #[repr(C)]
     #[derive(Default)]
@@ -33,6 +34,41 @@ fn cpu_time() -> Duration {
     unsafe { getrusage(0, &mut usage) };
     let time = |t: &Timeval| Duration::new(t.seconds as u64, t.micros as u32 * 1000);
     time(&usage.user) + time(&usage.system)
+}
+/// The process's CPU time so far, every thread, user and kernel.
+#[cfg(windows)]
+fn cpu_time() -> Duration {
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn GetProcessTimes(
+            process: *mut std::ffi::c_void,
+            creation: *mut FileTime,
+            exit: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+    }
+    let [mut creation, mut exit, mut kernel, mut user] = Default::default();
+    // SAFETY: Fills four FILETIMEs for this process (a pseudo handle).
+    unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    // FILETIME durations count 100 ns intervals.
+    let time = |t: &FileTime| Duration::from_nanos(((t.high as u64) << 32 | t.low as u64) * 100);
+    time(&kernel) + time(&user)
 }
 
 fn main() {

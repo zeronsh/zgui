@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut style=fixed(900.,760.);
         style.padding=24.;style.gap=16.;
         ui.scene.borrow_mut().set_style(root,style);
-        ui.label(root,"zgui · Linux & macOS",fixed(820.,28.));
+        ui.label(root,"zgui · Linux, macOS & Windows",fixed(820.,28.));
         ui.label(root,"Retained widgets · GPU shaping · keyboard navigation · native accessibility",fixed(840.,26.));
         let count=ui.signal(0i32);
         let status=ui.signal(String::from("Ready"));
