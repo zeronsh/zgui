@@ -71,6 +71,7 @@ SMOKES = [
     ("window-buttons", "python3 scripts/window_buttons_smoke.py {bin}/glass_counter --output {out}", False),
     ("desktop-font", "python3 scripts/desktop_font_smoke.py {bin}/gallery --output {out}", False),
     ("work-area", "python3 scripts/work_area_smoke.py {bin} --output {out}", False),
+    ("gl-fallback", "python3 scripts/gl_fallback_smoke.py {bin}/gallery --output {out}", False),
     ("primary-selection-wayland", "python3 scripts/primary_selection_smoke.py {bin}/primary_selection --wayland --output {out}", False),
     ("event-hooks", "python3 scripts/event_hooks_smoke.py {bin}/event_hooks --output {out}", False),
     ("wrapped-editor", "python3 scripts/wrapped_editor_smoke.py {bin}/wrapped_editor --output {out}", False),

@@ -168,6 +168,15 @@ with a message, which it ignores for a window it does not manage yet. On
 Wayland the compositor places windows, so a saved frame keeps its size and
 maximized state alone. `window_frames_smoke.py` checks both.
 
+## Graphics
+
+zgui draws through Vulkan. Where no Vulkan driver is (VMs and older GPUs
+without one, systems that ship none), it draws through GL over EGL instead,
+asking only for what older GPUs give (wgpu's downlevel limits); before, such
+an app did not start ("Failed to create surface for any enabled backend").
+The GL instance is made only once Vulkan finds no driver, so a Vulkan system
+loads no EGL. `gl_fallback_smoke.py` draws the gallery both ways.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a

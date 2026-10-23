@@ -1173,9 +1173,13 @@ impl GpuContext {
         // Direct3D 12 alone: it presents through DXGI's flip model, which the
         // compositor schedules, and leaves no Vulkan driver loaded beside it
         // (on NVIDIA, three quarters of the idle CPU and 18 MiB of working
-        // set). Vulkan stands in only where Direct3D 12 has no adapter.
+        // set). Vulkan stands in only where Direct3D 12 has no adapter. On
+        // Linux, GL stands in where no Vulkan driver is (VMs and older GPUs
+        // without one): made only then, so a Vulkan system loads no EGL.
         let attempts: &[wgpu::Backends] = if cfg!(windows) {
             &[wgpu::Backends::DX12, wgpu::Backends::VULKAN]
+        } else if cfg!(target_os = "linux") {
+            &[wgpu::Backends::PRIMARY, wgpu::Backends::GL]
         } else {
             &[wgpu::Backends::PRIMARY]
         };
@@ -1193,12 +1197,25 @@ impl GpuContext {
             descriptor
                 .flags
                 .remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
+            // EGL draws to the window's display, which it must be given.
+            if backends == wgpu::Backends::GL
+                && let Some(window) = &window
+            {
+                descriptor = descriptor.with_display_handle(Box::new(window.clone()));
+            }
             let instance = wgpu::Instance::new(descriptor.with_env());
-            let surface = window
+            // No driver for these backends: the next.
+            let surface = match window
                 .clone()
                 .map(|window| instance.create_surface(window))
                 .transpose()
-                .map_err(|e| GpuError(e.to_string()))?;
+            {
+                Ok(surface) => surface,
+                Err(error) => {
+                    found = Err(GpuError(error.to_string()));
+                    continue;
+                }
+            };
             let adapter =
                 pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::LowPower,
@@ -1238,7 +1255,13 @@ impl GpuContext {
                 } else {
                     wgpu::Limits::default().max_non_sampler_bindings
                 },
-                ..Default::default()
+                // GL (Linux's fallback) asks no more than older GPUs give,
+                // with the textures as large as this one makes.
+                ..if info.backend == wgpu::Backend::Gl {
+                    wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
+                } else {
+                    Default::default()
+                }
             },
             memory_hints: wgpu::MemoryHints::MemoryUsage,
             ..Default::default()

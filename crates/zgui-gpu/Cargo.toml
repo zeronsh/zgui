@@ -26,7 +26,9 @@ composition = ["windows/Win32_Graphics_DirectComposition"]
 
 [dependencies]
 zgui = { path = "../zgui", version = "0.1.0" }
-wgpu = "29.0.4"
+# wgpu's defaults less WebGPU (the browser's) and GL, which is Linux's
+# fallback alone (below).
+wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 winit = "0.30.13"
 cosmic-text = { version = "0.19.0", features = ["shape-run-cache"] }
 pollster = "0.4"
@@ -40,6 +42,11 @@ unicode-segmentation = "1.12"
 rustc-hash = "2.1"
 
 gif = { version = "=0.14.2", default-features = false, features = ["std"], optional = true }
+
+# GL (EGL), where no Vulkan driver is: VMs and GPUs without one, and
+# systems that ship none. Never loaded where Vulkan is (`GpuContext::create`).
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { version = "29.0.4", default-features = false, features = ["gles"] }
 
 # DXGI frame statistics for ZGUI_PRESENT_LOG (dxgi.rs); the version wgpu-hal uses.
 [target.'cfg(windows)'.dependencies]
