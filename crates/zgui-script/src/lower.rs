@@ -1001,6 +1001,7 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             select_on_focus,
             line_numbers,
             secure,
+            spellcheck,
         } => {
             let value = bridge(
                 need(&mut cx),
@@ -1043,6 +1044,9 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             }
             if *secure {
                 view = view.secure(true);
+            }
+            if *spellcheck {
+                view = view.spellcheck(true);
             }
             if *select_on_focus {
                 view = view.select_on_focus(true);

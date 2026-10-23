@@ -22,7 +22,16 @@ pub(crate) fn context_menu(
             editor.clone(),
             editor.clone(),
         );
-        vec![
+        // On a misspelled word: the checker's guesses first, as AppKit's
+        // and the browsers' menus have them.
+        let mut items = platform
+            .as_ref()
+            .map(|platform| crate::editor_spell::menu_items(&editor, platform))
+            .unwrap_or_default();
+        if !items.is_empty() {
+            items.push(separator());
+        }
+        items.extend([
             menu_item("Cut")
                 .id("editor-cut")
                 .disabled(!(copyable && editable && platform.is_some()))
@@ -54,6 +63,17 @@ pub(crate) fn context_menu(
             menu_item("Select All")
                 .id("editor-select-all")
                 .on_click(move || all.select_all()),
-        ]
+        ]);
+        items
     })
+}
+
+/// A rule between a menu's groups.
+fn separator() -> crate::compose::View {
+    use crate::style::Styled;
+    crate::compose::div()
+        .h(1.)
+        .my(4.)
+        .mx(8.)
+        .bg(crate::theme::tok::BORDER_SUBTLE)
 }

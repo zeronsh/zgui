@@ -3574,6 +3574,11 @@ export type InputProps = {
 	-- A password field: its text shows as a bullet per character, and
 	-- copying or cutting it gives nothing.
 	secure: boolean?,
+	-- Check its spelling as it is typed (HTML's `spellcheck`): the system's
+	-- checker marks misspelled words with a dotted line, and its context
+	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a
+	-- password field.
+	spellcheck: boolean?,
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
 }

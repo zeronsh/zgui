@@ -325,6 +325,7 @@ pub struct View {
     placeholder_color: Option<Box<dyn FnMut() -> crate::scene::Color>>,
     select_on_focus: Option<bool>,
     secure: Option<bool>,
+    spellcheck: Option<bool>,
     line_numbers: Option<bool>,
     window_drag: bool,
     /// `View::selectable`.
@@ -440,6 +441,7 @@ impl View {
             placeholder_color: None,
             select_on_focus: None,
             secure: None,
+            spellcheck: None,
             line_numbers: None,
             window_drag: false,
             selectable: None,
@@ -766,6 +768,15 @@ impl View {
         self.secure = Some(secure);
         self
     }
+    /// Check the spelling as it is typed, as a browser's text fields do
+    /// (`spellcheck`): the system's checker marks misspelled words with a
+    /// dotted line, and the context menu offers its guesses, Learn Spelling
+    /// and Ignore Spelling. Off by default; a password field never checks.
+    /// Only editor views take it.
+    pub fn spellcheck(mut self, check: bool) -> Self {
+        self.spellcheck = Some(check);
+        self
+    }
     /// Number a multiline editor's lines in a gutter at its left, as a code
     /// editor does (see `EditorHandle::set_line_numbers`). Only editor roots
     /// accept this.
@@ -951,6 +962,9 @@ impl View {
         }
         if self.select_on_focus.is_some() {
             inner.select_on_focus = self.select_on_focus;
+        }
+        if self.spellcheck.is_some() {
+            inner.spellcheck = self.spellcheck;
         }
         if self.secure.is_some() {
             inner.secure = self.secure;
@@ -2237,6 +2251,10 @@ fn mount_element(
         "read_only is only supported on editor views"
     );
     assert!(
+        view.spellcheck.is_none() || is_editor,
+        "spellcheck is only supported on editor views"
+    );
+    assert!(
         (view.placeholder.is_none() && view.placeholder_color.is_none()) || is_editor,
         "placeholder is only supported on editor views"
     );
@@ -2992,6 +3010,14 @@ fn mount_element(
         }
         if let Some(secure) = view.secure {
             editor.set_secure(secure);
+        }
+        if view.spellcheck == Some(true)
+            && view.secure != Some(true)
+            && let Some(platform) = environment
+                .services
+                .get::<crate::platform::PlatformService>()
+        {
+            crate::editor_spell::mount(ui, editor.clone(), platform);
         }
         if let Some(numbered) = view.line_numbers {
             editor.set_line_numbers(numbered);

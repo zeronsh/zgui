@@ -648,6 +648,8 @@ pub(crate) enum Kind {
         line_numbers: bool,
         /// `secure = true`: a password field (masked, never copied).
         secure: bool,
+        /// `spellcheck = true`: the system's checker marks misspellings.
+        spellcheck: bool,
     },
     Progress {
         label: String,
@@ -1507,6 +1509,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "placeholder_color",
     "select_on_focus",
     "secure",
+    "spellcheck",
     "line_numbers",
     "animate",
 ];
@@ -2387,6 +2390,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         .get::<Option<bool>>("select_on_focus")?
                         .unwrap_or(false),
                     secure: table.get::<Option<bool>>("secure")?.unwrap_or(false),
+                    spellcheck: table.get::<Option<bool>>("spellcheck")?.unwrap_or(false),
                     line_numbers: table.get::<Option<bool>>("line_numbers")?.unwrap_or(false),
                 };
                 node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
