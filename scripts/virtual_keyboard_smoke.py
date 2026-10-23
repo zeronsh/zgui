@@ -84,6 +84,9 @@ def main():
         xdo("key","--clearmodifiers","Down")
         time.sleep(.2)
         report(4)
+        # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+        # own timer, which a quick run would wait past.
+        xdo("windowactivate", "--sync", window, "key", "alt+F4")
         output, _ = app.communicate(timeout=15)
         (args.output / "virtual_keyboard.log").write_text(output)
         if app.returncode:

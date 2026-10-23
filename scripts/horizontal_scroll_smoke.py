@@ -82,6 +82,9 @@ def main():
         time.sleep(.2)
         click(100,180)
         report(4,range(0),wide=True)
+        # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+        # own timer, which a quick run would wait past.
+        xdo("windowactivate", "--sync", window, "key", "alt+F4")
         output, _ = app.communicate(timeout=15)
         (args.output / "horizontal_scroll.log").write_text(output)
         if app.returncode:

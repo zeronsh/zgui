@@ -78,6 +78,9 @@ def main():
         xdo("mousemove", "--window", window, 100,150,"click","--repeat",2,"--delay",100,5)
         time.sleep(.2)
         report(3,range(0))
+        # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+        # own timer, which a quick run would wait past.
+        xdo("windowactivate", "--sync", window, "key", "alt+F4")
         output, _ = app.communicate(timeout=15)
         (args.output / "focus_scroll.log").write_text(output)
         if app.returncode:
