@@ -26,6 +26,12 @@ pub trait Platform {
     fn clipboard_text(&self) -> Option<String>;
     /// Put `text` on the clipboard; whether it took it.
     fn set_clipboard_text(&self, text: String) -> bool;
+    /// Open `url` with the system's handler for it (a browser for
+    /// `https:`); whether the request was made. None opens nothing.
+    fn open_url(&self, url: &str) -> bool {
+        let _ = url;
+        false
+    }
     /// Put `text` on the clipboard with `html`, its rich form, where the
     /// platform takes both; plain text alone otherwise.
     fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {

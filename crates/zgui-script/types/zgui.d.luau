@@ -2129,7 +2129,13 @@ export type SpanProps = {
 		gap: number?,
 		tint: Color?,
 	}?,
-	on_click: (Handler | Action)?,
+	-- A click (and a middle click, which passes as a ⌘-click) on the run,
+	-- a link: told the keys held.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Where it links (`"https://…"`): a link, underlined, whose click opens
+	-- it with the system's handler (after `on_click`'s), and whose context
+	-- menu opens or copies it.
+	href: string?,
 	-- Its text as it is, not a template (see TextProps).
 	literal: boolean?,
 	-- Room around it: across (before and after it, taking space in the

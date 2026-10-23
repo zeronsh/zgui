@@ -30,6 +30,10 @@ impl Platform for Desktop {
             .as_mut()
             .is_some_and(|clipboard| clipboard.set_text(text).is_ok())
     }
+    fn open_url(&self, url: &str) -> bool {
+        // The launcher runs detached: nothing waits on the browser.
+        crate::url::valid_url(url) && open::that_detached(url).is_ok()
+    }
     fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {
         self.clipboard
             .borrow_mut()

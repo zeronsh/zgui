@@ -103,7 +103,7 @@ impl Tasks {
 type Registry = Rc<RefCell<HashMap<String, Vec<NodeId>>>>;
 #[derive(Clone)]
 pub(crate) struct Environment {
-    services: ServiceScope,
+    pub(crate) services: ServiceScope,
     typography: Signal<Typography>,
     registry: Registry,
     portal: Option<(NodeId, Signal<bool>)>,
@@ -2646,6 +2646,7 @@ fn mount_element(
             paragraph,
             content_state.clone(),
             hovered.clone(),
+            &environment,
         );
         crate::compose_rich::mount_icons(ui, root, paragraph, content_state.clone());
         let weak = ui.downgrade();
@@ -2663,13 +2664,14 @@ fn mount_element(
                 if span.text.is_empty() {
                     continue;
                 }
-                if span.action.is_some() && span.hover.is_none() {
+                let link = span.action.is_some() || span.href.is_some();
+                if link && span.hover.is_none() {
                     span.underline.get_or_insert_with(Default::default);
                 }
                 if let Some(hover) = span
                     .hover
                     .as_ref()
-                    .filter(|_| span.action.is_some() && hovered == Some(links.len()))
+                    .filter(|_| link && hovered == Some(links.len()))
                 {
                     if let Some(underline) = hover.underline {
                         span.underline = Some(underline);
@@ -2691,10 +2693,11 @@ fn mount_element(
                 });
                 let start = content.len();
                 content.push_str(&span.text);
-                if let Some(action) = span.action {
+                if link {
                     links.push(crate::compose_rich::Link {
                         range: start..content.len(),
-                        action,
+                        action: span.action,
+                        href: span.href,
                         styled_hover: span.hover.is_some(),
                     });
                 }

@@ -6,8 +6,9 @@ use crate::{
     text_layout::{FontFamily, LetterSpacing, LineHeight},
 };
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
+/// A link's click, told the keys held (a ⌘-click).
 #[derive(Clone)]
-pub(crate) struct InlineAction(Rc<RefCell<dyn FnMut()>>);
+pub(crate) struct InlineAction(Rc<RefCell<dyn FnMut(crate::input::Modifiers)>>);
 impl std::fmt::Debug for InlineAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("InlineAction")
@@ -21,7 +22,10 @@ impl PartialEq for InlineAction {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Link {
     pub range: Range<usize>,
-    pub action: InlineAction,
+    pub action: Option<InlineAction>,
+    /// Where it goes (`TextSpan::href`): a click opens it, its context menu
+    /// opens or copies it.
+    pub href: Option<Arc<str>>,
     /// It restyles under the pointer, so no hover ring.
     pub styled_hover: bool,
 }
@@ -59,6 +63,7 @@ pub(crate) const ICON_PLACEHOLDER: &str = "\u{2060}";
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextSpan {
     pub(crate) action: Option<InlineAction>,
+    pub(crate) href: Option<Arc<str>>,
     pub(crate) text: Arc<str>,
     pub(crate) styles: Styles,
     pub(crate) background: Option<Color>,
@@ -79,6 +84,7 @@ pub struct SpanHover {
 pub fn text_span(text: impl Into<Arc<str>>) -> TextSpan {
     TextSpan {
         action: None,
+        href: None,
         text: text.into(),
         styles: Styles::new(),
         background: None,
@@ -119,8 +125,24 @@ impl TextSpan {
     }
     /// Make this span a keyboard-accessible link with shaped hit regions,
     /// underlined unless it has a `hover` style.
-    pub fn on_click(mut self, callback: impl FnMut() + 'static) -> Self {
+    pub fn on_click(self, mut callback: impl FnMut() + 'static) -> Self {
+        self.on_click_with(move |_| callback())
+    }
+    /// `on_click`, told the keys held as it was clicked: a ⌘-click (Control
+    /// elsewhere), or a middle click, which passes as one, as browsers open
+    /// a link in the background.
+    pub fn on_click_with(
+        mut self,
+        callback: impl FnMut(crate::input::Modifiers) + 'static,
+    ) -> Self {
         self.action = Some(InlineAction(Rc::new(RefCell::new(callback))));
+        self
+    }
+    /// A link to `url`: a click (after `on_click`'s, if it has one) opens it
+    /// with the system's handler (`Platform::open_url`, a browser for
+    /// `https:`), and its context menu opens or copies it.
+    pub fn href(mut self, url: impl Into<Arc<str>>) -> Self {
+        self.href = Some(url.into());
         self
     }
 
@@ -243,15 +265,58 @@ impl From<RichTextView> for View {
     }
 }
 
+/// What a link does: its action, and where it goes.
+type LinkTarget = (Option<InlineAction>, Option<Arc<str>>);
+/// Link `node`'s context menu: Open Link and Copy Link for its `href` (none
+/// without one, so the press goes on to what it is in).
+fn mount_link_menu(
+    ui: &mut crate::widgets::Ui,
+    node: crate::scene::NodeId,
+    link: Rc<RefCell<LinkTarget>>,
+    platform: Option<Rc<crate::platform::PlatformService>>,
+    environment: crate::compose::Environment,
+) {
+    crate::compose_context_menu::mount(
+        ui,
+        node,
+        Box::new(move |_| {
+            let Some(url) = link.borrow().1.clone() else {
+                return Vec::new();
+            };
+            let (open, copy) = (platform.clone(), platform.clone());
+            let opened = url.clone();
+            vec![
+                crate::compose::menu_item("Open Link")
+                    .id("link-open")
+                    .on_click(move || {
+                        if let Some(platform) = &open {
+                            platform.0.open_url(&opened);
+                        }
+                    }),
+                crate::compose::menu_item("Copy Link")
+                    .id("link-copy")
+                    .on_click(move || {
+                        if let Some(platform) = &copy {
+                            platform.0.set_clipboard_text(url.to_string());
+                        }
+                    }),
+            ]
+        }),
+        None,
+        false,
+        environment,
+    );
+}
 pub(crate) fn mount_links(
     ui: &mut crate::widgets::Ui,
     owner: crate::scene::NodeId,
     paragraph: crate::scene::NodeId,
     content: crate::reactive::Signal<Content>,
     hovered: crate::reactive::Signal<Option<usize>>,
+    environment: &crate::compose::Environment,
 ) {
     use crate::{
-        input::{EventPhase, InputEvent},
+        input::{EventPhase, InputEvent, Modifiers, PointerButton},
         scene::{Layout, NodeId, NodeKind, QuadStyle, Rect, Style},
         semantics::{Role, SemanticNode},
     };
@@ -259,9 +324,11 @@ pub(crate) fn mount_links(
     struct Mounted {
         node: NodeId,
         fragments: Rc<RefCell<Vec<NodeId>>>,
-        action: Rc<RefCell<InlineAction>>,
+        action: Rc<RefCell<LinkTarget>>,
         focus: Rc<Cell<bool>>,
         hover: Rc<Cell<bool>>,
+        /// Its Open Link and Copy Link menu is mounted.
+        menu: bool,
         /// Restyled under the pointer: no ring for hover.
         styled: Rc<Cell<bool>>,
     }
@@ -270,6 +337,9 @@ pub(crate) fn mount_links(
     let engine = ui.observe_text_geometry_revision();
     let theme = ui.theme_scope();
     let weak = ui.downgrade();
+    // What opens and copies `href`s: the host's platform, if any.
+    let platform: Option<Rc<crate::platform::PlatformService>> = environment.services.get();
+    let environment = environment.clone();
     let mut mounted: Vec<Mounted> = Vec::new();
     let mut geometry_key = None;
     let mut geometry: Vec<Vec<Rect>> = Vec::new();
@@ -335,8 +405,12 @@ pub(crate) fn mount_links(
                         ..Default::default()
                     },
                 );
+                // A browser's link hand, over each of its fragments too.
+                ui.scene
+                    .borrow_mut()
+                    .set_cursor(node, Some(crate::cursor::Cursor::Pointer));
                 let fragments = Rc::new(RefCell::new(Vec::new()));
-                let action = Rc::new(RefCell::new(link.action.clone()));
+                let action = Rc::new(RefCell::new((link.action.clone(), link.href.clone())));
                 let focus = Rc::new(Cell::new(false));
                 let hover = Rc::new(Cell::new(false));
                 let styled = Rc::new(Cell::new(link.styled_hover));
@@ -350,6 +424,18 @@ pub(crate) fn mount_links(
                 );
                 let weak = ui.downgrade();
                 let ring = theme.clone();
+                let open = platform.clone();
+                // A click's: its own action with the keys held, then its
+                // `href` opened.
+                let activate = move |link: &LinkTarget, held| {
+                    if let Some(action) = &link.0 {
+                        (action.0.borrow_mut())(held);
+                    }
+                    if let (Some(url), Some(platform)) = (&link.1, &open) {
+                        platform.0.open_url(url);
+                    }
+                };
+                let mut middle = false;
                 ui.on_event(node, true, move |cx| {
                     if cx.phase == EventPhase::Capture
                         || (cx.default_prevented()
@@ -365,8 +451,33 @@ pub(crate) fn mount_links(
                     match cx.event {
                         InputEvent::Activate => {
                             cx.stop_propagation();
-                            let action = callback.borrow().clone();
-                            (action.0.borrow_mut())();
+                            let link = callback.borrow().clone();
+                            activate(&link, cx.pointer_modifiers());
+                            return;
+                        }
+                        // A middle click acts as a ⌘-click (Control
+                        // elsewhere), as a browser opens a link in the
+                        // background.
+                        InputEvent::PointerDown {
+                            button: PointerButton::Middle,
+                            ..
+                        } => {
+                            middle = true;
+                            cx.prevent_default();
+                            return;
+                        }
+                        InputEvent::PointerUp {
+                            button: PointerButton::Middle,
+                            ..
+                        } if std::mem::take(&mut middle) => {
+                            let held = Modifiers {
+                                meta: cfg!(target_os = "macos"),
+                                control: !cfg!(target_os = "macos"),
+                                ..cx.pointer_modifiers()
+                            };
+                            let link = callback.borrow().clone();
+                            activate(&link, held);
+                            cx.prevent_default();
                             return;
                         }
                         InputEvent::Focus => focused.set(true),
@@ -420,14 +531,28 @@ pub(crate) fn mount_links(
                     focus,
                     hover,
                     styled,
+                    menu: false,
                 });
             }
             let entry = &mut mounted[index];
             entry.styled.set(link.styled_hover);
-            let old = entry.action.replace(link.action.clone());
+            let old = entry
+                .action
+                .replace((link.action.clone(), link.href.clone()));
             drop(old);
             if !ui.scene.borrow().contains(owner) {
                 return;
+            }
+            // Its context menu, once it has an `href` to open or copy.
+            if !entry.menu && link.href.is_some() {
+                entry.menu = true;
+                mount_link_menu(
+                    &mut ui,
+                    entry.node,
+                    entry.action.clone(),
+                    platform.clone(),
+                    environment.clone(),
+                );
             }
             ui.semantics.borrow_mut().set(
                 entry.node,

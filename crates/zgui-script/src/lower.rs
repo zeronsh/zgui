@@ -3059,6 +3059,7 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
         text: Text,
         style: SpanStyle,
         click: Option<Handler>,
+        href: Option<Arc<str>>,
         icon: Option<crate::node::SpanIcon>,
     }
     #[derive(Clone, Copy)]
@@ -3107,6 +3108,7 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                 hover: s.hover,
             },
             click: s.click.clone(),
+            href: s.href.clone(),
             icon: s.icon.clone(),
         })
         .collect();
@@ -3175,9 +3177,14 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                 }
                 if let Some(handler) = &span.click {
                     let (handler, vm, actions) = (handler.clone(), vm.clone(), actions.clone());
-                    out = out.on_click(move || {
-                        run(&handler, &vm, &actions, ());
+                    // Told the keys held, as an element's `on_click` is.
+                    out = out.on_click_with(move |held| {
+                        let keys = modifiers_table(&vm.lua, held).ok();
+                        run(&handler, &vm, &actions, keys);
                     });
+                }
+                if let Some(href) = &span.href {
+                    out = out.href(href.clone());
                 }
                 if let Some(icon) = &span.icon {
                     // Tracked: a remote icon shows once it comes.

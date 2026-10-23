@@ -829,6 +829,43 @@ fn clicks_and_presses_carry_the_keys_held() {
 }
 
 #[test]
+fn a_span_with_an_href_is_a_link_and_its_click_carries_the_keys_held() {
+    use zgui::{
+        input::{InputEvent, Modifiers, PointerButton},
+        semantics::Role,
+    };
+    let mut h = Harness::inline(
+        r##"local seen = ui.state("seen", "")
+        return ui.column { w = 300,
+            ui.rich { ui.span { "docs", literal = true, href = "https://example.org",
+                on_click = function(e)
+                    seen:set(seen:peek() .. (if e.meta or e.ctrl then "C" else "c"))
+                end } },
+            ui.text { "{seen}", id = "seen" } }"##,
+    );
+    h.frames(2);
+    let link = {
+        let semantics = h.ui.semantics.borrow();
+        let links: Vec<_> = semantics
+            .iter()
+            .filter(|(_, s)| s.role == Role::Link)
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(links.len(), 1);
+        links[0]
+    };
+    let b = h.ui.scene.borrow().bounds(link);
+    let (x, y) = (b.x + b.width / 2., b.y + b.height / 2.);
+    for button in [PointerButton::Primary, PointerButton::Middle] {
+        let held = Modifiers::default();
+        h.ui.dispatch_with_modifiers(InputEvent::PointerDown { x, y, button }, held);
+        h.ui.dispatch_with_modifiers(InputEvent::PointerUp { x, y, button }, held);
+    }
+    h.frames(1);
+    assert_eq!(h.text("seen"), "cC", "a middle click is a ⌘-click");
+}
+
+#[test]
 fn cleanups_run_when_a_component_unmounts() {
     let mut h = Harness::inline(
         r##"local shown = ui.state("shown", true)

@@ -798,6 +798,8 @@ pub(crate) struct Span {
     pub padding: [f32; 2],
     pub radius: f32,
     pub click: Option<Handler>,
+    /// Where it links (`href = "https://…"`): a click opens it.
+    pub href: Option<std::sync::Arc<str>>,
     /// How far below the baseline its underline sits.
     pub underline_offset: Option<f32>,
     /// A link's look under the pointer: underlined, and its colour.
@@ -2090,7 +2092,8 @@ fn label(table: &Table) -> mlua::Result<String> {
     Ok(table.get::<Option<String>>("label")?.unwrap_or_default())
 }
 
-/// `ui.span { "text", bold = true, color = "#f80", on_click = fn }`.
+/// `ui.span { "text", bold = true, color = "#f80", on_click = fn }`;
+/// `href = "https://…"` makes it a link that opens it.
 fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
     let (content, table) = match arg {
         mlua::Value::Table(t) => (t.get::<mlua::Value>(1)?, Some(t)),
@@ -2113,6 +2116,7 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         padding: [0.; 2],
         radius: 0.,
         click: None,
+        href: None,
         underline_offset: None,
         hover: None,
         icon: None,
@@ -2171,6 +2175,7 @@ fn span(lua: &Lua, arg: mlua::Value, literal: bool) -> mlua::Result<Span> {
         if let Some(h) = t.get::<Option<mlua::Value>>("on_click")? {
             span.click = Some(handler(h)?);
         }
+        span.href = t.get::<Option<String>>("href")?.map(Into::into);
     }
     Ok(span)
 }
