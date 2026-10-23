@@ -43,7 +43,7 @@ impl View {
     }
     /// Styles for the context menu's panel, over a menu's defaults.
     pub fn context_menu_style(mut self, styles: Styles) -> Self {
-        self.context_menu_style = Some(styles);
+        self.context_menu_style = Some(Box::new(styles));
         self
     }
 }

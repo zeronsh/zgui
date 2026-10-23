@@ -296,7 +296,9 @@ pub struct View {
     keymap: crate::actions::Keymap,
     pub(crate) drag_preview: Option<crate::compose_drag::PreviewBuilder>,
     pub(crate) context_menu: Option<crate::compose_context_menu::ContextMenuBuilder>,
-    pub(crate) context_menu_style: Option<Styles>,
+    /// Boxed: a `Styles` is 432 bytes, and every view carries this field
+    /// through each builder call.
+    pub(crate) context_menu_style: Option<Box<Styles>>,
     pub(crate) context_menu_below: Option<bool>,
     focusable: Option<bool>,
     /// Whether the pointer stops at the view (`pointer_events`), followed.
@@ -2546,7 +2548,7 @@ fn mount_element(
             .then(|| crate::selection::context_menu(ui, root, environment.services.get()))
     });
     if let Some(build) = context_menu {
-        let style = view.context_menu_style.take();
+        let style = view.context_menu_style.take().map(|style| *style);
         let below = view.context_menu_below.unwrap_or(false);
         crate::compose_context_menu::mount(ui, root, build, style, below, environment.clone());
     }
