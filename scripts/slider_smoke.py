@@ -95,6 +95,9 @@ def main():
             if time.monotonic() >= deadline:
                 raise AssertionError("native screenshot has no visible window")
             time.sleep(.1)
+        # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+        # own timer, which a quick run would wait out.
+        xdo("windowactivate", "--sync", window, "key", "alt+F4")
         output, _ = app.communicate(timeout=15)
         (args.output / "slider.log").write_text(output)
         if app.returncode:

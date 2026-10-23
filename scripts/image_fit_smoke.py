@@ -101,6 +101,9 @@ def main():
                     path = args.output / f"image-fit-{index}.png"
                     subprocess.run(["import", "-window", window, str(path)], env=env, check=True, timeout=10)
                     checks.append(check_pixels(Image.open(path).convert("RGB"), width, mode))
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo("windowactivate", "--sync", window, "key", "alt+F4")
                 app.wait(timeout=16)
             output = (args.output / "image-fit.log").read_text()
             assert app.returncode == 0, output

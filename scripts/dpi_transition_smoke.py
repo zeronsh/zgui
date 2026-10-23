@@ -110,6 +110,9 @@ def main():
                     click(60, 125)
                     stages.append({"stage": stage, "scale": scale, "output": state,
                                    "screenshot_size": picture.size, "editor_fill_pixel_width": len(fill)})
+                # Closed as a user closes it (sway asks it to), not by the
+                # app's own timer, which a quick run would wait out.
+                subprocess.run(["swaymsg", f"[pid={app.pid}] kill"], env=env, capture_output=True)
                 app.wait(timeout=18)
             if app.returncode:
                 raise RuntimeError((args.output / "protocol.log").read_text()[-4000:])

@@ -114,10 +114,10 @@ SMOKES = [
 COST = {
     "editor-selection": 24,
     "effects": 21, "native-ime": 19, "external-ime": 12, "readonly-ime": 12,
-    "wayland-ime": 8, "component-host": 20, "gallery": 20,
+    "wayland-ime": 8,
     "native-menus": 12, "native-menus-wayland": 12,
-    "live-dpi": 15, "image-fit": 15, "wayland-input": 13,
-    "percent-sizes": 13, "wrapped-editor": 13, "clipboard-shutdown": 3, "host-suspend": 3,
+    "wayland-input": 13,
+    "clipboard-shutdown": 3, "host-suspend": 3,
 }
 
 

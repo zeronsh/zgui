@@ -81,6 +81,9 @@ def main():
         click(220,90)
         click(500,90)  # Increase viewport height, reducing maximum offset.
         report(5,240,8)
+        # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+        # own timer, which a quick run would wait out.
+        xdo("windowactivate", "--sync", window, "key", "alt+F4")
         output, _ = app.communicate(timeout=15)
         (args.output / "scroll.log").write_text(output)
         if app.returncode:

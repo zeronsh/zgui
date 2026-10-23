@@ -68,6 +68,9 @@ def main():
         if args.screenshot:
             from PIL import ImageGrab
             ImageGrab.grab(xdisplay=args.display).save(args.screenshot)
+        # Closed as a user closes it (Alt+F4 to the window manager), not by
+        # the app's own timer; it prints what it holds as it closes.
+        xdo("windowactivate", "--sync", window, "key", "alt+F4")
         output, _ = proc.communicate(timeout=25)
         if proc.returncode:
             raise RuntimeError(output)

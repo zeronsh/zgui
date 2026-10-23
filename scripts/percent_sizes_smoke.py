@@ -76,6 +76,9 @@ def main():
                     assert image.size == (width, height), image.size
                     assert image.getpixel((40, height - 35)) == (32, 48, 80)
                     assert image.getpixel((width // 2 + 20, height - 35)) == (40, 59, 50)
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo("windowactivate", "--sync", window, "key", "alt+F4")
                 app.wait(timeout=16)
             output = (args.output / "percent-sizes.log").read_text()
             assert app.returncode == 0, output
