@@ -398,11 +398,11 @@ The `ui.tween(state, opts)`, `ui.spring(state, opts)` and `ui.loop(opts)` bindin
 
 | | per frame |
 | --- | --- |
-| Luau + anime engine | about 106 µs |
-| The same motion in Rust, a signal and reactive style per element | about 217 µs |
-| The same values written straight to the scene (no engine) | about 123 µs |
+| Luau + anime engine | about 90 µs |
+| The same motion in Rust, a signal and reactive style per element | about 240 µs |
+| The same values written straight to the scene (no engine) | about 120 µs |
 
-Writing to the scene directly is the floor for the work itself; the engine is below it because it skips values that did not change. What remains is the scene's own invalidation.
+Writing to the scene directly is the floor for the work itself; the engine is below it because it skips values that did not change and writes a moving, fading element's translation and opacity together, damaging each look once. What remains is the scene's own invalidation.
 
 `script_layout_bench` (`cargo run --release -p zgui-script --example script_layout_bench`) reverses 1,000 rows of three heights in a scroll view (same machine, release, mean of 20):
 
