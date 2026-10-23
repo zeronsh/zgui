@@ -108,22 +108,6 @@ pub(crate) fn sync(ui: &zgui::widgets::Ui) {
     read_wheel();
 }
 
-#[cfg(test)]
-mod tests {
-    use super::step;
-
-    #[test]
-    fn a_wheel_step_is_a_browsers_line_or_the_users_lines_or_a_page() {
-        assert_eq!(step(None, 600.), 40.);
-        // Windows: three lines a notch, the default, scroll 100.
-        assert_eq!(step(Some(3), 600.), 100.);
-        assert_eq!(step(Some(6), 600.), 200.);
-        assert_eq!(step(Some(0), 600.), 0.);
-        // "One screen at a time" (WHEEL_PAGESCROLL).
-        assert_eq!(step(Some(u32::MAX), 600.), 525.);
-    }
-}
-
 /// macOS's scroll bar style changed since the last call ("Show scroll bars",
 /// or a mouse plugged in under "Automatically"): the host syncs every window
 /// then. The first call starts listening.
@@ -157,5 +141,21 @@ pub(crate) fn style_changed() -> bool {
     #[cfg(not(target_os = "macos"))]
     {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step;
+
+    #[test]
+    fn a_wheel_step_is_a_browsers_line_or_the_users_lines_or_a_page() {
+        assert_eq!(step(None, 600.), 40.);
+        // Windows: three lines a notch, the default, scroll 100.
+        assert_eq!(step(Some(3), 600.), 100.);
+        assert_eq!(step(Some(6), 600.), 200.);
+        assert_eq!(step(Some(0), 600.), 0.);
+        // "One screen at a time" (WHEEL_PAGESCROLL).
+        assert_eq!(step(Some(u32::MAX), 600.), 525.);
     }
 }
