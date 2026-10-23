@@ -33,19 +33,28 @@ use zgui::{
 };
 use zgui_gpu::{GpuContext, GpuRenderer};
 
+/// How a window is made: its title, size, chrome and placement.
 #[derive(Clone, Debug)]
 pub struct WindowOptions {
+    /// The title in its title bar, window menu and accessibility tree.
     pub title: String,
+    /// Logical client width.
     pub width: f64,
+    /// Logical client height.
     pub height: f64,
+    /// Whether the window is transparent where zgui paints nothing.
     pub transparent: bool,
+    /// Whether the person can resize it.
     pub resizable: bool,
+    /// Whether it has the platform's title bar and frame.
     pub decorations: bool,
+    /// Whether it opens fullscreen.
     pub fullscreen: bool,
     /// Logical minimum client size.
     pub min_size: Option<(f64, f64)>,
     /// Initial physical bounds. Placement remains compositor policy on Wayland.
     pub bounds: Option<crate::WindowBounds>,
+    /// The display it opens on; `None` lets the platform choose.
     pub display: Option<crate::DisplaySelector>,
     /// Upper bound on animation frames per second (see [`zgui::frame`]), for
     /// example to save power. Input-driven redraws are not limited. `None`
@@ -190,6 +199,8 @@ impl From<accesskit_winit::Event> for Event {
     }
 }
 type FutureTask = Pin<Box<dyn Future<Output = ()>>>;
+/// Runs futures on a window's UI thread. Clones share the queue; spawning
+/// does nothing once the window has closed.
 #[derive(Clone)]
 pub struct TaskSpawner {
     pending: Rc<RefCell<VecDeque<FutureTask>>>,
@@ -215,6 +226,8 @@ impl TaskSpawner {
         self.spawn(task);
         guard
     }
+    /// Run `future` on the UI thread until it finishes or the window closes.
+    /// Use [`TaskSpawner::spawn_scoped`] for a task that a view can cancel.
     pub fn spawn(&self, future: impl Future<Output = ()> + 'static) {
         if self.closed.load(Ordering::Acquire) {
             return;
@@ -231,14 +244,17 @@ pub struct WindowHandle {
     closed: Arc<AtomicBool>,
 }
 impl WindowHandle {
+    /// Move and resize the window. A zero width or height is ignored.
     pub fn set_bounds(&self, bounds: crate::WindowBounds) {
         if bounds.size.0 > 0 && bounds.size.1 > 0 {
             self.command(WindowCommand::Bounds(bounds));
         }
     }
+    /// Enter or leave fullscreen.
     pub fn set_fullscreen(&self, fullscreen: bool) {
         self.command(WindowCommand::Fullscreen(fullscreen));
     }
+    /// Show or hide the platform's title bar and frame.
     pub fn set_decorations(&self, decorations: bool) {
         self.command(WindowCommand::Decorations(decorations));
     }
@@ -248,6 +264,8 @@ impl WindowHandle {
     pub fn set_pointer_passthrough(&self, passthrough: bool) {
         self.command(WindowCommand::PointerPassthrough(passthrough));
     }
+    /// The smallest logical client size the person can resize to; `None`
+    /// removes the limit. A size that isn't finite and positive is ignored.
     pub fn set_min_inner_size(&self, size: Option<(f64, f64)>) {
         if size.is_none_or(|(w, h)| valid_window_size(w, h)) {
             self.command(WindowCommand::MinSize(size));
@@ -258,6 +276,8 @@ impl WindowHandle {
     pub fn drag_window(&self) {
         self.command(WindowCommand::Drag);
     }
+    /// Read the window's bounds, displays and capabilities into
+    /// [`crate::WindowInfo`] again.
     pub fn refresh_window_info(&self) {
         self.command(WindowCommand::RefreshInfo);
     }
@@ -330,6 +350,7 @@ impl WindowHandle {
             let _ = self.proxy.send_event(Event::Close(self.token));
         }
     }
+    /// Whether the window has closed; a closed handle ignores every request.
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
     }
@@ -393,6 +414,7 @@ impl WindowFactory {
             .send_event(Event::MenusChanged)
             .map_err(|_| crate::AppMenuError("application event loop is closed".into()))
     }
+    /// The application menu model, as last set.
     pub fn menus(&self) -> Vec<crate::AppMenu> {
         self.menus.borrow().clone()
     }
@@ -426,6 +448,9 @@ impl WindowFactory {
             closed: Arc::new(AtomicBool::new(false)),
         }
     }
+    /// Open a window with `options`; `build` mounts its content once the
+    /// native window exists. On a closed application the handle is already
+    /// closed.
     pub fn open(
         &self,
         options: WindowOptions,
@@ -446,13 +471,21 @@ impl WindowFactory {
         handle
     }
 }
+/// What a window's content is built with: its UI, its native services and
+/// handles to it and the application.
 pub struct WindowContext {
+    /// The window's native file dialogs and prompts.
     pub dialogs: crate::FileDialogs,
+    /// The window's bounds, displays and capabilities, kept current.
     pub window_info: crate::WindowInfo,
     menu_model: Signal<Vec<crate::AppMenu>>,
+    /// The window's UI: its scene, input and reactive runtime.
     pub ui: Ui,
+    /// Runs futures on the window's UI thread.
     pub tasks: TaskSpawner,
+    /// This window.
     pub window: WindowHandle,
+    /// Opens other windows and holds the application menu.
     pub windows: WindowFactory,
     /// Logical viewport dimensions; reactive layouts update on resize and scale changes.
     pub viewport: Signal<(f32, f32)>,
@@ -490,6 +523,8 @@ impl WindowContext {
             },
         )
     }
+    /// Ask for a file to open, then call `callback` with it. Dropping the
+    /// returned task cancels the delivery.
     pub fn prompt_open_file(
         &self,
         options: crate::FileDialogOptions,
@@ -500,6 +535,8 @@ impl WindowContext {
             callback(dialogs.open_file(options).await);
         })
     }
+    /// Ask for a destination to save to, then call `callback` with it. Nothing
+    /// is written. Dropping the returned task cancels the delivery.
     pub fn prompt_save_file(
         &self,
         options: crate::FileDialogOptions,
@@ -510,6 +547,8 @@ impl WindowContext {
             callback(dialogs.save_file(options).await);
         })
     }
+    /// Ask for a folder, then call `callback` with it. Dropping the returned
+    /// task cancels the delivery.
     pub fn prompt_open_folder(
         &self,
         options: crate::FileDialogOptions,
@@ -567,6 +606,8 @@ impl WindowContext {
         self.closed = Some(Box::new(handler));
     }
 }
+/// A desktop application: its fonts, first window, menus and native
+/// events. [`Application::run`] starts the event loop.
 pub struct Application {
     fonts: Vec<zgui_gpu::text::FontData>,
     options: WindowOptions,
@@ -577,6 +618,8 @@ pub struct Application {
 }
 type ApplicationEventHandler = Box<dyn FnMut(crate::ApplicationEvent, &WindowFactory)>;
 impl Application {
+    /// An application with the default window, no menus and no application
+    /// ID, which quits when its last window closes.
     pub fn new() -> Self {
         Self {
             fonts: Vec::new(),
@@ -592,10 +635,12 @@ impl Application {
         self.fonts.push(font);
         self
     }
+    /// The first window's options.
     pub fn window(mut self, options: WindowOptions) -> Self {
         self.options = options;
         self
     }
+    /// The application menu (validated now), for every window.
     pub fn menus(mut self, menus: Vec<crate::AppMenu>) -> Result<Self, crate::AppMenuError> {
         crate::app_menu::validate(&menus)?;
         self.menus = menus;
@@ -614,6 +659,8 @@ impl Application {
         self.application_id = Some(id);
         Ok(self)
     }
+    /// Call `handler` for each URL or reopen request the system delivers
+    /// (requires [`Application::application_id`]).
     pub fn on_application_event(
         mut self,
         handler: impl FnMut(crate::ApplicationEvent, &WindowFactory) + 'static,
@@ -627,6 +674,8 @@ impl Application {
         self.quit_on_last_window_close = quit;
         self
     }
+    /// Run the event loop: open the first window, `build` its content, and
+    /// return once the application quits.
     pub fn run(self, build: impl FnOnce(&mut WindowContext)) -> Result<(), Box<dyn Error>> {
         let event_loop = EventLoop::<Event>::with_user_event().build()?;
         let proxy = event_loop.create_proxy();

@@ -19,6 +19,7 @@
 //!     })
 //! }
 //! ```
+#![warn(missing_docs)]
 pub mod app_menu;
 mod clipboard;
 pub mod file_dialog;

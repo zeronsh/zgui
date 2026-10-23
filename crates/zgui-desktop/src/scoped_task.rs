@@ -34,9 +34,11 @@ pub struct ScopedTask {
     state: Rc<RefCell<State>>,
 }
 impl ScopedTask {
+    /// Cancel the task now: it won't be polled again and its future is dropped.
     pub fn cancel(&self) {
         cancel(&self.state);
     }
+    /// Whether the task has finished or been cancelled.
     pub fn is_finished(&self) -> bool {
         self.state.borrow().finished
     }

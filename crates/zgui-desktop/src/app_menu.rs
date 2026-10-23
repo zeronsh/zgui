@@ -20,9 +20,11 @@ impl From<String> for MenuAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuAccelerator(pub zgui::actions::Keystroke);
 impl MenuAccelerator {
+    /// `key` with `modifiers`.
     pub fn new(key: zgui::input::Key, modifiers: zgui::input::Modifiers) -> Self {
         Self(zgui::actions::Keystroke::new(key, modifiers))
     }
+    /// `key` with the platform's command modifier: ⌘ on macOS, Ctrl elsewhere.
     pub fn primary(key: zgui::input::Key) -> Self {
         Self::new(
             key,
@@ -71,16 +73,22 @@ impl MenuAccelerator {
         parts.push(key);
         Ok(parts.join("+"))
     }
+    /// The shortcut as a menu shows it (`Super+Shift+Z`), or empty if it can't
+    /// be one.
     pub fn label(&self) -> String {
         self.name().unwrap_or_default()
     }
 }
+/// A menu: a top-level menu in the menu bar, or a submenu.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppMenu {
+    /// The title it shows.
     pub label: String,
+    /// Its items, in order.
     pub entries: Vec<AppMenuEntry>,
 }
 impl AppMenu {
+    /// A menu titled `label` holding `entries`.
     pub fn new(label: impl Into<String>, entries: impl IntoIterator<Item = AppMenuEntry>) -> Self {
         Self {
             label: label.into(),
@@ -100,14 +108,21 @@ impl AppMenu {
 /// app as that action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StandardItem {
+    /// Undoes the last edit.
     Undo,
+    /// Redoes the last undone edit.
     Redo,
+    /// Cuts the selection to the clipboard.
     Cut,
+    /// Copies the selection to the clipboard.
     Copy,
+    /// Pastes the clipboard.
     Paste,
+    /// Selects everything in the focused view.
     SelectAll,
 }
 impl StandardItem {
+    /// Its title, as the menu shows it.
     pub fn label(self) -> &'static str {
         match self {
             Self::Undo => "Undo",
@@ -138,20 +153,33 @@ impl StandardItem {
     }
 }
 
+/// One entry of an [`AppMenu`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppMenuEntry {
+    /// A command that dispatches `action` when chosen.
     Item {
+        /// The title it shows.
         label: String,
+        /// What it dispatches to the focused window.
         action: MenuAction,
+        /// Whether it can be chosen; a disabled item shows dimmed.
         enabled: bool,
+        /// A check mark: `Some(true)` checked, `Some(false)` checkable but not
+        /// checked, `None` not a toggle.
         checked: Option<bool>,
+        /// Its keyboard shortcut.
         accelerator: Option<MenuAccelerator>,
     },
+    /// A nested menu.
     Submenu(AppMenu),
+    /// A divider between groups of entries.
     Separator,
+    /// An edit command the platform implements (see [`StandardItem`]).
     Standard(StandardItem),
 }
 impl AppMenuEntry {
+    /// An enabled item titled `label` that dispatches `action`, unchecked and
+    /// without a shortcut.
     pub fn item(label: impl Into<String>, action: impl Into<MenuAction>) -> Self {
         Self::Item {
             label: label.into(),
@@ -161,12 +189,15 @@ impl AppMenuEntry {
             accelerator: None,
         }
     }
+    /// The item with a check mark, shown when `checked` (see `Item::checked`).
+    /// Other entries are unchanged.
     pub fn checked(mut self, checked: bool) -> Self {
         if let Self::Item { checked: value, .. } = &mut self {
             *value = Some(checked)
         }
         self
     }
+    /// The item with the shortcut `accelerator`. Other entries are unchanged.
     pub fn accelerator(mut self, accelerator: MenuAccelerator) -> Self {
         if let Self::Item {
             accelerator: value, ..
@@ -176,6 +207,7 @@ impl AppMenuEntry {
         }
         self
     }
+    /// The item enabled or disabled. Other entries are unchanged.
     pub fn enabled(mut self, enabled: bool) -> Self {
         if let Self::Item { enabled: value, .. } = &mut self {
             *value = enabled;
@@ -183,6 +215,7 @@ impl AppMenuEntry {
         self
     }
 }
+/// Why a menu model or menu request was rejected, in words.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppMenuError(pub String);
 impl fmt::Display for AppMenuError {

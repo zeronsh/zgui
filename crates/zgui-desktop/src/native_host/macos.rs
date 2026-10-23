@@ -1302,8 +1302,11 @@ pub struct NativeDiagnostics(Rc<RefCell<Weak<RefCell<Shared>>>>);
 /// A native view as AppKit has it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeViewReport {
+    /// The scene node it shows.
     pub node: NodeId,
+    /// Whether AppKit hides it.
     pub hidden: bool,
+    /// Its outermost cut's opacity.
     pub alpha: f64,
     /// The native view's frame in the window.
     pub frame: Option<Rect>,
@@ -1313,16 +1316,22 @@ pub struct NativeViewReport {
     /// Its outermost cut's subview index in the content view (paint order).
     pub index: usize,
 }
+/// A backdrop blur's view as AppKit has it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackdropReport {
+    /// Whether AppKit hides it.
     pub hidden: bool,
+    /// Its frame in the window.
     pub frame: Rect,
+    /// Its opacity.
     pub alpha: f64,
     /// Its layer's corner radius (-1: a shape mask).
     pub corner_radius: f64,
     /// Masks of the cuts around it (its ancestors' clips), in the window.
     pub masks: Vec<(Rect, f64)>,
+    /// Its outermost cut's subview index in the content view (paint order).
     pub index: usize,
+    /// Its AppKit class.
     pub class: String,
     /// The blur's radius, as its filter holds it.
     pub blur: Option<f64>,
@@ -1359,6 +1368,7 @@ impl NativeDiagnostics {
         let shared = shared.borrow();
         Some(f(&shared))
     }
+    /// Each native view the window shows, in mount order.
     pub fn natives(&self) -> Vec<NativeViewReport> {
         self.with(|shared| {
             let parent = shared.parent.as_ref().unwrap();
@@ -1379,6 +1389,7 @@ impl NativeDiagnostics {
         })
         .unwrap_or_default()
     }
+    /// Each backdrop blur the window shows.
     pub fn backdrops(&self) -> Vec<BackdropReport> {
         self.with(|shared| {
             let parent = shared.parent.as_ref().unwrap();

@@ -31,6 +31,7 @@ pub enum Titlebar {
 /// transparent where zgui paints nothing (or translucent colour).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Glass {
+    /// The blur's material.
     pub material: GlassMaterial,
     /// Only the blur: no tint from the desktop, no saturation boost, a
     /// 60-point gaussian, as gpui's `BlurredView` (for apps laying their own
@@ -38,6 +39,7 @@ pub struct Glass {
     pub plain: bool,
 }
 impl Glass {
+    /// Glass of `material`, tinted and saturated as the platform's is.
     pub fn new(material: GlassMaterial) -> Self {
         Self {
             material,
@@ -63,17 +65,29 @@ pub enum GlassMaterial {
     Hud,
     /// The colourless material under a window's own background.
     UnderWindowBackground,
+    /// The material behind a page's content.
     UnderPageBackground,
+    /// A window's background.
     WindowBackground,
+    /// The background of a window's content.
     ContentBackground,
+    /// A title bar's.
     Titlebar,
+    /// A header view's, as a table's column headers.
     HeaderView,
+    /// A sidebar's.
     Sidebar,
+    /// A menu's.
     Menu,
+    /// A popover's.
     Popover,
+    /// A sheet's.
     Sheet,
+    /// A tooltip's.
     ToolTip,
+    /// A fullscreen window's controls.
     FullScreenUi,
+    /// The selection's highlight.
     Selection,
 }
 impl GlassMaterial {

@@ -1,9 +1,13 @@
 //! Delegation to the user's registered URL handler without blocking the UI.
 use std::{fmt, io};
+/// Why a URL could not be handed to its handler.
 #[derive(Debug)]
 pub enum OpenUrlError {
+    /// The URL has no valid scheme, or holds control characters.
     InvalidUrl,
+    /// The system's URL launcher failed.
     Launcher(io::Error),
+    /// The background worker that launches URLs is gone.
     WorkerUnavailable,
 }
 impl fmt::Display for OpenUrlError {

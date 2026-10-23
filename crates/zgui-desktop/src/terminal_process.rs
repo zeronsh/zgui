@@ -10,6 +10,7 @@ use std::cell::{Cell, RefCell};
 pub struct ForegroundProcess {
     /// As it presents itself (`claude`, `vim`, `zsh`).
     pub name: String,
+    /// Its process ID.
     pub pid: u32,
     /// At rest: the session's shell itself is in front, nothing running in
     /// it that closing would end.

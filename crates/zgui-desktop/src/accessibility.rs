@@ -7,6 +7,8 @@ use zgui::{
     semantics::{Live, Role, ScrollAxis, SemanticRevision, Semantics},
 };
 
+/// Projects a scene's semantics into AccessKit tree updates, keeping each
+/// node's accessible ID for as long as the node lives.
 #[derive(Default)]
 pub struct AccessibilityTree {
     ids: HashMap<NodeId, AccessibleId>,
@@ -20,6 +22,7 @@ pub struct AccessibilityTree {
     blocks: HashSet<NodeId>,
 }
 impl AccessibilityTree {
+    /// An empty tree: the first update is a complete snapshot.
     pub fn new() -> Self {
         Self::default()
     }
@@ -34,6 +37,7 @@ impl AccessibilityTree {
             AccessibleId(self.next)
         })
     }
+    /// The scene node an accessible ID stands for, if it is still mounted.
     pub fn scene_node(&self, id: AccessibleId) -> Option<NodeId> {
         self.ids
             .iter()
@@ -76,6 +80,9 @@ impl AccessibilityTree {
         let ids = self.text_runs.get(&owner)?;
         Some(run_position(ids, &self.text_positions, byte))
     }
+    /// What changed in the accessible tree since the last update: nodes whose
+    /// semantics changed, and the focus. `title` names the window and `scale`
+    /// converts its logical bounds to physical pixels.
     pub fn update(
         &mut self,
         scene: &Scene,

@@ -10,16 +10,20 @@ use zgui::{reactive::Signal, widgets::Ui};
 /// when the compositor does not expose global window placement (notably Wayland).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowBounds {
+    /// The window's outer top-left corner in physical desktop coordinates.
     pub position: Option<(i32, i32)>,
+    /// The client area's physical width and height.
     pub size: (u32, u32),
 }
 impl WindowBounds {
+    /// A `width` by `height` window, placed by the platform.
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             position: None,
             size: (width, height),
         }
     }
+    /// Placed with its top-left corner at `x`, `y`.
     pub fn at(mut self, x: i32, y: i32) -> Self {
         self.position = Some((x, y));
         self
@@ -32,38 +36,62 @@ impl WindowBounds {
         }
     }
 }
+/// Which display a window opens on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DisplaySelector {
+    /// The primary display.
     Primary,
+    /// The display at this index in [`WindowInfo::displays`].
     Index(usize),
+    /// The display with this name.
     Name(String),
 }
+/// A display's geometry and scale, as the platform reports it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisplayInfo {
+    /// Its index in [`WindowInfo::displays`].
     pub index: usize,
+    /// Its name, when the platform gives one.
     pub name: Option<String>,
+    /// Its top-left corner in physical desktop coordinates.
     pub position: (i32, i32),
+    /// Its physical width and height.
     pub size: (u32, u32),
+    /// Physical pixels per logical point.
     pub scale_factor: f64,
     /// Refresh rate in hertz, when the platform reports it. Variable-rate
     /// displays report their maximum.
     pub refresh_rate_hz: Option<f64>,
+    /// Whether it is the primary display.
     pub primary: bool,
 }
+/// What this platform lets a window do, so an app can offer only what works.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WindowCapabilities {
+    /// The window's position on the desktop can be read (not on Wayland).
     pub global_position: bool,
+    /// The window can be placed at an explicit position.
     pub placement: bool,
+    /// [`crate::WindowHandle::drag_window`] can start a native move.
     pub interactive_drag: bool,
+    /// The window can enter native fullscreen.
     pub native_fullscreen: bool,
 }
+/// A window's geometry and state, kept current as signals: reading one in
+/// a view updates it when the window moves, resizes or changes display.
 #[derive(Clone)]
 pub struct WindowInfo {
+    /// Whether the native window exists; the rest is meaningful once it does.
     pub ready: Signal<bool>,
+    /// Its bounds.
     pub bounds: Signal<WindowBounds>,
+    /// Whether it is fullscreen.
     pub fullscreen: Signal<bool>,
+    /// The displays connected.
     pub displays: Signal<Vec<DisplayInfo>>,
+    /// The index in `displays` of the one it is on, when known.
     pub current_display: Signal<Option<usize>>,
+    /// What the platform lets it do.
     pub capabilities: Signal<WindowCapabilities>,
     /// The most recent rejected explicit placement/drag request, if any.
     pub last_request_error: Signal<Option<String>>,

@@ -1,10 +1,15 @@
 //! Owned operating-system application activation and open-URL callbacks.
 use std::{fmt, sync::Arc};
+/// What the operating system asks of the application as a whole.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApplicationEvent {
+    /// Open these URLs.
     OpenUrls(Vec<String>),
+    /// Show a window again: the dock icon was clicked or the app relaunched.
     Reopen,
 }
+/// Why native application events could not be registered (an invalid
+/// application ID, or the platform refused).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationEventError(pub String);
 impl fmt::Display for ApplicationEventError {

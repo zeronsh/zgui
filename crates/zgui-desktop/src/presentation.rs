@@ -1,6 +1,8 @@
 //! Repair only regions changed since a recycled window buffer was last presented.
 use std::{collections::VecDeque, num::NonZeroU32};
 use zgui::scene::Rect;
+/// Which regions of each recycled window buffer are out of date, from the
+/// damage of the frames presented since it was last drawn.
 #[derive(Default)]
 pub struct Presentation {
     history: VecDeque<Vec<Rect>>,

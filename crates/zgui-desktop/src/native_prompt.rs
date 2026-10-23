@@ -3,37 +3,58 @@ use crate::FileDialogError;
 use std::sync::Arc;
 use winit::window::Window;
 
+/// How serious a prompt is: it chooses the prompt's icon.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PromptLevel {
+    /// Information.
     #[default]
     Info,
+    /// A warning.
     Warning,
+    /// An error.
     Error,
 }
+/// Which buttons a prompt offers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PromptButtons {
+    /// OK alone.
     #[default]
     Ok,
+    /// OK and Cancel.
     OkCancel,
+    /// Yes and No.
     YesNo,
+    /// Yes, No and Cancel.
     YesNoCancel,
 }
+/// The button a prompt was answered with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptResponse {
+    /// OK.
     Ok,
+    /// Cancel.
     Cancel,
+    /// Yes.
     Yes,
+    /// No.
     No,
+    /// A button the platform labelled otherwise, by its label.
     Custom(String),
 }
+/// A native prompt's text, level and buttons.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PromptOptions {
+    /// Its heading.
     pub title: String,
+    /// Its message, under the heading.
     pub description: String,
+    /// How serious it is.
     pub level: PromptLevel,
+    /// The buttons it offers.
     pub buttons: PromptButtons,
 }
 impl PromptOptions {
+    /// An informational prompt with OK alone.
     pub fn new(title: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             title: title.into(),
@@ -41,10 +62,12 @@ impl PromptOptions {
             ..Self::default()
         }
     }
+    /// Offer `buttons`.
     pub fn buttons(mut self, buttons: PromptButtons) -> Self {
         self.buttons = buttons;
         self
     }
+    /// At `level`.
     pub fn level(mut self, level: PromptLevel) -> Self {
         self.level = level;
         self

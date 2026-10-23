@@ -17,10 +17,13 @@ use winit::window::Window;
 /// An extension filter, without a leading dot (for example `png` or `rs`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileFilter {
+    /// What the picker calls the filter (`Images`).
     pub name: String,
+    /// The extensions it accepts.
     pub extensions: Vec<String>,
 }
 impl FileFilter {
+    /// A filter called `name` accepting `extensions`.
     pub fn new(
         name: impl Into<String>,
         extensions: impl IntoIterator<Item = impl Into<String>>,
@@ -35,26 +38,34 @@ impl FileFilter {
 /// Filters affect files only; extension/overwrite behavior follows the native dialog.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileDialogOptions {
+    /// The dialog's title.
     pub title: String,
+    /// The folder it starts in.
     pub directory: Option<PathBuf>,
+    /// The file name a save dialog suggests.
     pub file_name: Option<String>,
+    /// Which files can be chosen; none means any.
     pub filters: Vec<FileFilter>,
 }
 impl FileDialogOptions {
+    /// Options titled `title`, with no starting folder, name or filters.
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
             ..Self::default()
         }
     }
+    /// Start in `directory`.
     pub fn directory(mut self, directory: impl Into<PathBuf>) -> Self {
         self.directory = Some(directory.into());
         self
     }
+    /// Suggest `file_name` for saving.
     pub fn file_name(mut self, file_name: impl Into<String>) -> Self {
         self.file_name = Some(file_name.into());
         self
     }
+    /// Add `filter`.
     pub fn filter(mut self, filter: FileFilter) -> Self {
         self.filters.push(filter);
         self
@@ -75,12 +86,15 @@ impl FileDialogOptions {
         Ok(())
     }
 }
+/// Why a native dialog or prompt could not be shown or answered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileDialogError {
     /// The owning window has closed.
     WindowClosed,
     /// The native window is not created yet, or is currently suspended.
     WindowUnavailable,
+    /// A title, file name or filter holds a NUL, or a filter's extension is
+    /// empty, has a path separator or starts with a dot.
     InvalidOptions,
     /// The native worker could not be started or terminated unexpectedly.
     BackendUnavailable,
@@ -212,21 +226,25 @@ impl FileDialogs {
         }
         Ok(response)
     }
+    /// Ask for one file to open.
     pub async fn open_file(&self, options: FileDialogOptions) -> FileDialogResult<PathBuf> {
         Ok(self
             .select(Kind::OpenFile, options)
             .await?
             .and_then(|p| p.into_iter().next()))
     }
+    /// Ask for any number of files to open.
     pub async fn open_files(&self, options: FileDialogOptions) -> FileDialogResult<Vec<PathBuf>> {
         self.select(Kind::OpenFiles, options).await
     }
+    /// Ask for one folder.
     pub async fn open_folder(&self, options: FileDialogOptions) -> FileDialogResult<PathBuf> {
         Ok(self
             .select(Kind::Folder, options)
             .await?
             .and_then(|p| p.into_iter().next()))
     }
+    /// Ask for any number of folders.
     pub async fn open_folders(&self, options: FileDialogOptions) -> FileDialogResult<Vec<PathBuf>> {
         self.select(Kind::Folders, options).await
     }

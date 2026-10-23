@@ -1,3 +1,5 @@
+//! A software renderer that paints a scene into a pixel buffer, for
+//! reference and headless tests.
 use fontdue::{Font, FontSettings, Metrics};
 use std::collections::HashMap;
 use zgui::scene::{Color, Effects, NodeKind, Rect, Scene};
@@ -28,6 +30,7 @@ fn styled_bytes(key: &StyledGlyphKey, images: &StyledGlyphImages) -> usize {
 /// Persistent CPU backing store with cached glyph masks and damage-only rasterization.
 /// Glyph cache is bounded; this backend intentionally favors a small portable implementation.
 pub struct Raster {
+    /// The frame, a row at a time, a pixel each as `0x00RRGGBB`.
     pub pixels: Vec<u32>,
     width: usize,
     height: usize,
@@ -55,6 +58,7 @@ impl Raster {
         self.rich_glyphs.clear();
     }
 
+    /// A `width` by `height` store filled with the background colour.
     pub fn new(width: usize, height: usize) -> Self {
         Self {
             pixels: vec![0x10141c; width * height],
@@ -77,11 +81,13 @@ impl Raster {
             selected: None,
         }
     }
+    /// Resize the store to `width` by `height`.
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
         self.pixels.resize(width * height, 0x10141c);
     }
+    /// Repaint `damage` (and whatever scrolled) from `scene`.
     pub fn render(&mut self, scene: &Scene, damage: &[Rect]) {
         self.canvases.retain(scene);
         self.svgs.retain(scene);
@@ -1008,6 +1014,7 @@ impl Raster {
             }
         }
     }
+    /// Write the frame to `path` as a binary PPM.
     pub fn write_ppm(&self, path: &std::path::Path) -> std::io::Result<()> {
         use std::io::Write;
         let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
