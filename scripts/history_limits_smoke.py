@@ -87,6 +87,9 @@ def main():
                 reports["exhausted_undo"] = snapshot()
                 assert reports["exhausted_undo"]["model"] == "ab", reports
                 subprocess.run(["import", "-window", window, str(args.output / "history-limits.png")], env=env, check=True, timeout=10)
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo("windowactivate", "--sync", window, "key", "alt+F4")
                 app.wait(timeout=14)
             assert app.returncode == 0, output.read_text()
             (args.output / "results.json").write_text(json.dumps(dict(passed=True, backend="owned X11/Xvfb/Openbox", reports=reports), indent=2) + "\n")

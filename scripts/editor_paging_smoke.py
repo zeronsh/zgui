@@ -121,6 +121,9 @@ def main():
                 key("ctrl+Home", "Prior")
                 reports["beginning"] = report()
                 assert reports["beginning"]["focus"] == 0 and reports["beginning"]["scroll"] == 0, reports
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo("windowactivate", "--sync", window, "key", "alt+F4")
                 app.wait(timeout=25)
             assert app.returncode == 0, output.read_text()
             (args.output / "results.json").write_text(json.dumps(dict(passed=True, backend="owned X11/Xvfb/Openbox", reports=reports), indent=2) + "\n")

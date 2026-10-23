@@ -89,6 +89,9 @@ def main():
                 reports["prevented"] = snapshot()
                 assert reports["prevented"] == dict(accepted=2, rejected=0), reports
                 subprocess.run(["import", "-window", window, str(args.output / "keyboard-chords.png")], env=env, check=True, timeout=10)
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo("windowactivate", "--sync", window, "key", "alt+F4")
                 app.wait(timeout=14)
             assert app.returncode == 0, output.read_text()
             (args.output / "results.json").write_text(json.dumps(dict(passed=True, backend="owned X11/Xvfb/Openbox", reports=reports), indent=2) + "\n")

@@ -143,6 +143,9 @@ def main():
                 assert current['focus_changes'] == initial['focus_changes'] and current['focus'], current
                 snapshots.append(dict(stage='new_commit', **current))
                 subprocess.run(['import','-window',window,str(args.output/'external-ime.png')],env=env,check=True,timeout=10)
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo('windowactivate', '--sync', window, 'key', 'alt+F4')
                 app.wait(timeout=25)
             trace = (args.output/'application.log').read_text()
             assert app.returncode == 0, trace

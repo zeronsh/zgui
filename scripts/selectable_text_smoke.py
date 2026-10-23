@@ -143,6 +143,9 @@ def main():
                 lines = [int(n) for n in re.findall(r"line (\d+)\)", reports["autoscroll"]["text"])]
                 assert lines and lines[-1] > 20 and lines == list(range(lines[0], lines[-1] + 1)), reports["autoscroll"]
                 capture("autoscroll")
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo("windowactivate", "--sync", window, "key", "alt+F4")
                 app.wait(timeout=60)
             assert app.returncode == 0, output.read_text()
             (args.output / "results.json").write_text(json.dumps(dict(passed=True, backend="owned X11/Xvfb/Openbox", reports=reports), indent=2) + "\n")

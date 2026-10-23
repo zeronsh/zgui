@@ -128,6 +128,9 @@ def main():
                 assert not reports["paused"]["animate"], reports
                 assert reports["still_paused"]["x"] == reports["paused"]["x"], reports
                 capture("paused")
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo("windowactivate", "--sync", window, "key", "alt+F4")
                 app.wait(timeout=35)
             assert app.returncode == 0, output.read_text()
             (args.output / "results.json").write_text(json.dumps(dict(passed=True, backend="owned X11/Xvfb/Openbox", timed_close=True, reports=reports, changed_pixels=changes), indent=2) + "\n")
