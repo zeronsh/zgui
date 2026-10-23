@@ -137,10 +137,10 @@ impl View {
         })
     }
     /// Whether the drag moves its window instead, the grab point under the
-    /// pointer, with no preview (macOS): a window's only tab, as in Safari
-    /// and Chrome. Released over another window's destination it drops
-    /// there as any drag does (the tab merges into that window's strip);
-    /// elsewhere the window stays where it was let go.
+    /// pointer, with no preview (macOS, Windows, X11): a window's only tab,
+    /// as in Safari and Chrome. Released over another window's destination
+    /// it drops there as any drag does (the tab merges into that window's
+    /// strip); elsewhere the window stays where it was let go.
     pub fn drag_moves_window<T: 'static>(
         self,
         mut moves: impl FnMut(&T) -> bool + 'static,

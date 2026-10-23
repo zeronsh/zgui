@@ -36,8 +36,9 @@ use windows::{
                 IDCompositionVisual,
             },
             Dwm::{
-                DWM_WINDOW_CORNER_PREFERENCE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
-                DWMWCP_ROUND, DWMWCP_ROUNDSMALL, DwmSetWindowAttribute,
+                DWM_WINDOW_CORNER_PREFERENCE, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
+                DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL, DwmGetWindowAttribute,
+                DwmSetWindowAttribute,
             },
             Gdi::{
                 ClientToScreen, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
@@ -54,8 +55,8 @@ use windows::{
             Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
                 CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, GA_ROOT,
-                GW_HWNDNEXT, GWLP_HWNDPARENT, GWLP_USERDATA, GetAncestor, GetClientRect,
-                GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect, HTCLIENT,
+                GW_HWNDNEXT, GWL_EXSTYLE, GWLP_HWNDPARENT, GWLP_USERDATA, GetAncestor,
+                GetClientRect, GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect, HTCLIENT,
                 HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_ARROW, IsWindowVisible, KillTimer,
                 LoadCursorW, MA_NOACTIVATE, RegisterClassExW, SPI_SETWORKAREA, SW_HIDE,
                 SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
@@ -735,12 +736,47 @@ pub(crate) fn window_at(x: f64, y: f64) -> Option<isize> {
         Some(window.0 as isize)
     }
 }
-/// Whether top-level `window` shows at screen point `point`.
-fn holds(window: HWND, point: POINT) -> bool {
-    let mut rect = RECT::default();
-    // SAFETY: reads a window's visibility and rectangle into a local.
+/// The front-most window (any app's) at global point `(x, y)` (the screen's
+/// pixels) below window `number`, past drag previews: what is under a window
+/// a drag moves (`View::drag_moves_window`), itself under the pointer.
+pub(crate) fn window_below(x: f64, y: f64, number: isize) -> Option<isize> {
+    let point = POINT {
+        x: x.round() as i32,
+        y: y.round() as i32,
+    };
+    let preview =
+        |window: HWND| PREVIEWS.with(|previews| previews.borrow().contains(&(window.0 as isize)));
+    // SAFETY: walks the system's top-level windows down the z-order.
     unsafe {
+        let mut window = GetWindow(HWND(number as *mut _), GW_HWNDNEXT).ok()?;
+        while !holds(window, point) || preview(window) {
+            window = GetWindow(window, GW_HWNDNEXT).ok()?;
+        }
+        Some(window.0 as isize)
+    }
+}
+/// Whether top-level `window` shows at screen point `point` and takes the
+/// pointer there, as `WindowFromPoint` has it: visible, not cloaked (on
+/// another desktop, say), not a click-through overlay.
+fn holds(window: HWND, point: POINT) -> bool {
+    const WS_EX_LAYERED: isize = 0x0008_0000;
+    const WS_EX_TRANSPARENT: isize = 0x0000_0020;
+    let mut rect = RECT::default();
+    let mut cloaked = 0u32;
+    // SAFETY: reads a window's visibility, style, cloaking and rectangle
+    // into locals.
+    unsafe {
+        let style = GetWindowLongPtrW(window, GWL_EXSTYLE) as isize;
+        let through = style & WS_EX_LAYERED != 0 && style & WS_EX_TRANSPARENT != 0;
+        let _ = DwmGetWindowAttribute(
+            window,
+            DWMWA_CLOAKED,
+            (&raw mut cloaked).cast(),
+            size_of::<u32>() as u32,
+        );
         IsWindowVisible(window).as_bool()
+            && !through
+            && cloaked == 0
             && GetWindowRect(window, &mut rect).is_ok()
             && (rect.left..rect.right).contains(&point.x)
             && (rect.top..rect.bottom).contains(&point.y)

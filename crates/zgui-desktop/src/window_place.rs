@@ -163,7 +163,14 @@ pub(crate) fn place(
 #[cfg(windows)]
 mod win32;
 #[cfg(windows)]
-pub(crate) use win32::place;
+pub(crate) use win32::{move_to, place, pointer, settle};
+/// The front-most window at global point `(x, y)` below window `number`:
+/// what is under a window being moved (`popup_window`'s, past its drag
+/// previews).
+#[cfg(windows)]
+pub(crate) fn window_below(x: f64, y: f64, number: isize) -> Option<isize> {
+    crate::popup_window::window_below(x, y, number)
+}
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -300,21 +307,20 @@ pub(crate) fn window_below(x: f64, y: f64, number: isize) -> Option<isize> {
     crate::popup_window::window_below(x, y, number)
 }
 
-// todo(windows): `SetWindowPos` and `WindowFromPoint` past the moved window
-// (`GetWindow(GW_HWNDNEXT)`). Until then such a drag shows its preview, as
-// any drag does.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+// Elsewhere a window cannot be moved by a drag: such a drag shows its
+// preview, as any drag does.
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub(crate) fn move_to(_: &winit::window::Window, _: (f64, f64), _: &mut Option<(f64, f64)>) {}
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub(crate) fn pointer() -> Option<(f64, f64)> {
     None
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub(crate) fn settle(_: &winit::window::Window, _: &mut Option<(f64, f64)>) {}
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub(crate) fn window_below(_: f64, _: f64, _: isize) -> Option<isize> {
     None
 }

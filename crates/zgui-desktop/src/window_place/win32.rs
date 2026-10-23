@@ -268,6 +268,47 @@ fn under_pointer(hwnd: HWND, (x, y): (f64, f64)) {
     }
 }
 
+/// Put `window`'s content top-left at global point `to` (the screen's
+/// pixels), as a drag of its only tab does (`View::drag_moves_window`): at
+/// once, so there is nothing for `settle` to do.
+pub(crate) fn move_to(window: &winit::window::Window, to: (f64, f64), _: &mut Option<(f64, f64)>) {
+    let Some(hwnd) = hwnd(window) else {
+        return;
+    };
+    let (mut client, mut frame) = (POINT::default(), RECT::default());
+    // SAFETY: reads our own window's geometry into locals, then moves it.
+    unsafe {
+        if !ClientToScreen(hwnd, &mut client).as_bool() || GetWindowRect(hwnd, &mut frame).is_err()
+        {
+            return;
+        }
+        let left = to.0.round() as i32 - (client.x - frame.left);
+        let top = to.1.round() as i32 - (client.y - frame.top);
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            left,
+            top,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// The pointer in global coordinates (the screen's pixels): a window
+/// following the pointer is placed from it, never from window-relative
+/// points that its own moves skew.
+pub(crate) fn pointer() -> Option<(f64, f64)> {
+    let mut point = POINT::default();
+    // SAFETY: writes the pointer's position into a local.
+    unsafe { GetCursorPos(&mut point) }.ok()?;
+    Some((f64::from(point.x), f64::from(point.y)))
+}
+
+/// `move_to` moved the window at once: nothing to tell Windows.
+pub(crate) fn settle(_: &winit::window::Window, _: &mut Option<(f64, f64)>) {}
+
 /// Place `window` (not shown yet), as `super::place` says. Placed nowhere in
 /// particular, it stays where Windows put it (`CW_USEDEFAULT` cascades);
 /// `Tabbing` has no counterpart here.

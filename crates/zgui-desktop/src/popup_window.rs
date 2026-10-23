@@ -72,7 +72,7 @@ pub(crate) use macos::{
 mod win32;
 #[cfg(windows)]
 pub(crate) use win32::{
-    PopupHost, content_origin, enabled, popup_screens, warm, window_at, window_number,
+    PopupHost, content_origin, enabled, popup_screens, warm, window_at, window_below, window_number,
 };
 
 #[cfg(target_os = "linux")]
