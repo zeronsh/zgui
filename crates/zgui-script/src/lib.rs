@@ -23,6 +23,7 @@
 //! ```
 //!
 //! The `ui` and `anime` libraries are documented in `docs/scripting.md`.
+#![warn(missing_docs)]
 mod anim;
 mod anime;
 mod bundle;
@@ -551,8 +552,11 @@ pub enum Capability {
 /// and grants say), its entry script on the disk, and what it may do.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plugin {
+    /// What errors and grants call it.
     pub name: String,
+    /// Its entry script.
     pub entry: PathBuf,
+    /// What it may do beyond its sandbox.
     pub grants: Vec<Capability>,
 }
 
@@ -940,6 +944,7 @@ impl ScriptHost {
         };
         self.configure(|inner| inner.plugins.push(script))
     }
+    /// Run scripts within `limits`: heap, and time to load and per call.
     pub fn limits(self, limits: Limits) -> Self {
         self.configure(|inner| inner.limits = limits)
     }

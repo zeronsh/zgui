@@ -207,6 +207,7 @@ pub fn decode_gif(bytes: &[u8]) -> Result<Arc<zgui::animation::Animation>, GpuEr
         .map(Arc::new)
         .map_err(|e| GpuError(e.into()))
 }
+/// Without the `gif` feature: an error naming it.
 #[cfg(not(feature = "gif"))]
 pub fn decode_gif(_: &[u8]) -> Result<Arc<zgui::animation::Animation>, GpuError> {
     Err(GpuError("GIF images need zgui-gpu's `gif` feature".into()))

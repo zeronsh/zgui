@@ -42,13 +42,19 @@ use zgui::{
 
 /// A scripted app mounted headless, 400 by 300 points.
 pub struct TestApp {
+    /// Its document.
     pub ui: Ui,
+    /// The script host running it.
     pub host: ScriptHost,
+    /// The mounted script view.
     pub handle: ViewHandle,
+    /// The executor its tasks run on; the test advances it.
     pub executor: Rc<RefCell<LocalExecutor>>,
+    /// The frame clock its animations wait on; the test delivers frames.
     pub clock: FrameClock,
     /// Display frames delivered so far.
     pub frame: Cell<u64>,
+    /// When it started, the time frames count from.
     pub start: Instant,
     /// Native views (web pages, terminals) the script placed: headless, they
     /// show placeholders.

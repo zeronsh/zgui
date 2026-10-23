@@ -31,6 +31,8 @@ struct Shown {
     key: Key,
     transformed: Arc<ImageData>,
 }
+/// Rasterized SVGs by source, size and tint, shared between the nodes
+/// showing them; unused ones are kept within a byte budget.
 #[derive(Default)]
 pub struct SvgCache {
     entries: HashMap<Key, Entry>,
@@ -40,6 +42,7 @@ pub struct SvgCache {
     rasterizations: u64,
 }
 impl SvgCache {
+    /// Let go of nodes that are gone, and drop unused rasters past the budget.
     pub fn retain(&mut self, scene: &Scene) {
         let entries = &mut self.entries;
         self.nodes.retain(|node, shown| {
@@ -66,15 +69,20 @@ impl SvgCache {
             }
         }
     }
+    /// The image ids of the rasters it holds.
     pub fn image_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.entries.values().map(|e| e.image.id())
     }
+    /// The bytes its rasters take.
     pub fn bytes(&self) -> usize {
         self.bytes
     }
+    /// How many rasterizations it has done.
     pub fn rasterizations(&self) -> u64 {
         self.rasterizations
     }
+    /// `svg` rasterized for `node` at its size and scale, from the cache while
+    /// unchanged.
     pub fn get(
         &mut self,
         node: NodeId,

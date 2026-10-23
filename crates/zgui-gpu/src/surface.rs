@@ -4,6 +4,7 @@ use crate::GpuError;
 /// Result of presenting the retained target to a native window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PresentationStatus {
+    /// Presented.
     Presented,
     /// Retry on a later event-loop turn; the rendered target remains valid.
     /// Also returned when surface changes exhaust this turn's recovery budget.

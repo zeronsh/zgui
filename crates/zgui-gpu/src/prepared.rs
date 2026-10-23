@@ -472,6 +472,7 @@ pub struct TextCache {
     drawn_bytes: usize,
     /// Texts shaped, and requests served without shaping, for tests and stats.
     pub shaped: u64,
+    /// Requests served without shaping.
     pub hits: u64,
     /// Lines of dropped texts, their allocations reused by new ones: freeing
     /// and allocating a shaped line's many small parts costs more than

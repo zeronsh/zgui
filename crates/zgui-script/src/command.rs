@@ -23,6 +23,7 @@ use zgui::reactive::{Runtime, Signal};
 pub struct Command {
     /// Unique; empty for a separator.
     pub id: String,
+    /// What the menu item says.
     pub title: String,
     /// The menu it goes in ("File", "Edit", "View", "Window", or any other).
     pub menu: String,

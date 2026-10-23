@@ -13,11 +13,16 @@ use zgui::reactive::{Runtime, Signal};
 /// other signal.
 #[derive(Clone, Debug, Default)]
 pub enum Value {
+    /// `nil`.
     #[default]
     Nil,
+    /// A boolean.
     Bool(bool),
+    /// A number.
     Num(f64),
+    /// A string.
     Str(Rc<str>),
+    /// A table used as a list (keys 1 to n).
     List(Rc<[Value]>),
     /// A table with string keys, sorted by key so equal tables compare equal.
     Map(Rc<[(Rc<str>, Value)]>),
@@ -78,7 +83,9 @@ impl PartialEq for Value {
 /// One step of a path into a value: a map's key or a list's 1-based index.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PathKey {
+    /// A map's key.
     Key(Rc<str>),
+    /// A list's index, from 1.
     Index(usize),
 }
 impl std::fmt::Display for PathKey {
@@ -211,9 +218,11 @@ impl Value {
             (new, _) => new,
         }
     }
+    /// Whether Luau counts it as true: anything but `nil` and `false`.
     pub fn truthy(&self) -> bool {
         !matches!(self, Value::Nil | Value::Bool(false))
     }
+    /// It as a number: a number, or a boolean as 1 or 0.
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::Num(n) => Some(*n),
@@ -221,6 +230,7 @@ impl Value {
             _ => None,
         }
     }
+    /// Its items if it is a list, else none.
     pub fn list(&self) -> &[Value] {
         match self {
             Value::List(items) => items,
@@ -1228,6 +1238,7 @@ pub struct Store {
     signals: RefCell<HashMap<String, Signal<Value>>>,
 }
 impl Store {
+    /// An empty store on `runtime`.
     pub fn new(runtime: &Runtime) -> Self {
         Self {
             runtime: runtime.clone(),
@@ -1242,6 +1253,7 @@ impl Store {
             .or_insert_with(|| self.runtime.signal(initial))
             .clone()
     }
+    /// The state for `key`, if there is any.
     pub fn get(&self, key: &str) -> Option<Signal<Value>> {
         self.signals.borrow().get(key).cloned()
     }

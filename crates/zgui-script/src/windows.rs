@@ -18,9 +18,13 @@ use zgui::reactive::{Runtime, Signal};
 /// A window as the application opens it.
 #[derive(Clone)]
 pub struct Window {
+    /// Its id, as the script declared it (`ui.window { id = … }`).
     pub id: String,
+    /// Its title.
     pub title: String,
+    /// Its width in logical points.
     pub width: f64,
+    /// Its height in logical points.
     pub height: f64,
     /// Open while true: the application opens the window when it turns
     /// true, closes it when it turns false, and sets it false when the user

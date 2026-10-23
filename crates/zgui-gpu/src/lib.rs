@@ -1,6 +1,7 @@
 //! Damage-scissored retained GPU renderer for Vulkan (Linux) and Metal (macOS).
 //! The output is premultiplied BGRA8 (read back as RGBA8). Text uses cosmic-text shaping and a bounded
 //! GPU glyph atlas; stable text never reshapes on paint or compositor updates.
+#![warn(missing_docs)]
 use cosmic_text::{Buffer, CacheKey, FontSystem, Metrics, SwashCache, SwashContent};
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
@@ -61,6 +62,7 @@ fn premultiply_into_cell(cell: &mut [u8], pixels: &[u8], width: u32) {
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 /// The backdrop blur atlas's format (see `atlas_texture`).
 const BLUR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Why rendering failed, in words.
 #[derive(Debug)]
 pub struct GpuError(pub String);
 impl fmt::Display for GpuError {
@@ -69,27 +71,42 @@ impl fmt::Display for GpuError {
     }
 }
 impl std::error::Error for GpuError {}
+/// What one frame's rendering did, for tests and diagnostics.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct GpuStats {
+    /// Draw calls encoded.
     pub draw_calls: usize,
     /// Encoded render passes, including repainted isolated layers; excludes presentation.
     pub render_passes: usize,
     /// Backdrop filter passes (three per batch of filters blurred together), included in render_passes.
     pub blur_passes: usize,
+    /// Quad instances drawn.
     pub instances: usize,
+    /// Text nodes shaped (not reused from the cache).
     pub shaped_nodes: usize,
+    /// Glyphs uploaded to the atlas.
     pub glyph_uploads: usize,
+    /// Images uploaded to textures.
     pub image_uploads: usize,
     /// Native GPU imports/conversions, never CPU image uploads.
     pub native_surface_imports: usize,
+    /// Native surfaces converted to a drawable format.
     pub native_surface_conversions: usize,
+    /// Canvases and decorations rasterized.
     pub canvas_rasterizations: usize,
+    /// SVGs rasterized.
     pub svg_rasterizations: usize,
+    /// Times the instance geometry was rebuilt.
     pub geometry_rebuilds: usize,
+    /// Vertex buffers allocated or grown.
     pub vertex_buffer_allocations: usize,
+    /// Physical pixels repainted.
     pub damaged_pixels: u64,
+    /// Cached layers repainted.
     pub layer_repaints: usize,
+    /// Cached layers composited without repainting.
     pub layer_cache_hits: usize,
+    /// Layer textures allocated.
     pub layer_texture_allocations: usize,
     /// Scrolled regions shifted by copying instead of redrawn.
     pub scroll_copies: usize,
@@ -100,19 +117,33 @@ pub struct GpuStats {
 /// Retained allocation counters for diagnostics; excludes driver/font database allocations.
 #[derive(Debug, Clone, Copy)]
 pub struct DebugCacheStats {
+    /// Text nodes whose shaping is cached.
     pub shaped_nodes: usize,
+    /// Bytes of cached shaping.
     pub shaped_bytes: usize,
+    /// Glyph quads cached with it.
     pub cached_quads: usize,
+    /// Glyphs in the atlas.
     pub atlas_entries: usize,
+    /// The atlas texture's bytes.
     pub atlas_bytes: usize,
+    /// Glyph images in the rasterizer's cache.
     pub swash_images: usize,
+    /// Glyph outlines in the rasterizer's cache.
     pub swash_outlines: usize,
+    /// Image textures.
     pub image_textures: usize,
+    /// Their bytes.
     pub image_bytes: usize,
+    /// Bytes of rasterized canvases and decorations.
     pub canvas_raster_bytes: usize,
+    /// Bytes of rasterized SVGs.
     pub svg_raster_bytes: usize,
+    /// The vertex buffer's bytes.
     pub vertex_buffer_bytes: usize,
+    /// Cached layer textures.
     pub layer_textures: usize,
+    /// Their bytes.
     pub layer_bytes: usize,
 }
 const SHAPE_BUDGET: usize = 8 * 1024 * 1024;
@@ -1128,6 +1159,7 @@ struct GpuContextInner {
     quad_layout: wgpu::PipelineLayout,
 }
 impl GpuContext {
+    /// A context on the system's GPU, found without a window.
     pub fn new() -> Result<Self, GpuError> {
         Self::create(None)
     }
@@ -1244,9 +1276,11 @@ impl GpuContext {
             }),
         })
     }
+    /// Whether `other` is this context (a clone of it), on the same device.
     pub fn shares_device(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.inner, &other.inner)
     }
+    /// The font system its renderers shape and draw text with.
     pub fn text_system(&self) -> Rc<RefCell<FontSystem>> {
         self.inner.fonts.clone()
     }
@@ -1256,10 +1290,14 @@ impl GpuContext {
     }
 }
 impl GpuError {
+    /// Whether a window's surface can't be drawn with the context's adapter
+    /// (make a context for that window instead).
     pub fn is_surface_incompatible(&self) -> bool {
         self.0 == "surface is incompatible with the shared GPU adapter"
     }
 }
+/// Draws a [`zgui::scene::Scene`] with wgpu (Metal, Direct3D 12 or Vulkan),
+/// repainting only its damage, to an offscreen target or a window.
 pub struct GpuRenderer {
     context: GpuContext,
     scene_identity: Option<u64>,
@@ -1436,10 +1474,14 @@ pub struct GpuRenderer {
     plane: Option<planes::PlaneState>,
 }
 impl GpuRenderer {
+    /// An offscreen renderer `width` by `height` physical pixels, on a context
+    /// of its own.
     pub fn new(width: u32, height: u32) -> Result<Self, GpuError> {
         let context = GpuContext::new()?;
         Self::create(None, width, height, &context)
     }
+    /// A renderer for `window`, on a context made for it, at its size and
+    /// scale.
     pub fn for_window(window: Arc<winit::window::Window>) -> Result<Self, GpuError> {
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
@@ -1448,9 +1490,11 @@ impl GpuRenderer {
         renderer.set_scale_factor(scale);
         Ok(renderer)
     }
+    /// Its context, to share with other renderers.
     pub fn context(&self) -> GpuContext {
         self.context.clone()
     }
+    /// An offscreen renderer `width` by `height` physical pixels on `context`.
     pub fn new_with_context(
         width: u32,
         height: u32,
@@ -1458,6 +1502,7 @@ impl GpuRenderer {
     ) -> Result<Self, GpuError> {
         Self::create(None, width, height, context)
     }
+    /// A renderer for `window` on `context`, at its size and scale.
     pub fn for_window_with_context(
         window: Arc<winit::window::Window>,
         context: &GpuContext,
@@ -1752,6 +1797,7 @@ impl GpuRenderer {
         #[cfg(not(target_os = "macos"))]
         None
     }
+    /// What its caches hold now.
     pub fn debug_cache_stats(&self) -> DebugCacheStats {
         DebugCacheStats {
             shaped_nodes: self.shapes.len(),
@@ -1770,15 +1816,18 @@ impl GpuRenderer {
             layer_bytes: self.layers.values().map(|l| l.bytes).sum(),
         }
     }
+    /// The colour the target clears to where nothing is drawn.
     pub fn set_background(&mut self, color: Color) {
         if self.background != color {
             self.background = color;
             self.fresh = true;
         }
     }
+    /// The GPU adapter it renders with.
     pub fn adapter_info(&self) -> wgpu::AdapterInfo {
         self.info.clone()
     }
+    /// The font system it shapes and draws text with.
     pub fn text_system(&self) -> Rc<RefCell<FontSystem>> {
         self.fonts.clone()
     }
@@ -1842,6 +1891,7 @@ impl GpuRenderer {
                 .measure_detached(&mut fonts.borrow_mut(), rich, width)
         });
     }
+    /// Physical pixels per logical point (at least 0.1; 1 if not finite).
     pub fn set_scale_factor(&mut self, scale: f32) {
         let scale = if scale.is_finite() {
             scale.max(0.1)
@@ -1942,6 +1992,8 @@ impl GpuRenderer {
         }
         stats
     }
+    /// Draw `scene`'s `damage` (logical rectangles) to the target, and report
+    /// what it did.
     pub fn render(&mut self, scene: &Scene, damage: &[Rect]) -> Result<GpuStats, GpuError> {
         let presented = std::mem::take(&mut self.present_stats);
         let mut stats = self.render_inner(scene, damage)?;
@@ -5795,6 +5847,7 @@ impl GpuRenderer {
     pub fn debug_direct_frames(&self) -> u64 {
         self.direct_frames
     }
+    /// Frames drawn in one pass with their presentation.
     pub fn debug_single_pass_frames(&self) -> u64 {
         self.single_pass_frames
     }
@@ -5875,6 +5928,7 @@ impl GpuRenderer {
         }
         Ok(pixels)
     }
+    /// The target's pixels, RGBA, a row at a time.
     pub fn readback(&self) -> Result<Vec<u8>, GpuError> {
         self.flush_pending();
         self.read_texture(&self.target)

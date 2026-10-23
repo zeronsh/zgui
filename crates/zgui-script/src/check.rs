@@ -21,8 +21,10 @@ https://github.com/JohnnyMorganz/luau-lsp/releases and put `luau-lsp` on your PA
 (or install it with a toolchain manager: `rokit add --global JohnnyMorganz/luau-lsp`), \
 or point LUAU_LSP at the binary.";
 
+/// How bad a [`Diagnostic`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
+    /// A type or syntax error.
     Error,
     /// A lint, such as an unused variable.
     Warning,
@@ -31,12 +33,17 @@ pub enum Severity {
 /// One finding, at a 1-based line and column.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
+    /// The script it is in.
     pub file: PathBuf,
+    /// Its line, from 1.
     pub line: u32,
+    /// Its column, from 1.
     pub column: u32,
+    /// Whether it is an error or a warning.
     pub severity: Severity,
     /// luau-lsp's name for it: `TypeError`, `SyntaxError`, `LocalUnused`…
     pub code: String,
+    /// What it says.
     pub message: String,
 }
 impl fmt::Display for Diagnostic {
@@ -57,15 +64,20 @@ impl fmt::Display for Diagnostic {
     }
 }
 
+/// What checking scripts found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Report {
+    /// How many scripts were checked.
     pub files: usize,
+    /// What was found.
     pub diagnostics: Vec<Diagnostic>,
 }
 impl Report {
+    /// How many errors it found.
     pub fn errors(&self) -> usize {
         self.count(Severity::Error)
     }
+    /// How many warnings it found.
     pub fn warnings(&self) -> usize {
         self.count(Severity::Warning)
     }
@@ -77,12 +89,14 @@ impl Report {
     }
 }
 
+/// Why scripts could not be checked.
 #[derive(Debug)]
 pub enum CheckError {
     /// luau-lsp is not on the PATH (see [`INSTALL`]).
     NotInstalled,
     /// A path that does not exist, or holds no `.luau` files.
     NoScripts(PathBuf),
+    /// Running luau-lsp failed.
     Io(std::io::Error),
 }
 impl fmt::Display for CheckError {
@@ -96,6 +110,7 @@ impl fmt::Display for CheckError {
 }
 impl std::error::Error for CheckError {}
 
+/// How scripts are checked.
 #[derive(Clone, Debug)]
 pub struct Options {
     /// Strict mode where no `.luaurc` (or `--!` comment) picks a mode.
@@ -323,6 +338,7 @@ pub struct Background {
     result: Arc<Mutex<Option<Result<Report, CheckError>>>>,
 }
 impl Background {
+    /// Check `paths` with `options` on a thread of its own.
     pub fn start(paths: Vec<PathBuf>, options: Options) -> Self {
         let result = Arc::new(Mutex::new(None));
         let slot = result.clone();

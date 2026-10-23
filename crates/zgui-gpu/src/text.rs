@@ -21,6 +21,7 @@ pub struct FontData {
     families: Arc<[String]>,
 }
 impl FontData {
+    /// A font from `bytes`: 1 byte to 64 MiB of TrueType or OpenType data.
     pub fn new(bytes: impl Into<Arc<[u8]>>) -> Result<Self, &'static str> {
         let bytes = bytes.into();
         if bytes.is_empty() || bytes.len() > 64 * 1024 * 1024 {
@@ -42,9 +43,11 @@ impl FontData {
             families: families.into(),
         })
     }
+    /// The family names it holds, sorted.
     pub fn families(&self) -> &[String] {
         &self.families
     }
+    /// Its size in bytes.
     pub fn byte_len(&self) -> usize {
         self.bytes.len()
     }
@@ -194,9 +197,12 @@ pub fn set_buffer_text(
         buffer.set_rich_text(spans, &base, Shaping::Advanced, alignment(font));
     }
 }
+/// A caret position in shaped text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextCursor {
+    /// The UTF-8 byte offset.
     pub byte_index: usize,
+    /// Which side of the offset the caret sits on.
     pub affinity: Affinity,
 }
 /// Owns a shaped text buffer. Reuse it until text/font/width changes.
@@ -210,6 +216,8 @@ pub struct ShapedText {
     line_height: f32,
 }
 impl ShapedText {
+    /// `text` shaped in the default font at `font_size`, wrapped at `width`
+    /// if given.
     pub fn new(
         fonts: &mut FontSystem,
         text: impl Into<Arc<str>>,
@@ -218,6 +226,7 @@ impl ShapedText {
     ) -> Self {
         Self::with_font(fonts, text, font_size, width, &Default::default())
     }
+    /// `text` shaped in `font` at `font_size`, wrapped at `width` if given.
     pub fn with_font(
         fonts: &mut FontSystem,
         text: impl Into<Arc<str>>,
@@ -306,9 +315,11 @@ impl ShapedText {
             line_height,
         }
     }
+    /// The text.
     pub fn text(&self) -> &str {
         &self.text
     }
+    /// Its width and height.
     pub fn size(&self) -> (f32, f32) {
         self.buffer
             .layout_runs()
@@ -316,6 +327,7 @@ impl ShapedText {
                 (w.max(run.line_w), h.max(run.line_top + run.line_height))
             })
     }
+    /// The caret position at `x`, `y`, if the text has one there.
     pub fn hit_test(&self, x: f32, y: f32) -> Option<TextCursor> {
         let cursor = self.buffer.hit(x, y)?;
         Some(TextCursor {
@@ -323,6 +335,8 @@ impl ShapedText {
             affinity: cursor.affinity,
         })
     }
+    /// The caret's rectangle at `cursor`, if it is a char boundary in the
+    /// text.
     pub fn caret(&self, cursor: TextCursor) -> Option<Rect> {
         if cursor.byte_index > self.text.len() || !self.text.is_char_boundary(cursor.byte_index) {
             return None;
@@ -421,6 +435,7 @@ impl ShapedText {
         }
         rectangles
     }
+    /// Its line pitch.
     pub fn line_height(&self) -> f32 {
         self.line_height
     }
@@ -593,14 +608,18 @@ impl Default for CpuTextRaster {
         }
     }
 }
+/// Rich text rasterized: each glyph's position, colour and image, then
+/// the decorations (backgrounds, underlines, strikethroughs).
 pub type RichRaster = (
     Vec<(i32, i32, zgui::scene::Color, cosmic_text::SwashImage)>,
     Vec<RichDecoration>,
 );
 impl CpuTextRaster {
+    /// Make `font` available to the text it rasterizes.
     pub fn register_font(&mut self, font: &FontData) {
         font.install(&mut self.fonts);
     }
+    /// Rasterize `rich` laid out in `width` by `height`.
     pub fn rasterize_rich(
         &mut self,
         rich: &zgui::rich_text::RichText,
@@ -625,6 +644,8 @@ impl CpuTextRaster {
         }
         (images, rich_decorations(&buffer, rich))
     }
+    /// Rasterize `text` at `size` in `font`, laid out in `width` by `height`:
+    /// each glyph's position and image.
     pub fn rasterize(
         &mut self,
         text: &str,
@@ -1639,8 +1660,11 @@ mod variation_axis_tests {
 /// A visual fragment of a run decoration, relative to the paragraph origin.
 #[derive(Clone, Copy, Debug)]
 pub struct RichDecoration {
+    /// Its box, from the paragraph's origin.
     pub bounds: Rect,
+    /// Its colour.
     pub color: zgui::scene::Color,
+    /// Whether it is a background (else a line).
     pub background: bool,
     /// A background's corner radius.
     pub radius: f32,

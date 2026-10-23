@@ -84,12 +84,14 @@ struct Top {
 }
 
 impl Incremental {
+    /// A parser for markdown rendered with `options`, with no text yet.
     pub fn new(options: Options) -> Self {
         Self {
             options,
             ..Self::default()
         }
     }
+    /// The text parsed so far.
     pub fn source(&self) -> &str {
         &self.source
     }

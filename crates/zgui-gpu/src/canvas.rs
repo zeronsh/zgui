@@ -29,7 +29,9 @@ struct Entry {
 }
 /// A cached raster: its image id, and its pixels if not uploaded yet.
 pub struct Raster {
+    /// The image id its GPU texture is keyed by.
     pub id: u64,
+    /// Its pixels, until they are uploaded.
     pub pixels: Option<Arc<ImageData>>,
 }
 impl Entry {
@@ -40,6 +42,8 @@ impl Entry {
         }
     }
 }
+/// Rasterized canvases and detailed decorations by node, kept while they
+/// are unchanged and within a byte budget.
 #[derive(Default)]
 pub struct CanvasCache {
     entries: HashMap<NodeId, Entry>,
@@ -48,6 +52,7 @@ pub struct CanvasCache {
     rasterizations: u64,
 }
 impl CanvasCache {
+    /// Forget the rasters of nodes that are gone or no longer draw one.
     pub fn retain(&mut self, scene: &Scene) {
         self.entries.retain(|id, _| {
             scene.contains(*id)
@@ -61,6 +66,7 @@ impl CanvasCache {
         });
         self.bytes = self.entries.values().map(|e| e.bytes).sum();
     }
+    /// The image ids of the rasters it holds.
     pub fn image_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.entries.values().map(|e| e.id)
     }
@@ -76,12 +82,17 @@ impl CanvasCache {
             self.bytes -= entry.bytes;
         }
     }
+    /// How many rasterizations it has done.
     pub fn rasterizations(&self) -> u64 {
         self.rasterizations
     }
+    /// The bytes its rasters take, uploaded or not.
     pub fn bytes(&self) -> usize {
         self.bytes
     }
+    /// `node`'s decoration (`style`) rasterized at `width` by `height` logical
+    /// points and `scale`, from the cache while unchanged. More than 32
+    /// shadows is an error.
     pub fn get_decoration(
         &mut self,
         node: NodeId,
@@ -110,6 +121,8 @@ impl CanvasCache {
         }
         Ok(image)
     }
+    /// `canvas` rasterized for `node` at `width` by `height` logical points and
+    /// `scale`, from the cache while unchanged.
     pub fn get(
         &mut self,
         node: NodeId,
@@ -227,6 +240,8 @@ fn path(path: &Path) -> Option<sk::Path> {
     }
     builder.finish()
 }
+/// Rasterize `canvas` at `width` by `height` logical points and `scale`
+/// into an image.
 pub fn rasterize(
     canvas: &Canvas,
     width: f32,

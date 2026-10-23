@@ -30,17 +30,23 @@ pub(crate) type Call = Pin<Box<dyn Future<Output = Result<Value, String>>>>;
 /// An HTTP request a script makes (`ui.fetch`), for the host's fetcher.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Request {
+    /// The URL.
     pub url: String,
     /// "GET" unless the script says otherwise.
     pub method: String,
+    /// Its headers, in order.
     pub headers: Vec<(String, String)>,
+    /// Its body, if it has one.
     pub body: Option<Vec<u8>>,
 }
 /// What the host's fetcher answers.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Response {
+    /// The HTTP status (200 for OK).
     pub status: u16,
+    /// Its headers, in order.
     pub headers: Vec<(String, String)>,
+    /// Its body.
     pub body: Vec<u8>,
 }
 pub(crate) type Fetch = Pin<Box<dyn Future<Output = Result<Response, String>>>>;

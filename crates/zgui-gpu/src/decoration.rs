@@ -61,6 +61,8 @@ fn rounded(rect: Rect, r: [(f32, f32); 4]) -> Path {
         .close();
     p.build().expect("finite normalized corners")
 }
+/// A box's detailed decoration (`style.decoration`) as canvas commands, at
+/// `width` by `height`: what rasterizes when it can't draw analytically.
 pub fn canvas(style: &QuadStyle, width: f32, height: f32) -> Result<Canvas, GpuError> {
     let Some(detail) = &style.decoration else {
         return Err(GpuError("missing detailed decoration".into()));

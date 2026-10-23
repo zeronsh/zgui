@@ -30,8 +30,11 @@ pub struct Bundle {
     /// Sorted by path: a lookup is a binary search, with nothing allocated.
     pub files: &'static [BundleFile],
 }
+/// One script file in a [`Bundle`], compiled into the binary.
 pub struct BundleFile {
+    /// Its path from the bundle's root, `/`-separated.
     pub path: &'static str,
+    /// Its contents.
     pub bytes: &'static [u8],
 }
 
