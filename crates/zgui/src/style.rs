@@ -34,6 +34,8 @@ pub enum ObjectFit {
     ScaleDown,
 }
 
+/// A set of style properties, each unset until a builder sets it: a
+/// view's own, or a reusable patch merged over one ([`Styled::style`]).
 #[derive(Debug, Default, PartialEq)]
 pub struct Styles {
     pub(crate) layout_options: Option<std::sync::Arc<crate::layout::LayoutOptions>>,
@@ -387,6 +389,7 @@ impl Styles {
             self.layout_options = None;
         }
     }
+    /// No properties set.
     pub fn new() -> Self {
         Self::default()
     }
@@ -649,6 +652,7 @@ macro_rules! value_or_token {
 /// Colours, lengths, typography and shadows take a value or a theme token
 /// (`.bg(tok::SURFACE_RAISED)`, `.p(tok::SPACE_3)`; see [`crate::theme`]).
 pub trait Styled: Sized {
+    /// The styles the builders set.
     fn styles_mut(&mut self) -> &mut Styles;
     /// Set `field` from the theme token `token` (what the typed setters do
     /// for tokens; scripts use it for `"$name"` values).
@@ -683,136 +687,180 @@ pub trait Styled: Sized {
         self.styles_mut().layout_options_mut().merge(options);
         self
     }
+    /// Lay the children out in a grid (CSS `display: grid`; see `grid_cols`).
     fn grid(mut self) -> Self {
         self.styles_mut().layout_options_mut().display = Some(crate::layout::Display::Grid);
         self
     }
+    /// Remove the view from layout and interaction (CSS `display: none`); it
+    /// keeps its component state. `flex` or `grid` shows it again.
     fn hidden(mut self) -> Self {
         self.styles_mut().layout_options_mut().display = Some(crate::layout::Display::None);
         self
     }
+    /// Paint the view again after `invisible`.
     fn visible(mut self) -> Self {
         self.styles_mut().layout_options_mut().visible = Some(true);
         self
     }
+    /// Keep the view's room in layout but paint none of it and take no
+    /// input (CSS `visibility: hidden`).
     fn invisible(mut self) -> Self {
         self.styles_mut().layout_options_mut().visible = Some(false);
         self
     }
+    /// Wrap the children onto more lines when they overflow the row or
+    /// column (CSS `flex-wrap: wrap`).
     fn flex_wrap(mut self) -> Self {
         self.styles_mut().layout_options_mut().wrap = Some(crate::layout::FlexWrap::Wrap);
         self
     }
+    /// Wrap, with each new line before the last (`flex-wrap: wrap-reverse`).
     fn flex_wrap_reverse(mut self) -> Self {
         self.styles_mut().layout_options_mut().wrap = Some(crate::layout::FlexWrap::Reverse);
         self
     }
+    /// Keep the children on one line (`flex-wrap: nowrap`).
     fn flex_nowrap(mut self) -> Self {
         self.styles_mut().layout_options_mut().wrap = Some(crate::layout::FlexWrap::NoWrap);
         self
     }
+    /// Lay the children out in a row, last first (`flex-direction:
+    /// row-reverse`).
     fn flex_row_reverse(mut self) -> Self {
         self.styles_mut().layout = Some(Layout::Row);
         self.styles_mut().layout_options_mut().reverse = Some(true);
         self
     }
+    /// Lay the children out in a column, last first (`flex-direction:
+    /// column-reverse`).
     fn flex_col_reverse(mut self) -> Self {
         self.styles_mut().layout = Some(Layout::Column);
         self.styles_mut().layout_options_mut().reverse = Some(true);
         self
     }
+    /// The size the view starts from along its parent's main axis before
+    /// growing or shrinking (CSS `flex-basis`).
     fn flex_basis(mut self, value: impl Into<crate::layout::Length>) -> Self {
         self.styles_mut().layout_options_mut().basis = Some(value.into());
         self
     }
+    /// Align this child across its parent's axis, overriding the parent's
+    /// `items_*` (CSS `align-self`).
     fn align_self(mut self, value: Align) -> Self {
         self.styles_mut().layout_options_mut().align_self = Some(value);
         self
     }
+    /// How a wrapping container spaces its lines across its axis (CSS
+    /// `align-content`).
     fn align_content(mut self, value: crate::layout::ContentAlign) -> Self {
         self.styles_mut().layout_options_mut().align_content = Some(value);
         self
     }
+    /// The room between columns, a length or percentage (CSS `column-gap`).
     fn gap_x(mut self, value: impl Into<crate::layout::Length>) -> Self {
         self.styles_mut().layout_options_mut().gap_x = Some(value.into());
         self
     }
+    /// The room between rows, a length or percentage (CSS `row-gap`).
     fn gap_y(mut self, value: impl Into<crate::layout::Length>) -> Self {
         self.styles_mut().layout_options_mut().gap_y = Some(value.into());
         self
     }
+    /// Width over height: the missing dimension follows from the other (CSS
+    /// `aspect-ratio`).
     fn aspect_ratio(mut self, value: f32) -> Self {
         self.styles_mut().layout_options_mut().aspect_ratio = Some(value);
         self
     }
+    /// A grid's number of equal columns (at least 1).
     fn grid_cols(mut self, value: u16) -> Self {
         self.styles_mut().layout_options_mut().columns = Some(value.max(1));
         self
     }
+    /// A grid's number of equal rows (at least 1).
     fn grid_rows(mut self, value: u16) -> Self {
         self.styles_mut().layout_options_mut().rows = Some(value.max(1));
         self
     }
+    /// The grid column this child starts at, from 1; negative counts from
+    /// the end (CSS `grid-column-start`).
     fn col_start(mut self, value: i16) -> Self {
         self.styles_mut().layout_options_mut().column_start = Some(value);
         self
     }
+    /// The grid row this child starts at, from 1; negative counts from the
+    /// end (CSS `grid-row-start`).
     fn row_start(mut self, value: i16) -> Self {
         self.styles_mut().layout_options_mut().row_start = Some(value);
         self
     }
+    /// How many grid columns this child spans (at least 1).
     fn col_span(mut self, value: u16) -> Self {
         self.styles_mut().layout_options_mut().column_span = Some(value.max(1));
         self
     }
+    /// How many grid rows this child spans (at least 1).
     fn row_span(mut self, value: u16) -> Self {
         self.styles_mut().layout_options_mut().row_span = Some(value.max(1));
         self
     }
+    /// Span every grid column (CSS `grid-column: 1 / -1`).
     fn col_span_full(mut self) -> Self {
         self.styles_mut().layout_options_mut().column_full = Some(true);
         self
     }
+    /// Span every grid row (CSS `grid-row: 1 / -1`).
     fn row_span_full(mut self) -> Self {
         self.styles_mut().layout_options_mut().row_full = Some(true);
         self
     }
+    /// The smallest width, as a percentage of the parent's content width.
     fn min_w_percent(mut self, percent: f32) -> Self {
         self.styles_mut().layout_options_mut().min_width =
             Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// The largest width, as a percentage of the parent's content width.
     fn max_w_percent(mut self, percent: f32) -> Self {
         self.styles_mut().layout_options_mut().max_width =
             Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// The smallest height, as a percentage of the parent's content height.
     fn min_h_percent(mut self, percent: f32) -> Self {
         self.styles_mut().layout_options_mut().min_height =
             Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// The largest height, as a percentage of the parent's content height.
     fn max_h_percent(mut self, percent: f32) -> Self {
         self.styles_mut().layout_options_mut().max_height =
             Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// An `absolute` view's inset from its containing block's top edge.
     fn top(mut self, value: impl Into<crate::layout::Length>) -> Self {
         self.styles_mut().layout_options_mut().inset.top = Some(value.into());
         self
     }
+    /// An `absolute` view's inset from its containing block's right edge.
     fn right(mut self, value: impl Into<crate::layout::Length>) -> Self {
         self.styles_mut().layout_options_mut().inset.right = Some(value.into());
         self
     }
+    /// An `absolute` view's inset from its containing block's bottom edge.
     fn bottom(mut self, value: impl Into<crate::layout::Length>) -> Self {
         self.styles_mut().layout_options_mut().inset.bottom = Some(value.into());
         self
     }
+    /// An `absolute` view's inset from its containing block's left edge.
     fn left(mut self, value: impl Into<crate::layout::Length>) -> Self {
         self.styles_mut().layout_options_mut().inset.left = Some(value.into());
         self
     }
+    /// Padding on every side, as a percentage of the parent's content width
+    /// (as CSS resolves percentage padding).
     fn p_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.padding.top = Some(crate::layout::Length::Percent(percent / 100.));
@@ -821,38 +869,45 @@ pub trait Styled: Sized {
         options.padding.left = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Left and right padding, as a percentage of the parent's content width.
     fn px_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.padding.right = Some(crate::layout::Length::Percent(percent / 100.));
         options.padding.left = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Top and bottom padding, as a percentage of the parent's content width.
     fn py_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.padding.top = Some(crate::layout::Length::Percent(percent / 100.));
         options.padding.bottom = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Top padding, as a percentage of the parent's content width.
     fn pt_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.padding.top = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Right padding, as a percentage of the parent's content width.
     fn pr_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.padding.right = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Bottom padding, as a percentage of the parent's content width.
     fn pb_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.padding.bottom = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Left padding, as a percentage of the parent's content width.
     fn pl_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.padding.left = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// A margin on every side, as a percentage of the parent's content width.
     fn m_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.top = Some(crate::layout::Length::Percent(percent / 100.));
@@ -861,6 +916,8 @@ pub trait Styled: Sized {
         options.margin.left = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Automatic margins on every side: the view takes its parent's free
+    /// space around it, centring it (CSS `margin: auto`).
     fn m_auto(mut self) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.top = Some(crate::layout::Length::Auto);
@@ -869,65 +926,80 @@ pub trait Styled: Sized {
         options.margin.left = Some(crate::layout::Length::Auto);
         self
     }
+    /// Left and right margins, as a percentage of the parent's content width.
     fn mx_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.right = Some(crate::layout::Length::Percent(percent / 100.));
         options.margin.left = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Automatic left and right margins: the view is centred across.
     fn mx_auto(mut self) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.right = Some(crate::layout::Length::Auto);
         options.margin.left = Some(crate::layout::Length::Auto);
         self
     }
+    /// Top and bottom margins, as a percentage of the parent's content width.
     fn my_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.top = Some(crate::layout::Length::Percent(percent / 100.));
         options.margin.bottom = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// Automatic top and bottom margins: centred down.
     fn my_auto(mut self) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.top = Some(crate::layout::Length::Auto);
         options.margin.bottom = Some(crate::layout::Length::Auto);
         self
     }
+    /// A top margin, as a percentage of the parent's content width.
     fn mt_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.top = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// An automatic top margin: the free space goes above the view, pushing
+    /// it to the bottom.
     fn mt_auto(mut self) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.top = Some(crate::layout::Length::Auto);
         self
     }
+    /// A right margin, as a percentage of the parent's content width.
     fn mr_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.right = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// An automatic right margin: the free space goes after the view,
+    /// pushing what follows it to the end.
     fn mr_auto(mut self) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.right = Some(crate::layout::Length::Auto);
         self
     }
+    /// A bottom margin, as a percentage of the parent's content width.
     fn mb_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.bottom = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// An automatic bottom margin: the free space goes below the view.
     fn mb_auto(mut self) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.bottom = Some(crate::layout::Length::Auto);
         self
     }
+    /// A left margin, as a percentage of the parent's content width.
     fn ml_percent(mut self, percent: f32) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.left = Some(crate::layout::Length::Percent(percent / 100.));
         self
     }
+    /// An automatic left margin: the free space goes before the view,
+    /// pushing it to the end.
     fn ml_auto(mut self) -> Self {
         let options = self.styles_mut().layout_options_mut();
         options.margin.left = Some(crate::layout::Length::Auto);
@@ -974,6 +1046,7 @@ pub trait Styled: Sized {
             None => self,
         }
     }
+    /// Merge `style`'s set properties over these.
     fn style(mut self, style: Styles) -> Self {
         self.styles_mut().merge(&style);
         self
@@ -983,18 +1056,24 @@ pub trait Styled: Sized {
         self.styles_mut().object_fit = Some(fit);
         self
     }
+    /// Fit the image inside its box, keeping its aspect ratio
+    /// ([`ObjectFit::Contain`]).
     fn object_contain(self) -> Self {
         self.object_fit(ObjectFit::Contain)
     }
+    /// Fill the box with the image, keeping its aspect ratio and cropping
+    /// the rest ([`ObjectFit::Cover`]).
     fn object_cover(self) -> Self {
         self.object_fit(ObjectFit::Cover)
     }
+    /// The width in points, or a theme token; replaces `w_percent`.
     fn w(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Width);
         self.styles_mut().width = Some(value);
         self.styles_mut().width_percent = None;
         self
     }
+    /// The height in points, or a theme token; replaces `h_percent`.
     fn h(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Height);
         self.styles_mut().height = Some(value);
@@ -1032,6 +1111,9 @@ pub trait Styled: Sized {
     fn h_full(self) -> Self {
         self.h_percent(100.)
     }
+    /// The smallest width in points (CSS `min-width`); replaces
+    /// `min_w_percent`. `min_w(0.)` lets a flex child shrink below its
+    /// content.
     fn min_w(mut self, value: f32) -> Self {
         if let Some(options) = &mut self.styles_mut().layout_options {
             std::sync::Arc::make_mut(options).min_width = None;
@@ -1039,6 +1121,8 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().min_width = Some(value);
         self
     }
+    /// The largest width in points (CSS `max-width`); replaces
+    /// `max_w_percent`.
     fn max_w(mut self, value: f32) -> Self {
         if let Some(options) = &mut self.styles_mut().layout_options {
             std::sync::Arc::make_mut(options).max_width = None;
@@ -1046,6 +1130,8 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().max_width = Some(value);
         self
     }
+    /// The smallest height in points (CSS `min-height`); replaces
+    /// `min_h_percent`.
     fn min_h(mut self, value: f32) -> Self {
         if let Some(options) = &mut self.styles_mut().layout_options {
             std::sync::Arc::make_mut(options).min_height = None;
@@ -1053,6 +1139,8 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().min_height = Some(value);
         self
     }
+    /// The largest height in points (CSS `max-height`); replaces
+    /// `max_h_percent`.
     fn max_h(mut self, value: f32) -> Self {
         if let Some(options) = &mut self.styles_mut().layout_options {
             std::sync::Arc::make_mut(options).max_height = None;
@@ -1060,6 +1148,8 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().max_height = Some(value);
         self
     }
+    /// The room between children, both ways, in points or a theme token;
+    /// replaces `gap_x` and `gap_y`.
     fn gap(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Gap);
         if let Some(options) = &mut self.styles_mut().layout_options {
@@ -1070,19 +1160,28 @@ pub trait Styled: Sized {
         self.styles_mut().gap = Some(value);
         self
     }
+    /// How much of its parent's free space this child takes, in proportion
+    /// to its siblings' (CSS `flex-grow`).
     fn flex_grow(mut self, value: f32) -> Self {
         self.styles_mut().flex_grow = Some(value);
         self
     }
+    /// How much this child gives up when its parent is short of space, in
+    /// proportion to its siblings' (CSS `flex-shrink`; 1 unless set). It
+    /// shrinks no smaller than its content unless `min_w`/`min_h` allow.
     fn flex_shrink(mut self, value: f32) -> Self {
         self.styles_mut().flex_shrink = Some(value);
         self
     }
+    /// Fill the background with `brush` (a colour, or a gradient between two
+    /// points) instead of the `bg` colour.
     fn bg_fill(mut self, brush: crate::canvas::Brush) -> Self {
         self.styles_mut().paint_background =
             Some(Some(crate::decoration::Background::Brush(brush)));
         self
     }
+    /// Fill the background with a linear gradient through `stops`, at `angle`
+    /// clockwise radians, its ends spanning the box (CSS `linear-gradient`).
     fn bg_gradient(
         mut self,
         angle: f32,
@@ -1122,10 +1221,12 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().shader_uniforms = Some(uniforms);
         self
     }
+    /// Round each corner by its own radius; replaces `rounded`.
     fn rounded_corners(mut self, corners: crate::decoration::Corners) -> Self {
         self.styles_mut().corners = Some(Some(corners));
         self
     }
+    /// A border with its own width on each side; replaces `border`.
     fn border_edges(mut self, widths: Insets) -> Self {
         self.styles_mut().border_edges = Some(Some(widths));
         self
@@ -1187,10 +1288,12 @@ pub trait Styled: Sized {
             StrokeAlign::Outside => self.outline(width, color).outline_offset(0.),
         }
     }
+    /// Draw the border solid or dashed.
     fn border_style(mut self, style: crate::decoration::BorderStyle) -> Self {
         self.styles_mut().rare_mut().border_style = Some(style);
         self
     }
+    /// Shadows under the box, in order (CSS `box-shadow`); replaces `shadow`.
     fn shadows(mut self, shadows: impl Into<std::sync::Arc<[BoxShadow]>>) -> Self {
         self.styles_mut().rare_mut().shadows = Some(Some(shadows.into()));
         self
@@ -1200,16 +1303,20 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().inset_shadows = Some(Some(shadows.into()));
         self
     }
+    /// The pointer's shape over the view.
     fn cursor(mut self, cursor: crate::cursor::Cursor) -> Self {
         self.styles_mut().cursor = Some(cursor);
         self
     }
+    /// The background colour, or a theme token; clears `bg_fill`,
+    /// `bg_gradient`, `bg_image` and `bg_shader`.
     fn bg(mut self, value: impl Into<crate::theme::Themed<Color>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Background);
         self.styles_mut().background = Some(value);
         self.styles_mut().paint_background = Some(None);
         self
     }
+    /// The text colour, or a theme token. Inherited.
     fn text_color(mut self, value: impl Into<crate::theme::Themed<Color>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::TextColor);
         self.styles_mut().text_color = Some(value);
@@ -1223,6 +1330,8 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().font_fallbacks = Some(families.into());
         self
     }
+    /// How text past its last line or its width ends: cut, or with an
+    /// ellipsis.
     fn text_overflow(mut self, overflow: crate::text_layout::TextOverflow) -> Self {
         self.styles_mut().rare_mut().text_overflow = Some(overflow);
         self
@@ -1232,10 +1341,13 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().line_clamp = Some(std::num::NonZeroU32::new(lines));
         self
     }
+    /// One line, ending with an ellipsis if it doesn't fit.
     fn truncate(self) -> Self {
         self.line_clamp(1)
             .text_overflow(crate::text_layout::TextOverflow::Ellipsis)
     }
+    /// How lines of text align in their box: at the line's start, left,
+    /// centred or right. Inherited.
     fn text_align(mut self, alignment: crate::text_layout::TextAlign) -> Self {
         self.styles_mut().text_align = Some(alignment);
         self
@@ -1245,6 +1357,7 @@ pub trait Styled: Sized {
         self.styles_mut().rare_mut().font_features = Some(features);
         self
     }
+    /// The font family, or a theme token. Inherited.
     fn font_family(
         mut self,
         family: impl Into<crate::theme::Themed<crate::text_layout::FontFamily>>,
@@ -1253,18 +1366,23 @@ pub trait Styled: Sized {
         self.styles_mut().font_family = Some(family);
         self
     }
+    /// The font weight, from 1 to 1000 (400 regular, 700 bold), or a theme
+    /// token. Inherited.
     fn font_weight(mut self, weight: impl Into<crate::theme::Themed<u16>>) -> Self {
         value_or_token!(self, weight, crate::theme::Field::FontWeight);
         self.styles_mut().font_weight = Some(weight.clamp(1, 1000));
         self
     }
+    /// Bold text (weight 700).
     fn font_bold(self) -> Self {
         self.font_weight(700)
     }
+    /// Italic text, or upright. Inherited.
     fn italic(mut self, italic: bool) -> Self {
         self.styles_mut().italic = Some(italic);
         self
     }
+    /// The font size in points, or a theme token. Inherited.
     fn text_size(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::TextSize);
         self.styles_mut().text_size = Some(value);
@@ -1304,23 +1422,30 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Round every corner by this radius in points, or a theme token;
+    /// replaces `rounded_corners`.
     fn rounded(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Radius);
         self.styles_mut().radius = Some(value);
         self.styles_mut().corners = Some(None);
         self
     }
+    /// A border this wide on every side, in points or a theme token;
+    /// replaces `border_edges`.
     fn border(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::BorderWidth);
         self.styles_mut().border_width = Some(value);
         self.styles_mut().border_edges = Some(None);
         self
     }
+    /// The border's colour, or a theme token.
     fn border_color(mut self, value: impl Into<crate::theme::Themed<Color>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::BorderColor);
         self.styles_mut().border_color = Some(value);
         self
     }
+    /// The view's opacity, 0 to 1, or a theme token. The subtree composites
+    /// item by item unless `isolated`.
     fn opacity(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Opacity);
         self.styles_mut().opacity = Some(value);
@@ -1404,21 +1529,29 @@ pub trait Styled: Sized {
         self.styles_mut().mask_offset = Some((x, y));
         self
     }
+    /// Fade the view's top and bottom edges out over `value` points.
     fn edge_fade(mut self, value: f32) -> Self {
         self.styles_mut().edge_fade = Some(value);
         self
     }
+    /// Render the subtree as a group into a cached layer, then composite it
+    /// once: `isolated(true).opacity(0.5)` fades overlapping children
+    /// together.
     fn isolated(mut self, value: bool) -> Self {
         self.styles_mut().isolated = Some(value);
         self
     }
+    /// Wrap text at the content width (true), or keep each line whole.
+    /// Inherited.
     fn text_wrap(mut self, value: bool) -> Self {
         self.styles_mut().text_wrap = Some(value);
         self
     }
+    /// `w(width).h(height)`.
     fn size(self, width: f32, height: f32) -> Self {
         self.w(width).h(height)
     }
+    /// Padding on every side, in points or a theme token.
     fn p(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Padding(15));
         let style = self.styles_mut();
@@ -1434,6 +1567,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(false, 15);
         self
     }
+    /// Left and right padding, in points or a theme token.
     fn px(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Padding(10));
         let style = self.styles_mut();
@@ -1449,6 +1583,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(false, 10);
         self
     }
+    /// Top and bottom padding, in points or a theme token.
     fn py(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Padding(5));
         let style = self.styles_mut();
@@ -1464,6 +1599,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(false, 5);
         self
     }
+    /// Top padding, in points or a theme token.
     fn pt(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Padding(1));
         let style = self.styles_mut();
@@ -1479,6 +1615,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(false, 1);
         self
     }
+    /// Right padding, in points or a theme token.
     fn pr(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Padding(2));
         let style = self.styles_mut();
@@ -1494,6 +1631,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(false, 2);
         self
     }
+    /// Bottom padding, in points or a theme token.
     fn pb(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Padding(4));
         let style = self.styles_mut();
@@ -1509,6 +1647,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(false, 4);
         self
     }
+    /// Left padding, in points or a theme token.
     fn pl(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Padding(8));
         let style = self.styles_mut();
@@ -1524,6 +1663,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(false, 8);
         self
     }
+    /// A margin on every side, in points or a theme token.
     fn m(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Margin(15));
         let style = self.styles_mut();
@@ -1539,6 +1679,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(true, 15);
         self
     }
+    /// Left and right margins, in points or a theme token.
     fn mx(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Margin(10));
         let style = self.styles_mut();
@@ -1554,6 +1695,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(true, 10);
         self
     }
+    /// Top and bottom margins, in points or a theme token.
     fn my(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Margin(5));
         let style = self.styles_mut();
@@ -1569,6 +1711,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(true, 5);
         self
     }
+    /// A top margin, in points or a theme token.
     fn mt(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Margin(1));
         let style = self.styles_mut();
@@ -1584,6 +1727,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(true, 1);
         self
     }
+    /// A right margin, in points or a theme token.
     fn mr(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Margin(2));
         let style = self.styles_mut();
@@ -1599,6 +1743,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(true, 2);
         self
     }
+    /// A bottom margin, in points or a theme token.
     fn mb(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Margin(4));
         let style = self.styles_mut();
@@ -1614,6 +1759,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(true, 4);
         self
     }
+    /// A left margin, in points or a theme token.
     fn ml(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Margin(8));
         let style = self.styles_mut();
@@ -1629,6 +1775,7 @@ pub trait Styled: Sized {
         style.clear_layout_spacing(true, 8);
         self
     }
+    /// Lay the children out in a row, first first.
     fn flex_row(mut self) -> Self {
         if let Some(options) = &mut self.styles_mut().layout_options {
             std::sync::Arc::make_mut(options).reverse = None;
@@ -1636,6 +1783,7 @@ pub trait Styled: Sized {
         self.styles_mut().layout = Some(Layout::Row);
         self
     }
+    /// Lay the children out in a column, first first.
     fn flex_col(mut self) -> Self {
         if let Some(options) = &mut self.styles_mut().layout_options {
             std::sync::Arc::make_mut(options).reverse = None;
@@ -1643,50 +1791,65 @@ pub trait Styled: Sized {
         self.styles_mut().layout = Some(Layout::Column);
         self
     }
+    /// Stack the children in one area (see [`crate::compose::overlay`]).
     fn overlay(mut self) -> Self {
         self.styles_mut().layout = Some(Layout::Overlay);
         self
     }
+    /// Align the children at the start across the axis (CSS `align-items:
+    /// flex-start`).
     fn items_start(mut self) -> Self {
         self.styles_mut().align = Some(Align::Start);
         self
     }
+    /// Centre the children across the axis.
     fn items_center(mut self) -> Self {
         self.styles_mut().align = Some(Align::Center);
         self
     }
+    /// Align a row's children by their first lines' baselines.
     fn items_baseline(mut self) -> Self {
         self.styles_mut().align = Some(Align::Baseline);
         self
     }
+    /// Align the children at the end across the axis.
     fn items_end(mut self) -> Self {
         self.styles_mut().align = Some(Align::End);
         self
     }
+    /// Stretch the children across the axis, unless they size themselves on
+    /// it (a column's default).
     fn items_stretch(mut self) -> Self {
         self.styles_mut().align = Some(Align::Stretch);
         self
     }
+    /// Pack the children at the start of the axis.
     fn justify_start(mut self) -> Self {
         self.styles_mut().justify = Some(Justify::Start);
         self
     }
+    /// Centre the children along the axis.
     fn justify_center(mut self) -> Self {
         self.styles_mut().justify = Some(Justify::Center);
         self
     }
+    /// Pack the children at the end of the axis.
     fn justify_end(mut self) -> Self {
         self.styles_mut().justify = Some(Justify::End);
         self
     }
+    /// Spread the free space between the children, none at the ends.
     fn justify_between(mut self) -> Self {
         self.styles_mut().justify = Some(Justify::SpaceBetween);
         self
     }
+    /// Spread the free space evenly between the children and the ends.
     fn justify_evenly(mut self) -> Self {
         self.styles_mut().justify = Some(Justify::SpaceEvenly);
         self
     }
+    /// Spread the free space around each child: half as much at the ends as
+    /// between.
     fn justify_around(mut self) -> Self {
         self.styles_mut().justify = Some(Justify::SpaceAround);
         self
@@ -1785,6 +1948,8 @@ pub trait Styled: Sized {
     fn fade_sides(self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
         self.fade_edges(top, bottom).fade_edges_x(left, right)
     }
+    /// Clip the subtree to the view's box, and to its rounded corners (CSS
+    /// `overflow: hidden`).
     fn overflow_hidden(mut self) -> Self {
         self.styles_mut().clip = Some(true);
         if let Some(options) = &mut self.styles_mut().layout_options {
@@ -1794,6 +1959,7 @@ pub trait Styled: Sized {
         }
         self
     }
+    /// Let the subtree paint past the view's box (the default).
     fn overflow_visible(mut self) -> Self {
         self.styles_mut().clip = Some(false);
         if let Some(options) = &mut self.styles_mut().layout_options {
@@ -1803,42 +1969,54 @@ pub trait Styled: Sized {
         }
         self
     }
+    /// Clip the subtree at the view's left and right edges only.
     fn overflow_x_hidden(mut self) -> Self {
         self.styles_mut().layout_options_mut().clip_x = Some(true);
         self
     }
+    /// Clip the subtree at the view's top and bottom edges only.
     fn overflow_y_hidden(mut self) -> Self {
         self.styles_mut().layout_options_mut().clip_y = Some(true);
         self
     }
+    /// Let the subtree paint past the view's left and right edges.
     fn overflow_x_visible(mut self) -> Self {
         self.styles_mut().layout_options_mut().clip_x = Some(false);
         self
     }
+    /// Let the subtree paint past the view's top and bottom edges.
     fn overflow_y_visible(mut self) -> Self {
         self.styles_mut().layout_options_mut().clip_y = Some(false);
         self
     }
+    /// A 1-point border on every side.
     fn border_1(self) -> Self {
         self.border(1.)
     }
+    /// `flex_grow(1.)`: take the parent's free space.
     fn grow(self) -> Self {
         self.flex_grow(1.)
     }
+    /// `flex_shrink(0.)`: keep the view's size when its parent is short of
+    /// space.
     fn shrink_0(self) -> Self {
         self.flex_shrink(0.)
     }
+    /// One shadow under the box, or a theme token; replaces `shadows`.
     fn shadow(mut self, value: impl Into<crate::theme::Themed<BoxShadow>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Shadow);
         self.styles_mut().rare_mut().shadow = Some(Some(value));
         self.styles_mut().rare_mut().shadows = Some(None);
         self
     }
+    /// No shadow.
     fn shadow_none(mut self) -> Self {
         self.styles_mut().rare_mut().shadow = Some(None);
         self.styles_mut().rare_mut().shadows = Some(None);
         self
     }
+    /// Move the view by `x`, `y` points after layout, without moving its
+    /// siblings: a compositor-only change.
     fn translate(mut self, x: f32, y: f32) -> Self {
         self.styles_mut().transform = Some(Transform { x, y });
         self
@@ -1849,6 +2027,8 @@ pub trait Styled: Sized {
     fn scale(self, factor: f32) -> Self {
         self.scale_xy(factor, factor)
     }
+    /// Scale by `x` across and `y` down about the transform origin, as
+    /// `scale`.
     fn scale_xy(mut self, x: f32, y: f32) -> Self {
         let patch = &mut self.styles_mut().local_transform;
         patch.values.scale = (x, y);
