@@ -56,6 +56,16 @@ bounds a new window's size (`xdg_toplevel.configure_bounds`) and winit keeps
 to it: a 1200 by 800 window opens at 1024 by 640 on a 1024 by 640 sway output.
 `work_area_smoke.py` checks X11 below a panel.
 
+## Launching
+
+A launcher hands a new app a token: `XDG_ACTIVATION_TOKEN` on Wayland,
+`DESKTOP_STARTUP_ID` on X11. The app's first window takes it, as GTK's
+does: on Wayland it activates the window (`xdg_activation_v1`), so GNOME
+focuses it rather than announcing it "is ready"; on X11 it ends the launch's
+startup notification, and with it the launcher's busy cursor. The token then
+leaves the environment, so processes the app starts later do not take it as
+theirs. `launch_token_smoke.py` checks both.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a

@@ -359,6 +359,10 @@ pub struct WindowFactory {
     /// Wayland app_id and X11 class, what docks match to its desktop file.
     #[cfg(target_os = "linux")]
     application_id: Option<Rc<str>>,
+    /// The launcher's token (XDG activation on Wayland, startup
+    /// notification on X11), for the next window made.
+    #[cfg(target_os = "linux")]
+    activation: Rc<RefCell<Option<winit::window::ActivationToken>>>,
     fonts: Rc<Vec<zgui_gpu::text::FontData>>,
     menus: Rc<RefCell<Vec<crate::AppMenu>>>,
     pending: Rc<RefCell<VecDeque<WindowRequest>>>,
@@ -655,6 +659,8 @@ impl Application {
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
             application_id: self.application_id.as_deref().map(Rc::from),
+            #[cfg(target_os = "linux")]
+            activation: Rc::default(),
             menus: Rc::new(RefCell::new(self.menus)),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
@@ -1803,6 +1809,8 @@ impl Host {
             event_loop,
             #[cfg(target_os = "linux")]
             self.context.windows.application_id.as_deref(),
+            #[cfg(target_os = "linux")]
+            self.context.windows.activation.borrow_mut().take(),
         )?)?);
         #[cfg(target_os = "macos")]
         {
@@ -3233,6 +3241,20 @@ impl ApplicationHandler<Event> for WindowManager {
             menu.install();
         }
         self.active = true;
+        // The launcher's token: the first window takes it, so the desktop
+        // focuses it (Wayland) and ends the launch's busy cursor (X11).
+        // Gone from the environment, processes the app starts later do not
+        // take it as theirs.
+        #[cfg(target_os = "linux")]
+        {
+            use winit::platform::startup_notify::{
+                EventLoopExtStartupNotify, reset_activation_token_env,
+            };
+            if let Some(token) = event_loop.read_token_from_env() {
+                *self.factory.activation.borrow_mut() = Some(token);
+                reset_activation_token_env();
+            }
+        }
         #[cfg(target_os = "linux")]
         if self.native_data.is_none() {
             let proxy = self.factory.proxy.clone();
@@ -4225,6 +4247,8 @@ mod tests {
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
             application_id: None,
+            #[cfg(target_os = "linux")]
+            activation: Rc::default(),
             menus: Rc::new(RefCell::new(Vec::new())),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
@@ -4365,6 +4389,8 @@ mod tests {
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
             application_id: None,
+            #[cfg(target_os = "linux")]
+            activation: Rc::default(),
             menus: Rc::new(RefCell::new(Vec::new())),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),

@@ -154,6 +154,7 @@ pub(crate) fn attributes(
     options: &crate::WindowOptions,
     event_loop: &ActiveEventLoop,
     #[cfg(target_os = "linux")] application_id: Option<&str>,
+    #[cfg(target_os = "linux")] activation: Option<winit::window::ActivationToken>,
 ) -> Result<WindowAttributes, String> {
     let mut attrs = Window::default_attributes()
         .with_title(&options.title)
@@ -162,6 +163,11 @@ pub(crate) fn attributes(
         .with_transparent(options.is_transparent())
         .with_decorations(options.decorations)
         .with_visible(false);
+    #[cfg(target_os = "linux")]
+    if let Some(token) = activation {
+        use winit::platform::startup_notify::WindowAttributesExtStartupNotify;
+        attrs = attrs.with_activation_token(token);
+    }
     // Wayland's app_id and X11's WM_CLASS: what docks and task switchers
     // match to the app's desktop file (its icon and name). The application
     // id, else the executable's name, as desktop files usually are.
