@@ -67,6 +67,7 @@ function M.move(id: number, mailbox: string)
 			if state.selected:peek() == id then
 				state.selected:set(nil)
 			end
+			state.status:set(`Moved to {mailbox}`)
 		end)
 	end
 end
@@ -104,6 +105,29 @@ function M.send()
 			starred = false,
 		})
 		state.composing:set(false)
+		state.status:set("Message sent")
+	end)
+end
+
+-- New mail: a message arriving in the inbox, announced.
+function M.receive()
+	local next_id = #state.messages:peek() + 1
+	ui.batch(function()
+		state.messages:insert(1, {
+			id = next_id,
+			mailbox = "Inbox",
+			from = "Grace Hopper",
+			email = "grace@navy.mil",
+			subject = "The nanosecond, again",
+			preview = "Here is the length of wire I promised, for the demo on Friday.",
+			body = "Here is the length of wire I promised, for the demo on Friday.",
+			date = "Now",
+			unread = true,
+			starred = false,
+		})
+		local inbox = state.unread_counts:peek().Inbox or 0
+		state.unread_counts:set_key({ "Inbox" }, inbox + 1)
+		state.status:set("New message from Grace Hopper: The nanosecond, again")
 	end)
 end
 

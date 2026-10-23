@@ -210,5 +210,20 @@ return function(): Node
 			-- through the messages, as a mail app's list does.
 			keyboard = true,
 		},
+		-- What the last action did; a screen reader says it as it changes
+		-- (a status is politely live).
+		ui.text {
+			function()
+				return state.status:get()
+			end,
+			id = "status",
+			role = "status",
+			px = 14,
+			py = 6,
+			color = "$text.secondary",
+			text_size = "$font.size.sm",
+			truncate = true,
+			min_w = 0,
+		},
 	}
 end

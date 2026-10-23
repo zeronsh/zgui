@@ -39,6 +39,15 @@ ui.command {
 	end,
 }
 ui.command {
+	id = "receive",
+	title = "Get New Mail",
+	menu = "Mailbox",
+	key = "cmd+shift+n",
+	run = function()
+		actions.receive()
+	end,
+}
+ui.command {
 	id = "reply",
 	title = "Reply",
 	menu = "Message",

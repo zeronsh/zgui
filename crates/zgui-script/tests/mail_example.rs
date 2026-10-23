@@ -322,3 +322,45 @@ fn reading_a_message_costs_what_changed() {
         before - read
     );
 }
+
+#[test]
+fn what_an_action_did_is_said_in_a_live_status() {
+    let mut h = mail(1180.);
+    let status = h.find("status").expect("the status line");
+    assert_eq!(
+        h.ui.semantics.borrow().get(status).map(|n| n.role),
+        Some(zgui::semantics::Role::Status),
+        "politely live, as a status is"
+    );
+    // The text in it, which is what a screen reader announces.
+    let said = |h: &Harness| {
+        let scene = h.ui.scene.borrow();
+        let semantics = h.ui.semantics.borrow();
+        let mut pending = vec![status];
+        let mut text = String::new();
+        while let Some(id) = pending.pop() {
+            if let Some(node) = semantics
+                .get(id)
+                .filter(|n| n.role == zgui::semantics::Role::Label)
+            {
+                text.push_str(node.value.as_deref().unwrap_or(&node.label));
+            }
+            pending.extend(scene.children(id).iter().rev().copied());
+        }
+        text
+    };
+    assert!(h.host.run_command("receive"));
+    h.frames(1);
+    assert_eq!(
+        said(&h),
+        "New message from Grace Hopper: The nanosecond, again"
+    );
+    assert!(h.texts().contains(&"The nanosecond, again".to_owned()));
+    h.click("row-1");
+    h.frames(1);
+    assert!(h.host.run_command("new"));
+    h.frames(1);
+    h.click("send");
+    h.frames(1);
+    assert_eq!(said(&h), "Message sent");
+}

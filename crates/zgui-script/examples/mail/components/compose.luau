@@ -35,7 +35,7 @@ return function(): Node
 			gap = 8,
 			justify = "end",
 			ui.button { on_click = ui.set(state.composing, false), "Cancel" },
-			ui.button { on_click = actions.send, "Send" },
+			ui.button { id = "send", on_click = actions.send, "Send" },
 		},
 	}
 end

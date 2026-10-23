@@ -47,6 +47,9 @@ M.layout = ui.computed(function(): Layout
 	local width = M.root.width or 1180
 	return if width >= 1000 then "wide" elseif width >= 680 then "medium" else "narrow"
 end)
+-- What the last action did ("Message sent"): the list's status line, which
+-- screen readers announce as it changes.
+M.status = ui.state("status", "")
 -- The mailboxes drawer, while the window is too narrow for the sidebar.
 M.drawer = ui.state("drawer", false)
 return M
