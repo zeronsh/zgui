@@ -499,3 +499,39 @@ fn composer_states_buttons_brighten_and_squish() {
         brightness(&mut h)
     );
 }
+
+#[test]
+fn selectable_markdown_selects_as_one_document() {
+    let h = example("selectable");
+    h.frame();
+    ok(&h);
+    h.ui.prepare_frame();
+    let first = {
+        let scene = h.ui.scene.borrow();
+        let mut stack = vec![scene.root()];
+        let mut found = None;
+        while let Some(n) = stack.pop() {
+            if matches!(scene.kind(n), zgui::scene::NodeKind::RichText { .. }) && found.is_none() {
+                found = Some(n);
+            }
+            stack.extend(scene.children(n).iter().rev().copied());
+        }
+        found.expect("the heading")
+    };
+    assert!(h.ui.select_all_text(first));
+    let text = h.ui.selected_text();
+    assert!(
+        text.starts_with("Selectable markdown\n\nEverything below"),
+        "{text:?}"
+    );
+    assert!(text.contains("•\tDouble-press a word"), "{text:?}");
+    assert!(
+        text.contains("return ui.column { selectable = true"),
+        "{text:?}"
+    );
+    assert!(
+        text.contains("Gesture\tSelects\ndrag\tcharacters"),
+        "{text:?}"
+    );
+    assert!(!text.contains("kept out"), "{text:?}");
+}

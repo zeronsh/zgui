@@ -1397,6 +1397,9 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
     if node.window_drag {
         view = view.window_drag();
     }
+    if let Some(selectable) = node.selectable {
+        view = view.selectable(selectable);
+    }
     match &node.pointer_events {
         Some(Source::Lit(Lit::Bool(enabled))) => view = view.pointer_events(*enabled),
         Some(source) => {

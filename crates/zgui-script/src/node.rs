@@ -63,6 +63,9 @@ pub(crate) struct Node {
     pub shader_tokens: [Option<zgui::theme::TokenId>; 4],
     /// `window_drag = true`: a press on it moves the window.
     pub window_drag: bool,
+    /// `selectable = true`: the pointer selects the text in it (`false`
+    /// keeps a part of a selectable node out).
+    pub selectable: Option<bool>,
     /// `tooltip = "text" | node`, `tooltip_placement`: shown over it while
     /// the pointer rests on it. Boxed: few nodes have one.
     pub tooltip: Option<Box<Tooltip>>,
@@ -404,6 +407,7 @@ impl Node {
             shader_params: None,
             shader_tokens: [None; 4],
             window_drag: false,
+            selectable: None,
             tooltip: None,
             source: None,
             theme: None,
@@ -1597,6 +1601,7 @@ fn fill(lua: &Lua, mut node: Node, table: Option<&Table>) -> mlua::Result<Node> 
             },
             "focusable" => node.focusable = Some(lua.unpack(value)?),
             "window_drag" => node.window_drag = lua.unpack(value)?,
+            "selectable" => node.selectable = lua.unpack(value)?,
             "tooltip" => {
                 let content = match value {
                     mlua::Value::Nil => None,

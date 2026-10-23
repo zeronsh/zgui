@@ -137,6 +137,7 @@ end)
 
 return ui.column {
 	gap = 8,
+	selectable = true,
 	ui.each(blocks, function(b: MarkdownBlock)
 		if b.t == "ul" then
 			local items: { Child } = {}
@@ -149,6 +150,10 @@ return ui.column {
 	end),
 }
 ```
+
+## Selectable text
+
+Text is not selectable unless asked, as in native apps. `selectable = true` on any node makes the text in it and everything it holds selectable as a web page's is: one selection runs across its texts, paragraphs, list rows and spans in document order. Drag to select; a double press selects a word and a triple press a paragraph, and dragging after either extends by words or paragraphs; Shift extends; ⌘A / Ctrl+A selects it all and ⌘C / Ctrl+C copies plain text (a tab between texts side by side, a blank line between blocks set apart). A secondary press on selected text offers Copy and Select All. Links and buttons inside still click; a drag that starts on one selects. Holding a drag past a scroll viewport's edge scrolls it, and a selection in `ui.list`'s rows outlives the rows it recycles. `selectable = false` keeps a part out (a toolbar, a timestamp). Markdown has no built-in view, so put `selectable = true` on the node you draw its blocks in, as above. [crates/zgui-script/examples/selectable](../../crates/zgui-script/examples/selectable/app.luau) draws a whole document (`cargo run -p zgui-script --example selectable`).
 
 ## Gotchas
 
