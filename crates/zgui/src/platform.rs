@@ -26,6 +26,12 @@ pub trait Platform {
     fn clipboard_text(&self) -> Option<String>;
     /// Put `text` on the clipboard; whether it took it.
     fn set_clipboard_text(&self, text: String) -> bool;
+    /// Put `text` on the clipboard with `html`, its rich form, where the
+    /// platform takes both; plain text alone otherwise.
+    fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {
+        let _ = html;
+        self.set_clipboard_text(text)
+    }
     /// The files the user picks to open: none if they cancel.
     fn open_files(&self, picker: FilePicker) -> Pending<Result<Vec<PathBuf>, String>>;
     /// Where the user chooses to save: none if they cancel.

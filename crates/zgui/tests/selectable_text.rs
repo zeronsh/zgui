@@ -575,3 +575,30 @@ fn unmounting_a_region_under_a_drag_ends_the_drag() {
     assert!(!ui.is_selecting_text());
     assert!(!ui.has_text_selection());
 }
+
+#[test]
+fn copied_html_keeps_paragraphs_line_breaks_and_inline_styles() {
+    let mut ui = Ui::new(400., 300.);
+    ui.mount(
+        column()
+            .w(300.)
+            .gap(16.)
+            .text_size(10.)
+            .line_height(20.)
+            .selectable(true)
+            .child(
+                rich_text()
+                    .child(text_span("Bold").font_bold())
+                    .child(text_span(" & "))
+                    .child(text_span("code").font_family(zgui::text_layout::FontFamily::Monospace)),
+            )
+            .child(text("a <tag>\nnext line")),
+    );
+    ui.prepare_frame();
+    assert!(ui.select_all_text(texts(&ui)[0]));
+    assert_eq!(
+        ui.selected_html(),
+        "<meta charset=\"utf-8\"><p><b>Bold</b> &amp; <code>code</code></p>\
+         <p>a &lt;tag&gt;<br>next line</p>"
+    );
+}

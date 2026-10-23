@@ -44,6 +44,18 @@ impl Clipboard {
         })
     }
 
+    /// Put `text` on the clipboard with `html`, its rich form, beside it
+    /// where the platform takes HTML (macOS, Windows, X11); text alone on
+    /// Wayland.
+    pub(crate) fn set_rich_text(&mut self, text: String, html: String) -> Result<()> {
+        match &mut self.backend {
+            Backend::Native(clipboard) => clipboard.set_html(html, Some(text))?,
+            #[cfg(target_os = "linux")]
+            Backend::Wayland(_) => return self.set_text(text),
+        }
+        Ok(())
+    }
+
     pub(crate) fn get_text(&mut self) -> Result<String> {
         match &mut self.backend {
             Backend::Native(clipboard) => Ok(clipboard.get_text()?),

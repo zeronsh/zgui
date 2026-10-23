@@ -30,6 +30,12 @@ impl Platform for Desktop {
             .as_mut()
             .is_some_and(|clipboard| clipboard.set_text(text).is_ok())
     }
+    fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {
+        self.clipboard
+            .borrow_mut()
+            .as_mut()
+            .is_some_and(|clipboard| clipboard.set_rich_text(text, html).is_ok())
+    }
     fn open_files(&self, picker: FilePicker) -> Pending<Result<Vec<PathBuf>, String>> {
         let dialogs = self.dialogs.clone();
         Box::pin(async move {

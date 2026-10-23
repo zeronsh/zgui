@@ -205,6 +205,8 @@ pub(crate) struct State {
     focus_row: Option<RowAddress>,
     /// A drag's autoscroll: its next tick, and when the last ran.
     scroll: Option<(Instant, Instant)>,
+    /// The region whose semantic node holds the selection.
+    semantic_root: Option<NodeId>,
 }
 
 /// Removes a virtual row's entry once it is unmounted.
@@ -266,6 +268,12 @@ impl Drop for RootGuard {
 /// Make `root` a selectable region (`View::selectable(true)`).
 pub(crate) fn mount_root(ui: &mut Ui, root: NodeId) {
     ui.scene.borrow_mut().set_user_select(root, Some(true));
+    // Assistive technology finds its selection on it.
+    if ui.semantics.borrow().get(root).is_none() {
+        ui.semantics
+            .borrow_mut()
+            .set(root, crate::semantics::SemanticNode::new(Role::Group, ""));
+    }
     let theme = ui.theme_scope();
     let weak = ui.downgrade();
     ui.bind(root, move || {
@@ -658,15 +666,17 @@ impl Ui {
             state.revision = state.revision.wrapping_add(1);
         }
         let mut shown = Vec::new();
+        let mut backwards = false;
         let mut leaves = std::mem::take(&mut state.leaves);
         let colors = selected.and_then(|root| state.roots.get(&root).copied());
         if let (Some(root), Some(_)) = (selected, colors) {
             let scene = self.scene.borrow();
             let rows = &state.rows;
-            let (start, end) = if order_ends(rows, &scene, &anchor, &focus).is_le() {
-                (anchor, focus)
-            } else {
+            backwards = order_ends(rows, &scene, &anchor, &focus).is_gt();
+            let (start, end) = if backwards {
                 (focus, anchor)
+            } else {
+                (anchor, focus)
             };
             leaves.clear();
             scene.selectable_text(root, |id| self.is_editor(id), |leaf| leaves.push(leaf));
@@ -724,6 +734,26 @@ impl Ui {
         }
         leaves.clear();
         state.leaves = leaves;
+        // For assistive technology: the region's anchor and focus, in its
+        // labels' values (`SemanticNode::document_selection`).
+        let document = shown.first().zip(shown.last()).map(|(first, last)| {
+            let scene = self.scene.borrow();
+            let start = (
+                first.node,
+                semantic_offset(&scene, first.node, first.range.start),
+            );
+            let end = (
+                last.node,
+                semantic_offset(&scene, last.node, last.range.end),
+            );
+            if backwards {
+                (end, start)
+            } else {
+                (start, end)
+            }
+        });
+        let semantic_root = selected.filter(|_| document.is_some());
+        let previous = std::mem::replace(&mut state.semantic_root, semantic_root);
         let old = std::mem::replace(&mut state.shown, shown.clone());
         let color = colors.map(|(active, inactive)| match state.inactive {
             true => inactive,
@@ -738,6 +768,15 @@ impl Ui {
             );
         }
         drop(state);
+        {
+            let mut semantics = self.semantics.borrow_mut();
+            if let Some(previous) = previous.filter(|previous| Some(*previous) != semantic_root) {
+                semantics.update(previous, |node| node.document_selection = None);
+            }
+            if let Some(root) = semantic_root {
+                semantics.update(root, |node| node.document_selection = document);
+            }
+        }
         // Both run in document order, mostly the same nodes: what was shown
         // is looked up by node.
         let before: HashMap<NodeId, &Shown> = old.iter().map(|part| (part.node, part)).collect();
@@ -991,6 +1030,21 @@ impl Ui {
         self.set_selection(root, Some(anchor), Some(focus));
         true
     }
+    /// Select as assistive technology asks: each end a label and an offset
+    /// into its semantic value (`SemanticNode::document_selection`).
+    pub fn select_accessible_text(&self, anchor: (NodeId, usize), focus: (NodeId, usize)) -> bool {
+        let point = |(node, offset): (NodeId, usize)| {
+            let scene = self.scene.borrow();
+            scene.contains(node).then(|| TextPoint {
+                node,
+                offset: scene_offset(&scene, node, offset),
+            })
+        };
+        match (point(anchor), point(focus)) {
+            (Some(anchor), Some(focus)) => self.select_text(anchor, focus),
+            _ => false,
+        }
+    }
     /// Select all the text in the selectable region holding `node`.
     pub fn select_all_text(&self, node: NodeId) -> bool {
         let (root, first, last) = {
@@ -1054,6 +1108,55 @@ impl Ui {
             );
             previous = Some((part.node, size));
         }
+        out
+    }
+    /// The selected text as HTML, for pasting into rich text: paragraphs and
+    /// line breaks where `selected_text` has them, and bold, italic,
+    /// monospace (code), underline and strikethrough runs.
+    pub fn selected_html(&self) -> String {
+        let shown = self.selection_state().borrow().shown.clone();
+        let scene = self.scene.borrow();
+        let mut out = String::from("<meta charset=\"utf-8\"><p>");
+        let mut previous: Option<(NodeId, f32)> = None;
+        for part in shown {
+            if !scene.layout_visible(part.node) {
+                continue;
+            }
+            let size = font_size(&scene, part.node);
+            if let Some((before, before_size)) = previous {
+                out.push_str(
+                    match separator(&scene, before, part.node, before_size.min(size)) {
+                        "\t" => " ",
+                        "\n\n" => "</p><p>",
+                        _ => "<br>",
+                    },
+                );
+            }
+            match scene.kind(part.node) {
+                NodeKind::Text { text, .. } if !scene.font(part.node).masked => {
+                    let range = part.range.start.min(text.len())..part.range.end.min(text.len());
+                    html_run(&mut out, &text[range], scene.font(part.node), false, false);
+                }
+                NodeKind::RichText { text } => {
+                    for run in text.runs() {
+                        let start = run.range.start.max(part.range.start);
+                        let end = run.range.end.min(part.range.end);
+                        if start < end {
+                            html_run(
+                                &mut out,
+                                &text.text()[start..end],
+                                &run.font,
+                                run.underline.is_some(),
+                                run.strikethrough.is_some(),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+            previous = Some((part.node, size));
+        }
+        out.push_str("</p>");
         out
     }
     /// The window was activated or sent to the back: selections show the
@@ -1156,7 +1259,9 @@ pub(crate) fn context_menu(
                 .id("selection-copy")
                 .on_click(move || {
                     if let (Some(ui), Some(platform)) = (copy.upgrade(), &platform) {
-                        platform.0.set_clipboard_text(ui.selected_text());
+                        platform
+                            .0
+                            .set_clipboard_rich_text(ui.selected_text(), ui.selected_html());
                     }
                 }),
             crate::compose::menu_item("Select All")
@@ -1272,6 +1377,76 @@ fn font_size(scene: &Scene, id: NodeId) -> f32 {
         NodeKind::Text { font_size, .. } => *font_size,
         NodeKind::RichText { text } => text.runs().first().map_or(16., |run| run.font_size),
         _ => 16.,
+    }
+}
+
+/// `offset` into `id`'s text as an offset into its semantic value, which
+/// leaves inline icons' placeholders out.
+fn semantic_offset(scene: &Scene, id: NodeId, offset: usize) -> usize {
+    match scene.kind(id) {
+        NodeKind::RichText { text } => {
+            let icon = crate::compose_rich::ICON_PLACEHOLDER;
+            offset
+                - text.text()[..offset.min(text.text().len())]
+                    .matches(icon)
+                    .count()
+                    * icon.len()
+        }
+        _ => offset,
+    }
+}
+
+/// The reverse of `semantic_offset`.
+fn scene_offset(scene: &Scene, id: NodeId, semantic: usize) -> usize {
+    let NodeKind::RichText { text } = scene.kind(id) else {
+        return semantic;
+    };
+    let icon = crate::compose_rich::ICON_PLACEHOLDER;
+    let (mut seen, mut offset) = (0, 0);
+    let text = text.text();
+    while offset < text.len() {
+        if text[offset..].starts_with(icon) {
+            offset += icon.len();
+            continue;
+        }
+        if seen >= semantic {
+            break;
+        }
+        let step = text[offset..].chars().next().map_or(1, char::len_utf8);
+        seen += step;
+        offset += step;
+    }
+    offset
+}
+
+/// One styled run of `selected_html`: escaped, with its line breaks.
+fn html_run(out: &mut String, text: &str, font: &FontStyle, underline: bool, strike: bool) {
+    let tags = [
+        (font.weight >= 600, "b"),
+        (font.italic, "i"),
+        (
+            font.family == crate::text_layout::FontFamily::Monospace,
+            "code",
+        ),
+        (underline || font.underline.is_some(), "u"),
+        (strike, "s"),
+    ];
+    for (_, tag) in tags.iter().filter(|(on, _)| *on) {
+        out.push_str(&format!("<{tag}>"));
+    }
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\n' => out.push_str("<br>"),
+            '\u{2060}' | '\u{fffc}' => {}
+            c => out.push(c),
+        }
+    }
+    for (_, tag) in tags.iter().rev().filter(|(on, _)| *on) {
+        out.push_str(&format!("</{tag}>"));
     }
 }
 

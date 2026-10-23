@@ -64,6 +64,10 @@ pub struct SemanticNode {
     pub size_of_set: Option<usize>,
     /// A text input's placeholder, shown while it is empty.
     pub placeholder: Option<String>,
+    /// A selectable region's selection (`View::selectable`): its anchor and
+    /// focus, each a label under this node and a UTF-8 offset into that
+    /// label's value.
+    pub document_selection: Option<((NodeId, usize), (NodeId, usize))>,
 }
 impl SemanticNode {
     pub fn new(role: Role, label: impl Into<String>) -> Self {
@@ -86,6 +90,7 @@ impl SemanticNode {
             position_in_set: None,
             size_of_set: None,
             placeholder: None,
+            document_selection: None,
         }
     }
 }

@@ -1489,9 +1489,12 @@ impl Host {
             if !k.eq_ignore_ascii_case("c") || !self.context.ui.has_text_selection() {
                 return false;
             }
-            let text = self.context.ui.selected_text();
+            let (text, html) = (
+                self.context.ui.selected_text(),
+                self.context.ui.selected_html(),
+            );
             if let Some(clipboard) = self.clipboard.borrow_mut().as_mut() {
-                let _ = clipboard.set_text(text);
+                let _ = clipboard.set_rich_text(text, html);
             }
             return true;
         };
@@ -1548,13 +1551,22 @@ impl Host {
                 _ => {}
             },
             accesskit::Action::SetTextSelection => {
-                if let Some(accesskit::ActionData::SetTextSelection(selection)) = request.data
-                    && let Some((owner, anchor, focus)) = self.tree.resolve_selection(&selection)
-                    && owner == node
-                {
-                    self.context
-                        .ui
-                        .set_accessible_text_selection(node, anchor, focus);
+                if let Some(accesskit::ActionData::SetTextSelection(selection)) = request.data {
+                    match self.tree.resolve_selection(&selection) {
+                        Some((owner, anchor, focus)) if owner == node => {
+                            self.context
+                                .ui
+                                .set_accessible_text_selection(node, anchor, focus);
+                        }
+                        // Across a selectable region's labels.
+                        _ => {
+                            if let Some((anchor, focus)) =
+                                self.tree.resolve_document_selection(&selection)
+                            {
+                                self.context.ui.select_accessible_text(anchor, focus);
+                            }
+                        }
+                    }
                 }
             }
             accesskit::Action::Increment => {

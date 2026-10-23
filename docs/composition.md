@@ -127,6 +127,18 @@ unselectable text, inline icons and an ellipsis are left out; truncated text
 copies whole. `Ui::selected_text`, `text_selection`, `select_text`,
 `select_all_text` and `clear_text_selection` read and set the selection, and
 `text_selection_revision` changes whenever it does.
+`selected_html` gives it as HTML (paragraphs, line breaks, bold, italic,
+code, underline and strikethrough runs); the desktop host's ⌘C / Ctrl+C and
+the menu's Copy (`Platform::set_clipboard_rich_text`) put both on the clipboard where the platform takes HTML (macOS, Windows, X11) and
+plain text alone on Wayland.
+
+Assistive technology reads the selection from the region: its semantic node
+(a group, unless the view has a role of its own) carries
+`SemanticNode::document_selection`, which the desktop host projects as an
+AccessKit text selection over the labels' text runs, so a screen reader reads
+the selected text across nodes. A selection that assistive technology sets
+across the region's labels selects as the pointer would
+(`Ui::select_accessible_text`).
 
 Holding a drag past an edge of a scroll viewport (`scroll`, `scroll_x`, a
 virtual list) scrolls the innermost one holding the selection's focus and

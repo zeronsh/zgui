@@ -53,6 +53,37 @@ impl AccessibilityTree {
             focus[selection.focus.character_index.min(focus.len() - 1)],
         ))
     }
+    /// Convert a native selection across labels (a selectable region's) to
+    /// each end's label and UTF-8 offset into its value.
+    pub fn resolve_document_selection(
+        &self,
+        selection: &accesskit::TextSelection,
+    ) -> Option<((NodeId, usize), (NodeId, usize))> {
+        let end = |position: &accesskit::TextPosition| {
+            let (owner, offsets) = self.text_positions.get(&position.node)?;
+            Some((
+                *owner,
+                offsets[position.character_index.min(offsets.len() - 1)],
+            ))
+        };
+        Some((end(&selection.anchor)?, end(&selection.focus)?))
+    }
+    /// The native position of UTF-8 offset `byte` into label `owner`'s runs.
+    fn text_position(&self, owner: NodeId, byte: usize) -> Option<accesskit::TextPosition> {
+        let ids = self.text_runs.get(&owner)?;
+        let index = ids
+            .iter()
+            .rposition(|run| self.text_positions[run].1[0] <= byte)
+            .unwrap_or(0);
+        let character_index = self.text_positions[&ids[index]]
+            .1
+            .partition_point(|offset| *offset <= byte)
+            .saturating_sub(1);
+        Some(accesskit::TextPosition {
+            node: ids[index],
+            character_index,
+        })
+    }
     pub fn update(
         &mut self,
         scene: &Scene,
@@ -127,6 +158,9 @@ impl AccessibilityTree {
         }
         self.text_runs.retain(|owner, _| visible.contains(owner));
         let mut nodes = Vec::with_capacity(ordered.len() + 1);
+        // Selectable regions projected now, and their selections: set once
+        // their labels' runs are.
+        let mut documents = Vec::new();
         let mut window = Node::new(accesskit::Role::Window);
         window.set_label(title);
         window.set_children(children.remove(&scene.root()).unwrap_or_default());
@@ -363,9 +397,22 @@ impl AccessibilityTree {
             } else {
                 self.text_runs.remove(&id);
             }
+            if let Some(selection) = semantic.document_selection {
+                documents.push((nodes.len(), selection));
+            }
             n.set_children(native_children);
             nodes.push((native, n));
             self.projection_revisions.insert(id, revision);
+        }
+        for (index, (anchor, focus)) in documents {
+            if let (Some(anchor), Some(focus)) = (
+                self.text_position(anchor.0, anchor.1),
+                self.text_position(focus.0, focus.1),
+            ) {
+                let node = &mut nodes[index].1;
+                node.set_text_selection(accesskit::TextSelection { anchor, focus });
+                node.add_action(Action::SetTextSelection);
+            }
         }
         let live: HashSet<_> = self
             .ids
@@ -1099,5 +1146,69 @@ mod projection_key_tests {
                 Some(label)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod document_selection_tests {
+    use super::*;
+    use zgui::{compose::prelude::*, selection::TextPoint, widgets::Ui};
+
+    #[test]
+    fn a_selection_across_labels_is_the_regions_and_assistive_technology_can_set_it() {
+        let mut ui = Ui::new(400., 200.);
+        let view = ui.mount(
+            column()
+                .w(300.)
+                .selectable(true)
+                .children([text("Hello world"), text("Second line")]),
+        );
+        ui.prepare_frame();
+        let root = view.node();
+        let labels: Vec<_> = ui.scene.borrow().children(root).to_vec();
+        let at = |node, offset| TextPoint { node, offset };
+        assert!(ui.select_text(at(labels[0], 6), at(labels[1], 3)));
+        let mut adapter = AccessibilityTree::new();
+        let update = adapter.update(
+            &ui.scene.borrow(),
+            &ui.semantics.borrow(),
+            Some(root),
+            "Test",
+            1.,
+        );
+        let native = adapter.ids[&root];
+        let node = &update.nodes.iter().find(|(id, _)| *id == native).unwrap().1;
+        assert!(node.supports_action(Action::SetTextSelection));
+        let selection = *node
+            .text_selection()
+            .expect("the region carries the selection");
+        assert_eq!(
+            adapter.resolve_document_selection(&selection),
+            Some(((labels[0], 6), (labels[1], 3)))
+        );
+        let tree = accesskit_consumer::Tree::new(update, true);
+        let region = tree.state().focus().unwrap();
+        let text = region.text_selection().unwrap().text();
+        assert!(
+            text.starts_with("world") && text.ends_with("Sec"),
+            "{text:?}"
+        );
+        // Backwards, as assistive technology asks.
+        let reversed = accesskit::TextSelection {
+            anchor: selection.focus,
+            focus: selection.anchor,
+        };
+        let (anchor, focus) = adapter.resolve_document_selection(&reversed).unwrap();
+        assert!(ui.select_accessible_text(anchor, focus));
+        assert_eq!(
+            ui.text_selection(),
+            Some((at(labels[1], 3), at(labels[0], 6)))
+        );
+        assert_eq!(ui.selected_text(), "world\nSec");
+        ui.clear_text_selection();
+        assert_eq!(
+            ui.semantics.borrow().get(root).unwrap().document_selection,
+            None
+        );
     }
 }
