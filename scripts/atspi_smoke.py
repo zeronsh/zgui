@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from platform_smoke import stop, wait_for_wm
+from platform_smoke import release_documents, stop, wait_for_wm
 
 
 def main():
@@ -226,6 +226,7 @@ def main():
                     pass
                 launcher.wait(timeout=5)
             stop(xvfb)
+            release_documents(runtime)
 
 
 if __name__ == "__main__":

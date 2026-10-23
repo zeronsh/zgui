@@ -26,6 +26,25 @@ def stop(process):
             process.wait()
 
 
+def release_documents(runtime):
+    """Unmount the document portal from the private `runtime` directory.
+
+    On a stock session bus zgui's settings read starts xdg-desktop-portal,
+    which mounts xdg-document-portal's FUSE filesystem at `runtime`/doc. A
+    killed bus leaves that mount disconnected, and the directory can't be
+    removed past it. Call once the bus is stopped.
+    """
+    try:
+        if 'doc' not in os.listdir(runtime):
+            return
+    except OSError:
+        return
+    tool = shutil.which('fusermount3') or shutil.which('fusermount')
+    if tool:
+        subprocess.run([tool, '-u', '-z', os.path.join(runtime, 'doc')],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def wait_for_wm(env, seconds=20):
     """Wait until the window manager on `env`'s display manages windows:
     started is not ready, and a loaded machine takes longer than any sleep."""
