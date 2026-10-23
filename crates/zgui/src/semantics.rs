@@ -2,24 +2,42 @@
 use crate::scene::{NodeId, Scene};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// What a node is to assistive technology (ARIA's `role`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
+    /// The window's root.
     Window,
+    /// A grouping of related nodes.
     Group,
+    /// Static text.
     Label,
+    /// A push button.
     Button,
+    /// A link that opens something.
     Link,
+    /// A checkbox; see `SemanticNode::checked` and `mixed`.
     CheckBox,
+    /// A slider; see `min`, `max` and `numeric_value`.
     Slider,
+    /// A single-line text field.
     TextInput,
+    /// A multiline text editor.
     MultilineTextInput,
+    /// A progress indicator; see `min`, `max` and `numeric_value`.
     Progress,
+    /// A scrolling viewport; see `scroll_axis`.
     ScrollView,
+    /// A scrollbar.
     ScrollBar,
+    /// An item of a `List`.
     ListItem,
+    /// A dialog; see `modal`.
     Dialog,
+    /// A menu of `MenuItem`s.
     Menu,
+    /// A menu's command.
     MenuItem,
+    /// An image, named by its label.
     Image,
     /// Text read and selected as a document: a selectable region
     /// (`View::selectable`), as a browser's page is.
@@ -33,6 +51,7 @@ pub enum Role {
     /// A list whose items are chosen (`role="listbox"`): its
     /// `ListBoxOption`s say whether they are `selected`.
     ListBox,
+    /// An option of a `ListBox`.
     ListBoxOption,
     /// A row of controls (`role="toolbar"`).
     Toolbar,
@@ -42,50 +61,69 @@ pub enum Role {
     /// Tabs choosing a panel (`role="tablist"`), each a `Tab` that says
     /// whether it is `selected`.
     TabList,
+    /// A tab of a `TabList`.
     Tab,
 }
 /// How a change to a node's text is announced (ARIA's `aria-live`): only
 /// once the reader is idle, or at once, interrupting it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Live {
+    /// Announced once the reader is idle.
     Polite,
+    /// Announced at once, interrupting the reader.
     Assertive,
 }
 /// The single scrolling axis supported by a semantic scroll view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollAxis {
+    /// It scrolls across.
     Horizontal,
+    /// It scrolls down.
     Vertical,
 }
 /// Kind of popup exposed by an interactive trigger.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PopupKind {
+    /// It opens a menu.
     Menu,
+    /// It opens a dialog.
     Dialog,
 }
+/// A node's accessibility information: its role, name, value and state,
+/// which the desktop host projects to the platform's accessibility API.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SemanticNode {
+    /// What it is.
     pub role: Role,
+    /// Its accessible name.
     pub label: String,
+    /// Its value as text (a text field's contents).
     pub value: Option<String>,
     /// Committed-text UTF-8 byte offsets, preserving anchor/focus direction.
     pub text_selection: Option<(usize, usize)>,
+    /// A checkbox's state: on, off, or `None` for not a checkbox.
     pub checked: Option<bool>,
     /// A checkbox neither on nor off (`View::mixed`): what `checked` says
     /// is set aside.
     pub mixed: bool,
+    /// Whether it can't be used now.
     pub disabled: bool,
     /// Readable and selectable, but not editable through user input.
     pub read_only: bool,
     /// Whether this dialog traps interaction within its subtree.
     pub modal: bool,
+    /// Whether what it opens is open; `None` for nothing to open.
     pub expanded: Option<bool>,
+    /// What it opens, if anything.
     pub has_popup: Option<PopupKind>,
     /// Accessible ownership for a portal whose physical parent differs. Native
     /// projection ignores missing, hidden, self-referential or cyclic parents.
     pub logical_parent: Option<NodeId>,
+    /// A range's smallest value.
     pub min: Option<f64>,
+    /// A range's largest value.
     pub max: Option<f64>,
+    /// A range's current value.
     pub numeric_value: Option<f64>,
     /// None preserves the vertical default of legacy scroll views.
     pub scroll_axis: Option<ScrollAxis>,
@@ -115,6 +153,7 @@ pub struct SemanticNode {
     pub hidden: bool,
 }
 impl SemanticNode {
+    /// A node of `role` named `label`, everything else unset.
     pub fn new(role: Role, label: impl Into<String>) -> Self {
         Self {
             role,
@@ -156,6 +195,8 @@ struct SemanticEntry {
     node: SemanticNode,
     revision: u64,
 }
+/// The accessibility information of a document's nodes, with revisions a
+/// host uses to send only what changed.
 pub struct Semantics {
     nodes: crate::scene::NodeMap<SemanticEntry>,
     revision: u64,
@@ -192,9 +233,11 @@ impl Drop for SemanticUpdate<'_> {
     }
 }
 impl Semantics {
+    /// An empty store.
     pub fn new() -> Self {
         Self::default()
     }
+    /// Set `id`'s information; equal information changes nothing.
     pub fn set(&mut self, id: NodeId, node: SemanticNode) {
         if self.get(id) != Some(&node) {
             self.revision = self.revision.wrapping_add(1);
@@ -207,6 +250,7 @@ impl Semantics {
             );
         }
     }
+    /// `id`'s information, if it has any.
     pub fn get(&self, id: NodeId) -> Option<&SemanticNode> {
         self.nodes.get(&id).map(|entry| &entry.node)
     }
@@ -218,6 +262,8 @@ impl Semantics {
             revision: entry.revision,
         })
     }
+    /// Change `id`'s information in place, if it has any. It counts as
+    /// changed only if `f` changed it.
     pub fn update(&mut self, id: NodeId, f: impl FnOnce(&mut SemanticNode)) {
         if let Some(entry) = self.nodes.get_mut(&id) {
             let before = entry.node.clone();
@@ -284,12 +330,14 @@ impl Semantics {
         self.revision = self.revision.wrapping_add(1);
         entry.revision = self.revision;
     }
+    /// Remove `id`'s information.
     pub fn remove(&mut self, id: NodeId) {
         if self.nodes.remove(&id).is_some() {
             self.revision = self.revision.wrapping_add(1);
             crate::shrink_sparse(&mut self.nodes);
         }
     }
+    /// Remove the information of nodes no longer in `scene`.
     pub fn retain_mounted(&mut self, scene: &Scene) {
         let count = self.nodes.len();
         self.nodes.retain(|id, _| scene.contains(*id));
@@ -297,9 +345,11 @@ impl Semantics {
             self.revision = self.revision.wrapping_add(1);
         }
     }
+    /// Every node's information, in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = (NodeId, &SemanticNode)> {
         self.nodes.iter().map(|(id, entry)| (*id, &entry.node))
     }
+    /// Counts changes to the store: unchanged, nothing needs sending.
     pub fn revision(&self) -> u64 {
         self.revision
     }
