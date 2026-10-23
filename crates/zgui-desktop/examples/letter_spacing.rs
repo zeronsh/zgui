@@ -58,7 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .text_size(20.),
                     )
                     .child(
+                        // The label as wide as its tracking makes it.
                         column()
+                            .items_start()
                             .size(540., 140.)
                             .gap(8.)
                             .font_family(zgui::text_layout::FontFamily::Monospace)
