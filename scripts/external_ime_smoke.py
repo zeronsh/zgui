@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 
-from platform_smoke import stop, wait_for_wm
+from platform_smoke import stop, wait_for_wm, use_ibus_engine, wait_for_ibus_xim
 
 
 def main():
@@ -67,6 +67,7 @@ def main():
                 if time.monotonic()>deadline or ime.poll() is not None:
                     raise RuntimeError('IBus failed: '+ready.stdout+ready.stderr)
                 time.sleep(.2)
+            wait_for_ibus_xim(env)
             def xdo(*arguments):
                 return subprocess.check_output(['xdotool', *map(str,arguments)], env=env, text=True).strip()
             with (args.output / 'application.log').open('w') as output:
@@ -94,7 +95,7 @@ def main():
                 click(100, 76)
                 key('End')
                 initial = sample()
-                subprocess.run(['ibus','engine','libpinyin'],env=env,check=True)
+                use_ibus_engine(env,'libpinyin',ime)
                 type_text('nihao')
                 deadline = time.monotonic() + 5
                 while time.monotonic() < deadline:

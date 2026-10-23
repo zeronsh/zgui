@@ -41,6 +41,35 @@ def wait_for_wm(env, seconds=20):
     raise RuntimeError("the window manager did not start")
 
 
+def wait_for_ibus_xim(env, seconds=20):
+    """Wait until IBus's XIM frontend serves the display: a client started
+    before then runs without the input method."""
+    deadline = time.monotonic() + seconds
+    while "@server=ibus" not in subprocess.run(["xprop", "-root", "XIM_SERVERS"], env=env,
+                                               capture_output=True, text=True).stdout:
+        if time.monotonic() > deadline:
+            raise RuntimeError("IBus's XIM server did not register")
+        time.sleep(.05)
+
+
+def use_ibus_engine(env, engine, daemon, seconds=20):
+    """Switch IBus to `engine` and wait until it is the engine and its
+    process (a child of `daemon`, this probe's ibus-daemon) runs: keys sent
+    before then reach no engine."""
+    subprocess.run(["ibus", "engine", engine], env=env, check=True)
+    deadline = time.monotonic() + seconds
+    while True:
+        current = subprocess.run(["ibus", "engine"], env=env, capture_output=True, text=True).stdout.strip()
+        running = subprocess.run(["pgrep", "-P", str(daemon.pid), "-f", "ibus-engine-" + engine],
+                                 capture_output=True).returncode == 0
+        if current == engine and running:
+            time.sleep(.3)
+            return
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"IBus engine {engine} did not start ({current!r})")
+        time.sleep(.05)
+
+
 def x11(args, output):
     for tool in ("Xvfb", "openbox", "xdotool"):
         if not shutil.which(tool):
