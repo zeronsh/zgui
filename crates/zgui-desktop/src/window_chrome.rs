@@ -136,12 +136,13 @@ pub(crate) fn titlebar_area(
     {
         win::titlebar_area(size.width, titlebar)
     }
+    #[cfg(target_os = "linux")]
+    {
+        linux::titlebar_area(size.width, titlebar)
+    }
     // TODO(macos): the traffic lights' frame (`standardWindowButton`) in
     // the 40-point strip `Inset` keeps, and the strip right of them.
-    // TODO(linux): the libadwaita buttons `Inset` draws, on the side and in
-    // the order the desktop asks (`linux_appearance`), and the strip
-    // beside them.
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = size;
         (None, None)
@@ -1176,6 +1177,50 @@ mod linux {
         }
     }
 
+    /// The strip `Inset` keeps and the window buttons in it, in points:
+    /// the buttons where `CaptionHost` draws them, on the side the desktop
+    /// asks, and the strip between (`WindowInfo::titlebar_area`, `controls`).
+    pub(super) fn titlebar_area(
+        width: f32,
+        titlebar: super::Titlebar,
+    ) -> (Option<zgui::scene::Rect>, Option<zgui::scene::Rect>) {
+        area_for(
+            width,
+            titlebar,
+            crate::linux_appearance::current()
+                .buttons
+                .unwrap_or_default(),
+        )
+    }
+
+    /// `titlebar_area` for `layout`. With buttons on both sides, `controls`
+    /// is the right side's (the web's window controls overlay has one) and
+    /// the area is the strip between.
+    pub(super) fn area_for(
+        width: f32,
+        titlebar: super::Titlebar,
+        layout: ButtonLayout,
+    ) -> (Option<zgui::scene::Rect>, Option<zgui::scene::Rect>) {
+        use zgui::scene::Rect;
+        if titlebar != super::Titlebar::Inset {
+            return (Some(Rect::new(0., 0., width, STRIP)), None);
+        }
+        // A side's buttons with the margins around them.
+        let span = |side: [Option<WindowButton>; 3]| match side.iter().flatten().count() {
+            0 => 0.,
+            n => 2. * MARGIN + n as f32 * BUTTON + (n - 1) as f32 * GAP,
+        };
+        let left = span(layout.left).min(width);
+        let right = span(layout.right).min(width - left);
+        let area = Rect::new(left, 0., width - left - right, STRIP);
+        let controls = if right > 0. {
+            Some(Rect::new(width - right, 0., right, STRIP))
+        } else {
+            (left > 0.).then(|| Rect::new(0., 0., left, STRIP))
+        };
+        (Some(area), controls)
+    }
+
     /// An undecorated window's side of its title bar: the window buttons of
     /// `Titlebar::Inset` over its content (the window's state and the
     /// desktop's layout follow, a frame after they change), and the resize
@@ -1391,6 +1436,34 @@ mod linux {
                 ButtonLayout::parse("minimize,maximize,close").right,
                 ButtonLayout::default().right
             );
+        }
+
+        #[test]
+        fn the_title_bar_area_leaves_the_buttons_where_they_are_drawn() {
+            use super::{super::Titlebar, area_for};
+            use zgui::scene::Rect;
+            // Minimize, maximize, close on the right: 8 + 3 × 24 + 2 × 8 + 8.
+            let (area, controls) = area_for(800., Titlebar::Inset, ButtonLayout::default());
+            assert_eq!(controls, Some(Rect::new(696., 0., 104., 40.)));
+            assert_eq!(area, Some(Rect::new(0., 0., 696., 40.)));
+            // GNOME's own: close alone.
+            let gnome = ButtonLayout::parse("appmenu:close");
+            let (area, controls) = area_for(800., Titlebar::Inset, gnome);
+            assert_eq!(controls, Some(Rect::new(760., 0., 40., 40.)));
+            assert_eq!(area, Some(Rect::new(0., 0., 760., 40.)));
+            // On the left, the strip starts after them.
+            let left = ButtonLayout::parse("close,minimize,maximize:");
+            let (area, controls) = area_for(800., Titlebar::Inset, left);
+            assert_eq!(controls, Some(Rect::new(0., 0., 104., 40.)));
+            assert_eq!(area, Some(Rect::new(104., 0., 696., 40.)));
+            // Both sides: the right's are the controls, the strip between.
+            let both = ButtonLayout::parse("close:minimize,maximize");
+            let (area, controls) = area_for(800., Titlebar::Inset, both);
+            assert_eq!(controls, Some(Rect::new(728., 0., 72., 40.)));
+            assert_eq!(area, Some(Rect::new(40., 0., 688., 40.)));
+            // No buttons: the whole strip.
+            let (area, controls) = area_for(800., Titlebar::Hidden, ButtonLayout::default());
+            assert_eq!((area, controls), (Some(Rect::new(0., 0., 800., 40.)), None));
         }
 
         #[test]

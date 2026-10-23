@@ -3449,6 +3449,11 @@ impl ApplicationHandler<Event> for WindowManager {
                     #[cfg(target_os = "linux")]
                     if let Some(caption) = &mut host.caption {
                         caption.sync(&mut host.context.ui);
+                        if let Some(window) = &host.window {
+                            host.context
+                                .window_info
+                                .refresh(window, host.options.titlebar);
+                        }
                     }
                 }
             }
