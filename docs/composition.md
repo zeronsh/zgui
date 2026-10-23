@@ -222,6 +222,8 @@ repaints nothing. Hit testing maps the pointer through local transforms (scale, 
 
 `text_input(label, value)` and `text_area(label, value)` mount the same retained editor used by the native host. The first argument is its accessible name, and the `Signal<String>` is synchronized in both directions. IME preedit remains local until committed. Selection, undo, clipboard, and native IME placement use the mounted editor's lifecycle.
 
+Input methods (Japanese, Chinese, Korean) compose as a native field shows it: the marked text has a thin accent underline, the clause being converted (the composition's cursor range) a thick one, and the candidate window opens at that clause (`EditorHandle::composition_area`), else at the caret. A known gap: reconversion (macOS's double-press of the input-source key, or ⌃⇧R, that turns committed text back into a composition) is not offered. winit's text input client reports no committed text around the caret to the input method, so it has nothing to reconvert; it needs that client extended.
+
 ```rust
 use zgui::{compose::prelude::*, text_layout::FontFamily, widgets::Ui};
 let mut ui = Ui::new(640., 480.);

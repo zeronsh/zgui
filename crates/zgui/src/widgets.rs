@@ -59,8 +59,31 @@ struct EditorHint {
     /// Misspelled words (`View::spellcheck`), as byte ranges: marked with a
     /// dotted line. Usually none.
     misspelled: RefCell<Vec<std::ops::Range<usize>>>,
+    /// The clause an input method is converting (its composition's cursor
+    /// range), in the composition layer's points, and that layer: where its
+    /// candidates show.
+    clause: Cell<Option<Rect>>,
+    composition_layer: Cell<Option<NodeId>>,
 }
 impl EditorHandle {
+    /// Where an input method's candidate window goes: under the clause it
+    /// is converting (Japanese, Chinese), as a native field puts it, in the
+    /// window's points; `None` while there is none (the caret, then).
+    pub fn composition_area(&self) -> Option<Rect> {
+        let clause = self.hint.clause.get()?;
+        let layer = self.hint.composition_layer.get()?;
+        let scene = self.scene.borrow();
+        if !scene.contains(layer) {
+            return None;
+        }
+        let at = scene.bounds(layer);
+        Some(Rect::new(
+            at.x + clause.x,
+            at.y + clause.y,
+            clause.width,
+            clause.height,
+        ))
+    }
     /// The selection as UTF-8 byte offsets into the committed text,
     /// `(anchor, focus)`: equal for a caret, `focus` where the caret is.
     pub fn selection(&self) -> (usize, usize) {
@@ -2289,6 +2312,7 @@ impl Ui {
         let gesture = Rc::new(EditorDrag::default());
         let draw_gesture = gesture.clone();
         let hint = Rc::new(EditorHint::default());
+        hint.composition_layer.set(Some(preedit_layer));
         let draw_hint = hint.clone();
         let refresh: Rc<dyn Fn()> = Rc::new(move || {
             let e = edit.borrow();
@@ -2607,19 +2631,37 @@ impl Ui {
                 s.set_transform(*id, Transform { x: GUTTER_INSET, y });
             }
             drop(numbers);
+            // Marked text, underlined as a native field underlines it: a thin
+            // line under all of it, a thick one under the clause the input
+            // method is converting (its cursor range), where its candidates
+            // show.
+            let mut clause_area = None;
             let lines: Vec<_> = if let Some(preedit) = e.preedit() {
                 let start = selection.range().start;
-                layout
+                let line = |r: Rect, thick: f32| {
+                    let y = r.y + r.height - 1. - thick - scroll.1;
+                    (y >= 0. && y < inner_height).then_some((r.x - scroll.0, y, r.width, thick))
+                };
+                let mut lines: Vec<_> = layout
                     .selection(start..start + preedit.text.len())
                     .into_iter()
-                    .filter_map(|r| {
-                        let y = r.y + r.height - 2. - scroll.1;
-                        (y >= 0. && y < inner_height).then_some((r.x - scroll.0, y, r.width))
-                    })
-                    .collect()
+                    .filter_map(|r| line(r, 1.))
+                    .collect();
+                if let Some((a, b)) = preedit
+                    .cursor
+                    .filter(|(a, b)| a < b && *b <= preedit.text.len())
+                {
+                    let clause = layout.selection(start + a..start + b);
+                    clause_area = clause
+                        .first()
+                        .map(|r| Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height));
+                    lines.extend(clause.into_iter().filter_map(|r| line(r, 2.)));
+                }
+                lines
             } else {
                 Vec::new()
             };
+            draw_hint.clause.set(clause_area);
             let mut underline = preedit_nodes.borrow_mut();
             while underline.len() > lines.len() {
                 s.remove(underline.pop().unwrap());
@@ -2631,8 +2673,8 @@ impl Ui {
                     Style::default(),
                 ));
             }
-            for (id, (x, y, w)) in underline.iter().zip(lines) {
-                s.set_style(*id, fixed(w, 1.));
+            for (id, (x, y, w, thick)) in underline.iter().zip(lines) {
+                s.set_style(*id, fixed(w, thick));
                 s.set_transform(*id, Transform { x, y });
             }
             drop(underline);

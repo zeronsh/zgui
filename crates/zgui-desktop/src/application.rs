@@ -1654,7 +1654,13 @@ impl Host {
             self.native_cursor = Some(cursor);
         }
         let editor = crate::native_ime::editable_editor(ui, self.native_focused);
-        let caret = editor.map(|editor| ui.scene.borrow().bounds(editor.caret));
+        // The clause an input method converts, else the caret: where its
+        // candidates show, as under a native field's marked text.
+        let caret = editor.map(|editor| {
+            editor
+                .composition_area()
+                .unwrap_or_else(|| ui.scene.borrow().bounds(editor.caret))
+        });
         if caret != self.ime_geometry {
             if let Some(r) = caret {
                 // XIM takes a baseline spot and ignores the supplied rectangle
