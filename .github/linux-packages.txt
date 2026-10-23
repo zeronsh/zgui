@@ -9,10 +9,12 @@ gdb
 gir1.2-atspi-2.0
 gir1.2-gtk-3.0
 grim
+hunspell-en-us
 ibus
 ibus-libpinyin
 imagemagick
 libdbus-1-dev
+libenchant-2-2
 libfontconfig1-dev
 libwayland-dev
 libxcb1-dev

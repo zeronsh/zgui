@@ -40,6 +40,9 @@ calloop-wayland-source = "=0.4.1"
 wayland-client = "=0.31.15"
 wayland-backend = { version = "=0.3.17", features = ["client_system"] }
 wayland-protocols = { version = "=0.32.13", features = ["client", "unstable"] }
+# The spelling checker (linux_spelling.rs): Enchant, loaded when an editor
+# first checks.
+libloading = "0.8"
 
 # The compositor clock (frame_source.rs) and window chrome (window_chrome.rs);
 # the version wgpu-hal uses.

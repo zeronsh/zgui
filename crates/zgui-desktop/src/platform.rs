@@ -34,19 +34,19 @@ impl Platform for Desktop {
         // The launcher runs detached: nothing waits on the browser.
         crate::url::valid_url(url) && open::that_detached(url).is_ok()
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn misspellings(&self, text: &str) -> Vec<std::ops::Range<usize>> {
         spelling::misspellings(text)
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn spelling_guesses(&self, word: &str) -> Vec<String> {
         spelling::guesses(word)
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn learn_spelling(&self, word: &str) {
         spelling::learn(word);
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn ignore_spelling(&self, word: &str) {
         spelling::ignore(word);
     }
@@ -83,6 +83,9 @@ impl Platform for Desktop {
         })
     }
 }
+
+#[cfg(target_os = "linux")]
+use crate::linux_spelling as spelling;
 
 /// macOS's spelling checker (`NSSpellChecker`), for editors that check
 /// (`View::spellcheck`). One document tag for the app: what Ignore Spelling
