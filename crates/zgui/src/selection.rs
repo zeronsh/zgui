@@ -316,7 +316,12 @@ pub(crate) fn mount_root(ui: &mut Ui, root: NodeId) {
                 y,
                 button: PointerButton::Primary,
             } => {
-                if cx.default_prevented() || !ui.selectable_target(root, cx.target) {
+                // A control-click on macOS is a secondary click: it opens the
+                // context menu on the selection rather than collapsing it.
+                if cx.default_prevented()
+                    || context_click(cx.pointer_modifiers())
+                    || !ui.selectable_target(root, cx.target)
+                {
                     return;
                 }
                 ui.selection_state().borrow_mut().pressed = true;
@@ -1282,8 +1287,13 @@ pub(crate) enum SelectionEvent {
     SelectAll,
     Press,
 }
+/// A primary press that macOS takes as a secondary one (a control-click).
+fn context_click(modifiers: Modifiers) -> bool {
+    cfg!(target_os = "macos") && modifiers.control
+}
+
 impl SelectionEvent {
-    pub(crate) fn of(event: &InputEvent) -> Self {
+    pub(crate) fn of(event: &InputEvent, modifiers: Modifiers) -> Self {
         match event {
             InputEvent::KeyDown {
                 key: Key::Character(key),
@@ -1299,7 +1309,7 @@ impl SelectionEvent {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 ..
-            } => Self::Press,
+            } if !context_click(modifiers) => Self::Press,
             _ => Self::None,
         }
     }

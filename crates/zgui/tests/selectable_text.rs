@@ -602,3 +602,44 @@ fn copied_html_keeps_paragraphs_line_breaks_and_inline_styles() {
          <p>a &lt;tag&gt;<br>next line</p>"
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_control_click_on_macos_opens_the_menu_and_keeps_the_selection() {
+    let mut ui = Ui::new(400., 300.);
+    let view = ui.mount(
+        column()
+            .w(300.)
+            .text_size(10.)
+            .line_height(20.)
+            .selectable(true)
+            .child(text("Keep this selected")),
+    );
+    ui.prepare_frame();
+    drag(&mut ui, (0., 10.), (24., 10.));
+    assert_eq!(ui.selected_text(), "Keep");
+    let control = Modifiers {
+        control: true,
+        ..Modifiers::default()
+    };
+    let button = PointerButton::Primary;
+    ui.dispatch_with_modifiers(
+        InputEvent::PointerDown {
+            x: 6.,
+            y: 10.,
+            button,
+        },
+        control,
+    );
+    ui.dispatch_with_modifiers(
+        InputEvent::PointerUp {
+            x: 6.,
+            y: 10.,
+            button,
+        },
+        control,
+    );
+    ui.prepare_frame();
+    assert_eq!(ui.selected_text(), "Keep");
+    assert!(view.find("selection-copy").is_some(), "the menu opened");
+}

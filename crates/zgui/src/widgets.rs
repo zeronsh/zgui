@@ -1435,7 +1435,7 @@ impl Ui {
         event: InputEvent,
     ) -> Result<crate::input::DispatchResult, LayoutFeedbackError> {
         self.try_prepare_frame()?;
-        let selection = crate::selection::SelectionEvent::of(&event);
+        let selection = crate::selection::SelectionEvent::of(&event, Default::default());
         let mut result = self.input.dispatch(&self.scene, event);
         self.selection_after_dispatch(selection, &mut result);
         Ok(result)
@@ -1458,7 +1458,7 @@ impl Ui {
         modifiers: crate::input::Modifiers,
     ) -> Result<crate::input::DispatchResult, LayoutFeedbackError> {
         self.try_prepare_frame()?;
-        let selection = crate::selection::SelectionEvent::of(&event);
+        let selection = crate::selection::SelectionEvent::of(&event, modifiers);
         let mut result = self
             .input
             .dispatch_with_modifiers(&self.scene, event, modifiers);
