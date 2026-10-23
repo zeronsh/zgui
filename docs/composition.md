@@ -79,6 +79,66 @@ The Rust API is a target for a future template compiler, not an implementation o
 
 Headless `TaskRunner::from_executor` uses a weak spawning capability: a running component task can schedule another task without borrowing the executor during its own poll. New work starts on a later tick, and retaining the runner does not keep a disposed executor alive.
 
+## Selectable text
+
+Display text is not selectable unless asked, as in native applications.
+`.selectable(true)` on any view makes its text, and everything inside it,
+selectable the way a web page is (CSS `user-select: text`):
+
+```rust
+use zgui::{compose::prelude::*, widgets::Ui};
+let mut ui = Ui::new(640., 480.);
+ui.mount(column().w(600.).gap(12.).selectable(true).children([
+    text("Heading").text_size(24.),
+    rich_text().w_full().text_wrap(true)
+        .child(text_span("One selection spans "))
+        .child(text_span("every text node").font_bold())
+        .child(text_span(" in document order."))
+        .into(),
+    text("Kept out of selections").selectable(false),
+]));
+ui.prepare_frame();
+```
+
+One selection runs from an anchor to a focus across the region's text
+nodes, paragraphs, list rows, nested layouts and inline spans alike, in
+document order. Dragging selects; past the last line it reaches the end, and
+above the first the start. A double press selects a word and a triple press a
+paragraph (the text between hard line breaks), and dragging after either
+extends in whole words or paragraphs. Shift extends from the anchor.
+⌘A / Ctrl+A selects the region last pressed in, unless focus is in an editor;
+⌘C / Ctrl+C copies it as plain text. The pointer shows an I-beam over the
+region's text. `.selectable(false)` keeps a part out (CSS `user-select:
+none`); an inner `.selectable(true)` is part of the outer region.
+
+Links and buttons inside still click; a drag that starts on one moves past
+four points, cancels its press and selects instead. Editors inside select
+their own text, and pressing one ends the region's selection, as does a press
+on anything that is not a control (buttons, links and menu items keep it, so
+a Copy button can copy it). A press that selects by dragging does not also
+click an enclosing clickable view.
+
+Copied text keeps each node's own line breaks and joins soft wraps. Between
+nodes it follows layout, as CSS margins set blocks apart: comparing the boxes
+holding the two nodes in their nearest shared ancestor, it puts a tab between
+boxes side by side, a blank line between boxes set apart by half the text's
+size or more (paragraphs), and otherwise a line break. Hidden, transparent and
+unselectable text, inline icons and an ellipsis are left out; truncated text
+copies whole. `Ui::selected_text`, `text_selection`, `select_text`,
+`select_all_text` and `clear_text_selection` read and set the selection, and
+`text_selection_revision` changes whenever it does.
+
+The highlight paints under the glyphs in the theme's `selection` colour, or
+`selection.inactive` while the window is in the background (desktop hosts call
+`Ui::set_window_active`). It follows layout and reshaping. Removing a selected
+node drops its part, and unmounting the region ends the selection.
+
+Text that is not selectable costs nothing: no listeners, nodes or layouts. A
+selectable region adds one listener; a press shapes the text it lands on, and
+the layouts a gesture moves over are kept until it ends. Changing the
+selection repaints only where a highlight changed, and an unchanged one
+repaints nothing. Hit testing uses translation only, not scale or rotation.
+
 ## Editable text
 
 `text_input(label, value)` and `text_area(label, value)` mount the same retained editor used by the native host. The first argument is its accessible name, and the `Signal<String>` is synchronized in both directions. IME preedit remains local until committed. Selection, undo, clipboard, and native IME placement use the mounted editor's lifecycle.

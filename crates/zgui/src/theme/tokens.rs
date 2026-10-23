@@ -229,6 +229,8 @@ schema! {
     INPUT_BG: Color = "input.bg" => "{surface.raised}",
     MENU_BG: Color = "menu.bg" => "{surface.overlay}",
     MENU_HOVER: Color = "menu.hover" => "over({menu.bg}, {hover})",
+    /// Selected text while its window is in the background.
+    SELECTION_INACTIVE: Color = "selection.inactive" => "alpha({text.secondary}, 0.25)",
 }
 
 struct Registry {

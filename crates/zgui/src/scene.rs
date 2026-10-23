@@ -1211,6 +1211,8 @@ pub struct Scene {
     contents_styles: std::collections::HashMap<NodeId, Style>,
     /// Subtrees hit testing skips (`set_inert`): usually none.
     inert: Vec<NodeId>,
+    /// Text selection's settings and highlights (`set_user_select`).
+    selectable: select::Selectable,
 }
 /// Scroll content that moved rigidly by `(dx, dy)` within `clip`. The flush
 /// damaged only what copying the old pixels cannot provide (`exposed`, plus
@@ -1315,6 +1317,7 @@ impl Scene {
             cursor_styles: 0,
             contents_styles: Default::default(),
             inert: Vec::new(),
+            selectable: Default::default(),
         }
     }
     /// Make `id`'s subtree invisible to hit testing (and so to pointer
@@ -1631,12 +1634,12 @@ impl Scene {
         self.geometry_revision
     }
     pub fn cursor_at(&self, x: f32, y: f32) -> Option<crate::cursor::Cursor> {
-        if self.cursor_styles == 0 {
+        if self.cursor_styles == 0 && !self.selectable.any() {
             return None;
         }
         self.hit_test_all(x, y)
             .first()
-            .and_then(|id| self.cursor_for(*id))
+            .and_then(|id| self.selection_cursor(*id).or_else(|| self.cursor_for(*id)))
     }
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.node(id).parent
@@ -2305,6 +2308,7 @@ impl Scene {
     }
     fn free_subtree(&mut self, id: NodeId) {
         let node = self.slots[id.index as usize].node.take().unwrap();
+        self.selectable.forget(id);
         self.cursor_styles -= usize::from(node.cursor.is_some());
         self.relative_count -= usize::from(node.style.relative);
         if node.isolated {
@@ -2953,7 +2957,9 @@ impl Scene {
             NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => quad.paint_bounds(bounds),
             NodeKind::Image(image) => image.paint_bounds(bounds),
             NodeKind::Svg(svg) => svg.paint_bounds(bounds),
-            NodeKind::Text { .. } | NodeKind::RichText { .. } => self.text_ink(id, bounds),
+            NodeKind::Text { .. } | NodeKind::RichText { .. } => {
+                self.highlight_ink(id, bounds, self.text_ink(id, bounds))
+            }
             _ => bounds,
         })
     }
@@ -6712,6 +6718,9 @@ mod nonfinite_transform_tests {
 
 #[path = "scene_layout.rs"]
 mod advanced_layout;
+#[path = "scene_select.rs"]
+mod select;
+pub use select::{TextHighlight, TextLeaf};
 
 fn own_visible(style: &Style) -> bool {
     style.layout_options.as_deref().is_none_or(|options| {

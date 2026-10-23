@@ -149,6 +149,18 @@ impl Raster {
                     if item.effects.blur_radius > 0. {
                         self.blur(visible, item.effects.blur_radius.ceil().min(64.) as usize);
                     }
+                    // A text selection, under the glyphs.
+                    if let Some(highlight) = scene.text_highlight(item.id) {
+                        for r in &highlight.rects {
+                            let rect = Rect::new(
+                                item.bounds.x + r.x,
+                                item.bounds.y + r.y,
+                                r.width,
+                                r.height,
+                            );
+                            self.rect(rect, clip, tint(highlight.color, item.color), item.effects);
+                        }
+                    }
                     match item.kind {
                         NodeKind::Rect(color) => {
                             self.rect(item.bounds, clip, tint(*color, item.color), item.effects)

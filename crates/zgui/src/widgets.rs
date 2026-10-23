@@ -438,6 +438,8 @@ struct UiStorage {
     interaction: RefCell<Option<InteractionDeadline>>,
     advancing_interaction: Cell<bool>,
     window_gesture: Cell<Option<WindowGesture>>,
+    /// Display text's selection (`View::selectable`).
+    selection: RefCell<crate::selection::State>,
 }
 /// A press in a window drag region (`View::window_drag`), for the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -579,6 +581,7 @@ impl Ui {
             interaction: RefCell::new(None),
             advancing_interaction: Cell::new(false),
             window_gesture: Cell::new(None),
+            selection: Default::default(),
         });
         Self::from_storage(storage)
     }
@@ -631,6 +634,9 @@ impl Ui {
     }
     pub(crate) fn shared(&self) -> Self {
         Self::from_storage(self.storage.clone())
+    }
+    pub(crate) fn selection_state(&self) -> &RefCell<crate::selection::State> {
+        &self.storage.selection
     }
     /// A handle that does not keep the document alive.
     pub fn downgrade(&self) -> WeakUi {
@@ -1282,6 +1288,7 @@ impl Ui {
                     {
                         self.input.focus(&self.scene, Some(id));
                     }
+                    self.sync_selection();
                     return Ok(());
                 }
                 continue;
@@ -1428,7 +1435,10 @@ impl Ui {
         event: InputEvent,
     ) -> Result<crate::input::DispatchResult, LayoutFeedbackError> {
         self.try_prepare_frame()?;
-        Ok(self.input.dispatch(&self.scene, event))
+        let selection = crate::selection::SelectionEvent::of(&event);
+        let mut result = self.input.dispatch(&self.scene, event);
+        self.selection_after_dispatch(selection, &mut result);
+        Ok(result)
     }
     /// Dispatch native-style pointer input with modifiers and click counting.
     /// Ordinary `dispatch` retains unmodified, single-click pointer behavior.
@@ -1448,9 +1458,12 @@ impl Ui {
         modifiers: crate::input::Modifiers,
     ) -> Result<crate::input::DispatchResult, LayoutFeedbackError> {
         self.try_prepare_frame()?;
-        Ok(self
+        let selection = crate::selection::SelectionEvent::of(&event);
+        let mut result = self
             .input
-            .dispatch_with_modifiers(&self.scene, event, modifiers))
+            .dispatch_with_modifiers(&self.scene, event, modifiers);
+        self.selection_after_dispatch(selection, &mut result);
+        Ok(result)
     }
     fn interaction_valid(&self, job: &EditorInteraction) -> bool {
         job.gesture.mode.get().is_some()
@@ -2882,7 +2895,7 @@ enum EditorPointerSelection {
     },
 }
 
-fn editor_pointer_unit(
+pub(crate) fn editor_pointer_unit(
     text: &str,
     layout: &dyn TextLayout,
     hit: TextPosition,

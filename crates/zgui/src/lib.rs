@@ -24,6 +24,7 @@ pub mod timer;
 pub mod frame;
 
 pub mod rich_text;
+pub mod selection;
 pub mod text_layout;
 
 pub mod affine;

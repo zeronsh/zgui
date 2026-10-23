@@ -1485,7 +1485,15 @@ impl Host {
             return false;
         };
         let Some(editor) = self.context.ui.focused_editor() else {
-            return false;
+            // Selected display text (`View::selectable`) copies.
+            if !k.eq_ignore_ascii_case("c") || !self.context.ui.has_text_selection() {
+                return false;
+            }
+            let text = self.context.ui.selected_text();
+            if let Some(clipboard) = self.clipboard.borrow_mut().as_mut() {
+                let _ = clipboard.set_text(text);
+            }
+            return true;
         };
         if !["c", "x", "v"].iter().any(|v| k.eq_ignore_ascii_case(v)) {
             return false;
@@ -1889,6 +1897,7 @@ impl Host {
     }
     fn deactivate(&mut self) {
         self.context.ui.cancel_interactions();
+        self.context.ui.set_window_active(false);
         // A window at the back hears no pointer moves: what it hovered
         // has its leave now, not when the pointer next moves over it.
         self.native.pointer_left();
@@ -2163,6 +2172,7 @@ impl Host {
                 self.native_cursor = None;
                 self.native_focused = true;
                 self.focus_memory.activate(&self.context.ui);
+                self.context.ui.set_window_active(true);
             }
             WindowEvent::Ime(event) => {
                 if self.ime_restart.accepts(&event)

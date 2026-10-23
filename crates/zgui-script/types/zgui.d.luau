@@ -186,6 +186,7 @@ export type ColorToken =
 	| "$input.bg"
 	| "$menu.bg"
 	| "$menu.hover"
+	| "$selection.inactive"
 export type NumberToken =
 	"$glass.blur"
 	| "$font.size.xs"
@@ -307,6 +308,7 @@ export type TokenName =
 	| "input.bg"
 	| "menu.bg"
 	| "menu.hover"
+	| "selection.inactive"
 
 -- "#rgb", "#rrggbb", "#rrggbbaa", "rgb(…)", "rgba(…)", "hsl(…)", a few
 -- names, 0xrrggbb, or a colour token ("$text.secondary"; `ColorToken`

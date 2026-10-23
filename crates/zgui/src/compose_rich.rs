@@ -216,6 +216,11 @@ impl RichTextView {
         self.view = self.view.id(id);
         self
     }
+    /// Let the pointer select the paragraph's text (see `View::selectable`).
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.view = self.view.selectable(selectable);
+        self
+    }
 }
 impl Styled for RichTextView {
     fn styles_mut(&mut self) -> &mut Styles {

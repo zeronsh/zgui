@@ -172,6 +172,8 @@ pub struct EventContext {
     drag_request: Option<DragRequest>,
     drag_accepted: Option<NodeId>,
     key_code: Option<Rc<str>>,
+    /// `take_pointer`'s taker: what the pointer was pressed on gives it up.
+    take_pointer: Option<NodeId>,
 }
 impl EventContext {
     /// `event` at `target`, in the target phase, nothing decided yet.
@@ -191,6 +193,7 @@ impl EventContext {
             drag_request: None,
             drag_accepted: None,
             key_code: None,
+            take_pointer: None,
         }
     }
     /// Request a typed drag from this listener during a pointer move.
@@ -264,6 +267,13 @@ impl EventContext {
     }
     pub fn release_pointer(&mut self) {
         self.capture = Some(None);
+    }
+    /// Capture the pointer from what it was pressed on, which hears a
+    /// cancel and never activates: a drag that began on a link selects
+    /// text instead. For pointer moves while the press is down.
+    pub(crate) fn take_pointer(&mut self) {
+        self.capture = Some(Some(self.current_target));
+        self.take_pointer = Some(self.current_target);
     }
     pub fn default_prevented(&self) -> bool {
         self.prevented
@@ -1593,6 +1603,18 @@ impl InputDispatcher {
                 && let InputEvent::PointerMove { x, y } = event
             {
                 self.begin_drag(scene, source, payload, x, y, pressed_at.unwrap_or((x, y)));
+            }
+            if let Some(taker) = ctx.take_pointer {
+                let (pressed, captured) = {
+                    let mut state = self.state.borrow_mut();
+                    (state.pressed.take(), state.captured)
+                };
+                let pressed = pressed.filter(|id| Some(*id) != captured);
+                for id in [captured, pressed].into_iter().flatten() {
+                    if id != taker && scene.borrow().contains(id) {
+                        self.route(scene, id, InputEvent::PointerCancel);
+                    }
+                }
             }
             if let Some(capture) = ctx.capture {
                 let capture = capture.filter(|id| self.enabled(&scene.borrow(), *id));

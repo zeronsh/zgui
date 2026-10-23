@@ -324,6 +324,8 @@ pub struct View {
     secure: Option<bool>,
     line_numbers: Option<bool>,
     window_drag: bool,
+    /// `View::selectable`.
+    selectable: Option<bool>,
     /// Conditional children (`child_when`), mounted after the others.
     conditional: Vec<RegionBuilder>,
 }
@@ -432,6 +434,7 @@ impl View {
             secure: None,
             line_numbers: None,
             window_drag: false,
+            selectable: None,
             conditional: Vec::new(),
         }
     }
@@ -754,6 +757,19 @@ impl View {
         self.window_drag = true;
         self
     }
+    /// Let the pointer select the text in this view and everything it holds,
+    /// as CSS's `user-select: text` does: drag across any of its text, a
+    /// double press selects a word and a triple press a paragraph, Shift
+    /// extends, ⌘A / Ctrl+A selects all of it and ⌘C / Ctrl+C copies. One
+    /// selection spans its text nodes in document order. `false` keeps the
+    /// text of a part of a selectable view out (CSS `user-select: none`).
+    /// Text is not selectable unless asked (markdown is). Editors select
+    /// their own text, and links and buttons inside still click (a drag
+    /// that starts on one selects).
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = Some(selectable);
+        self
+    }
     // Wrapper properties refine the component's actual root without an extra layout box.
     fn refine(self, mut inner: View) -> View {
         if self.trigger_id.is_some() {
@@ -878,6 +894,9 @@ impl View {
             inner.line_numbers = self.line_numbers;
         }
         inner.window_drag |= self.window_drag;
+        if self.selectable.is_some() {
+            inner.selectable = self.selectable;
+        }
         inner.mounted.extend(self.mounted);
         inner.conditional.extend(self.conditional);
         inner
@@ -2431,6 +2450,11 @@ fn mount_element(
     };
     if view.contents {
         ui.scene.borrow_mut().set_contents(root, true);
+    }
+    match view.selectable {
+        Some(true) => crate::selection::mount_root(ui, root),
+        Some(false) => ui.scene.borrow_mut().set_user_select(root, Some(false)),
+        None => {}
     }
     let focusable = view
         .focusable

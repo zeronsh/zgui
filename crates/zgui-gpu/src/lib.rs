@@ -3256,6 +3256,19 @@ impl GpuRenderer {
                         shaped.atlas_epoch = self.atlas_epoch;
                         stats.geometry_rebuilds += 1;
                     }
+                    // A text selection, under the glyphs.
+                    if let Some(highlight) = scene.text_highlight(item.id) {
+                        quads.extend(highlight.rects.iter().map(|r| Quad {
+                            rect: [bounds.x + r.x, bounds.y + r.y, r.width, r.height],
+                            uv: [0.; 4],
+                            color: rgba(highlight.color, item.effects.opacity),
+                            fade,
+                            options: [item.effects.edge_fade, 0., 0., 0.],
+                            shape: [0.; 4],
+                            border: [0.; 4],
+                            mask: NO_MASK,
+                        }));
+                    }
                     for cached in &shaped.quads {
                         let mut quad = *cached;
                         quad.rect[0] += bounds.x;
