@@ -129,10 +129,15 @@ impl ScrollResampler {
                 (&mut self.wheel.0, &mut delta.0),
                 (&mut self.wheel.1, &mut delta.1),
             ] {
-                let step = if remaining.abs() < 0.5 {
+                // Whole pixels: content stays on the pixel grid, and the
+                // offset sums exactly even tens of thousands of pixels down,
+                // where an f32 holds fractions of a pixel only roughly.
+                let step = if remaining.abs() <= 1. {
                     *remaining
                 } else {
-                    *remaining * share
+                    let step = (*remaining * share).round();
+                    let step = if step == 0. { remaining.signum() } else { step };
+                    step.clamp(-remaining.abs(), remaining.abs())
                 };
                 *remaining -= step;
                 *out += step;
@@ -240,6 +245,26 @@ mod tests {
         }
         assert!((total - 84.).abs() < 1e-3);
         assert!(steps[0] > steps[3], "{steps:?}");
+        assert!(steps.iter().all(|step| step.fract() == 0.), "{steps:?}");
+        assert!(!resampler.pending());
+    }
+
+    /// Eased notches applied far down long content land exactly on their
+    /// destination, as f32 sums of fractional steps would not.
+    #[test]
+    fn wheel_notches_land_exactly_far_down() {
+        let start = Instant::now();
+        let mut resampler = ScrollResampler::default();
+        let mut offset = 79_952_f32;
+        for notch in 0..5u32 {
+            resampler.push_wheel(start + Duration::from_millis(25) * notch, (0., 56.));
+        }
+        for i in 1..=60u32 {
+            if let Some((_, dy)) = resampler.sample(start + Duration::from_micros(8333) * i) {
+                offset += dy;
+            }
+        }
+        assert_eq!(offset, 79_952. + 280.);
         assert!(!resampler.pending());
     }
 
