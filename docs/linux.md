@@ -29,6 +29,18 @@ as the window manager's would. Mark the strip `View::window_drag` so it moves
 the window; a double click on it maximizes or restores.
 `window_buttons_smoke.py` checks it on X11: no frame, maximize and restore,
 a corner drag, minimize, and close.
+## The interface font
+
+Text in the theme's generic family (`sans-serif`, which the default themes
+use, and `system-ui`) takes the desktop's interface face, as GTK and Qt apps
+do: GNOME's `font-name` (`Cantarell 11`, `Adwaita Sans 11`) or KDE's `font`,
+read through the settings portal before the first window and given to the
+renderer (`zgui_gpu::set_desktop_sans_serif`); a family the system lacks is
+passed over. Without one, cosmic-text's default stands (Open Sans, else its
+fallback list). A theme or view naming a family keeps it. The size in
+`font-name` is not taken; GNOME's text scaling factor is (`text_scale`).
+`desktop_font_smoke.py` renders the gallery under "DejaVu Sans 11" and
+"DejaVu Serif 11" from a stand-in portal and finds the text changed.
 
 ## Frame pacing and latency
 

@@ -22,6 +22,7 @@ mod planes;
 pub mod present_log;
 mod surface;
 mod upload;
+pub use font_cache::set_desktop_sans_serif;
 pub use surface::PresentationStatus;
 
 const MAX_ATLAS: u32 = 2048;

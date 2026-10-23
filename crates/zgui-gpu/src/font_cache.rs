@@ -52,8 +52,36 @@ fn platform_families(fonts: &mut FontSystem) {
             db.set_serif_family(serif);
         }
     }
+    // The desktop's interface face, as GTK and Qt apps take it, where the
+    // host learned one; cosmic-text's Open Sans is seldom installed, and
+    // its stand-in rarely the desktop's.
     #[cfg(not(windows))]
-    let _ = fonts;
+    if let Some(family) = DESKTOP_SANS.lock().unwrap().clone() {
+        let db = fonts.db_mut();
+        if db
+            .faces()
+            .any(|face| face.families.iter().any(|(name, _)| *name == family))
+        {
+            db.set_sans_serif_family(family);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+static DESKTOP_SANS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The desktop's interface face (Linux: GNOME's `font-name`, KDE's `font`),
+/// for the generic sans-serif family (CSS's `sans-serif` and `system-ui`),
+/// as GTK and Qt apps use it; a family the system lacks is passed over.
+/// Fonts loaded from then on take it: the host sets it before its first
+/// window. Elsewhere the platform's own face stands.
+pub fn set_desktop_sans_serif(family: Option<String>) {
+    #[cfg(not(windows))]
+    {
+        *DESKTOP_SANS.lock().unwrap() = family;
+    }
+    #[cfg(windows)]
+    let _ = family;
 }
 
 fn cached_system_fonts() -> FontSystem {
@@ -334,6 +362,36 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The desktop's face stands for sans-serif when it is installed, and
+    /// is passed over when not.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_desktops_face_is_sans_serif() {
+        let mut fonts = FontSystem::new();
+        let default = fonts
+            .db()
+            .family_name(&fontdb::Family::SansSerif)
+            .to_owned();
+        let Some(installed) = fonts
+            .db()
+            .faces()
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .find(|name| *name != default)
+        else {
+            return; // One family installed, or none.
+        };
+        set_desktop_sans_serif(Some("No Such Family zgui".into()));
+        platform_families(&mut fonts);
+        assert_eq!(fonts.db().family_name(&fontdb::Family::SansSerif), default);
+        set_desktop_sans_serif(Some(installed.clone()));
+        platform_families(&mut fonts);
+        set_desktop_sans_serif(None);
+        assert_eq!(
+            fonts.db().family_name(&fontdb::Family::SansSerif),
+            installed
+        );
+    }
 
     /// The cached database is the loaded one: the same faces, in the same
     /// order (matching breaks ties by it), with the same weight axes.

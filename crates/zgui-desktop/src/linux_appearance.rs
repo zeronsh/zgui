@@ -4,9 +4,10 @@
 //! contrast, reduced motion (or GNOME's animations turned off) and GNOME's
 //! text size (`text-scaling-factor`, Large Text in its accessibility
 //! settings), which scales the themes' font tokens, and KDE's wheel lines
-//! (`WheelScrollLines`, how far a wheel notch scrolls), and GNOME's window
-//! buttons (`button-layout`, which an undecorated window's title bar draws).
-//! They
+//! (`WheelScrollLines`, how far a wheel notch scrolls), GNOME's window
+//! buttons (`button-layout`, which an undecorated window's title bar draws),
+//! and the interface font (GNOME's `font-name`, KDE's `font`), which generic
+//! sans-serif text takes as GTK and Qt apps do. They
 //! are read at start, before the first window shows, and a thread follows
 //! `SettingChanged`, asleep until one arrives; the event loop then gives them
 //! to every window's themes.
@@ -30,6 +31,8 @@ const GNOME: &str = "org.gnome.desktop.interface";
 const GNOME_WM: &str = "org.gnome.desktop.wm.preferences";
 /// kdeglobals' `[KDE]` group, as KDE's portal gives it.
 const KDE: &str = "org.kde.kdeglobals.KDE";
+/// kdeglobals' `[General]` group.
+const KDE_GENERAL: &str = "org.kde.kdeglobals.General";
 
 /// The portal's settings as last read.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -147,6 +150,8 @@ fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
         (GNOME, "text-scaling-factor"),
         (KDE, "WheelScrollLines"),
         (GNOME_WM, "button-layout"),
+        (GNOME, "font-name"),
+        (KDE_GENERAL, "font"),
     ] {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -209,8 +214,77 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
                 .as_str()
                 .map(crate::window_chrome::ButtonLayout::parse)
         }
+        // The fonts of windows made from now on.
+        (GNOME, "font-name") => {
+            zgui_gpu::set_desktop_sans_serif(value.as_str().and_then(pango_family))
+        }
+        (KDE_GENERAL, "font") => {
+            zgui_gpu::set_desktop_sans_serif(value.as_str().and_then(qt_family))
+        }
         _ => {}
     }
+}
+/// The family of a Pango font description (`"Cantarell 11"`, `"Ubuntu Sans
+/// Bold Italic 10"`, `"Noto Sans, Cantarell 11"`): the first of its list,
+/// without the style words and size after it.
+fn pango_family(description: &str) -> Option<String> {
+    const STYLES: &[&str] = &[
+        "normal",
+        "roman",
+        "oblique",
+        "italic",
+        "small-caps",
+        "thin",
+        "ultra-light",
+        "extra-light",
+        "light",
+        "semi-light",
+        "demi-light",
+        "book",
+        "regular",
+        "medium",
+        "semi-bold",
+        "demi-bold",
+        "bold",
+        "ultra-bold",
+        "extra-bold",
+        "heavy",
+        "black",
+        "ultra-heavy",
+        "ultra-condensed",
+        "extra-condensed",
+        "condensed",
+        "semi-condensed",
+        "semi-expanded",
+        "expanded",
+        "extra-expanded",
+        "ultra-expanded",
+        "not-rotated",
+        "south",
+        "upside-down",
+        "north",
+        "rotated-left",
+        "east",
+        "rotated-right",
+        "west",
+    ];
+    let mut words: Vec<&str> = description.split_whitespace().collect();
+    while let Some(last) = words.last() {
+        let size = last.trim_end_matches("px").parse::<f32>().is_ok();
+        if size || STYLES.contains(&last.to_ascii_lowercase().as_str()) {
+            words.pop();
+        } else {
+            break;
+        }
+    }
+    let joined = words.join(" ");
+    let family = joined.split(',').next()?.trim();
+    (!family.is_empty()).then(|| family.to_owned())
+}
+/// The family of a Qt font string (`"Noto Sans,10,-1,5,400,0,0,0,0,0"`).
+fn qt_family(font: &str) -> Option<String> {
+    let family = font.split(',').next()?.trim();
+    (!family.is_empty()).then(|| family.to_owned())
 }
 /// Store `appearance`; whether it changed.
 fn set(appearance: Appearance) -> bool {
@@ -271,6 +345,29 @@ mod tests {
         assert_eq!(a.wheel_lines, None, "no lines: the default");
         apply(&mut a, "org.example", "contrast", &0u32);
         assert!(a.contrast, "other namespaces change nothing");
+    }
+
+    #[test]
+    fn interface_fonts_name_their_family() {
+        assert_eq!(pango_family("Cantarell 11").as_deref(), Some("Cantarell"));
+        assert_eq!(
+            pango_family("Ubuntu Sans Bold Italic 10").as_deref(),
+            Some("Ubuntu Sans")
+        );
+        assert_eq!(
+            pango_family("Noto Sans, Cantarell 11").as_deref(),
+            Some("Noto Sans")
+        );
+        assert_eq!(
+            pango_family("Adwaita Sans 11px").as_deref(),
+            Some("Adwaita Sans")
+        );
+        assert_eq!(pango_family("11"), None);
+        assert_eq!(
+            qt_family("Noto Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1").as_deref(),
+            Some("Noto Sans")
+        );
+        assert_eq!(qt_family(",10"), None);
     }
 
     #[test]
