@@ -253,20 +253,20 @@ fn placed(scene: &Scene, node: zgui::scene::NodeId, origin: Rect) -> Option<(f32
 }
 
 /// The list's identities, as the plain `ui.each` keys them.
-fn identities(list: &Value, key: &Option<Function>, vm: &Vm) -> Vec<Rc<str>> {
+fn identities(
+    list: &Value,
+    key: &Option<Function>,
+    item_keys: &mut crate::lower::ItemKeys,
+    vm: &Vm,
+) -> Vec<Rc<str>> {
     let mut seen: HashMap<String, usize> = HashMap::new();
+    let keys = key.as_ref().map(|f| item_keys.of(list.list(), f, vm));
     list.list()
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let base = match key {
-                Some(f) => vm.call::<Value>(f, item.clone()).map_or_else(
-                    |e| {
-                        vm.report(e);
-                        i.to_string()
-                    },
-                    |k| k.to_string(),
-                ),
+            let base = match &keys {
+                Some(keys) => keys[i].clone(),
                 None => format!("{i}:{item:?}"),
             };
             let n = seen.entry(base.clone()).or_default();
@@ -441,8 +441,9 @@ pub(crate) fn each(
     let runtime = cx.runtime();
     let (key_vm, untracked) = (vm.clone(), runtime.clone());
     let from = items.clone();
+    let mut item_keys = crate::lower::ItemKeys::default();
     cx.retain(runtime.effect(move || {
-        let ids = from.with(|list| identities(list, &key, &key_vm));
+        let ids = from.with(|list| identities(list, &key, &mut item_keys, &key_vm));
         untracked.untracked(|| change(ids));
     }));
     let (build_rows, vm, low) = (rows.clone(), vm.clone(), low.clone());

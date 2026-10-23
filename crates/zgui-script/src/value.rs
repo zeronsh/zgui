@@ -668,7 +668,7 @@ struct Converted {
     /// How many were held after the last sweep.
     swept: std::cell::Cell<usize>,
 }
-fn identity(value: &Value) -> usize {
+pub(crate) fn identity(value: &Value) -> usize {
     match value {
         Value::List(items) => Rc::as_ptr(items) as *const u8 as usize,
         Value::Map(fields) => Rc::as_ptr(fields) as *const u8 as usize,

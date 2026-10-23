@@ -113,6 +113,7 @@ return ui.column {
 
 - `each`'s list must be a state (`ui.state`, `ui.computed`, a component's `ui.use_state`), not a function or a plain table: wrap a derived list in `ui.computed`.
 - Without `key`, a row is its position and value: an edit or a reorder rebuilds the rows it touches, and their own state and elements go. Give rows a `key`, and `animate`, `enter` and `exit` need one to tell a moved row from a new one.
+- `key` is a function of its item alone, as React's keys are: it runs for an item when the item is a new value, and an item a change left as it was keeps the key it had (a list of a thousand rows that changes in one calls `key` once). A `key` reading other state is not run again when that state changes.
 - Rows are built once per key: a row's item is the value when it was built. Read changing parts of the item through state (or key by the parts that change) rather than expecting the build function to run again.
 - `switch`'s and `presence`'s value must be a string when it is a literal (`ui.switch("a", …)`); states and functions may hold any value. A literal `nil` is an error: use a state or a function that returns `nil` (`presence(function() return if open:get() then "panel" else nil end, …)`).
 - `presence` keeps content while its value stays equal: a new value builds new content, the same value does not rebuild it.

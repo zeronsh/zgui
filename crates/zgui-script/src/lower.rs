@@ -523,6 +523,49 @@ fn with_slot(lua: &mlua::Lua, props: &mlua::Table, context: &Value) -> mlua::Res
     Ok(copy)
 }
 
+/// The keys a `ui.each`'s `key` function gave its items, by item. An item
+/// that is the same value as at the last pass (a change elsewhere in the
+/// list shares the rest) keeps its key without calling the script: one
+/// changed row of a thousand calls `key` once, not a thousand times.
+#[derive(Default)]
+pub(crate) struct ItemKeys {
+    last: HashMap<usize, (Value, String)>,
+}
+impl ItemKeys {
+    /// Each item's key; its index where `key` fails.
+    pub fn of(&mut self, items: &[Value], key: &mlua::Function, vm: &Vm) -> Vec<String> {
+        let mut next = HashMap::with_capacity(items.len());
+        let keys = items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                // Lists and tables are known by their allocation (`identity`),
+                // kept alive here so it is not another value's by the next pass.
+                let id = crate::value::identity(item);
+                if let Some((_, key)) = self.last.get(&id).filter(|_| id != 0) {
+                    next.insert(id, (item.clone(), key.clone()));
+                    return key.clone();
+                }
+                match vm.call::<Value>(key, item.clone()) {
+                    Ok(k) => {
+                        let k = k.to_string();
+                        if id != 0 {
+                            next.insert(id, (item.clone(), k.clone()));
+                        }
+                        k
+                    }
+                    Err(e) => {
+                        vm.report(e);
+                        i.to_string()
+                    }
+                }
+            })
+            .collect();
+        self.last = next;
+        keys
+    }
+}
+
 /// A row of a `ui.each` as the key pass last saw it.
 struct EachRow {
     /// Its item, to tell when it changed (rows built again then).
@@ -931,6 +974,7 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             let noted: Rc<std::cell::RefCell<HashMap<String, (usize, String)>>> = Rc::default();
             let (keys_from, items) = (items.clone(), items.clone());
             let (key_fn, key_vm) = (key.clone(), vm.clone());
+            let mut item_keys = ItemKeys::default();
             let (rows_in_keys, noted_in_keys) = (rows.clone(), noted.clone());
             let runtime = vm.runtime.clone();
             let (builder, vm, low) = (builder.clone(), vm.clone(), low.clone());
@@ -941,19 +985,16 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
                         noted.clear();
                         let mut rows = rows_in_keys.borrow_mut();
                         let mut seen: HashMap<String, usize> = HashMap::new();
+                        let keys = key_fn
+                            .as_ref()
+                            .map(|f| item_keys.of(list.list(), f, &key_vm));
                         let identities = list
                             .list()
                             .iter()
                             .enumerate()
                             .map(|(i, item)| {
-                                let base = match &key_fn {
-                                    Some(f) => key_vm.call::<Value>(f, item.clone()).map_or_else(
-                                        |e| {
-                                            key_vm.report(e);
-                                            i.to_string()
-                                        },
-                                        |k| k.to_string(),
-                                    ),
+                                let base = match &keys {
+                                    Some(keys) => keys[i].clone(),
                                     None => i.to_string(),
                                 };
                                 let n = seen.entry(base.clone()).or_default();
