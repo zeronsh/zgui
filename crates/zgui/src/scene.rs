@@ -4798,10 +4798,6 @@ impl Scene {
         while let Some((id, parent_transform, parent_opacity, parent_clip, context, border)) =
             stack.pop()
         {
-            let inherited = context.as_deref();
-            let mask = inherited.and_then(|c| c.mask);
-            let rounded = inherited.map_or_else(RoundedClip::default, |c| c.rounded);
-            let parent_color = inherited.and_then(|c| c.color);
             let node = self.node(id);
             let transform = Transform {
                 x: parent_transform.x + node.transform.x,
@@ -4825,7 +4821,6 @@ impl Scene {
             } else {
                 node.effects.color_matrix()
             };
-            let color = compose_color(parent_color, own_color);
             // Fully transparent subtrees contribute no cached pixels or layer
             // bounds. An explicit layer root keeps opacity external above.
             if effects.opacity <= 0.0 || !own_visible(&node.style) {
@@ -4840,8 +4835,27 @@ impl Scene {
                 true => parent_clip,
                 false => clipped_bounds(parent_clip, bounds, &node.style),
             };
-            let child_mask = fade_mask(mask, clip, &node.style, self.overflow_of(id, node));
-            let mut child_rounded = rounded_clip(rounded, node, bounds);
+            // Most nodes add no fade, rounded clip, clip inset or colour
+            // filter: they and their children carry what was passed on.
+            let plain = own_color.is_none()
+                && matrix.is_none()
+                && node.clip_inset.is_none()
+                && !fades(&node.style)
+                && !(matches!(node.kind, NodeKind::Quad(_) | NodeKind::Panel { .. })
+                    && clip_axes(&node.style) == (true, true));
+            let inherited = context.as_deref().filter(|_| !plain);
+            let mask = inherited.and_then(|c| c.mask);
+            let rounded = inherited.map_or_else(RoundedClip::default, |c| c.rounded);
+            let parent_color = inherited.and_then(|c| c.color);
+            let color = compose_color(parent_color, own_color);
+            let child_mask = match plain {
+                true => mask,
+                false => fade_mask(mask, clip, &node.style, self.overflow_of(id, node)),
+            };
+            let mut child_rounded = match plain {
+                true => rounded,
+                false => rounded_clip(rounded, node, bounds),
+            };
             // Its clip inset: on its item and descendants here, on the
             // composite of an untransformed layer (after its effect), and
             // inside a transformed one, where its own space is.
@@ -4874,17 +4888,18 @@ impl Scene {
                 NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } if quad.paints_over());
             // The item's extras and its children's, shared with what passed
             // them on wherever they are the same.
-            let extras = if matrix.is_none() && item_rounded == rounded && color == parent_color {
-                context.clone()
-            } else {
-                PaintExtras {
-                    matrix,
-                    mask,
-                    rounded: item_rounded,
-                    color,
-                }
-                .shared()
-            };
+            let extras =
+                if plain || matrix.is_none() && item_rounded == rounded && color == parent_color {
+                    context.clone()
+                } else {
+                    PaintExtras {
+                        matrix,
+                        mask,
+                        rounded: item_rounded,
+                        color,
+                    }
+                    .shared()
+                };
             if !isolated && !border && border_over {
                 let opacity = parent_opacity;
                 stack.push((
@@ -4897,9 +4912,8 @@ impl Scene {
                 ));
             }
             if !isolated && !border {
-                let passed = if child_mask == mask
-                    && child_rounded == rounded
-                    && color == parent_color
+                let passed = if plain
+                    || child_mask == mask && child_rounded == rounded && color == parent_color
                 {
                     context
                 } else if matrix.is_none() && child_rounded == item_rounded && child_mask == mask {
@@ -4960,6 +4974,14 @@ impl Scene {
             stack: vec![(self.root, Transform::default(), 1.0, self.viewport, None)],
         }
     }
+}
+/// Whether `style` fades any edge (`fade_mask` makes a mask of its own).
+fn fades(style: &Style) -> bool {
+    style
+        .fade_edges
+        .iter()
+        .chain(&style.fade_edges_x)
+        .any(|band| band.is_finite() && *band > 0.)
 }
 /// The mask a node passes to its children: its own when it fades its edges
 /// (over its clip, less `fade_insets`), otherwise the one it inherited.
