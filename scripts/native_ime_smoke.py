@@ -158,6 +158,9 @@ def main():
                 click(100,174);capture(6)
                 type_text('shijie');capture(7,'second')
                 key('space');capture(8)
+                # Closed as a user closes it (Openbox's Alt+F4), not by the app's
+                # own timer, which a quick run would wait out.
+                xdo('windowactivate','--sync',window,'key','alt+F4')
                 app.wait(timeout=25)
             text=(args.output/'application.log').read_text()
             if app.returncode: raise RuntimeError(text)

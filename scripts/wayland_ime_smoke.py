@@ -133,7 +133,12 @@ def main():
                     (args.output/'snapshots.json').write_text(json.dumps(snapshots,indent=2)+'\n')
                     subprocess.run(['grim',str((args.output/f'ime-{stage}.png').resolve())],env=env,check=True)
                 click(100,82)
-                subprocess.run(['fcitx5-remote','-s','pinyin'],env=env,check=True)
+                # Fcitx answers before its Pinyin engine has loaded: switch
+                # once it can.
+                deadline=time.monotonic()+10
+                while subprocess.run(['fcitx5-remote','-s','pinyin'],env=env,capture_output=True).returncode:
+                    if time.monotonic()>deadline: raise RuntimeError('Fcitx never loaded Pinyin')
+                    time.sleep(.1)
                 subprocess.run(['fcitx5-remote','-o'],env=env,check=True)
                 time.sleep(.3)
                 engine = subprocess.check_output(['fcitx5-remote','-n'],env=env,text=True).strip()
@@ -147,6 +152,9 @@ def main():
                 click(100,174); capture(6)
                 type_text('shijie'); capture(7)
                 key('space'); capture(8)
+                # Closed as a user closes it (sway asks it to), not by the
+                # app's own timer, which a quick run would wait out.
+                subprocess.run(['swaymsg',f'[pid={app.pid}] kill'],env=env,capture_output=True)
                 app.wait(timeout=25)
             trace=(args.output/'application.log').read_text()
             protocol=(args.output/'protocol.log').read_text()

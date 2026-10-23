@@ -112,9 +112,9 @@ SMOKES = [
 # Seconds each probe took on a 4-vCPU runner; the slowest start first so the
 # pool drains evenly. Unlisted probes count as 10.
 COST = {
-    "editor-selection": 24, "wayland-external-ime": 21, "wayland-readonly-ime": 21,
-    "effects": 21, "native-ime": 26, "external-ime": 12, "readonly-ime": 12,
-    "wayland-ime": 21, "component-host": 20, "gallery": 20,
+    "editor-selection": 24,
+    "effects": 21, "native-ime": 19, "external-ime": 12, "readonly-ime": 12,
+    "wayland-ime": 8, "component-host": 20, "gallery": 20,
     "native-menus": 12, "native-menus-wayland": 12,
     "live-dpi": 15, "image-fit": 15, "wayland-input": 13,
     "percent-sizes": 13, "wrapped-editor": 13, "clipboard-shutdown": 3, "host-suspend": 3,
