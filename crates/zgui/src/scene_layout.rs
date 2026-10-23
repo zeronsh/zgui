@@ -493,6 +493,7 @@ impl Scene {
             })
             .collect::<Vec<_>>();
         let asked = vec![Some(hidden); children.len()];
+        let constraints = self.relevant(id, constraints);
         self.store_measurement(id, constraints, (0., 0.), children, asked);
         (0., 0.)
     }

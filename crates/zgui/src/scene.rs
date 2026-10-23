@@ -3578,8 +3578,20 @@ impl Scene {
             .map(|h| (h - vertical_padding).max(0.0));
         let percent_width = explicit_w.map(|w| (w - horizontal_padding).max(0.0));
         let percent_height = explicit_h.map(|h| (h - vertical_padding).max(0.0));
-        let mut children = Vec::new();
-        let mut child_constraints = Vec::new();
+        // A changed node's result from an earlier pass is dropped as this
+        // one is stored: its buffers hold this one's placements.
+        let pass = self.layout_pass;
+        let node = self.node_mut(id);
+        let stale = node.dirty & LAYOUT != 0;
+        let (mut children, mut child_constraints) = match &mut node.measurement {
+            Some(last) if layout.is_some() && stale && last.pass != pass => (
+                std::mem::take(&mut last.children),
+                std::mem::take(&mut last.child_constraints),
+            ),
+            _ => (Vec::new(), Vec::new()),
+        };
+        children.clear();
+        child_constraints.clear();
         let (mut width, mut height) = match layout {
             None => self.leaf_size(id, &style, available_w),
             Some(layout) => {
@@ -4074,12 +4086,15 @@ impl Scene {
         children: Vec<(NodeId, Rect)>,
         child_constraints: Vec<Option<Constraints>>,
     ) {
-        // As `measure` looks results up (`measure_hidden` stores directly).
-        let constraints = self.relevant(id, constraints);
+        // `constraints` are as `measure` looks results up (`relevant`).
         let pass = self.layout_pass;
         let node = self.node_mut(id);
         let dirty = node.dirty & LAYOUT != 0;
-        if let Some(previous) = node.measurement.take() {
+        // A changed node's result from an earlier pass is stale (the retain
+        // below drops it): not shifted in only to go.
+        if let Some(previous) = node.measurement.take()
+            && (previous.pass == pass || !dirty)
+        {
             node.alternates.insert(0, previous);
         }
         // Results from before a node changed are stale; of the rest, all of
