@@ -561,6 +561,15 @@ declare extern type Ref with
 	function elements(self): { Element }
 end
 
+export type ToastOptions = {
+	title: string,
+	body: string?,
+	kind: ("info" | "success" | "warning" | "error")?,
+	duration: number?,
+	-- A button on it: "Undo"; the toast goes after `run`.
+	action: { label: string, run: () -> () }?,
+}
+
 export type NumberOptions = {
 	-- Digits after the point (default: none for whole numbers, else 2).
 	decimals: number?,
@@ -11514,6 +11523,10 @@ declare ui: {
 	-- `table.sort` with a comparator for long lists: that calls Luau some
 	-- 1.7 million times for 100,000 rows. Nil keys go last.
 	sort: <T>(list: { T }, by: string | (item: T) -> any, descending: boolean?) -> { T },
+	-- A toast in the window's corner: it goes after `duration` ms (5000;
+	-- 7000 a warning; an error stays), or at its ×. Returns its id.
+	toast: (opts: ToastOptions) -> number,
+	dismiss_toast: (id: number) -> (),
 	-- JSON: `encode(value, { pretty = true })` writes what state could hold
 	-- (lists as arrays, tables as objects, `ui.null` as null); `decode(text)`
 	-- gives tables the script may change, and fails saying where.

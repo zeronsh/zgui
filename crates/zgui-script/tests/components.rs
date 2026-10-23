@@ -342,3 +342,44 @@ fn the_command_palette_lists_and_runs_the_apps_commands() {
     h.key(Key::Enter);
     assert_eq!(h.text("ran"), "theme");
 }
+
+#[test]
+fn ui_toast_shows_in_the_hosts_corner_and_runs_its_action() {
+    let mut h = Harness::inline(
+        r#"local undone = ui.state("undone", false)
+        local last = 0
+        ui.command { id = "toast", run = function()
+            last = ui.toast { title = "Deleted 3 files", kind = "success", action = { label = "Undo", run = function() undone:set(true) end } }
+        end }
+        ui.command { id = "dismiss", run = function() ui.dismiss_toast(last) end }
+        return ui.column { ui.text { id = "undone", function() return tostring(undone:get()) end } }"#,
+    );
+    assert!(h.host.run_command("toast"));
+    h.frames(2);
+    assert!(h.texts().contains(&"Deleted 3 files".to_owned()));
+    h.click_role_label(Role::Button, "Undo");
+    assert_eq!(h.text("undone"), "true");
+    assert!(
+        !h.texts().contains(&"Deleted 3 files".to_owned()),
+        "gone after its action"
+    );
+    assert!(h.host.run_command("toast"));
+    h.frames(2);
+    assert!(h.host.run_command("dismiss"));
+    h.frames(2);
+    assert!(!h.texts().contains(&"Deleted 3 files".to_owned()));
+}
+
+trait ClickRole {
+    fn click_role_label(&mut self, role: Role, label: &str);
+}
+impl ClickRole for Harness {
+    fn click_role_label(&mut self, role: Role, label: &str) {
+        let node = with_role(self, role)
+            .into_iter()
+            .find(|n| self.ui.semantics.borrow().get(*n).unwrap().label == label)
+            .unwrap_or_else(|| panic!("no {role:?} {label}"));
+        click_node(self, node);
+        self.frames(1);
+    }
+}

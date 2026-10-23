@@ -5158,6 +5158,7 @@ pub use crate::compose_palette::{PaletteCommand, command_palette, fuzzy_score};
 pub use crate::compose_select::{SelectOption, select};
 pub use crate::compose_split::{SplitOptions, split};
 pub use crate::compose_tabs::{CloseTab, Tab, TabsOptions, tabs};
+pub use crate::compose_toast::{Toast, ToastAction, ToastKind, Toaster, toast_host};
 
 /// Common imports for component application code.
 pub mod prelude {
@@ -5175,6 +5176,7 @@ pub mod prelude {
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
     pub use super::{SplitOptions, split};
     pub use super::{StepperOptions, accordion, disclosure, segmented, separator, stepper};
+    pub use super::{Toast, ToastKind, Toaster, toast_host};
     pub use super::{animated_image, animated_image_controlled, async_image, canvas};
     #[cfg(target_os = "macos")]
     pub use super::{native_surface, native_surface_signal};

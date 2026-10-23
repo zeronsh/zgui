@@ -265,6 +265,25 @@ local overlays = section(
 		ui.checkbox { label = "Unread only", value = ui.state("unread", false) },
 	},
 	ui.button { id = "open-dialog", "Dialog…", on_click = ui.set(dialog_open, true) },
+	ui.button {
+		id = "toast",
+		on_click = function()
+			ui.toast {
+				title = "Saved",
+				body = "Report.pdf",
+				kind = "success",
+				action = { label = "Undo", run = function() end },
+			}
+		end,
+		"Toast",
+	},
+	ui.button {
+		id = "toast-error",
+		on_click = function()
+			ui.toast { title = "Upload failed", body = "The server didn't answer.", kind = "error" }
+		end,
+		"Error toast",
+	},
 	ui.modal {
 		open = dialog_open,
 		label = "Discard changes?",

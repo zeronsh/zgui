@@ -1629,6 +1629,14 @@ impl ScriptHost {
                 .w_full()
                 .h_full()
                 .child(app.w_full().h_full())
+                // `ui.toast`'s, while one shows: nothing otherwise.
+                .child_when(
+                    {
+                        let toaster = zgui::compose::Toaster::of(&cx.runtime());
+                        move || toaster.any().then_some(())
+                    },
+                    |_, _| zgui::compose::toast_host(),
+                )
                 .child_when(
                     move || {
                         show_errors

@@ -84,6 +84,8 @@ const NOT_ELEMENTS: &[&str] = &[
     "linear",
     "sort",
     "number",
+    "toast",
+    "dismiss_toast",
     "shader",
     "bitmap",
     "raw",

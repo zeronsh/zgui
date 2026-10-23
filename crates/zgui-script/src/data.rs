@@ -334,7 +334,57 @@ fn decode(lua: &Lua, text: mlua::LuaString) -> mlua::Result<mlua::Value> {
     crate::value::to_lua(&crate::node::from_json(parsed), lua, false)
 }
 
+/// `ui.toast { title, body?, kind?, duration?, action = { label, run }? }`:
+/// shows a toast; its id dismisses it (`ui.dismiss_toast`).
+fn toast(lua: &Lua, table: Table) -> mlua::Result<u64> {
+    use zgui::compose::{Toast, ToastKind, Toaster};
+    let env = crate::node::env(lua)?;
+    let (runtime, vm) = (env.runtime.clone(), env.vm.clone());
+    drop(env);
+    let mut toast = Toast::new(
+        table
+            .get::<String>("title")
+            .map_err(|_| mlua::Error::runtime("ui.toast needs a `title`"))?,
+    );
+    toast.body = table.get("body")?;
+    toast.kind = match table.get::<Option<String>>("kind")?.as_deref() {
+        None | Some("info") => ToastKind::Info,
+        Some("success") => ToastKind::Success,
+        Some("warning") => ToastKind::Warning,
+        Some("error") => ToastKind::Error,
+        Some(other) => {
+            return Err(mlua::Error::runtime(format!(
+                "ui.toast's `kind` is \"info\", \"success\", \"warning\" or \"error\", not {other:?}"
+            )));
+        }
+    };
+    toast.duration = table
+        .get::<Option<f64>>("duration")?
+        .map(|ms| std::time::Duration::from_secs_f64(ms.max(0.) / 1000.));
+    if let Some(action) = table.get::<Option<Table>>("action")? {
+        let label: String = action.get("label")?;
+        let run: mlua::Function = action.get("run")?;
+        toast = toast.action(label, move || {
+            if let Some(vm) = vm.upgrade()
+                && let Err(error) = vm.call::<()>(&run, ())
+            {
+                vm.report(error);
+            }
+        });
+    }
+    Ok(Toaster::of(&runtime).show(toast))
+}
+
 pub(crate) fn install(lua: &Lua, ui: &Table) -> mlua::Result<()> {
+    ui.set("toast", lua.create_function(toast)?)?;
+    ui.set(
+        "dismiss_toast",
+        lua.create_function(|lua, id: u64| {
+            let runtime = crate::node::env(lua)?.runtime.clone();
+            zgui::compose::Toaster::of(&runtime).dismiss(id);
+            Ok(())
+        })?,
+    )?;
     let json = lua.create_table()?;
     json.set("encode", lua.create_function(encode)?)?;
     json.set("decode", lua.create_function(decode)?)?;

@@ -1,4 +1,4 @@
-# Overlays and menus: modal, popover, menu, menu_item, submenu, context_menu
+# Overlays and menus: modal, popover, menu, menu_item, submenu, context_menu, toast
 
 Panels over the interface. Each is bound to a boolean state: setting it opens the panel, and closing it (Escape, a click outside, an item chosen) sets it back to `false`. A panel draws over everything else, escaping its parent's clipping and layout, while what it holds stays part of the script's tree: its states, refs and handlers work as anywhere else.
 
@@ -129,3 +129,19 @@ return ui.column {
 ## layer
 
 `ui.layer { open?, placement?, … }` is a non-modal layer over the window, for toasts and other heads-up content: it takes no focus and has no backdrop, the pointer passes through it except over what it holds, and what it holds stays clickable while a dialog holds focus. It is raised over everything (dialogs included) each time it opens, so toasts shown while a dialog is open draw over the dialog's backdrop. `open` is a state (open when not given); `placement` sits it in the window as a modal's does (`{ x = "end", y = "end", inset = { 0, 24, 16, 0 } }` for a bottom-right stack).
+
+## toast
+
+`ui.toast { title, body?, kind?, duration?, action? }` shows a short message stacked in the window's bottom corner, at the end of the line (the left, right to left), over everything and taking no focus, as Radix's and the system's notifications; it returns the toast's id, which `ui.dismiss_toast(id)` dismisses. A toast goes after its `duration` (5000 ms, 7000 for a warning), paused while the pointer is over it, or at its ×; an error stays until dismissed. `action = { label = "Undo", run = fn }` puts a button on it, the toast going after `run`. Assistive technology hears each as it comes, an error at once. F8 moves focus into the stack, and Escape (or Delete) dismisses the focused toast. Four show at most; older ones wait. The stack is built while a toast shows, and is nothing otherwise.
+
+```lua
+ui.command { id = "delete", title = "Delete", run = function()
+	ui.toast { title = "Deleted 3 files", kind = "success", action = { label = "Undo", run = function() end } }
+end }
+return ui.button { "Delete", on_click = function()
+	ui.toast { title = "Upload failed", body = "The server didn't answer.", kind = "error" }
+end }
+```
+
+In Rust, `Toaster::of(&runtime).show(Toast::new("Saved").kind(ToastKind::Success))`, with one `toast_host()` in the window.
+

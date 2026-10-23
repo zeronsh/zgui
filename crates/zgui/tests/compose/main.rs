@@ -18,6 +18,8 @@ mod composition_slider;
 mod composition_split;
 #[path = "../composition_tabs.rs"]
 mod composition_tabs;
+#[path = "../composition_toast.rs"]
+mod composition_toast;
 #[path = "../deferred_mount_failure.rs"]
 mod deferred_mount_failure;
 #[path = "../lifecycle_resources.rs"]

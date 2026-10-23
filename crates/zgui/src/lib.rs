@@ -50,6 +50,7 @@ mod compose_select;
 mod compose_split;
 mod compose_style;
 mod compose_tabs;
+mod compose_toast;
 mod compose_tooltip;
 mod compose_virtual_keyboard;
 pub mod style;

@@ -6,7 +6,7 @@
 use std::rc::Rc;
 use zgui::compose::{
     ComboItem, ComboboxOptions, PaletteCommand, SelectOption, StepperOptions, Tab, TabsOptions,
-    prelude::*,
+    Toast, ToastKind, Toaster, prelude::*,
 };
 use zgui_desktop::{Application, WindowOptions};
 
@@ -218,6 +218,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .child(separator(false))
                         .children([item(0, "Small"), item(1, "Medium"), item(2, "Large")]),
+                    button()
+                        .on_click({
+                            let toaster = Toaster::of(&cx.ui.runtime);
+                            move || {
+                                toaster.show(
+                                    Toast::new("Saved")
+                                        .body("Report.pdf")
+                                        .kind(ToastKind::Success)
+                                        .action("Undo", || {}),
+                                );
+                            }
+                        })
+                        .child(text("Toast")),
                     div()
                         .focusable(true)
                         .p(8.)
@@ -277,7 +290,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .child(overlays)
                                 .child(containers),
                         ),
-                    ),
+                    )
+                    .child(toast_host()),
             );
         })
 }
