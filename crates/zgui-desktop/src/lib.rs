@@ -26,6 +26,8 @@ pub mod file_dialog;
 mod linux_dbus;
 #[cfg(target_os = "linux")]
 mod linux_spelling;
+#[cfg(target_os = "linux")]
+mod linux_zenity;
 mod native_events;
 mod native_prompt;
 mod platform;

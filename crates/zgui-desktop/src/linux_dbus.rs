@@ -22,6 +22,13 @@ pub(crate) fn session() -> Result<Connection, dbus::Error> {
 /// stays told.
 pub(crate) struct Stop(OwnedFd);
 
+impl AsRawFd for Stop {
+    /// Readable once told: for a thread waiting on more than a connection.
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.0.as_raw_fd()
+    }
+}
+
 impl Stop {
     pub fn new() -> Option<Self> {
         let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC) };

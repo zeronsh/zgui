@@ -30,9 +30,20 @@ pub(crate) fn select(
     if cancel.is_cancelled() {
         return Err(FileDialogError::WindowClosed);
     }
+    // No session bus, or no portal on it: zenity's chooser, if it is there.
+    let fallback = options.clone();
+    let zenity = |error: FileDialogError| {
+        if crate::linux_zenity::available() {
+            crate::linux_zenity::select(kind, &fallback, &parent, &cancel)
+        } else {
+            Err(error)
+        }
+    };
+    let Ok(connection) = crate::linux_dbus::session() else {
+        return zenity(FileDialogError::BackendUnavailable);
+    };
     // This guard must be destroyed BEFORE the Arc parent, including every error return.
     let exported = Parent::new(&parent).ok_or(FileDialogError::BackendUnavailable)?;
-    let connection = crate::linux_dbus::session().map_err(unavailable)?;
     let mut random = [0u8; 16];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut random))
@@ -119,17 +130,35 @@ pub(crate) fn select(
         "/org/freedesktop/portal/desktop",
         Duration::from_secs(3),
     );
-    let (path,): (dbus::Path<'static>,) = proxy
-        .method_call(
-            "org.freedesktop.portal.FileChooser",
-            if matches!(kind, Kind::Save) {
-                "SaveFile"
-            } else {
-                "OpenFile"
-            },
-            (exported.to_string(), options.title, values),
-        )
-        .map_err(unavailable)?;
+    let called: Result<(dbus::Path<'static>,), dbus::Error> = proxy.method_call(
+        "org.freedesktop.portal.FileChooser",
+        if matches!(kind, Kind::Save) {
+            "SaveFile"
+        } else {
+            "OpenFile"
+        },
+        (exported.to_string(), options.title, values),
+    );
+    let path = match called {
+        Ok((path,)) => path,
+        // No portal, or one without a file chooser.
+        Err(error)
+            if matches!(
+                error.name(),
+                Some(
+                    "org.freedesktop.DBus.Error.ServiceUnknown"
+                        | "org.freedesktop.DBus.Error.NameHasNoOwner"
+                        | "org.freedesktop.DBus.Error.UnknownMethod"
+                        | "org.freedesktop.DBus.Error.UnknownInterface"
+                        | "org.freedesktop.DBus.Error.UnknownObject"
+                )
+            ) =>
+        {
+            drop(exported);
+            return zenity(FileDialogError::BackendUnavailable);
+        }
+        Err(error) => return Err(unavailable(error)),
+    };
     // Older portals may return a different path. We subscribed to all Response
     // paths on this owned connection, so either response can already be queued.
     let _expected_path = expected;

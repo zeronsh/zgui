@@ -57,6 +57,7 @@ SMOKES = [
     ("primary-selection", "python3 scripts/primary_selection_smoke.py {bin}/primary_selection --output {out}", False),
     ("portal-appearance", "python3 scripts/portal_appearance_smoke.py {bin}/primary_selection --output {out}", False),
     ("native-platform", "python3 scripts/native_platform_smoke.py {bin}/native_platform --output {out}", False),
+    ("zenity-dialog", "python3 scripts/zenity_dialog_smoke.py {bin}/platform_services --output {out}", False),
     ("launch-token", "python3 scripts/launch_token_smoke.py {bin}/gallery {bin}/native_platform --output {out}", False),
     ("double-click-time", "python3 scripts/double_click_time_smoke.py {bin}/primary_selection --output {out}", False),
     ("touchpad-fling", "python3 scripts/touchpad_fling_smoke.py {bin}/scroll --output {out}", False),

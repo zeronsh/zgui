@@ -75,6 +75,17 @@ last focused) is raised with it: on Wayland through `xdg_activation_v1`
 manager, restoring it if minimized and ending that launch's startup
 notification. `launch_token_smoke.py` checks all four.
 
+## File dialogs
+
+File choosers go through the desktop's portal (`org.freedesktop.portal.FileChooser`),
+owned by their window and closed with it. Where no portal answers (a window
+manager alone: Openbox, i3, a sway without xdg-desktop-portal), zgui shows
+zenity's chooser, GTK's, as rfd and Chromium fall back to GTK's own: modal,
+attached to its window on X11 with zenity 3, and ended when its window closes
+or its request is dropped (the waiting thread sleeps on the process and the
+request together, through a pidfd). Without zenity either, the request fails
+with `BackendUnavailable`. `zenity_dialog_smoke.py` checks it.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a
