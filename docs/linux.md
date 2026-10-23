@@ -5,6 +5,40 @@ zgui runs natively on Wayland and on X11 (winit picks Wayland when
 Linux probes check on both: input, IME, clipboard and the primary selection,
 scaling, cursors, accessibility (AT-SPI) and the desktop's settings.
 
+## Frame pacing and latency
+
+On Wayland a window draws when the compositor's frame callback grants a
+frame (winit withholds `RedrawRequested` until then), so at most one frame
+is in flight and none queue up. On X11, which has no frame callbacks, a
+timer at the monitor's refresh rate paces animation and presents go out
+through the FIFO swapchain. A window with nothing changing does no work
+on either.
+
+`scripts/wayland_latency_probe.py` measures a Wayland client from its own
+protocol log, under Weston on Xvfb (60 Hz, software rendering, debug build,
+2026-10-23):
+
+| | Key press to commit |
+| --- | --- |
+| At rest | median 1.9 ms, p90 2.4 ms |
+| Animating at the display's rate | median 8.2 ms, p90 16.8 ms |
+
+At rest the frame showing a key is committed as soon as it is drawn. While
+animating, the key waits for the next frame callback, about half a refresh
+on average, and is drawn in that frame (one that arrives while a frame is
+being drawn waits for the one after). Weston then shows the commit at its next
+repaint, up to a refresh later, as it would show any client's commit.
+Animation commits came 16.5 ms apart (median, p90 17.4 ms), with none
+longer than 1.5 refreshes in 504 frames. Idle, the client sent and received
+no Wayland messages and used no CPU in 5 s. On X11 (Xvfb) it used no CPU
+and woke 0 times idle, and about 6 times per frame animating.
+
+Not measured: X11 presentation timing on real hardware. Xvfb has no vblank,
+and software Vulkan presents through shared memory, not the Present
+extension. Also open: drawing a frame later in the refresh, as macOS does,
+would cut the animating case toward the at-rest one. On Wayland that needs
+the compositor's refresh phase, from `wp_presentation` feedback.
+
 ## Web views
 
 `zgui::web_view` has no Linux implementation: a web view shows its labelled
