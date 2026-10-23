@@ -632,6 +632,8 @@ fn chat_view(cx: &mut Context, state: &App, id: String) -> View {
         measured_rows(page.clone(), heights, 2, rows, estimate, build)
             .w_full()
             .h_full()
+            // Messages select and copy as a chat's do on the web.
+            .selectable(true)
             // Faded out over the soft edge (`edge`), down to the window's
             // bottom, as its blur grows.
             .reactive_style(move || Styles::new().fade_edges(24., stack.get() - 24. + EDGE_LEAD))

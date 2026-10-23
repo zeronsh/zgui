@@ -769,6 +769,7 @@ local preview_pane = ui.column {
 			pb = 28,
 			gap = 12,
 			items = "stretch",
+			selectable = true,
 			ui.each(blocks, block),
 		},
 	},

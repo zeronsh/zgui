@@ -696,6 +696,7 @@ fn transcript(cx: &mut Context, page: &Signal<f32>) -> View {
         .w_full()
         .max_w(736.)
         .pb(24.)
+        .selectable(true)
         .child(body.w_full())
         .child(trailer(&anim, &live, started))
 }

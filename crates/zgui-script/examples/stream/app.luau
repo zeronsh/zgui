@@ -72,6 +72,7 @@ return ui.column {
 				w_full = true,
 				p = 18,
 				gap = 12,
+				selectable = true,
 				ui.each(paragraphs, function(paragraph)
 					return ui.text { paragraph, wrap = true, w_full = true }
 				end, { w_full = true, gap = 12 }),

@@ -1499,7 +1499,7 @@ return col {
 				items = "center",
 				px = 24,
 				pt = z(14),
-				col { w = z(384), transcript() },
+				col { w = z(384), selectable = true, transcript() },
 				-- Room for the composer, which docks the approval on top.
 				ui.div {
 					layout = "height",
