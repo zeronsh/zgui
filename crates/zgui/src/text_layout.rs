@@ -5,10 +5,14 @@ use unicode_segmentation::UnicodeSegmentation;
 /// Portable font selection. Named families fall back through the platform font database.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FontFamily {
+    /// The platform's sans-serif interface font.
     #[default]
     SansSerif,
+    /// The platform's serif font.
     Serif,
+    /// The platform's monospaced font.
     Monospace,
+    /// A family by name (`"Inter"`).
     Named(std::sync::Arc<str>),
 }
 impl From<&str> for FontFamily {
@@ -30,6 +34,7 @@ impl From<String> for FontFamily {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LineHeight(u32);
 impl LineHeight {
+    /// The normal line pitch for the font size.
     pub const NORMAL: Self = Self(0);
 
     /// Invalid, zero, or negative values reset the normal line pitch.
@@ -41,10 +46,12 @@ impl LineHeight {
         }
     }
 
+    /// The line height in logical pixels, or `None` for normal.
     pub fn pixels(self) -> Option<f32> {
         (self != Self::NORMAL).then(|| f32::from_bits(self.0))
     }
 
+    /// The line pitch for text `font_size` large.
     pub fn resolve(self, font_size: f32) -> f32 {
         self.pixels().unwrap_or_else(|| {
             let size = if font_size.is_finite() {
@@ -63,7 +70,10 @@ impl LineHeight {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LetterSpacing(u32);
 impl LetterSpacing {
+    /// No extra spacing.
     pub const ZERO: Self = Self(0);
+    /// `value` logical pixels between characters, normalized as the type
+    /// says.
     pub fn px(value: f32) -> Self {
         if value.is_finite() && value != 0. {
             Self(value.clamp(-1_000_000., 1_000_000.).to_bits())
@@ -71,6 +81,7 @@ impl LetterSpacing {
             Self::ZERO
         }
     }
+    /// The spacing in logical pixels.
     pub fn pixels(self) -> f32 {
         f32::from_bits(self.0)
     }
@@ -78,31 +89,45 @@ impl LetterSpacing {
 /// Physical paragraph alignment within an allocated text width.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextAlign {
+    /// At the start of the line: the left left to right, the right right to
+    /// left.
     #[default]
     Start,
+    /// At the left.
     Left,
+    /// Centred.
     Center,
+    /// At the right.
     Right,
 }
 /// Display-only overflow policy. Editor documents are never truncated.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextOverflow {
+    /// Cut off at the box's edge.
     #[default]
     Clip,
+    /// Ended with an ellipsis where it is cut.
     Ellipsis,
 }
+/// How plain text that doesn't fit ends.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextOptions {
+    /// How text past the last line or the width ends.
     pub overflow: TextOverflow,
+    /// The most lines shown; `None` shows them all.
     pub line_clamp: Option<std::num::NonZeroU32>,
 }
 /// Canonical OpenType feature settings. Tags use four ASCII bytes such as
 /// `*b"liga"`; the last occurrence of a tag wins. Sorted storage gives equivalent
 /// declarations identical font-cache keys. Unsupported tags are ignored by fonts.
 type FeatureSettings = std::sync::Arc<[([u8; 4], u32)]>;
+/// OpenType feature settings, canonical: each tag once, sorted. Empty
+/// uses the font's defaults.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FontFeatures(Option<FeatureSettings>);
 impl FontFeatures {
+    /// The settings `features` gives, each a four-byte tag and a value (`1`
+    /// on, `0` off); a later tag replaces an earlier one.
     pub fn new(features: impl IntoIterator<Item = ([u8; 4], u32)>) -> Self {
         let mut canonical = std::collections::BTreeMap::new();
         for (tag, value) in features {
@@ -114,22 +139,32 @@ impl FontFeatures {
             Self(Some(canonical.into_iter().collect::<Vec<_>>().into()))
         }
     }
+    /// The settings, sorted by tag.
     pub fn settings(&self) -> &[([u8; 4], u32)] {
         self.0.as_deref().unwrap_or(&[])
     }
+    /// The bytes the settings take, for cache accounting.
     pub fn storage_bytes(&self) -> usize {
         std::mem::size_of_val(self.settings())
     }
 }
+/// How text is set: family, weight, style, spacing, features and
+/// alignment.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FontStyle {
+    /// The font family.
     pub family: FontFamily,
     /// OpenType weight in the inclusive range 1..=1000 (400 regular, 700 bold).
     pub weight: u16,
+    /// Whether it is italic.
     pub italic: bool,
+    /// The line pitch.
     pub line_height: LineHeight,
+    /// Extra spacing between characters.
     pub letter_spacing: LetterSpacing,
+    /// OpenType features.
     pub features: FontFeatures,
+    /// How lines align in their box.
     pub align: TextAlign,
     /// Explicit ordered families tried before platform fallback for missing glyphs.
     pub fallbacks: std::sync::Arc<[FontFamily]>,
@@ -144,9 +179,12 @@ pub struct FontStyle {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextUnderline(Option<u32>);
 impl TextUnderline {
+    /// An underline `offset` logical pixels below the baseline, or at the
+    /// default with `None`.
     pub fn new(offset: Option<f32>) -> Self {
         Self(offset.filter(|o| o.is_finite()).map(f32::to_bits))
     }
+    /// Its offset below the baseline, if set.
     pub fn offset(self) -> Option<f32> {
         self.0.map(f32::from_bits)
     }
@@ -194,6 +232,7 @@ impl FontStyle {
 }
 /// Font-aware shaping callback. The legacy TextShaper remains available for default fonts.
 pub trait FontTextShaper {
+    /// Shape `text` at `size` in `font`, wrapped at `width` if given.
     fn shape(
         &self,
         text: &str,
@@ -222,12 +261,17 @@ pub enum TextAffinity {
     #[default]
     After,
 }
+/// A caret position in text: a byte offset and which side of it the
+/// caret sits on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TextPosition {
     /// UTF-8 byte offset on a grapheme boundary.
     pub byte_offset: usize,
+    /// Which side of a shared boundary the caret sits on.
     pub affinity: TextAffinity,
 }
+/// Shaped text's geometry: its size, carets, hit testing and selection
+/// rectangles, in the layout's own logical coordinates.
 pub trait TextLayout {
     /// Estimated retained bytes for cache admission, including this layout and
     /// its owned allocations. Shared font databases are excluded. This is cache
@@ -240,9 +284,11 @@ pub trait TextLayout {
     fn cache_weight(&self) -> Option<usize> {
         None
     }
+    /// Its width and height.
     fn size(&self) -> (f32, f32);
     /// Returns a UTF-8 byte offset on a grapheme boundary.
     fn hit_test(&self, x: f32, y: f32) -> usize;
+    /// The caret's rectangle at UTF-8 offset `byte_offset`.
     fn caret(&self, byte_offset: usize) -> Rect;
     /// Visual spans may be disjoint for bidirectional text.
     fn selection(&self, range: Range<usize>) -> Vec<Rect>;
@@ -253,6 +299,7 @@ pub trait TextLayout {
             affinity: TextAffinity::After,
         }
     }
+    /// The caret's rectangle at `position`, on the side its affinity says.
     fn caret_position(&self, position: TextPosition) -> Rect {
         self.caret(position.byte_offset)
     }
@@ -277,7 +324,9 @@ pub trait TextLayout {
         )
     }
 }
+/// Shapes text in the default font (see [`FontTextShaper`] for others).
 pub trait TextShaper {
+    /// Shape `text` at `font_size`, wrapped at `max_width` if given.
     fn shape(&self, text: &str, font_size: f32, max_width: Option<f32>) -> Box<dyn TextLayout>;
 }
 impl<F: Fn(&str, f32, Option<f32>) -> Box<dyn TextLayout>> TextShaper for F {
@@ -397,9 +446,11 @@ impl FallbackTextLayout {
         );
         layout
     }
+    /// `text` at `size` in the default font, wrapped at `max_width` if given.
     pub fn new(text: &str, size: f32, max_width: Option<f32>) -> Self {
         Self::with_line_height(text, size, max_width, LineHeight::NORMAL)
     }
+    /// [`FallbackTextLayout::new`] with a line height.
     pub fn with_line_height(
         text: &str,
         size: f32,
@@ -478,6 +529,8 @@ impl FallbackTextLayout {
             },
         )
     }
+    /// The size of `text` at `size` in `font`, wrapped at `max_width` if
+    /// given.
     pub fn measure_with_font(
         text: &str,
         size: f32,
