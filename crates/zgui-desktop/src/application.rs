@@ -91,6 +91,9 @@ enum Event {
     MenusChanged,
     #[cfg(target_os = "linux")]
     NativeFiles(u64, crate::wayland_data::FileEvent),
+    /// The desktop's appearance settings changed (`linux_appearance`).
+    #[cfg(target_os = "linux")]
+    AppearanceChanged,
     #[cfg(target_os = "macos")]
     NativeMenuAction(crate::MenuAction),
     Wake(u64),
@@ -668,6 +671,8 @@ impl Application {
         let mut host = WindowManager {
             #[cfg(target_os = "linux")]
             native_data: None,
+            #[cfg(target_os = "linux")]
+            appearance: None,
             _native_events: native_events,
             application_event: self.application_event,
             quit_on_last_window_close: self.quit_on_last_window_close,
@@ -2835,6 +2840,8 @@ impl Drop for Host {
 struct WindowManager {
     #[cfg(target_os = "linux")]
     native_data: Option<crate::wayland_data::NativeData>,
+    #[cfg(target_os = "linux")]
+    appearance: Option<crate::linux_appearance::Watcher>,
     _native_events: Option<crate::native_events::NativeApplicationEvents>,
     application_event: Option<ApplicationEventHandler>,
     quit_on_last_window_close: bool,
@@ -2965,6 +2972,13 @@ impl ApplicationHandler<Event> for WindowManager {
                 }
             }
         }
+        #[cfg(target_os = "linux")]
+        if self.appearance.is_none() {
+            let proxy = self.factory.proxy.clone();
+            self.appearance = crate::linux_appearance::watch(move || {
+                let _ = proxy.send_event(Event::AppearanceChanged);
+            });
+        }
         if self.factory.clipboard.borrow().is_none() {
             match crate::clipboard::Clipboard::new(
                 event_loop.owned_display_handle(),
@@ -3069,6 +3083,12 @@ impl ApplicationHandler<Event> for WindowManager {
                     if let Err(error) = result {
                         self.fail(event_loop, error);
                     }
+                }
+            }
+            #[cfg(target_os = "linux")]
+            Event::AppearanceChanged => {
+                for host in self.hosts.values() {
+                    crate::system_colors::sync(&host.context.ui);
                 }
             }
             Event::MenusChanged => {
@@ -3873,6 +3893,8 @@ mod tests {
         let manager = WindowManager {
             #[cfg(target_os = "linux")]
             native_data: None,
+            #[cfg(target_os = "linux")]
+            appearance: None,
             _native_events: None,
             application_event: None,
             quit_on_last_window_close: true,

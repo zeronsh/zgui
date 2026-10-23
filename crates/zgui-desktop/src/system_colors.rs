@@ -4,8 +4,6 @@
 //! and on Windows high contrast, animations turned off and the text size. An
 //! app theme or `theme_scope` that sets these tokens keeps its own; the text
 //! size scales the font tokens of every theme.
-// Linux reads no system values yet.
-#[cfg_attr(not(any(target_os = "macos", windows)), allow(unused_imports))]
 use zgui::{
     scene::Color,
     theme::{TokenId, TokenInput, tok},
@@ -15,8 +13,9 @@ use zgui::{
 /// window and in one at the back; Windows' accent, the selection colour of
 /// its own text fields (WinUI's, the new Notepad's), with white text over it.
 /// On Windows also high contrast (`windows_contrast`) and animations turned
-/// off (`windows_motion`). Empty where zgui reads none (Linux: a hook for its
-/// host), and the built-in themes apply.
+/// off (`windows_motion`). On Linux the user's accent (`linux_appearance`,
+/// the settings portal), translucent as GTK and KDE draw a selection.
+/// Empty where zgui reads none, and the built-in themes apply.
 fn tokens() -> Vec<(TokenId, TokenInput)> {
     #[cfg(target_os = "macos")]
     {
@@ -48,7 +47,17 @@ fn tokens() -> Vec<(TokenId, TokenInput)> {
         tokens.extend(windows_motion());
         tokens
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    {
+        let Some(Color(r, g, b, _)) = crate::linux_appearance::current().accent else {
+            return Vec::new();
+        };
+        vec![
+            (tok::SELECTION.0, Color(r, g, b, 0x66).into()),
+            (tok::SELECTION_INACTIVE.0, Color(r, g, b, 0x33).into()),
+        ]
+    }
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     {
         Vec::new()
     }

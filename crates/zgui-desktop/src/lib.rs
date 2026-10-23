@@ -69,6 +69,8 @@ pub use application::{
     Application, TaskSpawner, WindowContext, WindowFactory, WindowHandle, WindowOptions,
 };
 
+#[cfg(target_os = "linux")]
+mod linux_appearance;
 mod scoped_task;
 mod scroll_resample;
 mod system_colors;
