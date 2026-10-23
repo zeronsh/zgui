@@ -329,7 +329,7 @@ pub struct View {
     placeholder_color: Option<Box<dyn FnMut() -> crate::scene::Color>>,
     select_on_focus: Option<bool>,
     secure: Option<bool>,
-    spellcheck: Option<bool>,
+    spellcheck: Option<Box<dyn FnMut() -> bool>>,
     line_numbers: Option<bool>,
     window_drag: bool,
     /// `View::selectable`.
@@ -777,8 +777,13 @@ impl View {
     /// dotted line, and the context menu offers its guesses, Learn Spelling
     /// and Ignore Spelling. Off by default; a password field never checks.
     /// Only editor views take it.
-    pub fn spellcheck(mut self, check: bool) -> Self {
-        self.spellcheck = Some(check);
+    pub fn spellcheck(self, check: bool) -> Self {
+        self.spellcheck_when(move || check)
+    }
+    /// `spellcheck`, following the reactive values it reads (a setting):
+    /// turned off, the marks go; turned on, the whole text is checked.
+    pub fn spellcheck_when(mut self, check: impl FnMut() -> bool + 'static) -> Self {
+        self.spellcheck = Some(Box::new(check));
         self
     }
     /// Number a multiline editor's lines in a gutter at its left, as a code
@@ -2169,7 +2174,15 @@ impl WidgetStyles {
                 .py(6.)
                 .bg(tok::INPUT_BG)
                 .rounded(tok::RADIUS_MD),
-            editor: Styles::new().bg(tok::INPUT_BG).rounded(tok::RADIUS_MD),
+            // Outlined as a browser's fields are, so a field shows on any
+            // surface (the input colour can be the panel's); drawn over the
+            // content, so it takes no room.
+            editor: Styles::new()
+                .bg(tok::INPUT_BG)
+                .rounded(tok::RADIUS_MD)
+                .border(1.)
+                .border_color(tok::BORDER)
+                .border_over(true),
         }
     }
 }
@@ -2489,7 +2502,14 @@ fn mount_element(
             multiline,
         } => {
             let mut defaults = widget_style(|w| &w.editor);
+            // The default outline is drawn over; a border the app gives
+            // takes room, as CSS's does, unless it says otherwise.
+            let own_border =
+                view.styles.border_width.is_some() && view.styles.rare().border_over.is_none();
             defaults.merge(&view.styles);
+            if own_border {
+                defaults = defaults.border_over(false);
+            }
             view.styles = defaults;
             if view.variants.focus.is_none() {
                 view.variants.defaults[2] = Some(focus_ring(&view.styles));
@@ -3016,13 +3036,13 @@ fn mount_element(
         if let Some(secure) = view.secure {
             editor.set_secure(secure);
         }
-        if view.spellcheck == Some(true)
+        if let Some(check) = view.spellcheck.take()
             && view.secure != Some(true)
             && let Some(platform) = environment
                 .services
                 .get::<crate::platform::PlatformService>()
         {
-            crate::editor_spell::mount(ui, editor.clone(), platform);
+            crate::editor_spell::mount(ui, editor.clone(), platform, check);
         }
         if let Some(numbered) = view.line_numbers {
             editor.set_line_numbers(numbered);

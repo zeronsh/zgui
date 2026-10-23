@@ -638,6 +638,8 @@ pub(crate) enum Kind {
         offset: Option<Signal<Value>>,
         horizontal: bool,
         follow: bool,
+        /// `scrollbar = true`: an interactive scrollbar over its edge.
+        scrollbar: bool,
     },
     Text(Text),
     Rich(Vec<Span>),
@@ -677,8 +679,9 @@ pub(crate) enum Kind {
         line_numbers: bool,
         /// `secure = true`: a password field (masked, never copied).
         secure: bool,
-        /// `spellcheck = true`: the system's checker marks misspellings.
-        spellcheck: bool,
+        /// `spellcheck = true` (or a state or function of one): the system's
+        /// checker marks misspellings.
+        spellcheck: Option<Source>,
     },
     Progress {
         label: String,
@@ -717,6 +720,8 @@ pub(crate) enum Kind {
         overscan: usize,
         build: Function,
         offset: Option<Signal<Value>>,
+        /// `scrollbar = true`: an interactive scrollbar over its edge.
+        scrollbar: bool,
     },
     Switch {
         value: Source,
@@ -1520,6 +1525,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "multiline",
     "offset",
     "follow",
+    "scrollbar",
     "src",
     "code",
     "draw",
@@ -2306,6 +2312,10 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     Some(t) => t.get::<Option<bool>>("follow")?.unwrap_or(false),
                     None => false,
                 };
+                let scrollbar = match &table {
+                    Some(t) => t.get::<Option<bool>>("scrollbar")?.unwrap_or(false),
+                    None => false,
+                };
                 let node = fill(
                     lua,
                     Node::new(
@@ -2314,6 +2324,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             offset,
                             horizontal,
                             follow,
+                            scrollbar,
                         },
                     ),
                     table.as_ref(),
@@ -2462,7 +2473,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         .get::<Option<bool>>("select_on_focus")?
                         .unwrap_or(false),
                     secure: table.get::<Option<bool>>("secure")?.unwrap_or(false),
-                    spellcheck: table.get::<Option<bool>>("spellcheck")?.unwrap_or(false),
+                    spellcheck: optional("spellcheck", Ty::Bool)?,
                     line_numbers: table.get::<Option<bool>>("line_numbers")?.unwrap_or(false),
                 };
                 node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
@@ -2610,6 +2621,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             overscan,
                             build,
                             offset,
+                            scrollbar: table.get::<Option<bool>>("scrollbar")?.unwrap_or(false),
                         },
                     ),
                     Some(&table),

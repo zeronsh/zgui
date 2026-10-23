@@ -684,6 +684,7 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             offset,
             horizontal,
             follow,
+            scrollbar,
         } => {
             let offset = match offset {
                 Some(offset) => bridge(need(&mut cx), offset, number, |x| Value::Num(x as f64)),
@@ -697,7 +698,12 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             } else {
                 scroll(offset)
             };
-            view.follow_end(*follow)
+            let view = view.follow_end(*follow);
+            if *scrollbar {
+                view.scrollbar(true)
+            } else {
+                view
+            }
         }
         Kind::Text(text) => lower_text(text, vm),
         Kind::Rich(spans) => lower_rich(spans, vm, low),
@@ -808,8 +814,15 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             if *secure {
                 view = view.secure(true);
             }
-            if *spellcheck {
-                view = view.spellcheck(true);
+            match spellcheck {
+                None | Some(Source::Lit(Lit::Bool(false))) => {}
+                Some(Source::Lit(Lit::Bool(true))) => view = view.spellcheck(true),
+                Some(check) => {
+                    let (check, vm) = (resolve_owned(check), vm.clone());
+                    view = view.spellcheck_when(move || {
+                        resolve(&check, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
+                    });
+                }
             }
             if *select_on_focus {
                 view = view.select_on_focus(true);
@@ -1030,7 +1043,14 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
                 },
             )
         }
-        Kind::List { .. } => lower_list(&node.kind, vm, low, &mut cx),
+        Kind::List { scrollbar, .. } => {
+            let list = lower_list(&node.kind, vm, low, &mut cx);
+            if *scrollbar {
+                list.scrollbar(true)
+            } else {
+                list
+            }
+        }
         Kind::Modal {
             label,
             open,
@@ -2688,6 +2708,7 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         overscan,
         build: builder,
         offset,
+        ..
     } = kind
     else {
         unreachable!("lower_list takes lists")

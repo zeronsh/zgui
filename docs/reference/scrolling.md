@@ -17,6 +17,7 @@ ui.list(props: ListProps) -> Node
 | children | `Child` | none | |
 | `offset` | `State<number>` | its own | the scroll position in points, both ways: scrolling writes it, setting it scrolls (clamped) |
 | `follow` | `boolean` | `false` | stays at the end while the content grows, until scrolled away from it (a transcript, a log) |
+| `scrollbar` | `boolean` | `false` | an interactive scrollbar over the trailing edge: drag it, click its track to page; overlay style (hidden until scrolling) where the system has overlay scrollbars |
 | `w`, `h` | `Length` | `320` by `240` when nothing else sizes it | a stretching parent, `grow`, `w`/`h` or `w_full` size it instead |
 | `gap`, `items`, `p`… | | | lay out the content as a column's (a row's for `scroll_x`) |
 | `overflow` | `Overflow` | `"hidden"` | |
@@ -35,6 +36,7 @@ The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is 
 | `sticky_top` | `number` | `0` | how far below the top the sticky rows stick (CSS's sticky `top`): what scrolls above them still shows, so cover it if it shouldn't |
 | `overscan` | `number` | `2` | rows built beyond each edge of the view |
 | `offset` | `State<number>` | its own | the scroll position in points, as `scroll`'s |
+| `scrollbar` | `boolean` | `false` | an interactive scrollbar, as `scroll`'s |
 | `w`, `h` | `Length` | `320`, `240` | |
 
 With `heights`, rows differ in height but are still never measured: the list knows where each starts, so a changed list (a section folded, rows inserted) re-lays out without building anything offscreen. A host can publish the heights as a shared value (`ScriptHost::shared`), and the script never copies them.
@@ -91,10 +93,10 @@ return ui.row {
 
 ## Gotchas
 
-- Every list row is `height` points: a taller row overlaps the next and a shorter one leaves a gap. For rows of different heights use `scroll` with `each`.
+- Every list row is `height` points: a taller row overlaps the next and a shorter one leaves a gap. For rows of different heights give `heights` (each row's own, still never measured).
 - A list row is built once for its index, when it comes into view. Reading state in `row` (`items:get()[i]`) takes the value at that moment; to follow a change, read it in a function property or text inside the row (`ui.text(function() return items:get()[i].name end)`), or change `count`. Rows are keyed by index, so a row's own state stays with its position, not its data.
 - List rows do not stretch across the list: give a row's root `w_full = true`.
 - A `scroll` with no size and nothing sizing it is 320 by 240; inside a column that does not stretch (`items = "start"`, the default) it keeps that width. Use `w_full = true`, `grow = 1` or a stretching parent.
 - All of a `scroll`'s children stay mounted however far away they are; past a few thousand rows, use `list`.
 - `offset` counts points from the top (the left for `scroll_x`). Setting it beyond the content clamps it, and a binding to a state that is not a number reads as 0.
-- There is no scrollbar unless asked: a viewport scrolls by wheel, touchpad, keyboard focus and `offset`, and with the keys as a page does (Space, Shift+Space, Page Up/Down, Home/End, arrows) once it has been pressed in or is under the pointer, while nothing has focus (a focused control keeps its keys).
+- There is no scrollbar unless asked (`scrollbar = true`): a viewport scrolls by wheel, touchpad, keyboard focus and `offset`, and with the keys as a page does (Space, Shift+Space, Page Up/Down, Home/End, arrows) once it has been pressed in or is under the pointer, while nothing has focus (a focused control keeps its keys).

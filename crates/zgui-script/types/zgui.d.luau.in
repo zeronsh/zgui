@@ -1181,6 +1181,8 @@ export type ScrollProps = Merge<ContainerProps, {
 	-- The scroll position in points, both ways.
 	offset: State<number>?,
 	-- Stays at the end while the content grows, until scrolled away.
+	-- An interactive scrollbar over the trailing edge (none by default).
+	scrollbar: boolean?,
 	follow: boolean?,
 }>
 -- `ui.text { "Count: {count}", text_size = 18 }`: the text first.
@@ -1277,8 +1279,8 @@ export type InputProps = Merge<Props, {
 	-- Check its spelling as it is typed (HTML's `spellcheck`): the system's
 	-- checker marks misspelled words with a dotted line, and its context
 	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a
-	-- password field.
-	spellcheck: boolean?,
+	-- password field. A state or function follows it (a setting).
+	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
 }>
@@ -1294,6 +1296,8 @@ export type SliderProps = Merge<Props, {
 export type ListProps = Merge<Props, {
 	-- The row count (with `heights`, their length).
 	count: Reactive<number>?,
+	-- An interactive scrollbar over the trailing edge (none by default).
+	scrollbar: boolean?,
 	-- Builds row `index` (from 1).
 	row: (index: number) -> Node,
 	-- Every row's height in points (28 by default).
@@ -1614,7 +1618,10 @@ declare ui: {
 	read_file: (file: File | string) -> Promise<string>,
 	-- Write `text` to a file the user picked (beside it, then over it).
 	write_file: (file: File | string, text: string) -> Promise<nil>,
-	set: <T>(state: State<T>, value: T) -> Action,
+	-- `T` comes from the state's `set`, so a literal fits a state of a
+	-- union (`ui.set(density, "compact")` for `"comfortable" | "compact"`)
+	-- and anything else is still an error.
+	set: <T>(state: { read set: (self: any, value: T) -> () }, value: T) -> Action,
 	toggle: (state: State<boolean>) -> Action,
 	add: (state: State<number>, by: number?) -> Action,
 	-- The state's truthiness (or number) drives a 0-to-1 scalar, or

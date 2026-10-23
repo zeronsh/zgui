@@ -6,16 +6,32 @@
 use crate::{platform::PlatformService, widgets::EditorHandle, widgets::Ui};
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
-pub(crate) fn mount(ui: &mut Ui, editor: EditorHandle, platform: Rc<PlatformService>) {
-    // The text last checked, and its misspellings.
-    let checked: Rc<RefCell<(String, Vec<Range<usize>>)>> = Rc::default();
+/// Text as last checked, and its misspellings.
+type Checked = (String, Vec<Range<usize>>);
+
+pub(crate) fn mount(
+    ui: &mut Ui,
+    editor: EditorHandle,
+    platform: Rc<PlatformService>,
+    mut on: Box<dyn FnMut() -> bool>,
+) {
+    // The text last checked, and its misspellings (`None` while off).
+    let checked: Rc<RefCell<Option<Checked>>> = Rc::default();
     let value = editor.value.clone();
     ui.bind(editor.node, move || {
         value.with(|_| ());
+        if !on() {
+            // Off: no marks, and a fresh check when on again.
+            if checked.borrow_mut().take().is_some() {
+                editor.set_misspellings(Vec::new());
+            }
+            return;
+        }
         let text = editor.text();
         let mut checked = checked.borrow_mut();
-        let (old, ranges) = &mut *checked;
-        if *old == text && !old.is_empty() {
+        let fresh = checked.is_none();
+        let (old, ranges) = checked.get_or_insert_with(Default::default);
+        if *old == text && !fresh {
             return;
         }
         let (start, end, shift) = changed_paragraphs(old, &text);

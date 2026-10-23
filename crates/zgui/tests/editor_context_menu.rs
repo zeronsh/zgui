@@ -292,3 +292,32 @@ fn a_spellchecked_editor_marks_misspellings_and_its_menu_corrects_them() {
     assert!(marks(&ui).is_empty());
     assert_eq!(*speller.learned.borrow(), ["teh"]);
 }
+
+#[test]
+fn turning_spellcheck_off_clears_the_marks_and_on_checks_again() {
+    let mut ui = Ui::new(400., 200.);
+    let speller = Rc::new(Speller::default());
+    let value = ui.signal("fix teh bug".to_owned());
+    let on = ui.signal(true);
+    let read = on.clone();
+    ui.mount(provide(
+        zgui::platform::PlatformService(speller),
+        column().size(400., 200.).child(
+            text_area("Notes", value.clone())
+                .spellcheck_when(move || read.get())
+                .w(300.)
+                .h(80.),
+        ),
+    ));
+    ui.prepare_frame();
+    assert_eq!(marks(&ui).len(), 1);
+    on.set(false);
+    ui.prepare_frame();
+    assert!(marks(&ui).is_empty(), "off: no marks");
+    value.set("teh fix teh bug".to_owned());
+    ui.prepare_frame();
+    assert!(marks(&ui).is_empty(), "and nothing checked");
+    on.set(true);
+    ui.prepare_frame();
+    assert_eq!(marks(&ui).len(), 2, "on: the whole text checked");
+}
