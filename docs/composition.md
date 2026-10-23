@@ -762,6 +762,12 @@ trigger is on instead, and the desktop host shows each in a window of its own.
 See [popups past the window](application.md#popups-past-the-window).
 Elsewhere they stay inside the window.
 
+`.arrow(8.)` gives a popover an arrow at its trigger, as AppKit's popovers have:
+it reaches 8 points from the panel's edge, points at the trigger's centre from
+whichever side placement chose (flipping with it), and is drawn as the panel is,
+with its background (on macOS, the popover material) and border. The panel sits
+that much further from the trigger.
+
 Fluent styles and `.id(...)` apply to the panel. A private positioning node keeps
 user `.translate(...)` additive. Default panels have 16-pixel padding, a theme
 surface background and rounded corners; modal width defaults to 360 pixels and

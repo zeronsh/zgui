@@ -410,3 +410,36 @@ fn a_menu_opens_from_its_triggers_start_right_to_left() {
     );
     assert_eq!(panel.x + panel.width, anchor.x + anchor.width, "{panel:?}");
 }
+
+/// A popover's arrow (`View::arrow`) sits between it and its trigger,
+/// under the trigger's centre, and the panel opens that much further away.
+#[test]
+fn a_popovers_arrow_points_at_its_trigger() {
+    let mut ui = Ui::new(500., 400.);
+    let open = ui.signal(true);
+    let view = ui.mount(
+        column().p(20.).child(
+            popover("Details", open, button().id("anchor").size(80., 28.))
+                .id("panel")
+                .w(200.)
+                .arrow(8.),
+        ),
+    );
+    ui.prepare_frame();
+    ui.prepare_frame();
+    let scene = ui.scene.borrow();
+    let anchor = scene.bounds(view.find("anchor").unwrap());
+    let panel_node = view.find("panel").unwrap();
+    let panel = scene.bounds(panel_node);
+    // Below the trigger, 4 points and the arrow's 8 away.
+    assert_eq!(panel.y, anchor.y + anchor.height + 12.);
+    let position = scene.parent(panel_node).unwrap();
+    let arrow = scene.bounds(scene.children(position)[1]);
+    assert_eq!(arrow.height, 8.);
+    assert_eq!(arrow.y + arrow.height, panel.y, "on the panel's top edge");
+    assert_eq!(
+        arrow.x + arrow.width / 2.,
+        anchor.x + anchor.width / 2.,
+        "under the trigger's centre"
+    );
+}

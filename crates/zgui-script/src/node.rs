@@ -758,6 +758,8 @@ pub(crate) enum Kind {
         anchor: Rc<Node>,
         placement: Option<zgui::compose::Placement>,
         autofocus: bool,
+        /// `arrow = size`: an arrow at its trigger (`View::arrow`).
+        arrow: Option<f32>,
     },
     Menu {
         label: String,
@@ -1644,6 +1646,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "trigger",
     "autofocus",
     "open_over",
+    "arrow",
     "row",
     "open",
     "anchor",
@@ -2987,6 +2990,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         anchor,
                         placement,
                         autofocus,
+                        arrow: table.get("arrow")?,
                     }
                 };
                 node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)

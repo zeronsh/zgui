@@ -110,7 +110,8 @@ local function popover(): Node
 		anchor = button("Details…", function()
 			details:set(true)
 		end),
-		placement = { side = "right", align = "center", offset = 8 },
+		placement = { side = "right", align = "center", offset = 4 },
+		arrow = 8,
 		w = 240,
 		p = 14,
 		gap = 10,

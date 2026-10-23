@@ -1110,6 +1110,7 @@ fn kind_view(
             anchor,
             placement,
             autofocus,
+            arrow,
         } => {
             let view = popover(
                 label.clone(),
@@ -1121,6 +1122,10 @@ fn kind_view(
                 view
             } else {
                 view.autofocus(false)
+            };
+            let view = match arrow {
+                Some(size) => view.arrow(*size),
+                None => view,
             };
             match placement {
                 Some(at) => view.placement(*at),

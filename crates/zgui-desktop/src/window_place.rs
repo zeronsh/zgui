@@ -32,12 +32,18 @@ pub enum Tabbing {
     Disallowed,
 }
 
-/// How `place` left a window.
+/// How `place` left a window, on every platform that saves frames
+/// (`WindowOptions::frame_autosave`: macOS, Windows).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Placed {
-    /// Its saved frame: its size is that, not its options'.
+    /// Its saved frame was restored: its size and place are that, not its
+    /// options'. The host then leaves its size alone (an inset or hidden
+    /// title bar's resize to the options' size is skipped). On macOS the
+    /// frame is already what it will be once content runs under the title
+    /// bar; on Windows, as the frame was when it was saved.
     pub restored: bool,
-    /// It was left maximized: it opens so.
+    /// It was left maximized (Windows; macOS saves no zoomed state): it
+    /// opens so.
     pub maximized: bool,
 }
 

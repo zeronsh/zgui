@@ -304,6 +304,8 @@ struct PortalOptions {
     lazy: bool,
     /// `View::open_over`: the id of the item over the trigger.
     over: Option<Rc<dyn Fn() -> String>>,
+    /// `View::arrow`: how far a popover's arrow reaches from its edge.
+    arrow: Option<f32>,
 }
 /// A declarative view: a node to mount, its styles, children, handlers and
 /// semantics. Built with the functions here ([`column()`], [`text()`],
@@ -542,6 +544,15 @@ impl View {
     /// item, from state); one not in the menu places it as usual.
     pub fn open_over(mut self, id: impl Fn() -> String + 'static) -> Self {
         self.portal.get_or_insert_default().over = Some(Rc::new(id));
+        self
+    }
+    /// A popover's arrow, as AppKit's popovers have: it reaches `size`
+    /// points from the panel's edge to its tip, on the side facing the
+    /// trigger (flipping with it), pointing at the trigger's centre. Drawn
+    /// with the panel's own background and border; the panel sits `size`
+    /// further from the trigger to make room. Menus have none.
+    pub fn arrow(mut self, size: f32) -> Self {
+        self.portal.get_or_insert_default().arrow = (size > 0.).then_some(size);
         self
     }
     /// Build a modal's, popover's or menu's panel the first time it opens
@@ -2218,10 +2229,18 @@ fn mount_portal_panel(
     // A submenu leaves the pointer to its parent menu (moving over its other
     // items closes it); the parent's backdrop dismisses both.
     let dismiss_backdrop = view.dismiss_backdrop.take().unwrap_or(!is_submenu);
-    let (placement, modal_placement, autofocus, over) =
-        view.portal.take().map_or((None, None, None, None), |p| {
-            (p.placement, p.modal_placement, p.autofocus, p.over)
+    let (placement, modal_placement, autofocus, over, arrow) = view
+        .portal
+        .take()
+        .map_or((None, None, None, None, None), |p| {
+            (p.placement, p.modal_placement, p.autofocus, p.over, p.arrow)
         });
+    // The arrow is drawn as the panel is: a copy of its styles.
+    let arrow = arrow.filter(|_| anchored && !is_menu).map(|size| {
+        let mut styles = Styles::new();
+        styles.merge(&view.styles);
+        (size, styles)
+    });
     let placement = placement.unwrap_or_default();
     let panel_focusable = view.focusable.unwrap_or(true);
     let layout_target = is_menu.then(|| ui.signal(None));
@@ -2300,6 +2319,46 @@ fn mount_portal_panel(
             over_focus = over_item.clone();
             let over =
                 over_item.map(|item| Box::new(move || item()) as Box<dyn Fn() -> Option<NodeId>>);
+            // The arrow: a square drawn as the panel is, turned on its corner,
+            // in a box showing the half past the panel's edge (placed with
+            // the panel, `compose_popover::place_arrow`).
+            let arrow = arrow.map(|(size, styles)| {
+                let clip = ui.container(
+                    portal.position,
+                    Layout::Overlay,
+                    crate::scene::Style {
+                        absolute: true,
+                        clip: true,
+                        width: Some(2. * size),
+                        height: Some(size),
+                        ..Default::default()
+                    },
+                );
+                // Its box is the popover's, though the square paints nothing
+                // where the panel is clear (a macOS popover's material shows
+                // there, `Ui::set_popup_screens`): a popup window holds it.
+                ui.scene.borrow_mut().set_platform_painted(clip, true);
+                let side = size * std::f32::consts::SQRT_2;
+                let mut square = div();
+                square.styles = styles;
+                let square = square
+                    .absolute()
+                    .w(side)
+                    .h(side)
+                    .min_w(side)
+                    .min_h(side)
+                    .max_w(side)
+                    .max_h(side)
+                    .p(0.)
+                    .rounded(0.)
+                    .rotate(std::f32::consts::FRAC_PI_4);
+                let diamond = mount(ui, clip, square, environment.clone());
+                crate::compose_popover::Arrow {
+                    clip,
+                    diamond,
+                    size,
+                }
+            });
             crate::compose_popover::mount(
                 ui,
                 owner,
@@ -2309,6 +2368,7 @@ fn mount_portal_panel(
                 panel,
                 placement,
                 over,
+                arrow,
             );
         }
     } else {

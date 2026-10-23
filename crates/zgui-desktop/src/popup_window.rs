@@ -359,14 +359,17 @@ mod macos {
     }
 
     /// What shows behind a popup whose panel is translucent: AppKit's
-    /// material for it, cut to the panel's rounded box, as menus and
-    /// popovers are made of.
+    /// material for it, cut to the panel's rounded box (and its arrow, a
+    /// popover's), as menus and popovers are made of.
     #[derive(Clone, Copy, PartialEq)]
     struct Material {
         /// The panel's box, in its window's coordinates.
         rect: Rect,
         radius: f32,
         material: NSVisualEffectMaterial,
+        /// A popover's arrow (`View::arrow`): its triangle past the panel's
+        /// edge, in its window's coordinates.
+        arrow: Option<[(f32, f32); 3]>,
     }
     impl Material {
         /// For popup root `root`: its panel (what the root holds) is a box
@@ -382,16 +385,95 @@ mod macos {
             let menu = semantics
                 .get(panel)
                 .is_some_and(|node| node.role == Role::Menu);
+            let rect = scene.bounds(panel);
+            // The arrow's box beside the panel: its triangle points away.
+            let arrow = scene
+                .children(root)
+                .get(1)
+                .filter(|arrow| scene.style(**arrow).clip)
+                .map(|arrow| {
+                    let b = scene.bounds(*arrow);
+                    let (right, bottom) = (b.x + b.width, b.y + b.height);
+                    let (centre_x, centre_y) = (b.x + b.width / 2., b.y + b.height / 2.);
+                    if bottom <= rect.y + 0.5 {
+                        [(b.x, bottom), (right, bottom), (centre_x, b.y)]
+                    } else if b.y >= rect.y + rect.height - 0.5 {
+                        [(b.x, b.y), (right, b.y), (centre_x, bottom)]
+                    } else if right <= rect.x + 0.5 {
+                        [(right, b.y), (right, bottom), (b.x, centre_y)]
+                    } else {
+                        [(b.x, b.y), (b.x, bottom), (right, centre_y)]
+                    }
+                });
             Some(Self {
-                rect: scene.bounds(panel),
+                rect,
                 radius: quad.radius,
                 material: if menu {
                     NSVisualEffectMaterial::Menu
                 } else {
                     NSVisualEffectMaterial::Popover
                 },
+                arrow,
             })
         }
+        /// Moved by `(dx, dy)`.
+        fn moved(mut self, dx: f32, dy: f32) -> Self {
+            self.rect.x += dx;
+            self.rect.y += dy;
+            if let Some(arrow) = &mut self.arrow {
+                for point in arrow {
+                    point.0 += dx;
+                    point.1 += dy;
+                }
+            }
+            self
+        }
+        /// Its box: the panel's, and the arrow's.
+        fn bounds(&self) -> Rect {
+            let mut bounds = self.rect;
+            for (x, y) in self.arrow.into_iter().flatten() {
+                let (right, bottom) = (bounds.x + bounds.width, bounds.y + bounds.height);
+                bounds.x = bounds.x.min(x);
+                bounds.y = bounds.y.min(y);
+                bounds.width = right.max(x) - bounds.x;
+                bounds.height = bottom.max(y) - bounds.y;
+            }
+            bounds
+        }
+    }
+    /// A mask of `material`'s shape (its rounded box and arrow), the size of
+    /// its bounds, top-down.
+    fn arrow_mask(material: &Material) -> Retained<objc2_app_kit::NSImage> {
+        use objc2_app_kit::{NSBezierPath, NSImage};
+        let bounds = material.bounds();
+        let (rect, radius, arrow) = (material.rect, material.radius as f64, material.arrow);
+        let draw = block2::RcBlock::new(move |_: NSRect| -> objc2::runtime::Bool {
+            NSColor::blackColor().set();
+            let local = |x: f32, y: f32| NSPoint::new((x - bounds.x) as f64, (y - bounds.y) as f64);
+            NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
+                NSRect::new(
+                    local(rect.x, rect.y),
+                    NSSize::new(rect.width as f64, rect.height as f64),
+                ),
+                radius,
+                radius,
+            )
+            .fill();
+            if let Some([a, b, c]) = arrow {
+                let path = NSBezierPath::bezierPath();
+                path.moveToPoint(local(a.0, a.1));
+                path.lineToPoint(local(b.0, b.1));
+                path.lineToPoint(local(c.0, c.1));
+                path.closePath();
+                path.fill();
+            }
+            objc2::runtime::Bool::YES
+        });
+        NSImage::imageWithSize_flipped_drawingHandler(
+            NSSize::new(bounds.width as f64, bounds.height as f64),
+            true,
+            &draw,
+        )
     }
 
     /// A popup window: a borderless panel holding AppKit's material (when
@@ -534,16 +616,30 @@ mod macos {
                 None => self.effect.setHidden(true),
                 Some(material) => {
                     self.effect.setMaterial(material.material);
+                    let bounds = material.bounds();
                     self.effect.setFrame(NSRect::new(
                         NSPoint::new(
-                            (material.rect.x - rect.x) as f64,
+                            (bounds.x - rect.x) as f64,
                             // The container runs bottom-up.
-                            (rect.y + rect.height - material.rect.y - material.rect.height) as f64,
+                            (rect.y + rect.height - bounds.y - bounds.height) as f64,
                         ),
-                        NSSize::new(material.rect.width as f64, material.rect.height as f64),
+                        NSSize::new(bounds.width as f64, bounds.height as f64),
                     ));
-                    if let Some(layer) = self.effect.layer() {
-                        layer.setCornerRadius(material.radius as f64);
+                    // A popover's arrow: the shape is a mask; else the
+                    // layer's rounded corners cut it.
+                    match material.arrow {
+                        Some(_) => {
+                            if let Some(layer) = self.effect.layer() {
+                                layer.setCornerRadius(0.);
+                            }
+                            self.effect.setMaskImage(Some(&arrow_mask(&material)));
+                        }
+                        None => {
+                            self.effect.setMaskImage(None);
+                            if let Some(layer) = self.effect.layer() {
+                                layer.setCornerRadius(material.radius as f64);
+                            }
+                        }
                     }
                     self.effect.setHidden(false);
                 }
@@ -1134,11 +1230,8 @@ mod macos {
                     None => rect,
                 };
                 let moved = panel.rect != Some(frame);
-                let material = Material::of(scene, semantics, root).map(|mut material| {
-                    material.rect.x += frame.x - rect.x;
-                    material.rect.y += frame.y - rect.y;
-                    material
-                });
+                let material = Material::of(scene, semantics, root)
+                    .map(|material| material.moved(frame.x - rect.x, frame.y - rect.y));
                 let drawn = panel
                     .renderer
                     .as_ref()

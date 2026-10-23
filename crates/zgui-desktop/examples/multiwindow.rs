@@ -127,10 +127,11 @@ fn details(open: Signal<bool>, name: Signal<String>) -> View {
         }
     });
     popover("Details", open, anchor)
+        .arrow(8.)
         .placement(Placement {
             side: PlacementSide::Right,
             align: PlacementEdge::Center,
-            offset: 8.,
+            offset: 4.,
         })
         .w(260.)
         .p(14.)

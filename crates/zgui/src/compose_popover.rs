@@ -52,6 +52,19 @@ impl Default for Placement {
     }
 }
 
+/// A popover's arrow (`View::arrow`): a square turned on its corner and
+/// drawn as the panel is, in a box that shows only the half of it past the
+/// panel's edge.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Arrow {
+    /// The box clipping it, a child of the placement host.
+    pub clip: NodeId,
+    /// The turned square, in the box.
+    pub diamond: NodeId,
+    /// How far it reaches from the panel's edge.
+    pub size: f32,
+}
+
 /// Position the private placement host, preserving the public panel's styles.
 /// Registrations belong to the logical owner so disposal removes subscriptions.
 /// Where the host shows popups past the window (`Ui::set_popup_screens`),
@@ -67,8 +80,19 @@ pub(crate) fn mount(
     at: Placement,
     // `View::open_over`'s item, if any.
     over: Option<Box<dyn Fn() -> Option<NodeId>>>,
+    arrow: Option<Arrow>,
 ) {
-    mount_placement(ui, owner, anchor, overlay, position, panel, Some(at), over);
+    mount_placement(
+        ui,
+        owner,
+        anchor,
+        overlay,
+        position,
+        panel,
+        Some(at),
+        over,
+        arrow,
+    );
 }
 
 /// A submenu starts beside its trigger, flipping left when the right side lacks room.
@@ -80,7 +104,9 @@ pub(crate) fn mount_submenu(
     position: NodeId,
     panel: NodeId,
 ) {
-    mount_placement(ui, owner, anchor, overlay, position, panel, None, None);
+    mount_placement(
+        ui, owner, anchor, overlay, position, panel, None, None, None,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -94,6 +120,7 @@ fn mount_placement(
     // None: a submenu's, beside its trigger.
     at: Option<Placement>,
     over: Option<Box<dyn Fn() -> Option<NodeId>>>,
+    arrow: Option<Arrow>,
 ) {
     let anchor_bounds = ui.observe_bounds(anchor);
     let viewport = ui.observe_bounds(overlay);
@@ -125,12 +152,18 @@ fn mount_placement(
             );
             Rect::new(item.x - laid.x, item.y - laid.y, item.width, item.height)
         });
+        // An arrow, but for a pop-up button's menu over its trigger, takes
+        // room between the trigger and the panel.
+        let arrow = arrow.filter(|_| item.is_none());
         let desired = match (at, item) {
             (_, Some(item)) => {
                 over_placement(anchor, viewport, panel.width, panel.height, item, rtl)
             }
             (None, _) => submenu_placement(anchor, viewport, panel.width, panel.height, rtl),
-            (Some(at), None) => placement(anchor, viewport, panel.width, panel.height, at, rtl),
+            (Some(mut at), None) => {
+                at.offset += arrow.map_or(0., |arrow| arrow.size);
+                placement(anchor, viewport, panel.width, panel.height, at, rtl)
+            }
         };
         let mut scene = ui.scene.borrow_mut();
         if !scene.contains(position) {
@@ -149,7 +182,131 @@ fn mount_placement(
                 },
             );
         }
+        if let (Some(arrow), Some(at)) = (arrow, at)
+            && scene.contains(arrow.clip)
+        {
+            // The panel within the placement host, as laid out.
+            let within = (panel.x - current.x, panel.y - current.y);
+            let panel = Rect::new(
+                desired.0 + within.0,
+                desired.1 + within.1,
+                panel.width,
+                panel.height,
+            );
+            place_arrow(&mut scene, arrow, anchor, panel, within, at.side);
+        }
     });
+}
+
+/// Which way an arrow points, from the panel toward its trigger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Points {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// Where an arrow goes on `panel` (placed, in window points; `within`, its
+/// offset in the placement host) for a trigger at `anchor`: on the edge
+/// facing the trigger (as placement flipped it), along the trigger's
+/// centre, kept clear of the panel's corners. Its box and the square in it,
+/// relative to the placement host and the box.
+fn arrow_geometry(
+    size: f32,
+    anchor: Rect,
+    panel: Rect,
+    within: (f32, f32),
+    side: Side,
+) -> (Points, Rect, (f32, f32)) {
+    let points = match side {
+        Side::Top | Side::Bottom if panel.y >= anchor.y + anchor.height - 0.5 => Points::Up,
+        Side::Top | Side::Bottom => Points::Down,
+        Side::Left | Side::Right if panel.x >= anchor.x + anchor.width - 0.5 => Points::Left,
+        Side::Left | Side::Right => Points::Right,
+    };
+    // Half the square's diagonal is `size`.
+    let half = size * std::f32::consts::SQRT_2 / 2.;
+    let along = |centre: f32, start: f32, extent: f32| {
+        let margin = (size * 1.5).min(extent / 2.);
+        (centre - start).clamp(margin, extent - margin)
+    };
+    let (w, h) = (panel.width, panel.height);
+    let (box_rect, square) = match points {
+        Points::Up | Points::Down => {
+            let t = along(anchor.x + anchor.width / 2., panel.x, w);
+            let y = if points == Points::Up {
+                within.1 - size
+            } else {
+                within.1 + h
+            };
+            let square_y = if points == Points::Up {
+                size - half
+            } else {
+                -half
+            };
+            (
+                Rect::new(within.0 + t - size, y, 2. * size, size),
+                (size - half, square_y),
+            )
+        }
+        Points::Left | Points::Right => {
+            let t = along(anchor.y + anchor.height / 2., panel.y, h);
+            let x = if points == Points::Left {
+                within.0 - size
+            } else {
+                within.0 + w
+            };
+            let square_x = if points == Points::Left {
+                size - half
+            } else {
+                -half
+            };
+            (
+                Rect::new(x, within.1 + t - size, size, 2. * size),
+                (square_x, size - half),
+            )
+        }
+    };
+    (points, box_rect, square)
+}
+
+fn place_arrow(
+    scene: &mut crate::scene::Scene,
+    arrow: Arrow,
+    anchor: Rect,
+    panel: Rect,
+    within: (f32, f32),
+    side: Side,
+) {
+    let (_, area, (square_x, square_y)) = arrow_geometry(arrow.size, anchor, panel, within, side);
+    let mut style = scene.style(arrow.clip);
+    if style.width != Some(area.width) || style.height != Some(area.height) {
+        style.width = Some(area.width);
+        style.height = Some(area.height);
+        scene.set_style(arrow.clip, style);
+    }
+    let moved = |current: Transform, x: f32, y: f32| {
+        (current.x - x).abs() > 0.01 || (current.y - y).abs() > 0.01
+    };
+    if moved(scene.transform(arrow.clip), area.x, area.y) {
+        scene.set_transform(
+            arrow.clip,
+            Transform {
+                x: area.x,
+                y: area.y,
+            },
+        );
+    }
+    if moved(scene.transform(arrow.diamond), square_x, square_y) {
+        scene.set_transform(
+            arrow.diamond,
+            Transform {
+                x: square_x,
+                y: square_y,
+            },
+        );
+    }
 }
 
 /// The screen of `screens` an anchored popup opens on: the one holding its
@@ -441,6 +598,33 @@ mod tests {
             over_placement(button, viewport, 120., 180., item, true),
             (105., 97.)
         );
+    }
+    #[test]
+    fn an_arrow_points_at_its_trigger_from_the_side_it_opened_on() {
+        let trigger = Rect::new(100., 50., 80., 20.);
+        // Below the trigger: on the panel's top edge, under the trigger's
+        // centre (140), its box from 132 to 148, reaching 8 up.
+        let below = Rect::new(100., 78., 200., 120.);
+        let (points, area, square) = arrow_geometry(8., trigger, below, (0., 0.), Side::Bottom);
+        assert_eq!(points, Points::Up);
+        assert_eq!(area, Rect::new(32., -8., 16., 8.));
+        let half = 8. * std::f32::consts::SQRT_2 / 2.;
+        assert_eq!(square, (8. - half, 8. - half));
+        // Flipped above it: on the bottom edge, pointing down.
+        let above = Rect::new(100., -100., 200., 120.);
+        let (points, area, _) = arrow_geometry(8., trigger, above, (0., 0.), Side::Bottom);
+        assert_eq!(points, Points::Down);
+        assert_eq!(area.y, 120.);
+        // Beside it, on the right: on the left edge, at the trigger's middle
+        // (60), pointing left.
+        let right = Rect::new(188., 0., 200., 120.);
+        let (points, area, _) = arrow_geometry(8., trigger, right, (0., 0.), Side::Right);
+        assert_eq!(points, Points::Left);
+        assert_eq!(area, Rect::new(-8., 52., 8., 16.));
+        // A trigger past the panel's end: kept clear of its corner.
+        let far = Rect::new(500., 50., 20., 20.);
+        let (_, area, _) = arrow_geometry(8., far, below, (0., 0.), Side::Bottom);
+        assert_eq!(area.x + area.width / 2., 200. - 12.);
     }
     #[test]
     fn a_popup_button_opens_with_its_item_over_the_trigger() {

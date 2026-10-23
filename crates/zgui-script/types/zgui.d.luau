@@ -5660,6 +5660,9 @@ export type PopoverProps = {
 	-- A menu only: the `id` of its item to open over the trigger, as a
 	-- pop-up button's (a select's) opens with the chosen item over it.
 	open_over: (() -> string?)?,
+	-- A popover only: an arrow at its trigger, reaching this many points
+	-- from the panel's edge (AppKit's popovers have one).
+	arrow: number?,
 }
 -- `ui.menu_item { "Copy", on_click = … }`: the label first.
 -- The label (`{ "Copy" }`), or `label` with content of its own after it
