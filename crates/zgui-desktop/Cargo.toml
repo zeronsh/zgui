@@ -50,6 +50,9 @@ wayland-protocols = { version = "=0.32.13", features = ["client", "unstable"] }
 libloading = "0.8"
 # D-Bus threads that sleep until a message or their stop (linux_dbus.rs).
 libc = "0.2"
+# zbus's thread pool (accesskit's AT-SPI): 1.7.0's idle thread never ends
+# and wakes twice a second (smol-rs/blocking#75); 1.6's ends after 500 ms.
+blocking = "=1.6.2"
 
 # The compositor clock (frame_source.rs) and window chrome (window_chrome.rs);
 # the version wgpu-hal uses.

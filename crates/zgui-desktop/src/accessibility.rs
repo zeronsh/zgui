@@ -1366,3 +1366,42 @@ mod document_role_tests {
         );
     }
 }
+
+/// AT-SPI's bus connection (zbus) runs blocking calls on `blocking`'s pool.
+#[cfg(all(test, target_os = "linux"))]
+mod idle_pool_tests {
+    /// Threads of this process whose name starts with `prefix`.
+    fn threads(prefix: &str) -> usize {
+        std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .filter_map(|task| std::fs::read_to_string(task.ok()?.path().join("comm")).ok())
+            .filter(|name| name.starts_with(prefix))
+            .count()
+    }
+
+    #[test]
+    fn the_bus_pool_thread_ends_when_idle() {
+        // An idle window has no thread waking to look for work.
+        block_on(blocking::unblock(|| ()));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while threads("blocking-") > 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "an idle pool thread stayed, waking twice a second"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+                return value;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
