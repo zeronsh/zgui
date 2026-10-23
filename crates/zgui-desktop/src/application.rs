@@ -1619,6 +1619,11 @@ impl Host {
                     LogicalSize::new(r.width.max(1.) as f64, r.height as f64)
                         .to_physical::<f64>(self.scale_factor),
                 );
+                // winit's X11 sends the spot when it next handles an event.
+                #[cfg(target_os = "linux")]
+                if self.x11 {
+                    crate::x11_nudge::nudge(&window);
+                }
             }
             self.ime_geometry = caret;
         }

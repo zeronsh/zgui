@@ -55,6 +55,8 @@ libc = "0.2"
 blocking = "=1.6.2"
 # A new window's work area on X11 (x11_work_area.rs); winit's version.
 x11rb = "0.13"
+# An X11 input method's spot sent at once (x11_nudge.rs); winit's version.
+x11-dl = "2.21"
 
 # The compositor clock (frame_source.rs) and window chrome (window_chrome.rs);
 # the version wgpu-hal uses.
