@@ -4527,6 +4527,7 @@ dependencies = [
  "webview2-com",
  "windows",
  "winit",
+ "x11rb",
  "zgui",
  "zgui-ghostty-sys",
  "zgui-gpu",

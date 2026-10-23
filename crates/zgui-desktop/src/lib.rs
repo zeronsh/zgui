@@ -39,6 +39,8 @@ mod url;
 mod wayland_data;
 mod window_chrome;
 mod window_info;
+#[cfg(target_os = "linux")]
+mod x11_work_area;
 pub use app_menu::{
     AppMenu, AppMenuEntry, AppMenuError, MenuAccelerator, MenuAction, StandardItem, app_menu_bar,
     has_native_app_menu,

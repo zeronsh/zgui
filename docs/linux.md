@@ -41,6 +41,20 @@ fallback list). A theme or view naming a family keeps it. The size in
 `font-name` is not taken; GNOME's text scaling factor is (`text_scale`).
 `desktop_font_smoke.py` renders the gallery under "DejaVu Sans 11" and
 "DejaVu Serif 11" from a stand-in portal and finds the text changed.
+## New windows fit the screen
+
+A window manager shows a new window as large as it asks, past the screen's
+edge (Openbox does; Mutter maximizes one near the screen's size), and a size
+in points can be more pixels than the screen has at a high scale. Chromium
+and GTK fit theirs first, and so does zgui: on X11, before a window first
+shows and unless the app gave its bounds, its size shrinks to its monitor's
+work area (the current desktop's `_NET_WORKAREA`, the screen less its panels),
+its frame included (`_NET_REQUEST_FRAME_EXTENTS`, asked only of a window
+manager that lists it and only when the window may not fit), though not below
+`min_size`. It takes 0.2 ms when the window fits. On Wayland the compositor
+bounds a new window's size (`xdg_toplevel.configure_bounds`) and winit keeps
+to it: a 1200 by 800 window opens at 1024 by 640 on a 1024 by 640 sway output.
+`work_area_smoke.py` checks X11 below a panel.
 
 ## Frame pacing and latency
 

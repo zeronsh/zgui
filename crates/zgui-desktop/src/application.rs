@@ -1818,6 +1818,22 @@ impl Host {
                     .request_inner_size(LogicalSize::new(self.options.width, self.options.height)),
             };
         }
+        // X11 shows a window past its screen; the app's own bounds stand.
+        #[cfg(target_os = "linux")]
+        if sized.is_none()
+            && window.display_handle().is_ok_and(|handle| {
+                matches!(
+                    handle.as_raw(),
+                    RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
+                )
+            })
+        {
+            crate::x11_work_area::fit(
+                &window,
+                self.options.min_size,
+                self.options.decorations && self.options.titlebar == crate::Titlebar::Standard,
+            );
+        }
         self.context.window_info.corner_radius.set(radius);
         // Windows shows a window past its screen; the app's own bounds stand.
         #[cfg(windows)]

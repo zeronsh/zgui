@@ -53,6 +53,8 @@ libc = "0.2"
 # zbus's thread pool (accesskit's AT-SPI): 1.7.0's idle thread never ends
 # and wakes twice a second (smol-rs/blocking#75); 1.6's ends after 500 ms.
 blocking = "=1.6.2"
+# A new window's work area on X11 (x11_work_area.rs); winit's version.
+x11rb = "0.13"
 
 # The compositor clock (frame_source.rs) and window chrome (window_chrome.rs);
 # the version wgpu-hal uses.

@@ -36,6 +36,7 @@ Further native Linux probes, each on a private Xvfb/Openbox desktop or a nested 
 - Cursor styles as a native Wayland client: `wp_cursor_shape_v1` shapes for move, not-allowed, crosshair, a reactive wait and the default (`wayland_cursors_smoke.py`), beside the X11 cursor-image check.
 - An undecorated window's title bar (`Titlebar::Inset`): no window manager frame, its drawn buttons maximize, restore, minimize and close it, and a press on its corner resizes it through the window manager (`window_buttons_smoke.py`).
 - The desktop's interface font: GNOME's `font-name` from a stand-in portal reaches the gallery's sans-serif text (`desktop_font_smoke.py`).
+- New windows fit the work area on X11: on a 1024 by 700 screen whose top 40 pixels a panel reserves, the gallery (900 by 760, decorated) and the kitchen sink (1120 by 740, undecorated) open below the panel and within the screen, frame and all (`work_area_smoke.py`).
 - An application ID's D-Bus service (`org.freedesktop.Application`): a later launch's `Open` URLs and `Activate` reach the running app, which reopens a window after its last one closed, besides fullscreen, minimum size and a custom title bar's drag (`native_platform_smoke.py`). Its thread and the portal settings' sleep until a message arrives (`linux_dbus.rs`).
 - Live Wayland scaling through 1×, 2×, 1.5× (fractional, `preferred_scale(180)`) and back: viewport, viewporter destination, editor geometry, typed input and pixel extents (`dpi_transition_smoke.py`).
 
