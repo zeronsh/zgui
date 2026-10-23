@@ -39,6 +39,21 @@ extension. Also open: drawing a frame later in the refresh, as macOS does,
 would cut the animating case toward the at-rest one. On Wayland that needs
 the compositor's refresh phase, from `wp_presentation` feedback.
 
+## Input method candidates while scrolling
+
+zgui gives the input method the caret's rectangle on every frame the caret
+moves, scrolling included, so the candidate window opens at the caret
+wherever it has scrolled to. Checked with IBus (libpinyin) over XIM on
+2026-10-23: composing in a field inside a scroll view, then scrolling the
+field 160 px up by wheel, the candidate window opened at the caret's
+scrolled position on the next keystroke. IBus does not move a candidate
+window that is already showing when only the caret moves, so it stays put
+during the scroll itself, as it does for GTK apps. On Wayland each frame's
+rectangle goes out at once (`zwp_text_input_v3.set_cursor_rectangle`, then a
+commit), so a compositor that places the input method's popup from it can
+follow the scroll. A caret scrolled out of the window's top is given as at
+its top edge.
+
 ## Web views
 
 `zgui::web_view` has no Linux implementation: a web view shows its labelled
