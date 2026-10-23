@@ -24,6 +24,7 @@ pub mod timer;
 pub mod frame;
 
 pub mod rich_text;
+mod scroll_keys;
 pub mod selection;
 pub mod text_layout;
 

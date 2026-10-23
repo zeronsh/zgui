@@ -97,4 +97,4 @@ return ui.row {
 - A `scroll` with no size and nothing sizing it is 320 by 240; inside a column that does not stretch (`items = "start"`, the default) it keeps that width. Use `w_full = true`, `grow = 1` or a stretching parent.
 - All of a `scroll`'s children stay mounted however far away they are; past a few thousand rows, use `list`.
 - `offset` counts points from the top (the left for `scroll_x`). Setting it beyond the content clamps it, and a binding to a state that is not a number reads as 0.
-- There is no scrollbar: a viewport scrolls by wheel, touchpad, keyboard focus and `offset`.
+- There is no scrollbar unless asked: a viewport scrolls by wheel, touchpad, keyboard focus and `offset`, and with the keys as a page does (Space, Shift+Space, Page Up/Down, Home/End, arrows) once it has been pressed in or is under the pointer, while nothing has focus (a focused control keeps its keys).

@@ -440,6 +440,9 @@ struct UiStorage {
     window_gesture: Cell<Option<WindowGesture>>,
     /// Display text's selection (`View::selectable`).
     selection: RefCell<crate::selection::State>,
+    /// What the last primary press went to: the keyboard scrolls the scroll
+    /// view around it (`scroll_keys`).
+    last_pressed: Cell<Option<NodeId>>,
 }
 /// A press in a window drag region (`View::window_drag`), for the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -582,6 +585,7 @@ impl Ui {
             advancing_interaction: Cell::new(false),
             window_gesture: Cell::new(None),
             selection: Default::default(),
+            last_pressed: Cell::new(None),
         });
         Self::from_storage(storage)
     }
@@ -637,6 +641,31 @@ impl Ui {
     }
     pub(crate) fn selection_state(&self) -> &RefCell<crate::selection::State> {
         &self.storage.selection
+    }
+    /// What the last primary press went to, while it is mounted.
+    pub(crate) fn last_pressed(&self) -> Option<NodeId> {
+        self.storage
+            .last_pressed
+            .get()
+            .filter(|id| self.scene.borrow().contains(*id))
+    }
+    /// After the document had `event`: what the selection and keyboard
+    /// scrolling make of it.
+    fn after_dispatch(
+        &self,
+        event: (
+            crate::selection::SelectionEvent,
+            crate::scroll_keys::ScrollKey,
+            bool,
+        ),
+        result: &mut crate::input::DispatchResult,
+    ) {
+        let (selection, scroll, press) = event;
+        if press {
+            self.storage.last_pressed.set(result.target);
+        }
+        self.selection_after_dispatch(selection, result);
+        self.scroll_after_dispatch(scroll, result);
     }
     /// A handle that does not keep the document alive.
     pub fn downgrade(&self) -> WeakUi {
@@ -1435,9 +1464,19 @@ impl Ui {
         event: InputEvent,
     ) -> Result<crate::input::DispatchResult, LayoutFeedbackError> {
         self.try_prepare_frame()?;
-        let selection = crate::selection::SelectionEvent::of(&event, Default::default());
+        let after = (
+            crate::selection::SelectionEvent::of(&event, Default::default()),
+            crate::scroll_keys::ScrollKey::of(&event),
+            matches!(
+                event,
+                InputEvent::PointerDown {
+                    button: crate::input::PointerButton::Primary,
+                    ..
+                }
+            ),
+        );
         let mut result = self.input.dispatch(&self.scene, event);
-        self.selection_after_dispatch(selection, &mut result);
+        self.after_dispatch(after, &mut result);
         Ok(result)
     }
     /// Dispatch native-style pointer input with modifiers and click counting.
@@ -1458,11 +1497,21 @@ impl Ui {
         modifiers: crate::input::Modifiers,
     ) -> Result<crate::input::DispatchResult, LayoutFeedbackError> {
         self.try_prepare_frame()?;
-        let selection = crate::selection::SelectionEvent::of(&event, modifiers);
+        let after = (
+            crate::selection::SelectionEvent::of(&event, modifiers),
+            crate::scroll_keys::ScrollKey::of(&event),
+            matches!(
+                event,
+                InputEvent::PointerDown {
+                    button: crate::input::PointerButton::Primary,
+                    ..
+                }
+            ),
+        );
         let mut result = self
             .input
             .dispatch_with_modifiers(&self.scene, event, modifiers);
-        self.selection_after_dispatch(selection, &mut result);
+        self.after_dispatch(after, &mut result);
         Ok(result)
     }
     fn interaction_valid(&self, job: &EditorInteraction) -> bool {

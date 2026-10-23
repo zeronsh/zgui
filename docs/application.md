@@ -86,6 +86,12 @@ for complete signatures, anchoring and cache costs.
 
 The lower-level `ScrollView::mount(ui, parent, width, height)` returns a clipped viewport, a `content` node, and signals for offset, extent, and viewport size. Set its content height explicitly as data changes. Scroll offsets clamp when content or viewport dimensions change. Moving content changes a retained transform; it does not relayout every child. Nested wheel scrolling chains to a parent when the inner scroll view cannot move farther.
 
+The keyboard scrolls as a page does when nothing has focus. This covers scroll
+views, scrollable areas and virtual lists. Space and Shift+Space, Page Up/Down
+(87.5% of the viewport), Home/End and the arrows (40 points) scroll the view
+around what was last pressed, else under the pointer. A focused control keeps
+its keys: an editor's, a button's Space, a list's keyboard navigation.
+
 `VirtualListView::mount` takes a count, fixed row height, overscan, stable key function, and row initializer. It retains only visible rows plus overscan. Overlapping visible keys keep their node IDs and scopes; offscreen scopes are disposed. The initializer receives a `ViewScope`, so it can mount text, descendants, and subscriptions. `scope.retain(input.register(...))` ties an input binding to that row's lifetime. Store persistent edits and selection in a model keyed by item identity: an offscreen row deliberately does not keep a hidden widget alive. This low-level `VirtualListView` remains fixed-height; variable and naturally measured rows use the component APIs above.
 
 ## Menus and dialogs
