@@ -760,10 +760,16 @@ fn kind_view(
         Kind::Terminal(term) => zgui::terminal::terminal(term),
         Kind::Canvas(draw) => {
             let (draw, vm) = (draw.clone(), vm.clone());
+            let theme = match cx.as_deref().map(Context::theme) {
+                Some(theme) => theme,
+                None => zgui::theme::Themes::of(&low.runtime).root().clone(),
+            };
             canvas(move |(w, h)| {
                 let recorder = crate::canvas::Recorder(Default::default());
                 let result = vm.lua.create_userdata(recorder).and_then(|ud| {
-                    vm.call::<()>(&draw, (ud.clone(), w, h))?;
+                    crate::canvas::draw_in(theme.clone(), || {
+                        vm.call::<()>(&draw, (ud.clone(), w, h))
+                    })?;
                     ud.take::<crate::canvas::Recorder>()
                 });
                 match result {
@@ -874,6 +880,15 @@ fn kind_view(
             bridge(need(&mut cx), value, number, |x| Value::Num(x as f64)),
             *min..=*max,
         ),
+        Kind::Split { size, options } => {
+            let size = bridge(need(&mut cx), size, number, |x| Value::Num(x as f64));
+            let mut panes = node.children.iter().map(|child| lower(child, low));
+            let (first, second) = (
+                panes.next().unwrap_or_else(div),
+                panes.next().unwrap_or_else(div),
+            );
+            split(size, *options, first, second)
+        }
         Kind::Show {
             when,
             then,
@@ -1273,7 +1288,8 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             });
         }
     }
-    if !node.children.is_empty() {
+    // A split lowers its two panes itself.
+    if !node.children.is_empty() && !matches!(node.kind, Kind::Split { .. }) {
         // Only regions among the children take the container's flow.
         let flow = node
             .children
@@ -3495,6 +3511,7 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
             "center" => TextAlign::Center,
             "right" => TextAlign::Right,
             "left" => TextAlign::Left,
+            "end" => TextAlign::End,
             _ => TextAlign::Start,
         }),
         (Font, Lit::Str(v)) => match &**v {

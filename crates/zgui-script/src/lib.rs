@@ -31,6 +31,7 @@ mod calls;
 mod canvas;
 pub mod check;
 mod command;
+mod data;
 mod design;
 mod element;
 #[cfg(target_os = "macos")]
@@ -82,8 +83,12 @@ use zgui::{
 /// Resource limits for each script.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
-    /// Heap limit per script VM.
+    /// Heap limit for each of the app's own script VMs: generous, since an
+    /// app holds its data there (100,000 table rows take some 60 MB); it
+    /// stops a runaway allocation before the process runs out.
     pub memory: usize,
+    /// Heap limit for each plugin's VM, which the app needn't trust.
+    pub plugin_memory: usize,
     /// Budget for evaluating a script on load.
     pub load: Duration,
     /// Budget for one handler or computed property call.
@@ -92,7 +97,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            memory: 32 << 20,
+            memory: 1 << 30,
+            plugin_memory: 32 << 20,
             load: Duration::from_millis(500),
             call: Duration::from_millis(50),
         }
@@ -312,6 +318,14 @@ fn describe(name: &str, error: &mlua::Error) -> String {
             "\n(state values are read-only: change state with state:set_key(key, value), \
              state:patch({ … }), state:update(function(t) … end), state:insert(i, v) \
              or state:set(value))",
+        );
+    }
+    // Luau says only "not enough memory": say which limit and its knob.
+    if text.contains("not enough memory") {
+        message.push_str(
+            "\n(the script's VM reached its memory limit: `Limits::memory` for the app's \
+             scripts, 1 GiB by default, or `Limits::plugin_memory` for a plugin's, 32 MiB; \
+             a host raises them with `ScriptHost::limits`)",
         );
     }
     message
@@ -1173,7 +1187,7 @@ impl ScriptHost {
         self.0.calls.get()
     }
     /// Bytes the loaded scripts' VMs hold after a full collection (each is
-    /// capped at `Limits::memory`): what a test reads over many updates to
+    /// capped at `Limits::memory` or `Limits::plugin_memory`): what a test reads over many updates to
     /// check that nothing keeps what it no longer needs.
     pub fn script_memory(&self) -> usize {
         let loaded = self.0.current.borrow().clone();
@@ -1887,9 +1901,14 @@ impl ScriptHost {
         // not, and the VM frees all it holds when the last one goes.
         let lua = Lua::new().clone();
         let limits = self.0.limits;
-        lua.set_memory_limit(limits.memory).map_err(fail)?;
+        let memory = if plugin {
+            limits.plugin_memory
+        } else {
+            limits.memory
+        };
+        lua.set_memory_limit(memory).map_err(fail)?;
         let deadline: Rc<Cell<Option<Deadline>>> = Rc::default();
-        let interrupt = interrupt::install(&lua, deadline.clone(), limits.memory);
+        let interrupt = interrupt::install(&lua, deadline.clone(), memory);
         let vm = Rc::new(Vm {
             name: name.clone(),
             lua: lua.clone(),

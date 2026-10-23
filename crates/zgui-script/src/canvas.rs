@@ -1,10 +1,12 @@
 //! Drawing for `ui.canvas`: a script's `draw(c, width, height)` records
 //! paths and fills into zgui's retained canvas. It runs again only when the
 //! canvas's size or the state it reads changes; equal drawings keep their
-//! pixels.
+//! pixels. Colours may name theme tokens (`"$accent"`): the drawing reads
+//! them as it reads state, so a theme change draws it again.
 use crate::node::parse_color;
 use mlua::{Lua, Table, UserData, UserDataMethods};
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc};
+use zgui::theme::ThemeScope;
 use zgui::{
     canvas::{
         Brush, Canvas, FillRule, GradientStop, LineCap, LineJoin, Path, PathBuilder, Point, Stroke,
@@ -98,6 +100,33 @@ impl UserData for PathUd {
 pub(crate) struct BrushUd(pub Brush);
 impl UserData for BrushUd {}
 
+thread_local! {
+    /// The theme of the canvas drawing now (`draw_in`), whose tokens its
+    /// colours name.
+    static SCOPE: RefCell<Option<Rc<ThemeScope>>> = const { RefCell::new(None) };
+}
+/// Run `f`, a canvas's draw, with `$token` colours resolved in `scope`.
+pub(crate) fn draw_in<R>(scope: Rc<ThemeScope>, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Rc<ThemeScope>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPE.with(|s| *s.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(SCOPE.with(|s| s.borrow_mut().replace(scope)));
+    f()
+}
+fn token_color(name: &str) -> mlua::Result<Color> {
+    let scope = SCOPE.with(|s| s.borrow().clone()).ok_or_else(|| {
+        mlua::Error::runtime(format!(
+            "`${name}`: theme colours resolve while a canvas draws (call this in `draw`)"
+        ))
+    })?;
+    scope
+        .get(zgui::theme::token(name))
+        .color()
+        .ok_or_else(|| mlua::Error::runtime(format!("`${name}` is not a colour token")))
+}
 fn color(v: &mlua::Value) -> mlua::Result<Color> {
     let text = match v {
         mlua::Value::String(s) => s.to_string_lossy(),
@@ -110,6 +139,9 @@ fn color(v: &mlua::Value) -> mlua::Result<Color> {
             )));
         }
     };
+    if let Some(name) = text.strip_prefix('$') {
+        return token_color(name);
+    }
     parse_color(&text).ok_or_else(|| mlua::Error::runtime(format!("bad color `{text}`")))
 }
 fn brush(v: &mlua::Value) -> mlua::Result<Brush> {

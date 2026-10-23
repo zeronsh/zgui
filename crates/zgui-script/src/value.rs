@@ -347,6 +347,59 @@ impl Value {
             }
         }
     }
+    /// `set_path`, done in place where each container on the way is held
+    /// only here: a long list's row written without copying the list.
+    /// `None`, having changed nothing, where it would copy one (it is
+    /// shared) or add, remove or grow; else whether anything changed.
+    pub(crate) fn set_path_in_place(
+        &mut self,
+        path: &[PathKey],
+        new: &Value,
+    ) -> Result<Option<bool>, String> {
+        let Some((step, rest)) = path.split_first() else {
+            return Ok(None);
+        };
+        let slot: &mut Value = match (self, step) {
+            (Value::List(items), PathKey::Index(i)) if *i >= 1 && *i <= items.len() => {
+                let Some(items) = Rc::get_mut(items) else {
+                    return Ok(None);
+                };
+                &mut items[i - 1]
+            }
+            (Value::Map(fields), PathKey::Key(key)) => {
+                let Ok(at) = fields.binary_search_by(|(k, _)| (**k).cmp(key)) else {
+                    return Ok(None);
+                };
+                let Some(fields) = Rc::get_mut(fields) else {
+                    return Ok(None);
+                };
+                &mut fields[at].1
+            }
+            _ => return Ok(None),
+        };
+        if rest.is_empty() {
+            if matches!(new, Value::Nil) {
+                return Ok(None);
+            }
+            if *slot == *new {
+                return Ok(Some(false));
+            }
+            *slot = new.clone();
+            return Ok(Some(true));
+        }
+        if let Some(changed) = slot.set_path_in_place(rest, new)? {
+            return Ok(Some(changed));
+        }
+        let child = slot
+            .set_path(rest, new.clone())
+            .map_err(|e| format!("{step}: {e}"))?;
+        if matches!(child, Value::Nil) {
+            return Ok(None);
+        }
+        let changed = child != *slot;
+        *slot = child;
+        Ok(Some(changed))
+    }
     /// A map's fields, sorted by key; an empty map is `{}`, as Luau gives it.
     fn map(fields: Vec<(Rc<str>, Value)>) -> Value {
         if fields.is_empty() {
@@ -499,7 +552,205 @@ pub(crate) fn convert(value: mlua::Value, old: Option<&Value>) -> mlua::Result<V
         }
     })
 }
+/// What `raw_table` leaves to the general walk, or the error it found.
+enum Unread {
+    /// A state handle, an element, `ui.raw`, a metatable, an odd key or
+    /// value (whose error the general walk words), or deep nesting.
+    General,
+    Error(&'static str),
+}
+/// How deep `raw_table` reads: each level holds three stack slots, and a
+/// C function is given 20 (`LUA_MINSTACK`) without asking for more (which
+/// could raise an error out of frames holding values).
+const RAW_DEPTH: u32 = 5;
+/// `table` through Luau's C API, for a tree of plain values; `None` leaves
+/// it to the general walk (see `Unread::General`). Through mlua each field
+/// costs more than its value: 100,000 rows of seven fields took 95 ms.
+/// Strings are shared by the Luau string they came from, so 100,000 rows
+/// hold their seven keys once.
+fn raw_table(t: &Table, old: Option<&Value>) -> Option<mlua::Result<Value>> {
+    use mlua::ffi;
+    use std::ffi::c_int;
+    struct Cx<'a> {
+        held: Option<std::cell::Ref<'a, HashMap<usize, (Value, usize)>>>,
+        strings: HashMap<usize, Rc<str>>,
+    }
+    const TABLE: c_int = 1;
+    const IDS: c_int = 2;
+    /// SAFETY (for both): `state`'s stack holds the table at `idx`, the
+    /// cache's `ids` (or nil) at 2, and room for three slots a level. Raw
+    /// reads raise no Luau error.
+    unsafe fn read(
+        state: *mut ffi::lua_State,
+        idx: c_int,
+        old: Option<&Value>,
+        depth: u32,
+        cx: &mut Cx,
+    ) -> Result<Value, Unread> {
+        unsafe {
+            Ok(match ffi::lua_type(state, idx) {
+                ffi::LUA_TNIL => Value::Nil,
+                ffi::LUA_TBOOLEAN => Value::Bool(ffi::lua_toboolean(state, idx) != 0),
+                ffi::LUA_TNUMBER => {
+                    Value::Num(ffi::lua_tonumberx(state, idx, std::ptr::null_mut()))
+                }
+                ffi::LUA_TSTRING => {
+                    let mut n = 0;
+                    let data = ffi::lua_tolstring(state, idx, &mut n);
+                    let bytes = std::slice::from_raw_parts(data.cast::<u8>(), n);
+                    match old {
+                        Some(Value::Str(o)) if o.as_bytes() == bytes => Value::Str(o.clone()),
+                        _ => Value::Str(string(cx, data as usize, bytes)),
+                    }
+                }
+                ffi::LUA_TLIGHTUSERDATA
+                    if std::ptr::eq(ffi::lua_touserdata(state, idx).cast::<u8>(), &NULL) =>
+                {
+                    Value::Nil
+                }
+                ffi::LUA_TTABLE => read_table(state, idx, old, depth, cx)?,
+                _ => return Err(Unread::General),
+            })
+        }
+    }
+    fn string(cx: &mut Cx, at: usize, bytes: &[u8]) -> Rc<str> {
+        cx.strings
+            .entry(at)
+            .or_insert_with(|| String::from_utf8_lossy(bytes).into())
+            .clone()
+    }
+    unsafe fn read_table(
+        state: *mut ffi::lua_State,
+        idx: c_int,
+        old: Option<&Value>,
+        depth: u32,
+        cx: &mut Cx,
+    ) -> Result<Value, Unread> {
+        if depth >= RAW_DEPTH {
+            return Err(Unread::General);
+        }
+        unsafe {
+            // A table a script was given (read-only, filed): its value.
+            if ffi::lua_getreadonly(state, idx) != 0 && ffi::lua_type(state, IDS) == ffi::LUA_TTABLE
+            {
+                ffi::lua_pushvalue(state, idx);
+                let found = ffi::lua_rawget(state, IDS) == ffi::LUA_TLIGHTUSERDATA;
+                let id = ffi::lua_touserdata(state, -1) as usize;
+                ffi::lua_pop(state, 1);
+                if found && let Some((value, _)) = cx.held.as_ref().and_then(|held| held.get(&id)) {
+                    return Ok(match old {
+                        Some(old) if old == value => old.clone(),
+                        _ => value.clone(),
+                    });
+                }
+            }
+            if ffi::lua_getmetatable(state, idx) != 0 {
+                ffi::lua_pop(state, 1);
+                return Err(Unread::General);
+            }
+            let len = ffi::lua_objlen(state, idx);
+            let was = old.map_or(&[][..], Value::list);
+            let was_fields: &[(Rc<str>, Value)] = match old {
+                Some(Value::Map(f)) => f,
+                _ => &[],
+            };
+            let mut items: Vec<(usize, Value)> = Vec::with_capacity(len);
+            let mut keyed: Vec<(Rc<str>, Value)> = Vec::new();
+            let mut iter = 0;
+            loop {
+                iter = ffi::lua_rawiter(state, idx, iter);
+                if iter < 0 {
+                    break;
+                }
+                let top = ffi::lua_gettop(state);
+                let read_one = match ffi::lua_type(state, top - 1) {
+                    ffi::LUA_TNUMBER => {
+                        let n = ffi::lua_tonumberx(state, top - 1, std::ptr::null_mut());
+                        if n.fract() == 0. && n >= 1. && n as usize <= len {
+                            let i = n as usize;
+                            read(state, top, was.get(i - 1), depth + 1, cx)
+                                .map(|v| items.push((i, v)))
+                        } else {
+                            Err(Unread::General)
+                        }
+                    }
+                    ffi::LUA_TSTRING => {
+                        let mut n = 0;
+                        let data = ffi::lua_tolstring(state, top - 1, &mut n);
+                        let bytes = std::slice::from_raw_parts(data.cast::<u8>(), n);
+                        let prior = was_fields
+                            .binary_search_by(|(k, _)| k.as_bytes().cmp(bytes))
+                            .ok()
+                            .map(|i| &was_fields[i]);
+                        let key = match prior {
+                            Some((k, _)) => k.clone(),
+                            None => string(cx, data as usize, bytes),
+                        };
+                        read(state, top, prior.map(|(_, v)| v), depth + 1, cx)
+                            .map(|v| keyed.push((key, v)))
+                    }
+                    _ => Err(Unread::General),
+                };
+                ffi::lua_pop(state, 2);
+                read_one?;
+            }
+            if !keyed.is_empty() {
+                if len > 0 {
+                    return Err(Unread::Error(
+                        "a state table is a list or has string keys, not both",
+                    ));
+                }
+                keyed.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                let fresh = Value::Map(keyed.into());
+                return Ok(match old {
+                    Some(old) if *old == fresh => old.clone(),
+                    _ => fresh,
+                });
+            }
+            // The array part comes in order; items run up to the first
+            // hole, as a sequence does.
+            if !items.is_sorted_by_key(|(i, _)| *i) {
+                items.sort_unstable_by_key(|(i, _)| *i);
+            }
+            let mut list = Vec::with_capacity(items.len());
+            for (at, (i, item)) in items.into_iter().enumerate() {
+                if i != at + 1 {
+                    break;
+                }
+                list.push(item);
+            }
+            Ok(match old {
+                Some(old @ Value::List(o)) if o[..] == list[..] => old.clone(),
+                _ => Value::List(list.into()),
+            })
+        }
+    }
+    let lua = t.weak_lua().try_upgrade()?;
+    let cache = lua.app_data_ref::<Converted>();
+    let ids = cache.as_ref().map(|c| c.ids.clone());
+    let mut cx = Cx {
+        held: cache.as_ref().map(|c| c.held.borrow()),
+        strings: HashMap::new(),
+    };
+    let mut out = Err(Unread::General);
+    // SAFETY: `exec_raw` pushes the table and `ids` (or nil) at 1 and 2,
+    // as `read_table` needs; it raises no error.
+    unsafe {
+        lua.exec_raw::<()>((t, ids), |state| {
+            out = read_table(state, TABLE, old, 0, &mut cx);
+        })
+        .ok()?;
+    }
+    match out {
+        Ok(value) => Some(Ok(value)),
+        Err(Unread::General) => None,
+        Err(Unread::Error(e)) => Some(Err(mlua::Error::runtime(e))),
+    }
+}
 fn table(t: &Table, old: Option<&Value>) -> mlua::Result<Value> {
+    if let Some(result) = raw_table(t, old) {
+        return result;
+    }
     let len = t.raw_len();
     let mut keyed: Vec<(String, mlua::Value)> = Vec::new();
     // One walk, unprotected per step: a computed's list of thousands of
@@ -595,8 +846,13 @@ pub(crate) fn to_lua(value: &Value, lua: &Lua, frozen: bool) -> mlua::Result<mlu
         Value::Num(n) => Ok(mlua::Value::Number(*n)),
         Value::Str(s) => lua.create_string(&**s).map(mlua::Value::String),
         Value::List(items) => {
-            let table = lua.create_table_with_capacity(items.len(), 0)?;
             count_items(items.len());
+            if items.len() >= 64 && items.iter().all(is_plain) {
+                let table = plain_table(lua, items)?;
+                table.set_readonly(frozen);
+                return Ok(mlua::Value::Table(table));
+            }
+            let table = lua.create_table_with_capacity(items.len(), 0)?;
             for (i, item) in items.iter().enumerate() {
                 table.raw_set(i + 1, to_lua(item, lua, frozen)?)?;
             }
@@ -619,6 +875,37 @@ pub(crate) fn to_lua(value: &Value, lua: &Lua, frozen: bool) -> mlua::Result<mlu
         Value::Element(e) => lua
             .create_userdata(crate::element::ElementUd(e.0.clone()))
             .map(mlua::Value::UserData),
+    }
+}
+fn is_plain(value: &Value) -> bool {
+    matches!(value, Value::Num(_) | Value::Bool(_) | Value::Str(_))
+}
+/// A list of numbers, booleans and strings as a table, made through Luau's
+/// C API (`plain_list`'s inverse): through mlua each item costs more than
+/// the table (6 ms for 100,000 numbers, 0.5 here).
+fn plain_table(lua: &Lua, items: &[Value]) -> mlua::Result<Table> {
+    use mlua::ffi;
+    let n = std::ffi::c_int::try_from(items.len())
+        .map_err(|_| mlua::Error::runtime("a list too long for a table"))?;
+    // SAFETY: makes a table and fills its array part, leaving the table on
+    // the stack as `exec_raw`'s result. An allocation failing raises a
+    // Luau error out of this frame, which holds nothing to drop (`items`
+    // is borrowed).
+    unsafe {
+        lua.exec_raw::<Table>((), |state| {
+            ffi::lua_createtable(state, n, 0);
+            for (i, item) in items.iter().enumerate() {
+                match item {
+                    Value::Num(n) => ffi::lua_pushnumber(state, *n),
+                    Value::Bool(b) => ffi::lua_pushboolean(state, std::ffi::c_int::from(*b)),
+                    Value::Str(s) => {
+                        ffi::lua_pushlstring(state, s.as_ptr().cast(), s.len());
+                    }
+                    _ => ffi::lua_pushnil(state),
+                }
+                ffi::lua_rawseti_(state, -2, i as std::ffi::c_int + 1);
+            }
+        })
     }
 }
 impl IntoLua for Value {
@@ -692,6 +979,7 @@ pub(crate) fn install_cache(lua: &Lua) {
             tables,
             ids,
             clone,
+            bases: Default::default(),
             weight: std::cell::Cell::new(0),
             swept: std::cell::Cell::new(0),
         });
@@ -715,6 +1003,9 @@ struct Converted {
     ids: Table,
     /// Luau's `table.clone`: a table copied in C (see `derive`).
     clone: mlua::Function,
+    /// id → the value a list was written from (`derives_from`), whose
+    /// table its own is derived from when a script reads it.
+    bases: std::cell::RefCell<HashMap<usize, Value>>,
     /// The `weight` of what is held.
     weight: std::cell::Cell<usize>,
     /// The `weight` of what was held after the last sweep.
@@ -781,16 +1072,31 @@ fn shared_part(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
     if let mlua::Value::Table(t) = tables.raw_get::<mlua::Value>(id_key(id))? {
         return Ok(mlua::Value::Table(t));
     }
+    // Written since a script last read it: its table from the one read.
+    let base = cache.bases.borrow_mut().remove(&id);
     drop(cache);
+    if let Some(base) = base {
+        derive(lua, &base, value)?;
+        if let Some(t) = cached(lua, value)? {
+            return Ok(mlua::Value::Table(t));
+        }
+    }
+    if !has_element(value) {
+        return raw_shared(lua, value).map(mlua::Value::Table);
+    }
     CONVERTED.set(CONVERTED.get() + 1);
     let table = match value {
         Value::List(items) => {
-            let table = lua.create_table_with_capacity(items.len(), 0)?;
             count_items(items.len());
-            for (i, item) in items.iter().enumerate() {
-                table.raw_set(i + 1, shared_part(item, lua)?)?;
+            if items.len() >= 64 && items.iter().all(is_plain) {
+                plain_table(lua, items)?
+            } else {
+                let table = lua.create_table_with_capacity(items.len(), 0)?;
+                for (i, item) in items.iter().enumerate() {
+                    table.raw_set(i + 1, shared_part(item, lua)?)?;
+                }
+                table
             }
-            table
         }
         Value::Map(fields) => {
             let table = lua.create_table_with_capacity(0, fields.len())?;
@@ -805,6 +1111,119 @@ fn shared_part(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
     table.set_readonly(true);
     file(lua, value, &table)?;
     Ok(mlua::Value::Table(table))
+}
+fn has_element(value: &Value) -> bool {
+    match value {
+        Value::Element(_) => true,
+        Value::List(items) => items.iter().any(has_element),
+        Value::Map(fields) => fields.iter().any(|(_, v)| has_element(v)),
+        _ => false,
+    }
+}
+/// `shared_part` for a value holding no element, made through Luau's C
+/// API: the same tables, each read-only and filed, a cached part reused.
+/// Through mlua, every field costs more than its table: 100,000 rows of
+/// seven fields and a short history took 380 ms to read the first time.
+fn raw_shared(lua: &Lua, value: &Value) -> mlua::Result<Table> {
+    use mlua::ffi;
+    use std::ffi::{c_int, c_void};
+    let Some(cache) = lua.app_data_ref::<Converted>() else {
+        return Err(mlua::Error::runtime("no conversion cache"));
+    };
+    let (tables, ids) = (cache.tables.clone(), cache.ids.clone());
+    drop(cache);
+    struct Made<'a> {
+        filed: Vec<&'a Value>,
+        items: usize,
+    }
+    /// Push `value`'s script value (`tables` and `ids`, the cache's, at
+    /// stack indices 1 and 2).
+    ///
+    /// SAFETY: `state` is a Luau state with the two cache tables at 1 and
+    /// 2. An allocation failing raises a Luau error out of this frame,
+    /// which holds nothing to drop (`made` is the caller's).
+    unsafe fn push<'a>(state: *mut ffi::lua_State, value: &'a Value, made: &mut Made<'a>) {
+        const TABLES: c_int = 1;
+        const IDS: c_int = 2;
+        unsafe {
+            match value {
+                Value::Nil | Value::Element(_) => ffi::lua_pushnil(state),
+                Value::Bool(b) => ffi::lua_pushboolean(state, c_int::from(*b)),
+                Value::Num(n) => ffi::lua_pushnumber(state, *n),
+                Value::Str(s) => {
+                    ffi::lua_pushlstring(state, s.as_ptr().cast(), s.len());
+                }
+                Value::List(_) | Value::Map(_) => {
+                    let id = identity(value) as *mut c_void;
+                    ffi::lua_pushlightuserdata(state, id);
+                    if ffi::lua_rawget(state, TABLES) == ffi::LUA_TTABLE {
+                        return;
+                    }
+                    ffi::lua_pop(state, 1);
+                    // A table, a key and a value a level, all the way down.
+                    ffi::luaL_checkstack(state, 4, c"a value nested too deep".as_ptr());
+                    match value {
+                        Value::List(items) => {
+                            ffi::lua_createtable(state, items.len() as c_int, 0);
+                            for (i, item) in items.iter().enumerate() {
+                                push(state, item, made);
+                                ffi::lua_rawseti_(state, -2, i as c_int + 1);
+                            }
+                            made.items += items.len();
+                        }
+                        Value::Map(fields) => {
+                            ffi::lua_createtable(state, 0, fields.len() as c_int);
+                            for (key, item) in fields.iter() {
+                                ffi::lua_pushlstring(state, key.as_ptr().cast(), key.len());
+                                push(state, item, made);
+                                ffi::lua_rawset(state, -3);
+                            }
+                            made.items += fields.len();
+                        }
+                        _ => {}
+                    }
+                    ffi::lua_setreadonly(state, -1, 1);
+                    // Filed: tables[id] = it, ids[it] = id.
+                    ffi::lua_pushlightuserdata(state, id);
+                    ffi::lua_pushvalue(state, -2);
+                    ffi::lua_rawset(state, TABLES);
+                    ffi::lua_pushvalue(state, -1);
+                    ffi::lua_pushlightuserdata(state, id);
+                    ffi::lua_rawset(state, IDS);
+                    made.filed.push(value);
+                }
+            }
+        }
+    }
+    let mut made = Made {
+        filed: Vec::new(),
+        items: 0,
+    };
+    // SAFETY: `exec_raw` pushes the two cache tables at 1 and 2, as `push`
+    // needs, and takes the table it leaves as its result.
+    let table = unsafe {
+        lua.exec_raw::<Table>((&tables, &ids), |state| {
+            push(state, value, &mut made);
+            // Only the result stays.
+            ffi::lua_remove(state, 1);
+            ffi::lua_remove(state, 1);
+        })
+    };
+    // What was filed is held, even if the conversion failed part way: its
+    // tables are in the cache.
+    if let Some(cache) = lua.app_data_ref::<Converted>() {
+        let mut held = cache.held.borrow_mut();
+        for part in &made.filed {
+            let added = weight(part);
+            held.insert(identity(part), ((*part).clone(), added));
+            cache.weight.set(cache.weight.get() + added);
+        }
+    }
+    CONVERTED.set(CONVERTED.get() + made.filed.len() as u64);
+    count_items(made.items);
+    let table = table?;
+    sweep(lua)?;
+    Ok(table)
 }
 /// Cache `table` (read-only) as `value`'s, for `shared_part` to find, and
 /// sweep what nothing else holds as the cache grows.
@@ -823,9 +1242,17 @@ fn file_weighed(lua: &Lua, value: &Value, table: &Table, added: usize) -> mlua::
     ids.raw_set(table, id_key(id))?;
     cache.held.borrow_mut().insert(id, (value.clone(), added));
     cache.weight.set(cache.weight.get() + added);
-    // Sweep as the cache doubles in weight: amortized, each conversion pays
-    // a little, and what nothing else holds costs at most as much again as
-    // what is held.
+    drop(cache);
+    sweep(lua)
+}
+/// Sweep as the cache doubles in weight: amortized, each conversion pays a
+/// little, and what nothing else holds costs at most as much again as what
+/// is held.
+fn sweep(lua: &Lua) -> mlua::Result<()> {
+    let Some(cache) = lua.app_data_ref::<Converted>() else {
+        return Ok(());
+    };
+    let (tables, ids) = (cache.tables.clone(), cache.ids.clone());
     if cache.weight.get() >= (cache.swept.get() * 2).max(SWEPT_FROM) {
         let mut gone: Vec<usize> = Vec::new();
         {
@@ -872,6 +1299,34 @@ fn cached(lua: &Lua, value: &Value) -> mlua::Result<Option<Table>> {
             _ => None,
         },
     )
+}
+/// `new`, written from `old` (`set_key` on a row, `push`), gets its table
+/// from `old`'s when a script reads it (`derive`), or from what `old` was
+/// written from if no script read `old` (`set_key`s in a batch). Lazily: a
+/// list no script read since its last write is the state's alone, which
+/// lets `set_key` write it in place.
+fn derives_from(lua: &Lua, old: &Value, new: &Value) {
+    let (Value::List(before), Value::List(after)) = (old, new) else {
+        return;
+    };
+    if Rc::ptr_eq(before, after) || !large(new) {
+        return;
+    }
+    let Some(cache) = lua.app_data_ref::<Converted>() else {
+        return;
+    };
+    let mut bases = cache.bases.borrow_mut();
+    let base = match bases.remove(&identity(old)) {
+        Some(base) => base,
+        None => old.clone(),
+    };
+    // A few states written at a time; a value dropped unread leaves its
+    // entry, harmless (any base derives right, if not as cheaply) until
+    // they are cleared here.
+    if bases.len() >= 64 {
+        bases.clear();
+    }
+    bases.insert(identity(new), base);
 }
 /// After a write that kept most of a long list (`set_key` on a row, `push`),
 /// its table for scripts: the old one's, copied in C, with only the items
@@ -1104,8 +1559,8 @@ impl State {
     fn change(&self, lua: &Lua, f: impl FnOnce(&Value) -> mlua::Result<Value>) -> mlua::Result<()> {
         let old = self.0.with_untracked(Clone::clone);
         let next = f(&old)?;
-        // Before anything reads it: its table from the old one's.
-        let _ = derive(lua, &old, &next);
+        // When a script reads it: its table from the old one's.
+        derives_from(lua, &old, &next);
         self.write(lua, next);
         Ok(())
     }
@@ -1138,8 +1593,36 @@ impl UserData for State {
             "set_key",
             |lua, s, (path, value): (mlua::Value, mlua::Value)| {
                 let path = path_of(path)?;
+                // In place while nothing else holds the list (no script has
+                // read it since the last write): a batch of row writes to a
+                // list of 100,000 copies it once, not once a write.
+                let at = s.0.with_untracked(|old| old.at(&path).cloned());
+                let leaf = convert(value, at.as_ref())?;
+                let mut done = Ok(false);
+                let mut write = || {
+                    s.0.mutate(|v| match v.set_path_in_place(&path, &leaf) {
+                        Ok(Some(changed)) => {
+                            done = Ok(true);
+                            changed
+                        }
+                        Ok(None) => false,
+                        Err(e) => {
+                            done = Err(e);
+                            false
+                        }
+                    })
+                };
+                match lua
+                    .app_data_ref::<crate::node::Env>()
+                    .and_then(|env| env.vm.upgrade())
+                {
+                    Some(vm) => vm.off_clock(&mut write),
+                    None => write(),
+                };
+                if done.map_err(|e| fail("set_key", e))? {
+                    return Ok(());
+                }
                 s.change(lua, |old| {
-                    let leaf = convert(value, old.at(&path))?;
                     old.set_path(&path, leaf).map_err(|e| fail("set_key", e))
                 })
             },

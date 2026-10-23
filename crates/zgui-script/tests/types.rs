@@ -370,6 +370,7 @@ const ELEMENT_PROPS: &[&str] = &[
     "InputProps",
     "ProgressProps",
     "SliderProps",
+    "SplitProps",
     "ListProps",
     "ModalProps",
     "PopoverProps",

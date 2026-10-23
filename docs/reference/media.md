@@ -54,7 +54,7 @@ An SVG, from a file or from markup, drawn as vectors at every scale; `tint` reco
 | `c:clip(path)` | clips what follows to the path, until `c:restore()` |
 | `c:restore()` | ends the last clip |
 
-`paint` is a [color](properties.md) or a brush from `ui.linear(x1, y1, x2, y2, { colors })`, its colors spread evenly from (`x1`, `y1`) to (`x2`, `y2`).
+`paint` is a [color](properties.md) or a brush from `ui.linear(x1, y1, x2, y2, { colors })`, its colors spread evenly from (`x1`, `y1`) to (`x2`, `y2`). A color may name a theme token (`"$accent"`, `"$surface.raised"`), resolved in the canvas's theme while `draw` runs: the drawing follows it as it follows state, so a theme change draws it again. `ui.linear` called inside `draw` takes tokens too.
 
 A path is built by chaining: `ui.path():move(x, y):line(x, y):quad(cx, cy, x, y):cubic(c1x, c1y, c2x, c2y, x, y):arc(cx, cy, r, start, sweep):close()`. `arc` angles are degrees, clockwise from +x. Once drawn, a path is fixed: it can be drawn again (make it once, outside `draw`), not extended.
 

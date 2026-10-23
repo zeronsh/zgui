@@ -1,4 +1,4 @@
-# Containers: column, row, div, overlay, grid
+# Containers: column, row, div, overlay, grid, split
 
 Boxes that lay out their children. Each takes one table: string keys are [properties](properties.md) and [events](events.md), array entries are children.
 
@@ -8,6 +8,7 @@ ui.row(props: ContainerProps?) -> Node
 ui.div(props: ContainerProps?) -> Node
 ui.overlay(props: ContainerProps?) -> Node
 ui.grid(props: ContainerProps?) -> Node
+ui.split(props: SplitProps) -> Node
 ```
 
 | Function | Lays its children out |
@@ -17,6 +18,7 @@ ui.grid(props: ContainerProps?) -> Node
 | `div` | as `column` does; `direction = "row"` turns it |
 | `overlay` | all in one box, each aligned on its own: `items` across, `justify` down. With neither set they stretch to fill it, except along an axis they size themselves on. The overlay is as large as its largest child |
 | `grid` | in equal columns and rows: a `div` with `grid = true`; `cols` and `rows` set the tracks, children take `col_span`, `row_span`, `col_start`, `row_start` |
+| `split` | its two children side by side (`vertical = true`: one over the other) with a divider between them that drags to resize the first; the second fills the rest |
 
 ## Options
 
@@ -30,6 +32,30 @@ Children, and any [property](properties.md) and [event](events.md). What the con
 | `gap` | `number` | `0` | between children; `gap_x`, `gap_y` per axis |
 | `grow`, `shrink` | `number` | `0`, `1` | as a child of a row or column: it gives way in one too small for its children, no further than its content needs |
 | `cols`, `rows` | `number` | unset | `grid`'s equal tracks: `cols = 3` makes three columns |
+
+## split
+
+```lua
+local width = ui.persist("sidebar", 280)
+return ui.split {
+	size = width,
+	min = 200,
+	max = 480,
+	min_rest = 320,
+	h_full = true,
+	ui.column { p = 12, ui.text { "Sidebar" } },
+	ui.column { p = 12, ui.text { "Content" } },
+}
+```
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `size` | `State<number>` | required | the first pane's width (height, `vertical`) in points, both ways: the divider writes it as it drags, and a `ui.persist` keeps the layout across launches |
+| `vertical` | `boolean` | `false` | one pane over the other |
+| `min`, `max` | `number` | `0`, none | the first pane's bounds |
+| `min_rest` | `number` | `0` | the second pane's smallest size: the divider stops short of it, and a window too small for both shrinks the first pane, down to `min` |
+
+The divider drags without running script (only the panes lay out again), shows a resize cursor, takes Tab focus (the arrows move it ten points, a hundred with Shift; Home and End take it to its ends), and goes back to where it started on a double click. Assistive technology sees a splitter.
 
 ## Example
 

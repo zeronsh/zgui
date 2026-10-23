@@ -10,6 +10,8 @@ ui.use_state<T>(initial: T) -> State<T>
 ui.computed<T>(f: () -> T) -> State<T>
 ui.effect(f: () -> ...unknown) -> ()
 ui.batch<R...>(f: () -> R...) -> R...
+ui.sort<T>(list: { T }, by: string | (item: T) -> any, descending: boolean?) -> { T }
+ui.number(n: number, opts: NumberOptions?) -> string
 ui.ref() -> Ref
 ui.component<P>(build: (props: P) -> Node) -> (props: P) -> Node
 ui.on_mount(f: () -> ...unknown) -> ()
@@ -71,7 +73,7 @@ local tabs = ui.state("tabs", {} :: { Tab })
 | `remove(index: number): item?` | removes and returns the item; nil, and nothing changes, outside the list | |
 | `len(): number` | the list's length (0 for anything else); tracked as `get` is | |
 
-`set_key`, `patch`, `insert`, `push` and `remove` copy only the path they change, sharing the rest with the old value; prefer them to `update` for large state. Scripts reading a long list after `set_key` on one row (or a `push`) get its table back with only that row converted, and a computed that returns rows of a state (a filter) hands its readers the table it built: a write to one message of thousands costs the scripts reading them only their own loops. A write of an equal value notifies nobody.
+`set_key`, `patch`, `insert`, `push` and `remove` copy only the path they change, sharing the rest with the old value; prefer them to `update` for large state. `set_key` writes a list in place while nothing else holds it (no script has read it since the last write): a batch writing 300 rows of a 100,000-row list copies the list once, not 300 times. Scripts reading a long list after `set_key` on one row (or a `push`) get its table back with only that row converted, and a computed that returns rows of a state (a filter) hands its readers the table it built: a write to one message of thousands costs the scripts reading them only their own loops. A write of an equal value notifies nobody.
 
 ## Actions
 
@@ -125,6 +127,44 @@ Plugins reach the network, the clipboard and files only if the host grants each:
 `ui.computed(f)` and `ui.effect(f)` run `f` at once and again whenever a state it read with `get` (or a tracked field: `web.title`, `term.pwd`, a ref) changes; reads with `peek` do not count. `ui.batch(f)` runs `f` and updates what its writes affect once, after it; it returns what `f` returns. Every handler already runs in a batch.
 
 `ui.on_cleanup(f)` runs `f` when what is being built goes away: a component unmounting, an effect running again, the script reloading (stop a subscription, a timer of the host's). `ui.now()` is milliseconds since the epoch, to the microsecond; it is not tracked (`os.time` counts whole seconds). `print` writes a line to the app's stderr.
+
+## Large data
+
+State converts what it holds between Luau and Rust, through Luau's C API: 100,000 plain rows go into `ui.state` in some 60 ms and come out the first time in about 110 ms, a list of 100,000 numbers in about a millisecond either way. For data the app changes in place every few hundred milliseconds (a market feed's rows), it costs less to keep the rows in a plain Luau table and keep a small state that says they changed:
+
+```lua
+local rows = {}
+for i = 1, 1000 do rows[i] = { id = i, price = i } end
+local tick = ui.state("tick", 0)
+ui.every(250, function()
+	rows[math.random(#rows)].price += 1
+	tick:set(tick:peek() + 1)
+end)
+-- Indices, sorted by price: a list of numbers, cheap to hold in state.
+local order = ui.computed(function()
+	tick:get()
+	local shown: { number } = {}
+	for i = 1, #rows do shown[i] = i end
+	return ui.sort(shown, function(i) return rows[i].price end, true)
+end)
+return ui.list {
+	h = 300,
+	count = function() return #order:get() end,
+	height = 24,
+	row = function(i)
+		return ui.text { function()
+			tick:get()
+			local row = rows[order:get()[i]]
+			return if row then ui.number(row.price, { decimals = 2 }) else ""
+		end }
+	end,
+}
+```
+
+- `ui.sort(list, by, descending?)` sorts `list` in place, stably, by a field of each item (`"price"`) or a function of it, called once an item; it returns `list`, and puts nil keys last. `table.sort` with a comparator calls Luau some 1.7 million times for 100,000 rows (about 95 ms, over a call's 50 ms budget); `ui.sort` reads each key once and sorts in Rust (4 to 8 ms). A state's value is read-only: sort `table.clone(value)`.
+- A computed returning indices into the plain table (or ids) holds a list of numbers; one returning the row tables themselves converts every row each time it runs.
+- Totals over every row (a sum, a count by group) cost a loop over all of them each time they run: keep them as the rows change (the feed adds what it changed) rather than summing in a chart's `draw` each tick.
+- `ui.number(n, opts)` formats numbers as `Intl.NumberFormat` does: `ui.number(1234.5)` is "1,234.50"; `decimals`, `style = "percent"` (`n` a fraction: 0.05 is "5%"), `notation = "compact"` ("1.2K", "3.4M", "5.6B", "7.8T"), `sign` (`"auto"`, `"always"`, `"except_zero"`, `"never"`), `grouping` (thousands separators, on) and `currency` (`"$"`, before the number).
 
 ## Refs
 

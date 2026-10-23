@@ -347,7 +347,7 @@ export type Justify = "start" | "center" | "end" | "between" | "around" | "evenl
 export type AlignContent = "start" | "center" | "end" | "stretch" | "between" | "around" | "evenly"
 export type Overflow = "visible" | "hidden" | "clip"
 export type Fit = "fill" | "contain" | "cover" | "none" | "scale_down"
-export type TextAlign = "start" | "left" | "center" | "right"
+export type TextAlign = "start" | "end" | "left" | "center" | "right"
 -- "mono" (or "monospace"), "sans" ("sans-serif"), "serif", or a family name.
 -- A family name, or a font token (`FontToken`).
 export type Font = string
@@ -544,6 +544,18 @@ declare extern type Ref with
 	-- Every mounted node sharing it, in document order.
 	function elements(self): { Element }
 end
+
+export type NumberOptions = {
+	-- Digits after the point (default: none for whole numbers, else 2).
+	decimals: number?,
+	style: ("decimal" | "percent")?,
+	notation: ("standard" | "compact")?,
+	sign: ("auto" | "always" | "except_zero" | "never")?,
+	-- Thousands separators (default true).
+	grouping: boolean?,
+	-- A symbol before the number, after its sign: `"$"`.
+	currency: string?,
+}
 
 -- `ui.path()`: a path for a canvas, built by chaining.
 declare extern type Path with
@@ -1398,6 +1410,20 @@ export type SliderProps = Merge<Props, {
 	min: number?,
 	max: number?,
 }>
+-- Two panes (its two children) and a divider between them that drags to
+-- resize the first; the second fills the rest.
+export type SplitProps = Merge<ContainerProps, {
+	-- The first pane's size in points, both ways: the divider writes it as
+	-- it drags (a `ui.persist` keeps it across launches).
+	size: State<number>,
+	-- One pane over the other, instead of side by side.
+	vertical: boolean?,
+	-- The first pane's smallest and largest size.
+	min: number?,
+	max: number?,
+	-- The second pane's smallest size: the divider stops short of it.
+	min_rest: number?,
+}>
 -- A virtualized list: only visible rows are built.
 export type ListProps = Merge<Props, {
 	-- The name assistive technology reads for it: "Messages".
@@ -1627,6 +1653,10 @@ declare ui: {
 	textarea: (props: InputProps) -> Node,
 	progress: (props: ProgressProps) -> Node,
 	slider: (props: SliderProps) -> Node,
+	-- Resizable panes: `ui.split { size = width, Sidebar(), Content() }`;
+	-- the divider drags (no script runs), takes the arrow keys focused,
+	-- and resets on a double click.
+	split: (props: SplitProps) -> Node,
 	modal: (props: ModalProps) -> Node,
 	-- Over the window and non-modal (toasts): no focus, no backdrop; the
 	-- pointer passes through but for what it holds, which stays live while
@@ -1751,6 +1781,15 @@ declare ui: {
 	-- A WGSL fill: `fn fill(input: FillInput) -> vec4<f32>`, with input.p,
 	-- input.size, input.time, input.scale and input.params (four vec4s).
 	shader: (source: string, opts: { fps: number? }?) -> Shader,
+	-- Sorts `list` in place, stably, by a field of each item (`"price"`) or
+	-- a function of it (called once an item); returns it. Use it over
+	-- `table.sort` with a comparator for long lists: that calls Luau some
+	-- 1.7 million times for 100,000 rows. Nil keys go last.
+	sort: <T>(list: { T }, by: string | (item: T) -> any, descending: boolean?) -> { T },
+	-- `n` formatted, as `Intl.NumberFormat` would: `ui.number(1234.5)` is
+	-- "1,234.50", `{ style = "percent" }` takes a fraction (0.05 is "5%"),
+	-- `{ notation = "compact" }` gives "1.2K", `{ sign = "always" }` "+3".
+	number: (n: number, opts: NumberOptions?) -> string,
 	path: () -> Path,
 	linear: (x1: number, y1: number, x2: number, y2: number, colors: { read [number]: Color }) -> Brush,
 }

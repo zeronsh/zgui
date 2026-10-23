@@ -471,6 +471,7 @@ impl Node {
                 | Kind::Input { .. }
                 | Kind::Progress { .. }
                 | Kind::Slider { .. }
+                | Kind::Split { .. }
                 | Kind::List { .. }
                 | Kind::Modal { .. }
                 | Kind::Popover { .. }
@@ -508,6 +509,7 @@ impl Node {
             Kind::Input { .. } => "input",
             Kind::Progress { .. } => "progress",
             Kind::Slider { .. } => "slider",
+            Kind::Split { .. } => "split",
             Kind::Show { .. } => "show",
             Kind::Each { .. } => "each",
             Kind::List { .. } => "list",
@@ -712,6 +714,12 @@ pub(crate) enum Kind {
         min: f32,
         max: f32,
     },
+    /// `ui.split { size = state, a, b }`: two panes and a divider that
+    /// resizes the first.
+    Split {
+        size: Signal<Value>,
+        options: zgui::compose::SplitOptions,
+    },
     Show {
         when: Source,
         then: Rc<Node>,
@@ -823,6 +831,7 @@ impl Kind {
                 | Kind::Overlay
                 | Kind::Button
                 | Kind::Scroll { .. }
+                | Kind::Split { .. }
                 | Kind::Modal { .. }
                 | Kind::Popover { .. }
                 | Kind::Menu { .. }
@@ -1671,6 +1680,9 @@ const WIDGET_FIELDS: &[&str] = &[
     "spellcheck",
     "line_numbers",
     "animate",
+    "size",
+    "vertical",
+    "min_rest",
 ];
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
@@ -2671,6 +2683,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     crate::canvas::install(lua, &ui)?;
+    crate::data::install(lua, &ui)?;
 
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
         lua.create_function(move |lua, table: Table| {
@@ -2745,6 +2758,38 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    ui.set(
+        "split",
+        lua.create_function(|lua, table: Table| {
+            let size = expect_state(&table.get("size")?, "ui.split's `size`")?;
+            let number = |key: &str, default: f32| -> mlua::Result<f32> {
+                Ok(table.get::<Option<f32>>(key)?.unwrap_or(default))
+            };
+            let options = zgui::compose::SplitOptions {
+                vertical: table.get::<Option<bool>>("vertical")?.unwrap_or(false),
+                min: number("min", 0.)?,
+                max: number("max", f32::INFINITY)?,
+                min_rest: number("min_rest", 0.)?,
+            };
+            if !(options.min.is_finite() && options.min >= 0. && options.min <= options.max) {
+                return Err(mlua::Error::runtime(
+                    "ui.split needs 0 <= min <= max (finite min)",
+                ));
+            }
+            let node = fill(
+                lua,
+                Node::new(owner(lua)?, Kind::Split { size, options }),
+                Some(&table),
+            )?;
+            if node.children.len() != 2 {
+                return Err(mlua::Error::runtime(format!(
+                    "ui.split takes two panes, not {}",
+                    node.children.len()
+                )));
+            }
+            node_ud(lua, node)
+        })?,
+    )?;
     ui.set(
         "show",
         lua.create_function(

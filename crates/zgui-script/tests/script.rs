@@ -197,6 +197,10 @@ fn garbage_from_builtins_is_collected_before_the_memory_limit() {
     .limits(limits);
     let error = keep.reload().unwrap_err();
     assert!(error.contains("memory"), "{error}");
+    assert!(
+        error.contains("Limits::memory"),
+        "the error names the limit to raise: {error}"
+    );
 }
 
 #[test]

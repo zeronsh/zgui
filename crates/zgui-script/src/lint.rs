@@ -82,6 +82,8 @@ const NOT_ELEMENTS: &[&str] = &[
     "ref",
     "path",
     "linear",
+    "sort",
+    "number",
     "shader",
     "bitmap",
     "raw",

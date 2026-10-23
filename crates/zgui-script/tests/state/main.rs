@@ -9,6 +9,8 @@ mod app_api;
 mod calls;
 #[path = "../io.rs"]
 mod io;
+#[path = "../large_data.rs"]
+mod large_data;
 #[path = "../plugins.rs"]
 mod plugins;
 #[path = "../script.rs"]

@@ -5,7 +5,7 @@
 //! callback: 109 instructions an iteration of every script loop, more than
 //! the loop itself. This one is a plain C hook counting in the Lua thread
 //! (38), doing its work at one call in 64 as the closure did. It is the
-//! crate's only unsafe use of Luau's C API.
+//! crate's unsafe uses of Luau's C API, with `data::sort_by_keys`.
 use crate::Deadline;
 use mlua::{Lua, ffi};
 use std::{

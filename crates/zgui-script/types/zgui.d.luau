@@ -347,7 +347,7 @@ export type Justify = "start" | "center" | "end" | "between" | "around" | "evenl
 export type AlignContent = "start" | "center" | "end" | "stretch" | "between" | "around" | "evenly"
 export type Overflow = "visible" | "hidden" | "clip"
 export type Fit = "fill" | "contain" | "cover" | "none" | "scale_down"
-export type TextAlign = "start" | "left" | "center" | "right"
+export type TextAlign = "start" | "end" | "left" | "center" | "right"
 -- "mono" (or "monospace"), "sans" ("sans-serif"), "serif", or a family name.
 -- A family name, or a font token (`FontToken`).
 export type Font = string
@@ -544,6 +544,18 @@ declare extern type Ref with
 	-- Every mounted node sharing it, in document order.
 	function elements(self): { Element }
 end
+
+export type NumberOptions = {
+	-- Digits after the point (default: none for whole numbers, else 2).
+	decimals: number?,
+	style: ("decimal" | "percent")?,
+	notation: ("standard" | "compact")?,
+	sign: ("auto" | "always" | "except_zero" | "never")?,
+	-- Thousands separators (default true).
+	grouping: boolean?,
+	-- A symbol before the number, after its sign: `"$"`.
+	currency: string?,
+}
 
 -- `ui.path()`: a path for a canvas, built by chaining.
 declare extern type Path with
@@ -4641,6 +4653,292 @@ export type SliderProps = {
 	min: number?,
 	max: number?,
 }
+-- Two panes (its two children) and a divider between them that drags to
+-- resize the first; the second fills the rest.
+export type SplitProps = {
+	-- Size and position.
+	w: Reactive<Length>?,
+	h: Reactive<Length>?,
+	min_w: Reactive<Length>?,
+	max_w: Reactive<Length>?,
+	min_h: Reactive<Length>?,
+	max_h: Reactive<Length>?,
+	w_full: Reactive<boolean>?,
+	h_full: Reactive<boolean>?,
+	aspect: Reactive<number>?,
+	absolute: Reactive<boolean>?,
+	relative: Reactive<boolean>?,
+	top: Reactive<Length>?,
+	left: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
+	right: Reactive<Length>?,
+	bottom: Reactive<Length>?,
+	-- Spacing.
+	p: Reactive<Length>?,
+	px: Reactive<Length>?,
+	py: Reactive<Length>?,
+	pt: Reactive<Length>?,
+	pr: Reactive<Length>?,
+	pb: Reactive<Length>?,
+	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
+	m: Reactive<Length>?,
+	mx: Reactive<Length>?,
+	my: Reactive<Length>?,
+	mt: Reactive<Length>?,
+	mr: Reactive<Length>?,
+	mb: Reactive<Length>?,
+	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
+	gap: Reactive<Num>?,
+	gap_x: Reactive<Length>?,
+	gap_y: Reactive<Length>?,
+	-- Flex and grid.
+	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
+	grow: Reactive<number>?,
+	shrink: Reactive<number>?,
+	basis: Reactive<Length>?,
+	flex_wrap: Reactive<boolean>?,
+	wrap_reverse: Reactive<boolean>?,
+	items: Reactive<Align>?,
+	justify: Reactive<Justify>?,
+	self: Reactive<Align>?,
+	content: Reactive<AlignContent>?,
+	grid: Reactive<boolean>?,
+	cols: Reactive<number>?,
+	rows: Reactive<number>?,
+	col_start: Reactive<number>?,
+	row_start: Reactive<number>?,
+	col_span: Reactive<number>?,
+	row_span: Reactive<number>?,
+	col_span_full: Reactive<boolean>?,
+	row_span_full: Reactive<boolean>?,
+	overflow: Reactive<Overflow>?,
+	overflow_x: Reactive<Overflow>?,
+	overflow_y: Reactive<Overflow>?,
+	hidden: Reactive<boolean>?,
+	invisible: Reactive<boolean>?,
+	-- Paint.
+	bg: Reactive<Color>?,
+	gradient: Reactive<Gradient>?,
+	color: Reactive<Color>?,
+	bg_image: Reactive<string>?,
+	bg_fit: Reactive<Fit>?,
+	rounded: Reactive<Num>?,
+	corners: Reactive<Corners>?,
+	rounded_tl: Reactive<number>?,
+	rounded_tr: Reactive<number>?,
+	rounded_br: Reactive<number>?,
+	rounded_bl: Reactive<number>?,
+	border: Reactive<Num>?,
+	border_sides: Reactive<Sides>?,
+	border_color: Reactive<Color>?,
+	border_over: Reactive<boolean>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
+	outline: Reactive<Num>?,
+	outline_color: Reactive<Color>?,
+	outline_offset: Reactive<Num>?,
+	shadow: Reactive<Shadow>?,
+	inset_shadow: Reactive<Shadow>?,
+	opacity: Reactive<Num>?,
+	brightness: Reactive<number>?,
+	contrast: Reactive<number>?,
+	saturate: Reactive<number>?,
+	blur: Reactive<number>?,
+	backdrop_blur: Reactive<Num>?,
+	fade: Reactive<Pair>?,
+	fade_x: Reactive<Pair>?,
+	fade_sides: Reactive<Sides>?,
+	fade_overflow: Reactive<boolean>?,
+	snap: Reactive<boolean>?,
+	clip_inset: Reactive<Sides>?,
+	layer: Reactive<boolean>?,
+	fit: Reactive<Fit>?,
+	tint: Reactive<Color>?,
+	cursor: Reactive<Cursor>?,
+	-- Text.
+	text_size: Reactive<Num>?,
+	weight: Reactive<Num>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	align: Reactive<TextAlign>?,
+	font: Reactive<Font>?,
+	wrap: Reactive<boolean>?,
+	truncate: Reactive<boolean>?,
+	lines: Reactive<number>?,
+	line_height: Reactive<Num>?,
+	letter_spacing: Reactive<Num>?,
+	-- Tabular figures: every digit the same width.
+	tabular: Reactive<boolean>?,
+	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
+	-- below the baseline the line sits.
+	underline: Reactive<boolean>?,
+	underline_offset: Reactive<Num>?,
+	-- Transforms: after layout, about `origin` (fractions of the node).
+	x: Reactive<number>?,
+	y: Reactive<number>?,
+	scale: Reactive<number>?,
+	scale_x: Reactive<number>?,
+	scale_y: Reactive<number>?,
+	rotate: Reactive<number>?,
+	skew: Reactive<number>?,
+	skew_x: Reactive<number>?,
+	skew_y: Reactive<number>?,
+	origin: Reactive<Pair>?,
+	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
+	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
+	theme: Reactive<ThemeSpec>?,
+	-- Identity, for selectors, refs and animations.
+	id: string?,
+	-- Space-separated class names.
+	class: string?,
+	-- Styles chosen from a `ui.variants` definition: `button { tone =
+	-- "ghost" }`, or the recipe itself for its defaults. The element's own
+	-- properties win over them.
+	variants: (Variants | ((choice: any) -> Variants))?,
+	ref: (Ref | { Ref })?,
+	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
+	-- A press on it (or on what inside takes no input) moves the window; a
+	-- double click zooms it. Buttons and inputs inside keep their clicks.
+	-- CSS pointer-events: "none" (or false) lets the pointer through to what
+	-- is under the node (presses, hover, the wheel, drops, a native view);
+	-- descendants with handlers still take it. A state or function follows.
+	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	window_drag: boolean?,
+	-- The pointer selects the text in it and everything it holds, as on a
+	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
+	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
+	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
+	-- Shown over it while the pointer rests on it (after 300 ms; at once
+	-- within a second of another): text in the theme's look, or a node of
+	-- the app's own. Above it, centred, unless `tooltip_placement` says.
+	tooltip: (string | Node)?,
+	tooltip_placement: Placement?,
+	-- A hover card the pointer can move into and click in: it stays while
+	-- the pointer is over the node or the card.
+	tooltip_interactive: boolean?,
+	-- A condition (true disables), or the styles it shows while disabled.
+	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
+	hover: Styles?,
+	active: Styles?,
+	focus: Styles?,
+	-- Size animation ("height", "width", "size"; `true` is "height") or
+	-- position animation ("position"). A `layout_id` node mounting as
+	-- another with the same id unmounts (or while it is mounted) moves and
+	-- scales from that one's box.
+	layout: ("height" | "width" | "size" | "position" | boolean)?,
+	layout_id: string?,
+	layout_ease: Easing?,
+	-- Milliseconds.
+	layout_duration: number?,
+	layout_enter: boolean?,
+	layout_clip: boolean?,
+	-- The content shows through the bitmap's alpha: `mask = bitmap`, or
+	-- `{ bitmap, w = …, h = …, x = …, y = …, sweep = … }`.
+	mask: (Bitmap | MaskOptions)?,
+	bg_shader: Shader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	shader_params: { read [number]: Color | { number } }?,
+	-- Events.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Primary pointer down and up.
+	on_press: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_release: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
+	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Return true to consume the key.
+	on_key: (((e: KeyEvent) -> ...boolean?) | Action)?,
+	on_key_up: (((key: string) -> ...unknown) | Action)?,
+	on_focus: (Handler | Action)?,
+	on_blur: (Handler | Action)?,
+	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	on_mount: ((element: Element) -> ...unknown)?,
+	-- When layout gives it a new size, and at its first layout.
+	on_resize: ((size: Size, element: Element) -> ...unknown)?,
+	-- When any of it comes into view or all of it leaves (inside every
+	-- clip and scroll viewport above it), and at its first layout: for
+	-- building what only matters on screen.
+	on_visible: ((visible: boolean, element: Element) -> ...unknown)?,
+	-- Drag and drop within the window. Payloads are what `on_drag`
+	-- returns: the script's own plain values, so they are `any` here.
+	-- A source: `on_drag` returns the payload once the pointer moves 4
+	-- points; `drag_preview` builds what follows the pointer.
+	on_drag: (() -> any)?,
+	drag_preview: ((payload: any) -> Node)?,
+	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
+	-- Released outside every window of the app (macOS): a tab torn off its
+	-- window. `grab_x`/`grab_y` are where the source was held.
+	on_drag_outside: ((payload: any, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ...unknown)?,
+	-- The drag moves its window instead, with no preview (macOS): a
+	-- window's only tab. Dropped on another window's destination it drops
+	-- there; elsewhere the window stays where it was let go.
+	drag_moves_window: ((payload: any) -> boolean)?,
+	-- A destination: `drop_when` filters payloads (default: all).
+	drop_when: ((payload: any) -> unknown)?,
+	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
+	on_drag_leave: ((payload: any) -> ...unknown)?,
+	on_drop: ((payload: any, e: DragPoint) -> ...unknown)?,
+	-- A secondary click (control-click on macOS) shows the returned
+	-- `menu_item`s, `submenu`s and separators as a menu at the pointer;
+	-- returning nil (or nothing) shows none.
+	context_menu: ((e: PointerEvent) -> ...{ Node }?)?,
+	-- The context menu panel's look: bg, rounded, p, gap, backdrop_blur,
+	-- border, shadow, w, …
+	context_menu_style: Styles?,
+	-- Open the context menu under the node, from its left edge (a tab's),
+	-- rather than at the pointer.
+	context_menu_below: boolean?,
+	[number]: Child,
+	-- The name assistive technology reads for it, instead of its text: a
+	-- switch, a button showing only an icon. A state or function is
+	-- followed: a list row's name made from what it shows now.
+	label: (string | Readable<string> | (() -> string))?,
+	-- The first pane's size in points, both ways: the divider writes it as
+	-- it drags (a `ui.persist` keeps it across launches).
+	size: State<number>,
+	-- One pane over the other, instead of side by side.
+	vertical: boolean?,
+	-- The first pane's smallest and largest size.
+	min: number?,
+	max: number?,
+	-- The second pane's smallest size: the divider stops short of it.
+	min_rest: number?,
+}
 -- A virtualized list: only visible rows are built.
 export type ListProps = {
 	-- Size and position.
@@ -7850,6 +8148,10 @@ declare ui: {
 	textarea: (props: InputProps) -> Node,
 	progress: (props: ProgressProps) -> Node,
 	slider: (props: SliderProps) -> Node,
+	-- Resizable panes: `ui.split { size = width, Sidebar(), Content() }`;
+	-- the divider drags (no script runs), takes the arrow keys focused,
+	-- and resets on a double click.
+	split: (props: SplitProps) -> Node,
 	modal: (props: ModalProps) -> Node,
 	-- Over the window and non-modal (toasts): no focus, no backdrop; the
 	-- pointer passes through but for what it holds, which stays live while
@@ -7974,6 +8276,15 @@ declare ui: {
 	-- A WGSL fill: `fn fill(input: FillInput) -> vec4<f32>`, with input.p,
 	-- input.size, input.time, input.scale and input.params (four vec4s).
 	shader: (source: string, opts: { fps: number? }?) -> Shader,
+	-- Sorts `list` in place, stably, by a field of each item (`"price"`) or
+	-- a function of it (called once an item); returns it. Use it over
+	-- `table.sort` with a comparator for long lists: that calls Luau some
+	-- 1.7 million times for 100,000 rows. Nil keys go last.
+	sort: <T>(list: { T }, by: string | (item: T) -> any, descending: boolean?) -> { T },
+	-- `n` formatted, as `Intl.NumberFormat` would: `ui.number(1234.5)` is
+	-- "1,234.50", `{ style = "percent" }` takes a fraction (0.05 is "5%"),
+	-- `{ notation = "compact" }` gives "1.2K", `{ sign = "always" }` "+3".
+	number: (n: number, opts: NumberOptions?) -> string,
 	path: () -> Path,
 	linear: (x1: number, y1: number, x2: number, y2: number, colors: { read [number]: Color }) -> Brush,
 }
