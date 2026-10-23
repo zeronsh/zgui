@@ -383,7 +383,11 @@ size, radius and space. `tok::*` are typed constants (`ColorToken`,
 cannot be passed for a length. zgui's widgets declare tokens of their own in
 standard terms, which a theme may set: `button.bg` (`{surface.raised}`),
 `button.hover` (`over({button.bg}, {hover})`), `button.pressed`, `input.bg`,
-`menu.bg` (`{surface.overlay}`) and `menu.hover`.
+`menu.bg` (`{surface.overlay}`), `menu.hover`, and `popover.bg`
+(`{surface.overlay}`, popovers' and tooltips' panels). On macOS, where menus
+and popovers show in windows of their own over AppKit's material, the system
+sets `menu.bg` and `popover.bg` clear and `menu.hover` to the accent, as an
+app theme setting them overrides.
 
 Text shows `text.primary`, `font.size.md` and `font.sans` unless a view sets
 its own. The built-in `zgui-dark` theme, the default, keeps zgui's original

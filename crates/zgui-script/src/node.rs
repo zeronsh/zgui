@@ -758,6 +758,8 @@ pub(crate) enum Kind {
         anchor: Rc<Node>,
         placement: Option<zgui::compose::Placement>,
         autofocus: bool,
+        /// `open_over = fn() -> id`: opens with that item over the trigger.
+        over: Option<Function>,
     },
     /// Its label, and whether it leaves its menu open when chosen.
     MenuItem(String, bool),
@@ -1614,6 +1616,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "fallback",
     "trigger",
     "autofocus",
+    "open_over",
     "row",
     "open",
     "anchor",
@@ -2918,6 +2921,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         anchor,
                         placement,
                         autofocus,
+                        over: table.get("open_over")?,
                     }
                 } else {
                     Kind::Popover {

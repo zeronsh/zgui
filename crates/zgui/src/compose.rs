@@ -288,6 +288,8 @@ struct PortalOptions {
     trigger: Option<View>,
     /// `View::lazy`: built the first time it opens.
     lazy: bool,
+    /// `View::open_over`: the id of the item over the trigger.
+    over: Option<Rc<dyn Fn() -> String>>,
 }
 pub struct View {
     kind: Kind,
@@ -513,6 +515,14 @@ impl View {
     /// holds focus; it is raised over everything as it opens.
     pub fn layer(mut self) -> Self {
         self.portal.get_or_insert_default().layer = true;
+        self
+    }
+    /// Open a menu with its item `id` over the trigger, as a pop-up button's
+    /// menu (a select's) opens with the chosen item over the button, rather
+    /// than below it. `id` is read as it opens and while open (the chosen
+    /// item, from state); one not in the menu places it as usual.
+    pub fn open_over(mut self, id: impl Fn() -> String + 'static) -> Self {
+        self.portal.get_or_insert_default().over = Some(Rc::new(id));
         self
     }
     /// Build a modal's, popover's or menu's panel the first time it opens
@@ -1993,6 +2003,9 @@ fn mount_portal(
         });
     }
     let anchor = anchor.map(|anchor| mount(ui, owner, *anchor, environment.clone()));
+    if let Some(anchor) = anchor {
+        ui.listen_popup_soon(anchor);
+    }
     if !view.portal.as_ref().is_some_and(|p| p.lazy) {
         mount_portal_panel(
             ui,
@@ -2094,6 +2107,8 @@ fn mount_portal_panel(
             .p(16.)
             .bg(if is_menu {
                 tok::MENU_BG
+            } else if anchored {
+                tok::POPOVER_BG
             } else {
                 tok::SURFACE_OVERLAY
             })
@@ -2108,12 +2123,20 @@ fn mount_portal_panel(
     let has_max_width = view.styles.rare().max_width.is_some();
     let has_max_height = view.styles.rare().max_height.is_some();
     let viewport = ui.observe_bounds(ui.root());
+    // Anchored, it may reach past the window, to the screen's edges.
+    let area = anchor.map(|anchor| (ui.popup_screens(), ui.observe_bounds(anchor)));
     let mut dynamic = view.reactive_style.take();
     view.reactive_style = Some(Box::new(move || {
         let mut styles = dynamic
             .as_mut()
             .map_or_else(Styles::new, |compute| compute());
-        let bounds = viewport.get();
+        let bounds = area
+            .as_ref()
+            .and_then(|(screens, anchor)| {
+                let anchor = anchor.get();
+                screens.with(|screens| crate::compose_popover::screen_of(screens, anchor))
+            })
+            .unwrap_or_else(|| viewport.get());
         let margin = if anchored { 8. } else { 32. };
         if !has_max_width && styles.rare().max_width.is_none() {
             styles.rare_mut().max_width = Some((bounds.width - margin).max(0.));
@@ -2126,9 +2149,9 @@ fn mount_portal_panel(
     // A submenu leaves the pointer to its parent menu (moving over its other
     // items closes it); the parent's backdrop dismisses both.
     let dismiss_backdrop = view.dismiss_backdrop.take().unwrap_or(!is_submenu);
-    let (placement, modal_placement, autofocus) =
-        view.portal.take().map_or((None, None, None), |p| {
-            (p.placement, p.modal_placement, p.autofocus)
+    let (placement, modal_placement, autofocus, over) =
+        view.portal.take().map_or((None, None, None, None), |p| {
+            (p.placement, p.modal_placement, p.autofocus, p.over)
         });
     let placement = placement.unwrap_or_default();
     let panel_focusable = view.focusable.unwrap_or(true);
@@ -2172,15 +2195,13 @@ fn mount_portal_panel(
             mount(ui, content, child, environment.clone());
         }
         crate::compose_menu_scroll::mount(ui, panel, viewport, content);
-        crate::compose_menu::mount(
-            ui,
-            panel,
-            menu,
-            anchor.expect("menu anchor"),
-            portal.overlay,
-            dismiss_backdrop,
-        );
+        let trigger = anchor.expect("menu anchor");
+        if !is_submenu {
+            crate::compose_menu::mount_press(ui, trigger, portal.overlay, panel, open.clone());
+        }
+        crate::compose_menu::mount(ui, panel, menu, trigger, portal.overlay, dismiss_backdrop);
     }
+    let mut over_focus = None;
     if let Some(anchor) = anchor {
         if is_submenu {
             crate::compose_popover::mount_submenu(
@@ -2192,6 +2213,24 @@ fn mount_portal_panel(
                 panel,
             );
         } else {
+            // `open_over`'s item, among the menu's.
+            let over_item = over.map(|id| {
+                let (registry, weak) = (environment.registry.clone(), ui.downgrade());
+                Rc::new(move || {
+                    let id = id();
+                    let ui = weak.upgrade()?;
+                    let scene = ui.scene.borrow();
+                    let registry = registry.borrow();
+                    registry
+                        .get(&id)?
+                        .iter()
+                        .copied()
+                        .find(|node| scene.contains(*node) && scene.is_within(*node, panel))
+                }) as Rc<dyn Fn() -> Option<NodeId>>
+            });
+            over_focus = over_item.clone();
+            let over =
+                over_item.map(|item| Box::new(move || item()) as Box<dyn Fn() -> Option<NodeId>>);
             crate::compose_popover::mount(
                 ui,
                 owner,
@@ -2200,6 +2239,7 @@ fn mount_portal_panel(
                 portal.position,
                 panel,
                 placement,
+                over,
             );
         }
     } else {
@@ -2208,6 +2248,7 @@ fn mount_portal_panel(
             None => crate::compose_modal::center(ui, owner, portal.position),
         }
     }
+    let open_signal = open.clone();
     crate::compose_modal::activate(
         ui,
         owner,
@@ -2228,6 +2269,35 @@ fn mount_portal_panel(
         autofocus.unwrap_or(true),
         is_layer,
     );
+    // A pop-up button's menu opens with its chosen item (`open_over`)
+    // highlighted, rather than its first.
+    if let Some(item) = over_focus {
+        let (visible, weak) = (portal.visible.clone(), ui.downgrade());
+        ui.bind(owner, move || {
+            if visible.get()
+                && let Some(ui) = weak.upgrade()
+                && let Some(item) = ui.runtime.untracked(|| item())
+            {
+                ui.input.focus(&ui.scene, Some(item));
+            }
+        });
+    }
+    // Open, where the host shows popups past the window
+    // (`Ui::set_popup_screens`), an anchored popup is a popup root: drawn in
+    // a window of its own (`Scene::set_popup`). Closed, it is none, so a
+    // list's hundred row menus cost the host nothing.
+    if anchored {
+        let (screens, visible, position) =
+            (ui.popup_screens(), portal.visible.clone(), portal.position);
+        let weak = ui.downgrade();
+        ui.bind(owner, move || {
+            let popup = visible.get() && screens.with(|screens| !screens.is_empty());
+            if let Some(ui) = weak.upgrade() {
+                ui.scene.borrow_mut().set_popup(position, popup);
+            }
+        });
+        ui.register_popup(portal.position, open_signal);
+    }
     // A submenu's layer lets the pointer through to its parent menu.
     if is_submenu {
         let mut options = ui.input.options(portal.overlay).unwrap_or_default();
@@ -2265,7 +2335,9 @@ impl WidgetStyles {
             menu_focus_recolor: Styles::new()
                 .bg(tok::MENU_HOVER)
                 .border_color(tok::FOCUS_RING),
-            menu_item: Styles::new().px(12.).py(8.).items_center().bg(tok::MENU_BG),
+            // On the menu's panel: no fill of its own, so a translucent
+            // panel (AppKit's material behind it) shows through.
+            menu_item: Styles::new().px(12.).py(8.).items_center(),
             menu_hover: Styles::new().bg(tok::MENU_HOVER),
             menu_focus: Styles::new()
                 .bg(tok::MENU_HOVER)
@@ -2814,8 +2886,16 @@ fn open_element(
                 .set(root, SemanticNode::new(Role::Button, ""));
         }
         let mut click = view.click.take();
+        // A menu item's action runs once its menu has flashed and closed
+        // (`compose_menu::flash`), so the flash shares it.
+        let menu_click = item_menu
+            .as_ref()
+            .map(|_| Rc::new(RefCell::new(click.take())));
         let menu_trigger = view.menu_trigger.take();
         let keep_open = view.menu_keep_open;
+        let runner = item_menu
+            .as_ref()
+            .and_then(|_| environment.services.get::<TaskRunner>());
         let weak_ui = ui.downgrade();
         ui.on_event(root, true, move |cx| {
             // Over a menu's item (or pressing it): a submenu trigger opens
@@ -2864,9 +2944,29 @@ fn open_element(
                 } else if let Some(menu) = &item_menu
                     && !keep_open
                 {
+                    // Where menus are windows of their own (AppKit's), the
+                    // chosen item flashes, then the menu closes, then its
+                    // action runs, as AppKit sends it.
+                    if let (Some(runner), Some(ui)) = (&runner, weak_ui.upgrade())
+                        && ui.popup_screens().with_untracked(|s| !s.is_empty())
+                    {
+                        let (click, modifiers) = (menu_click.clone(), cx.pointer_modifiers());
+                        crate::compose_menu::flash(&ui, runner, menu.clone(), root, move || {
+                            if let Some(click) = &click
+                                && let Some(click) = click.borrow_mut().as_mut()
+                            {
+                                click(modifiers);
+                            }
+                        });
+                        return;
+                    }
                     menu.close_chain();
                 }
                 if let Some(click) = &mut click {
+                    click(cx.pointer_modifiers());
+                } else if let Some(click) = &menu_click
+                    && let Some(click) = click.borrow_mut().as_mut()
+                {
                     click(cx.pointer_modifiers());
                 }
             }

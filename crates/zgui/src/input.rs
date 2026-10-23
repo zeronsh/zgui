@@ -912,6 +912,11 @@ impl InputDispatcher {
     /// its own, at the target phase (they do not bubble): the nodes left,
     /// deepest first, then the nodes entered, outermost first. Costs a walk
     /// up from `hit` when the hit target changes, nothing when it does not.
+    /// Hover nothing until the pointer next moves (a menu item flashing
+    /// off under a still pointer, `compose_menu::flash`).
+    pub(crate) fn clear_hover(&self, scene: &Rc<RefCell<Scene>>) {
+        self.set_hover(scene, None);
+    }
     fn set_hover(&self, scene: &Rc<RefCell<Scene>>, hit: Option<NodeId>) {
         if self.state.borrow().hover.first().copied() == hit {
             return;

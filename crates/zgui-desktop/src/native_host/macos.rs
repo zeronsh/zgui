@@ -694,7 +694,12 @@ pub fn set_cursor(window: &winit::window::Window, cursor: winit::window::CursorI
         0,
         mtm,
     );
-    if under != ns_window.windowNumber() {
+    // Over the window, or over one of its popups (`popup_window`).
+    let ours = under == ns_window.windowNumber()
+        || ns_window
+            .childWindows()
+            .is_some_and(|children| children.iter().any(|child| child.windowNumber() == under));
+    if !ours {
         return;
     }
     // AppKit's unpublished cursors, as winit (and Safari) use them: the

@@ -332,6 +332,165 @@ pub(crate) fn mount(
     });
 }
 
+/// A chosen item flashes off and on, then its menu closes and `then` (its
+/// action) runs, as AppKit's menus confirm a choice (macOS). Choosing again
+/// meanwhile does nothing.
+pub(crate) fn flash(
+    ui: &Ui,
+    runner: &crate::compose::TaskRunner,
+    menu: Rc<MenuContext>,
+    item: NodeId,
+    then: impl FnOnce() + 'static,
+) {
+    thread_local! {
+        /// Whether a flash runs (one at most), and its task, kept until the
+        /// next.
+        static FLASHING: Cell<bool> = const { Cell::new(false) };
+        static TASK: RefCell<Option<crate::compose::TaskToken>> = const { RefCell::new(None) };
+    }
+    if FLASHING.replace(true) {
+        return;
+    }
+    // Off: neither focused nor hovered.
+    if let Some(panel) = menu.panel.get() {
+        ui.input.focus(&ui.scene, Some(panel));
+    }
+    ui.input.clear_hover(&ui.scene);
+    /// Ends the flash however its task does (dropped with its window too).
+    struct Done;
+    impl Drop for Done {
+        fn drop(&mut self) {
+            FLASHING.set(false);
+        }
+    }
+    let weak = ui.downgrade();
+    let task = runner.spawn(Box::pin(async move {
+        let _done = Done;
+        let step = Duration::from_millis(50);
+        crate::timer::sleep(step).await;
+        if let Some(ui) = weak.upgrade() {
+            ui.input.focus(&ui.scene, Some(item));
+        }
+        crate::timer::sleep(step).await;
+        drop(_done);
+        menu.close_chain();
+        then();
+    }));
+    TASK.with(|slot| *slot.borrow_mut() = Some(task));
+}
+/// A menu's trigger opens it as it is pressed, as AppKit's pop-up and
+/// pull-down buttons do: dragged on to an item and released there, that
+/// item is chosen; released over the trigger (a click), the menu stays open
+/// to click in; dragged away and released elsewhere, it closes. A press on
+/// the trigger of an open menu lands on its backdrop, which closes it. Only
+/// a trigger listening already (a button) is one: a bare anchor (a context
+/// menu's point) stays out of hit testing.
+pub(crate) fn mount_press(
+    ui: &mut Ui,
+    anchor: NodeId,
+    overlay: NodeId,
+    panel: NodeId,
+    open: Signal<bool>,
+) {
+    if !ui.input.has_listeners(anchor) {
+        return;
+    }
+    // Where the press opening the menu was, while it is held. The menu's
+    // focus scope cancels the press on the trigger, so its overlay (inside
+    // the scope, over the window and holding the items) follows it.
+    let pressed = Rc::new(Cell::new(None::<(f32, f32)>));
+    let (start, close) = (pressed.clone(), open.clone());
+    let binding = ui.input.listen(anchor, move |cx| {
+        if cx.phase == EventPhase::Capture || cx.default_prevented() {
+            return;
+        }
+        match cx.event {
+            InputEvent::PointerDown {
+                x,
+                y,
+                button: PointerButton::Primary,
+            } if !open.with_untracked(|open| *open) => {
+                // The press opens the menu, focus going into it, rather
+                // than to the trigger.
+                cx.prevent_default();
+                start.set(Some((x, y)));
+                open.set(true);
+            }
+            // Released before the menu showed (a click in one batch of
+            // input): on the trigger, it stays open.
+            InputEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } => start.set(None),
+            _ => {}
+        }
+    });
+    ui.retain(anchor, binding);
+    let weak = ui.downgrade();
+    let binding = ui.input.listen(overlay, move |cx| {
+        // Before what is under the pointer hears it (or as the backdrop).
+        if cx.phase == EventPhase::Bubble || pressed.get().is_none() {
+            return;
+        }
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match cx.event {
+            // A new press: the one that opened the menu has ended unheard.
+            InputEvent::PointerDown { .. } => pressed.set(None),
+            InputEvent::PointerMove { x, y } => {
+                if let Some(item) = item_at(&ui, panel, x, y)
+                    && ui.input.focused() != Some(item)
+                {
+                    ui.input.focus(&ui.scene, Some(item));
+                }
+            }
+            InputEvent::PointerUp {
+                x,
+                y,
+                button: PointerButton::Primary,
+            } => {
+                let (px, py) = pressed.take().expect("checked above");
+                cx.prevent_default();
+                cx.stop_propagation();
+                if let Some(item) = item_at(&ui, panel, x, y) {
+                    ui.input.dispatch_to(&ui.scene, item, InputEvent::Activate);
+                    return;
+                }
+                let trigger = ui.scene.borrow().bounds(anchor);
+                let on_trigger = x >= trigger.x
+                    && y >= trigger.y
+                    && x < trigger.x + trigger.width
+                    && y < trigger.y + trigger.height;
+                if !on_trigger && (x - px).hypot(y - py) > 4. {
+                    close.set(false);
+                }
+            }
+            _ => {}
+        }
+    });
+    ui.retain(anchor, binding);
+}
+/// The enabled item of the menu `panel` at window point `(x, y)`.
+fn item_at(ui: &Ui, panel: NodeId, x: f32, y: f32) -> Option<NodeId> {
+    let scene = ui.scene.borrow();
+    if !scene.contains(panel) {
+        return None;
+    }
+    let semantics = ui.semantics.borrow();
+    let hit = scene.hit_test(x, y)?;
+    std::iter::once(hit)
+        .chain(scene.ancestors(hit))
+        .take_while(|node| *node != panel)
+        .find(|node| {
+            semantics
+                .get(*node)
+                .is_some_and(|semantic| semantic.role == Role::MenuItem)
+                && ui.input.is_enabled(&scene, *node)
+        })
+        .filter(|item| scene.is_within(*item, panel))
+}
+
 fn bounded_prefix(text: &str) -> Option<String> {
     let mut result = String::new();
     for character in text.chars().flat_map(char::to_lowercase) {

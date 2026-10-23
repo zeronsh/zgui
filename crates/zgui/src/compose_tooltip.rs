@@ -156,7 +156,7 @@ fn wrap(anchor: View, tip: Tooltip) -> View {
                 .px(8.)
                 .py(4.)
                 .max_w(320.)
-                .bg(tok::SURFACE_OVERLAY)
+                .bg(tok::POPOVER_BG)
                 .border(0.5)
                 .border_color(tok::BORDER)
                 .rounded(tok::RADIUS_SM)

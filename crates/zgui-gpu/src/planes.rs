@@ -8,17 +8,23 @@
 //! window: its items draw relative to that box, as an isolated layer's do.
 //! Both show their frames as plain layer contents, so they change with the
 //! native views' geometry in one Core Animation transaction.
+//!
+//! A popup window's renderer is an overlay renderer drawing one popup root's
+//! subtree (`Scene::set_popup`) alone, unclipped by the window, in the popup's
+//! box (`set_popup`).
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
 use crate::{GpuError, GpuRenderer};
 use std::{borrow::Cow, rc::Rc};
 use zgui::{
     native_view::{Plane, PlaneSplit},
-    scene::{PaintItem, Rect, Scene},
+    scene::{NodeId, PaintItem, Rect, Scene},
 };
 
 pub(crate) struct PlaneState {
     split: Rc<PlaneSplit>,
     plane: Plane,
+    /// A popup window's root: its subtree is all this draws (no split).
+    popup: Option<NodeId>,
     /// The overlay surface's box in the window, in logical pixels on whole
     /// device pixels; `None` for the base plane (the whole window).
     rect: Option<Rect>,
@@ -60,7 +66,33 @@ impl GpuRenderer {
             self.layers.remove(id);
         }
         let rect = self.plane.as_ref().and_then(|state| state.rect);
-        self.plane = Some(PlaneState { split, plane, rect });
+        self.plane = Some(PlaneState {
+            split,
+            plane,
+            popup: None,
+            rect,
+        });
+    }
+    /// Draw popup root `root`'s subtree alone from now on (a popup window's
+    /// renderer), in `rect`, its box in window coordinates (see
+    /// `set_plane_rect`). A new root repaints everything.
+    pub fn set_popup(&mut self, root: NodeId, rect: Rect) {
+        let previous = self.plane.as_ref().and_then(|state| state.popup);
+        if previous != Some(root) {
+            let rect = self.plane.as_ref().and_then(|state| state.rect);
+            self.plane = Some(PlaneState {
+                split: Rc::default(),
+                plane: Plane::Overlay,
+                popup: Some(root),
+                rect,
+            });
+            self.fresh = true;
+        }
+        self.set_plane_rect(rect);
+    }
+    /// The popup root this draws (`set_popup`).
+    pub(crate) fn plane_popup(&self) -> Option<NodeId> {
+        self.plane.as_ref().and_then(|state| state.popup)
     }
     /// Draw everything again (no native views).
     pub fn clear_plane(&mut self) {
@@ -184,7 +216,9 @@ impl GpuRenderer {
     }
     /// Keep `items` (any layer's, window coordinates) this plane draws.
     pub(crate) fn plane_filter(&self, items: &mut Vec<PaintItem<'_>>) {
-        if let Some(state) = &self.plane {
+        if let Some(state) = &self.plane
+            && state.popup.is_none()
+        {
             state.split.filter(items, state.plane);
         }
     }

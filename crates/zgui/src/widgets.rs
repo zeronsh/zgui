@@ -441,6 +441,15 @@ struct UiStorage {
     mount_theme: RefCell<Option<Rc<ThemeScope>>>,
     text_geometry_revision: Signal<u64>,
     presented: Signal<bool>,
+    /// Where popups may show (`Ui::set_popup_screens`).
+    popup_screens: Signal<Vec<Rect>>,
+    /// Open signals of anchored popups, by their popup roots
+    /// (`Ui::dismiss_popups`).
+    popups: RefCell<Vec<(NodeId, Signal<bool>)>>,
+    /// The host's hook for a popup about to open (`Ui::on_popup_soon`), and
+    /// whether it was called and not yet heard (`popup_soon_heard`).
+    popup_soon: RefCell<Option<Rc<dyn Fn()>>>,
+    popup_soon_sent: Cell<bool>,
     scene: Rc<RefCell<Scene>>,
     input: InputDispatcher,
     semantics: Rc<RefCell<Semantics>>,
@@ -632,6 +641,10 @@ impl Ui {
             text_geometry_revision: runtime.signal(0),
             presented: runtime.signal(true),
             overlay_scrollbars: runtime.signal(false),
+            popup_screens: runtime.signal(Vec::new()),
+            popups: RefCell::new(Vec::new()),
+            popup_soon: RefCell::new(None),
+            popup_soon_sent: Cell::new(false),
             runtime,
             scene: Rc::new(RefCell::new(Scene::new(width, height))),
             input: InputDispatcher::new(),
@@ -1491,6 +1504,97 @@ impl Ui {
     }
     pub(crate) fn observe_presentation(&self) -> Signal<bool> {
         self.storage.presented.clone()
+    }
+    /// Let anchored popups (popovers, menus, submenus, context menus,
+    /// tooltips) show past the window, within `screens`: the visible part of
+    /// each screen, in window coordinates. Each flips and clamps to the
+    /// screen its trigger is on instead of the window, and its subtree
+    /// becomes a popup root (`Scene::set_popup`) the host shows in a window
+    /// of its own. None (the default, and on hosts without popup windows):
+    /// they stay inside the window.
+    pub fn set_popup_screens(&self, screens: Vec<Rect>) {
+        if self
+            .storage
+            .popup_screens
+            .with_untracked(|current| *current != screens)
+        {
+            self.storage.popup_screens.set(screens);
+        }
+    }
+    pub(crate) fn popup_screens(&self) -> Signal<Vec<Rect>> {
+        self.storage.popup_screens.clone()
+    }
+    /// Call `soon` as the pointer reaches something that opens a popup (a
+    /// popover's or menu's trigger, a view with a tooltip or context menu),
+    /// once until the host hears it (`popup_soon_heard`): a host showing
+    /// popups in windows of their own readies one then, not before. Set
+    /// before the window's views mount; without it nothing listens.
+    pub fn on_popup_soon(&self, soon: impl Fn() + 'static) {
+        *self.storage.popup_soon.borrow_mut() = Some(Rc::new(soon));
+    }
+    /// The host heard `on_popup_soon`'s call: the next may come.
+    pub fn popup_soon_heard(&self) {
+        self.storage.popup_soon_sent.set(false);
+    }
+    pub(crate) fn popup_soon_enabled(&self) -> bool {
+        self.storage.popup_soon.borrow().is_some()
+    }
+    pub(crate) fn popup_soon(&self) {
+        if self.storage.popup_soon_sent.replace(true) {
+            return;
+        }
+        let soon = self.storage.popup_soon.borrow().clone();
+        if let Some(soon) = soon {
+            soon();
+        }
+    }
+    /// Listen on `node` for the pointer reaching it (moving over it or
+    /// pressing it): a popup it opens may follow (`on_popup_soon`). Only a
+    /// node listening already: a bare one (a context menu's point) stays out
+    /// of hit testing.
+    pub(crate) fn listen_popup_soon(&mut self, node: NodeId) {
+        if !self.popup_soon_enabled() || !self.input.has_listeners(node) {
+            return;
+        }
+        let weak = self.downgrade();
+        let binding = self.input.listen(node, move |cx| {
+            if cx.phase != crate::input::EventPhase::Capture
+                && matches!(
+                    cx.event,
+                    crate::input::InputEvent::PointerMove { .. }
+                        | crate::input::InputEvent::PointerDown { .. }
+                )
+                && let Some(ui) = weak.upgrade()
+            {
+                ui.popup_soon();
+            }
+        });
+        self.retain(node, binding);
+    }
+    pub(crate) fn register_popup(&self, root: NodeId, open: Signal<bool>) {
+        let scene = self.scene.borrow();
+        let mut popups = self.storage.popups.borrow_mut();
+        popups.retain(|(node, _)| scene.contains(*node));
+        popups.push((root, open));
+    }
+    /// Close every open popup shown past the window, as AppKit closes menus
+    /// and transient popovers when the app or its window loses focus.
+    pub fn dismiss_popups(&self) {
+        let open: Vec<Signal<bool>> = {
+            let scene = self.scene.borrow();
+            self.storage
+                .popups
+                .borrow()
+                .iter()
+                .filter(|(node, _)| scene.is_popup(*node))
+                .map(|(_, open)| open.clone())
+                .collect()
+        };
+        for open in open {
+            if open.with_untracked(|open| *open) {
+                open.set(false);
+            }
+        }
     }
     pub(crate) fn observe_visibility(&self, node: NodeId) -> Signal<bool> {
         if let Some(signal) = self.storage.observed_visibility.borrow().get(&node) {

@@ -754,6 +754,12 @@ window. Its `.child`/`.children` populate the popup panel. Anchor scrolling,
 translations, content sizing and window resizing update placement automatically.
 Neither constructor requires parent IDs or application scene mutation.
 
+On macOS anchored popups (popovers, menus, submenus, context menus, tooltips)
+reach past the window, as AppKit's do: they flip and clamp to the screen their
+trigger is on instead, and the desktop host shows each in a window of its own.
+See [popups past the window](application.md#popups-past-the-window).
+Elsewhere they stay inside the window.
+
 Fluent styles and `.id(...)` apply to the panel. A private positioning node keeps
 user `.translate(...)` additive. Default panels have 16-pixel padding, a theme
 surface background and rounded corners; modal width defaults to 360 pixels and

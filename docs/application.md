@@ -118,6 +118,41 @@ Mount `Dialog` or `Popover` in a full-window `Layout::Overlay` layer. Populate t
 
 `Popover::item` creates menu items with Up/Down/Home/End navigation, disabled-item skipping, and dismissal before activation. `popover.show(&ui)` positions against its anchor and clamps to the current viewport. From a retained callback, use `show_with(&scene, &input)` instead of capturing the entire `Ui`. Position is refreshed on opening; continuous anchor-following while the menu remains open is not implemented.
 
+## Popups past the window
+
+On macOS anchored popups reach past their window, as AppKit's menus and
+popovers do, with nothing asked of the app: a menu at a window's bottom edge
+hangs below it, a tooltip at its top shows over the title bar. Each flips and
+clamps to the visible part of the screen its trigger is on (`Ui::set_popup_screens`,
+which the host keeps current). An open popup's subtree stays in the window's
+scene, with its focus, keys and dismissal, but is a popup root
+(`Scene::set_popup`): the window's renderer leaves it out and a borderless,
+transparent, non-activating child panel shows it, drawn by a renderer of its
+own that shares the window's device and text caches, at the scale of the
+screen it shows on. The window stays key, so typing reaches a field in a
+popover; the panel's pointer input reaches the window's scene in its
+coordinates, past its edges.
+
+They behave as AppKit's: a menu opens as its trigger is pressed (dragged to an
+item and released there, the item is chosen; released over the trigger, the
+menu stays open to click in), its chosen item flashes and it fades out as it
+closes, and `View::open_over` opens a pop-up button's menu with the chosen
+item over the button. A panel with a translucent background gets AppKit's
+material behind it (the menu material for menus, the popover material
+otherwise), cut to its rounded corners; the theme's `menu.bg` and `popover.bg`
+are clear there, so menus and popovers look as AppKit's unless an app styles
+them. Popups close as their window or the app loses focus, on a press in the
+window's title bar, and on Escape or a press outside them.
+
+An app that never opens a popup pays nothing: no popup window is made until
+the pointer first reaches something that opens one (`Ui::on_popup_soon`), and
+a closed popup is no popup root. Opening one is a move and one small frame.
+Closed popup windows are kept, hidden, to reuse; a hidden one draws nothing
+and never wakes. `ZGUI_POPUP_WINDOWS=0` keeps popups inside the window, as on
+Windows and Linux, where they would need owned tool windows (Windows),
+override-redirect windows (X11) or `xdg_popup` (Wayland; winit has no way to
+make one).
+
 ## Ownership, tasks, and disposal
 
 A mounted component owns its local state, bindings, child components and tasks

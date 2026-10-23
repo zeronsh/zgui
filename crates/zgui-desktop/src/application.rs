@@ -108,6 +108,11 @@ enum Event {
     Close(u64),
     RequestClose(u64),
     WindowCommand(u64, WindowCommand),
+    /// Pointer input over one of the window's popup windows.
+    Popup(u64, crate::popup_window::PopupInput),
+    /// The pointer reached something in the window that opens a popup: have
+    /// a popup window ready (`Ui::on_popup_soon`).
+    PopupSoon(u64),
 }
 /// Commands are queued onto the UI thread; the operating system may decline requests.
 #[derive(Debug)]
@@ -1065,6 +1070,8 @@ struct Host {
     trackpad: Trackpad,
     /// Native views (web pages) over and under this window's zgui content.
     native: crate::native_host::NativeHost,
+    /// Popups shown past the window, in windows of their own.
+    popups: crate::popup_window::PopupHost,
     /// The theme's `background` when it changes, for the renderer's clear
     /// colour, and the effect that watches it.
     theme_background: Rc<std::cell::Cell<Option<zgui::scene::Color>>>,
@@ -1116,6 +1123,20 @@ impl Host {
                 let _ = wake.send_event(Event::Wake(token));
             }
         });
+        let popups = crate::popup_window::PopupHost::new({
+            let proxy = proxy.clone();
+            move |input| {
+                let _ = proxy.send_event(Event::Popup(token, input));
+            }
+        });
+        // Where popups have windows of their own, one is readied as the
+        // pointer reaches a trigger.
+        if crate::popup_window::enabled() {
+            let proxy = proxy.clone();
+            ui.on_popup_soon(move || {
+                let _ = proxy.send_event(Event::PopupSoon(token));
+            });
+        }
         let inspector = zgui::inspect::Inspector::new();
         {
             let handle = handle.clone();
@@ -1239,6 +1260,7 @@ impl Host {
             ime_geometry: None,
             ime_target: None,
             native,
+            popups,
             theme_background: Rc::default(),
             applied_background: None,
             _background_effect: None,
@@ -1449,6 +1471,7 @@ impl Host {
         let report = scene.flush();
         self.accessibility_geometry_dirty |= !report.damage.is_empty();
         let full = [scene.bounds(scene.root())];
+        let forced = self.force;
         let damage = if self.force {
             &full[..]
         } else {
@@ -1554,6 +1577,21 @@ impl Host {
                 self.presentation
                     .completed(status, std::time::Instant::now());
             }
+        }
+        // Popups past the window: their own frames, in their own windows
+        // (nothing at all while none shows).
+        if let Some(renderer) = &self.renderer
+            && (self.popups.showing() || !scene.popups().is_empty())
+        {
+            let full = forced || report.damage.first() == full.first();
+            self.popups.update(
+                &window,
+                &scene,
+                &self.context.ui.semantics.borrow(),
+                &renderer.context(),
+                self.scale_factor as f32,
+                full,
+            )?;
         }
         drop(scene);
         // Native geometry that changed without zgui pixels to show with it.
@@ -1973,6 +2011,9 @@ impl Host {
         self.context
             .window_info
             .refresh(&window, self.options.titlebar);
+        self.context
+            .ui
+            .set_popup_screens(crate::popup_window::popup_screens(&window));
         self.frame_paced = matches!(
             window.display_handle().map(|h| h.as_raw()),
             Ok(RawDisplayHandle::Wayland(_))
@@ -2247,6 +2288,7 @@ impl Host {
         self.context.dialogs.attach(None);
         if let Some(window) = &self.window {
             window.set_visible(false);
+            self.popups.hide_all(window);
         }
         self.deactivate();
         self.native_cursor = None;
@@ -2290,6 +2332,9 @@ impl Host {
             self.context
                 .window_info
                 .refresh(window, self.options.titlebar);
+            self.context
+                .ui
+                .set_popup_screens(crate::popup_window::popup_screens(window));
             let window = window.clone();
             self.refresh_frame_interval(&window);
             let window = &window;
@@ -2602,6 +2647,9 @@ impl Host {
                 if let Some(caption) = &mut self.caption {
                     caption.sync(&mut self.context.ui);
                 }
+                // Menus and popovers close as their window or the app
+                // loses focus, as AppKit's do.
+                self.context.ui.dismiss_popups();
                 self.deactivate()
             }
             WindowEvent::ThemeChanged(appearance) => {
@@ -2719,6 +2767,53 @@ impl Host {
         }
 
         Ok(())
+    }
+    /// Pointer input over a popup window, as the window's own (its point in
+    /// the window's coordinates, past its edges).
+    fn popup_input(
+        &mut self,
+        input: crate::popup_window::PopupInput,
+    ) -> Result<(), Box<dyn Error>> {
+        use crate::popup_window::PopupInput;
+        // Winit's placeholder device, for events it did not report.
+        let device_id = winit::event::DeviceId::dummy();
+        let at = |x: f32, y: f32| LogicalPosition::new(x, y).to_physical(self.scale_factor);
+        match input {
+            PopupInput::Moved { x, y } => self.window_event(WindowEvent::CursorMoved {
+                device_id,
+                position: at(x, y),
+            }),
+            PopupInput::Button {
+                x,
+                y,
+                button,
+                pressed,
+            } => {
+                self.cursor = (x, y);
+                self.window_event(WindowEvent::MouseInput {
+                    device_id,
+                    state: if pressed {
+                        ElementState::Pressed
+                    } else {
+                        ElementState::Released
+                    },
+                    button,
+                })
+            }
+            PopupInput::Wheel { x, y, delta, phase } => {
+                self.cursor = (x, y);
+                self.window_event(WindowEvent::MouseWheel {
+                    device_id,
+                    delta,
+                    phase,
+                })
+            }
+            PopupInput::Left => self.window_event(WindowEvent::CursorLeft { device_id }),
+            PopupInput::Dismiss => {
+                self.context.ui.dismiss_popups();
+                Ok(())
+            }
+        }
     }
     fn accessibility_event(&mut self, event: accesskit_winit::WindowEvent) {
         match event {
@@ -3477,6 +3572,22 @@ impl ApplicationHandler<Event> for WindowManager {
             }
             Event::Close(token) => self.close(token),
             Event::RequestClose(token) => self.request_close(token),
+            Event::Popup(token, input) => {
+                if let Some(host) = self.hosts.get_mut(&token)
+                    && !host.context.window.is_closed()
+                    && let Err(error) = host.popup_input(input)
+                {
+                    self.fail(event_loop, error);
+                }
+            }
+            Event::PopupSoon(token) => {
+                if let Some(host) = self.hosts.get(&token) {
+                    host.context.ui.popup_soon_heard();
+                    if let Some(renderer) = &host.renderer {
+                        crate::popup_window::warm(&renderer.context(), host.scale_factor as f32);
+                    }
+                }
+            }
             Event::Wake(token) => {
                 let _ = self.hosts.get(&token);
             }

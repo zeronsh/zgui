@@ -1133,13 +1133,23 @@ fn kind_view(
             anchor,
             placement,
             autofocus,
+            over,
         } => {
-            let view = menu(
+            let mut view = menu(
                 label.clone(),
                 bridge(need(&mut cx), open, Value::truthy, Value::Bool),
                 lower(anchor, low),
             )
             .lazy();
+            if let Some(over) = over.clone() {
+                let vm = vm.clone();
+                view = view.open_over(move || {
+                    vm.call::<Option<String>>(&over, ())
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
+                });
+            }
             let view = if *autofocus {
                 view
             } else {

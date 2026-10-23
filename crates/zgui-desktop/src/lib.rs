@@ -29,6 +29,7 @@ mod linux_spelling;
 mod native_events;
 mod native_prompt;
 mod platform;
+mod popup_window;
 #[cfg(target_os = "linux")]
 mod portal_dialog;
 #[cfg(target_os = "linux")]

@@ -146,4 +146,5 @@ pub(crate) fn mount(
     });
     ui.retain(node, binding);
     ui.retain(node, open);
+    ui.listen_popup_soon(node);
 }

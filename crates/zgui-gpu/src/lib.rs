@@ -2058,9 +2058,14 @@ impl GpuRenderer {
         );
         let merged = (!self.fresh && !scene.has_backdrop_blur())
             .then(|| merge_damage(damage, viewport, self.scale));
+        // A popup window's renderer walks its root's subtree alone.
+        let start = self.plane_popup();
+        if start.is_some_and(|root| !scene.contains(root)) {
+            return Ok(GpuStats::default());
+        }
         let items = match &merged {
-            Some(regions) => scene.layer_items_within(None, Some(&self.plane_world(regions))),
-            None => scene.layer_items(None),
+            Some(regions) => scene.layer_items_within(start, Some(&self.plane_world(regions))),
+            None => scene.layer_items(start),
         };
         // Around native views, only this plane's paint (planes.rs).
         let items = self.plane_items(items);
@@ -5498,6 +5503,14 @@ impl GpuRenderer {
         }
         self.layer_present = Some(present);
         Ok(PresentationStatus::Presented)
+    }
+    /// Whether a frame drawn into the renderer's own surfaces waits to be
+    /// presented (`present` then shows it; without one it does nothing).
+    #[cfg(target_os = "macos")]
+    pub fn frame_pending(&self) -> bool {
+        self.layer_present
+            .as_ref()
+            .is_some_and(|present| present.current.is_some())
     }
     /// How long the GPU took to run the frame last presented, when it was
     /// encoded with Metal directly: the frame's own work, plus however long

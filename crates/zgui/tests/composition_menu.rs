@@ -251,3 +251,135 @@ fn items_outside_a_menu_are_plain_actions() {
     assert!(child_open.get());
     assert!(view.find("inner").is_some());
 }
+
+/// A menu opens as its trigger is pressed, as AppKit's pop-up buttons do:
+/// dragged to an item and released there, the item is chosen; released over
+/// the trigger, the menu stays open to click in.
+#[test]
+fn menus_open_on_press_and_choose_on_release() {
+    let mut ui = Ui::new(500., 400.);
+    let open = ui.signal(false);
+    let chosen = ui.signal(String::new());
+    let pick = |label: &'static str| {
+        let chosen = chosen.clone();
+        menu_item(label).id(label).h(24.).on_click(move || {
+            chosen.set(label.to_owned());
+        })
+    };
+    let view = ui.mount(
+        menu("Size", open.clone(), button().id("anchor").size(120., 28.))
+            .w(160.)
+            .p(0.)
+            .children([pick("small"), pick("medium"), pick("large")]),
+    );
+    ui.prepare_frame();
+    let scene = ui.scene.clone();
+    let center = |id: &str| {
+        let bounds = scene.borrow().bounds(view.find(id).unwrap());
+        (bounds.x + bounds.width / 2., bounds.y + bounds.height / 2.)
+    };
+    let button = PointerButton::Primary;
+    let (x, y) = center("anchor");
+    ui.dispatch(InputEvent::PointerDown { x, y, button });
+    ui.prepare_frame();
+    assert!(open.get(), "open as pressed");
+    // Released over the trigger: still open, nothing chosen.
+    ui.dispatch(InputEvent::PointerUp { x, y, button });
+    ui.prepare_frame();
+    assert!(open.get());
+    assert_eq!(chosen.get(), "");
+    // A press outside closes it; pressed again, dragged to an item and
+    // released there, the item is chosen.
+    ui.dispatch(InputEvent::PointerDown {
+        x: 450.,
+        y: 380.,
+        button,
+    });
+    ui.dispatch(InputEvent::PointerUp {
+        x: 450.,
+        y: 380.,
+        button,
+    });
+    ui.prepare_frame();
+    assert!(!open.get());
+    ui.dispatch(InputEvent::PointerDown { x, y, button });
+    ui.prepare_frame();
+    let (ix, iy) = center("large");
+    ui.dispatch(InputEvent::PointerMove { x: ix, y: iy });
+    assert_eq!(ui.input.focused(), view.find("large"), "highlighted");
+    ui.dispatch(InputEvent::PointerUp {
+        x: ix,
+        y: iy,
+        button,
+    });
+    ui.prepare_frame();
+    assert_eq!(chosen.get(), "large");
+    assert!(!open.get());
+    // Dragged away from it all and released: closed, nothing chosen.
+    chosen.set(String::new());
+    ui.dispatch(InputEvent::PointerDown { x, y, button });
+    ui.prepare_frame();
+    assert!(open.get());
+    ui.dispatch(InputEvent::PointerMove { x: 450., y: 380. });
+    ui.dispatch(InputEvent::PointerUp {
+        x: 450.,
+        y: 380.,
+        button,
+    });
+    ui.prepare_frame();
+    assert!(!open.get());
+    assert_eq!(chosen.get(), "");
+}
+
+/// A click whose press and release arrive together, before the menu shows
+/// (as X11 test input does): the menu stays open with its first item
+/// focused (unseen, as after any press), and a click on one of its disabled
+/// items later neither closes it nor chooses anything.
+#[test]
+fn a_click_before_the_menu_shows_leaves_it_open() {
+    let mut ui = Ui::new(500., 400.);
+    let open = ui.signal(false);
+    let chosen = ui.signal(String::new());
+    let pick = |label: &'static str| {
+        let chosen = chosen.clone();
+        menu_item(label).id(label).h(24.).on_click(move || {
+            chosen.set(label.to_owned());
+        })
+    };
+    let view = ui.mount(
+        menu("Size", open.clone(), button().id("anchor").size(120., 28.))
+            .w(160.)
+            .p(0.)
+            .children([pick("small"), pick("medium").disabled(true), pick("large")]),
+    );
+    ui.prepare_frame();
+    let scene = ui.scene.clone();
+    let center = |id: &str| {
+        let bounds = scene.borrow().bounds(view.find(id).unwrap());
+        (bounds.x + bounds.width / 2., bounds.y + bounds.height / 2.)
+    };
+    let button = PointerButton::Primary;
+    let (x, y) = center("anchor");
+    ui.dispatch(InputEvent::PointerDown { x, y, button });
+    ui.dispatch(InputEvent::PointerUp { x, y, button });
+    ui.prepare_frame();
+    assert!(open.get());
+    assert_eq!(ui.input.focused(), view.find("small"));
+    let (dx, dy) = center("medium");
+    ui.dispatch(InputEvent::PointerMove { x: dx, y: dy });
+    ui.dispatch(InputEvent::PointerDown {
+        x: dx,
+        y: dy,
+        button,
+    });
+    ui.dispatch(InputEvent::PointerUp {
+        x: dx,
+        y: dy,
+        button,
+    });
+    ui.prepare_frame();
+    assert!(open.get(), "a disabled item's click keeps it open");
+    assert_eq!(chosen.get(), "");
+    key(&mut ui, Key::ArrowDown);
+    assert_eq!(ui.input.focused(), view.find("large"), "past the disabled");
+}

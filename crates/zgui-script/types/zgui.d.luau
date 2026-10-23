@@ -186,6 +186,7 @@ export type ColorToken =
 	| "$input.bg"
 	| "$menu.bg"
 	| "$menu.hover"
+	| "$popover.bg"
 	| "$selection.inactive"
 	| "$selection.text"
 	| "$selection.text.inactive"
@@ -311,6 +312,7 @@ export type TokenName =
 	| "input.bg"
 	| "menu.bg"
 	| "menu.hover"
+	| "popover.bg"
 	| "selection.inactive"
 	| "selection.text"
 	| "selection.text.inactive"
@@ -5375,6 +5377,9 @@ export type PopoverProps = {
 	-- Focus its first control as it opens (true); false keeps the panel
 	-- itself focused (a menu whose search field waits to be clicked).
 	autofocus: boolean?,
+	-- A menu only: the `id` of its item to open over the trigger, as a
+	-- pop-up button's (a select's) opens with the chosen item over it.
+	open_over: (() -> string?)?,
 }
 -- `ui.menu_item { "Copy", on_click = … }`: the label first.
 -- The label (`{ "Copy" }`), or `label` with content of its own after it

@@ -37,10 +37,22 @@ fn tokens() -> Vec<(TokenId, TokenInput)> {
         ) else {
             return Vec::new();
         };
-        vec![
+        let mut tokens = vec![
             (tok::SELECTION.0, active.into()),
             (tok::SELECTION_INACTIVE.0, inactive.into()),
-        ]
+        ];
+        // Menus and popovers in windows of their own are AppKit's material
+        // (`popup_window`), clear over it; a menu's chosen item, the accent,
+        // as AppKit highlights it.
+        if crate::popup_window::enabled() {
+            let clear = Color(0, 0, 0, 0);
+            tokens.push((tok::MENU_BG.0, clear.into()));
+            tokens.push((tok::POPOVER_BG.0, clear.into()));
+            if let Some(accent) = srgb(NSColor::controlAccentColor()) {
+                tokens.push((tok::MENU_HOVER.0, accent.into()));
+            }
+        }
+        tokens
     }
     #[cfg(windows)]
     {
