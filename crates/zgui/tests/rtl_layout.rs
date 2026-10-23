@@ -148,3 +148,23 @@ fn the_style_read_back_is_the_one_given() {
     );
     assert_eq!((style.margin.left, style.margin.right), (0., 4.));
 }
+
+#[test]
+fn a_left_to_right_part_keeps_its_margins_where_given() {
+    // A phone number's row turned back left to right inside a right-to-left
+    // column: placed from the column's start (its right), its left margin
+    // on its left, its own children from its left.
+    let (ui, view) = mount(
+        column().w(300.).items_start().rtl().child(
+            row()
+                .id("ltr")
+                .w(200.)
+                .ml(10.)
+                .mr(4.)
+                .direction(Direction::Ltr)
+                .child(chip("digit", 20.)),
+        ),
+    );
+    assert_eq!(rect(&ui, &view, "ltr").x, 96.);
+    assert_eq!(rect(&ui, &view, "digit").x, 96.);
+}

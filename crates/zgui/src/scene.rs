@@ -1089,12 +1089,22 @@ pub enum Direction {
     Ltr,
     Rtl,
 }
+/// Which way a node runs (`own`: its padding and what it holds) and the
+/// parent it sits in (`parent`: its margins and insets, which place it
+/// there).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Way {
+    own: bool,
+    parent: bool,
+}
 /// Whether `style` lays out as given, or by `laid_out_style`.
-fn laid_out_as_given(style: &Style, rtl: bool) -> bool {
-    !rtl && !style
-        .layout_options
-        .as_deref()
-        .is_some_and(|o| o.has_inline())
+fn laid_out_as_given(style: &Style, way: Way) -> bool {
+    !way.own
+        && !way.parent
+        && !style
+            .layout_options
+            .as_deref()
+            .is_some_and(|o| o.has_inline())
 }
 /// What a node given `style` lays out by. Right to left (`rtl`) it is laid
 /// out left to right and its children mirrored in its box after
@@ -1103,23 +1113,29 @@ fn laid_out_as_given(style: &Style, rtl: bool) -> bool {
 /// end (`*_inline`) are its left and right in that left-to-right layout:
 /// right and left once mirrored. Points go where the plain lengths are,
 /// which keeps the node off the flex-options path.
-fn laid_out_style(mut style: Style, rtl: bool) -> Style {
-    if laid_out_as_given(&style, rtl) {
+fn laid_out_style(mut style: Style, way: Way) -> Style {
+    if laid_out_as_given(&style, way) {
         return style;
     }
     let flip = |i: &mut Insets| std::mem::swap(&mut i.left, &mut i.right);
     let flip_lengths =
         |e: &mut crate::layout::EdgeLengths| std::mem::swap(&mut e.left, &mut e.right);
-    if rtl {
+    // Its margins and insets are its parent's to mirror; its padding, its
+    // own box's.
+    if way.parent {
         flip(&mut style.margin);
-        if let Some(padding) = &mut style.padding_edges {
-            flip(padding);
-        }
         if let Some(options) = &mut style.layout_options {
             let options = Arc::make_mut(options);
             flip_lengths(&mut options.inset);
             flip_lengths(&mut options.margin);
-            flip_lengths(&mut options.padding);
+        }
+    }
+    if way.own {
+        if let Some(padding) = &mut style.padding_edges {
+            flip(padding);
+        }
+        if let Some(options) = &mut style.layout_options {
+            flip_lengths(&mut Arc::make_mut(options).padding);
         }
     }
     let Some(mut options) = style
@@ -2283,7 +2299,15 @@ impl Scene {
             .node(id)
             .parent
             .is_some_and(|parent| self.node(parent).rtl);
-        self.refresh_direction(id, inherited);
+        self.refresh_direction(id, inherited, false);
+    }
+    /// Which way `id` and its parent run.
+    fn way(&self, id: NodeId) -> Way {
+        let node = self.node(id);
+        Way {
+            own: node.rtl,
+            parent: node.parent.is_some_and(|parent| self.node(parent).rtl),
+        }
     }
     /// The way `id`'s lines run, its own or inherited.
     pub fn direction(&self, id: NodeId) -> Direction {
@@ -2293,20 +2317,24 @@ impl Scene {
             Direction::Ltr
         }
     }
-    /// `id` under a parent running right to left (`inherited`) or not: it,
-    /// and what of its subtree changes way, lay out again.
-    fn refresh_direction(&mut self, id: NodeId, inherited: bool) {
+    /// `id` under a parent running right to left (`inherited`) or not, the
+    /// parent having changed way (`moved`) or not: it, and what of its
+    /// subtree changes way or sits in what did, lay out again.
+    fn refresh_direction(&mut self, id: NodeId, inherited: bool, moved: bool) {
         let rtl = self
             .directions
             .get(&id)
             .map_or(inherited, |d| *d == Direction::Rtl);
-        if self.node(id).rtl == rtl {
+        let turned = self.node(id).rtl != rtl;
+        if !turned && !moved {
             return;
         }
         self.node_mut(id).rtl = rtl;
         // Children first: a contents node lays out as its last child.
-        for child in self.node(id).children.clone() {
-            self.refresh_direction(child, rtl);
+        if turned {
+            for child in self.node(id).children.clone() {
+                self.refresh_direction(child, rtl, true);
+            }
         }
         if self.node(id).contents {
             self.sync_contents(id);
@@ -2314,7 +2342,7 @@ impl Scene {
             let given = self.style(id);
             self.restyle(id, given, true);
         }
-        if self.node(id).align_start {
+        if turned && self.node(id).align_start {
             let mut font = self.node(id).font.clone();
             font.align = crate::text_layout::TextAlign::Start;
             self.set_font(id, font);
@@ -2335,7 +2363,8 @@ impl Scene {
     /// last child's.
     fn sync_contents(&mut self, id: NodeId) {
         let own = self.contents_styles.get(&id).cloned().unwrap_or_default();
-        let own = laid_out_style(own, self.node(id).rtl);
+        let way = self.way(id);
+        let own = laid_out_style(own, way);
         let style = match self.node(id).children.last() {
             Some(lead) => contents_style(own, &self.node(*lead).style),
             None => own,
@@ -2899,9 +2928,13 @@ impl Scene {
         let overflow_fade = style.fade_overflow;
         // It runs as its parent does until it says otherwise.
         let rtl = self.node(parent).rtl;
-        let given = (!laid_out_as_given(&style, rtl)).then(|| style.clone());
+        let way = Way {
+            own: rtl,
+            parent: rtl,
+        };
+        let given = (!laid_out_as_given(&style, way)).then(|| style.clone());
         let style = match given {
-            Some(_) => laid_out_style(style, rtl),
+            Some(_) => laid_out_style(style, way),
             None => style,
         };
         let node = Node {
@@ -3099,9 +3132,9 @@ impl Scene {
                 self.set_contents_style(id, style);
                 return;
             }
-            let rtl = self.node(id).rtl;
-            if !laid_out_as_given(&style, rtl) {
-                let laid = laid_out_style(style.clone(), rtl);
+            let way = self.way(id);
+            if !laid_out_as_given(&style, way) {
+                let laid = laid_out_style(style.clone(), way);
                 self.given_styles.insert(id, style);
                 style = laid;
             } else if !self.given_styles.is_empty() {
@@ -5006,7 +5039,7 @@ impl Scene {
                 );
                 // Its style runs mirrored right to left; placed here, not
                 // mirrored after, its insets and margins are as given.
-                let rtl = self.node(id).rtl;
+                let rtl = self.way(id).parent;
                 if rtl {
                     std::mem::swap(&mut left, &mut right);
                 }
