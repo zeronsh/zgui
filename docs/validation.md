@@ -29,15 +29,23 @@ Native examples run under Xvfb with Openbox, using llvmpipe Vulkan:
 - The workbench passes virtual-row selection, note editing/autosave across selection changes, menu opening/dismissal, modal confirmation and viewport resizing. See [workbench](images/workbench.png) and [dialog](images/workbench-dialog.png). Its draft storage is session-only memory.
 - GPUI, QuickGUI and zgui render the same frozen deterministic workload using their actual pinned frameworks. Geometry/content/colors match; native text rasterization/baseline differences remain. See the [comparison protocol](benchmarking.md) and [raw results](results/README.md).
 
-To rerun on an existing X11 test display with a window manager:
+Further native Linux probes, each on a private Xvfb/Openbox desktop or a nested Sway or Weston compositor:
+
+- Wayland clipboard: copy and paste go through the compositor (`set_selection`, `receive`, `send` in the protocol trace) via one data device per seat, which Weston requires (`wayland_input_smoke.py`).
+- The primary selection: an editor's double-clicked word and Ctrl+A reach other clients, and another client's selection lands where a middle click puts the caret, on X11 (`xclip`) and as a native Wayland client of Sway (`wl-paste`/`wl-copy --primary`) (`primary_selection_smoke.py`). Selected display text is the primary selection too (`selectable_text_smoke.py`).
+- Cursor styles as a native Wayland client: `wp_cursor_shape_v1` shapes for move, not-allowed, crosshair, a reactive wait and the default (`wayland_cursors_smoke.py`), beside the X11 cursor-image check.
+- Live Wayland scaling through 1×, 2×, 1.5× (fractional, `preferred_scale(180)`) and back: viewport, viewporter destination, editor geometry, typed input and pixel extents (`dpi_transition_smoke.py`).
+
+Every probe is listed in `scripts/linux_smokes.py`, which runs them side by side (each owns its display or compositor) and reports each one:
 
 ```sh
 cargo build -p zgui-desktop --examples --locked
-DISPLAY=:96 python3 scripts/desktop_smoke.py target/debug/examples/gallery
-DISPLAY=:96 target/debug/examples/windows --smoke-test
+cargo test -p zgui-desktop --lib --no-run --locked
+python3 scripts/linux_smokes.py --jobs 4              # all of them
+python3 scripts/linux_smokes.py --only wayland --only primary
 ```
 
-The CI configuration builds/checks/tests on Linux and macOS, and includes separate Linux Vulkan/native-smoke and macOS Metal/native-window jobs. The macOS job requires GPU readback tests and two bounded component-window lifecycle runs; it preserves logs even on failure. The portable window harness passes locally on X11 (idle: zero ticks/17 mounted rows; combined: 119 ticks/19 rows over two seconds), which does not validate AppKit or Metal. Its [logs and exact harness](platform-validation/component-host/README.md) are retained. Configuring CI is not evidence that its remote jobs have run. This workspace has no remote CI results.
+CI runs on every push to main and every pull request (`.github/workflows/ci.yml`): a Linux job (fmt, stylua, clippy, unit and doc tests (zgui-script's included), Vulkan rendering tests on llvmpipe, then every native probe above, four at a time), a macOS job (clippy, tests, Metal rendering and readback, component window lifecycle) and a Windows job (check, core and bundle tests, Direct3D 12 border and transform pixel tests on WARP). Probes wait for what they drive (the window manager, IBus's XIM server and engine, a mapped window) rather than sleeping, so a loaded runner slows them without failing them.
 
 ## Platform coverage
 
