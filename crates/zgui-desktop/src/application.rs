@@ -3519,7 +3519,15 @@ fn cursor_for_role(role: Option<Role>) -> CursorIcon {
 /// 40 (Chromium's and WebKit's line step, and Chromium's per Cocoa tick).
 /// Windows reports notches, not lines, and a notch is the system's wheel
 /// lines (3 by default) at a third of 100 each: 100, as Chromium scrolls.
-const WHEEL_LINE: f32 = if cfg!(windows) { 100. } else { 40. };
+/// On Linux, KDE's wheel lines ("Scroll by", 3 by default) scale it as
+/// Windows' do: 40 is three lines.
+fn wheel_line() -> f32 {
+    #[cfg(target_os = "linux")]
+    if let Some(lines) = crate::linux_appearance::current().wheel_lines {
+        return 40. * lines as f32 / 3.;
+    }
+    if cfg!(windows) { 100. } else { 40. }
+}
 /// A trackpad scroll gesture, from winit's phases: the fingers' Started,
 /// Moved and Ended, then (if they flicked) the momentum's, reported alike.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3562,7 +3570,10 @@ impl Trackpad {
 }
 fn wheel_delta(delta: MouseScrollDelta, scale: f64) -> (f32, f32) {
     match delta {
-        MouseScrollDelta::LineDelta(x, y) => (-x * WHEEL_LINE, -y * WHEEL_LINE),
+        MouseScrollDelta::LineDelta(x, y) => {
+            let line = wheel_line();
+            (-x * line, -y * line)
+        }
         MouseScrollDelta::PixelDelta(p) => {
             let p = p.to_logical::<f32>(scale);
             (-p.x, -p.y)
