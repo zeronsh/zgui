@@ -413,3 +413,45 @@ fn drops_land_under_a_pointer_transparent_layer() {
     up(&ui, 150., 20.);
     assert_eq!(&*log.borrow(), &["drop:7"]);
 }
+
+/// What a drag carries to other apps (`drag_export`) is the host's to read
+/// as it starts; a drag another app took ends accepted at its source
+/// (`end_drag_elsewhere`), and its host learns how it ended.
+#[test]
+fn drags_carry_their_export_and_end_where_the_host_says() {
+    use zgui::input::DragItem;
+    let mut ui = Ui::new(300., 200.);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let ended = log.clone();
+    ui.mount(
+        div()
+            .id("source")
+            .size(100., 40.)
+            .on_drag(|| Card(5))
+            .drag_export(|card: &Card| vec![DragItem::Text(format!("card {}", card.0))])
+            .on_drag_end(move |card: &Card, accepted| {
+                ended
+                    .borrow_mut()
+                    .push(format!("end:{}:{accepted}", card.0))
+            }),
+    );
+    ui.prepare_frame();
+    down(&ui, 10., 10.);
+    moved(&ui, 30., 10.);
+    let drag = ui.input.drag_state().expect("dragging");
+    assert_eq!(
+        drag.export.as_deref(),
+        Some(&[DragItem::Text("card 5".into())][..])
+    );
+    // Out of the window, another app took it.
+    moved(&ui, 400., 10.);
+    ui.input.end_drag_elsewhere(&ui.scene, true);
+    assert!(!ui.input.is_dragging());
+    assert_eq!(*log.borrow(), ["end:5:true"]);
+    let ended = ui.input.take_drag_ended().expect("ended");
+    assert!(ended.accepted);
+    assert!(ui.input.take_drag_ended().is_none());
+    // The release the platform's session took: nothing more happens.
+    up(&ui, 400., 10.);
+    assert_eq!(*log.borrow(), ["end:5:true"]);
+}

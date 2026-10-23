@@ -1,4 +1,6 @@
-//! One window-local typed drag session. Native OS drag initiation is separate.
+//! One window's typed drag session. A host handing it to the platform as it
+//! leaves the window (to other apps) reads what it carries from
+//! `drag_state`, and tells it how it ended (`end_drag_elsewhere`).
 use super::*;
 use crate::actions::Action;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +26,38 @@ pub struct DragEvent {
     /// True on End only when the accepted destination consumed Drop.
     pub accepted: bool,
 }
+/// What a drag carries to other apps, when a host hands it to the platform
+/// as it leaves the window (`View::drag_export`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum DragItem {
+    Text(String),
+    Url(String),
+    File(std::path::PathBuf),
+    /// An encoded image (PNG, JPEG, TIFF).
+    Image(Rc<[u8]>),
+}
+/// A window's drag, as its host reads it (`InputDispatcher::drag_state`).
+#[derive(Clone, Debug)]
+pub struct DragState {
+    pub payload: Action,
+    pub source: NodeId,
+    /// The pointer, in the window's coordinates.
+    pub x: f32,
+    pub y: f32,
+    pub preview: Option<NodeId>,
+    /// Where the preview's top-left goes, where a host shows it in a window
+    /// of its own (`set_drag_preview_origin`).
+    pub preview_origin: Option<(f32, f32)>,
+    pub export: Option<Rc<[DragItem]>>,
+}
+/// How a window's drag ended, for its host (a preview shown in a window of
+/// its own slides back to its source when nothing took it).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragEnded {
+    pub source: NodeId,
+    pub preview: Option<NodeId>,
+    pub accepted: bool,
+}
 #[derive(Clone)]
 pub(super) struct DragSession {
     pub(super) source: NodeId,
@@ -33,6 +67,8 @@ pub(super) struct DragSession {
     grab: (f32, f32),
     destination: Option<NodeId>,
     preview: Option<NodeId>,
+    preview_origin: Option<(f32, f32)>,
+    export: Option<Rc<[DragItem]>>,
 }
 impl DragSession {
     fn event(&self, phase: DragPhase, accepted: bool) -> InputEvent {
@@ -57,6 +93,34 @@ impl InputDispatcher {
         if let Some(drag) = &mut self.state.borrow_mut().drag {
             drag.preview = node;
         }
+    }
+    /// Where the preview's top-left goes, in window coordinates, for a host
+    /// showing it in a window of its own (it is then not moved in the scene).
+    pub fn set_drag_preview_origin(&self, origin: Option<(f32, f32)>) {
+        if let Some(drag) = &mut self.state.borrow_mut().drag {
+            drag.preview_origin = origin;
+        }
+    }
+    pub fn drag_state(&self) -> Option<DragState> {
+        self.state.borrow().drag.as_ref().map(|drag| DragState {
+            payload: drag.payload.clone(),
+            source: drag.source,
+            x: drag.x,
+            y: drag.y,
+            preview: drag.preview,
+            preview_origin: drag.preview_origin,
+            export: drag.export.clone(),
+        })
+    }
+    /// How the last drag ended, once.
+    pub fn take_drag_ended(&self) -> Option<DragEnded> {
+        self.state.borrow_mut().drag_ended.take()
+    }
+    /// The drag ended where the window does not see it (handed to the
+    /// platform, another app took it or none did): the source hears it end,
+    /// `accepted` or not, and nothing here is dropped on.
+    pub fn end_drag_elsewhere(&self, scene: &Rc<RefCell<Scene>>, accepted: bool) {
+        self.finish(scene, false, accepted);
     }
     pub fn cancel_drag(&self, scene: &Rc<RefCell<Scene>>) {
         self.finish_drag(scene, false);
@@ -106,6 +170,8 @@ impl InputDispatcher {
             grab: (pressed_at.0 - origin.x, pressed_at.1 - origin.y),
             destination: None,
             preview: None,
+            preview_origin: None,
+            export: None,
         };
         let pressed = {
             let mut state = self.state.borrow_mut();
@@ -120,7 +186,12 @@ impl InputDispatcher {
             self.route(scene, pressed, InputEvent::PointerCancel);
         }
         self.route(scene, source, InputEvent::PointerCancel);
-        self.route(scene, source, drag.event(DragPhase::Start, false));
+        let started = self.route(scene, source, drag.event(DragPhase::Start, false));
+        if let Some(items) = started.drag_export
+            && let Some(active) = &mut self.state.borrow_mut().drag
+        {
+            active.export = Some(items);
+        }
         self.update_drag(scene, x, y);
     }
     fn drag_hit(&self, scene: &Scene, x: f32, y: f32, preview: Option<NodeId>) -> Option<NodeId> {
@@ -188,6 +259,10 @@ impl InputDispatcher {
         }
     }
     fn finish_drag(&self, scene: &Rc<RefCell<Scene>>, drop: bool) {
+        self.finish(scene, drop, false);
+    }
+    /// End the drag: dropped here (`drop`), or taken elsewhere (`elsewhere`).
+    fn finish(&self, scene: &Rc<RefCell<Scene>>, drop: bool, elsewhere: bool) {
         let Some(drag) = self.state.borrow_mut().drag.take() else {
             return;
         };
@@ -198,14 +273,20 @@ impl InputDispatcher {
             state.captured = None;
             state.capture_button = None;
         }
-        let accepted = drop
-            && drag
-                .destination
-                .filter(|id| self.enabled(&scene.borrow(), *id))
-                .is_some_and(|id| {
-                    self.route(scene, id, drag.event(DragPhase::Drop, false))
-                        .prevented
-                });
+        let accepted = elsewhere
+            || drop
+                && drag
+                    .destination
+                    .filter(|id| self.enabled(&scene.borrow(), *id))
+                    .is_some_and(|id| {
+                        self.route(scene, id, drag.event(DragPhase::Drop, false))
+                            .prevented
+                    });
+        self.state.borrow_mut().drag_ended = Some(DragEnded {
+            source: drag.source,
+            preview: drag.preview,
+            accepted,
+        });
         if let Some(id) = drag.destination.filter(|id| scene.borrow().contains(*id)) {
             self.route(scene, id, drag.event(DragPhase::Leave, accepted));
         }

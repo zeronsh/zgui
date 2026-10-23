@@ -2478,6 +2478,23 @@ fn with_drag(
             call(&vm, &end, (payload.clone(), accepted));
         });
     }
+    if let Some(export) = events.drag_export.clone() {
+        let vm = vm.clone();
+        view = view.drag_export(move |payload: &Value| {
+            use zgui::input::DragItem;
+            let Some(mlua::Value::Table(items)) = call(&vm, &export, payload.clone()) else {
+                return Vec::new();
+            };
+            let text = |key: &str| items.get::<Option<String>>(key).ok().flatten();
+            let mut out = Vec::new();
+            out.extend(text("text").map(DragItem::Text));
+            out.extend(text("url").map(DragItem::Url));
+            if let Ok(Some(files)) = items.get::<Option<Vec<String>>>("files") {
+                out.extend(files.into_iter().map(|file| DragItem::File(file.into())));
+            }
+            out
+        });
+    }
     let (drop, accept, over, leave) = (
         events.drop.clone(),
         events.drop_when.clone(),

@@ -184,6 +184,8 @@ pub struct EventContext {
     click_count: u8,
     drag_request: Option<DragRequest>,
     drag_accepted: Option<NodeId>,
+    /// What a starting drag carries to other apps (`set_drag_export`).
+    drag_export: Option<Rc<[DragItem]>>,
     key_code: Option<Rc<str>>,
     /// `take_pointer`'s taker: what the pointer was pressed on gives it up.
     take_pointer: Option<NodeId>,
@@ -208,6 +210,7 @@ impl EventContext {
             click_count: 0,
             drag_request: None,
             drag_accepted: None,
+            drag_export: None,
             key_code: None,
             take_pointer: None,
             prevented_by: None,
@@ -230,6 +233,13 @@ impl EventContext {
                 pressed_at,
             ));
             self.prevent_default();
+        }
+    }
+    /// On a drag's Start, at its source: what it carries to other apps
+    /// (`View::drag_export`).
+    pub fn set_drag_export(&mut self, items: Vec<DragItem>) {
+        if matches!(&self.event, InputEvent::Drag(event) if event.phase == DragPhase::Start) {
+            self.drag_export = Some(items.into());
         }
     }
     pub fn accept_drag(&mut self) {
@@ -453,6 +463,8 @@ struct State {
     drag_orphans: Vec<Callback>,
     /// The source of a drag being finished (its drop and end delivering).
     drag_ending: Option<NodeId>,
+    /// How the last drag ended, until its host takes it (`take_drag_ended`).
+    drag_ended: Option<drag::DragEnded>,
     /// The physical key of the key event being dispatched (`set_key_code`).
     key_code: Option<Rc<str>>,
     /// The scroll view a wheel gesture is latched to, the axis it moves
@@ -3111,4 +3123,4 @@ mod disabled_observer_tests {
 
 #[path = "input_drag.rs"]
 mod drag;
-pub use drag::{DragEvent, DragPhase};
+pub use drag::{DragEnded, DragEvent, DragItem, DragPhase, DragState};

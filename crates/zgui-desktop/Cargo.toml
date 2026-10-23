@@ -6,11 +6,17 @@ license.workspace = true
 
 [features]
 # Image formats (see zgui-gpu): all by default.
-default = ["svg", "png", "jpeg", "gif"]
+default = ["svg", "png", "jpeg", "gif", "private-api"]
 svg = ["zgui-gpu/svg"]
 png = ["zgui-gpu/png"]
 jpeg = ["zgui-gpu/jpeg"]
 gif = ["zgui-gpu/gif"]
+# macOS private API, looked up as it is first used and done without where
+# it is missing: `CGSMoveWindow` moves a drag preview's window (a sixth of
+# what `setFrameOrigin:` costs). Off for App Store builds, which may not
+# call private API: build with `default-features = false` and the image
+# formats wanted.
+private-api = []
 # Terminals (`zgui::terminal`) as Ghostty surfaces: builds Ghostty with Zig
 # 0.16 (see crates/zgui-ghostty-sys). macOS only for now.
 ghostty = ["dep:zgui-ghostty-sys", "zgui-ghostty-sys/link", "dep:libc"]
@@ -67,7 +73,7 @@ webview2-com = { version = "0.39", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.18.0", default-features = false }
 objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSTextInputContext", "NSColor", "NSGraphics", "NSEvent", "objc2-core-foundation", "objc2-quartz-core", "block2", "NSTextInputClient", "NSTrackingArea", "NSCursor", "NSPasteboard", "NSGraphicsContext", "NSScreen", "NSVisualEffectView", "NSColorSpace", "NSControl", "NSScroller", "NSWorkspace", "NSAccessibility", "NSSpellChecker", "NSPanel"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSTextInputContext", "NSColor", "NSGraphics", "NSEvent", "objc2-core-foundation", "objc2-quartz-core", "block2", "NSTextInputClient", "NSTrackingArea", "NSCursor", "NSPasteboard", "NSGraphicsContext", "NSScreen", "NSVisualEffectView", "NSColorSpace", "NSControl", "NSScroller", "NSWorkspace", "NSAccessibility", "NSSpellChecker", "NSPanel", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSAppleEventManager", "NSAppleEventDescriptor", "objc2-core-services", "NSDictionary", "NSError", "NSURLRequest", "NSUUID", "NSKeyValueObserving", "NSValue", "NSData", "NSJSONSerialization", "NSGeometry", "objc2-core-foundation", "NSAttributedString", "NSRange", "NSURLResponse", "NSNotification", "NSOperation", "block2", "NSOrthography", "NSTextCheckingResult"] }
 zgui-ghostty-sys = { path = "../zgui-ghostty-sys", optional = true }
 libc = { version = "0.2", optional = true }

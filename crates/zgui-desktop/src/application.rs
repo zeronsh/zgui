@@ -114,6 +114,9 @@ enum Event {
     /// The pointer reached something in the window that opens a popup: have
     /// a popup window ready (`Ui::on_popup_soon`).
     PopupSoon(u64),
+    /// The platform's drag, handed it by the window as the drag left it
+    /// (`native_drag`).
+    NativeDrag(u64, crate::native_drag::NativeDrag),
 }
 /// Commands are queued onto the UI thread; the operating system may decline requests.
 #[derive(Debug)]
@@ -1079,6 +1082,8 @@ struct Host {
     native: crate::native_host::NativeHost,
     /// Popups shown past the window, in windows of their own.
     popups: crate::popup_window::PopupHost,
+    /// Its drag is the platform's now (`native_drag`).
+    native_drag: bool,
     /// The theme's `background` when it changes, for the renderer's clear
     /// colour, and the effect that watches it.
     theme_background: Rc<std::cell::Cell<Option<zgui::scene::Color>>>,
@@ -1143,6 +1148,8 @@ impl Host {
             ui.on_popup_soon(move || {
                 let _ = proxy.send_event(Event::PopupSoon(token));
             });
+            // Drag previews too, moved with the pointer (`PopupHost::follow`).
+            ui.set_popup_previews(cfg!(target_os = "macos"));
         }
         let inspector = zgui::inspect::Inspector::new();
         {
@@ -1270,6 +1277,7 @@ impl Host {
             ime_target: None,
             native,
             popups,
+            native_drag: false,
             theme_background: Rc::default(),
             applied_background: None,
             _background_effect: None,
@@ -1600,6 +1608,8 @@ impl Host {
                 &renderer.context(),
                 self.scale_factor as f32,
                 full,
+                self.context.ui.input.drag_state().as_ref(),
+                self.context.ui.input.take_drag_ended(),
             )?;
         }
         drop(scene);
@@ -2493,6 +2503,9 @@ impl Host {
                     PointerStep::Leave(_) => self.dispatch(InputEvent::PointerLeave)?,
                     PointerStep::Over(_) => {}
                 }
+                if self.context.ui.input.is_dragging() {
+                    self.drag_moved();
+                }
             }
             // Back from a popup window (X11): where the pointer is, which
             // winit does not say.
@@ -2807,6 +2820,82 @@ impl Host {
         }
 
         Ok(())
+    }
+    /// The window's drag moved: a preview in a window of its own moves with
+    /// the pointer, drawn once; leaving the window carrying what other apps
+    /// take (`View::drag_export`), the drag becomes the platform's.
+    fn drag_moved(&mut self) {
+        let (Some(drag), Some(window)) = (self.context.ui.input.drag_state(), self.window.clone())
+        else {
+            return;
+        };
+        if self.native_drag {
+            return;
+        }
+        self.popups.follow(&window, &drag);
+        let Some(items) = &drag.export else {
+            return;
+        };
+        let (width, height) = self.context.viewport.with_untracked(|viewport| *viewport);
+        if (0. ..width).contains(&drag.x) && (0. ..height).contains(&drag.y) {
+            return;
+        }
+        let image = self.popups.preview_image(&drag);
+        let (proxy, token) = (self.proxy.clone(), self.context.window.token);
+        if crate::native_drag::begin(&window, items, image, move |drag| {
+            let _ = proxy.send_event(Event::NativeDrag(token, drag));
+        }) {
+            zgui_gpu::present_log::log(|| "native drag begin".into());
+            self.native_drag = true;
+            self.popups.show_preview(&window, &drag, None);
+        }
+    }
+    /// The platform's drag moved or ended, at a global point: the window's
+    /// pointer, which the platform reports to its session meanwhile. Back
+    /// over the window, its destinations hear the drag; released there, it
+    /// drops on them. Taken by another app, it ends accepted; else its
+    /// preview shows where it was let go, to slide back from there.
+    fn native_drag_event(
+        &mut self,
+        event: crate::native_drag::NativeDrag,
+    ) -> Result<(), Box<dyn Error>> {
+        use crate::native_drag::NativeDrag;
+        let Some(window) = self.window.clone() else {
+            return Ok(());
+        };
+        let (x, y, ended) = match event {
+            NativeDrag::Moved { x, y } => (x, y, None),
+            NativeDrag::Ended { x, y, accepted } => (x, y, Some(accepted)),
+        };
+        let (left, top) = crate::popup_window::content_origin(&window).unwrap_or((0., 0.));
+        let at = ((x - left) as f32, (y - top) as f32);
+        let device_id = winit::event::DeviceId::dummy();
+        let position = LogicalPosition::new(at.0, at.1).to_physical(self.scale_factor);
+        let Some(taken) = ended else {
+            return self.window_event(WindowEvent::CursorMoved {
+                device_id,
+                position,
+            });
+        };
+        self.native_drag = false;
+        if let Some(drag) = self.context.ui.input.drag_state() {
+            if taken {
+                let ui = &self.context.ui;
+                ui.input.end_drag_elsewhere(&ui.scene, true);
+            } else {
+                self.popups.show_preview(&window, &drag, Some(at));
+            }
+        }
+        // The session took the button's release.
+        self.window_event(WindowEvent::CursorMoved {
+            device_id,
+            position,
+        })?;
+        self.window_event(WindowEvent::MouseInput {
+            device_id,
+            state: ElementState::Released,
+            button: MouseButton::Left,
+        })
     }
     /// Pointer input over a popup window, as the window's own (its point in
     /// the window's coordinates, past its edges).
@@ -3675,6 +3764,14 @@ impl ApplicationHandler<Event> for WindowManager {
                 if let Some(host) = self.hosts.get_mut(&token)
                     && !host.context.window.is_closed()
                     && let Err(error) = host.popup_input(input)
+                {
+                    self.fail(event_loop, error);
+                }
+            }
+            Event::NativeDrag(token, drag) => {
+                if let Some(host) = self.hosts.get_mut(&token)
+                    && !host.context.window.is_closed()
+                    && let Err(error) = host.native_drag_event(drag)
                 {
                     self.fail(event_loop, error);
                 }

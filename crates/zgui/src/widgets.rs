@@ -450,6 +450,8 @@ struct UiStorage {
     /// whether it was called and not yet heard (`popup_soon_heard`).
     popup_soon: RefCell<Option<Rc<dyn Fn()>>>,
     popup_soon_sent: Cell<bool>,
+    /// The host shows drag previews in windows of their own (`set_popup_previews`).
+    popup_previews: Cell<bool>,
     scene: Rc<RefCell<Scene>>,
     input: InputDispatcher,
     semantics: Rc<RefCell<Semantics>>,
@@ -645,6 +647,7 @@ impl Ui {
             popups: RefCell::new(Vec::new()),
             popup_soon: RefCell::new(None),
             popup_soon_sent: Cell::new(false),
+            popup_previews: Cell::new(false),
             runtime,
             scene: Rc::new(RefCell::new(Scene::new(width, height))),
             input: InputDispatcher::new(),
@@ -1512,6 +1515,19 @@ impl Ui {
     /// becomes a popup root (`Scene::set_popup`) the host shows in a window
     /// of its own. None (the default, and on hosts without popup windows):
     /// they stay inside the window.
+    /// The host shows a drag's preview in a window of its own and moves
+    /// that window with the pointer (macOS): previews are then popup roots,
+    /// over every window and app, drawn once.
+    pub fn set_popup_previews(&self, on: bool) {
+        self.storage.popup_previews.set(on);
+    }
+    pub(crate) fn popup_previews(&self) -> bool {
+        self.storage.popup_previews.get()
+            && self
+                .storage
+                .popup_screens
+                .with_untracked(|screens| !screens.is_empty())
+    }
     pub fn set_popup_screens(&self, screens: Vec<Rect>) {
         if self
             .storage

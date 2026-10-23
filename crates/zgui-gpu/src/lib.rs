@@ -5512,6 +5512,49 @@ impl GpuRenderer {
             .as_ref()
             .is_some_and(|present| present.current.is_some())
     }
+    /// The frame its layer shows (a popup window's), for an image of it (a
+    /// drag image): width and height in pixels, then premultiplied BGRA rows.
+    /// Waits for the GPU to finish it.
+    #[cfg(target_os = "macos")]
+    pub fn shown_pixels(&self) -> Option<(u32, u32, Vec<u8>)> {
+        use std::ffi::c_void;
+        unsafe extern "C" {
+            fn IOSurfaceLock(surface: *const c_void, options: u32, seed: *mut u32) -> i32;
+            fn IOSurfaceUnlock(surface: *const c_void, options: u32, seed: *mut u32) -> i32;
+            fn IOSurfaceGetBaseAddress(surface: *const c_void) -> *const u8;
+            fn IOSurfaceGetBytesPerRow(surface: *const c_void) -> usize;
+            fn IOSurfaceGetWidth(surface: *const c_void) -> usize;
+            fn IOSurfaceGetHeight(surface: *const c_void) -> usize;
+        }
+        let present = self.layer_present.as_ref()?;
+        let (buffer, _) = present.buffers.get(present.shown?)?;
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let surface = objc2_core_foundation::CFRetained::as_ptr(&buffer.surface)
+            .as_ptr()
+            .cast::<c_void>()
+            .cast_const();
+        // SAFETY: a live surface of the renderer's, locked read-only (1)
+        // while its rows are copied.
+        unsafe {
+            if IOSurfaceLock(surface, 1, std::ptr::null_mut()) != 0 {
+                return None;
+            }
+            let (width, height) = (IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface));
+            let (base, stride) = (
+                IOSurfaceGetBaseAddress(surface),
+                IOSurfaceGetBytesPerRow(surface),
+            );
+            let mut pixels = Vec::with_capacity(width * height * 4);
+            for row in 0..height {
+                pixels.extend_from_slice(std::slice::from_raw_parts(
+                    base.add(row * stride),
+                    width * 4,
+                ));
+            }
+            IOSurfaceUnlock(surface, 1, std::ptr::null_mut());
+            Some((width as u32, height as u32, pixels))
+        }
+    }
     /// How long the GPU took to run the frame last presented, when it was
     /// encoded with Metal directly: the frame's own work, plus however long
     /// other work on the GPU (the window server's compositing, other apps)

@@ -808,6 +808,9 @@ export type KeyEvent = {
 	["repeat"]: boolean,
 }
 export type WheelEvent = { dx: number, dy: number }
+-- What a drag carries to other apps (`drag_export`): text, a link, files
+-- (absolute paths).
+export type DragExport = { text: string?, url: string?, files: { string }? }
 export type Size = { w: number, h: number }
 export type DragPoint = { x: number, y: number, local_x: number, local_y: number, w: number, h: number }
 
@@ -1231,6 +1234,9 @@ export type NodeProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -1500,6 +1506,9 @@ export type Props = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -1762,6 +1771,9 @@ export type ContainerProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -2026,6 +2038,9 @@ export type ScrollProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -2297,6 +2312,9 @@ export type TextProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -2609,6 +2627,9 @@ export type RichProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -2871,6 +2892,9 @@ export type ImageProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -3141,6 +3165,9 @@ export type SvgProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -3405,6 +3432,9 @@ export type CanvasProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -3668,6 +3698,9 @@ export type CheckboxProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -3934,6 +3967,9 @@ export type InputProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -4215,6 +4251,9 @@ export type ProgressProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -4478,6 +4517,9 @@ export type SliderProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -4745,6 +4787,9 @@ export type ListProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -5040,6 +5085,9 @@ export type LayerProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -5304,6 +5352,9 @@ export type ModalProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -5577,6 +5628,9 @@ export type PopoverProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -5852,6 +5906,9 @@ export type MenuItemProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -6116,6 +6173,9 @@ export type SubmenuProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -6383,6 +6443,9 @@ export type WebViewProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -6668,6 +6731,9 @@ export type TerminalProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -6931,6 +6997,9 @@ export type SlotProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -7199,6 +7268,9 @@ export type EachOptions = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
@@ -7470,6 +7542,9 @@ export type PresenceOptions = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,

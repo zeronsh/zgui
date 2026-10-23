@@ -71,13 +71,15 @@ pub(crate) enum PopupInput {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) use macos::{PopupHost, enabled, popup_screens, warm};
+pub(crate) use macos::{PopupHost, content_origin, enabled, popup_screens, warm};
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub(crate) use other::{PopupHost, enabled, popup_screens, warm};
+pub(crate) use other::{PopupHost, content_origin, enabled, popup_screens, warm};
 
 #[cfg(target_os = "linux")]
-pub(crate) use x11::{PopupHost, enabled, make, pointer, popup_screens, route, wanted, warm};
+pub(crate) use x11::{
+    PopupHost, content_origin, enabled, make, pointer, popup_screens, route, wanted, warm,
+};
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod other {
@@ -102,8 +104,24 @@ mod other {
             _: &zgui_gpu::GpuContext,
             _: f32,
             _: bool,
+            _: Option<&zgui::input::DragState>,
+            _: Option<zgui::input::DragEnded>,
         ) -> Result<(), zgui_gpu::GpuError> {
             Ok(())
+        }
+        pub fn follow(&mut self, _: &winit::window::Window, _: &zgui::input::DragState) {}
+        pub fn preview_image(
+            &self,
+            _: &zgui::input::DragState,
+        ) -> Option<crate::native_drag::DragImage> {
+            None
+        }
+        pub fn show_preview(
+            &mut self,
+            _: &winit::window::Window,
+            _: &zgui::input::DragState,
+            _: Option<(f32, f32)>,
+        ) {
         }
         pub fn hide_all(&mut self, _: &winit::window::Window) {}
     }
@@ -112,6 +130,9 @@ mod other {
     }
     pub(crate) fn enabled() -> bool {
         false
+    }
+    pub(crate) fn content_origin(_: &winit::window::Window) -> Option<(f64, f64)> {
+        None
     }
     pub(crate) fn warm(_: &zgui_gpu::GpuContext, _: f32) {}
 }
@@ -141,6 +162,7 @@ mod macos {
         event::{MouseButton, MouseScrollDelta, TouchPhase},
     };
     use zgui::{
+        input::{DragEnded, DragState},
         scene::{NodeId, NodeKind, Rect, Scene},
         semantics::{Role, Semantics},
     };
@@ -372,6 +394,11 @@ mod macos {
         rect: Option<Rect>,
         /// Its popup root's layer revision it last drew.
         revision: Option<u64>,
+        /// A drag preview's: from where its preview goes to its frame.
+        preview: Option<(f32, f32)>,
+        /// Moved by the window server alone (`follow`), to `rect` over its
+        /// parent: AppKit's frame is stale until set.
+        moved: Option<(Retained<NSWindow>, Retained<NSView>, Rect)>,
     }
     impl Panel {
         fn new(mtm: MainThreadMarker) -> Self {
@@ -458,6 +485,8 @@ mod macos {
                 scale: 0.,
                 rect: None,
                 revision: None,
+                preview: None,
+                moved: None,
             }
         }
         /// Its renderer, made for `scale` (again for a new one).
@@ -507,6 +536,7 @@ mod macos {
         }
         /// Place it at `rect` (its parent's coordinates) over `parent`.
         fn place(&mut self, parent: &NSWindow, content: &NSView, rect: Rect) {
+            self.sync();
             if self.rect == Some(rect) {
                 return;
             }
@@ -528,7 +558,15 @@ mod macos {
                 }
             }
         }
+        /// AppKit learns where the window server has moved it (`follow`).
+        fn sync(&mut self) {
+            if let Some((parent, content, rect)) = self.moved.take() {
+                self.rect = None;
+                self.place(&parent, &content, rect);
+            }
+        }
         fn hide(&mut self) {
+            self.sync();
             let parent = self.view.ivars().parent.borrow_mut().take();
             if let Some(parent) = parent {
                 parent.removeChildWindow(&self.window);
@@ -541,6 +579,7 @@ mod macos {
             self.material = None;
             self.rect = None;
             self.revision = None;
+            self.preview = None;
             self.window.setAlphaValue(1.);
             self.window.setIgnoresMouseEvents(false);
             if let Some(renderer) = &mut self.renderer {
@@ -696,6 +735,105 @@ mod macos {
             ];
         }
     }
+    /// Slide a drag preview's `panel` to `to` (its parent's coordinates),
+    /// with the duration and ease of AppKit's drag images sliding back, then
+    /// put it back in the pool.
+    fn slide_back(panel: Panel, parent: &NSWindow, content: &NSView, to: Rect) {
+        let local = NSRect::new(
+            NSPoint::new(to.x as f64, to.y as f64),
+            NSSize::new(to.width as f64, to.height as f64),
+        );
+        let target = parent.convertRectToScreen(content.convertRect_toView(local, None));
+        let window = panel.window.clone();
+        let id = NEXT_FADE.with(|next| {
+            next.set(next.get() + 1);
+            next.get()
+        });
+        FADING.with(|fading| fading.borrow_mut().push((id, panel)));
+        let changes = block2::RcBlock::new(move |context: *mut AnyObject| {
+            // SAFETY: AppKit's animation context, and a window's animator
+            // proxy, which animates its frame.
+            unsafe {
+                let _: () = msg_send![context, setDuration: 0.2f64];
+                let ease: Retained<AnyObject> = msg_send![
+                    objc2::class!(CAMediaTimingFunction),
+                    functionWithName: &*NSString::from_str("easeOut")
+                ];
+                let _: () = msg_send![context, setTimingFunction: &*ease];
+                let animator: Retained<NSWindow> = msg_send![&*window, animator];
+                animator.setFrame_display(target, false);
+            }
+        });
+        let done = block2::RcBlock::new(move || {
+            let panel = FADING.with(|fading| {
+                let mut fading = fading.borrow_mut();
+                let index = fading.iter().position(|(other, _)| *other == id)?;
+                Some(fading.swap_remove(index).1)
+            });
+            if let Some(panel) = panel {
+                release(panel);
+            }
+        });
+        // SAFETY: as `fade_out`'s.
+        unsafe {
+            let _: () = msg_send![
+                objc2::class!(NSAnimationContext),
+                runAnimationGroup: &*changes,
+                completionHandler: &*done
+            ];
+        }
+    }
+    /// The level drag images show at (`kCGDraggingWindowLevel`), over menus.
+    const DRAGGING_LEVEL: isize = 500;
+    /// Move `window`'s top-left to `origin` (global, top-down from the
+    /// primary screen's top) through the window server alone, as AppKit
+    /// moves its drag images, without AppKit's bookkeeping for a moved
+    /// window (a sixth of `setFrameOrigin:`'s cost). `CGSMoveWindow` is
+    /// private API: looked up once, and false where it is missing or the
+    /// `private-api` feature is off (App Store builds).
+    fn server_move(window: &NSWindow, origin: NSPoint) -> bool {
+        #[cfg(feature = "private-api")]
+        {
+            use std::ffi::{c_char, c_void};
+            type Connection = unsafe extern "C" fn() -> i32;
+            type Move = unsafe extern "C" fn(i32, u32, *const NSPoint) -> i32;
+            unsafe extern "C" {
+                fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+            }
+            thread_local! {
+                static MOVE: Option<(Connection, Move)> = {
+                    // `RTLD_DEFAULT`: every image loaded (AppKit loads
+                    // the window server's).
+                    let default = -2isize as *mut c_void;
+                    // SAFETY: symbols looked up by name, transmuted to
+                    // their C signatures only when found.
+                    unsafe {
+                        let connection = dlsym(default, c"CGSMainConnectionID".as_ptr());
+                        let moved = dlsym(default, c"CGSMoveWindow".as_ptr());
+                        (!connection.is_null() && !moved.is_null()).then(|| {
+                            (
+                                std::mem::transmute::<*mut c_void, Connection>(connection),
+                                std::mem::transmute::<*mut c_void, Move>(moved),
+                            )
+                        })
+                    }
+                };
+            }
+            if let Some((connection, moved)) = MOVE.with(|found| *found) {
+                // SAFETY: the window server's own call, on a window of ours.
+                return unsafe { moved(connection(), window.windowNumber() as u32, &origin) } == 0;
+            }
+        }
+        let _ = (window, origin);
+        false
+    }
+    /// The primary screen's height, to flip between AppKit's and global
+    /// coordinates (AppKit's run bottom-up from its bottom).
+    fn flip_height(mtm: MainThreadMarker) -> f64 {
+        objc2_app_kit::NSScreen::screens(mtm)
+            .firstObject()
+            .map_or(0., |screen| screen.frame().size.height)
+    }
     fn acquire(mtm: MainThreadMarker) -> Panel {
         POOL_PANELS
             .with(|pool| pool.borrow_mut().pop())
@@ -780,6 +918,16 @@ mod macos {
             })
             .collect()
     }
+    /// The window's content top-left in global coordinates (top-down from
+    /// the primary screen's top, in points).
+    pub(crate) fn content_origin(window: &winit::window::Window) -> Option<(f64, f64)> {
+        let (parent, content) = parent_of(window)?;
+        let frame = parent.convertRectToScreen(content.convertRect_toView(content.bounds(), None));
+        Some((
+            frame.origin.x,
+            flip_height(MainThreadMarker::from(&*parent)) - (frame.origin.y + frame.size.height),
+        ))
+    }
     /// The backing scale of the screen holding `rect`'s centre (the
     /// parent's coordinates): a popup draws at the scale it shows at.
     fn scale_at(parent: &NSWindow, content: &NSView, rect: Rect) -> Option<f32> {
@@ -821,7 +969,9 @@ mod macos {
         }
         /// After the scene's flush: show each visible popup root in a panel
         /// over `window`, draw it again where it changed (its layer revision,
-        /// `Scene::set_popup`; always when `full`), and hide the rest.
+        /// `Scene::set_popup`; always when `full`), and hide the rest. A drag
+        /// preview's panel goes where `drag` puts it; as the drag ends
+        /// (`ended`) untaken, it slides back to its source.
         #[allow(clippy::too_many_arguments)]
         pub fn update(
             &mut self,
@@ -831,6 +981,8 @@ mod macos {
             context: &GpuContext,
             scale: f32,
             full: bool,
+            drag: Option<&DragState>,
+            ended: Option<DragEnded>,
         ) -> Result<(), GpuError> {
             if self.shown.is_empty() && scene.popups().is_empty() {
                 return Ok(());
@@ -852,9 +1004,32 @@ mod macos {
                     index += 1;
                     continue;
                 }
-                let (root, panel) = self.shown.swap_remove(index);
+                let (root, mut panel) = self.shown.swap_remove(index);
                 zgui_gpu::present_log::log(|| format!("popup hide {root:?}"));
-                fade_out(panel);
+                if panel.preview.is_none() {
+                    fade_out(panel);
+                    continue;
+                }
+                // A drag nothing took: its preview slides back to its
+                // source, as AppKit's drag images do. A taken one goes.
+                let back = ended
+                    .filter(|ended| ended.preview == Some(root) && !ended.accepted)
+                    .filter(|ended| scene.contains(ended.source))
+                    .zip(panel.preview.zip(panel.rect));
+                match back {
+                    Some((ended, ((dx, dy), rect))) => {
+                        let source = scene.bounds(ended.source);
+                        panel.sync();
+                        panel.window.orderFront(None);
+                        slide_back(
+                            panel,
+                            &parent,
+                            &content,
+                            Rect::new(source.x + dx, source.y + dy, rect.width, rect.height),
+                        );
+                    }
+                    None => release(panel),
+                }
             }
             let number = parent.windowNumber();
             PARENTS.with(|parents| {
@@ -900,8 +1075,26 @@ mod macos {
                     renderer.repaint_all();
                     renderer.render(scene, &[])?;
                 }
-                let moved = panel.rect != Some(rect);
-                let material = Material::of(scene, semantics, root);
+                // A drag preview's panel goes where the drag puts it; its
+                // frame is drawn where the scene has it.
+                let preview = drag.filter(|drag| drag.preview == Some(root)).map(|drag| {
+                    let laid = scene.bounds(root);
+                    let (x, y) = drag.preview_origin.unwrap_or((laid.x, laid.y));
+                    (rect.x - laid.x, rect.y - laid.y, x, y)
+                });
+                if new {
+                    panel.preview = preview.map(|(dx, dy, ..)| (dx, dy));
+                }
+                let frame = match preview {
+                    Some((dx, dy, x, y)) => Rect::new(x + dx, y + dy, rect.width, rect.height),
+                    None => rect,
+                };
+                let moved = panel.rect != Some(frame);
+                let material = Material::of(scene, semantics, root).map(|mut material| {
+                    material.rect.x += frame.x - rect.x;
+                    material.rect.y += frame.y - rect.y;
+                    material
+                });
                 let drawn = panel
                     .renderer
                     .as_ref()
@@ -915,8 +1108,8 @@ mod macos {
                 CATransaction::begin();
                 CATransaction::setDisableActions(true);
                 panel.renderer.as_mut().expect("made above").present()?;
-                panel.back(material, rect);
-                panel.place(&parent, &content, rect);
+                panel.back(material, frame);
+                panel.place(&parent, &content, frame);
                 if new {
                     panel.host.setHidden(false);
                 }
@@ -927,12 +1120,21 @@ mod macos {
                     *ivars.parent.borrow_mut() = Some(parent.clone());
                     // Its first frame reaches the window server before it shows.
                     CATransaction::flush();
-                    // SAFETY: both are live windows of this process.
-                    unsafe {
-                        parent.addChildWindow_ordered(&panel.window, NSWindowOrderingMode::Above)
-                    };
-                    // A child takes its parent's level; menus' is higher.
-                    panel.window.setLevel(NSPopUpMenuWindowLevel);
+                    if panel.preview.is_some() {
+                        // Over every window, the pointer passing through it,
+                        // as AppKit's drag images.
+                        panel.window.setIgnoresMouseEvents(true);
+                        panel.window.setLevel(DRAGGING_LEVEL);
+                        *ivars.parent.borrow_mut() = None;
+                    } else {
+                        // SAFETY: both are live windows of this process.
+                        unsafe {
+                            parent
+                                .addChildWindow_ordered(&panel.window, NSWindowOrderingMode::Above)
+                        };
+                        // A child takes its parent's level; menus' is higher.
+                        panel.window.setLevel(NSPopUpMenuWindowLevel);
+                    }
                     panel.window.orderFront(None);
                 }
                 if new || moved {
@@ -942,6 +1144,86 @@ mod macos {
                 }
             }
             Ok(())
+        }
+        /// Move the drag preview's panel to where `drag` puts it, drawing
+        /// nothing (between frames, as the pointer moves).
+        pub fn follow(&mut self, window: &winit::window::Window, drag: &DragState) {
+            let (Some(root), Some((x, y))) = (drag.preview, drag.preview_origin) else {
+                return;
+            };
+            let Some((_, panel)) = self.shown.iter_mut().find(|(shown, _)| *shown == root) else {
+                return;
+            };
+            let (Some((dx, dy)), Some(rect)) = (panel.preview, panel.rect) else {
+                return;
+            };
+            let Some((parent, content)) = parent_of(window) else {
+                return;
+            };
+            let frame = Rect::new(x + dx, y + dy, rect.width, rect.height);
+            if panel.rect == Some(frame) {
+                return;
+            }
+            let local = NSRect::new(
+                NSPoint::new(frame.x as f64, frame.y as f64),
+                NSSize::new(frame.width as f64, frame.height as f64),
+            );
+            let screen = parent.convertRectToScreen(content.convertRect_toView(local, None));
+            let top = flip_height(MainThreadMarker::from(&*parent))
+                - (screen.origin.y + screen.size.height);
+            if server_move(&panel.window, NSPoint::new(screen.origin.x, top)) {
+                // AppKit hears where it went as the drag ends (`hide`).
+                panel.moved = Some((parent, content, frame));
+            } else {
+                // Its size is the same: only its origin moves.
+                panel.window.setFrameOrigin(screen.origin);
+                panel.view.ivars().origin.set((frame.x, frame.y));
+            }
+            panel.rect = Some(frame);
+        }
+        /// The drag preview's last frame, as a drag image with the pointer in
+        /// it (to hand the drag to AppKit).
+        pub fn preview_image(&self, drag: &DragState) -> Option<crate::native_drag::DragImage> {
+            let root = drag.preview?;
+            let (_, panel) = self.shown.iter().find(|(shown, _)| *shown == root)?;
+            let rect = panel.rect?;
+            let (width, height, bgra) = panel.renderer.as_ref()?.shown_pixels()?;
+            Some(crate::native_drag::DragImage {
+                width,
+                height,
+                bgra,
+                scale: panel.scale,
+                grab: (drag.x - rect.x, drag.y - rect.y),
+            })
+        }
+        /// Show the drag preview, or not (`None`: AppKit shows the drag's
+        /// image meanwhile); shown again with the drag's pointer at `at` (the
+        /// parent's coordinates).
+        pub fn show_preview(
+            &mut self,
+            window: &winit::window::Window,
+            drag: &DragState,
+            at: Option<(f32, f32)>,
+        ) {
+            let Some(root) = drag.preview else {
+                return;
+            };
+            let Some((_, panel)) = self.shown.iter_mut().find(|(shown, _)| *shown == root) else {
+                return;
+            };
+            match at {
+                None => panel.window.orderOut(None),
+                Some((x, y)) => {
+                    let (Some(rect), Some((parent, content))) = (panel.rect, parent_of(window))
+                    else {
+                        return;
+                    };
+                    let grab = (drag.x - rect.x, drag.y - rect.y);
+                    let frame = Rect::new(x - grab.0, y - grab.1, rect.width, rect.height);
+                    panel.place(&parent, &content, frame);
+                    panel.window.orderFront(None);
+                }
+            }
         }
         /// Hide every popup (the window closes or goes away).
         pub fn hide_all(&mut self, _: &winit::window::Window) {
@@ -1180,6 +1462,13 @@ mod x11 {
     }
     /// macOS readies a panel here; X11's windows are made by `make`.
     pub(crate) fn warm(_: &GpuContext, _: f32) {}
+    // todo(x11): drags between windows need each window's place on screen
+    // (`XTranslateCoordinates`) and the stacking order; drag previews in
+    // windows of their own need `PopupHost::follow`. Until then drags stay
+    // in their window and previews in its scene (`Ui::set_popup_previews`).
+    pub(crate) fn content_origin(_: &Window) -> Option<(f64, f64)> {
+        None
+    }
     /// Whether a popup found no window ready (`make` one).
     pub(crate) fn wanted() -> bool {
         WANTED.with(|wanted| wanted.replace(false))
@@ -1317,6 +1606,8 @@ mod x11 {
             context: &GpuContext,
             scale: f32,
             full: bool,
+            _: Option<&zgui::input::DragState>,
+            _: Option<zgui::input::DragEnded>,
         ) -> Result<(), GpuError> {
             if (self.shown.is_empty() && scene.popups().is_empty()) || !x11(parent) {
                 return Ok(());
@@ -1419,6 +1710,20 @@ mod x11 {
             Ok(())
         }
         /// Hide every popup (the window closes or goes away).
+        pub fn follow(&mut self, _: &Window, _: &zgui::input::DragState) {}
+        pub fn preview_image(
+            &self,
+            _: &zgui::input::DragState,
+        ) -> Option<crate::native_drag::DragImage> {
+            None
+        }
+        pub fn show_preview(
+            &mut self,
+            _: &Window,
+            _: &zgui::input::DragState,
+            _: Option<(f32, f32)>,
+        ) {
+        }
         pub fn hide_all(&mut self, parent: &Window) {
             for (_, popup) in self.shown.drain(..) {
                 release(popup);

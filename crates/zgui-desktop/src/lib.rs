@@ -28,6 +28,7 @@ mod linux_dbus;
 mod linux_spelling;
 #[cfg(target_os = "linux")]
 mod linux_zenity;
+mod native_drag;
 mod native_events;
 mod native_prompt;
 mod platform;

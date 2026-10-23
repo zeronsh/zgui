@@ -2,7 +2,9 @@
 -- menu, a submenu, a select, a popover, a context menu and a tooltip near
 -- the window's edges reach past them, each in a window of its own with
 -- AppKit's menu and popover material (the theme's defaults there), opening
--- and closing as AppKit's do; elsewhere they stay inside the window.
+-- and closing as AppKit's do; elsewhere they stay inside the window. The
+-- chips at the bottom drag out to other apps: text into Mail or Notes, a
+-- link into Safari.
 
 local file = ui.state("file", false)
 local recent = ui.state("recent", false)
@@ -124,6 +126,37 @@ local function popover(): Node
 	}
 end
 
+-- A chip that drags out to other apps, carrying `export`.
+local function chip(label: string, export: DragExport): Node
+	return ui.column {
+		h = 28,
+		px = 12,
+		justify = "center",
+		rounded = 8,
+		bg = "#3d7ef733",
+		text_size = 12,
+		on_drag = function()
+			return label
+		end,
+		drag_preview = function(payload: string)
+			return ui.column {
+				h = 28,
+				px = 12,
+				justify = "center",
+				rounded = 8,
+				bg = "#3d7ef7e0",
+				color = "#ffffff",
+				text_size = 12,
+				ui.text(payload),
+			}
+		end,
+		drag_export = function()
+			return export
+		end,
+		ui.text(label),
+	}
+end
+
 return ui.column {
 	w = "100%",
 	h = "100%",
@@ -175,7 +208,11 @@ return ui.column {
 		w = "100%",
 		items = "center",
 		justify = "between",
-		ui.text { "Menus, popovers and tooltips reach past the window.", text_size = 12, opacity = 0.6 },
+		ui.row {
+			gap = 8,
+			chip("A line of text", { text = "Dragged out of a zgui window." }),
+			chip("A link", { url = "https://github.com/zeronsh/zgui" }),
+		},
 		select(),
 	},
 }

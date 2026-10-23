@@ -3,12 +3,15 @@
 //! edge of a small window. On macOS they show in windows of their own, with
 //! AppKit's menu and popover material (the theme's defaults there), open as
 //! AppKit's do (a menu on press: drag to an item and release to choose it)
-//! and fade as they close; elsewhere they stay inside the window.
+//! and fade as they close; elsewhere they stay inside the window. The
+//! chips at the bottom drag out to other apps: text into Mail or Notes, a
+//! link into Safari, a file into Finder.
 //!
 //! `--open=file|recent|select|details` opens one at start and `--at=X,Y`
 //! places the window (physical pixels), for screenshots.
 use zgui::{
     compose::{Placement, PlacementEdge, PlacementSide, prelude::*},
+    input::DragItem,
     reactive::Signal,
 };
 use zgui_desktop::{Application, WindowOptions};
@@ -144,6 +147,29 @@ fn details(open: Signal<bool>, name: Signal<String>) -> View {
         )
 }
 
+/// A chip that drags out to other apps, carrying `export`.
+fn chip(label: &'static str, export: DragItem) -> View {
+    let look = |view: View| {
+        view.h(28.)
+            .px(12.)
+            .rounded(8.)
+            .items_center()
+            .justify_center()
+            .text_size(12.)
+    };
+    look(div())
+        .bg(rgba(0x3d7ef733))
+        .child(text(label))
+        .on_drag(move || label)
+        .drag_preview(move |label: &&'static str| {
+            look(div())
+                .bg(rgba(0x3d7ef7e0))
+                .text_color(rgb(0xffffff))
+                .child(text(*label))
+        })
+        .drag_export(move |_: &&'static str| vec![export.clone()])
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let open_at_start =
         std::env::args().find_map(|arg| arg.strip_prefix("--open=").map(String::from));
@@ -151,6 +177,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (x, y) = arg.strip_prefix("--at=")?.split_once(',')?;
         Some((x.parse().ok()?, y.parse().ok()?))
     });
+    // A file to drag into Finder.
+    let path = std::env::temp_dir().join("Dragged from zgui.txt");
+    std::fs::write(&path, "Dragged out of a zgui window.\n")?;
     Application::new()
         .window(WindowOptions {
             title: "Popups past the window".into(),
@@ -218,11 +247,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .w_full()
                             .items_center()
                             .justify_between()
-                            .child(
-                                text("Menus, popovers and tooltips reach past the window.")
-                                    .text_size(12.)
-                                    .opacity(0.6),
-                            )
+                            .child(row().gap(8.).children([
+                                chip(
+                                    "A line of text",
+                                    DragItem::Text("Dragged out of a zgui window.".into()),
+                                ),
+                                chip(
+                                    "A link",
+                                    DragItem::Url("https://github.com/zeronsh/zgui".into()),
+                                ),
+                                chip("A file", DragItem::File(path.clone())),
+                            ]))
                             .child(select(size.clone(), chosen)),
                     ),
             );

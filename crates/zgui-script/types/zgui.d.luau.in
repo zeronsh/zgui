@@ -801,6 +801,9 @@ export type KeyEvent = {
 	["repeat"]: boolean,
 }
 export type WheelEvent = { dx: number, dy: number }
+-- What a drag carries to other apps (`drag_export`): text, a link, files
+-- (absolute paths).
+export type DragExport = { text: string?, url: string?, files: { string }? }
 export type Size = { w: number, h: number }
 export type DragPoint = { x: number, y: number, local_x: number, local_y: number, w: number, h: number }
 
@@ -1224,6 +1227,9 @@ export type NodeProps = {
 	on_drag: (() -> any)?,
 	drag_preview: ((payload: any) -> Node)?,
 	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
 	-- A destination: `drop_when` filters payloads (default: all).
 	drop_when: ((payload: any) -> unknown)?,
 	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
