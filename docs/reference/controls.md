@@ -1,4 +1,4 @@
-# Controls: button, input, textarea, checkbox, slider, progress
+# Controls: button, input, textarea, checkbox, slider, progress, segmented, stepper
 
 Controls take keyboard focus, show it with an accent ring, and (except `button`) bind a state both ways: the control shows the state, and the user's changes write it. They take any [property](properties.md) and [event](events.md); their defaults below are only defaults.
 
@@ -9,7 +9,11 @@ ui.textarea(props: InputProps) -> Node
 ui.checkbox(props: CheckboxProps) -> Node
 ui.slider(props: SliderProps) -> Node
 ui.progress(props: ProgressProps) -> Node
+ui.segmented(props: SegmentedProps) -> Node
+ui.stepper(props: StepperProps) -> Node
 ```
+
+Every control dims while `disabled` (to 45% opacity, as native controls do) unless it says how it looks then.
 
 ## button
 
@@ -23,7 +27,7 @@ A focusable box whose children lie in a row; `on_click` runs on a click, Space o
 | `px`, `py` | `Length` | `12`, `8` | |
 | `gap` | `number` | `6` | |
 | `items` | `Align` | `"center"` | |
-| `bg` | `Color` | `"#232e40"` | `hover` defaults to `{ bg = "#2f4058" }` |
+| `bg` | `Color` | `"$button.bg"` | `hover` defaults to `"$button.hover"` |
 | `rounded` | `number` | `6` | |
 | `focus` | `Styles` | an accent ring | `focus = { border = 0 }` removes it |
 
@@ -44,7 +48,7 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `multiline` | `boolean` | `false` (`textarea`: always) | `input` with several lines |
 | `w`, `h` | `Length` | `240` wide (an intrinsic width), `36` high (`textarea`: `156`) | |
 | `px`, `py` | `Length` | `8`, `6` | |
-| `bg`, `rounded` | | `"#232e40"`, `6` | |
+| `bg`, `rounded` | | `"$input.bg"`, `"$radius.md"` | |
 | `shrink` | `number` | `1` | a row too narrow for it shrinks it, to nothing if need be (it scrolls its text); `shrink = 0` holds it |
 | `wrap` | `boolean` | `false` | `textarea`: wrap long lines rather than scroll them |
 | `line_numbers` | `boolean` | `false` | `textarea`: number the lines in a gutter at the left, the caret's brighter (a code editor); only the lines in view are built |
@@ -65,6 +69,8 @@ A toggle drawn as the platform draws one, a rounded 16-point box beside its labe
 
 ## slider
 
+`step` sets what an arrow moves (ten steps with Shift, or Page Up and Down) and what a drag lands on; without one, an arrow moves a hundredth of the range.
+
 A horizontal number control: dragging, the arrow keys (1% of the range) and Home/End move it.
 
 | Option | Type | Default | |
@@ -74,8 +80,30 @@ A horizontal number control: dragging, the arrow keys (1% of the range) and Home
 | `label` | `string` | `""` | its accessible name (not drawn) |
 | `w`, `h` | `Length` | `240`, `36` | |
 | `px`, `py` | `Length` | `8`, `6` | |
-| `bg`, `rounded` | | `"#232e40"`, `6` | the rail |
+| `bg`, `rounded` | | `"$input.bg"`, `"$radius.md"` | the rail |
 | `color` | `Color` | inherited | the thumb |
+
+## segmented
+
+One of a few options side by side, as AppKit's segmented control: a radio group to assistive technology, one Tab stop, the arrows (mirrored right to left) moving the choice, Home and End to the ends.
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `value` | `State<any>` | required | the chosen option's value, both ways |
+| `options` | `{ string \| number \| { label, value } }` | required | what each shows; a bare string or number is its own value |
+| `label` | `string` | `""` | the group's accessible name |
+
+## stepper
+
+A number field with buttons that step it, a spin button to assistive technology. The arrows step it, Page Up and Down ten steps, Home and End to its ends; what is typed applies on Enter or on leaving the field, and anything that isn't a number goes back to the value.
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `value` | `State<number>` | required | held between `min` and `max`, rounded to `decimals` |
+| `min`, `max` | `number` | none | |
+| `step` | `number` | `1` | |
+| `decimals` | `number` | `0` | digits shown after the point |
+| `label` | `string` | `""` | its accessible name |
 
 ## progress
 
@@ -83,10 +111,10 @@ A determinate bar from a 0-to-1 state; it takes no input.
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<number>` | required | 0 to 1, clamped |
+| `value` | `State<number?>` | required | 0 to 1, clamped; `nil` is indeterminate (work of unknown size): a stretch of the bar sweeps across, and assistive technology hears no value |
 | `label` | `string` | `""` | its accessible name (not drawn) |
 | `w`, `h` | `Length` | `240`, `8` | |
-| `bg` | `Color` | `"#232e40"` | the track |
+| `bg` | `Color` | `"$input.bg"` | the track |
 | `color` | `Color` | inherited | the fill |
 
 ## Example

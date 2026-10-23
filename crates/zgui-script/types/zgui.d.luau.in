@@ -187,6 +187,7 @@ export type ColorToken =
 	| "$menu.bg"
 	| "$menu.hover"
 	| "$popover.bg"
+	| "$backdrop"
 	| "$selection.inactive"
 	| "$selection.text"
 	| "$selection.text.inactive"
@@ -313,6 +314,7 @@ export type TokenName =
 	| "menu.bg"
 	| "menu.hover"
 	| "popover.bg"
+	| "backdrop"
 	| "selection.inactive"
 	| "selection.text"
 	| "selection.text.inactive"
@@ -1155,6 +1157,22 @@ export type AriaRole =
 	| "tab"
 	| "dialog"
 	| "img"
+	| "tabpanel"
+	| "radiogroup"
+	| "radio"
+	| "switch"
+	| "checkbox"
+	| "spinbutton"
+	| "combobox"
+	| "tree"
+	| "treeitem"
+	| "grid"
+	| "row"
+	| "gridcell"
+	| "columnheader"
+	| "alert"
+	| "menu"
+	| "menuitem"
 export type NodeProps = {
 	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -1178,6 +1196,11 @@ export type NodeProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -1215,6 +1238,9 @@ export type NodeProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -1431,14 +1457,50 @@ export type InputProps = Merge<Props, {
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
 }>
-export type ProgressProps = Merge<Props, { value: State<number>, label: string? }>
+-- `value` from 0 to 1, or nil: indeterminate (work of unknown size), a
+-- stretch of the bar sweeping across.
+export type ProgressProps = Merge<Props, { value: State<number> | State<number?>, label: string? }>
 export type SliderProps = Merge<Props, {
 	value: State<number>,
 	label: string?,
 	-- 0 and 1 by default; min < max.
 	min: number?,
 	max: number?,
+	-- What an arrow moves (ten with Shift, or Page Up and Down), and what
+	-- a drag lands on; a hundredth of the range without one.
+	step: number?,
 }>
+-- One of a few options side by side (AppKit's segmented control; a radio
+-- group to assistive technology): the arrows move the choice.
+export type SegmentedOption = string | number | { label: string, value: any? }
+export type SegmentedProps = Merge<Props, {
+	value: State<any>,
+	options: { SegmentedOption },
+	label: string?,
+}>
+-- A number field with buttons that step it; the arrows step it, Page Up
+-- and Down ten steps, Home and End to its ends; typing applies on Enter.
+export type StepperProps = Merge<Props, {
+	value: State<number>,
+	label: string?,
+	min: number?,
+	max: number?,
+	step: number?,
+	-- Digits shown after the point.
+	decimals: number?,
+}>
+-- A summary that shows and hides its children (HTML's `<details>`).
+export type DisclosureProps = Merge<ContainerProps, {
+	open: State<boolean>,
+	summary: string | Node,
+}>
+-- Sections, one open at a time: `open` is its `id`, or nil.
+export type AccordionProps = Merge<Props, {
+	[number]: Node,
+	open: State<any>,
+}>
+export type SectionProps = Merge<ContainerProps, { id: any, title: string }>
+export type SeparatorProps = Merge<Props, { vertical: boolean? }>
 -- Two panes (its two children) and a divider between them that drags to
 -- resize the first; the second fills the rest.
 export type SplitProps = Merge<ContainerProps, {
@@ -1494,7 +1556,15 @@ export type ModalPlacement = {
 	inset: (number | { number })?,
 }
 export type LayerProps = Merge<ContainerProps, { open: State<boolean>?, label: string?, placement: ModalPlacement? }>
-export type ModalProps = Merge<ContainerProps, { open: State<boolean>, label: string?, placement: ModalPlacement?, autofocus: boolean? }>
+export type ModalProps = Merge<ContainerProps, {
+	open: State<boolean>,
+	label: string?,
+	placement: ModalPlacement?,
+	autofocus: boolean?,
+	-- false: a click outside doesn't close it (a dialog that must be
+	-- answered; Escape still does).
+	dismiss_on_backdrop: boolean?,
+}>
 -- Where an anchored popover or menu opens: on `side` of its trigger
 -- (flipping when that side lacks room), lined up with its start, centre
 -- or end, `offset` points away (bottom, start, 4 by default).
@@ -1518,6 +1588,10 @@ export type PopoverProps = Merge<ContainerProps, {
 	-- A popover only: an arrow at its trigger, reaching this many points
 	-- from the panel's edge (AppKit's popovers have one).
 	arrow: number?,
+	-- At least as wide as its trigger, as a select's list is.
+	match_anchor_width: boolean?,
+	-- A popover only: false keeps it open on a click outside.
+	dismiss_on_backdrop: boolean?,
 }>
 -- `ui.menu_item { "Copy", on_click = … }`: the label first.
 -- The label (`{ "Copy" }`), or `label` with content of its own after it
@@ -1527,6 +1601,12 @@ export type MenuItemProps = Merge<Props, {
 	label: string?,
 	-- Chosen, it leaves the menu open (a toggle, a pin).
 	keep_open: boolean?,
+	-- A check in its gutter while true (a toggle item); `radio = true`: a
+	-- dot, one of a group (a radio item). Told to assistive technology.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	radio: boolean?,
+	-- The keys that do it, shown at its end: "⌘C".
+	shortcut: string?,
 }>
 export type SubmenuProps = Merge<ContainerProps, {
 	open: State<boolean>,
@@ -1689,6 +1769,14 @@ declare ui: {
 	-- the divider drags (no script runs), takes the arrow keys focused,
 	-- and resets on a double click.
 	split: (props: SplitProps) -> Node,
+	segmented: (props: SegmentedProps) -> Node,
+	stepper: (props: StepperProps) -> Node,
+	disclosure: (props: DisclosureProps) -> Node,
+	accordion: (props: AccordionProps) -> Node,
+	-- An accordion's section: `ui.section { id = "a", title = "Shipping", … }`.
+	section: (props: SectionProps) -> Node,
+	-- A line between groups, across (`vertical = true`: down a toolbar).
+	separator: (props: SeparatorProps?) -> Node,
 	modal: (props: ModalProps) -> Node,
 	-- Over the window and non-modal (toasts): no focus, no backdrop; the
 	-- pointer passes through but for what it holds, which stays live while

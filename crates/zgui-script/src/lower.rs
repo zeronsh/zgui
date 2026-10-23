@@ -195,6 +195,9 @@ fn tooltip(anchor: View, tip: &crate::node::Tooltip, low: &Rc<Lowering>) -> View
     if let Some(placement) = tip.placement {
         core = core.placement(placement);
     }
+    if let Some(delay) = tip.delay {
+        core = core.delay(delay);
+    }
     anchor.tooltip(core.interactive(tip.interactive))
 }
 
@@ -381,6 +384,31 @@ fn controlled_input(
         }
     };
     (text, listener)
+}
+
+/// `bridge`, converting with closures (a value to its index among options).
+fn bridge_with<T: PartialEq + Clone + 'static>(
+    cx: &mut Context,
+    value: &Signal<Value>,
+    from: impl Fn(&Value) -> T + 'static,
+    to: impl Fn(T) -> Value + 'static,
+) -> Signal<T> {
+    let from = Rc::new(from);
+    let typed = cx.state(value.with_untracked(|v| from(v)));
+    let runtime = cx.runtime();
+    let (v, t, f) = (value.clone(), typed.clone(), from.clone());
+    cx.retain(runtime.effect(move || {
+        t.set(f(&v.get()));
+    }));
+    let (v, t) = (value.clone(), typed.clone());
+    let mut first = true;
+    cx.retain(runtime.effect(move || {
+        let next = t.get();
+        if !std::mem::take(&mut first) {
+            v.set(to(next));
+        }
+    }));
+    typed
 }
 
 fn need<'a>(cx: &'a mut Option<&mut Context>) -> &'a mut Context {
@@ -978,20 +1006,120 @@ fn kind_view(
             }
             view
         }
+        // `nil` is indeterminate: work of unknown size.
         Kind::Progress { label, value } => progress(
             label.clone(),
-            bridge(need(&mut cx), value, number, |x| Value::Num(x as f64)),
+            bridge(
+                need(&mut cx),
+                value,
+                |v| v.as_f64().map_or(f32::NAN, |n| n as f32),
+                |x| {
+                    if x.is_nan() {
+                        Value::Nil
+                    } else {
+                        Value::Num(x as f64)
+                    }
+                },
+            ),
         ),
         Kind::Slider {
             label,
             value,
             min,
             max,
-        } => slider(
+            step,
+        } => {
+            let view = slider(
+                label.clone(),
+                bridge(need(&mut cx), value, number, |x| Value::Num(x as f64)),
+                *min..=*max,
+            );
+            match step {
+                Some(step) => view.step(*step),
+                None => view,
+            }
+        }
+        Kind::Separator { vertical } => separator(*vertical),
+        Kind::Segmented {
+            label,
+            value,
+            options,
+        } => {
+            // The chosen option's value, as its index both ways.
+            let values: Rc<[Value]> = options.iter().map(|(v, _)| v.clone()).collect();
+            let index = {
+                let values = values.clone();
+                move |v: &Value| values.iter().position(|o| o == v).unwrap_or(0)
+            };
+            let chosen = bridge_with(need(&mut cx), value, index, move |i: usize| {
+                values.get(i).cloned().unwrap_or_default()
+            });
+            segmented(
+                label.clone(),
+                chosen,
+                options.iter().map(|(_, shown)| shown.clone()),
+            )
+        }
+        Kind::Stepper {
+            label,
+            value,
+            options,
+        } => stepper(
             label.clone(),
-            bridge(need(&mut cx), value, number, |x| Value::Num(x as f64)),
-            *min..=*max,
+            bridge(
+                need(&mut cx),
+                value,
+                |v| v.as_f64().unwrap_or(0.),
+                Value::Num,
+            ),
+            *options,
         ),
+        Kind::Disclosure { open, summary } => {
+            let open = bridge(need(&mut cx), open, Value::truthy, Value::Bool);
+            let summary = match summary {
+                crate::node::Summary::Text(text) => zgui::compose::text(text.clone()),
+                crate::node::Summary::Node(node) => lower(node, low),
+            };
+            let (children, low) = (node.children.clone(), low.clone());
+            disclosure(open, summary, move || {
+                column()
+                    .gap(8.)
+                    .children(children.iter().map(|c| lower(c, &low)))
+            })
+        }
+        Kind::Accordion { open } => {
+            let ids: Rc<[Value]> = node
+                .children
+                .iter()
+                .map(|c| match &c.kind {
+                    Kind::Section { id, .. } => id.clone(),
+                    _ => Value::Nil,
+                })
+                .collect();
+            let index = {
+                let ids = ids.clone();
+                move |v: &Value| ids.iter().position(|id| id == v)
+            };
+            let open = bridge_with(need(&mut cx), open, index, move |i: Option<usize>| {
+                i.and_then(|i| ids.get(i).cloned()).unwrap_or_default()
+            });
+            let sections = node.children.iter().map(|section| {
+                let title = match &section.kind {
+                    Kind::Section { title, .. } => title.clone(),
+                    _ => String::new(),
+                };
+                let (content, low) = (section.children.clone(), low.clone());
+                let build: Rc<dyn Fn() -> View> = Rc::new(move || {
+                    column()
+                        .gap(8.)
+                        .children(content.iter().map(|c| lower(c, &low)))
+                });
+                (title, build)
+            });
+            accordion(open, sections.collect::<Vec<_>>())
+        }
+        // Lowered by its accordion.
+        Kind::Section { .. } => div(),
         Kind::Split { size, options } => {
             let size = bridge(need(&mut cx), size, number, |x| Value::Num(x as f64));
             let mut panes = node.children.iter().map(|child| lower(child, low));
@@ -999,7 +1127,7 @@ fn kind_view(
                 panes.next().unwrap_or_else(div),
                 panes.next().unwrap_or_else(div),
             );
-            split(size, *options, first, second)
+            split(size, options.clone(), first, second)
         }
         Kind::Show {
             when,
@@ -1212,6 +1340,7 @@ fn kind_view(
             placement,
             autofocus,
             layer,
+            dismiss,
         } => {
             // Built when it first opens (`View::lazy`), as every script
             // overlay: closed, a list's menus and cards cost nothing.
@@ -1226,6 +1355,10 @@ fn kind_view(
                 view.autofocus(false)
             };
             let view = if *layer { view.layer() } else { view };
+            let view = match dismiss {
+                Some(d) => view.dismiss_on_backdrop(*d),
+                None => view,
+            };
             match placement {
                 Some(at) => view.modal_placement(*at),
                 None => view,
@@ -1238,6 +1371,8 @@ fn kind_view(
             placement,
             autofocus,
             arrow,
+            dismiss,
+            match_anchor,
         } => {
             let view = popover(
                 label.clone(),
@@ -1254,6 +1389,15 @@ fn kind_view(
                 Some(size) => view.arrow(*size),
                 None => view,
             };
+            let view = match dismiss {
+                Some(d) => view.dismiss_on_backdrop(*d),
+                None => view,
+            };
+            let view = if *match_anchor {
+                view.match_anchor_width()
+            } else {
+                view
+            };
             match placement {
                 Some(at) => view.placement(*at),
                 None => view,
@@ -1266,6 +1410,7 @@ fn kind_view(
             placement,
             autofocus,
             over,
+            match_anchor,
         } => {
             let mut view = menu(
                 label.clone(),
@@ -1273,6 +1418,9 @@ fn kind_view(
                 lower(anchor, low),
             )
             .lazy();
+            if *match_anchor {
+                view = view.match_anchor_width();
+            }
             if let Some(over) = over.clone() {
                 let vm = vm.clone();
                 view = view.open_over(move || {
@@ -1292,9 +1440,24 @@ fn kind_view(
                 None => view,
             }
         }
-        Kind::MenuItem(label, keep_open) => {
-            let item = menu_item(label.clone());
-            if *keep_open { item.keep_open() } else { item }
+        Kind::MenuItem(label, options) => {
+            let mut item = menu_item(label.clone());
+            if options.keep_open {
+                item = item.keep_open();
+            }
+            if let Some(checked) = &options.checked {
+                let (checked, vm) = (resolve_owned(checked), vm.clone());
+                item = item.menu_checked_when(move || {
+                    resolve(&checked, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
+                });
+            }
+            if options.radio {
+                item = item.menu_radio();
+            }
+            if let Some(keys) = &options.shortcut {
+                item = item.shortcut(keys.clone());
+            }
+            item
         }
         Kind::Submenu {
             label,
@@ -1400,8 +1563,17 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
             });
         }
     }
-    // A split lowers its two panes itself.
-    if !node.children.is_empty() && !matches!(node.kind, Kind::Split { .. }) {
+    // A split, a disclosure and an accordion lower their children
+    // themselves.
+    if !node.children.is_empty()
+        && !matches!(
+            node.kind,
+            Kind::Split { .. }
+                | Kind::Disclosure { .. }
+                | Kind::Accordion { .. }
+                | Kind::Section { .. }
+        )
+    {
         // Only regions among the children take the container's flow.
         let flow = node
             .children
@@ -1905,6 +2077,18 @@ fn styled(
             let (selected, vm) = (resolve_owned(selected), vm.clone());
             view = view.selected_when(move || {
                 resolve(&selected, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
+            });
+        }
+        if let Some(checked) = &a11y.checked {
+            let (checked, vm) = (resolve_owned(checked), vm.clone());
+            view = view.checked_when(move || {
+                resolve(&checked, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
+            });
+        }
+        if let Some(expanded) = &a11y.expanded {
+            let (expanded, vm) = (resolve_owned(expanded), vm.clone());
+            view = view.expanded_when(move || {
+                resolve(&expanded, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
             });
         }
         if let Some(live) = a11y.live {

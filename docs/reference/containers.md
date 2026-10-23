@@ -1,4 +1,4 @@
-# Containers: column, row, div, overlay, grid, split
+# Containers: column, row, div, overlay, grid, split, disclosure, accordion, separator
 
 Boxes that lay out their children. Each takes one table: string keys are [properties](properties.md) and [events](events.md), array entries are children.
 
@@ -9,6 +9,10 @@ ui.div(props: ContainerProps?) -> Node
 ui.overlay(props: ContainerProps?) -> Node
 ui.grid(props: ContainerProps?) -> Node
 ui.split(props: SplitProps) -> Node
+ui.disclosure(props: DisclosureProps) -> Node
+ui.accordion(props: AccordionProps) -> Node
+ui.section(props: SectionProps) -> Node
+ui.separator(props: SeparatorProps?) -> Node
 ```
 
 | Function | Lays its children out |
@@ -54,9 +58,34 @@ return ui.split {
 | `vertical` | `boolean` | `false` | one pane over the other |
 | `second` | `boolean` | `false` | `size` is the second pane's (an inspector at the right), and the first fills the rest |
 | `min`, `max` | `number` | `0`, none | the first pane's bounds |
+| `label` | `string` | `"Resize"` | what assistive technology calls the divider, which it reads as a splitter with its size and range, and can set |
 | `min_rest` | `number` | `0` | the second pane's smallest size: the divider stops short of it, and a window too small for both shrinks the first pane, down to `min` |
 
 The divider drags without running script (only the panes lay out again), shows a resize cursor, takes Tab focus (the arrows move it ten points, a hundred with Shift; Home and End take it to its ends), and goes back to where it started on a double click. Assistive technology sees a splitter.
+
+## disclosure, accordion, separator
+
+`ui.disclosure { open = state, summary = "Advanced", … }` shows its children while `open`, as HTML's `<details>`: its summary is a button (Enter or Space toggles it) that says it is `expanded`, with a chevron that turns as it opens. `summary` is text or a node.
+
+`ui.accordion { open = state, ui.section { id = "ship", title = "Shipping", … }, … }` holds sections of which one at most is open: `open` is its `id`, or nil; opening one closes the one open. A section's children are built when it opens.
+
+`ui.separator {}` is a line between groups across a menu or a list (`vertical = true`: down a toolbar), in the theme's subtle border colour and hidden from assistive technology.
+
+```lua
+local open = ui.state("open", false)
+local section = ui.state("section", "ship" :: string?)
+return ui.column {
+	w = 320,
+	gap = 8,
+	ui.disclosure { open = open, summary = "Advanced", ui.text { "Hidden until opened" } },
+	ui.separator {},
+	ui.accordion {
+		open = section,
+		ui.section { id = "ship", title = "Shipping", ui.text { "By sea" } },
+		ui.section { id = "pay", title = "Payment", ui.text { "By card" } },
+	},
+}
+```
 
 ## Example
 

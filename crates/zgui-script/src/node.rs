@@ -475,6 +475,10 @@ impl Node {
                 | Kind::Progress { .. }
                 | Kind::Slider { .. }
                 | Kind::Split { .. }
+                | Kind::Segmented { .. }
+                | Kind::Stepper { .. }
+                | Kind::Disclosure { .. }
+                | Kind::Accordion { .. }
                 | Kind::List { .. }
                 | Kind::Modal { .. }
                 | Kind::Popover { .. }
@@ -513,6 +517,12 @@ impl Node {
             Kind::Progress { .. } => "progress",
             Kind::Slider { .. } => "slider",
             Kind::Split { .. } => "split",
+            Kind::Separator { .. } => "separator",
+            Kind::Segmented { .. } => "segmented",
+            Kind::Stepper { .. } => "stepper",
+            Kind::Disclosure { .. } => "disclosure",
+            Kind::Accordion { .. } => "accordion",
+            Kind::Section { .. } => "section",
             Kind::Show { .. } => "show",
             Kind::Each { .. } => "each",
             Kind::List { .. } => "list",
@@ -720,6 +730,40 @@ pub(crate) enum Kind {
         value: Signal<Value>,
         min: f32,
         max: f32,
+        /// `step`: what an arrow moves, and what a drag lands on.
+        step: Option<f32>,
+    },
+    /// `ui.separator { vertical? }`: a line between groups.
+    Separator {
+        vertical: bool,
+    },
+    /// `ui.segmented { value = state, options = { … } }`: one of a few.
+    Segmented {
+        label: String,
+        value: Signal<Value>,
+        /// Each option's value and what it shows.
+        options: Vec<(Value, String)>,
+    },
+    /// `ui.stepper { value = state, min, max, step, decimals }`.
+    Stepper {
+        label: String,
+        value: Signal<Value>,
+        options: zgui::compose::StepperOptions,
+    },
+    /// `ui.disclosure { open = state, summary = "…", content… }`.
+    Disclosure {
+        open: Signal<Value>,
+        summary: Summary,
+    },
+    /// `ui.accordion { open = state, ui.section { … }… }`: sections, one
+    /// open at a time (`open` its id, or nil).
+    Accordion {
+        open: Signal<Value>,
+    },
+    /// `ui.section { id, title, content… }`: an accordion's section.
+    Section {
+        id: Value,
+        title: String,
     },
     /// `ui.split { size = state, a, b }`: two panes and a divider that
     /// resizes the first.
@@ -774,6 +818,9 @@ pub(crate) enum Kind {
         autofocus: bool,
         /// `ui.layer`: non-modal, over the window (toasts).
         layer: bool,
+        /// `dismiss_on_backdrop = false`: a click outside doesn't close it
+        /// (a dialog that must be answered).
+        dismiss: Option<bool>,
     },
     Popover {
         label: String,
@@ -783,6 +830,9 @@ pub(crate) enum Kind {
         autofocus: bool,
         /// `arrow = size`: an arrow at its trigger (`View::arrow`).
         arrow: Option<f32>,
+        dismiss: Option<bool>,
+        /// `match_anchor_width = true`: at least as wide as its trigger.
+        match_anchor: bool,
     },
     Menu {
         label: String,
@@ -792,9 +842,10 @@ pub(crate) enum Kind {
         autofocus: bool,
         /// `open_over = fn() -> id`: opens with that item over the trigger.
         over: Option<Function>,
+        match_anchor: bool,
     },
-    /// Its label, and whether it leaves its menu open when chosen.
-    MenuItem(String, bool),
+    /// Its label, and how it is chosen and shown.
+    MenuItem(String, MenuItemOptions),
     Submenu {
         label: String,
         open: Signal<Value>,
@@ -839,6 +890,9 @@ impl Kind {
                 | Kind::Button
                 | Kind::Scroll { .. }
                 | Kind::Split { .. }
+                | Kind::Disclosure { .. }
+                | Kind::Accordion { .. }
+                | Kind::Section { .. }
                 | Kind::Modal { .. }
                 | Kind::Popover { .. }
                 | Kind::Menu { .. }
@@ -904,6 +958,8 @@ pub(crate) struct Tooltip {
     /// `tooltip_interactive`: a hover card the pointer can move into (and
     /// click in); it stays while the pointer is over the node or the card.
     pub interactive: bool,
+    /// `tooltip_delay`: how long the pointer rests before it shows.
+    pub delay: Option<std::time::Duration>,
 }
 pub(crate) enum TooltipContent {
     /// Drawn in the theme's tooltip look.
@@ -1641,6 +1697,9 @@ pub(crate) struct A11y {
     pub role: Option<zgui::semantics::Role>,
     pub level: Option<usize>,
     pub selected: Option<Source>,
+    /// `checked` and `expanded`: a custom switch's state, a disclosure's.
+    pub checked: Option<Source>,
+    pub expanded: Option<Source>,
     pub live: Option<zgui::semantics::Live>,
     pub description: Option<Rc<str>>,
     pub hidden: bool,
@@ -1689,12 +1748,45 @@ fn a11y_role(name: &str) -> Option<zgui::semantics::Role> {
         "tab" => Role::Tab,
         "dialog" => Role::Dialog,
         "img" | "image" => Role::Image,
+        "tabpanel" => Role::TabPanel,
+        "radiogroup" => Role::RadioGroup,
+        "radio" => Role::RadioButton,
+        "switch" => Role::Switch,
+        "checkbox" => Role::CheckBox,
+        "spinbutton" => Role::SpinButton,
+        "combobox" => Role::ComboBox,
+        "tree" => Role::Tree,
+        "treeitem" => Role::TreeItem,
+        "grid" => Role::Grid,
+        "row" => Role::Row,
+        "gridcell" | "cell" => Role::Cell,
+        "columnheader" => Role::ColumnHeader,
+        "alert" => Role::Alert,
+        "menu" => Role::Menu,
+        "menuitem" => Role::MenuItem,
         _ => return None,
     })
 }
 
 /// Rows past which `ui.each` suggests `ui.list`.
 const LONG_EACH: usize = 1000;
+
+/// What a disclosure's summary shows: text, or a node of the app's.
+pub(crate) enum Summary {
+    Text(String),
+    Node(Rc<Node>),
+}
+
+/// A menu item's options: whether it leaves its menu open when chosen
+/// (`keep_open`), whether it is checked (`checked`, a radio's with
+/// `radio`), and the keys it shows (`shortcut`).
+#[derive(Default)]
+pub(crate) struct MenuItemOptions {
+    pub keep_open: bool,
+    pub checked: Option<Source>,
+    pub radio: bool,
+    pub shortcut: Option<String>,
+}
 
 /// What an input edits: a state, both ways, or (controlled, as React's
 /// inputs are) what a function shows, edits going out by `on_change` and
@@ -1758,6 +1850,13 @@ const WIDGET_FIELDS: &[&str] = &[
     "second",
     "on_change",
     "on_commit",
+    "dismiss_on_backdrop",
+    "match_anchor_width",
+    "step",
+    "options",
+    "decimals",
+    "summary",
+    "title",
 ];
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
@@ -1997,6 +2096,12 @@ fn fill_from(
             }
             "tooltip_interactive" => {
                 node.tooltip.get_or_insert_default().interactive = lua.unpack(value)?;
+            }
+            // Milliseconds the pointer rests before it shows (300).
+            "tooltip_delay" => {
+                let ms: f64 = lua.unpack(value)?;
+                node.tooltip.get_or_insert_default().delay =
+                    Some(std::time::Duration::from_secs_f64(ms.max(0.) / 1000.));
             }
             "pointer_events" => {
                 node.pointer_events = Some(match &value {
@@ -2309,7 +2414,9 @@ fn fill_from(
                 let role = a11y_role(&name).ok_or_else(|| {
                     mlua::Error::runtime(format!(
                         "unknown role `{name}`: one of group, button, link, heading, list, \
-                         listitem, listbox, option, toolbar, status, tablist, tab, dialog, img"
+                         listitem, listbox, option, toolbar, status, tablist, tab, tabpanel, \
+                         dialog, img, radiogroup, radio, switch, checkbox, spinbutton, combobox, \
+                         tree, treeitem, grid, row, gridcell, columnheader, alert, menu, menuitem"
                     ))
                 })?;
                 node.a11y.get_or_insert_default().role = Some(role);
@@ -2328,6 +2435,14 @@ fn fill_from(
             "selected" => {
                 node.a11y.get_or_insert_default().selected =
                     Some(source(lua, Ty::Bool, "selected", value)?);
+            }
+            "checked" => {
+                node.a11y.get_or_insert_default().checked =
+                    Some(source(lua, Ty::Bool, "checked", value)?);
+            }
+            "expanded" => {
+                node.a11y.get_or_insert_default().expanded =
+                    Some(source(lua, Ty::Bool, "expanded", value)?);
             }
             "live" => {
                 let mode: String = lua.unpack(value)?;
@@ -2868,11 +2983,16 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             if !(min.is_finite() && max.is_finite() && min < max) {
                 return Err(mlua::Error::runtime("slider needs finite min < max"));
             }
+            let step: Option<f32> = t.get("step")?;
+            if step.is_some_and(|s| !(s.is_finite() && s > 0.)) {
+                return Err(mlua::Error::runtime("a slider's step is positive"));
+            }
             Ok(Kind::Slider {
                 label,
                 value,
                 min,
                 max,
+                step,
             })
         })?,
     )?;
@@ -2890,6 +3010,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 min: number("min", 0.)?,
                 max: number("max", f32::INFINITY)?,
                 min_rest: number("min_rest", 0.)?,
+                label: table.get("label")?,
             };
             if !(options.min.is_finite() && options.min >= 0. && options.min <= options.max) {
                 return Err(mlua::Error::runtime(
@@ -2908,6 +3029,146 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 )));
             }
             node_ud(lua, node)
+        })?,
+    )?;
+    ui.set(
+        "separator",
+        lua.create_function(|lua, table: Option<Table>| {
+            let vertical = match &table {
+                Some(t) => t.get::<Option<bool>>("vertical")?.unwrap_or(false),
+                None => false,
+            };
+            node_ud(
+                lua,
+                fill(
+                    lua,
+                    Node::new(owner(lua)?, Kind::Separator { vertical }),
+                    table.as_ref(),
+                )?,
+            )
+        })?,
+    )?;
+    ui.set(
+        "segmented",
+        widget(|label, value, t| {
+            let list: Table = t
+                .get("options")
+                .map_err(|_| mlua::Error::runtime("ui.segmented needs `options`"))?;
+            let mut options = Vec::new();
+            for option in list.sequence_values::<mlua::Value>() {
+                options.push(match option? {
+                    // `{ value = "w", label = "Week" }`, or the label alone.
+                    mlua::Value::Table(o) => {
+                        let shown: String = o.get("label")?;
+                        let value = match o.get::<mlua::Value>("value")? {
+                            mlua::Value::Nil => Value::Str(shown.as_str().into()),
+                            v => crate::value::convert(v, None)?,
+                        };
+                        (value, shown)
+                    }
+                    other => {
+                        let value = crate::value::convert(other, None)?;
+                        (value.clone(), value.to_string())
+                    }
+                });
+            }
+            if options.is_empty() {
+                return Err(mlua::Error::runtime(
+                    "ui.segmented needs at least one option",
+                ));
+            }
+            Ok(Kind::Segmented {
+                label,
+                value,
+                options,
+            })
+        })?,
+    )?;
+    ui.set(
+        "stepper",
+        widget(|label, value, t| {
+            let defaults = zgui::compose::StepperOptions::default();
+            let options = zgui::compose::StepperOptions {
+                min: t.get::<Option<f64>>("min")?.unwrap_or(defaults.min),
+                max: t.get::<Option<f64>>("max")?.unwrap_or(defaults.max),
+                step: t.get::<Option<f64>>("step")?.unwrap_or(defaults.step),
+                decimals: t
+                    .get::<Option<f64>>("decimals")?
+                    .map_or(defaults.decimals, |d| d.clamp(0., 10.) as usize),
+            };
+            if !(options.min <= options.max && options.step > 0. && options.step.is_finite()) {
+                return Err(mlua::Error::runtime(
+                    "ui.stepper needs min <= max and a positive step",
+                ));
+            }
+            Ok(Kind::Stepper {
+                label,
+                value,
+                options,
+            })
+        })?,
+    )?;
+    ui.set(
+        "disclosure",
+        lua.create_function(|lua, table: Table| {
+            let open = expect_state(&table.get("open")?, "ui.disclosure's `open`")?;
+            let summary = match table.get::<mlua::Value>("summary")? {
+                mlua::Value::String(s) => Summary::Text(s.to_string_lossy()),
+                mlua::Value::Nil => {
+                    return Err(mlua::Error::runtime("ui.disclosure needs a `summary`"));
+                }
+                node => Summary::Node(expect_node(node, "ui.disclosure's `summary`")?),
+            };
+            node_ud(
+                lua,
+                fill(
+                    lua,
+                    Node::new(owner(lua)?, Kind::Disclosure { open, summary }),
+                    Some(&table),
+                )?,
+            )
+        })?,
+    )?;
+    ui.set(
+        "accordion",
+        lua.create_function(|lua, table: Table| {
+            let open = expect_state(&table.get("open")?, "ui.accordion's `open`")?;
+            let node = fill(
+                lua,
+                Node::new(owner(lua)?, Kind::Accordion { open }),
+                Some(&table),
+            )?;
+            if let Some(other) = node
+                .children
+                .iter()
+                .find(|c| !matches!(c.kind, Kind::Section { .. }))
+            {
+                return Err(mlua::Error::runtime(format!(
+                    "ui.accordion holds ui.section nodes, not {}",
+                    other.tag()
+                )));
+            }
+            node_ud(lua, node)
+        })?,
+    )?;
+    ui.set(
+        "section",
+        lua.create_function(|lua, table: Table| {
+            let id = match table.get::<mlua::Value>("id")? {
+                mlua::Value::Nil => return Err(mlua::Error::runtime("ui.section needs an `id`")),
+                v => crate::value::convert(v, None)?,
+            };
+            let title: String = table
+                .get("title")
+                .map_err(|_| mlua::Error::runtime("ui.section needs a `title`"))?;
+            node_ud(
+                lua,
+                fill(
+                    lua,
+                    Node::new(owner(lua)?, Kind::Section { id, title }),
+                    Some(&table),
+                )?,
+            )
         })?,
     )?;
     ui.set(
@@ -3111,6 +3372,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             placement: modal_placement_of(table.get("placement")?)?,
                             autofocus: table.get::<Option<bool>>("autofocus")?.unwrap_or(true),
                             layer: false,
+                            dismiss: table.get("dismiss_on_backdrop")?,
                         },
                     ),
                     Some(&table),
@@ -3138,6 +3400,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             placement: modal_placement_of(table.get("placement")?)?,
                             autofocus: false,
                             layer: true,
+                            dismiss: None,
                         },
                     ),
                     Some(&table),
@@ -3154,6 +3417,9 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 let label = label(&table)?;
                 let placement = placement_of(table.get("placement")?)?;
                 let autofocus = table.get::<Option<bool>>("autofocus")?.unwrap_or(true);
+                let match_anchor = table
+                    .get::<Option<bool>>("match_anchor_width")?
+                    .unwrap_or(false);
                 let kind = if name == "menu" {
                     Kind::Menu {
                         label,
@@ -3162,6 +3428,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         placement,
                         autofocus,
                         over: table.get("open_over")?,
+                        match_anchor,
                     }
                 } else {
                     Kind::Popover {
@@ -3171,6 +3438,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         placement,
                         autofocus,
                         arrow: table.get("arrow")?,
+                        dismiss: table.get("dismiss_on_backdrop")?,
+                        match_anchor,
                     }
                 };
                 node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
@@ -3192,11 +3461,28 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             // `keep_open = true`: chosen, it leaves the menu open (a toggle).
             let keep_open = table.get::<Option<bool>>("keep_open")?.unwrap_or(false);
             table.raw_remove("keep_open")?;
+            // `checked` (a state or function, or a boolean), `radio`, and
+            // the keys it shows: `shortcut = "⌘C"`.
+            let checked = match table.get::<mlua::Value>("checked")? {
+                mlua::Value::Nil => None,
+                value => Some(source(lua, Ty::Bool, "checked", value)?),
+            };
+            table.raw_remove("checked")?;
+            let radio = table.get::<Option<bool>>("radio")?.unwrap_or(false);
+            table.raw_remove("radio")?;
+            let shortcut: Option<String> = table.get("shortcut")?;
+            table.raw_remove("shortcut")?;
+            let options = MenuItemOptions {
+                keep_open,
+                checked,
+                radio,
+                shortcut,
+            };
             node_ud(
                 lua,
                 fill(
                     lua,
-                    Node::new(owner(lua)?, Kind::MenuItem(label, keep_open)),
+                    Node::new(owner(lua)?, Kind::MenuItem(label, options)),
                     Some(&table),
                 )?,
             )

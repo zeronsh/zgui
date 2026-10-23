@@ -187,6 +187,7 @@ export type ColorToken =
 	| "$menu.bg"
 	| "$menu.hover"
 	| "$popover.bg"
+	| "$backdrop"
 	| "$selection.inactive"
 	| "$selection.text"
 	| "$selection.text.inactive"
@@ -313,6 +314,7 @@ export type TokenName =
 	| "menu.bg"
 	| "menu.hover"
 	| "popover.bg"
+	| "backdrop"
 	| "selection.inactive"
 	| "selection.text"
 	| "selection.text.inactive"
@@ -1185,6 +1187,22 @@ export type AriaRole =
 	| "tab"
 	| "dialog"
 	| "img"
+	| "tabpanel"
+	| "radiogroup"
+	| "radio"
+	| "switch"
+	| "checkbox"
+	| "spinbutton"
+	| "combobox"
+	| "tree"
+	| "treeitem"
+	| "grid"
+	| "row"
+	| "gridcell"
+	| "columnheader"
+	| "alert"
+	| "menu"
+	| "menuitem"
 export type NodeProps = {
 	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -1208,6 +1226,11 @@ export type NodeProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -1245,6 +1268,9 @@ export type NodeProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -1489,6 +1515,11 @@ export type Props = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -1526,6 +1557,9 @@ export type Props = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -1763,6 +1797,11 @@ export type ContainerProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -1800,6 +1839,9 @@ export type ContainerProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -2040,6 +2082,11 @@ export type ScrollProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -2077,6 +2124,9 @@ export type ScrollProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -2324,6 +2374,11 @@ export type TextProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -2361,6 +2416,9 @@ export type TextProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -2648,6 +2706,11 @@ export type RichProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -2685,6 +2748,9 @@ export type RichProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -2922,6 +2988,11 @@ export type ImageProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -2959,6 +3030,9 @@ export type ImageProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -3204,6 +3278,11 @@ export type SvgProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -3241,6 +3320,9 @@ export type SvgProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -3480,6 +3562,11 @@ export type CanvasProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -3517,6 +3604,9 @@ export type CanvasProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -3755,6 +3845,11 @@ export type CheckboxProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -3792,6 +3887,9 @@ export type CheckboxProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -4033,6 +4131,11 @@ export type InputProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -4070,6 +4173,9 @@ export type InputProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -4176,6 +4282,8 @@ export type InputProps = {
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
 }
+-- `value` from 0 to 1, or nil: indeterminate (work of unknown size), a
+-- stretch of the bar sweeping across.
 export type ProgressProps = {
 	-- Size and position.
 	w: Reactive<Length>?,
@@ -4334,6 +4442,11 @@ export type ProgressProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -4371,6 +4484,9 @@ export type ProgressProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -4448,7 +4564,7 @@ export type ProgressProps = {
 	-- rather than at the pointer.
 	context_menu_below: boolean?,
 	[number]: never,
-	value: State<number>,
+	value: State<number> | State<number?>,
 	label: string?,
 }
 export type SliderProps = {
@@ -4609,6 +4725,11 @@ export type SliderProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -4646,6 +4767,9 @@ export type SliderProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -4728,6 +4852,1724 @@ export type SliderProps = {
 	-- 0 and 1 by default; min < max.
 	min: number?,
 	max: number?,
+	-- What an arrow moves (ten with Shift, or Page Up and Down), and what
+	-- a drag lands on; a hundredth of the range without one.
+	step: number?,
+}
+-- One of a few options side by side (AppKit's segmented control; a radio
+-- group to assistive technology): the arrows move the choice.
+export type SegmentedOption = string | number | { label: string, value: any? }
+export type SegmentedProps = {
+	-- Size and position.
+	w: Reactive<Length>?,
+	h: Reactive<Length>?,
+	size: Reactive<Pair>?,
+	min_w: Reactive<Length>?,
+	max_w: Reactive<Length>?,
+	min_h: Reactive<Length>?,
+	max_h: Reactive<Length>?,
+	w_full: Reactive<boolean>?,
+	h_full: Reactive<boolean>?,
+	aspect: Reactive<number>?,
+	absolute: Reactive<boolean>?,
+	relative: Reactive<boolean>?,
+	top: Reactive<Length>?,
+	left: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
+	right: Reactive<Length>?,
+	bottom: Reactive<Length>?,
+	-- Spacing.
+	p: Reactive<Length>?,
+	px: Reactive<Length>?,
+	py: Reactive<Length>?,
+	pt: Reactive<Length>?,
+	pr: Reactive<Length>?,
+	pb: Reactive<Length>?,
+	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
+	m: Reactive<Length>?,
+	mx: Reactive<Length>?,
+	my: Reactive<Length>?,
+	mt: Reactive<Length>?,
+	mr: Reactive<Length>?,
+	mb: Reactive<Length>?,
+	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
+	gap: Reactive<Num>?,
+	gap_x: Reactive<Length>?,
+	gap_y: Reactive<Length>?,
+	-- Flex and grid.
+	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
+	grow: Reactive<number>?,
+	shrink: Reactive<number>?,
+	basis: Reactive<Length>?,
+	flex_wrap: Reactive<boolean>?,
+	wrap_reverse: Reactive<boolean>?,
+	items: Reactive<Align>?,
+	justify: Reactive<Justify>?,
+	self: Reactive<Align>?,
+	content: Reactive<AlignContent>?,
+	grid: Reactive<boolean>?,
+	cols: Reactive<number>?,
+	rows: Reactive<number>?,
+	col_start: Reactive<number>?,
+	row_start: Reactive<number>?,
+	col_span: Reactive<number>?,
+	row_span: Reactive<number>?,
+	col_span_full: Reactive<boolean>?,
+	row_span_full: Reactive<boolean>?,
+	overflow: Reactive<Overflow>?,
+	overflow_x: Reactive<Overflow>?,
+	overflow_y: Reactive<Overflow>?,
+	hidden: Reactive<boolean>?,
+	invisible: Reactive<boolean>?,
+	-- Paint.
+	bg: Reactive<Color>?,
+	gradient: Reactive<Gradient>?,
+	color: Reactive<Color>?,
+	bg_image: Reactive<string>?,
+	bg_fit: Reactive<Fit>?,
+	rounded: Reactive<Num>?,
+	corners: Reactive<Corners>?,
+	rounded_tl: Reactive<number>?,
+	rounded_tr: Reactive<number>?,
+	rounded_br: Reactive<number>?,
+	rounded_bl: Reactive<number>?,
+	border: Reactive<Num>?,
+	border_sides: Reactive<Sides>?,
+	border_color: Reactive<Color>?,
+	border_over: Reactive<boolean>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
+	outline: Reactive<Num>?,
+	outline_color: Reactive<Color>?,
+	outline_offset: Reactive<Num>?,
+	shadow: Reactive<Shadow>?,
+	inset_shadow: Reactive<Shadow>?,
+	opacity: Reactive<Num>?,
+	brightness: Reactive<number>?,
+	contrast: Reactive<number>?,
+	saturate: Reactive<number>?,
+	blur: Reactive<number>?,
+	backdrop_blur: Reactive<Num>?,
+	fade: Reactive<Pair>?,
+	fade_x: Reactive<Pair>?,
+	fade_sides: Reactive<Sides>?,
+	fade_overflow: Reactive<boolean>?,
+	snap: Reactive<boolean>?,
+	clip_inset: Reactive<Sides>?,
+	layer: Reactive<boolean>?,
+	fit: Reactive<Fit>?,
+	tint: Reactive<Color>?,
+	cursor: Reactive<Cursor>?,
+	-- Text.
+	text_size: Reactive<Num>?,
+	weight: Reactive<Num>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	align: Reactive<TextAlign>?,
+	font: Reactive<Font>?,
+	wrap: Reactive<boolean>?,
+	truncate: Reactive<boolean>?,
+	lines: Reactive<number>?,
+	line_height: Reactive<Num>?,
+	letter_spacing: Reactive<Num>?,
+	-- Tabular figures: every digit the same width.
+	tabular: Reactive<boolean>?,
+	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
+	-- below the baseline the line sits.
+	underline: Reactive<boolean>?,
+	underline_offset: Reactive<Num>?,
+	-- Transforms: after layout, about `origin` (fractions of the node).
+	x: Reactive<number>?,
+	y: Reactive<number>?,
+	scale: Reactive<number>?,
+	scale_x: Reactive<number>?,
+	scale_y: Reactive<number>?,
+	rotate: Reactive<number>?,
+	skew: Reactive<number>?,
+	skew_x: Reactive<number>?,
+	skew_y: Reactive<number>?,
+	origin: Reactive<Pair>?,
+	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
+	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
+	theme: Reactive<ThemeSpec>?,
+	-- Identity, for selectors, refs and animations.
+	id: string?,
+	-- Space-separated class names.
+	class: string?,
+	-- Styles chosen from a `ui.variants` definition: `button { tone =
+	-- "ghost" }`, or the recipe itself for its defaults. The element's own
+	-- properties win over them.
+	variants: (Variants | ((choice: any) -> Variants))?,
+	ref: (Ref | { Ref })?,
+	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
+	-- A press on it (or on what inside takes no input) moves the window; a
+	-- double click zooms it. Buttons and inputs inside keep their clicks.
+	-- CSS pointer-events: "none" (or false) lets the pointer through to what
+	-- is under the node (presses, hover, the wheel, drops, a native view);
+	-- descendants with handlers still take it. A state or function follows.
+	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	window_drag: boolean?,
+	-- The pointer selects the text in it and everything it holds, as on a
+	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
+	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
+	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
+	-- Shown over it while the pointer rests on it (after 300 ms; at once
+	-- within a second of another): text in the theme's look, or a node of
+	-- the app's own. Above it, centred, unless `tooltip_placement` says.
+	tooltip: (string | Node)?,
+	tooltip_placement: Placement?,
+	-- A hover card the pointer can move into and click in: it stays while
+	-- the pointer is over the node or the card.
+	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
+	-- A condition (true disables), or the styles it shows while disabled.
+	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
+	hover: Styles?,
+	active: Styles?,
+	focus: Styles?,
+	-- Size animation ("height", "width", "size"; `true` is "height") or
+	-- position animation ("position"). A `layout_id` node mounting as
+	-- another with the same id unmounts (or while it is mounted) moves and
+	-- scales from that one's box.
+	layout: ("height" | "width" | "size" | "position" | boolean)?,
+	layout_id: string?,
+	layout_ease: Easing?,
+	-- Milliseconds.
+	layout_duration: number?,
+	layout_enter: boolean?,
+	layout_clip: boolean?,
+	-- The content shows through the bitmap's alpha: `mask = bitmap`, or
+	-- `{ bitmap, w = …, h = …, x = …, y = …, sweep = … }`.
+	mask: (Bitmap | MaskOptions)?,
+	bg_shader: Shader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	shader_params: { read [number]: Color | { number } }?,
+	-- Events.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Primary pointer down and up.
+	on_press: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_release: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
+	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Return true to consume the key.
+	on_key: (((e: KeyEvent) -> ...boolean?) | Action)?,
+	on_key_up: (((key: string) -> ...unknown) | Action)?,
+	on_focus: (Handler | Action)?,
+	on_blur: (Handler | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	on_mount: ((element: Element) -> ...unknown)?,
+	-- When layout gives it a new size, and at its first layout.
+	on_resize: ((size: Size, element: Element) -> ...unknown)?,
+	-- When any of it comes into view or all of it leaves (inside every
+	-- clip and scroll viewport above it), and at its first layout: for
+	-- building what only matters on screen.
+	on_visible: ((visible: boolean, element: Element) -> ...unknown)?,
+	-- Drag and drop within the window. Payloads are what `on_drag`
+	-- returns: the script's own plain values, so they are `any` here.
+	-- A source: `on_drag` returns the payload once the pointer moves 4
+	-- points; `drag_preview` builds what follows the pointer.
+	on_drag: (() -> any)?,
+	drag_preview: ((payload: any) -> Node)?,
+	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
+	-- Released outside every window of the app (macOS): a tab torn off its
+	-- window. `grab_x`/`grab_y` are where the source was held.
+	on_drag_outside: ((payload: any, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ...unknown)?,
+	-- The drag moves its window instead, with no preview (macOS): a
+	-- window's only tab. Dropped on another window's destination it drops
+	-- there; elsewhere the window stays where it was let go.
+	drag_moves_window: ((payload: any) -> boolean)?,
+	-- A destination: `drop_when` filters payloads (default: all).
+	drop_when: ((payload: any) -> unknown)?,
+	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
+	on_drag_leave: ((payload: any) -> ...unknown)?,
+	on_drop: ((payload: any, e: DragPoint) -> ...unknown)?,
+	-- A secondary click (control-click on macOS) shows the returned
+	-- `menu_item`s, `submenu`s and separators as a menu at the pointer;
+	-- returning nil (or nothing) shows none.
+	context_menu: ((e: PointerEvent) -> ...{ Node }?)?,
+	-- The context menu panel's look: bg, rounded, p, gap, backdrop_blur,
+	-- border, shadow, w, …
+	context_menu_style: Styles?,
+	-- Open the context menu under the node, from its left edge (a tab's),
+	-- rather than at the pointer.
+	context_menu_below: boolean?,
+	[number]: never,
+	value: State<any>,
+	options: { SegmentedOption },
+	label: string?,
+}
+-- A number field with buttons that step it; the arrows step it, Page Up
+-- and Down ten steps, Home and End to its ends; typing applies on Enter.
+export type StepperProps = {
+	-- Size and position.
+	w: Reactive<Length>?,
+	h: Reactive<Length>?,
+	size: Reactive<Pair>?,
+	min_w: Reactive<Length>?,
+	max_w: Reactive<Length>?,
+	min_h: Reactive<Length>?,
+	max_h: Reactive<Length>?,
+	w_full: Reactive<boolean>?,
+	h_full: Reactive<boolean>?,
+	aspect: Reactive<number>?,
+	absolute: Reactive<boolean>?,
+	relative: Reactive<boolean>?,
+	top: Reactive<Length>?,
+	left: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
+	right: Reactive<Length>?,
+	bottom: Reactive<Length>?,
+	-- Spacing.
+	p: Reactive<Length>?,
+	px: Reactive<Length>?,
+	py: Reactive<Length>?,
+	pt: Reactive<Length>?,
+	pr: Reactive<Length>?,
+	pb: Reactive<Length>?,
+	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
+	m: Reactive<Length>?,
+	mx: Reactive<Length>?,
+	my: Reactive<Length>?,
+	mt: Reactive<Length>?,
+	mr: Reactive<Length>?,
+	mb: Reactive<Length>?,
+	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
+	gap: Reactive<Num>?,
+	gap_x: Reactive<Length>?,
+	gap_y: Reactive<Length>?,
+	-- Flex and grid.
+	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
+	grow: Reactive<number>?,
+	shrink: Reactive<number>?,
+	basis: Reactive<Length>?,
+	flex_wrap: Reactive<boolean>?,
+	wrap_reverse: Reactive<boolean>?,
+	items: Reactive<Align>?,
+	justify: Reactive<Justify>?,
+	self: Reactive<Align>?,
+	content: Reactive<AlignContent>?,
+	grid: Reactive<boolean>?,
+	cols: Reactive<number>?,
+	rows: Reactive<number>?,
+	col_start: Reactive<number>?,
+	row_start: Reactive<number>?,
+	col_span: Reactive<number>?,
+	row_span: Reactive<number>?,
+	col_span_full: Reactive<boolean>?,
+	row_span_full: Reactive<boolean>?,
+	overflow: Reactive<Overflow>?,
+	overflow_x: Reactive<Overflow>?,
+	overflow_y: Reactive<Overflow>?,
+	hidden: Reactive<boolean>?,
+	invisible: Reactive<boolean>?,
+	-- Paint.
+	bg: Reactive<Color>?,
+	gradient: Reactive<Gradient>?,
+	color: Reactive<Color>?,
+	bg_image: Reactive<string>?,
+	bg_fit: Reactive<Fit>?,
+	rounded: Reactive<Num>?,
+	corners: Reactive<Corners>?,
+	rounded_tl: Reactive<number>?,
+	rounded_tr: Reactive<number>?,
+	rounded_br: Reactive<number>?,
+	rounded_bl: Reactive<number>?,
+	border: Reactive<Num>?,
+	border_sides: Reactive<Sides>?,
+	border_color: Reactive<Color>?,
+	border_over: Reactive<boolean>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
+	outline: Reactive<Num>?,
+	outline_color: Reactive<Color>?,
+	outline_offset: Reactive<Num>?,
+	shadow: Reactive<Shadow>?,
+	inset_shadow: Reactive<Shadow>?,
+	opacity: Reactive<Num>?,
+	brightness: Reactive<number>?,
+	contrast: Reactive<number>?,
+	saturate: Reactive<number>?,
+	blur: Reactive<number>?,
+	backdrop_blur: Reactive<Num>?,
+	fade: Reactive<Pair>?,
+	fade_x: Reactive<Pair>?,
+	fade_sides: Reactive<Sides>?,
+	fade_overflow: Reactive<boolean>?,
+	snap: Reactive<boolean>?,
+	clip_inset: Reactive<Sides>?,
+	layer: Reactive<boolean>?,
+	fit: Reactive<Fit>?,
+	tint: Reactive<Color>?,
+	cursor: Reactive<Cursor>?,
+	-- Text.
+	text_size: Reactive<Num>?,
+	weight: Reactive<Num>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	align: Reactive<TextAlign>?,
+	font: Reactive<Font>?,
+	wrap: Reactive<boolean>?,
+	truncate: Reactive<boolean>?,
+	lines: Reactive<number>?,
+	line_height: Reactive<Num>?,
+	letter_spacing: Reactive<Num>?,
+	-- Tabular figures: every digit the same width.
+	tabular: Reactive<boolean>?,
+	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
+	-- below the baseline the line sits.
+	underline: Reactive<boolean>?,
+	underline_offset: Reactive<Num>?,
+	-- Transforms: after layout, about `origin` (fractions of the node).
+	x: Reactive<number>?,
+	y: Reactive<number>?,
+	scale: Reactive<number>?,
+	scale_x: Reactive<number>?,
+	scale_y: Reactive<number>?,
+	rotate: Reactive<number>?,
+	skew: Reactive<number>?,
+	skew_x: Reactive<number>?,
+	skew_y: Reactive<number>?,
+	origin: Reactive<Pair>?,
+	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
+	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
+	theme: Reactive<ThemeSpec>?,
+	-- Identity, for selectors, refs and animations.
+	id: string?,
+	-- Space-separated class names.
+	class: string?,
+	-- Styles chosen from a `ui.variants` definition: `button { tone =
+	-- "ghost" }`, or the recipe itself for its defaults. The element's own
+	-- properties win over them.
+	variants: (Variants | ((choice: any) -> Variants))?,
+	ref: (Ref | { Ref })?,
+	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
+	-- A press on it (or on what inside takes no input) moves the window; a
+	-- double click zooms it. Buttons and inputs inside keep their clicks.
+	-- CSS pointer-events: "none" (or false) lets the pointer through to what
+	-- is under the node (presses, hover, the wheel, drops, a native view);
+	-- descendants with handlers still take it. A state or function follows.
+	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	window_drag: boolean?,
+	-- The pointer selects the text in it and everything it holds, as on a
+	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
+	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
+	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
+	-- Shown over it while the pointer rests on it (after 300 ms; at once
+	-- within a second of another): text in the theme's look, or a node of
+	-- the app's own. Above it, centred, unless `tooltip_placement` says.
+	tooltip: (string | Node)?,
+	tooltip_placement: Placement?,
+	-- A hover card the pointer can move into and click in: it stays while
+	-- the pointer is over the node or the card.
+	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
+	-- A condition (true disables), or the styles it shows while disabled.
+	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
+	hover: Styles?,
+	active: Styles?,
+	focus: Styles?,
+	-- Size animation ("height", "width", "size"; `true` is "height") or
+	-- position animation ("position"). A `layout_id` node mounting as
+	-- another with the same id unmounts (or while it is mounted) moves and
+	-- scales from that one's box.
+	layout: ("height" | "width" | "size" | "position" | boolean)?,
+	layout_id: string?,
+	layout_ease: Easing?,
+	-- Milliseconds.
+	layout_duration: number?,
+	layout_enter: boolean?,
+	layout_clip: boolean?,
+	-- The content shows through the bitmap's alpha: `mask = bitmap`, or
+	-- `{ bitmap, w = …, h = …, x = …, y = …, sweep = … }`.
+	mask: (Bitmap | MaskOptions)?,
+	bg_shader: Shader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	shader_params: { read [number]: Color | { number } }?,
+	-- Events.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Primary pointer down and up.
+	on_press: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_release: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
+	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Return true to consume the key.
+	on_key: (((e: KeyEvent) -> ...boolean?) | Action)?,
+	on_key_up: (((key: string) -> ...unknown) | Action)?,
+	on_focus: (Handler | Action)?,
+	on_blur: (Handler | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	on_mount: ((element: Element) -> ...unknown)?,
+	-- When layout gives it a new size, and at its first layout.
+	on_resize: ((size: Size, element: Element) -> ...unknown)?,
+	-- When any of it comes into view or all of it leaves (inside every
+	-- clip and scroll viewport above it), and at its first layout: for
+	-- building what only matters on screen.
+	on_visible: ((visible: boolean, element: Element) -> ...unknown)?,
+	-- Drag and drop within the window. Payloads are what `on_drag`
+	-- returns: the script's own plain values, so they are `any` here.
+	-- A source: `on_drag` returns the payload once the pointer moves 4
+	-- points; `drag_preview` builds what follows the pointer.
+	on_drag: (() -> any)?,
+	drag_preview: ((payload: any) -> Node)?,
+	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
+	-- Released outside every window of the app (macOS): a tab torn off its
+	-- window. `grab_x`/`grab_y` are where the source was held.
+	on_drag_outside: ((payload: any, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ...unknown)?,
+	-- The drag moves its window instead, with no preview (macOS): a
+	-- window's only tab. Dropped on another window's destination it drops
+	-- there; elsewhere the window stays where it was let go.
+	drag_moves_window: ((payload: any) -> boolean)?,
+	-- A destination: `drop_when` filters payloads (default: all).
+	drop_when: ((payload: any) -> unknown)?,
+	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
+	on_drag_leave: ((payload: any) -> ...unknown)?,
+	on_drop: ((payload: any, e: DragPoint) -> ...unknown)?,
+	-- A secondary click (control-click on macOS) shows the returned
+	-- `menu_item`s, `submenu`s and separators as a menu at the pointer;
+	-- returning nil (or nothing) shows none.
+	context_menu: ((e: PointerEvent) -> ...{ Node }?)?,
+	-- The context menu panel's look: bg, rounded, p, gap, backdrop_blur,
+	-- border, shadow, w, …
+	context_menu_style: Styles?,
+	-- Open the context menu under the node, from its left edge (a tab's),
+	-- rather than at the pointer.
+	context_menu_below: boolean?,
+	[number]: never,
+	value: State<number>,
+	label: string?,
+	min: number?,
+	max: number?,
+	step: number?,
+	-- Digits shown after the point.
+	decimals: number?,
+}
+-- A summary that shows and hides its children (HTML's `<details>`).
+export type DisclosureProps = {
+	-- Size and position.
+	w: Reactive<Length>?,
+	h: Reactive<Length>?,
+	size: Reactive<Pair>?,
+	min_w: Reactive<Length>?,
+	max_w: Reactive<Length>?,
+	min_h: Reactive<Length>?,
+	max_h: Reactive<Length>?,
+	w_full: Reactive<boolean>?,
+	h_full: Reactive<boolean>?,
+	aspect: Reactive<number>?,
+	absolute: Reactive<boolean>?,
+	relative: Reactive<boolean>?,
+	top: Reactive<Length>?,
+	left: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
+	right: Reactive<Length>?,
+	bottom: Reactive<Length>?,
+	-- Spacing.
+	p: Reactive<Length>?,
+	px: Reactive<Length>?,
+	py: Reactive<Length>?,
+	pt: Reactive<Length>?,
+	pr: Reactive<Length>?,
+	pb: Reactive<Length>?,
+	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
+	m: Reactive<Length>?,
+	mx: Reactive<Length>?,
+	my: Reactive<Length>?,
+	mt: Reactive<Length>?,
+	mr: Reactive<Length>?,
+	mb: Reactive<Length>?,
+	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
+	gap: Reactive<Num>?,
+	gap_x: Reactive<Length>?,
+	gap_y: Reactive<Length>?,
+	-- Flex and grid.
+	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
+	grow: Reactive<number>?,
+	shrink: Reactive<number>?,
+	basis: Reactive<Length>?,
+	flex_wrap: Reactive<boolean>?,
+	wrap_reverse: Reactive<boolean>?,
+	items: Reactive<Align>?,
+	justify: Reactive<Justify>?,
+	self: Reactive<Align>?,
+	content: Reactive<AlignContent>?,
+	grid: Reactive<boolean>?,
+	cols: Reactive<number>?,
+	rows: Reactive<number>?,
+	col_start: Reactive<number>?,
+	row_start: Reactive<number>?,
+	col_span: Reactive<number>?,
+	row_span: Reactive<number>?,
+	col_span_full: Reactive<boolean>?,
+	row_span_full: Reactive<boolean>?,
+	overflow: Reactive<Overflow>?,
+	overflow_x: Reactive<Overflow>?,
+	overflow_y: Reactive<Overflow>?,
+	hidden: Reactive<boolean>?,
+	invisible: Reactive<boolean>?,
+	-- Paint.
+	bg: Reactive<Color>?,
+	gradient: Reactive<Gradient>?,
+	color: Reactive<Color>?,
+	bg_image: Reactive<string>?,
+	bg_fit: Reactive<Fit>?,
+	rounded: Reactive<Num>?,
+	corners: Reactive<Corners>?,
+	rounded_tl: Reactive<number>?,
+	rounded_tr: Reactive<number>?,
+	rounded_br: Reactive<number>?,
+	rounded_bl: Reactive<number>?,
+	border: Reactive<Num>?,
+	border_sides: Reactive<Sides>?,
+	border_color: Reactive<Color>?,
+	border_over: Reactive<boolean>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
+	outline: Reactive<Num>?,
+	outline_color: Reactive<Color>?,
+	outline_offset: Reactive<Num>?,
+	shadow: Reactive<Shadow>?,
+	inset_shadow: Reactive<Shadow>?,
+	opacity: Reactive<Num>?,
+	brightness: Reactive<number>?,
+	contrast: Reactive<number>?,
+	saturate: Reactive<number>?,
+	blur: Reactive<number>?,
+	backdrop_blur: Reactive<Num>?,
+	fade: Reactive<Pair>?,
+	fade_x: Reactive<Pair>?,
+	fade_sides: Reactive<Sides>?,
+	fade_overflow: Reactive<boolean>?,
+	snap: Reactive<boolean>?,
+	clip_inset: Reactive<Sides>?,
+	layer: Reactive<boolean>?,
+	fit: Reactive<Fit>?,
+	tint: Reactive<Color>?,
+	cursor: Reactive<Cursor>?,
+	-- Text.
+	text_size: Reactive<Num>?,
+	weight: Reactive<Num>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	align: Reactive<TextAlign>?,
+	font: Reactive<Font>?,
+	wrap: Reactive<boolean>?,
+	truncate: Reactive<boolean>?,
+	lines: Reactive<number>?,
+	line_height: Reactive<Num>?,
+	letter_spacing: Reactive<Num>?,
+	-- Tabular figures: every digit the same width.
+	tabular: Reactive<boolean>?,
+	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
+	-- below the baseline the line sits.
+	underline: Reactive<boolean>?,
+	underline_offset: Reactive<Num>?,
+	-- Transforms: after layout, about `origin` (fractions of the node).
+	x: Reactive<number>?,
+	y: Reactive<number>?,
+	scale: Reactive<number>?,
+	scale_x: Reactive<number>?,
+	scale_y: Reactive<number>?,
+	rotate: Reactive<number>?,
+	skew: Reactive<number>?,
+	skew_x: Reactive<number>?,
+	skew_y: Reactive<number>?,
+	origin: Reactive<Pair>?,
+	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
+	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
+	theme: Reactive<ThemeSpec>?,
+	-- Identity, for selectors, refs and animations.
+	id: string?,
+	-- Space-separated class names.
+	class: string?,
+	-- Styles chosen from a `ui.variants` definition: `button { tone =
+	-- "ghost" }`, or the recipe itself for its defaults. The element's own
+	-- properties win over them.
+	variants: (Variants | ((choice: any) -> Variants))?,
+	ref: (Ref | { Ref })?,
+	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
+	-- A press on it (or on what inside takes no input) moves the window; a
+	-- double click zooms it. Buttons and inputs inside keep their clicks.
+	-- CSS pointer-events: "none" (or false) lets the pointer through to what
+	-- is under the node (presses, hover, the wheel, drops, a native view);
+	-- descendants with handlers still take it. A state or function follows.
+	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	window_drag: boolean?,
+	-- The pointer selects the text in it and everything it holds, as on a
+	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
+	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
+	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
+	-- Shown over it while the pointer rests on it (after 300 ms; at once
+	-- within a second of another): text in the theme's look, or a node of
+	-- the app's own. Above it, centred, unless `tooltip_placement` says.
+	tooltip: (string | Node)?,
+	tooltip_placement: Placement?,
+	-- A hover card the pointer can move into and click in: it stays while
+	-- the pointer is over the node or the card.
+	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
+	-- A condition (true disables), or the styles it shows while disabled.
+	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
+	hover: Styles?,
+	active: Styles?,
+	focus: Styles?,
+	-- Size animation ("height", "width", "size"; `true` is "height") or
+	-- position animation ("position"). A `layout_id` node mounting as
+	-- another with the same id unmounts (or while it is mounted) moves and
+	-- scales from that one's box.
+	layout: ("height" | "width" | "size" | "position" | boolean)?,
+	layout_id: string?,
+	layout_ease: Easing?,
+	-- Milliseconds.
+	layout_duration: number?,
+	layout_enter: boolean?,
+	layout_clip: boolean?,
+	-- The content shows through the bitmap's alpha: `mask = bitmap`, or
+	-- `{ bitmap, w = …, h = …, x = …, y = …, sweep = … }`.
+	mask: (Bitmap | MaskOptions)?,
+	bg_shader: Shader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	shader_params: { read [number]: Color | { number } }?,
+	-- Events.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Primary pointer down and up.
+	on_press: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_release: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
+	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Return true to consume the key.
+	on_key: (((e: KeyEvent) -> ...boolean?) | Action)?,
+	on_key_up: (((key: string) -> ...unknown) | Action)?,
+	on_focus: (Handler | Action)?,
+	on_blur: (Handler | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	on_mount: ((element: Element) -> ...unknown)?,
+	-- When layout gives it a new size, and at its first layout.
+	on_resize: ((size: Size, element: Element) -> ...unknown)?,
+	-- When any of it comes into view or all of it leaves (inside every
+	-- clip and scroll viewport above it), and at its first layout: for
+	-- building what only matters on screen.
+	on_visible: ((visible: boolean, element: Element) -> ...unknown)?,
+	-- Drag and drop within the window. Payloads are what `on_drag`
+	-- returns: the script's own plain values, so they are `any` here.
+	-- A source: `on_drag` returns the payload once the pointer moves 4
+	-- points; `drag_preview` builds what follows the pointer.
+	on_drag: (() -> any)?,
+	drag_preview: ((payload: any) -> Node)?,
+	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
+	-- Released outside every window of the app (macOS): a tab torn off its
+	-- window. `grab_x`/`grab_y` are where the source was held.
+	on_drag_outside: ((payload: any, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ...unknown)?,
+	-- The drag moves its window instead, with no preview (macOS): a
+	-- window's only tab. Dropped on another window's destination it drops
+	-- there; elsewhere the window stays where it was let go.
+	drag_moves_window: ((payload: any) -> boolean)?,
+	-- A destination: `drop_when` filters payloads (default: all).
+	drop_when: ((payload: any) -> unknown)?,
+	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
+	on_drag_leave: ((payload: any) -> ...unknown)?,
+	on_drop: ((payload: any, e: DragPoint) -> ...unknown)?,
+	-- A secondary click (control-click on macOS) shows the returned
+	-- `menu_item`s, `submenu`s and separators as a menu at the pointer;
+	-- returning nil (or nothing) shows none.
+	context_menu: ((e: PointerEvent) -> ...{ Node }?)?,
+	-- The context menu panel's look: bg, rounded, p, gap, backdrop_blur,
+	-- border, shadow, w, …
+	context_menu_style: Styles?,
+	-- Open the context menu under the node, from its left edge (a tab's),
+	-- rather than at the pointer.
+	context_menu_below: boolean?,
+	[number]: Child,
+	-- The name assistive technology reads for it, instead of its text: a
+	-- switch, a button showing only an icon. A state or function is
+	-- followed: a list row's name made from what it shows now.
+	label: (string | Readable<string> | (() -> string))?,
+	open: State<boolean>,
+	summary: string | Node,
+}
+-- Sections, one open at a time: `open` is its `id`, or nil.
+export type AccordionProps = {
+	-- Size and position.
+	w: Reactive<Length>?,
+	h: Reactive<Length>?,
+	size: Reactive<Pair>?,
+	min_w: Reactive<Length>?,
+	max_w: Reactive<Length>?,
+	min_h: Reactive<Length>?,
+	max_h: Reactive<Length>?,
+	w_full: Reactive<boolean>?,
+	h_full: Reactive<boolean>?,
+	aspect: Reactive<number>?,
+	absolute: Reactive<boolean>?,
+	relative: Reactive<boolean>?,
+	top: Reactive<Length>?,
+	left: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
+	right: Reactive<Length>?,
+	bottom: Reactive<Length>?,
+	-- Spacing.
+	p: Reactive<Length>?,
+	px: Reactive<Length>?,
+	py: Reactive<Length>?,
+	pt: Reactive<Length>?,
+	pr: Reactive<Length>?,
+	pb: Reactive<Length>?,
+	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
+	m: Reactive<Length>?,
+	mx: Reactive<Length>?,
+	my: Reactive<Length>?,
+	mt: Reactive<Length>?,
+	mr: Reactive<Length>?,
+	mb: Reactive<Length>?,
+	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
+	gap: Reactive<Num>?,
+	gap_x: Reactive<Length>?,
+	gap_y: Reactive<Length>?,
+	-- Flex and grid.
+	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
+	grow: Reactive<number>?,
+	shrink: Reactive<number>?,
+	basis: Reactive<Length>?,
+	flex_wrap: Reactive<boolean>?,
+	wrap_reverse: Reactive<boolean>?,
+	items: Reactive<Align>?,
+	justify: Reactive<Justify>?,
+	self: Reactive<Align>?,
+	content: Reactive<AlignContent>?,
+	grid: Reactive<boolean>?,
+	cols: Reactive<number>?,
+	rows: Reactive<number>?,
+	col_start: Reactive<number>?,
+	row_start: Reactive<number>?,
+	col_span: Reactive<number>?,
+	row_span: Reactive<number>?,
+	col_span_full: Reactive<boolean>?,
+	row_span_full: Reactive<boolean>?,
+	overflow: Reactive<Overflow>?,
+	overflow_x: Reactive<Overflow>?,
+	overflow_y: Reactive<Overflow>?,
+	hidden: Reactive<boolean>?,
+	invisible: Reactive<boolean>?,
+	-- Paint.
+	bg: Reactive<Color>?,
+	gradient: Reactive<Gradient>?,
+	color: Reactive<Color>?,
+	bg_image: Reactive<string>?,
+	bg_fit: Reactive<Fit>?,
+	rounded: Reactive<Num>?,
+	corners: Reactive<Corners>?,
+	rounded_tl: Reactive<number>?,
+	rounded_tr: Reactive<number>?,
+	rounded_br: Reactive<number>?,
+	rounded_bl: Reactive<number>?,
+	border: Reactive<Num>?,
+	border_sides: Reactive<Sides>?,
+	border_color: Reactive<Color>?,
+	border_over: Reactive<boolean>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
+	outline: Reactive<Num>?,
+	outline_color: Reactive<Color>?,
+	outline_offset: Reactive<Num>?,
+	shadow: Reactive<Shadow>?,
+	inset_shadow: Reactive<Shadow>?,
+	opacity: Reactive<Num>?,
+	brightness: Reactive<number>?,
+	contrast: Reactive<number>?,
+	saturate: Reactive<number>?,
+	blur: Reactive<number>?,
+	backdrop_blur: Reactive<Num>?,
+	fade: Reactive<Pair>?,
+	fade_x: Reactive<Pair>?,
+	fade_sides: Reactive<Sides>?,
+	fade_overflow: Reactive<boolean>?,
+	snap: Reactive<boolean>?,
+	clip_inset: Reactive<Sides>?,
+	layer: Reactive<boolean>?,
+	fit: Reactive<Fit>?,
+	tint: Reactive<Color>?,
+	cursor: Reactive<Cursor>?,
+	-- Text.
+	text_size: Reactive<Num>?,
+	weight: Reactive<Num>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	align: Reactive<TextAlign>?,
+	font: Reactive<Font>?,
+	wrap: Reactive<boolean>?,
+	truncate: Reactive<boolean>?,
+	lines: Reactive<number>?,
+	line_height: Reactive<Num>?,
+	letter_spacing: Reactive<Num>?,
+	-- Tabular figures: every digit the same width.
+	tabular: Reactive<boolean>?,
+	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
+	-- below the baseline the line sits.
+	underline: Reactive<boolean>?,
+	underline_offset: Reactive<Num>?,
+	-- Transforms: after layout, about `origin` (fractions of the node).
+	x: Reactive<number>?,
+	y: Reactive<number>?,
+	scale: Reactive<number>?,
+	scale_x: Reactive<number>?,
+	scale_y: Reactive<number>?,
+	rotate: Reactive<number>?,
+	skew: Reactive<number>?,
+	skew_x: Reactive<number>?,
+	skew_y: Reactive<number>?,
+	origin: Reactive<Pair>?,
+	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
+	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
+	theme: Reactive<ThemeSpec>?,
+	-- Identity, for selectors, refs and animations.
+	id: string?,
+	-- Space-separated class names.
+	class: string?,
+	-- Styles chosen from a `ui.variants` definition: `button { tone =
+	-- "ghost" }`, or the recipe itself for its defaults. The element's own
+	-- properties win over them.
+	variants: (Variants | ((choice: any) -> Variants))?,
+	ref: (Ref | { Ref })?,
+	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
+	-- A press on it (or on what inside takes no input) moves the window; a
+	-- double click zooms it. Buttons and inputs inside keep their clicks.
+	-- CSS pointer-events: "none" (or false) lets the pointer through to what
+	-- is under the node (presses, hover, the wheel, drops, a native view);
+	-- descendants with handlers still take it. A state or function follows.
+	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	window_drag: boolean?,
+	-- The pointer selects the text in it and everything it holds, as on a
+	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
+	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
+	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
+	-- Shown over it while the pointer rests on it (after 300 ms; at once
+	-- within a second of another): text in the theme's look, or a node of
+	-- the app's own. Above it, centred, unless `tooltip_placement` says.
+	tooltip: (string | Node)?,
+	tooltip_placement: Placement?,
+	-- A hover card the pointer can move into and click in: it stays while
+	-- the pointer is over the node or the card.
+	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
+	-- A condition (true disables), or the styles it shows while disabled.
+	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
+	hover: Styles?,
+	active: Styles?,
+	focus: Styles?,
+	-- Size animation ("height", "width", "size"; `true` is "height") or
+	-- position animation ("position"). A `layout_id` node mounting as
+	-- another with the same id unmounts (or while it is mounted) moves and
+	-- scales from that one's box.
+	layout: ("height" | "width" | "size" | "position" | boolean)?,
+	layout_id: string?,
+	layout_ease: Easing?,
+	-- Milliseconds.
+	layout_duration: number?,
+	layout_enter: boolean?,
+	layout_clip: boolean?,
+	-- The content shows through the bitmap's alpha: `mask = bitmap`, or
+	-- `{ bitmap, w = …, h = …, x = …, y = …, sweep = … }`.
+	mask: (Bitmap | MaskOptions)?,
+	bg_shader: Shader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	shader_params: { read [number]: Color | { number } }?,
+	-- Events.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Primary pointer down and up.
+	on_press: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_release: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
+	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Return true to consume the key.
+	on_key: (((e: KeyEvent) -> ...boolean?) | Action)?,
+	on_key_up: (((key: string) -> ...unknown) | Action)?,
+	on_focus: (Handler | Action)?,
+	on_blur: (Handler | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	on_mount: ((element: Element) -> ...unknown)?,
+	-- When layout gives it a new size, and at its first layout.
+	on_resize: ((size: Size, element: Element) -> ...unknown)?,
+	-- When any of it comes into view or all of it leaves (inside every
+	-- clip and scroll viewport above it), and at its first layout: for
+	-- building what only matters on screen.
+	on_visible: ((visible: boolean, element: Element) -> ...unknown)?,
+	-- Drag and drop within the window. Payloads are what `on_drag`
+	-- returns: the script's own plain values, so they are `any` here.
+	-- A source: `on_drag` returns the payload once the pointer moves 4
+	-- points; `drag_preview` builds what follows the pointer.
+	on_drag: (() -> any)?,
+	drag_preview: ((payload: any) -> Node)?,
+	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
+	-- Released outside every window of the app (macOS): a tab torn off its
+	-- window. `grab_x`/`grab_y` are where the source was held.
+	on_drag_outside: ((payload: any, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ...unknown)?,
+	-- The drag moves its window instead, with no preview (macOS): a
+	-- window's only tab. Dropped on another window's destination it drops
+	-- there; elsewhere the window stays where it was let go.
+	drag_moves_window: ((payload: any) -> boolean)?,
+	-- A destination: `drop_when` filters payloads (default: all).
+	drop_when: ((payload: any) -> unknown)?,
+	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
+	on_drag_leave: ((payload: any) -> ...unknown)?,
+	on_drop: ((payload: any, e: DragPoint) -> ...unknown)?,
+	-- A secondary click (control-click on macOS) shows the returned
+	-- `menu_item`s, `submenu`s and separators as a menu at the pointer;
+	-- returning nil (or nothing) shows none.
+	context_menu: ((e: PointerEvent) -> ...{ Node }?)?,
+	-- The context menu panel's look: bg, rounded, p, gap, backdrop_blur,
+	-- border, shadow, w, …
+	context_menu_style: Styles?,
+	-- Open the context menu under the node, from its left edge (a tab's),
+	-- rather than at the pointer.
+	context_menu_below: boolean?,
+	[number]: Node,
+	open: State<any>,
+}
+export type SectionProps = {
+	-- Size and position.
+	w: Reactive<Length>?,
+	h: Reactive<Length>?,
+	size: Reactive<Pair>?,
+	min_w: Reactive<Length>?,
+	max_w: Reactive<Length>?,
+	min_h: Reactive<Length>?,
+	max_h: Reactive<Length>?,
+	w_full: Reactive<boolean>?,
+	h_full: Reactive<boolean>?,
+	aspect: Reactive<number>?,
+	absolute: Reactive<boolean>?,
+	relative: Reactive<boolean>?,
+	top: Reactive<Length>?,
+	left: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
+	right: Reactive<Length>?,
+	bottom: Reactive<Length>?,
+	-- Spacing.
+	p: Reactive<Length>?,
+	px: Reactive<Length>?,
+	py: Reactive<Length>?,
+	pt: Reactive<Length>?,
+	pr: Reactive<Length>?,
+	pb: Reactive<Length>?,
+	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
+	m: Reactive<Length>?,
+	mx: Reactive<Length>?,
+	my: Reactive<Length>?,
+	mt: Reactive<Length>?,
+	mr: Reactive<Length>?,
+	mb: Reactive<Length>?,
+	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
+	gap: Reactive<Num>?,
+	gap_x: Reactive<Length>?,
+	gap_y: Reactive<Length>?,
+	-- Flex and grid.
+	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
+	grow: Reactive<number>?,
+	shrink: Reactive<number>?,
+	basis: Reactive<Length>?,
+	flex_wrap: Reactive<boolean>?,
+	wrap_reverse: Reactive<boolean>?,
+	items: Reactive<Align>?,
+	justify: Reactive<Justify>?,
+	self: Reactive<Align>?,
+	content: Reactive<AlignContent>?,
+	grid: Reactive<boolean>?,
+	cols: Reactive<number>?,
+	rows: Reactive<number>?,
+	col_start: Reactive<number>?,
+	row_start: Reactive<number>?,
+	col_span: Reactive<number>?,
+	row_span: Reactive<number>?,
+	col_span_full: Reactive<boolean>?,
+	row_span_full: Reactive<boolean>?,
+	overflow: Reactive<Overflow>?,
+	overflow_x: Reactive<Overflow>?,
+	overflow_y: Reactive<Overflow>?,
+	hidden: Reactive<boolean>?,
+	invisible: Reactive<boolean>?,
+	-- Paint.
+	bg: Reactive<Color>?,
+	gradient: Reactive<Gradient>?,
+	color: Reactive<Color>?,
+	bg_image: Reactive<string>?,
+	bg_fit: Reactive<Fit>?,
+	rounded: Reactive<Num>?,
+	corners: Reactive<Corners>?,
+	rounded_tl: Reactive<number>?,
+	rounded_tr: Reactive<number>?,
+	rounded_br: Reactive<number>?,
+	rounded_bl: Reactive<number>?,
+	border: Reactive<Num>?,
+	border_sides: Reactive<Sides>?,
+	border_color: Reactive<Color>?,
+	border_over: Reactive<boolean>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
+	outline: Reactive<Num>?,
+	outline_color: Reactive<Color>?,
+	outline_offset: Reactive<Num>?,
+	shadow: Reactive<Shadow>?,
+	inset_shadow: Reactive<Shadow>?,
+	opacity: Reactive<Num>?,
+	brightness: Reactive<number>?,
+	contrast: Reactive<number>?,
+	saturate: Reactive<number>?,
+	blur: Reactive<number>?,
+	backdrop_blur: Reactive<Num>?,
+	fade: Reactive<Pair>?,
+	fade_x: Reactive<Pair>?,
+	fade_sides: Reactive<Sides>?,
+	fade_overflow: Reactive<boolean>?,
+	snap: Reactive<boolean>?,
+	clip_inset: Reactive<Sides>?,
+	layer: Reactive<boolean>?,
+	fit: Reactive<Fit>?,
+	tint: Reactive<Color>?,
+	cursor: Reactive<Cursor>?,
+	-- Text.
+	text_size: Reactive<Num>?,
+	weight: Reactive<Num>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	align: Reactive<TextAlign>?,
+	font: Reactive<Font>?,
+	wrap: Reactive<boolean>?,
+	truncate: Reactive<boolean>?,
+	lines: Reactive<number>?,
+	line_height: Reactive<Num>?,
+	letter_spacing: Reactive<Num>?,
+	-- Tabular figures: every digit the same width.
+	tabular: Reactive<boolean>?,
+	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
+	-- below the baseline the line sits.
+	underline: Reactive<boolean>?,
+	underline_offset: Reactive<Num>?,
+	-- Transforms: after layout, about `origin` (fractions of the node).
+	x: Reactive<number>?,
+	y: Reactive<number>?,
+	scale: Reactive<number>?,
+	scale_x: Reactive<number>?,
+	scale_y: Reactive<number>?,
+	rotate: Reactive<number>?,
+	skew: Reactive<number>?,
+	skew_x: Reactive<number>?,
+	skew_y: Reactive<number>?,
+	origin: Reactive<Pair>?,
+	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
+	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
+	theme: Reactive<ThemeSpec>?,
+	-- Space-separated class names.
+	class: string?,
+	-- Styles chosen from a `ui.variants` definition: `button { tone =
+	-- "ghost" }`, or the recipe itself for its defaults. The element's own
+	-- properties win over them.
+	variants: (Variants | ((choice: any) -> Variants))?,
+	ref: (Ref | { Ref })?,
+	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
+	-- A press on it (or on what inside takes no input) moves the window; a
+	-- double click zooms it. Buttons and inputs inside keep their clicks.
+	-- CSS pointer-events: "none" (or false) lets the pointer through to what
+	-- is under the node (presses, hover, the wheel, drops, a native view);
+	-- descendants with handlers still take it. A state or function follows.
+	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	window_drag: boolean?,
+	-- The pointer selects the text in it and everything it holds, as on a
+	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
+	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
+	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
+	-- Shown over it while the pointer rests on it (after 300 ms; at once
+	-- within a second of another): text in the theme's look, or a node of
+	-- the app's own. Above it, centred, unless `tooltip_placement` says.
+	tooltip: (string | Node)?,
+	tooltip_placement: Placement?,
+	-- A hover card the pointer can move into and click in: it stays while
+	-- the pointer is over the node or the card.
+	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
+	-- A condition (true disables), or the styles it shows while disabled.
+	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
+	hover: Styles?,
+	active: Styles?,
+	focus: Styles?,
+	-- Size animation ("height", "width", "size"; `true` is "height") or
+	-- position animation ("position"). A `layout_id` node mounting as
+	-- another with the same id unmounts (or while it is mounted) moves and
+	-- scales from that one's box.
+	layout: ("height" | "width" | "size" | "position" | boolean)?,
+	layout_id: string?,
+	layout_ease: Easing?,
+	-- Milliseconds.
+	layout_duration: number?,
+	layout_enter: boolean?,
+	layout_clip: boolean?,
+	-- The content shows through the bitmap's alpha: `mask = bitmap`, or
+	-- `{ bitmap, w = …, h = …, x = …, y = …, sweep = … }`.
+	mask: (Bitmap | MaskOptions)?,
+	bg_shader: Shader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	shader_params: { read [number]: Color | { number } }?,
+	-- Events.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Primary pointer down and up.
+	on_press: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_release: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
+	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Return true to consume the key.
+	on_key: (((e: KeyEvent) -> ...boolean?) | Action)?,
+	on_key_up: (((key: string) -> ...unknown) | Action)?,
+	on_focus: (Handler | Action)?,
+	on_blur: (Handler | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	on_mount: ((element: Element) -> ...unknown)?,
+	-- When layout gives it a new size, and at its first layout.
+	on_resize: ((size: Size, element: Element) -> ...unknown)?,
+	-- When any of it comes into view or all of it leaves (inside every
+	-- clip and scroll viewport above it), and at its first layout: for
+	-- building what only matters on screen.
+	on_visible: ((visible: boolean, element: Element) -> ...unknown)?,
+	-- Drag and drop within the window. Payloads are what `on_drag`
+	-- returns: the script's own plain values, so they are `any` here.
+	-- A source: `on_drag` returns the payload once the pointer moves 4
+	-- points; `drag_preview` builds what follows the pointer.
+	on_drag: (() -> any)?,
+	drag_preview: ((payload: any) -> Node)?,
+	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
+	-- Released outside every window of the app (macOS): a tab torn off its
+	-- window. `grab_x`/`grab_y` are where the source was held.
+	on_drag_outside: ((payload: any, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ...unknown)?,
+	-- The drag moves its window instead, with no preview (macOS): a
+	-- window's only tab. Dropped on another window's destination it drops
+	-- there; elsewhere the window stays where it was let go.
+	drag_moves_window: ((payload: any) -> boolean)?,
+	-- A destination: `drop_when` filters payloads (default: all).
+	drop_when: ((payload: any) -> unknown)?,
+	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
+	on_drag_leave: ((payload: any) -> ...unknown)?,
+	on_drop: ((payload: any, e: DragPoint) -> ...unknown)?,
+	-- A secondary click (control-click on macOS) shows the returned
+	-- `menu_item`s, `submenu`s and separators as a menu at the pointer;
+	-- returning nil (or nothing) shows none.
+	context_menu: ((e: PointerEvent) -> ...{ Node }?)?,
+	-- The context menu panel's look: bg, rounded, p, gap, backdrop_blur,
+	-- border, shadow, w, …
+	context_menu_style: Styles?,
+	-- Open the context menu under the node, from its left edge (a tab's),
+	-- rather than at the pointer.
+	context_menu_below: boolean?,
+	[number]: Child,
+	-- The name assistive technology reads for it, instead of its text: a
+	-- switch, a button showing only an icon. A state or function is
+	-- followed: a list row's name made from what it shows now.
+	label: (string | Readable<string> | (() -> string))?,
+	id: any,
+	title: string,
+}
+export type SeparatorProps = {
+	-- Size and position.
+	w: Reactive<Length>?,
+	h: Reactive<Length>?,
+	size: Reactive<Pair>?,
+	min_w: Reactive<Length>?,
+	max_w: Reactive<Length>?,
+	min_h: Reactive<Length>?,
+	max_h: Reactive<Length>?,
+	w_full: Reactive<boolean>?,
+	h_full: Reactive<boolean>?,
+	aspect: Reactive<number>?,
+	absolute: Reactive<boolean>?,
+	relative: Reactive<boolean>?,
+	top: Reactive<Length>?,
+	left: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
+	right: Reactive<Length>?,
+	bottom: Reactive<Length>?,
+	-- Spacing.
+	p: Reactive<Length>?,
+	px: Reactive<Length>?,
+	py: Reactive<Length>?,
+	pt: Reactive<Length>?,
+	pr: Reactive<Length>?,
+	pb: Reactive<Length>?,
+	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
+	m: Reactive<Length>?,
+	mx: Reactive<Length>?,
+	my: Reactive<Length>?,
+	mt: Reactive<Length>?,
+	mr: Reactive<Length>?,
+	mb: Reactive<Length>?,
+	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
+	gap: Reactive<Num>?,
+	gap_x: Reactive<Length>?,
+	gap_y: Reactive<Length>?,
+	-- Flex and grid.
+	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
+	grow: Reactive<number>?,
+	shrink: Reactive<number>?,
+	basis: Reactive<Length>?,
+	flex_wrap: Reactive<boolean>?,
+	wrap_reverse: Reactive<boolean>?,
+	items: Reactive<Align>?,
+	justify: Reactive<Justify>?,
+	self: Reactive<Align>?,
+	content: Reactive<AlignContent>?,
+	grid: Reactive<boolean>?,
+	cols: Reactive<number>?,
+	rows: Reactive<number>?,
+	col_start: Reactive<number>?,
+	row_start: Reactive<number>?,
+	col_span: Reactive<number>?,
+	row_span: Reactive<number>?,
+	col_span_full: Reactive<boolean>?,
+	row_span_full: Reactive<boolean>?,
+	overflow: Reactive<Overflow>?,
+	overflow_x: Reactive<Overflow>?,
+	overflow_y: Reactive<Overflow>?,
+	hidden: Reactive<boolean>?,
+	invisible: Reactive<boolean>?,
+	-- Paint.
+	bg: Reactive<Color>?,
+	gradient: Reactive<Gradient>?,
+	color: Reactive<Color>?,
+	bg_image: Reactive<string>?,
+	bg_fit: Reactive<Fit>?,
+	rounded: Reactive<Num>?,
+	corners: Reactive<Corners>?,
+	rounded_tl: Reactive<number>?,
+	rounded_tr: Reactive<number>?,
+	rounded_br: Reactive<number>?,
+	rounded_bl: Reactive<number>?,
+	border: Reactive<Num>?,
+	border_sides: Reactive<Sides>?,
+	border_color: Reactive<Color>?,
+	border_over: Reactive<boolean>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
+	outline: Reactive<Num>?,
+	outline_color: Reactive<Color>?,
+	outline_offset: Reactive<Num>?,
+	shadow: Reactive<Shadow>?,
+	inset_shadow: Reactive<Shadow>?,
+	opacity: Reactive<Num>?,
+	brightness: Reactive<number>?,
+	contrast: Reactive<number>?,
+	saturate: Reactive<number>?,
+	blur: Reactive<number>?,
+	backdrop_blur: Reactive<Num>?,
+	fade: Reactive<Pair>?,
+	fade_x: Reactive<Pair>?,
+	fade_sides: Reactive<Sides>?,
+	fade_overflow: Reactive<boolean>?,
+	snap: Reactive<boolean>?,
+	clip_inset: Reactive<Sides>?,
+	layer: Reactive<boolean>?,
+	fit: Reactive<Fit>?,
+	tint: Reactive<Color>?,
+	cursor: Reactive<Cursor>?,
+	-- Text.
+	text_size: Reactive<Num>?,
+	weight: Reactive<Num>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	align: Reactive<TextAlign>?,
+	font: Reactive<Font>?,
+	wrap: Reactive<boolean>?,
+	truncate: Reactive<boolean>?,
+	lines: Reactive<number>?,
+	line_height: Reactive<Num>?,
+	letter_spacing: Reactive<Num>?,
+	-- Tabular figures: every digit the same width.
+	tabular: Reactive<boolean>?,
+	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
+	-- below the baseline the line sits.
+	underline: Reactive<boolean>?,
+	underline_offset: Reactive<Num>?,
+	-- Transforms: after layout, about `origin` (fractions of the node).
+	x: Reactive<number>?,
+	y: Reactive<number>?,
+	scale: Reactive<number>?,
+	scale_x: Reactive<number>?,
+	scale_y: Reactive<number>?,
+	rotate: Reactive<number>?,
+	skew: Reactive<number>?,
+	skew_x: Reactive<number>?,
+	skew_y: Reactive<number>?,
+	origin: Reactive<Pair>?,
+	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
+	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
+	theme: Reactive<ThemeSpec>?,
+	-- Identity, for selectors, refs and animations.
+	id: string?,
+	-- Space-separated class names.
+	class: string?,
+	-- Styles chosen from a `ui.variants` definition: `button { tone =
+	-- "ghost" }`, or the recipe itself for its defaults. The element's own
+	-- properties win over them.
+	variants: (Variants | ((choice: any) -> Variants))?,
+	ref: (Ref | { Ref })?,
+	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
+	-- A press on it (or on what inside takes no input) moves the window; a
+	-- double click zooms it. Buttons and inputs inside keep their clicks.
+	-- CSS pointer-events: "none" (or false) lets the pointer through to what
+	-- is under the node (presses, hover, the wheel, drops, a native view);
+	-- descendants with handlers still take it. A state or function follows.
+	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	window_drag: boolean?,
+	-- The pointer selects the text in it and everything it holds, as on a
+	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
+	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
+	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
+	-- Shown over it while the pointer rests on it (after 300 ms; at once
+	-- within a second of another): text in the theme's look, or a node of
+	-- the app's own. Above it, centred, unless `tooltip_placement` says.
+	tooltip: (string | Node)?,
+	tooltip_placement: Placement?,
+	-- A hover card the pointer can move into and click in: it stays while
+	-- the pointer is over the node or the card.
+	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
+	-- A condition (true disables), or the styles it shows while disabled.
+	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
+	hover: Styles?,
+	active: Styles?,
+	focus: Styles?,
+	-- Size animation ("height", "width", "size"; `true` is "height") or
+	-- position animation ("position"). A `layout_id` node mounting as
+	-- another with the same id unmounts (or while it is mounted) moves and
+	-- scales from that one's box.
+	layout: ("height" | "width" | "size" | "position" | boolean)?,
+	layout_id: string?,
+	layout_ease: Easing?,
+	-- Milliseconds.
+	layout_duration: number?,
+	layout_enter: boolean?,
+	layout_clip: boolean?,
+	-- The content shows through the bitmap's alpha: `mask = bitmap`, or
+	-- `{ bitmap, w = …, h = …, x = …, y = …, sweep = … }`.
+	mask: (Bitmap | MaskOptions)?,
+	bg_shader: Shader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	shader_params: { read [number]: Color | { number } }?,
+	-- Events.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Primary pointer down and up.
+	on_press: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_release: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
+	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Return true to consume the key.
+	on_key: (((e: KeyEvent) -> ...boolean?) | Action)?,
+	on_key_up: (((key: string) -> ...unknown) | Action)?,
+	on_focus: (Handler | Action)?,
+	on_blur: (Handler | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	on_mount: ((element: Element) -> ...unknown)?,
+	-- When layout gives it a new size, and at its first layout.
+	on_resize: ((size: Size, element: Element) -> ...unknown)?,
+	-- When any of it comes into view or all of it leaves (inside every
+	-- clip and scroll viewport above it), and at its first layout: for
+	-- building what only matters on screen.
+	on_visible: ((visible: boolean, element: Element) -> ...unknown)?,
+	-- Drag and drop within the window. Payloads are what `on_drag`
+	-- returns: the script's own plain values, so they are `any` here.
+	-- A source: `on_drag` returns the payload once the pointer moves 4
+	-- points; `drag_preview` builds what follows the pointer.
+	on_drag: (() -> any)?,
+	drag_preview: ((payload: any) -> Node)?,
+	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
+	-- Released outside every window of the app (macOS): a tab torn off its
+	-- window. `grab_x`/`grab_y` are where the source was held.
+	on_drag_outside: ((payload: any, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ...unknown)?,
+	-- The drag moves its window instead, with no preview (macOS): a
+	-- window's only tab. Dropped on another window's destination it drops
+	-- there; elsewhere the window stays where it was let go.
+	drag_moves_window: ((payload: any) -> boolean)?,
+	-- A destination: `drop_when` filters payloads (default: all).
+	drop_when: ((payload: any) -> unknown)?,
+	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
+	on_drag_leave: ((payload: any) -> ...unknown)?,
+	on_drop: ((payload: any, e: DragPoint) -> ...unknown)?,
+	-- A secondary click (control-click on macOS) shows the returned
+	-- `menu_item`s, `submenu`s and separators as a menu at the pointer;
+	-- returning nil (or nothing) shows none.
+	context_menu: ((e: PointerEvent) -> ...{ Node }?)?,
+	-- The context menu panel's look: bg, rounded, p, gap, backdrop_blur,
+	-- border, shadow, w, …
+	context_menu_style: Styles?,
+	-- Open the context menu under the node, from its left edge (a tab's),
+	-- rather than at the pointer.
+	context_menu_below: boolean?,
+	[number]: never,
+	vertical: boolean?,
 }
 -- Two panes (its two children) and a divider between them that drags to
 -- resize the first; the second fills the rest.
@@ -4888,6 +6730,11 @@ export type SplitProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -4925,6 +6772,9 @@ export type SplitProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -5179,6 +7029,11 @@ export type ListProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -5216,6 +7071,9 @@ export type ListProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -5486,6 +7344,11 @@ export type LayerProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -5523,6 +7386,9 @@ export type LayerProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -5762,6 +7628,11 @@ export type ModalProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -5799,6 +7670,9 @@ export type ModalProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -5880,6 +7754,9 @@ export type ModalProps = {
 	label: string?,
 	placement: ModalPlacement?,
 	autofocus: boolean?,
+	-- false: a click outside doesn't close it (a dialog that must be
+	-- answered; Escape still does).
+	dismiss_on_backdrop: boolean?,
 }
 -- Where an anchored popover or menu opens: on `side` of its trigger
 -- (flipping when that side lacks room), lined up with its start, centre
@@ -6047,6 +7924,11 @@ export type PopoverProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -6084,6 +7966,9 @@ export type PopoverProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -6175,6 +8060,10 @@ export type PopoverProps = {
 	-- A popover only: an arrow at its trigger, reaching this many points
 	-- from the panel's edge (AppKit's popovers have one).
 	arrow: number?,
+	-- At least as wide as its trigger, as a select's list is.
+	match_anchor_width: boolean?,
+	-- A popover only: false keeps it open on a click outside.
+	dismiss_on_backdrop: boolean?,
 }
 -- `ui.menu_item { "Copy", on_click = … }`: the label first.
 -- The label (`{ "Copy" }`), or `label` with content of its own after it
@@ -6337,6 +8226,7 @@ export type MenuItemProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -6374,6 +8264,9 @@ export type MenuItemProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -6454,6 +8347,12 @@ export type MenuItemProps = {
 	label: string?,
 	-- Chosen, it leaves the menu open (a toggle, a pin).
 	keep_open: boolean?,
+	-- A check in its gutter while true (a toggle item); `radio = true`: a
+	-- dot, one of a group (a radio item). Told to assistive technology.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	radio: boolean?,
+	-- The keys that do it, shown at its end: "⌘C".
+	shortcut: string?,
 }
 export type SubmenuProps = {
 	-- Size and position.
@@ -6613,6 +8512,11 @@ export type SubmenuProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -6650,6 +8554,9 @@ export type SubmenuProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -6892,6 +8799,11 @@ export type WebViewProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -6929,6 +8841,9 @@ export type WebViewProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -7189,6 +9104,11 @@ export type TerminalProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -7226,6 +9146,9 @@ export type TerminalProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -7464,6 +9387,11 @@ export type SlotProps = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -7501,6 +9429,9 @@ export type SlotProps = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -7744,6 +9675,11 @@ export type EachOptions = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -7781,6 +9717,9 @@ export type EachOptions = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -8027,6 +9966,11 @@ export type PresenceOptions = {
 	heading: number?,
 	-- Whether this option, tab or item is the chosen one (`aria-selected`).
 	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
 	-- note, a message arriving.
 	live: ("polite" | "assertive" | "off")?,
@@ -8064,6 +10008,9 @@ export type PresenceOptions = {
 	-- A hover card the pointer can move into and click in: it stays while
 	-- the pointer is over the node or the card.
 	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
 	-- A condition (true disables), or the styles it shows while disabled.
 	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
 	hover: Styles?,
@@ -8255,6 +10202,14 @@ declare ui: {
 	-- the divider drags (no script runs), takes the arrow keys focused,
 	-- and resets on a double click.
 	split: (props: SplitProps) -> Node,
+	segmented: (props: SegmentedProps) -> Node,
+	stepper: (props: StepperProps) -> Node,
+	disclosure: (props: DisclosureProps) -> Node,
+	accordion: (props: AccordionProps) -> Node,
+	-- An accordion's section: `ui.section { id = "a", title = "Shipping", … }`.
+	section: (props: SectionProps) -> Node,
+	-- A line between groups, across (`vertical = true`: down a toolbar).
+	separator: (props: SeparatorProps?) -> Node,
 	modal: (props: ModalProps) -> Node,
 	-- Over the window and non-modal (toasts): no focus, no backdrop; the
 	-- pointer passes through but for what it holds, which stays live while

@@ -39,6 +39,10 @@ context_menu_below: boolean?
 | children (not `menu_item`) | `Child` | none | the panel's content |
 | properties | [Props](properties.md) | | style the panel (not the anchor): `w`, `p`, `gap`, `bg`, `rounded`, `backdrop_blur`, `border`, `shadow`… |
 | `on_click` (`menu_item`) | `Handler \| Action` | none | runs once the menu has closed |
+| `checked`, `radio` (`menu_item`) | `boolean \| Readable<boolean> \| (() -> boolean)`, `boolean` | none | a check in the item's gutter while true (a toggle item), or a dot with `radio = true` (one of a group); assistive technology hears a checkbox or radio item |
+| `shortcut` (`menu_item`) | `string` | none | the keys that do it, shown at its end in the tertiary text colour (`"⌘C"`) |
+| `match_anchor_width` (`popover`, `menu`) | `boolean` | `false` | at least as wide as its trigger, as a select's list is |
+| `dismiss_on_backdrop` (`modal`, `popover`) | `boolean` | `true` | `false`: a click outside doesn't close it (a dialog that must be answered); Escape still does |
 | `disabled` (`menu_item`, `submenu`) | `boolean \| Readable<boolean> \| (() -> boolean)` | `false` | keyboard navigation skips it |
 | `context_menu` | `(e: PointerEvent) -> { Node }?` | none | `e` is `{ x, y, local_x, local_y }`; return the items, or nothing for no menu |
 | `context_menu_style` | `Styles` | the menu's own | the context menu panel's look, plain values |
@@ -52,8 +56,8 @@ Panels start with 16 points of padding, the theme's surface color and rounded co
 - A modal or popover traps keyboard focus while open, starting on its first enabled control, and gives focus back when it closes.
 - A menu takes focus to its first enabled item. Up and Down move (wrapping), Home and End jump, typing a letter finds an item by its label, Tab closes the menu and moves on.
 - Choosing an item closes its menu, and the menus it opened from, before its `on_click` runs, so the handler can open another dialog.
-- A submenu opens with a click on its item, Right or Enter, not on hover; Left or Escape closes it alone. A long menu scrolls.
-- The innermost node with a `context_menu` takes the secondary click. Terminals hand the right clicks their program does not use to the node, so a terminal's context menu opens over it.
+- A submenu opens when the pointer moves onto its item, or with a click, Right or Enter (Left right to left, the way it opens); Left (Right) or Escape closes it alone. A long menu scrolls.
+- The innermost node with a `context_menu` takes the secondary click; Shift+F10 or the Menu key opens it under what has focus. Terminals hand the right clicks their program does not use to the node, so a terminal's context menu opens over it.
 
 ## Example
 
