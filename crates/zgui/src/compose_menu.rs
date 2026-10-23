@@ -59,12 +59,48 @@ impl MenuContext {
             }
         }
     }
+    /// Focus the first enabled item of this menu's open submenu `open`.
+    pub(crate) fn focus_submenu(&self, ui: &Ui, open: &Signal<bool>) {
+        let panel = self
+            .children
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find(|child| child.open.same(open))
+            .and_then(|child| child.panel.get());
+        if let Some(first) = panel.and_then(|panel| items(ui, panel).first().copied()) {
+            ui.input.focus(&ui.scene, Some(first));
+        }
+    }
     pub(crate) fn close_chain(&self) {
         self.open.set(false);
         if let Some(parent) = &self.parent {
             parent.close_chain();
         }
     }
+}
+/// A menu panel's enabled items, in order.
+fn items(ui: &Ui, panel: NodeId) -> Vec<NodeId> {
+    let scene = ui.scene.borrow();
+    let semantics = ui.semantics.borrow();
+    let mut pending = scene
+        .children(panel)
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
+    let mut items = Vec::new();
+    while let Some(node) = pending.pop() {
+        if semantics
+            .get(node)
+            .is_some_and(|node| node.role == Role::MenuItem)
+            && ui.input.is_enabled(&scene, node)
+        {
+            items.push(node);
+        }
+        pending.extend(scene.children(node).iter().rev().copied());
+    }
+    items
 }
 #[derive(Default)]
 struct Search {
@@ -229,28 +265,7 @@ pub(crate) fn mount(
             }
             return;
         }
-        let items = {
-            let scene = ui.scene.borrow();
-            let semantics = ui.semantics.borrow();
-            let mut pending = scene
-                .children(panel)
-                .iter()
-                .rev()
-                .copied()
-                .collect::<Vec<_>>();
-            let mut items = Vec::new();
-            while let Some(node) = pending.pop() {
-                if semantics
-                    .get(node)
-                    .is_some_and(|node| node.role == Role::MenuItem)
-                    && ui.input.is_enabled(&scene, node)
-                {
-                    items.push(node);
-                }
-                pending.extend(scene.children(node).iter().rev().copied());
-            }
-            items
-        };
+        let items = items(&ui, panel);
         if items.is_empty() {
             return;
         }

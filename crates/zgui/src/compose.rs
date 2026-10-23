@@ -2475,6 +2475,7 @@ fn mount_element(
         let mut click = view.click.take();
         let menu_trigger = view.menu_trigger.take();
         let keep_open = view.menu_keep_open;
+        let weak_ui = ui.downgrade();
         ui.on_event(root, true, move |cx| {
             // Over a menu's item (or pressing it): a submenu trigger opens
             // its submenu, and any other submenu of that menu closes.
@@ -2509,6 +2510,15 @@ fn mount_element(
                     value.set(!value.get());
                 }
                 if let Some(open) = &menu_trigger {
+                    // Hovering opened it already, and the press then focused
+                    // this trigger: move focus back into the submenu, as
+                    // opening it does.
+                    if open.with_untracked(|o| *o)
+                        && let Some(menu) = &item_menu
+                        && let Some(ui) = weak_ui.upgrade()
+                    {
+                        menu.focus_submenu(&ui, open);
+                    }
                     open.set(true);
                 } else if let Some(menu) = &item_menu
                     && !keep_open
