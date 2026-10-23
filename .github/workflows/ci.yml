@@ -205,7 +205,9 @@ jobs:
         with:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo check --workspace --all-targets --locked
+      # Clippy compiles what `cargo check` would, and lints the Windows-only
+      # code Linux and macOS never build; WebView2 (off by default) with it.
+      - run: cargo clippy --workspace --all-targets --features zgui-desktop/webview2 --locked -- -D warnings
       - run: cargo test -p zgui -p zgui-desktop --lib --locked
       # Bundled script paths: caught a Windows separator bug.
       - run: cargo test -p zgui-script --test bundle --locked
