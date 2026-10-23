@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use unicode_segmentation::UnicodeSegmentation;
 use zgui::{
     scene::{NodeId, Scene},
-    semantics::{Role, ScrollAxis, SemanticRevision, Semantics},
+    semantics::{Live, Role, ScrollAxis, SemanticRevision, Semantics},
 };
 
 #[derive(Default)]
@@ -87,11 +87,21 @@ impl AccessibilityTree {
         let root = self.id(scene.root());
         let mut children: HashMap<NodeId, Vec<AccessibleId>> = HashMap::new();
         // Scene order, not hash-map iteration order, determines accessible traversal.
-        let ordered: Vec<_> = scene
+        let mut ordered: Vec<_> = scene
             .paint_items()
             .filter(|p| p.effects.opacity > 0.0)
             .filter_map(|p| semantics.get(p.id).map(|s| (p.id, s)))
             .collect();
+        // What is hidden from assistive technology (`aria-hidden`) goes with
+        // its subtree; only a tree that hides something looks.
+        let hidden: Vec<_> = ordered
+            .iter()
+            .filter(|(_, s)| s.hidden)
+            .map(|(id, _)| *id)
+            .collect();
+        if !hidden.is_empty() {
+            ordered.retain(|(id, _)| !hidden.iter().any(|h| scene.is_within(*id, *h)));
+        }
         let visible: HashSet<_> = ordered
             .iter()
             .map(|(id, _)| *id)
@@ -187,9 +197,18 @@ impl AccessibilityTree {
             );
             let mut native_children = children.remove(&id).unwrap_or_default();
             let runs = self.text_runs.get(&id).map_or(&[][..], Vec::as_slice);
+            // Text read as text: a label, or a text node that is a heading
+            // (a label with a level). A heading holding text is named by
+            // it, and its text reads as its own.
+            let text = semantic.role == Role::Label
+                || (semantic.role == Role::Heading
+                    && matches!(
+                        scene.kind(id),
+                        zgui::scene::NodeKind::Text { .. } | zgui::scene::NodeKind::RichText { .. }
+                    ));
             // A label in a selectable region is one of its blocks, which
             // break its text as a browser's paragraphs do.
-            let block = semantic.role == Role::Label && scene.is_selectable(id);
+            let block = text && scene.is_selectable(id);
             // Reuse the existing cached node's geometry/children instead of
             // retaining another copy in the revision cache. Text runs must still
             // have live cached nodes/positions before omitting this projection.
@@ -212,8 +231,15 @@ impl AccessibilityTree {
             let mut n = Node::new(semantic_role(semantic));
             // AccessKit Label content belongs in value; AT-SPI derives its
             // accessible name from value, rather than the control-label field.
-            let text_value = if semantic.role == Role::Label {
+            let text_value = if text {
+                // A heading is also named by its text, as a browser's is.
+                if semantic.role == Role::Heading {
+                    n.set_label(semantic.label.clone());
+                }
                 Some(semantic.value.as_deref().unwrap_or(&semantic.label))
+            } else if semantic.role == Role::Heading {
+                n.set_label(semantic.label.clone());
+                None
             } else {
                 n.set_label(semantic.label.clone());
                 semantic.value.as_deref()
@@ -230,7 +256,29 @@ impl AccessibilityTree {
             if semantic.modal {
                 n.set_modal();
             }
-            if let Some(v) = text_value {
+            if let Some(level) = semantic.level {
+                n.set_level(level);
+            }
+            if let Some(selected) = semantic.selected {
+                n.set_selected(selected);
+            }
+            // A status is politely live unless it says otherwise, as ARIA's is.
+            match semantic
+                .live
+                .or((semantic.role == Role::Status).then_some(Live::Polite))
+            {
+                Some(Live::Polite) => n.set_live(accesskit::Live::Polite),
+                Some(Live::Assertive) => n.set_live(accesskit::Live::Assertive),
+                None => {}
+            }
+            if let Some(description) = &semantic.description {
+                n.set_description(description.clone());
+            }
+            // A heading's text is its name and its runs; its value is left
+            // to the platform (its level, on macOS), or the document would
+            // read it twice.
+            let heading = semantic.role == Role::Heading;
+            if let Some(v) = text_value.filter(|_| !heading) {
                 n.set_value(v);
             }
             if let Some(placeholder) = &semantic.placeholder {
@@ -263,7 +311,12 @@ impl AccessibilityTree {
             }
             if matches!(
                 semantic.role,
-                Role::Button | Role::Link | Role::CheckBox | Role::MenuItem
+                Role::Button
+                    | Role::Link
+                    | Role::CheckBox
+                    | Role::MenuItem
+                    | Role::ListBoxOption
+                    | Role::Tab
             ) {
                 n.add_action(Action::Click);
             }
@@ -285,6 +338,8 @@ impl AccessibilityTree {
                     | Role::Slider
                     | Role::ScrollBar
                     | Role::ListItem
+                    | Role::ListBoxOption
+                    | Role::Tab
                     | Role::Dialog
                     | Role::Menu
             ) {
@@ -322,16 +377,14 @@ impl AccessibilityTree {
                 });
             }
             n.set_bounds(bounds);
-            if matches!(
-                semantic.role,
-                Role::TextInput | Role::MultilineTextInput | Role::Label
-            ) {
+            if text || matches!(semantic.role, Role::TextInput | Role::MultilineTextInput) {
                 let reusable = self
                     .ids
                     .get(&id)
                     .and_then(|native| self.cache.get(native))
                     .is_some_and(|cached| {
-                        cached.role() == semantic_role(semantic) && cached.value() == text_value
+                        cached.role() == semantic_role(semantic)
+                            && cached.value() == text_value.filter(|_| !heading)
                     })
                     && self.blocks.contains(&id) == block
                     && self.text_runs.get(&id).is_none_or(|ids| {
@@ -374,15 +427,13 @@ impl AccessibilityTree {
                 if let Some(ids) = self.text_runs.get(&id) {
                     let selection_position =
                         |byte: usize| run_position(ids, &self.text_positions, byte);
-                    if semantic.role != Role::Label
-                        && let Some((anchor, focus)) = semantic.text_selection
-                    {
+                    if !text && let Some((anchor, focus)) = semantic.text_selection {
                         n.set_text_selection(accesskit::TextSelection {
                             anchor: selection_position(anchor),
                             focus: selection_position(focus),
                         });
                     }
-                    if semantic.role != Role::Label {
+                    if !text {
                         n.add_action(Action::SetTextSelection);
                     }
                     native_children.extend(ids.iter().copied());
@@ -556,6 +607,14 @@ fn role(r: Role) -> accesskit::Role {
         Role::MenuItem => accesskit::Role::MenuItem,
         Role::Image => accesskit::Role::Image,
         Role::Document => accesskit::Role::Document,
+        Role::Heading => accesskit::Role::Heading,
+        Role::List => accesskit::Role::List,
+        Role::ListBox => accesskit::Role::ListBox,
+        Role::ListBoxOption => accesskit::Role::ListBoxOption,
+        Role::Toolbar => accesskit::Role::Toolbar,
+        Role::Status => accesskit::Role::Status,
+        Role::TabList => accesskit::Role::TabList,
+        Role::Tab => accesskit::Role::Tab,
     }
 }
 
@@ -1405,5 +1464,151 @@ mod idle_pool_tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+}
+
+#[cfg(test)]
+mod vocabulary_tests {
+    use super::*;
+    use zgui::{compose::prelude::*, semantics::Live, widgets::Ui};
+
+    /// Every projected node, after a frame.
+    fn project(ui: &mut Ui) -> Vec<Node> {
+        ui.prepare_frame();
+        let mut adapter = AccessibilityTree::new();
+        adapter
+            .update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "Test", 1.)
+            .nodes
+            .into_iter()
+            .map(|(_, node)| node)
+            .collect()
+    }
+    fn find(nodes: &[Node], role: accesskit::Role) -> Vec<&Node> {
+        nodes.iter().filter(|n| n.role() == role).collect()
+    }
+
+    #[test]
+    fn headings_say_their_level_and_are_named_by_their_text() {
+        let mut ui = Ui::new(400., 300.);
+        ui.mount(
+            column()
+                .child(text("Inbox").heading(1))
+                .child(text("Today").heading(2))
+                .child(text("A paragraph")),
+        );
+        let nodes = project(&mut ui);
+        let headings = find(&nodes, accesskit::Role::Heading);
+        assert_eq!(headings.len(), 2);
+        assert_eq!(headings[0].level(), Some(1));
+        assert_eq!(headings[0].label(), Some("Inbox"));
+        assert_eq!(headings[1].level(), Some(2));
+        assert_eq!(find(&nodes, accesskit::Role::Label).len(), 1);
+    }
+
+    #[test]
+    fn a_heading_holding_text_is_named_by_it_and_reads_it_once() {
+        // As markdown's headings are built: a box of styled runs.
+        let mut ui = Ui::new(400., 300.);
+        ui.mount(
+            column()
+                .selectable(true)
+                .child(row().heading(2).child(text("Notes")))
+                .child(text("Body")),
+        );
+        let nodes = project(&mut ui);
+        let heading = find(&nodes, accesskit::Role::Heading)[0];
+        assert_eq!(heading.label(), Some("Notes"));
+        assert_eq!(heading.value(), None);
+        assert_eq!(heading.level(), Some(2));
+        // Its text is its child's, once: one run says "Notes".
+        let runs = nodes
+            .iter()
+            .filter(|n| n.role() == accesskit::Role::TextRun && n.value() == Some("Notes\n"))
+            .count();
+        assert_eq!(runs, 1);
+    }
+
+    #[test]
+    fn options_follow_their_selection_and_click() {
+        let mut ui = Ui::new(400., 300.);
+        let chosen = ui.signal(0_usize);
+        let option = |i: usize| {
+            let read = chosen.clone();
+            let write = chosen.clone();
+            row()
+                .role(Role::ListBoxOption)
+                .selected_when(move || read.get() == i)
+                .on_click(move || {
+                    write.set(i);
+                })
+                .child(text(format!("Mailbox {i}")))
+        };
+        ui.mount(
+            column()
+                .role(Role::ListBox)
+                .accessible_label("Mailboxes")
+                .child(option(0))
+                .child(option(1)),
+        );
+        let nodes = project(&mut ui);
+        let options = find(&nodes, accesskit::Role::ListBoxOption);
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0].is_selected(), Some(true));
+        assert_eq!(options[1].is_selected(), Some(false));
+        assert_eq!(options[1].label(), Some("Mailbox 1"));
+        assert!(options[1].supports_action(Action::Click));
+        assert_eq!(
+            find(&nodes, accesskit::Role::ListBox)[0].label(),
+            Some("Mailboxes")
+        );
+        chosen.set(1);
+        let nodes = project(&mut ui);
+        let options = find(&nodes, accesskit::Role::ListBoxOption);
+        assert_eq!(options[0].is_selected(), Some(false));
+        assert_eq!(options[1].is_selected(), Some(true));
+    }
+
+    #[test]
+    fn live_regions_descriptions_and_hidden_decoration() {
+        let mut ui = Ui::new(400., 300.);
+        ui.mount(
+            column()
+                .child(text("3 new messages").live(Live::Polite))
+                .child(text("Saved").role(Role::Status))
+                .child(
+                    button()
+                        .accessible_description("Moves it out of the inbox")
+                        .child(text("Archive")),
+                )
+                .child(
+                    row()
+                        .accessible_hidden()
+                        .child(text("●"))
+                        .child(text("decor")),
+                )
+                .child(
+                    button()
+                        .child(text("●").accessible_hidden())
+                        .child(text(""))
+                        .child(text("Unread")),
+                ),
+        );
+        let nodes = project(&mut ui);
+        let live: Vec<_> = nodes.iter().filter_map(|n| n.live()).collect();
+        assert_eq!(live, [accesskit::Live::Polite, accesskit::Live::Polite]);
+        let button = find(&nodes, accesskit::Role::Button)[0];
+        assert_eq!(button.description(), Some("Moves it out of the inbox"));
+        let texts: Vec<_> = find(&nodes, accesskit::Role::Label)
+            .iter()
+            .filter_map(|n| n.value())
+            .collect();
+        assert!(!texts.contains(&"●"), "{texts:?}");
+        assert!(!texts.contains(&"decor"), "{texts:?}");
+        // A name made from text leaves out what is hidden, and empty text.
+        let names: Vec<_> = find(&nodes, accesskit::Role::Button)
+            .iter()
+            .filter_map(|n| n.label())
+            .collect();
+        assert_eq!(names, ["Archive", "Unread"]);
     }
 }

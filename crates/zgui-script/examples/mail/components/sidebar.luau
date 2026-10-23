@@ -17,6 +17,11 @@ end)
 
 local function mailbox(name: string): Node
 	return ui.row {
+		-- A choice among the mailboxes, as assistive technology reads it.
+		role = "option",
+		selected = function()
+			return state.mailbox:get() == name
+		end,
 		h = 30,
 		px = 10,
 		rounded = 6,
@@ -68,6 +73,6 @@ return function(): Node
 				"New Message",
 			},
 		},
-		rows,
+		ui.column { role = "listbox", label = "Mailboxes", gap = 2, rows },
 	}
 end

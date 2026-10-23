@@ -24,6 +24,32 @@ pub enum Role {
     /// Text read and selected as a document: a selectable region
     /// (`View::selectable`), as a browser's page is.
     Document,
+    /// A section's title (`h1`…`h6`): screen readers move between them,
+    /// and announce its `level`.
+    Heading,
+    /// Items read as a list (`ul`, `ol`): its `ListItem`s say where they
+    /// are in it.
+    List,
+    /// A list whose items are chosen (`role="listbox"`): its
+    /// `ListBoxOption`s say whether they are `selected`.
+    ListBox,
+    ListBoxOption,
+    /// A row of controls (`role="toolbar"`).
+    Toolbar,
+    /// Advisory text that changes, such as a count or a saved state
+    /// (`role="status"`, politely live).
+    Status,
+    /// Tabs choosing a panel (`role="tablist"`), each a `Tab` that says
+    /// whether it is `selected`.
+    TabList,
+    Tab,
+}
+/// How a change to a node's text is announced (ARIA's `aria-live`): only
+/// once the reader is idle, or at once, interrupting it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Live {
+    Polite,
+    Assertive,
 }
 /// The single scrolling axis supported by a semantic scroll view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +102,17 @@ pub struct SemanticNode {
     /// The label was given (`View::accessible_label`), not derived from the
     /// node's text: it stays when that text changes.
     pub named: bool,
+    /// A heading's level, 1 for the top (`h1`).
+    pub level: Option<usize>,
+    /// Whether an option, tab or item is the chosen one (`aria-selected`).
+    pub selected: Option<bool>,
+    /// Announce changes to the text in this subtree (`aria-live`).
+    pub live: Option<Live>,
+    /// Read after the name, as a hint (`aria-description`).
+    pub description: Option<String>,
+    /// Left out of the accessibility tree with its subtree (`aria-hidden`):
+    /// decoration, or a copy of what is said elsewhere.
+    pub hidden: bool,
 }
 impl SemanticNode {
     pub fn new(role: Role, label: impl Into<String>) -> Self {
@@ -101,6 +138,11 @@ impl SemanticNode {
             size_of_set: None,
             placeholder: None,
             document_selection: None,
+            level: None,
+            selected: None,
+            live: None,
+            description: None,
+            hidden: false,
         }
     }
 }

@@ -153,6 +153,37 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `focusable` | `boolean` | controls: `true` | takes keyboard focus |
 | `pointer_events` | `"none"`, `"auto"`, `boolean`, or a state or function of one | `"auto"` | `"none"` or `false` lets the pointer pass through to what is under the node (presses, hover, the wheel, drops, and a web view or terminal, even where the node paints over it); descendants with their own handlers still receive input |
 
+## Accessibility
+
+What assistive technology (VoiceOver, Narrator, Orca) reads for a node beyond what it is: controls say their role, name and state themselves, and these say what a plain box means. They cost nothing on nodes that don't set them.
+
+| Property | Type | Default | |
+| --- | --- | --- | --- |
+| `label` | `string` | its text | the name read for a box (ARIA's `aria-label`): an icon button, a group. Widgets take their own `label` |
+| `role` | `"group" \| "button" \| "link" \| "heading" \| "list" \| "listitem" \| "listbox" \| "option" \| "toolbar" \| "status" \| "tablist" \| "tab" \| "dialog" \| "img"` | what it is | what it is taken for (ARIA's `role`), keeping what it does: a clickable row as an `"option"` in a `"listbox"`, a row of buttons as a `"toolbar"`. Options, tabs, list items and headings are named by their text |
+| `heading` | `number` | | a section title of that level, 1 to 6 (`h1`…`h6`): screen readers list headings and move between them (VoiceOver's rotor) |
+| `selected` | `boolean \| state \| function` | | whether an option, tab or item is the chosen one (`aria-selected`), followed |
+| `live` | `"polite" \| "assertive" \| "off"` | `"off"` (`role = "status"`: `"polite"`) | announce changes to the text in it (`aria-live`): a count, a "Sent" note, a message arriving; `"assertive"` interrupts |
+| `description` | `string` | | read after the name, as a hint (`aria-description`) |
+| `aria_hidden` | `boolean` | `false` | leaves it and what it holds out of the accessibility tree (`aria-hidden`): decoration such as an unread dot, or what is said elsewhere |
+
+```lua
+local mailbox = ui.state("mailbox", "Inbox")
+return ui.column {
+	role = "listbox",
+	label = "Mailboxes",
+	ui.row {
+		role = "option",
+		selected = function()
+			return mailbox:get() == "Inbox"
+		end,
+		on_click = ui.set(mailbox, "Inbox"),
+		ui.text { "●", aria_hidden = true },
+		ui.text { "Inbox" },
+	},
+}
+```
+
 ## Position
 
 An `absolute = true` node leaves the flow and positions against its containing block: the nearest ancestor with `relative = true`, searched from its parent up but not past an `absolute` ancestor (which contains its own absolute descendants); with none, its parent. `left`, `top`, `right` and `bottom` count from that block's padding box, inside its border; percentages are of its size; both insets on an axis without a size stretch the node between them; an axis without insets keeps it at its parent's content origin (plus `ml`/`mt`). `show`, `switch`, `each` and `presence` wrap their content in a node of their own, so mark the ancestor you mean `relative` rather than relying on being its direct child. Transforms and scroll offsets never change the containing block: an absolute node moves with them, and still paints in its parent's place, under its clips.

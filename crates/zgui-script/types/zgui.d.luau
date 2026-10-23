@@ -1068,6 +1068,21 @@ export type StyleProps = {
 
 -- What every element takes besides its styles.
 export type PointerEvents = "none" | "auto" | boolean
+export type AriaRole =
+	"group"
+	| "button"
+	| "link"
+	| "heading"
+	| "list"
+	| "listitem"
+	| "listbox"
+	| "option"
+	| "toolbar"
+	| "status"
+	| "tablist"
+	| "tab"
+	| "dialog"
+	| "img"
 export type NodeProps = {
 	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -1082,6 +1097,23 @@ export type NodeProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -1322,6 +1354,23 @@ export type Props = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -1555,6 +1604,23 @@ export type ContainerProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -1790,6 +1856,23 @@ export type ScrollProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -2032,6 +2115,23 @@ export type TextProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -2315,6 +2415,23 @@ export type RichProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -2548,6 +2665,23 @@ export type ImageProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -2789,6 +2923,23 @@ export type SvgProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -3024,6 +3175,23 @@ export type CanvasProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -3258,6 +3426,23 @@ export type CheckboxProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -3495,6 +3680,23 @@ export type InputProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -3747,6 +3949,23 @@ export type ProgressProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -3981,6 +4200,23 @@ export type SliderProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -4219,6 +4455,23 @@ export type ListProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -4480,6 +4733,23 @@ export type LayerProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -4715,6 +4985,23 @@ export type ModalProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -4959,6 +5246,23 @@ export type PopoverProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -5202,6 +5506,23 @@ export type MenuItemProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -5437,6 +5758,23 @@ export type SubmenuProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -5675,6 +6013,23 @@ export type WebViewProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -5931,6 +6286,23 @@ export type TerminalProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -6165,6 +6537,23 @@ export type SlotProps = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -6404,6 +6793,23 @@ export type EachOptions = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what
@@ -6646,6 +7052,23 @@ export type PresenceOptions = {
 	variants: (Variants | ((choice: any) -> Variants))?,
 	ref: (Ref | { Ref })?,
 	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
 	-- A press on it (or on what inside takes no input) moves the window; a
 	-- double click zooms it. Buttons and inputs inside keep their clicks.
 	-- CSS pointer-events: "none" (or false) lets the pointer through to what

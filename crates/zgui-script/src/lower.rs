@@ -1743,6 +1743,29 @@ fn styled(
     if let Some(label) = &node.label {
         view = view.accessible_label(label.to_string());
     }
+    if let Some(a11y) = &node.a11y {
+        if let Some(role) = a11y.role {
+            view = view.role(role);
+        }
+        if let Some(level) = a11y.level {
+            view = view.heading(level);
+        }
+        if let Some(selected) = &a11y.selected {
+            let (selected, vm) = (resolve_owned(selected), vm.clone());
+            view = view.selected_when(move || {
+                resolve(&selected, Ty::Bool, None, &vm) == Some(Lit::Bool(true))
+            });
+        }
+        if let Some(live) = a11y.live {
+            view = view.live(live);
+        }
+        if let Some(description) = &a11y.description {
+            view = view.accessible_description(description.to_string());
+        }
+        if a11y.hidden {
+            view = view.accessible_hidden();
+        }
+    }
     if let Some(layout) = node.layout.as_ref().filter(|_| node.sizes_layout()) {
         view = layout_box(view, layout, vm, low);
     }

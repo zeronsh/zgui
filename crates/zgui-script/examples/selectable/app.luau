@@ -53,15 +53,16 @@ end
 
 local function block(b: MarkdownBlock): Node
 	if b.t == "h" then
-		return runs(b.s, { wrap = true, text_size = if b.l == 1 then 26 else 20, bold = true })
+		return runs(b.s, { wrap = true, heading = b.l, text_size = if b.l == 1 then 26 else 20, bold = true })
 	elseif b.t == "ul" or b.t == "ol" then
 		local items: { Child } = {}
 		for i, item in b.items do
 			table.insert(
 				items,
 				ui.row {
+					role = "listitem",
 					gap = 8,
-					ui.text { if b.t == "ol" then `{i}.` else "•", color = "$text.tertiary" },
+					ui.text { if b.t == "ol" then `{i}.` else "•", color = "$text.tertiary", aria_hidden = true },
 					ui.column {
 						grow = 1,
 						gap = 4,
@@ -76,7 +77,7 @@ local function block(b: MarkdownBlock): Node
 				}
 			)
 		end
-		return ui.column { gap = 4, items }
+		return ui.column { role = "list", gap = 4, items }
 	elseif b.t == "code" then
 		return ui.column {
 			p = 12,

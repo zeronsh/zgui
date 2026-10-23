@@ -30,6 +30,11 @@ local function row(i: number): Node
 	end
 	return ui.row {
 		id = `row-{i}`,
+		role = "option",
+		selected = function()
+			local m = message()
+			return m ~= nil and state.selected:get() == m.id
+		end,
 		w_full = true,
 		h = row_height(),
 		pl = 6,
@@ -96,6 +101,7 @@ local function row(i: number): Node
 			end,
 			color = "$accent",
 			text_size = 8,
+			aria_hidden = true,
 			w = 14,
 			shrink = 0,
 			pt = 5,

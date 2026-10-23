@@ -1,6 +1,12 @@
 [workspace]
 members = ["crates/zgui", "crates/zgui-desktop", "crates/zgui-ghostty-sys", "crates/zgui-gpu", "crates/zgui-script", "crates/zgui-run", "comparisons/workload"]
-exclude = ["comparisons/gpui", "comparisons/quickgui", "vendor/cosmic-text", "vendor/taffy"]
+exclude = [
+    "comparisons/gpui",
+    "comparisons/quickgui",
+    "vendor/accesskit_macos",
+    "vendor/cosmic-text",
+    "vendor/taffy",
+]
 resolver = "2"
 
 [workspace.package]
@@ -36,3 +42,6 @@ cosmic-text = { path = "vendor/cosmic-text" }
 # taffy 0.9.0 with auto margins keeping a flex line's gaps (see
 # vendor/taffy/src/compute/flexbox.rs, "zgui:").
 taffy = { path = "vendor/taffy" }
+# AccessKit 0.26 on macOS with headings VoiceOver finds: see
+# vendor/accesskit_macos/ZGUI_PATCH.md.
+accesskit_macos = { path = "vendor/accesskit_macos" }

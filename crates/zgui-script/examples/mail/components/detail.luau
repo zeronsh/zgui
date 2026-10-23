@@ -43,6 +43,8 @@ return function(): Node
 				-- The actions wrap onto a second line in a narrow pane; Back
 				-- returns to the list when the window shows one pane.
 				ui.row {
+					role = "toolbar",
+					label = "Message",
 					gap = 8,
 					flex_wrap = true,
 					ui.show(
@@ -66,7 +68,14 @@ return function(): Node
 						actions.move(id, "Trash")
 					end),
 				},
-				ui.text { m.subject, id = "subject", text_size = "$font.size.xl", bold = true, wrap = true },
+				ui.text {
+					m.subject,
+					id = "subject",
+					heading = 1,
+					text_size = "$font.size.xl",
+					bold = true,
+					wrap = true,
+				},
 				ui.rich {
 					wrap = true,
 					ui.span { m.from, bold = true },

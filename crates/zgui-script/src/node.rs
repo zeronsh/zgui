@@ -40,6 +40,10 @@ pub(crate) struct Node {
     /// A container's `label`: the name assistive technology reads for it
     /// (a switch, an icon button). Widgets read their own `label`.
     pub label: Option<Rc<str>>,
+    /// `role`, `heading`, `selected`, `live`, `description`, `aria_hidden`:
+    /// what assistive technology hears beyond the name, boxed (most nodes
+    /// say none of it).
+    pub a11y: Option<Box<A11y>>,
     pub classes: Rc<[Rc<str>]>,
     pub refs: Vec<Rc<Ref>>,
     /// Handlers, boxed: most nodes have none (read them with `events()`).
@@ -401,6 +405,7 @@ impl Node {
             children: Vec::new(),
             id: None,
             label: None,
+            a11y: None,
             classes: Rc::new([]),
             refs: Vec::new(),
             events: None,
@@ -1540,6 +1545,49 @@ fn children(
     Ok(())
 }
 
+/// A node's accessibility beyond its name (`Node::a11y`).
+#[derive(Default)]
+pub(crate) struct A11y {
+    pub role: Option<zgui::semantics::Role>,
+    pub level: Option<usize>,
+    pub selected: Option<Source>,
+    pub live: Option<zgui::semantics::Live>,
+    pub description: Option<Rc<str>>,
+    pub hidden: bool,
+}
+/// `live`'s modes, as `aria-live` names them.
+fn live_mode(mode: &str) -> mlua::Result<Option<zgui::semantics::Live>> {
+    match mode {
+        "polite" => Ok(Some(zgui::semantics::Live::Polite)),
+        "assertive" => Ok(Some(zgui::semantics::Live::Assertive)),
+        "off" => Ok(None),
+        other => Err(mlua::Error::runtime(format!(
+            "`live` is \"polite\", \"assertive\" or \"off\", not `{other}`"
+        ))),
+    }
+}
+/// A `role` as ARIA names it.
+fn a11y_role(name: &str) -> Option<zgui::semantics::Role> {
+    use zgui::semantics::Role;
+    Some(match name {
+        "group" => Role::Group,
+        "button" => Role::Button,
+        "link" => Role::Link,
+        "heading" => Role::Heading,
+        "list" => Role::List,
+        "listitem" => Role::ListItem,
+        "listbox" => Role::ListBox,
+        "option" => Role::ListBoxOption,
+        "toolbar" => Role::Toolbar,
+        "status" => Role::Status,
+        "tablist" => Role::TabList,
+        "tab" => Role::Tab,
+        "dialog" => Role::Dialog,
+        "img" | "image" => Role::Image,
+        _ => return None,
+    })
+}
+
 /// Rows past which `ui.each` suggests `ui.list`.
 const LONG_EACH: usize = 1000;
 
@@ -2087,6 +2135,42 @@ fn fill_from(
                 ) =>
             {
                 node.label = Some(lua.unpack::<String>(value)?.into());
+            }
+            "role" => {
+                let name: String = lua.unpack(value)?;
+                let role = a11y_role(&name).ok_or_else(|| {
+                    mlua::Error::runtime(format!(
+                        "unknown role `{name}`: one of group, button, link, heading, list, \
+                         listitem, listbox, option, toolbar, status, tablist, tab, dialog, img"
+                    ))
+                })?;
+                node.a11y.get_or_insert_default().role = Some(role);
+            }
+            "heading" => {
+                let level: f64 = lua.unpack(value)?;
+                if !(1. ..=6.).contains(&level) || level.fract() != 0. {
+                    return Err(mlua::Error::runtime(format!(
+                        "`heading` is a level from 1 to 6, not {level}"
+                    )));
+                }
+                let a11y = node.a11y.get_or_insert_default();
+                a11y.role = Some(zgui::semantics::Role::Heading);
+                a11y.level = Some(level as usize);
+            }
+            "selected" => {
+                node.a11y.get_or_insert_default().selected =
+                    Some(source(lua, Ty::Bool, "selected", value)?);
+            }
+            "live" => {
+                let mode: String = lua.unpack(value)?;
+                node.a11y.get_or_insert_default().live = live_mode(&mode)?;
+            }
+            "description" => {
+                node.a11y.get_or_insert_default().description =
+                    Some(lua.unpack::<String>(value)?.into());
+            }
+            "aria_hidden" => {
+                node.a11y.get_or_insert_default().hidden = lua.unpack(value)?;
             }
             name if WIDGET_FIELDS.contains(&name) => {}
             name => {

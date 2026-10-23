@@ -5,7 +5,7 @@ use crate::{
     input::{EventContext, EventPhase, InputEvent, PointerButton},
     reactive::{Runtime, ServiceScope, Signal},
     scene::{Layout, NodeId, NodeKind},
-    semantics::{Role, SemanticNode},
+    semantics::{Live, Role, SemanticNode},
     style::{Styled, Styles},
     theme::tok,
     widgets::{Ui, WeakUi},
@@ -327,6 +327,7 @@ pub struct View {
     contents: bool,
     mounted: Vec<Box<dyn FnOnce(NodeHandle)>>,
     accessible_label: Option<String>,
+    accessibility: Option<Box<Accessibility>>,
     placeholder: Option<Box<dyn FnMut() -> String>>,
     placeholder_color: Option<Box<dyn FnMut() -> crate::scene::Color>>,
     select_on_focus: Option<bool>,
@@ -443,6 +444,7 @@ impl View {
             contents: false,
             mounted: Vec::new(),
             accessible_label: None,
+            accessibility: None,
             placeholder: None,
             placeholder_color: None,
             select_on_focus: None,
@@ -721,6 +723,47 @@ impl View {
     /// node without a role of its own becomes a named group.
     pub fn accessible_label(mut self, label: impl Into<String>) -> Self {
         self.accessible_label = Some(label.into());
+        self
+    }
+    fn accessibility_mut(&mut self) -> &mut Accessibility {
+        self.accessibility.get_or_insert_with(Default::default)
+    }
+    /// What assistive technology takes this node for (ARIA's `role`),
+    /// instead of what it is: a clickable row as a `ListBoxOption`, a row
+    /// of buttons as a `Toolbar`. It keeps what it does.
+    pub fn role(mut self, role: Role) -> Self {
+        self.accessibility_mut().role = Some(role);
+        self
+    }
+    /// A section title of `level` (1 for the top, as `h1`): screen readers
+    /// list headings and move between them.
+    pub fn heading(mut self, level: usize) -> Self {
+        let accessibility = self.accessibility_mut();
+        accessibility.role = Some(Role::Heading);
+        accessibility.level = Some(level.max(1));
+        self
+    }
+    /// Whether this option, tab or item is the chosen one, followed
+    /// (`aria-selected`).
+    pub fn selected_when(mut self, selected: impl FnMut() -> bool + 'static) -> Self {
+        self.accessibility_mut().selected = Some(Box::new(selected));
+        self
+    }
+    /// Announce changes to the text in this subtree (`aria-live`): a
+    /// count, a "Sent" note, a message arriving.
+    pub fn live(mut self, live: Live) -> Self {
+        self.accessibility_mut().live = Some(live);
+        self
+    }
+    /// Read after the name, as a hint (`aria-description`).
+    pub fn accessible_description(mut self, description: impl Into<String>) -> Self {
+        self.accessibility_mut().description = Some(description.into());
+        self
+    }
+    /// Leave this node and its subtree out of the accessibility tree
+    /// (`aria-hidden`): decoration, or what is said elsewhere already.
+    pub fn accessible_hidden(mut self) -> Self {
+        self.accessibility_mut().hidden = true;
         self
     }
     /// Run `f` once this view's node and children are mounted, with a handle
@@ -2343,6 +2386,7 @@ struct Opened {
     row_text: Option<crate::selection::RowText>,
     pointer_events: Option<Box<dyn FnMut() -> bool>>,
     accessible_label: Option<String>,
+    accessibility: Option<Box<Accessibility>>,
     mounted: Vec<Box<dyn FnOnce(NodeHandle)>>,
     /// Whether the view said if it takes focus.
     focusable_set: bool,
@@ -3247,6 +3291,7 @@ fn open_element(
         row_text: view.row_text,
         pointer_events: view.pointer_events,
         accessible_label: view.accessible_label,
+        accessibility: view.accessibility,
         mounted: view.mounted,
         focusable_set: view.focusable.is_some(),
         environment,
@@ -3272,6 +3317,7 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
         mut row_text,
         pointer_events,
         accessible_label,
+        accessibility,
         mounted,
         focusable_set,
         environment,
@@ -3359,6 +3405,9 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
             node.named = true;
             semantics.set(root, node);
         }
+    }
+    if let Some(accessibility) = accessibility {
+        apply_accessibility(ui, root, *accessibility);
     }
     update_button_labels(ui, root);
     for mounted in mounted {
@@ -4033,26 +4082,83 @@ fn mount_slider(
         }
     });
 }
+/// What a view says to assistive technology beyond its name (`View::role`,
+/// `heading`, `selected_when`, `live`, `accessible_description`,
+/// `accessible_hidden`), boxed: most views say none of it.
+#[derive(Default)]
+pub(crate) struct Accessibility {
+    role: Option<Role>,
+    level: Option<usize>,
+    selected: Option<Box<dyn FnMut() -> bool>>,
+    live: Option<Live>,
+    description: Option<String>,
+    hidden: bool,
+}
+fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) {
+    let Accessibility {
+        role,
+        level,
+        selected,
+        live,
+        description,
+        hidden,
+    } = accessibility;
+    {
+        let mut semantics = ui.semantics.borrow_mut();
+        if semantics.get(root).is_none() {
+            semantics.set(root, SemanticNode::new(role.unwrap_or(Role::Group), ""));
+        }
+        semantics.update(root, |node| {
+            if let Some(role) = role {
+                node.role = role;
+            }
+            node.level = level.or(node.level);
+            node.live = live.or(node.live);
+            node.description = description.or(node.description.take());
+            node.hidden |= hidden;
+        });
+    }
+    if let Some(mut selected) = selected {
+        let tree = ui.semantics.clone();
+        ui.bind(root, move || {
+            let selected = selected();
+            tree.borrow_mut()
+                .update(root, |node| node.selected = Some(selected));
+        });
+    }
+}
 fn update_button_labels(ui: &Ui, node: NodeId) {
     let scene = ui.scene.borrow();
     let mut current = Some(node);
     while let Some(id) = current {
-        let is_button = ui
-            .semantics
-            .borrow()
-            .get(id)
-            .is_some_and(|n| n.role == Role::Button && !n.named);
+        // Named by their content, as ARIA names a button, heading, tab or
+        // option from its text.
+        let is_button = ui.semantics.borrow().get(id).is_some_and(|n| {
+            !n.named
+                && matches!(
+                    n.role,
+                    Role::Button | Role::Heading | Role::ListItem | Role::ListBoxOption | Role::Tab
+                )
+        });
         if is_button {
             let mut parts = Vec::new();
             let mut pending = vec![id];
+            let semantics = ui.semantics.borrow();
             while let Some(child) = pending.pop() {
+                // What is hidden from assistive technology names nothing.
+                if child != id && semantics.get(child).is_some_and(|n| n.hidden) {
+                    continue;
+                }
                 match scene.kind(child) {
-                    NodeKind::Text { text, .. } => parts.push(text.as_ref()),
-                    NodeKind::RichText { text } => parts.push(text.text()),
+                    NodeKind::Text { text, .. } if !text.is_empty() => parts.push(text.as_ref()),
+                    NodeKind::RichText { text } if !text.text().is_empty() => {
+                        parts.push(text.text())
+                    }
                     _ => {}
                 }
                 pending.extend(scene.children(child).iter().rev().copied());
             }
+            drop(semantics);
             let label = parts.join(" ");
             ui.semantics
                 .borrow_mut()

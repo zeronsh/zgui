@@ -842,6 +842,44 @@ the APG web pattern keeps disabled items focusable. This native API does not cla
 full APG conformance.
 
 
+## Accessibility
+
+Controls report their role, name and state to assistive technology
+themselves (AccessKit: VoiceOver, Narrator, Orca). These say what a plain view
+means, as ARIA's attributes do in HTML; a view that sets none pays nothing:
+
+- `.accessible_label(name)`: the name read for it (`aria-label`).
+- `.role(Role::…)`: what it is taken for, keeping what it does. Use
+  `ListBox` and `ListBoxOption` for a choice among clickable rows, and
+  `Toolbar`, `List` / `ListItem`, `TabList` / `Tab`, `Status` and so on.
+  Buttons, options, tabs, list items and headings are named by their text,
+  leaving out empty and hidden text.
+- `.heading(level)`: a section title (`h1`…`h6`). VoiceOver's rotor lists
+  headings, and a heading in a selectable document keeps its text in the
+  document's.
+- `.selected_when(|| …)`: whether an option, tab or item is chosen
+  (`aria-selected`), followed.
+- `.live(Live::Polite)` or `Live::Assertive`: announce changes to the text in
+  it (`aria-live`). `Role::Status` is polite by default.
+- `.accessible_description(text)`: read after the name (`aria-description`).
+- `.accessible_hidden()`: left out with its subtree (`aria-hidden`), for
+  decoration.
+
+```rust
+use zgui::{compose::prelude::*, semantics::Role};
+# let mut ui = zgui::widgets::Ui::new(300., 200.);
+let inbox = ui.signal(true);
+let read = inbox.clone();
+let mailboxes = column().role(Role::ListBox).accessible_label("Mailboxes").child(
+    row()
+        .role(Role::ListBoxOption)
+        .selected_when(move || read.get())
+        .child(text("●").accessible_hidden())
+        .child(text("Inbox")),
+);
+# ui.mount(mailboxes);
+```
+
 ## Owned input handlers
 
 Attach `.on_event(|event| { ... })` to any view for pointer, wheel, keyboard,
