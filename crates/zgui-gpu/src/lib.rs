@@ -1421,6 +1421,8 @@ pub struct GpuRenderer {
     texture_uploads: upload::TextureUploads,
     instance: wgpu::Instance,
     window: Option<Arc<winit::window::Window>>,
+    /// A surface of the caller's, not a winit window's (`for_raw_surface`).
+    raw: Option<(wgpu::rwh::RawDisplayHandle, wgpu::rwh::RawWindowHandle)>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     info: wgpu::AdapterInfo,
@@ -1598,6 +1600,38 @@ impl GpuRenderer {
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
         let mut renderer = Self::create(Some(window), size.width, size.height, context)?;
+        renderer.set_scale_factor(scale);
+        Ok(renderer)
+    }
+    /// A renderer presenting to a surface of the caller's, not a winit
+    /// window's (a Wayland popup's `wl_surface`), `width` by `height`
+    /// physical pixels at `scale`, on `context`.
+    ///
+    /// # Safety
+    ///
+    /// `display` and `window` stay valid while the renderer lives.
+    pub unsafe fn for_raw_surface(
+        display: wgpu::rwh::RawDisplayHandle,
+        window: wgpu::rwh::RawWindowHandle,
+        width: u32,
+        height: u32,
+        scale: f32,
+        context: &GpuContext,
+    ) -> Result<Self, GpuError> {
+        // SAFETY: the caller keeps the handles valid while the renderer,
+        // and so the surface, lives.
+        let surface = unsafe {
+            context
+                .inner
+                .instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: Some(display),
+                    raw_window_handle: window,
+                })
+        }
+        .map_err(|e| GpuError(e.to_string()))?;
+        let mut renderer = Self::create_on(None, Some(surface), width, height, context)?;
+        renderer.raw = Some((display, window));
         renderer.set_scale_factor(scale);
         Ok(renderer)
     }
@@ -1787,6 +1821,7 @@ impl GpuRenderer {
             texture_uploads: Default::default(),
             instance,
             window,
+            raw: None,
             device,
             queue,
             info,
@@ -7199,6 +7234,20 @@ impl surface::SurfaceSource for GpuRenderer {
         #[cfg(all(windows, feature = "composition"))]
         if let Some(target) = &self.composition {
             self.surface = Some(target.surface(&self.instance)?);
+            return Ok(());
+        }
+        if let Some((display, window)) = self.raw {
+            // SAFETY: as `for_raw_surface`'s caller promised.
+            self.surface = Some(
+                unsafe {
+                    self.instance
+                        .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                            raw_display_handle: Some(display),
+                            raw_window_handle: window,
+                        })
+                }
+                .map_err(|e| GpuError(e.to_string()))?,
+            );
             return Ok(());
         }
         self.surface = Some(

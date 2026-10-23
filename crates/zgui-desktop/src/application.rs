@@ -4594,6 +4594,9 @@ impl WindowManager {
         if crate::popup_window::wanted() {
             crate::popup_window::make(event_loop);
         }
+        // What Wayland popups heard (winit read the socket for them).
+        #[cfg(target_os = "linux")]
+        crate::popup_window::dispatch_wayland();
         // Wake tasks whose sleeps are due before the hosts poll them.
         self.timers.fire();
         if !self.active {

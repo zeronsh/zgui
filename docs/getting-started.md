@@ -6,7 +6,7 @@ zgui runs on macOS, Windows and Linux. On Linux, install the fontconfig, xkbcomm
 
 ## In Rust
 
-Add the crates (they are not on crates.io yet), and the fixes zgui builds its dependencies with: it carries forks of five of them (`vendor/` in its repository), and a git dependency doesn't bring its `[patch]` with it, so without these zgui-gpu doesn't compile (cosmic-text) or behaves differently (layout margins, VoiceOver headings, Metal's command buffers):
+Add the crates (they are not on crates.io yet), and the fixes zgui builds its dependencies with: it carries forks of six of them (`vendor/` in its repository), and a git dependency doesn't bring its `[patch]` with it, so without these zgui doesn't compile (cosmic-text; winit, which gives zgui-desktop the window's `xdg_surface` for Wayland popups) or behaves differently (layout margins, VoiceOver headings, Metal's command buffers):
 
 ```toml
 [dependencies]
@@ -19,6 +19,7 @@ taffy = { git = "https://github.com/zeronsh/zgui" }
 wgpu-hal = { git = "https://github.com/zeronsh/zgui" }
 accesskit_macos = { git = "https://github.com/zeronsh/zgui" }
 accesskit_windows = { git = "https://github.com/zeronsh/zgui" }
+winit = { git = "https://github.com/zeronsh/zgui" }
 ```
 
 The first build compiles the stack once (about a minute on an Apple M-series Mac, release); later ones take seconds.

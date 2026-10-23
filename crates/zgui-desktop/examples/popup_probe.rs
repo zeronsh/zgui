@@ -1,8 +1,8 @@
-//! Measures popup windows (macOS, Windows; on X11 it reports its menu for
-//! `scripts/popup_windows_smoke.py` to drive): a menu hanging past the
-//! window's bottom edge, opened, hovered and chosen from by synthetic AppKit
-//! events (on Windows, mouse messages) posted to this process alone (the
-//! user's pointer is never moved).
+//! Measures popup windows (macOS, Windows; on Linux it reports its menu for
+//! `scripts/popup_windows_smoke.py` and `wayland_popups_smoke.py` to drive):
+//! a menu hanging past the window's bottom edge, opened, hovered and chosen
+//! from by synthetic AppKit events (on Windows, mouse messages) posted to
+//! this process alone (the user's pointer is never moved).
 //!
 //! Prints the time from the posted click to the popup window showing, then
 //! idles twice (before any popup, after one opened and closed) for an
@@ -87,6 +87,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(not(any(target_os = "macos", windows)))]
             {
                 let _ = view;
+                // `POPUP_PROBE_OPEN`: the menu opens by itself, for a
+                // compositor no script can click in (Weston).
+                if std::env::var_os("POPUP_PROBE_OPEN").is_some() {
+                    let open = open.clone();
+                    cx.tasks.spawn(async move {
+                        zgui::timer::sleep(std::time::Duration::from_millis(500)).await;
+                        open.set(true);
+                    });
+                }
                 let report = cx.ui.runtime.effect(move || {
                     println!("OPEN {} CHOSEN {:?}", open.get(), chosen.get());
                 });

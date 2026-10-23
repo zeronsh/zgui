@@ -27,9 +27,9 @@
 //! winit reports, dismissed with the parent's focus. winit makes them, so
 //! they are made where the event loop is (`make`, as the pointer nears a
 //! trigger, or the frame after a popup found none ready).
-//! todo(wayland): `xdg_popup` with an `xdg_positioner` (the compositor places,
-//! flips and dismisses it; the app cannot learn screen bounds), which winit
-//! does not expose.
+//!
+//! Wayland (`wayland`): `xdg_popup`s of the window's `xdg_surface` (the
+//! vendored winit's), which the compositor places and keeps on its outputs.
 use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
 
 /// Pointer input over a popup window, in its parent window's coordinates.
@@ -1394,6 +1394,11 @@ mod macos {
 }
 
 #[cfg(target_os = "linux")]
+mod wayland;
+#[cfg(target_os = "linux")]
+pub(crate) use wayland::dispatch as dispatch_wayland;
+
+#[cfg(target_os = "linux")]
 mod x11 {
     use super::PopupInput;
     use std::{
@@ -1475,6 +1480,11 @@ mod x11 {
     /// (X11; none on Wayland, where popups stay inside their window).
     pub(crate) fn popup_screens(window: &Window) -> Vec<Rect> {
         if !x11(window) {
+            // Wayland: the compositor keeps popups on its outputs, which the
+            // app cannot learn; the scene places them unbounded.
+            if enabled() && super::wayland::available(window) {
+                return vec![Rect::new(-1e5, -1e5, 2e5, 2e5)];
+            }
             return Vec::new();
         }
         let Ok(origin) = window.inner_position() else {
@@ -1937,12 +1947,16 @@ mod x11 {
         send: Sink,
         /// The display whose pointer a menu or popover holds (`grab`).
         grabbed: Option<usize>,
+        /// A Wayland window's popups.
+        wayland: super::wayland::Popups,
     }
     impl PopupHost {
         pub fn new(send: impl Fn(PopupInput) + 'static) -> Self {
+            let send: Sink = Rc::new(send);
             Self {
                 shown: Vec::new(),
-                send: Rc::new(send),
+                wayland: super::wayland::Popups::new(send.clone()),
+                send,
                 grabbed: None,
             }
         }
@@ -1956,7 +1970,7 @@ mod x11 {
         }
         /// Whether any popup shows.
         pub fn showing(&self) -> bool {
-            !self.shown.is_empty()
+            !self.shown.is_empty() || self.wayland.showing()
         }
         /// After the scene's flush: show each visible popup root in a window
         /// over `parent`, draw it again where it changed (always when
@@ -1974,7 +1988,10 @@ mod x11 {
             ended: Option<zgui::input::DragEnded>,
         ) -> Result<(), GpuError> {
             reap();
-            if (self.shown.is_empty() && scene.popups().is_empty()) || !x11(parent) {
+            if !x11(parent) {
+                return self.wayland.update(parent, scene, context, scale, full);
+            }
+            if self.shown.is_empty() && scene.popups().is_empty() {
                 return Ok(());
             }
             let wanted: Vec<(NodeId, Rect)> = scene
@@ -2162,6 +2179,7 @@ mod x11 {
             for (_, popup) in self.shown.drain(..) {
                 release(popup);
             }
+            self.wayland.hide_all(parent);
             self.hold(parent, false);
         }
     }

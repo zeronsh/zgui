@@ -8,6 +8,7 @@ xdotool nor an X11-backed compositor can.
     pointer = VirtualPointer(os.environ["XDG_RUNTIME_DIR"], "wayland-1")
     pointer.move_to(400, 300, 1400, 900)
     pointer.swipe(dy=20, frames=12)   # two fingers, 120 Hz, then lifted
+    pointer.click()                   # the left button, pressed and released
 """
 import os
 import socket
@@ -18,7 +19,8 @@ import time
 DISPLAY_SYNC, DISPLAY_GET_REGISTRY = 0, 1
 REGISTRY_BIND = 0
 MANAGER_CREATE = 0
-MOTION_ABSOLUTE, AXIS, FRAME, AXIS_SOURCE, AXIS_STOP = 1, 3, 4, 5, 6
+MOTION_ABSOLUTE, BUTTON, AXIS, FRAME, AXIS_SOURCE, AXIS_STOP = 1, 2, 3, 4, 5, 6
+BTN_LEFT = 0x110
 FINGER = 1
 VERTICAL, HORIZONTAL = 0, 1
 
@@ -90,6 +92,16 @@ class VirtualPointer:
         """To (`x`, `y`) of the `width` by `height` output layout."""
         self._send(self.pointer, MOTION_ABSOLUTE, struct.pack("<IIIII", self._now(), x, y, width, height))
         self._send(self.pointer, FRAME)
+
+    def button(self, pressed, button=BTN_LEFT):
+        """Press or release `button` (Linux's input code; the left by default)."""
+        self._send(self.pointer, BUTTON, struct.pack("<III", self._now(), button, int(pressed)))
+        self._send(self.pointer, FRAME)
+
+    def click(self, button=BTN_LEFT):
+        self.button(True, button)
+        time.sleep(.05)
+        self.button(False, button)
 
     def swipe(self, dy=0., dx=0., frames=12, hz=120.):
         """Two fingers scrolling `dx`, `dy` (Wayland's sense: positive

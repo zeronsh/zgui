@@ -150,10 +150,10 @@ An app that never opens a popup pays nothing: no popup window is made until
 the pointer first reaches something that opens one (`Ui::on_popup_soon`), and
 a closed popup is no popup root. Opening one is a move and one small frame.
 Closed popup windows are kept, hidden, to reuse; a hidden one draws nothing
-and never wakes. `ZGUI_POPUP_WINDOWS=0` keeps popups inside the window, as on
-Windows and Linux, where they would need owned tool windows (Windows),
-override-redirect windows (X11) or `xdg_popup` (Wayland; winit has no way to
-make one).
+and never wakes. Windows shows popups in owned popup windows, X11 in
+override-redirect windows, and Wayland in `xdg_popup`s of the window, which the
+compositor places and keeps on its outputs ([Linux](linux.md#popups-on-wayland)).
+`ZGUI_POPUP_WINDOWS=0` keeps popups inside the window.
 
 ## Windows as AppKit keeps them
 

@@ -235,71 +235,45 @@ the previous caret until the next key. `native_ime_smoke.py` records whether
 the window followed at once. If it did not, Down and Up make IBus lay it out
 again, the preedit unchanged, and the window must then be at the caret.
 
-## Popups on Wayland: what it would take
+## Popups on Wayland
 
-On X11 popups show in windows of their own (see the X11 popups PR, #179); on
-Wayland they stay inside their window. The protocol's answer is `xdg_popup`,
-and here is what building it would take, assessed before building.
+Menus, popovers, selects and tooltips show past the window as `xdg_popup`s of
+it (`popup_window/wayland.rs`), as GTK's and Chromium's do. winit gives a
+window's `xdg_toplevel`, not the `xdg_surface` a popup's parent must be, so
+zgui vendors winit 0.30.13 with one method more, `WindowExtWayland::xdg_surface`,
+and where the window geometry starts (`xdg_window_geometry_origin`, above the
+content by the title bar winit draws where the compositor draws none, as
+Weston): see `vendor/winit/ZGUI_PATCH.md`.
 
-**The protocol.** A popup is a `wl_surface` with an `xdg_surface` and its
-`xdg_popup` role, made by `xdg_surface.get_popup(parent xdg_surface,
-positioner)`. The `xdg_positioner` says its size, the anchor rectangle on the
-parent (the trigger), the edge and gravity, and how the compositor may adjust
-it (`constraint_adjustment`: flip, slide, resize). The compositor places it
-and reports where in `xdg_popup.configure` (relative to the parent), which
-the client acks before its first commit; `reposition` (version 3) moves an
-open one when its anchor moves. `xdg_popup.grab(seat, serial)` makes it the
-seat's grab: the compositor dismisses it (`popup_done`) on a press outside
-the client's popups, and keyboard focus goes to the popup. A client cannot
-learn screen bounds; flipping at the screen's edge is the compositor's.
+zgui's objects live on an event queue of its own on winit's display: its own
+`wl_compositor`, `xdg_wm_base`, `wp_viewporter` and a `wl_pointer` per seat.
+winit reads the socket for both queues, and zgui's is dispatched where the
+event loop turns, so it costs no wakeup. A popup is a `wl_surface` with an
+`xdg_surface` and `xdg_popup`, made as it shows and destroyed as it hides,
+drawn by a renderer of its own on the window's device
+(`GpuRenderer::for_raw_surface`). Its positioner anchors it where the scene
+placed it, in the window geometry's coordinates, and lets the compositor
+slide it onto the output; pointer input over it reaches the window's host in
+the window's coordinates, by where the scene drew it. The scene places popups
+unbounded (the app cannot learn the outputs), so a menu past the window's
+bottom edge opens downward, past it. Opening one (configured, its surface
+made) took 3.8 to 5.8 ms and its first frame 2.2 to 4.5 ms, in a debug build
+on lavapipe: within a frame, so popups are not pooled.
 
-**The blocker: the parent's `xdg_surface`.** winit 0.30.13 exposes the
-window's `xdg_toplevel` (`WindowExtWayland::xdg_toplevel`), not its
-`xdg_surface`. The protocol has no way from one to the other, and a second
-`xdg_surface` on the window's `wl_surface` is a protocol error
-(`already_constructed`). Its sctk window has the `xdg_surface`
-(`XdgSurface::xdg_surface`), behind a private field.
+The popup takes no grab: keys stay the window's, which drives menus as
+before, and a press on another app takes the window's focus, which closes
+them, as without a grab on X11. Drag previews stay inside the window (a popup
+moved with the pointer needs the compositor's configure each move).
+`wayland_popups_smoke.py` clicks popup_probe's menu open under sway, past
+the window's edge where the scene put it, chooses its last item below the
+window, and closes it with a press in the window; under Weston, the menu sits
+the same on the content below winit's title bar.
 
-**Options.**
-
-- *Patch winit* (recommended): vendor winit 0.30.13 as wgpu-hal,
-  cosmic-text and the accesskit adapters are, adding one method,
-  `WindowExtWayland::xdg_surface`, beside `xdg_toplevel` (ten lines; a patch
-  to offer upstream). The popup is then zgui's own, on the connection the
-  data-device worker already keeps on winit's display (`wayland_data.rs`,
-  which owns the seats, their pointers and the latest input serial): a
-  `wl_surface` and `xdg_popup` (sctk 0.19's `Popup`, or wayland-protocols
-  directly), a wgpu surface from its raw handles, its pointer events from
-  the worker's `wl_pointer`, routed by surface to the parent's host as X11's
-  are, fractional scale per surface (`wp_fractional_scale_v1` and the
-  viewporter, as the window has).
-- *Subsurfaces* (no patch): a `wl_subsurface` of the window's surface past
-  its edges. Mutter, KWin and wlroots draw it, but nothing keeps it on the
-  screen (the client knows no screens), it gets no grab or `popup_done`, and
-  it moves only with its parent. Not what users of GTK or Chromium popups
-  see; rejected.
-- *A winit fork with popups of its own*: winit's popup API is unsettled
-  upstream (its 0.31 rework); carrying it would cost more than the one
-  method above.
-
-**What changes in zgui.** The compositor, not zgui, has the last word on
-where a popup goes: the core places it as now (with no screens to keep it
-in, as on Wayland today), the host gives the positioner the anchor and the
-placement's edge and gravity, and the configured rectangle comes back to the
-core so drawing and hit testing follow it (a `Ui` hook for a popup's
-placement; on X11 and macOS it is the core's own). The grab moves keyboard
-focus to the popup surface, so either the worker's `wl_keyboard` routes keys
-to the parent's host too (with winit's keymap), or menus start without the
-grab and close as their window loses focus or takes a press, as X11's do
-without one, the grab following once keys route.
-
-**Size.** The winit patch; about 500 lines in a `wayland` module of
-`popup_window.rs` (positioner, configure and ack, surfaces and renderer,
-input routing, `popup_done`); the core's placement hook; a probe under a
-headless sway, driving it with `scripts/wayland_pointer.py`'s virtual
-pointer and checking the protocol in the client's `WAYLAND_DEBUG` log.
-Risks: frame pacing for a surface winit does not own (its frame
-callbacks are the worker's), and compositors' differing `constraint_adjustment`.
+Not yet: the grab (`xdg_popup.grab`, which moves the keyboard to the popup,
+so keys must come through a `wl_keyboard` of zgui's own with winit's
+keymap); flipping above a trigger at the output's bottom rather than sliding
+(the positioner anchored on the trigger, the compositor's placement coming
+back to the scene); and a menu taller than the output.
 
 ## Web views
 
