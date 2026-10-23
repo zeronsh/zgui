@@ -186,19 +186,23 @@ fn the_theme_switches_and_charts_follow_it() {
 #[test]
 fn a_feed_tick_costs_what_it_shows() {
     let mut h = dashboard();
-    // The live feed paused: only the ticks counted here run, however long
-    // the frames take (the feed's timer fires every 250 ms of the clock).
+    // The live feed's timer runs in real time: one landing among the ticks
+    // counted a whole feed more. Paused, no timer runs, and each tick is
+    // the command's alone, counted on its own.
     h.click("live");
+    h.frame();
     let tick = |h: &mut Harness| {
-        let (calls, converted) = (h.calls(), zgui_script::values_converted());
+        let mut calls = Vec::new();
+        let converted = zgui_script::values_converted();
         for _ in 0..10 {
+            let before = h.calls();
             assert!(h.host.run_command("refresh"));
             h.frame();
+            calls.push(h.calls() - before);
         }
-        (
-            (h.calls() - calls) / 10,
-            (zgui_script::values_converted() - converted) / 10,
-        )
+        let most = *calls.iter().max().unwrap();
+        assert!(most < 300, "script calls a tick: {calls:?}");
+        (most, (zgui_script::values_converted() - converted) / 10)
     };
     // Sorted by symbol, a tick changes what the visible rows show and the
     // charts: no filter or sort runs, and nothing of the 100,000 rows is

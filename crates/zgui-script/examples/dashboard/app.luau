@@ -19,9 +19,15 @@ ui.command {
 	run = actions.feed,
 }
 
-ui.every(250, function()
-	if state.live:peek() then
-		actions.feed()
+-- The feed ticks while live; paused, no timer runs.
+local stop_feed: (() -> ())? = nil
+ui.effect(function()
+	local live = state.live:get()
+	if live and not stop_feed then
+		stop_feed = ui.every(250, actions.feed)
+	elseif not live and stop_feed then
+		stop_feed()
+		stop_feed = nil
 	end
 end)
 
