@@ -108,11 +108,26 @@ def main():
                 time.sleep(.6)
                 xdo("key", "--clearmodifiers", "ctrl+a")
                 reports["all"] = report()
-                assert reports["all"]["text"].startswith("Selectable text") and reports["all"]["text"].endswith("between paragraphs."), reports
+                assert reports["all"]["text"].startswith("Selectable text") and "between paragraphs.\n\n00001\tA transcript line" in reports["all"]["text"], reports
                 capture("select-all")
                 click(600, 540)  # Blank room: a press there collapses it.
                 reports["cleared"] = report()
                 assert reports["cleared"]["text"] == "", reports
+                # Held below the transcript, the drag scrolls it and selects
+                # the lines it brings into view.
+                transcript = reports["initial"]["transcript"]
+                time.sleep(.6)
+                move(transcript[0] + 80, transcript[1] + 10)
+                xdo("mousedown", 1)
+                move(transcript[0] + 80, transcript[1] + transcript[3] + 30)
+                time.sleep(1.5)
+                xdo("mouseup", 1)
+                reports["autoscroll"] = report()
+                # Copy takes the mounted rows: line 1's row was recycled as the
+                # transcript scrolled past it, the selection kept.
+                lines = [int(n) for n in re.findall(r"line (\d+)\)", reports["autoscroll"]["text"])]
+                assert lines and lines[-1] > 20 and lines == list(range(lines[0], lines[-1] + 1)), reports["autoscroll"]
+                capture("autoscroll")
                 app.wait(timeout=60)
             assert app.returncode == 0, output.read_text()
             (args.output / "results.json").write_text(json.dumps(dict(passed=True, backend="owned X11/Xvfb/Openbox", reports=reports), indent=2) + "\n")

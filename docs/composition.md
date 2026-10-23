@@ -128,6 +128,21 @@ copies whole. `Ui::selected_text`, `text_selection`, `select_text`,
 `select_all_text` and `clear_text_selection` read and set the selection, and
 `text_selection_revision` changes whenever it does.
 
+Holding a drag past an edge of a scroll viewport (`scroll`, `scroll_x`, a
+virtual list) scrolls the innermost one holding the selection's focus and
+extends over what scrolls into view, faster the farther the pointer is, as an
+editor's drag does; it stops at the viewport's end and on release. A
+selection in a virtual list outlives the rows it recycles: an end in an
+unmounted row keeps the row's index and path, the rows between stay selected,
+and a row that mounts again shows its part. Copy takes the text that is
+mounted (the visible rows and overscan); rows out of view are not copied.
+
+A secondary press (a control-click on macOS) on selected text opens a menu
+with Copy and Select All, unless the region has a `context_menu` of its own;
+elsewhere the press goes on to an enclosing view's menu. Copy uses the
+`PlatformService` clipboard the desktop host provides. `Ui::is_selecting_text`
+says whether a pointer gesture is still making the selection.
+
 The highlight paints under the glyphs in the theme's `selection` colour, or
 `selection.inactive` while the window is in the background (desktop hosts call
 `Ui::set_window_active`). It follows layout and reshaping. Removing a selected

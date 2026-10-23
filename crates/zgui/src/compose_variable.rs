@@ -523,6 +523,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             Layout::Overlay,
                             row_style(width, *row_height, measured),
                         );
+                        crate::selection::mount_row(&mut ui, row, &index_signal);
                         let node = mount(&mut ui, row, view, environment.clone());
                         cx.finish(&mut ui, node);
                         if let Some(navigation) = &navigation {

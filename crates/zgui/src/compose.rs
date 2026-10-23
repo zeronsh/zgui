@@ -1496,6 +1496,7 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         let mut cx = Context::new(runtime.clone(), environment.clone());
                         let view = build(index_signal.clone(), key.clone(), &mut cx);
                         let row = ui.container(content, Layout::Overlay, Default::default());
+                        crate::selection::mount_row(&mut ui, row, &index_signal);
                         let node = mount(&mut ui, row, view, environment.clone());
                         cx.finish(&mut ui, node);
                         if let Some(navigation) = &navigation {
@@ -2464,7 +2465,12 @@ fn mount_element(
     if let Some(preview) = view.drag_preview {
         crate::compose_drag::mount(ui, root, preview);
     }
-    if let Some(build) = view.context_menu.take() {
+    // A selectable region's own menu (Copy, Select All), unless it has one.
+    let context_menu = view.context_menu.take().or_else(|| {
+        (view.selectable == Some(true))
+            .then(|| crate::selection::context_menu(ui, root, environment.services.get()))
+    });
+    if let Some(build) = context_menu {
         let style = view.context_menu_style.take();
         let below = view.context_menu_below.unwrap_or(false);
         crate::compose_context_menu::mount(ui, root, build, style, below, environment.clone());

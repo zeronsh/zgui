@@ -1477,6 +1477,7 @@ impl Ui {
         [
             self.input.next_key_deadline(),
             self.next_editor_interaction_deadline(),
+            self.next_selection_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -1512,6 +1513,13 @@ impl Ui {
         if keys {
             self.try_prepare_frame()?;
         }
+        // A selection drag held past a scroll viewport's edge.
+        let keys = if self.advance_selection_scroll(now) {
+            self.try_prepare_frame()?;
+            true
+        } else {
+            keys
+        };
 
         if self
             .next_editor_interaction_deadline()

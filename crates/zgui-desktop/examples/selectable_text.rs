@@ -1,8 +1,10 @@
 //! Selectable display text, as on a web page: one `.selectable(true)` and
 //! the pointer selects across headings, paragraphs, list items and inline
 //! spans; double and triple presses select words and paragraphs, Shift
-//! extends, ⌘A / Ctrl+A selects all and ⌘C / Ctrl+C copies. Links and
-//! buttons inside still click, and a drag from one selects.
+//! extends, ⌘A / Ctrl+A selects all and ⌘C / Ctrl+C copies, as does the
+//! context menu on selected text. Links and buttons inside still click,
+//! and a drag from one selects. A drag held past the transcript's edge
+//! scrolls it, and the selection outlives the rows it recycles.
 use zgui::{compose::prelude::*, scene::Color, theme::tok};
 use zgui_desktop::{Application, WindowOptions};
 
@@ -12,11 +14,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .window(WindowOptions {
             title: "zgui selectable text".into(),
             width: 640.,
-            height: 560.,
+            height: 700.,
             ..Default::default()
         })
         .run(move |cx| {
             let clicks = cx.ui.signal(0_u32);
+            let transcript = cx.ui.signal(0_f32);
             let (count, link) = (clicks.clone(), clicks.clone());
             let item = |text: &str| {
                 row()
@@ -91,6 +94,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .id("last")
                             .w_full()
                             .text_wrap(true),
+                    )
+                    .child(
+                        virtual_list(
+                            transcript,
+                            22.,
+                            4,
+                            || 10_000,
+                            |index| index,
+                            |_, line, _| {
+                                row()
+                                    .gap(12.)
+                                    .child(text(format!("{:05}", line + 1)).w(52.).text_color(tok::TEXT_TERTIARY))
+                                    .child(text(format!("A transcript line in a virtual list of 10,000 (line {})", line + 1)))
+                            },
+                        )
+                        .id("transcript")
+                        .w_full()
+                        .h(176.)
+                        .scrollbar(true),
                     ),
             );
             // Start with part of it selected (for screenshots).
@@ -118,6 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let window = cx.window.clone();
                 let find = |id: &str| view.find(id).unwrap();
                 let (heading, intro, last) = (find("heading"), find("intro"), find("last"));
+                let transcript = find("transcript");
                 cx.tasks.spawn(async move {
                     for _ in 0..400 {
                         let Some(ui) = ui.upgrade() else { return };
@@ -128,10 +151,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 format!("{:.1},{:.1},{:.1},{:.1}", b.x, b.y, b.width, b.height)
                             };
                             println!(
-                                "SELECTABLE heading={} intro={} last={} text={:?}",
+                                "SELECTABLE heading={} intro={} last={} transcript={} text={:?}",
                                 bounds(heading),
                                 bounds(intro),
                                 bounds(last),
+                                bounds(transcript),
                                 ui.selected_text(),
                             );
                         }

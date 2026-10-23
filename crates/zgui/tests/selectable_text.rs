@@ -395,3 +395,183 @@ fn the_inactive_window_colour_and_copy_text_spacing() {
         active
     );
 }
+
+fn rows(ui: &mut Ui, offset: zgui::reactive::Signal<f32>) -> zgui::compose::ViewHandle {
+    let handle = ui.mount(
+        column()
+            .w(300.)
+            .text_size(10.)
+            .line_height(20.)
+            .selectable(true)
+            .child(text("Header"))
+            .child(
+                virtual_list(
+                    offset,
+                    20.,
+                    1,
+                    || 1000,
+                    |index| index,
+                    |_, key, _| text(format!("Row {key}")),
+                )
+                .w(300.)
+                .h(100.),
+            ),
+    );
+    ui.prepare_frame();
+    handle
+}
+
+#[test]
+fn a_selection_outlives_virtual_rows_recycled_out_of_view() {
+    let mut ui = Ui::new(400., 300.);
+    let offset = ui.signal(0.);
+    let _view = rows(&mut ui, offset.clone());
+    // Header at 0, the list's rows from 20: row 1 at 40, row 3 at 80.
+    drag(&mut ui, (6., 50.), (18., 90.));
+    assert_eq!(ui.selected_text(), "ow 1\nRow 2\nRow");
+    offset.set(10_000.);
+    ui.prepare_frame();
+    assert!(!ui.has_text_selection(), "nothing selected is mounted");
+    assert!(ui.text_selection().is_some(), "but the selection remains");
+    offset.set(0.);
+    ui.prepare_frame();
+    assert_eq!(ui.selected_text(), "ow 1\nRow 2\nRow");
+    assert_eq!(highlighted(&ui).len(), 3);
+    // A selection from the header into the rows keeps the rows between.
+    drag(&mut ui, (0., 10.), (12., 70.));
+    assert_eq!(ui.selected_text(), "Header\nRow 0\nRow 1\nRo");
+    offset.set(30.);
+    ui.prepare_frame();
+    // Row 0 is still mounted in the overscan; what shows is still selected.
+    assert!(ui.selected_text().starts_with("Header\n"));
+    assert!(ui.selected_text().ends_with("Row 1\nRo"));
+}
+
+#[test]
+fn a_drag_held_past_a_scroll_viewport_scrolls_it_and_extends() {
+    let mut ui = Ui::new(400., 300.);
+    let offset = ui.signal(0.);
+    let _view = rows(&mut ui, offset.clone());
+    press(&mut ui, 0., 30., false);
+    // Below the list (it ends at 120), held there.
+    move_to(&mut ui, 40., 160.);
+    let start = std::time::Instant::now();
+    let mut now = start;
+    let deadline = ui
+        .next_interaction_deadline()
+        .expect("autoscroll scheduled");
+    assert!(deadline > start);
+    for _ in 0..30 {
+        now += std::time::Duration::from_millis(16);
+        ui.advance_interactions(now).unwrap();
+    }
+    assert!(offset.get() > 100., "scrolled: {}", offset.get());
+    let text = ui.selected_text();
+    let last = text.lines().last().unwrap().to_owned();
+    // The focus followed the rows scrolled under the pointer's edge.
+    let row: usize = last.trim_start_matches("Row ").parse().unwrap();
+    assert!(
+        row as f32 * 20. >= offset.get(),
+        "{last} at {}",
+        offset.get()
+    );
+    release(&mut ui, 40., 160.);
+    assert!(
+        ui.next_interaction_deadline().is_none(),
+        "released, it stops"
+    );
+    // Back at the top, the anchor's row shows selected again.
+    offset.set(0.);
+    ui.prepare_frame();
+    assert!(ui.selected_text().starts_with("Row 0\nRow 1\n"));
+}
+
+#[test]
+fn the_context_menu_copies_selected_text() {
+    struct Clipboard(std::cell::RefCell<Option<String>>);
+    impl zgui::platform::Platform for Clipboard {
+        fn clipboard_text(&self) -> Option<String> {
+            self.0.borrow().clone()
+        }
+        fn set_clipboard_text(&self, text: String) -> bool {
+            *self.0.borrow_mut() = Some(text);
+            true
+        }
+        fn open_files(
+            &self,
+            _: zgui::platform::FilePicker,
+        ) -> zgui::platform::Pending<Result<Vec<std::path::PathBuf>, String>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+        fn save_file(
+            &self,
+            _: zgui::platform::FilePicker,
+        ) -> zgui::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+            Box::pin(async { Ok(None) })
+        }
+    }
+    let clipboard = Rc::new(Clipboard(Default::default()));
+    let mut ui = Ui::new(400., 300.);
+    let outer_menu = Rc::new(Cell::new(0));
+    let opened = outer_menu.clone();
+    let view = ui.mount(provide(
+        zgui::platform::PlatformService(clipboard.clone()),
+        column()
+            .size(400., 300.)
+            .context_menu(move |_| {
+                opened.set(opened.get() + 1);
+                vec![menu_item("Outer")]
+            })
+            .child(
+                column()
+                    .w(300.)
+                    .text_size(10.)
+                    .line_height(20.)
+                    .selectable(true)
+                    .children([text("Copy these words"), text("Not these")]),
+            ),
+    ));
+    ui.prepare_frame();
+    let secondary = |ui: &mut Ui, x, y| {
+        let button = PointerButton::Secondary;
+        ui.dispatch(InputEvent::PointerDown { x, y, button });
+        ui.dispatch(InputEvent::PointerUp { x, y, button });
+        ui.prepare_frame();
+    };
+    drag(&mut ui, (0., 10.), (40., 10.));
+    assert_eq!(ui.selected_text(), "Copy th");
+    secondary(&mut ui, 10., 10.);
+    assert_eq!(outer_menu.get(), 0);
+    let copy = view.find("selection-copy").expect("Copy shows");
+    ui.input.dispatch_to(&ui.scene, copy, InputEvent::Activate);
+    assert_eq!(clipboard.0.borrow().as_deref(), Some("Copy th"));
+    secondary(&mut ui, 10., 10.);
+    let all = view.find("selection-select-all").unwrap();
+    ui.input.dispatch_to(&ui.scene, all, InputEvent::Activate);
+    ui.prepare_frame();
+    assert_eq!(ui.selected_text(), "Copy these words\nNot these");
+    // On text that is not selected: the enclosing view's menu.
+    ui.clear_text_selection();
+    secondary(&mut ui, 10., 30.);
+    assert_eq!(outer_menu.get(), 1);
+}
+
+#[test]
+fn unmounting_a_region_under_a_drag_ends_the_drag() {
+    let mut ui = Ui::new(400., 300.);
+    let handle = ui.mount(
+        column()
+            .w(300.)
+            .text_size(10.)
+            .selectable(true)
+            .child(text("Dragged over")),
+    );
+    ui.prepare_frame();
+    press(&mut ui, 0., 5., false);
+    move_to(&mut ui, 30., 5.);
+    assert!(ui.is_selecting_text());
+    handle.unmount();
+    ui.prepare_frame();
+    assert!(!ui.is_selecting_text());
+    assert!(!ui.has_text_selection());
+}

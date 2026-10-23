@@ -18,7 +18,14 @@ use crate::{
     theme::tok,
     widgets::{Ui, WeakUi},
 };
-use std::{collections::HashMap, ops::Range, rc::Rc, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// A place in selectable text: a text node and a UTF-8 byte offset into
 /// its text.
@@ -90,6 +97,27 @@ struct Gesture {
     edges: (TextPoint, TextPoint),
     /// The pointer moved since the press: a release selects, not clicks.
     dragged: bool,
+    /// Where the pointer is: held past a scroll viewport's edge, the
+    /// viewport scrolls toward it.
+    pointer: (f32, f32),
+}
+
+/// Where a point in a virtual list's row lies in the list: the row's index
+/// and the path of child positions from the row to its text node, so a
+/// selection outlives the row's nodes as the list recycles them.
+#[derive(Clone, Debug, PartialEq)]
+struct RowAddress {
+    content: NodeId,
+    index: usize,
+    path: Vec<u32>,
+}
+
+/// A selection's end, as it stands: in mounted text, in a row the list has
+/// unmounted (scrolled away; it comes back with its row), or gone.
+enum End {
+    Live(TextPoint),
+    Parked(RowAddress, usize),
+    Gone,
 }
 
 /// A press on a link or button in selectable text: a drag from it selects.
@@ -170,6 +198,45 @@ pub(crate) struct State {
     synced: (u64, u64, u64),
     /// The region's text, gathered for each refresh (kept for its room).
     leaves: Vec<TextLeaf>,
+    /// Virtual list rows in selectable regions, and their indices.
+    rows: HashMap<NodeId, crate::reactive::Signal<usize>>,
+    /// Where the anchor and the focus lie in virtual lists, if they do.
+    anchor_row: Option<RowAddress>,
+    focus_row: Option<RowAddress>,
+    /// A drag's autoscroll: its next tick, and when the last ran.
+    scroll: Option<(Instant, Instant)>,
+}
+
+/// Removes a virtual row's entry once it is unmounted.
+struct RowGuard {
+    ui: WeakUi,
+    row: NodeId,
+}
+impl Drop for RowGuard {
+    fn drop(&mut self) {
+        if let Some(ui) = self.ui.upgrade()
+            && let Ok(mut state) = ui.selection_state().try_borrow_mut()
+        {
+            state.rows.remove(&self.row);
+        }
+    }
+}
+
+/// A virtual list mounted `row` at `index`: a selection in a selectable
+/// region outlives the row's nodes, coming back when the row does.
+pub(crate) fn mount_row(ui: &mut Ui, row: NodeId, index: &crate::reactive::Signal<usize>) {
+    if !ui.scene.borrow().is_selectable(row) {
+        return;
+    }
+    ui.selection_state()
+        .borrow_mut()
+        .rows
+        .insert(row, index.clone());
+    let guard = RowGuard {
+        ui: ui.downgrade(),
+        row,
+    };
+    ui.retain(row, guard);
 }
 
 /// Removes a region's entry once it is unmounted.
@@ -185,6 +252,12 @@ impl Drop for RootGuard {
             state.roots.remove(&self.root);
             if state.active_root == Some(self.root) {
                 state.active_root = None;
+            }
+            // Unmounted under a drag: the drag is over.
+            if state.gesture.as_ref().is_some_and(|g| g.root == self.root) {
+                state.gesture = None;
+                state.scroll = None;
+                state.pending = None;
             }
         }
     }
@@ -350,6 +423,7 @@ impl Ui {
             unit,
             edges: if extend { (anchor, anchor) } else { edges },
             dragged: false,
+            pointer: (x, y),
         });
         drop(state);
         self.set_selection(Some(root), Some(anchor), Some(edges.1));
@@ -363,13 +437,24 @@ impl Ui {
                 return false;
             };
             gesture.dragged = true;
+            gesture.pointer = (x, y);
             (gesture.unit, gesture.edges)
         };
         let Some(hit) = self.point_at(root, x, y) else {
             return true;
         };
-        let (anchor, focus) = if unit == Unit::Character {
-            (edges.0, hit.point)
+        // The word or paragraph pressed was recycled with its row: the
+        // drag goes on from the anchor.
+        let recycled = {
+            let scene = self.scene.borrow();
+            !scene.contains(edges.0.node) || !scene.contains(edges.1.node)
+        };
+        let (anchor, focus) = if unit == Unit::Character || recycled {
+            let anchor = match unit {
+                Unit::Character => edges.0,
+                _ => self.selection_state().borrow().anchor.unwrap_or(edges.0),
+            };
+            (anchor, hit.point)
         } else {
             let scene = self.scene.borrow();
             let current = hit.edges(unit);
@@ -382,6 +467,7 @@ impl Ui {
             }
         };
         self.set_selection(Some(root), Some(anchor), Some(focus));
+        self.arm_selection_scroll();
         true
     }
     /// The press that began a gesture in `root` ended. Returns whether the
@@ -392,6 +478,7 @@ impl Ui {
             return false;
         };
         state.layouts.clear();
+        state.scroll = None;
         gesture.dragged
             && state
                 .anchor
@@ -511,6 +598,23 @@ impl Ui {
             if state.root == root && state.anchor == anchor && state.focus == focus {
                 return;
             }
+            // An end kept as it was keeps its row; a new one in a virtual
+            // list's row takes that row's address.
+            let rows = {
+                let scene = self.scene.borrow();
+                let row = |point: Option<TextPoint>,
+                           old: Option<TextPoint>,
+                           kept: &Option<RowAddress>| match point {
+                    Some(point) if Some(point) == old => kept.clone(),
+                    Some(point) => row_address(&state.rows, &scene, point.node),
+                    None => None,
+                };
+                (
+                    row(anchor, state.anchor, &state.anchor_row),
+                    row(focus, state.focus, &state.focus_row),
+                )
+            };
+            (state.anchor_row, state.focus_row) = rows;
             state.root = root;
             state.anchor = anchor;
             state.focus = focus;
@@ -522,66 +626,90 @@ impl Ui {
     /// it, or whose layout, changed (all of it if `recolor`).
     pub(crate) fn refresh_selection(&self, recolor: bool) {
         let mut state = self.selection_state().borrow_mut();
-        let selected =
-            state
-                .root
-                .zip(state.anchor)
-                .zip(state.focus)
-                .filter(|((root, anchor), focus)| {
-                    let scene = self.scene.borrow();
-                    scene.contains(*root)
-                        && scene.contains(anchor.node)
-                        && scene.contains(focus.node)
-                });
+        // Ends in recycled virtual rows: back in their rows if mounted again.
+        let (anchor, focus) = {
+            let scene = self.scene.borrow();
+            let end = |point: Option<TextPoint>, row: &Option<RowAddress>| match point {
+                Some(point) => revive(&state.rows, &scene, point, row.as_ref()),
+                None => End::Gone,
+            };
+            (
+                end(state.anchor, &state.anchor_row),
+                end(state.focus, &state.focus_row),
+            )
+        };
+        if let End::Live(point) = anchor {
+            state.anchor = Some(point);
+        }
+        if let End::Live(point) = focus {
+            state.focus = Some(point);
+        }
+        let root = state
+            .root
+            .filter(|root| self.scene.borrow().contains(*root));
+        let selected = root.filter(|_| !matches!(anchor, End::Gone) && !matches!(focus, End::Gone));
         // Its text is gone: so is the selection.
         if selected.is_none() && state.anchor.is_some() {
             state.root = None;
             state.anchor = None;
             state.focus = None;
+            state.anchor_row = None;
+            state.focus_row = None;
             state.revision = state.revision.wrapping_add(1);
         }
         let mut shown = Vec::new();
         let mut leaves = std::mem::take(&mut state.leaves);
-        let colors = selected.and_then(|((root, _), _)| state.roots.get(&root).copied());
-        if let (Some(((root, anchor), focus)), Some(_)) = (selected, colors) {
+        let colors = selected.and_then(|root| state.roots.get(&root).copied());
+        if let (Some(root), Some(_)) = (selected, colors) {
             let scene = self.scene.borrow();
-            let (start, end) = if order(&scene, anchor, focus).is_le() {
+            let rows = &state.rows;
+            let (start, end) = if order_ends(rows, &scene, &anchor, &focus).is_le() {
                 (anchor, focus)
             } else {
                 (focus, anchor)
             };
             leaves.clear();
             scene.selectable_text(root, |id| self.is_editor(id), |leaf| leaves.push(leaf));
-            let index = |id: NodeId| leaves.iter().position(|leaf| leaf.id == id);
-            let (first, last) = match (index(start.node), index(end.node)) {
-                (Some(first), Some(last)) => (first, last),
-                // An end that no longer shows (hidden): the leaves between.
-                _ => {
-                    let first = leaves
+            // The leaves from the start to the end: an end that does not show
+            // (hidden, or in an unmounted row) by where it would be.
+            let first = match &start {
+                End::Live(point) => leaves.iter().position(|l| l.id == point.node).or_else(|| {
+                    leaves
                         .iter()
-                        .position(|l| scene.document_order(l.id, start.node).is_ge());
-                    let last = leaves
-                        .iter()
-                        .rposition(|l| scene.document_order(l.id, end.node).is_le());
-                    match (first, last) {
-                        (Some(first), Some(last)) if first <= last => (first, last),
-                        _ => (1, 0),
-                    }
-                }
+                        .position(|l| scene.document_order(l.id, point.node).is_ge())
+                }),
+                End::Parked(row, _) => leaves
+                    .iter()
+                    .position(|l| row_order(rows, &scene, l.id, row).is_ge()),
+                End::Gone => None,
             };
+            let last = match &end {
+                End::Live(point) => leaves.iter().position(|l| l.id == point.node).or_else(|| {
+                    leaves
+                        .iter()
+                        .rposition(|l| scene.document_order(l.id, point.node).is_le())
+                }),
+                End::Parked(row, _) => leaves
+                    .iter()
+                    .rposition(|l| row_order(rows, &scene, l.id, row).is_le()),
+                End::Gone => None,
+            };
+            let (first, last) = match (first, last) {
+                (Some(first), Some(last)) if first <= last => (first, last),
+                _ => (1, 0),
+            };
+            let (start, end) = (live(&start), live(&end));
             for leaf in leaves.get(first..=last).unwrap_or_default() {
                 let Some(text) = text_of(&scene, leaf.id) else {
                     continue;
                 };
-                let from = if leaf.id == start.node {
-                    boundary(&text, start.offset)
-                } else {
-                    0
+                let from = match start {
+                    Some(start) if leaf.id == start.node => boundary(&text, start.offset),
+                    _ => 0,
                 };
-                let to = if leaf.id == end.node {
-                    boundary(&text, end.offset)
-                } else {
-                    text.len()
+                let to = match end {
+                    Some(end) if leaf.id == end.node => boundary(&text, end.offset),
+                    _ => text.len(),
                 };
                 if from < to
                     && let Some(stamp) = stamp(&scene, leaf.id)
@@ -687,8 +815,147 @@ impl Ui {
         }
         self.refresh_selection(false);
     }
+    /// How fast a drag scrolls, in points a second along each axis: toward
+    /// the pointer while it is held past an edge of the innermost scroll
+    /// viewport holding the selection's focus, faster the farther it is.
+    fn selection_scroll_velocity(&self) -> (f32, f32) {
+        let state = self.selection_state().borrow();
+        let Some(gesture) = &state.gesture else {
+            return (0., 0.);
+        };
+        let scene = self.scene.borrow();
+        let from = state
+            .focus
+            .map(|focus| focus.node)
+            .filter(|node| scene.contains(*node))
+            .unwrap_or(gesture.root);
+        if !scene.contains(from) {
+            return (0., 0.);
+        }
+        let Some(visible) = std::iter::once(from)
+            .chain(scene.ancestors(from))
+            .find(|id| scene.is_scroll_content(*id))
+            .and_then(|content| scene.parent(content))
+            .and_then(|viewport| scene.visible_bounds(viewport))
+        else {
+            return (0., 0.);
+        };
+        let speed = |at: f32, start: f32, extent: f32| {
+            let past = if at < start {
+                at - start
+            } else if at > start + extent {
+                at - start - extent
+            } else {
+                0.
+            };
+            if past == 0. || !past.is_finite() {
+                0.
+            } else {
+                past.signum() * (past.abs() * 12.).clamp(24., 1200.)
+            }
+        };
+        let (x, y) = gesture.pointer;
+        (
+            speed(x, visible.x, visible.width),
+            speed(y, visible.y, visible.height),
+        )
+    }
+    /// Schedule a drag's autoscroll while the pointer is past an edge.
+    fn arm_selection_scroll(&self) {
+        let moving = self.selection_scroll_velocity() != (0., 0.);
+        let mut state = self.selection_state().borrow_mut();
+        if !moving {
+            state.scroll = None;
+        } else if state.scroll.is_none() {
+            let now = Instant::now();
+            state.scroll = Some((now + Duration::from_millis(16), now));
+        }
+    }
+    /// When a drag held past a scroll viewport's edge next scrolls it.
+    pub(crate) fn next_selection_deadline(&self) -> Option<Instant> {
+        let state = self.selection_state().borrow();
+        state
+            .scroll
+            .filter(|_| state.gesture.is_some())
+            .map(|(next, _)| next)
+    }
+    /// Scroll for a drag held past a viewport's edge, if due, and extend the
+    /// selection over what scrolled under the pointer. A stall contributes
+    /// at most 50 ms of motion; a viewport that cannot scroll further stops
+    /// the ticks until the pointer moves again. Returns whether it scrolled.
+    pub(crate) fn advance_selection_scroll(&self, now: Instant) -> bool {
+        let (root, pointer, target, last) = {
+            let state = self.selection_state().borrow();
+            let Some((next, last)) = state.scroll else {
+                return false;
+            };
+            let Some(gesture) = state.gesture.as_ref().filter(|_| next <= now) else {
+                return false;
+            };
+            let target = state
+                .focus
+                .map(|focus| focus.node)
+                .filter(|node| self.scene.borrow().contains(*node))
+                .unwrap_or(gesture.root);
+            (gesture.root, gesture.pointer, target, last)
+        };
+        let velocity = self.selection_scroll_velocity();
+        let elapsed = now
+            .saturating_duration_since(last)
+            .min(Duration::from_millis(50))
+            .as_secs_f32();
+        let scrolled = velocity != (0., 0.)
+            && self
+                .input
+                .dispatch_to(
+                    &self.scene,
+                    target,
+                    InputEvent::Scroll {
+                        x: pointer.0,
+                        y: pointer.1,
+                        delta_x: velocity.0 * elapsed,
+                        delta_y: velocity.1 * elapsed,
+                    },
+                )
+                .default_prevented;
+        if !scrolled {
+            self.selection_state().borrow_mut().scroll = None;
+            return false;
+        }
+        // Lay the scrolled text out where it now is, then reach it.
+        let _ = self.try_prepare_frame();
+        self.drag_selection(root, pointer.0, pointer.1);
+        if let Some(scroll) = &mut self.selection_state().borrow_mut().scroll {
+            *scroll = (now + Duration::from_millis(16), now);
+        }
+        true
+    }
+    /// Whether a pointer gesture is making the selection now: a host
+    /// publishes it once it settles (the primary selection).
+    pub fn is_selecting_text(&self) -> bool {
+        self.selection_state().borrow().gesture.is_some()
+    }
+    /// Whether window point `x`, `y` is on selected text.
+    fn on_selected_text(&self, x: f32, y: f32) -> bool {
+        let shown = self.selection_state().borrow().shown.clone();
+        let scene = self.scene.borrow();
+        shown.iter().any(|part| {
+            let (Some(highlight), true) =
+                (scene.text_highlight(part.node), scene.contains(part.node))
+            else {
+                return false;
+            };
+            let bounds = scene.bounds(part.node);
+            highlight.rects.iter().any(|r| {
+                let (left, top) = (bounds.x + r.x, bounds.y + r.y);
+                x >= left && x < left + r.width && y >= top && y < top + r.height
+            })
+        })
+    }
     /// The selection's anchor and focus, if there is one (it may be
-    /// collapsed: both at one place).
+    /// collapsed: both at one place). An end in a virtual list's row that
+    /// the list has unmounted names the node it had; the selection comes
+    /// back with the row.
     pub fn text_selection(&self) -> Option<(TextPoint, TextPoint)> {
         let state = self.selection_state().borrow();
         state.anchor.zip(state.focus)
@@ -865,6 +1132,44 @@ impl Ui {
     }
 }
 
+/// A selectable region's context menu: Copy and Select All, on selected
+/// text (elsewhere the press goes on to an enclosing view's menu).
+pub(crate) fn context_menu(
+    ui: &Ui,
+    root: NodeId,
+    platform: Option<Rc<crate::platform::PlatformService>>,
+) -> crate::compose_context_menu::ContextMenuBuilder {
+    let weak = ui.downgrade();
+    Box::new(move |event| {
+        let Some(ui) = weak.upgrade() else {
+            return Vec::new();
+        };
+        if ui.selection_state().borrow().root != Some(root)
+            || !ui.on_selected_text(event.x, event.y)
+        {
+            return Vec::new();
+        }
+        let (copy, all) = (weak.clone(), weak.clone());
+        let platform = platform.clone();
+        vec![
+            crate::compose::menu_item("Copy")
+                .id("selection-copy")
+                .on_click(move || {
+                    if let (Some(ui), Some(platform)) = (copy.upgrade(), &platform) {
+                        platform.0.set_clipboard_text(ui.selected_text());
+                    }
+                }),
+            crate::compose::menu_item("Select All")
+                .id("selection-select-all")
+                .on_click(move || {
+                    if let Some(ui) = all.upgrade() {
+                        ui.select_all_text(root);
+                    }
+                }),
+        ]
+    })
+}
+
 /// What `Ui`'s dispatch looks for after the document has had an event.
 #[derive(Clone, Copy)]
 pub(crate) enum SelectionEvent {
@@ -977,6 +1282,125 @@ fn boundary(text: &str, offset: usize) -> usize {
         offset -= 1;
     }
     offset
+}
+
+/// Where `node` lies in a virtual list's row, as a `RowAddress`.
+fn row_address(
+    rows: &HashMap<NodeId, crate::reactive::Signal<usize>>,
+    scene: &Scene,
+    node: NodeId,
+) -> Option<RowAddress> {
+    if rows.is_empty() || !scene.contains(node) {
+        return None;
+    }
+    let mut path = Vec::new();
+    let mut at = node;
+    while let Some(parent) = scene.parent(at) {
+        if let Some(index) = rows.get(&at) {
+            path.reverse();
+            return Some(RowAddress {
+                content: parent,
+                index: index.with_untracked(|index| *index),
+                path,
+            });
+        }
+        path.push(scene.children(parent).iter().position(|c| *c == at)? as u32);
+        at = parent;
+    }
+    None
+}
+
+/// The text node at `row`, if its row is mounted.
+fn resolve_row(
+    rows: &HashMap<NodeId, crate::reactive::Signal<usize>>,
+    scene: &Scene,
+    row: &RowAddress,
+) -> Option<NodeId> {
+    let mounted = scene.children(row.content).iter().find(|child| {
+        rows.get(child)
+            .is_some_and(|index| index.with_untracked(|index| *index) == row.index)
+    })?;
+    let mut at = *mounted;
+    for index in &row.path {
+        at = *scene.children(at).get(*index as usize)?;
+    }
+    matches!(
+        scene.kind(at),
+        NodeKind::Text { .. } | NodeKind::RichText { .. }
+    )
+    .then_some(at)
+}
+
+/// `point` as it stands, found again in its row if that was recycled.
+fn revive(
+    rows: &HashMap<NodeId, crate::reactive::Signal<usize>>,
+    scene: &Scene,
+    point: TextPoint,
+    row: Option<&RowAddress>,
+) -> End {
+    if scene.contains(point.node) {
+        return End::Live(point);
+    }
+    let Some(row) = row.filter(|row| scene.contains(row.content)) else {
+        return End::Gone;
+    };
+    match resolve_row(rows, scene, row) {
+        Some(node) => End::Live(TextPoint {
+            node,
+            offset: point.offset,
+        }),
+        None => End::Parked(row.clone(), point.offset),
+    }
+}
+
+fn live(end: &End) -> Option<TextPoint> {
+    match end {
+        End::Live(point) => Some(*point),
+        _ => None,
+    }
+}
+
+/// Where text node `leaf` lies against an unmounted row's place.
+fn row_order(
+    rows: &HashMap<NodeId, crate::reactive::Signal<usize>>,
+    scene: &Scene,
+    leaf: NodeId,
+    row: &RowAddress,
+) -> Ordering {
+    let mut at = leaf;
+    while let Some(parent) = scene.parent(at) {
+        if parent == row.content {
+            return rows.get(&at).map_or(Ordering::Equal, |index| {
+                index.with_untracked(|index| *index).cmp(&row.index)
+            });
+        }
+        at = parent;
+    }
+    scene.document_order(leaf, row.content)
+}
+
+fn order_ends(
+    rows: &HashMap<NodeId, crate::reactive::Signal<usize>>,
+    scene: &Scene,
+    a: &End,
+    b: &End,
+) -> Ordering {
+    match (a, b) {
+        (End::Live(a), End::Live(b)) => order(scene, *a, *b),
+        (End::Live(a), End::Parked(row, offset)) => {
+            row_order(rows, scene, a.node, row).then(a.offset.cmp(offset))
+        }
+        (End::Parked(row, offset), End::Live(b)) => row_order(rows, scene, b.node, row)
+            .reverse()
+            .then(offset.cmp(&b.offset)),
+        (End::Parked(a, x), End::Parked(b, y)) if a.content == b.content => a
+            .index
+            .cmp(&b.index)
+            .then(a.path.cmp(&b.path))
+            .then(x.cmp(y)),
+        (End::Parked(a, _), End::Parked(b, _)) => scene.document_order(a.content, b.content),
+        _ => Ordering::Equal,
+    }
 }
 
 fn order(scene: &Scene, a: TextPoint, b: TextPoint) -> std::cmp::Ordering {
