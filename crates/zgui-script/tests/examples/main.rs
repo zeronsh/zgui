@@ -3,6 +3,8 @@
 // Each file loads its own `common` (a Harness of its own, which files
 // add methods to), as it did as a binary of its own.
 #![allow(clippy::duplicate_mod)]
+#[path = "../catalog_example.rs"]
+mod catalog_example;
 #[path = "../dashboard_example.rs"]
 mod dashboard_example;
 #[path = "../example_scripts.rs"]
