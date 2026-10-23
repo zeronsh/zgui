@@ -86,7 +86,7 @@ def main():
         (args.output / "horizontal_scroll.log").write_text(output)
         if app.returncode:
             raise RuntimeError(output)
-        required = ["SNAPSHOT 1 offset=416.000 focused=Some(7) wide=false", "SNAPSHOT 2 offset=0.000 focused=Some(0) wide=false", "SNAPSHOT 3 offset=112.000 focused=Some(0) wide=false", "SNAPSHOT 4 offset=336.000 focused=Some(8) wide=true", "HORIZONTAL_SCROLL offset=336.000 wide=true reports=4"]
+        required = ["SNAPSHOT 1 offset=416.000 focused=Some(7) wide=false", "SNAPSHOT 2 offset=0.000 focused=Some(0) wide=false", "SNAPSHOT 3 offset=160.000 focused=Some(0) wide=false", "SNAPSHOT 4 offset=336.000 focused=Some(8) wide=true", "HORIZONTAL_SCROLL offset=336.000 wide=true reports=4"]
         if any(item not in output for item in required):
             raise AssertionError(output)
         result = {"platform": "X11/Xvfb", "scale": 1, "result": "pass", "checks": ["Tab horizontal reveal", "ShiftTab horizontal reveal", "native button7 horizontal wheel", "manualwheel no snapback", "viewport resize clamp", "focused pixels", "automatic close"], "pixel_samples": samples, "limitations": "Software rendering; does not validate macOS or hardware GPUs."}

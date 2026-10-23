@@ -82,7 +82,7 @@ def main():
         (args.output / "focus_scroll.log").write_text(output)
         if app.returncode:
             raise RuntimeError(output)
-        required = ["SNAPSHOT 1 offset=176.000 focused=Some(7)", "SNAPSHOT 2 offset=0.000 focused=Some(0)", "SNAPSHOT 3 offset=112.000 focused=Some(0)", "FOCUS_SCROLL offset=112.000 reports=3"]
+        required = ["SNAPSHOT 1 offset=176.000 focused=Some(7)", "SNAPSHOT 2 offset=0.000 focused=Some(0)", "SNAPSHOT 3 offset=160.000 focused=Some(0)", "FOCUS_SCROLL offset=160.000 reports=3"]
         if any(item not in output for item in required):
             raise AssertionError(output)
         result = {"platform": "X11/Xvfb", "scale": 1, "result": "pass", "checks": ["Tab reveals last button", "ShiftTab reveals first button", "focused control visible pixels", "manualwheel does not snap back", "focused identity retained", "automatic close"], "pixel_samples": samples, "limitations": "Software rendering; does not validate macOS or hardware GPUs."}

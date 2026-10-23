@@ -3434,9 +3434,14 @@ fn cursor_for_role(role: Option<Role>) -> CursorIcon {
         _ => CursorIcon::Default,
     }
 }
+/// How far a wheel's line scrolls, in logical pixels, as browsers have it:
+/// 40 (Chromium's and WebKit's line step, and Chromium's per Cocoa tick).
+/// Windows reports notches, not lines, and a notch is the system's wheel
+/// lines (3 by default) at a third of 100 each: 100, as Chromium scrolls.
+const WHEEL_LINE: f32 = if cfg!(windows) { 100. } else { 40. };
 fn wheel_delta(delta: MouseScrollDelta, scale: f64) -> (f32, f32) {
     match delta {
-        MouseScrollDelta::LineDelta(x, y) => (-x * 28., -y * 28.),
+        MouseScrollDelta::LineDelta(x, y) => (-x * WHEEL_LINE, -y * WHEEL_LINE),
         MouseScrollDelta::PixelDelta(p) => {
             let p = p.to_logical::<f32>(scale);
             (-p.x, -p.y)
@@ -3798,9 +3803,11 @@ mod tests {
     }
     #[test]
     fn wheel_down_is_positive_in_logical_scene_coordinates() {
+        // A line as a browser scrolls one; on Windows, a notch.
+        let line = if cfg!(windows) { 100. } else { 40. };
         assert_eq!(
             wheel_delta(MouseScrollDelta::LineDelta(1., -2.), 2.),
-            (-28., 56.)
+            (-line, 2. * line)
         );
         // Windows: a precision touchpad's fractions of a notch are motion.
         assert!(!continuous_lines(0., -1.));

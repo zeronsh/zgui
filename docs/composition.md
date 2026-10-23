@@ -559,7 +559,10 @@ The offset follows external writes and clamps when content or viewport dimension
 change. NaN becomes zero and infinities clamp to an endpoint. Wheel input scrolls
 this viewport while it can move and bubbles to an outer scroller at an edge;
 a delta crossing an edge is consumed by the inner viewport for that event.
-Disabled viewports ignore input while still following model updates. Offset-only
+The desktop host turns a mouse wheel's lines into pixels as browsers do:
+40 per line on macOS and Linux (Chromium's and WebKit's line step), and on
+Windows, which reports notches, 100 per notch (the system's default three lines).
+Trackpads' pixel deltas pass as they are. Disabled viewports ignore input while still following model updates. Offset-only
 changes translate the retained subtree without layout or remounting children.
 All children remain mounted offscreen; use `virtual_list` for large collections
 that need bounded row construction and memory.
