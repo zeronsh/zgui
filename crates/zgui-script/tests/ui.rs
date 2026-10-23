@@ -136,7 +136,7 @@ fn script_scrolls_fade_only_where_content_runs_past() {
             .layer_items(None)
             .into_iter()
             .find(|item| item.id == node)
-            .and_then(|item| item.mask.map(|(_, bands)| bands))
+            .and_then(|item| item.mask().map(|(_, bands)| bands))
     };
     assert_eq!(bands(&mut h), Some([0., 0., 18., 0.]));
 }

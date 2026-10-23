@@ -15,7 +15,7 @@ fn items_rounded(
         .into_iter()
         .find(|item| item.id == node)
         .expect("painted")
-        .rounded
+        .rounded()
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn fade_sides_reach_descendants_as_four_bands() {
         .into_iter()
         .find(|item| item.id == node)
         .unwrap();
-    let (rect, bands) = item.mask.expect("faded");
+    let (rect, bands) = item.mask().expect("faded");
     assert_eq!(bands, [0., 28., 0., 4.]);
     assert_eq!(rect, zgui::scene::Rect::new(0., 0., 198., 40.));
 }
@@ -369,7 +369,7 @@ fn fade_overflow_shows_only_the_bands_content_runs_past() {
             .into_iter()
             .find(|item| item.id == node)
             .unwrap();
-        item.mask.map(|(_, bands)| bands)
+        item.mask().map(|(_, bands)| bands)
     };
     // At the top: content runs past the bottom only.
     assert_eq!(bands(&mut ui), Some([0., 0., 18., 0.]));
@@ -412,7 +412,7 @@ fn fade_overflow_measures_a_scroll_views_content() {
             .into_iter()
             .find(|item| item.id == node)
             .unwrap();
-        item.mask.map(|(_, bands)| bands)
+        item.mask().map(|(_, bands)| bands)
     };
     // The scrolled content sits under the scroll view's own viewport: its
     // overflow counts all the same.

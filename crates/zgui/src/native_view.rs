@@ -629,7 +629,7 @@ impl Walk<'_> {
             );
             let opacity = context.opacity * item.effects.opacity;
             let mut rounded: Vec<RoundRect> = item
-                .rounded
+                .rounded()
                 .iter()
                 .flatten()
                 .filter_map(|round| map_round(context.matrix, *round))
@@ -637,7 +637,7 @@ impl Walk<'_> {
             rounded.extend(context.rounded.iter().copied());
             if item.isolated {
                 let inner = self.scene.layer_items(Some(item.id));
-                let matrix = match (item.matrix, context.matrix) {
+                let matrix = match (item.matrix(), context.matrix) {
                     (Some(own), Some(outer)) => Some(own.then(outer)),
                     (own, outer) => own.or(outer),
                 };

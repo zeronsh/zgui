@@ -127,7 +127,7 @@ impl Raster {
                 };
                 // Rounded clips around it: its pixels there mixed back over
                 // what lay beneath by how much of each the curves keep.
-                let corners = self.save_corners(&item.rounded, clip);
+                let corners = self.save_corners(&item.rounded(), clip);
                 'draw: {
                     if item.isolated {
                         self.isolated(scene, item, clip);
@@ -161,7 +161,7 @@ impl Raster {
                                 r.width,
                                 r.height,
                             );
-                            let color = tint(highlight.color, item.color);
+                            let color = tint(highlight.color, item.color());
                             if highlight.radius > 0. {
                                 let style = zgui::scene::QuadStyle {
                                     fill: color,
@@ -175,21 +175,21 @@ impl Raster {
                         }
                         self.selected =
                             highlight.text_color.map(|text| zgui::scene::TextHighlight {
-                                text_color: Some(tint(text, item.color)),
+                                text_color: Some(tint(text, item.color())),
                                 ..highlight.clone()
                             });
                     }
                     match item.kind {
                         NodeKind::Rect(color) => {
-                            self.rect(item.bounds, clip, tint(*color, item.color), item.effects)
+                            self.rect(item.bounds, clip, tint(*color, item.color()), item.effects)
                         }
                         NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => {
                             // A border pass: the border over what it holds
                             // (if it paints there), then the outline.
                             if !item.border_pass || (quad.border_over && quad.has_border()) {
                                 let mut style = border_part(quad, item.border_pass);
-                                style.fill = tint(style.fill, item.color);
-                                style.border_color = tint(style.border_color, item.color);
+                                style.fill = tint(style.fill, item.color());
+                                style.border_color = tint(style.border_color, item.color());
                                 self.quad(item.id, item.bounds, clip, style, item.effects)
                             }
                             if let Some(outline) = quad.outline.filter(|o| o.visible())
@@ -203,7 +203,7 @@ impl Raster {
                                         0.
                                     },
                                     border_width: outline.width,
-                                    border_color: tint(outline.color, item.color),
+                                    border_color: tint(outline.color, item.color()),
                                     ..Default::default()
                                 };
                                 self.quad(
@@ -258,7 +258,7 @@ impl Raster {
                             color,
                             font_size,
                         } => {
-                            let color = &tint(*color, item.color);
+                            let color = &tint(*color, item.color());
                             if item.text_options != Default::default() {
                                 let runs = if text.is_empty() {
                                     Vec::new()
@@ -295,7 +295,7 @@ impl Raster {
                     }
                 }
                 self.selected = None;
-                self.mix_corners(&item.rounded, corners);
+                self.mix_corners(&item.rounded(), corners);
             }
         }
     }
@@ -335,22 +335,8 @@ impl Raster {
         };
         let mut black = make(0);
         let mut white = make(0xffffff);
-        let items: Vec<_> = scene
-            .layer_items(Some(item.id))
-            .into_iter()
-            .map(|mut i| {
-                i.bounds.x -= x;
-                i.bounds.y -= y;
-                i.clip = i
-                    .clip
-                    .map(|r| Rect::new(r.x - x, r.y - y, r.width, r.height));
-                for round in i.rounded.iter_mut().flatten() {
-                    round.rect.x -= x;
-                    round.rect.y -= y;
-                }
-                i
-            })
-            .collect();
+        let mut items = scene.layer_items(Some(item.id));
+        zgui::scene::translate_items(&mut items, -x, -y);
         let full = [Rect::new(0., 0., width as f32, height as f32)];
         black.render_flat(scene, items.clone(), &full);
         white.render_flat(scene, items, &full);
@@ -389,7 +375,7 @@ impl Raster {
         );
         // A transformed layer samples back through its matrix (from this
         // target's origin), nearest texel, as transformed images do.
-        let matrix = item.matrix.map(|matrix| {
+        let matrix = item.matrix().map(|matrix| {
             let (x, y) = self.origin;
             zgui::affine::Affine::translation(x, y)
                 .then(matrix)

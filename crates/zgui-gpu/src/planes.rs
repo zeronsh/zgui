@@ -194,15 +194,7 @@ impl GpuRenderer {
         let Some((x, y)) = self.plane_offset() else {
             return items;
         };
-        let shift = |r: Rect| Rect::new(r.x - x, r.y - y, r.width, r.height);
-        for item in &mut items {
-            item.bounds = shift(item.bounds);
-            item.clip = item.clip.map(shift);
-            item.mask = item.mask.map(|(rect, bands)| (shift(rect), bands));
-            for clip in item.rounded.iter_mut().flatten() {
-                clip.rect = shift(clip.rect);
-            }
-        }
+        zgui::scene::translate_items(&mut items, -x, -y);
         items
     }
 }

@@ -170,7 +170,10 @@ impl Region {
     }
     /// `item`'s, if it lies in one.
     fn of(item: &zgui::scene::PaintItem<'_>) -> Option<Self> {
-        if item.mask.is_none() && item.rounded.iter().all(Option::is_none) && item.color.is_none() {
+        if item.mask().is_none()
+            && item.rounded().iter().all(Option::is_none)
+            && item.color().is_none()
+        {
             return None;
         }
         let round = |clip: Option<zgui::scene::RoundRect>| match clip {
@@ -180,8 +183,9 @@ impl Region {
             ),
             None => ([0., 0., -1., -1.], [0.; 4]),
         };
-        let ((round0, radii0), (round1, radii1)) = (round(item.rounded[0]), round(item.rounded[1]));
-        let (fade_box, fade) = item.mask.map_or(([0.; 4], [0.; 4]), |(rect, bands)| {
+        let ((round0, radii0), (round1, radii1)) =
+            (round(item.rounded()[0]), round(item.rounded()[1]));
+        let (fade_box, fade) = item.mask().map_or(([0.; 4], [0.; 4]), |(rect, bands)| {
             (
                 [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height],
                 bands,
@@ -194,8 +198,8 @@ impl Region {
             radii1,
             fade_box,
             fade,
-            color: item.color.unwrap_or_default(),
-            tint: [if item.color.is_some() { 1. } else { 0. }, 0., 0., 0.],
+            color: item.color().unwrap_or_default(),
+            tint: [if item.color().is_some() { 1. } else { 0. }, 0., 0., 0.],
         })
     }
 }
@@ -375,7 +379,8 @@ fn copy_is_exact(
         })
     };
     for item in &items[first..=last] {
-        if !content(item) || item.mask.is_some() || item.isolated || item.effects.blur_radius > 0. {
+        if !content(item) || item.mask().is_some() || item.isolated || item.effects.blur_radius > 0.
+        {
             return false;
         }
     }
@@ -413,7 +418,7 @@ fn copy_is_exact(
             && quad.decoration.is_none()
             && item.effects.opacity >= 1.
             && item.effects.edge_fade <= 0.
-            && item.mask.is_none()
+            && item.mask().is_none()
             && !item.isolated
             && rect == clip
         {
@@ -2251,27 +2256,8 @@ impl GpuRenderer {
         // Everything inside draws at the layer's raster scale: glyphs,
         // canvases and nested layers rasterize as finely as it shows.
         self.scale = scale;
-        let local: Vec<_> = items
-            .into_iter()
-            .map(|mut item| {
-                item.bounds.x -= bounds.x;
-                item.bounds.y -= bounds.y;
-                item.clip = item
-                    .clip
-                    .map(|r| Rect::new(r.x - bounds.x, r.y - bounds.y, r.width, r.height));
-                item.mask = item.mask.map(|(r, bands)| {
-                    (
-                        Rect::new(r.x - bounds.x, r.y - bounds.y, r.width, r.height),
-                        bands,
-                    )
-                });
-                for clip in item.rounded.iter_mut().flatten() {
-                    clip.rect.x -= bounds.x;
-                    clip.rect.y -= bounds.y;
-                }
-                item
-            })
-            .collect();
+        let mut local = items;
+        zgui::scene::translate_items(&mut local, -bounds.x, -bounds.y);
         // Nested layer images remain world-positioned in their cache; pass the offset
         // separately so the same texture can be composed into any ancestor layer.
         let old_origin = self.layer_origin;
@@ -2541,7 +2527,7 @@ impl GpuRenderer {
             };
 
             // A transformed layer's matrix, from this target's origin.
-            let matrix = item.matrix.map(|matrix| {
+            let matrix = item.matrix().map(|matrix| {
                 let (x, y) = self.layer_origin;
                 zgui::affine::Affine::translation(x, y)
                     .then(matrix)

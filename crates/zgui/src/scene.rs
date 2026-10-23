@@ -1100,11 +1100,6 @@ pub type RoundedClip = [Option<RoundRect>; 2];
 pub struct PaintItem<'a> {
     /// A layer (an isolated or transformed subtree) represented by its cached image.
     pub isolated: bool,
-    /// A transformed layer: where its content, laid out in `bounds`' space,
-    /// lands in this item's (see `LocalTransform::matrix`). Its `clip` is
-    /// then its parent's; its own clips inside the layer. Always `None`
-    /// from `paint_items`.
-    pub matrix: Option<crate::affine::Affine>,
     pub id: NodeId,
     pub bounds: Rect,
     pub kind: &'a NodeKind,
@@ -1112,16 +1107,83 @@ pub struct PaintItem<'a> {
     pub text_options: crate::text_layout::TextOptions,
     pub effects: Effects,
     pub clip: Option<Rect>,
-    /// The nearest `fade_edges` ancestor's clip and bands (top, bottom).
-    pub mask: Option<FadeMask>,
-    /// Rounded clips around it (see `RoundedClip`).
-    pub rounded: RoundedClip,
     /// This item paints `id`'s border alone, after its descendants
     /// (`QuadStyle::border_over`); the node's first item painted the rest.
     pub border_pass: bool,
+    /// Its matrix, fade mask, rounded clips and colour filters, where it has
+    /// any (see the accessors): `None` for most items.
+    pub extras: Option<std::rc::Rc<PaintExtras>>,
+}
+/// What few paint items carry besides their box, clip and effects, kept
+/// apart so the common item stays small (a frame walks thousands). A
+/// subtree inside the same fade mask, rounded clips and colour filters
+/// shares one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PaintExtras {
+    /// See `PaintItem::matrix`.
+    pub matrix: Option<crate::affine::Affine>,
+    pub mask: Option<FadeMask>,
+    pub rounded: RoundedClip,
+    pub color: Option<ColorMatrix>,
+}
+impl PaintExtras {
+    /// `None` for nothing to carry, else shared.
+    fn shared(self) -> Option<std::rc::Rc<Self>> {
+        (self != Self::default()).then(|| std::rc::Rc::new(self))
+    }
+}
+/// Moves `items` by `(dx, dy)`, into a layer's or a plane's space: their
+/// boxes, clips, fade masks and rounded clips (not a layer's matrix, which
+/// maps from its own box). Items sharing extras share the moved ones.
+pub fn translate_items(items: &mut [PaintItem<'_>], dx: f32, dy: f32) {
+    let shift = |r: Rect| Rect::new(r.x + dx, r.y + dy, r.width, r.height);
+    let mut moved: Option<(*const PaintExtras, std::rc::Rc<PaintExtras>)> = None;
+    for item in items {
+        item.bounds = shift(item.bounds);
+        item.clip = item.clip.map(shift);
+        let Some(extras) = &item.extras else {
+            continue;
+        };
+        if let Some((from, to)) = &moved
+            && std::ptr::eq(*from, &**extras)
+        {
+            item.extras = Some(to.clone());
+            continue;
+        }
+        let from = std::rc::Rc::as_ptr(extras);
+        let mut shifted = PaintExtras::clone(extras);
+        shifted.mask = shifted.mask.map(|(rect, bands)| (shift(rect), bands));
+        for clip in shifted.rounded.iter_mut().flatten() {
+            clip.rect = shift(clip.rect);
+        }
+        let shifted = std::rc::Rc::new(shifted);
+        item.extras = Some(shifted.clone());
+        moved = Some((from, shifted));
+    }
+}
+impl PaintItem<'_> {
+    /// A transformed layer: where its content, laid out in `bounds`' space,
+    /// lands in this item's (see `LocalTransform::matrix`). Its `clip` is
+    /// then its parent's; its own clips inside the layer. Always `None`
+    /// from `paint_items`.
+    pub fn matrix(&self) -> Option<crate::affine::Affine> {
+        self.extras.as_ref().and_then(|extras| extras.matrix)
+    }
+    /// The nearest `fade_edges` ancestor's clip and bands (top, bottom).
+    pub fn mask(&self) -> Option<FadeMask> {
+        self.extras.as_ref().and_then(|extras| extras.mask)
+    }
+    /// Rounded clips around it (see `RoundedClip`).
+    pub fn rounded(&self) -> RoundedClip {
+        self.extras
+            .as_ref()
+            .map_or_else(RoundedClip::default, |extras| extras.rounded)
+    }
     /// Its and its ancestors' colour filters as one matrix (see
     /// `Effects::color_matrix`); a layer's own, at its composite.
-    pub color: Option<ColorMatrix>,
+    pub fn color(&self) -> Option<ColorMatrix> {
+        self.extras.as_ref().and_then(|extras| extras.color)
+    }
 }
 type FontMeasurer =
     dyn Fn(&std::sync::Arc<str>, f32, Option<f32>, &crate::text_layout::FontStyle) -> (f32, f32);
@@ -4644,7 +4706,7 @@ impl Scene {
                 let nested = self
                     .layer_bounds(item.id)
                     .expand(filter_spread(item.effects.filter_blur));
-                item.matrix.map_or(nested, |matrix| matrix.bounds(nested))
+                item.matrix().map_or(nested, |matrix| matrix.bounds(nested))
             } else if let NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } = item.kind {
                 quad.paint_bounds(item.bounds)
             } else if let NodeKind::Svg(svg) = item.kind {
@@ -4720,29 +4782,26 @@ impl Scene {
         // Sized as the last walk was, rather than grown from nothing each frame.
         let (stack_hint, items_hint) = self.walk_hints.get();
         let mut stack = Vec::with_capacity(stack_hint.max(1));
+        // Each entry: a node, what its parent passes on (translation,
+        // opacity, clip, and the fade mask, rounded clips and colour filters
+        // as shared `PaintExtras`), and whether it is a border pass.
         stack.push((
             start,
             transform,
             1.,
             clip,
-            None::<FadeMask>,
-            RoundedClip::default(),
+            None::<std::rc::Rc<PaintExtras>>,
             false,
-            None::<ColorMatrix>,
         ));
         let mut result = Vec::with_capacity(items_hint);
         let mut deepest = 0;
-        while let Some((
-            id,
-            parent_transform,
-            parent_opacity,
-            parent_clip,
-            mask,
-            rounded,
-            border,
-            parent_color,
-        )) = stack.pop()
+        while let Some((id, parent_transform, parent_opacity, parent_clip, context, border)) =
+            stack.pop()
         {
+            let inherited = context.as_deref();
+            let mask = inherited.and_then(|c| c.mask);
+            let rounded = inherited.map_or_else(RoundedClip::default, |c| c.rounded);
+            let parent_color = inherited.and_then(|c| c.color);
             let node = self.node(id);
             let transform = Transform {
                 x: parent_transform.x + node.transform.x,
@@ -4813,6 +4872,19 @@ impl Scene {
             // Its border over what it holds: a second item once they paint.
             let border_over = matches!(&node.kind,
                 NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } if quad.paints_over());
+            // The item's extras and its children's, shared with what passed
+            // them on wherever they are the same.
+            let extras = if matrix.is_none() && item_rounded == rounded && color == parent_color {
+                context.clone()
+            } else {
+                PaintExtras {
+                    matrix,
+                    mask,
+                    rounded: item_rounded,
+                    color,
+                }
+                .shared()
+            };
             if !isolated && !border && border_over {
                 let opacity = parent_opacity;
                 stack.push((
@@ -4820,13 +4892,27 @@ impl Scene {
                     parent_transform,
                     opacity,
                     parent_clip,
-                    mask,
-                    rounded,
+                    context.clone(),
                     true,
-                    parent_color,
                 ));
             }
             if !isolated && !border {
+                let passed = if child_mask == mask
+                    && child_rounded == rounded
+                    && color == parent_color
+                {
+                    context
+                } else if matrix.is_none() && child_rounded == item_rounded && child_mask == mask {
+                    extras.clone()
+                } else {
+                    PaintExtras {
+                        matrix: None,
+                        mask: child_mask,
+                        rounded: child_rounded,
+                        color,
+                    }
+                    .shared()
+                };
                 stack.extend(
                     node.children
                         .iter()
@@ -4834,16 +4920,7 @@ impl Scene {
                         .filter(|child| touches(self.ink(**child), transform))
                         .map(|child| {
                             let opacity = effects.opacity;
-                            (
-                                *child,
-                                transform,
-                                opacity,
-                                clip,
-                                child_mask,
-                                child_rounded,
-                                false,
-                                color,
-                            )
+                            (*child, transform, opacity, clip, passed.clone(), false)
                         }),
                 );
                 deepest = deepest.max(stack.len());
@@ -4863,7 +4940,6 @@ impl Scene {
             };
             result.push(PaintItem {
                 isolated,
-                matrix,
                 id,
                 bounds,
                 kind: &node.kind,
@@ -4871,10 +4947,8 @@ impl Scene {
                 text_options: node.style.text_options,
                 effects,
                 clip: own_clip,
-                mask,
-                rounded: item_rounded,
                 border_pass: border,
-                color,
+                extras,
             });
         }
         self.walk_hints.set((deepest, result.len()));
@@ -4883,15 +4957,7 @@ impl Scene {
     pub fn paint_items(&self) -> impl Iterator<Item = PaintItem<'_>> {
         PaintIter {
             scene: self,
-            stack: vec![(
-                self.root,
-                Transform::default(),
-                1.0,
-                self.viewport,
-                None,
-                RoundedClip::default(),
-                None,
-            )],
+            stack: vec![(self.root, Transform::default(), 1.0, self.viewport, None)],
         }
     }
 }
@@ -4997,15 +5063,16 @@ type PaintFrame = (
     Transform,
     f32,
     Rect,
-    Option<FadeMask>,
-    RoundedClip,
-    Option<ColorMatrix>,
+    Option<std::rc::Rc<PaintExtras>>,
 );
 impl<'a> Iterator for PaintIter<'a> {
     type Item = PaintItem<'a>;
     fn next(&mut self) -> Option<Self::Item> {
-        let (id, parent_transform, parent_opacity, parent_clip, mask, rounded, parent_color) =
-            self.stack.pop()?;
+        let (id, parent_transform, parent_opacity, parent_clip, extras) = self.stack.pop()?;
+        let inherited = extras.as_deref();
+        let mask = inherited.and_then(|c| c.mask);
+        let rounded = inherited.map_or_else(RoundedClip::default, |c| c.rounded);
+        let parent_color = inherited.and_then(|c| c.color);
         let node = self.scene.node(id);
         let transform = Transform {
             x: parent_transform.x + node.transform.x,
@@ -5039,21 +5106,34 @@ impl<'a> Iterator for PaintIter<'a> {
         };
         let child_rounded = rounded_clip(rounded, node, bounds);
         let color = compose_color(parent_color, node.effects.color_matrix());
+        let own = if color == parent_color {
+            extras
+        } else {
+            PaintExtras {
+                matrix: None,
+                mask,
+                rounded,
+                color,
+            }
+            .shared()
+        };
+        let passed = if child_mask == mask && child_rounded == rounded {
+            own.clone()
+        } else {
+            PaintExtras {
+                matrix: None,
+                mask: child_mask,
+                rounded: child_rounded,
+                color,
+            }
+            .shared()
+        };
         self.stack.extend(node.children.iter().rev().map(|child| {
             let opacity = effects.opacity;
-            (
-                *child,
-                transform,
-                opacity,
-                clip,
-                child_mask,
-                child_rounded,
-                color,
-            )
+            (*child, transform, opacity, clip, passed.clone())
         }));
         Some(PaintItem {
             isolated: false,
-            matrix: None,
             id,
             bounds,
             kind: &node.kind,
@@ -5061,10 +5141,8 @@ impl<'a> Iterator for PaintIter<'a> {
             text_options: node.style.text_options,
             effects,
             clip: Some(own_clip),
-            mask,
-            rounded,
             border_pass: false,
-            color,
+            extras: own,
         })
     }
 }
@@ -7168,7 +7246,7 @@ mod local_transform_tests {
             scene
                 .layer_items_within(None, Some(&[damage]))
                 .iter()
-                .any(|item| item.id == id && item.isolated && item.matrix.is_some())
+                .any(|item| item.id == id && item.isolated && item.matrix().is_some())
         };
         // Above the laid-out box, inside the rotated one.
         assert!(visits(&scene, Rect::new(118., 92., 4., 4.)));
@@ -7177,7 +7255,7 @@ mod local_transform_tests {
         // Its own items are drawn in its unrotated space.
         let items = scene.layer_items(Some(id));
         assert_eq!(items[0].bounds, Rect::new(100., 100., 40., 20.));
-        assert_eq!(items[0].matrix, None);
+        assert_eq!(items[0].matrix(), None);
     }
     #[test]
     fn hit_tests_map_through_rotation_scale_and_skew() {
@@ -7279,7 +7357,7 @@ mod local_transform_tests {
         assert_eq!(scene.hit_test(82., 82.), Some(panel));
         let items = scene.layer_items(Some(panel));
         let inner = items.iter().find(|item| item.id == card).unwrap();
-        assert!(inner.isolated && inner.matrix.is_some());
+        assert!(inner.isolated && inner.matrix().is_some());
     }
     #[test]
     fn removing_transformed_nodes_restores_counts() {
@@ -7307,7 +7385,7 @@ mod local_transform_tests {
         // one layer item.
         let items = scene.layer_items(None);
         let item = items.iter().find(|item| item.id == id).unwrap();
-        assert!(item.isolated && item.matrix.is_none());
+        assert!(item.isolated && item.matrix().is_none());
         assert_eq!(item.effects.filter_blur, 2.);
         assert_eq!(scene.layer_items(Some(id))[0].effects, Effects::default());
         // Animating the sigma neither lays out nor repaints the content.
@@ -7491,7 +7569,7 @@ mod local_transform_tests {
             .into_iter()
             .find(|item| item.id == id)
             .unwrap();
-        assert_eq!(item.color, Some(matrix));
+        assert_eq!(item.color(), Some(matrix));
         // Contrast 0 maps everything to mid grey.
         let grey = Effects {
             contrast: 0.,
