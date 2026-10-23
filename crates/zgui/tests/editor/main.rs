@@ -38,3 +38,5 @@ mod editor_streaming_history;
 mod editor_undo_keys;
 #[path = "../editor_wrap_navigation.rs"]
 mod editor_wrap_navigation;
+#[path = "../ime_clauses.rs"]
+mod ime_clauses;
