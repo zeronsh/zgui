@@ -3162,10 +3162,12 @@ impl Host {
             return;
         };
         let (grab_x, grab_y) = *self.window_grab.get_or_insert((drag.x, drag.y));
+        let scale = self.global_scale();
         // Its content's top-left goes to the pointer less the grab point.
-        let (x, y) =
-            crate::window_place::pointer().unwrap_or((left + drag.x as f64, top + drag.y as f64));
-        let to = (x - grab_x as f64, y - grab_y as f64);
+        let (x, y) = crate::window_place::pointer().unwrap_or_else(|| {
+            crate::popup_window::global_at((drag.x as f64, drag.y as f64), (left, top), scale)
+        });
+        let to = (x - grab_x as f64 * scale, y - grab_y as f64 * scale);
         if to == (left, top) {
             return;
         }
@@ -3207,9 +3209,20 @@ impl Host {
     }
     /// Its content's box in global coordinates.
     fn content_box(&self) -> Option<[f64; 4]> {
-        let (left, top) = self.content_origin?;
+        let origin = self.content_origin?;
         let (width, height) = self.context.viewport.with_untracked(|viewport| *viewport);
-        Some([left, top, width as f64, height as f64])
+        let size = (width as f64, height as f64);
+        Some(crate::popup_window::global_box(
+            origin,
+            size,
+            self.global_scale(),
+        ))
+    }
+    /// Global units per point of its content (`popup_window::global_scale`).
+    fn global_scale(&self) -> f64 {
+        self.window
+            .as_deref()
+            .map_or(1., crate::popup_window::global_scale)
     }
     /// The platform's drag moved or ended, at a global point: the window's
     /// pointer, which the platform reports to its session meanwhile. Back
@@ -3228,8 +3241,9 @@ impl Host {
             NativeDrag::Moved { x, y } => (x, y, None),
             NativeDrag::Ended { x, y, accepted } => (x, y, Some(accepted)),
         };
-        let (left, top) = crate::popup_window::content_origin(&window).unwrap_or((0., 0.));
-        let at = ((x - left) as f32, (y - top) as f32);
+        let origin = crate::popup_window::content_origin(&window).unwrap_or((0., 0.));
+        let (x, y) = crate::popup_window::points_at((x, y), origin, self.global_scale());
+        let at = (x as f32, y as f32);
         let device_id = winit::event::DeviceId::dummy();
         let position = LogicalPosition::new(at.0, at.1).to_physical(self.scale_factor);
         let Some(taken) = ended else {
@@ -3830,7 +3844,11 @@ impl WindowManager {
         let inside = |[left, top, width, height]: [f64; 4]| {
             (left..left + width).contains(&x) && (top..top + height).contains(&y)
         };
-        let at = |token: u64, rect: [f64; 4]| (token, (x - rect[0]) as f32, (y - rect[1]) as f32);
+        let at = |token: u64, rect: [f64; 4]| {
+            let scale = self.hosts.get(&token).map_or(1., Host::global_scale);
+            let (x, y) = crate::popup_window::points_at((x, y), (rect[0], rect[1]), scale);
+            (token, x as f32, y as f32)
+        };
         if let Some((token, rect, when)) = self.drag_over.get()
             && inside(rect)
             && when.elapsed() < DRAG_OVER_FOR
@@ -3873,9 +3891,11 @@ impl WindowManager {
         if drag.moves_window {
             // The window follows the pointer: what is under the pointer is
             // beneath the window.
-            let (left, top) = source.content_origin?;
-            let (x, y) = crate::window_place::pointer()
-                .unwrap_or((left + drag.x as f64, top + drag.y as f64));
+            let origin = source.content_origin?;
+            let at = (drag.x as f64, drag.y as f64);
+            let (x, y) = crate::window_place::pointer().unwrap_or_else(|| {
+                crate::popup_window::global_at(at, origin, source.global_scale())
+            });
             return Some((self.window_under_past(x, y, Some(token)), drag));
         }
         let (width, height) = source.context.viewport.with_untracked(|viewport| *viewport);
@@ -3886,11 +3906,12 @@ impl WindowManager {
         }
         // Where windows have no place on screen (Wayland), out of its own
         // window is out of the app's.
-        let Some((left, top)) = source.content_origin else {
+        let Some(origin) = source.content_origin else {
             return Some((None, drag));
         };
-        let over = self.window_under(left + drag.x as f64, top + drag.y as f64);
-        Some((over, drag))
+        let at = (drag.x as f64, drag.y as f64);
+        let (x, y) = crate::popup_window::global_at(at, origin, source.global_scale());
+        Some((self.window_under(x, y), drag))
     }
     /// After window `token`'s input: carry its drag to the app's window under
     /// the pointer, whose destinations hear it (and none in the source

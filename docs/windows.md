@@ -172,7 +172,9 @@ they are where Direct3D 12 is not available.
 A drag's preview shows in a window of its own, over every window, and moves
 with the pointer without drawing again. It goes from one of the app's
 windows to another (their destinations hear it, a tab torn off past them
-hears `on_drag_outside`).
+hears `on_drag_outside`), exactly between windows on monitors of different
+scales: their places are compared in the screen's pixels, each window's
+points its scale apart (`popup_window::global_scale`).
 
 A drag carrying what other apps take (`View::drag_export`) becomes Windows'
 as it leaves the app's windows (`native_drag/win32.rs`): `DoDragDrop` with
