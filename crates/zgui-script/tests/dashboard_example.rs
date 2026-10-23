@@ -186,6 +186,9 @@ fn the_theme_switches_and_charts_follow_it() {
 #[test]
 fn a_feed_tick_costs_what_it_shows() {
     let mut h = dashboard();
+    // The live feed paused: only the ticks counted here run, however long
+    // the frames take (the feed's timer fires every 250 ms of the clock).
+    h.click("live");
     let tick = |h: &mut Harness| {
         let (calls, converted) = (h.calls(), zgui_script::values_converted());
         for _ in 0..10 {
