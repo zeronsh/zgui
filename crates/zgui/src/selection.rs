@@ -1209,6 +1209,34 @@ impl Ui {
         self.set_selection(Some(root), first, last);
         true
     }
+    /// Select the word at window point `x`, `y`, as a double press there
+    /// does: a long press on a touch screen starts a selection this way.
+    /// Returns false (changing nothing) when no selectable text is there,
+    /// or it is in an editor, which selects its own.
+    pub fn select_word_at(&self, x: f32, y: f32) -> bool {
+        let Some(target) = self.scene.borrow().hit_test(x, y) else {
+            return false;
+        };
+        let Some(root) = self.scene.borrow().selection_root(target) else {
+            return false;
+        };
+        if !self.selection_state().borrow().roots.contains_key(&root)
+            || !self.selectable_target(root, target)
+        {
+            return false;
+        }
+        let Some(hit) = self.point_at(root, x, y) else {
+            return false;
+        };
+        let (anchor, focus) = hit.edges(Unit::Word);
+        {
+            let mut state = self.selection_state().borrow_mut();
+            state.active_root = Some(root);
+            state.gesture = None;
+        }
+        self.set_selection(Some(root), Some(anchor), Some(focus));
+        true
+    }
     pub fn clear_text_selection(&self) {
         self.set_selection(None, None, None);
     }

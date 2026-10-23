@@ -132,7 +132,9 @@ size or more (paragraphs), and otherwise a line break. Hidden, transparent and
 unselectable text, inline icons and an ellipsis are left out; truncated text
 copies whole. `Ui::selected_text`, `text_selection`, `select_text`,
 `select_all_text` and `clear_text_selection` read and set the selection, and
-`text_selection_revision` changes whenever it does.
+`text_selection_revision` changes whenever it does. `select_word_at(x, y)`
+selects the word at a window point as a double press there does (a touch
+screen's long press), returning false where no selectable text is.
 `selected_html` gives it as HTML (paragraphs, line breaks, bold, italic,
 code, underline and strikethrough runs); the desktop host's ⌘C / Ctrl+C and
 the menu's Copy (`Platform::set_clipboard_rich_text`) put both on the clipboard where the platform takes HTML (macOS, Windows, X11) and

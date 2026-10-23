@@ -148,6 +148,28 @@ fn double_and_triple_presses_select_words_and_paragraphs_and_drag_by_them() {
 }
 
 #[test]
+fn a_word_at_a_point_selects_as_a_double_press_does() {
+    // A touch screen's long press.
+    let mut ui = Ui::new(400., 300.);
+    let value = ui.signal("editable".to_owned());
+    document(
+        &mut ui,
+        vec![text("alpha beta gamma"), text_input("Field", value).w(200.)],
+    );
+    assert!(ui.select_word_at(40., 10.));
+    assert_eq!(ui.selected_text(), "beta");
+    assert_eq!(highlighted(&ui), [0]);
+    // Select-all then takes the region it is in.
+    assert!(ui.dispatch(shortcut("a")).default_prevented);
+    assert_eq!(ui.selected_text(), "alpha beta gamma");
+    // An editor selects its own, and nothing is there below the text.
+    let field = ui.scene.borrow().bounds(texts(&ui)[1]);
+    assert!(!ui.select_word_at(field.x + 2., field.y + 5.));
+    assert!(!ui.select_word_at(380., 290.));
+    assert_eq!(ui.selected_text(), "alpha beta gamma");
+}
+
+#[test]
 fn shift_press_extends_from_the_anchor() {
     let mut ui = Ui::new(400., 300.);
     document(&mut ui, vec![text("abcdefghij"), text("klmnopqrst")]);
