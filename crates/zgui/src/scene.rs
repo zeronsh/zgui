@@ -2575,6 +2575,60 @@ impl Scene {
         self.damage_subtree(id);
         self.invalidate(id, COMPOSITE);
     }
+    /// `set_transform` and `set_effects` together, as an animation moving and
+    /// fading a node writes them: its old and its new look are damaged once
+    /// each, where the two calls damage each place twice.
+    pub fn set_transform_and_effects(
+        &mut self,
+        id: NodeId,
+        transform: Transform,
+        effects: Effects,
+    ) {
+        let (transform, effects) = (finite_translation(transform), finite_effects(effects));
+        let node = self.node(id);
+        if node.scroll_copy || node.transform == transform || node.effects == effects {
+            self.set_transform(id, transform);
+            self.set_effects(id, effects);
+            return;
+        }
+        self.effects_changing(id, &effects);
+        self.damage_subtree(id);
+        self.filter_changing(id, &effects);
+        let node = self.node_mut(id);
+        node.transform = transform;
+        node.effects = effects;
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.damage_subtree(id);
+        self.invalidate(id, COMPOSITE);
+    }
+    /// Bookkeeping before a node's effects change, ahead of its old damage.
+    fn effects_changing(&mut self, id: NodeId, effects: &Effects) {
+        if (self.node(id).effects.opacity <= 0.) != (effects.opacity <= 0.) {
+            self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        }
+        let old_blur = self.node(id).effects.blur_radius > 0.0;
+        if !old_blur && effects.blur_radius > 0.0 {
+            self.blur_nodes.push(id);
+        }
+        if old_blur && effects.blur_radius == 0.0 {
+            self.blur_nodes.retain(|entry| *entry != id);
+        }
+    }
+    /// Bookkeeping between a node's old damage and its new effects.
+    fn filter_changing(&mut self, id: NodeId, effects: &Effects) {
+        let old_filter = self.node(id).filtered();
+        if old_filter != (effects.filter_blur > 0.) {
+            if old_filter {
+                self.filtered -= 1;
+            } else {
+                // A layer from now on: its texture outlives a blur back at 0.
+                self.filtered += 1;
+                if !std::mem::replace(&mut self.node_mut(id).promoted, true) {
+                    self.promoted_count += 1;
+                }
+            }
+        }
+    }
     fn invalidate(&mut self, id: NodeId, flags: u8) {
         if self.isolation_count + self.promoted_count > 0 {
             let mut current = Some(id);
@@ -6722,6 +6776,45 @@ mod advanced_layout;
 mod select;
 pub use select::{TextHighlight, TextLeaf};
 
+/// `set_transform`'s translation: each non-finite coordinate is zero. (The
+/// setters keep their own copies of these and of the bookkeeping: calling
+/// shared ones cost each of their calls about 1% more instructions.)
+fn finite_translation(mut transform: Transform) -> Transform {
+    let coordinate = |value: f32| {
+        if value.is_finite() && value != 0.0 {
+            value
+        } else {
+            0.0
+        }
+    };
+    transform.x = coordinate(transform.x);
+    transform.y = coordinate(transform.y);
+    transform
+}
+/// `set_effects`'s effects, made finite.
+fn finite_effects(mut effects: Effects) -> Effects {
+    effects.opacity = if effects.opacity.is_nan() {
+        1.0
+    } else {
+        effects.opacity.clamp(0.0, 1.0).max(0.0)
+    };
+    let radius = |value: f32| {
+        if value.is_finite() && value > 0.0 {
+            value
+        } else {
+            0.0
+        }
+    };
+    effects.blur_radius = radius(effects.blur_radius);
+    effects.edge_fade = radius(effects.edge_fade);
+    effects.filter_blur = radius(effects.filter_blur);
+    // Colour filters: nonfinite values change nothing; none is negative.
+    let factor = |value: f32| if value.is_finite() { value.max(0.) } else { 1. };
+    effects.brightness = factor(effects.brightness);
+    effects.contrast = factor(effects.contrast);
+    effects.saturate = factor(effects.saturate);
+    effects
+}
 fn own_visible(style: &Style) -> bool {
     style.layout_options.as_deref().is_none_or(|options| {
         options.visible != Some(false) && options.display != Some(crate::layout::Display::None)
@@ -6794,6 +6887,53 @@ mod local_transform_tests {
             && (a.y - b.y).abs() <= 1.
             && (a.width - b.width).abs() <= 2.
             && (a.height - b.height).abs() <= 2.
+    }
+    /// Written together, a translation and effects leave the node, its layer
+    /// and the pixels to repaint as the two setters one after the other do.
+    #[test]
+    fn moving_and_fading_together_is_the_two_setters() {
+        let effects = |opacity, filter_blur, blur_radius| Effects {
+            opacity,
+            filter_blur,
+            blur_radius,
+            ..Effects::default()
+        };
+        let cases = [
+            (Transform { x: 150., y: 100. }, effects(0.5, 0., 0.)),
+            // The translation as it was: only the effects change.
+            (Transform { x: 100., y: 100. }, effects(0.5, 0., 0.)),
+            (
+                Transform {
+                    x: f32::NAN,
+                    y: 40.,
+                },
+                effects(f32::INFINITY, 0., 0.),
+            ),
+            (Transform { x: 30., y: 130. }, effects(1., 4., 0.)),
+            (Transform { x: 90., y: 105. }, effects(0.8, 0., 6.)),
+            (Transform { x: 200., y: 100. }, effects(0., 0., 0.)),
+        ];
+        for (transform, effects) in cases {
+            let (mut together, a) = placed(40., 20.);
+            together.set_transform_and_effects(a, transform, effects);
+            let (mut apart, b) = placed(40., 20.);
+            apart.set_transform(b, transform);
+            apart.set_effects(b, effects);
+            assert_eq!(together.node(a).transform, apart.node(b).transform);
+            assert_eq!(together.effects(a), apart.effects(b));
+            assert_eq!(
+                together.geometry_revision() == 0,
+                apart.geometry_revision() == 0
+            );
+            let (t, s) = (together.flush(), apart.flush());
+            assert_eq!(together.is_layer(a), apart.is_layer(b));
+            assert_eq!(t.composite_nodes, s.composite_nodes);
+            assert_eq!(
+                union(&t.damage),
+                union(&s.damage),
+                "{transform:?} {effects:?}"
+            );
+        }
     }
     #[test]
     fn matrix_is_css_order_about_the_origin() {

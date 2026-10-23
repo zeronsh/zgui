@@ -506,24 +506,33 @@ impl Element {
             && scene.contains(id)
         {
             let animated = self.animated.borrow();
-            if let Some((x, y)) = self.shown(&animated, None) {
-                scene.set_transform(id, Transform { x, y });
-            }
-            if animated.opacity.is_some() || animated.blur.is_some() || animated.color.is_some() {
-                let mut effects = scene.effects(id);
-                if let Some([brightness, contrast, saturate]) = animated.color {
-                    effects.brightness = brightness;
-                    effects.contrast = contrast;
-                    effects.saturate = saturate;
+            let translate = self.shown(&animated, None).map(|(x, y)| Transform { x, y });
+            let effects =
+                (animated.opacity.is_some() || animated.blur.is_some() || animated.color.is_some())
+                    .then(|| {
+                        let mut effects = scene.effects(id);
+                        if let Some([brightness, contrast, saturate]) = animated.color {
+                            effects.brightness = brightness;
+                            effects.contrast = contrast;
+                            effects.saturate = saturate;
+                        }
+                        if let Some(opacity) = animated.opacity {
+                            effects.opacity = opacity;
+                        }
+                        // `blur` is the content's blur; `blur_radius` is the backdrop's.
+                        if let Some(blur) = animated.blur {
+                            effects.filter_blur = blur;
+                        }
+                        effects
+                    });
+            match (translate, effects) {
+                // Moving and fading: one damage of each look, not two.
+                (Some(translate), Some(effects)) => {
+                    scene.set_transform_and_effects(id, translate, effects)
                 }
-                if let Some(opacity) = animated.opacity {
-                    effects.opacity = opacity;
-                }
-                // `blur` is the content's blur; `blur_radius` is the backdrop's.
-                if let Some(blur) = animated.blur {
-                    effects.filter_blur = blur;
-                }
-                scene.set_effects(id, effects);
+                (Some(translate), None) => scene.set_transform(id, translate),
+                (None, Some(effects)) => scene.set_effects(id, effects),
+                (None, None) => {}
             }
             if let Some(local) = animated.local {
                 set_local_transform(scene, id, local);
