@@ -1501,6 +1501,35 @@ export type AccordionProps = Merge<Props, {
 }>
 export type SectionProps = Merge<ContainerProps, { id: any, title: string }>
 export type SeparatorProps = Merge<Props, { vertical: boolean? }>
+-- A tab of `ui.tabs`: its `id` (unique), what it shows, whether it closes;
+-- other fields are the app's own, kept as the tabs move and close.
+export type TabItem = { id: string, label: string, closable: boolean? }
+-- Tabs choosing a panel: one Tab stop, the arrows choose; closable tabs
+-- close with their ×, Delete or a middle click; reorderable ones drag, or
+-- move with ⌘ (Ctrl) Shift and an arrow; too many to fit scroll, with a
+-- menu of them all at the strip's end.
+export type TabsProps = Merge<Props, {
+	-- The tabs, two-way: closing removes one, reordering moves it.
+	items: State<{ TabItem }>,
+	-- The chosen tab's id; closing it chooses its neighbour.
+	value: State<string>,
+	-- The chosen tab's panel, built as it is chosen.
+	panel: (id: string) -> Node,
+	reorderable: boolean?,
+	-- Asked before a tab closes: false keeps it (an editor asking to save).
+	on_close: ((id: string) -> boolean?)?,
+	label: string?,
+}>
+export type SelectOption = string | number | { label: string, value: any?, disabled: boolean? }
+-- A button showing the chosen option that opens a menu of them over
+-- itself; closed, typing chooses (as a native select), Down opens it.
+export type SelectProps = Merge<Props, {
+	value: State<any>,
+	options: { SelectOption },
+	-- Shown while no option is chosen.
+	placeholder: string?,
+	label: string?,
+}>
 -- Two panes (its two children) and a divider between them that drags to
 -- resize the first; the second fills the rest.
 export type SplitProps = Merge<ContainerProps, {
@@ -1770,6 +1799,8 @@ declare ui: {
 	-- and resets on a double click.
 	split: (props: SplitProps) -> Node,
 	segmented: (props: SegmentedProps) -> Node,
+	tabs: (props: TabsProps) -> Node,
+	select: (props: SelectProps) -> Node,
 	stepper: (props: StepperProps) -> Node,
 	disclosure: (props: DisclosureProps) -> Node,
 	accordion: (props: AccordionProps) -> Node,

@@ -477,6 +477,8 @@ impl Node {
                 | Kind::Split { .. }
                 | Kind::Segmented { .. }
                 | Kind::Stepper { .. }
+                | Kind::Tabs { .. }
+                | Kind::Select { .. }
                 | Kind::Disclosure { .. }
                 | Kind::Accordion { .. }
                 | Kind::List { .. }
@@ -518,6 +520,8 @@ impl Node {
             Kind::Slider { .. } => "slider",
             Kind::Split { .. } => "split",
             Kind::Separator { .. } => "separator",
+            Kind::Tabs { .. } => "tabs",
+            Kind::Select { .. } => "select",
             Kind::Segmented { .. } => "segmented",
             Kind::Stepper { .. } => "stepper",
             Kind::Disclosure { .. } => "disclosure",
@@ -732,6 +736,23 @@ pub(crate) enum Kind {
         max: f32,
         /// `step`: what an arrow moves, and what a drag lands on.
         step: Option<f32>,
+    },
+    /// `ui.tabs { items = state, value = state, panel = fn(id), … }`.
+    Tabs {
+        label: String,
+        items: Signal<Value>,
+        value: Signal<Value>,
+        reorderable: bool,
+        on_close: Option<Function>,
+        panel: Function,
+    },
+    /// `ui.select { value = state, options = { … }, placeholder }`.
+    Select {
+        label: String,
+        value: Signal<Value>,
+        /// Each option's value, what it shows, and whether it is disabled.
+        options: Vec<(Value, String, bool)>,
+        placeholder: String,
     },
     /// `ui.separator { vertical? }`: a line between groups.
     Separator {
@@ -1857,6 +1878,9 @@ const WIDGET_FIELDS: &[&str] = &[
     "decimals",
     "summary",
     "title",
+    "reorderable",
+    "on_close",
+    "panel",
 ];
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
@@ -3029,6 +3053,60 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 )));
             }
             node_ud(lua, node)
+        })?,
+    )?;
+    ui.set(
+        "tabs",
+        lua.create_function(|lua, table: Table| {
+            let items = expect_state(&table.get("items")?, "ui.tabs's `items`")?;
+            // Not the `items` alignment style: the tabs.
+            table.raw_remove("items")?;
+            let value = expect_state(&table.get("value")?, "ui.tabs's `value`")?;
+            let panel: Function = table
+                .get("panel")
+                .map_err(|_| mlua::Error::runtime("ui.tabs needs `panel`, fn(id) -> node"))?;
+            let kind = Kind::Tabs {
+                label: label(&table)?,
+                items,
+                value,
+                reorderable: table.get::<Option<bool>>("reorderable")?.unwrap_or(false),
+                on_close: table.get("on_close")?,
+                panel,
+            };
+            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
+        })?,
+    )?;
+    ui.set(
+        "select",
+        widget(|label, value, t| {
+            let list: Table = t
+                .get("options")
+                .map_err(|_| mlua::Error::runtime("ui.select needs `options`"))?;
+            let mut options = Vec::new();
+            for option in list.sequence_values::<mlua::Value>() {
+                options.push(match option? {
+                    mlua::Value::Table(o) => {
+                        let shown: String = o.get("label")?;
+                        let value = match o.get::<mlua::Value>("value")? {
+                            mlua::Value::Nil => Value::Str(shown.as_str().into()),
+                            v => crate::value::convert(v, None)?,
+                        };
+                        let disabled = o.get::<Option<bool>>("disabled")?.unwrap_or(false);
+                        (value, shown, disabled)
+                    }
+                    other => {
+                        let value = crate::value::convert(other, None)?;
+                        let shown = value.to_string();
+                        (value, shown, false)
+                    }
+                });
+            }
+            Ok(Kind::Select {
+                label,
+                value,
+                options,
+                placeholder: t.get::<Option<String>>("placeholder")?.unwrap_or_default(),
+            })
         })?,
     )?;
     ui.set(

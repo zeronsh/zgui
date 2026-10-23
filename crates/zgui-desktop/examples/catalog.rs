@@ -4,7 +4,7 @@
 //! same through `ui.*`.
 //! Run: cargo run -p zgui-desktop --example catalog
 use std::rc::Rc;
-use zgui::compose::{StepperOptions, prelude::*};
+use zgui::compose::{SelectOption, StepperOptions, Tab, TabsOptions, prelude::*};
 use zgui_desktop::{Application, WindowOptions};
 
 /// A titled card with a hint and its controls in a row.
@@ -43,6 +43,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let menu_open = ui.signal(false);
             let wrap = ui.signal(true);
             let size = ui.signal(1usize);
+            let documents = ui.signal(vec![
+                Tab::new("readme", "README.md").closable(),
+                Tab::new("main", "main.rs").closable(),
+                Tab::new("cargo", "Cargo.toml").closable(),
+                Tab::new("notes", "Notes"),
+            ]);
+            let document = ui.signal("readme".to_owned());
+            let fruit = ui.signal("banana".to_owned());
             let details = ui.signal(false);
             let faq = ui.signal(Some(0usize));
 
@@ -93,6 +101,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ],
                 ));
 
+            let choosing = section(
+                "Tabs and select",
+                "Tabs: arrows choose, Delete closes, ⌘⇧ and an arrow (or a drag) reorders. Select: typing chooses while closed.",
+                vec![
+                    column().w(520.).h(160.).child(tabs(
+                        "Documents",
+                        documents,
+                        document,
+                        TabsOptions {
+                            reorderable: true,
+                            ..Default::default()
+                        },
+                        |id, _| {
+                            column()
+                                .p(12.)
+                                .child(text(format!("Editing {id}")).text_color(tok::TEXT_SECONDARY))
+                        },
+                    )),
+                    select(
+                        "Fruit",
+                        fruit,
+                        vec![
+                            SelectOption::new("apple", "Apple"),
+                            SelectOption::new("banana", "Banana"),
+                            SelectOption::new("blueberry", "Blueberry").disabled(),
+                            SelectOption::new("cherry", "Cherry"),
+                        ],
+                        "Choose a fruit",
+                    ),
+                ],
+            );
             let item = |i: usize, label: &str| {
                 let (checked, set) = (size.clone(), size.clone());
                 menu_item(label)
@@ -174,6 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .px(16.)
                                 .pb(24.)
                                 .child(controls)
+                                .child(choosing)
                                 .child(overlays)
                                 .child(containers),
                         ),

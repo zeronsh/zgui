@@ -936,6 +936,12 @@ impl View {
         self.accessibility_mut().checked = Some(Box::new(checked));
         self
     }
+    /// What this control's value reads as to assistive technology, followed:
+    /// a select's chosen option, a combobox's text.
+    pub fn value_when(mut self, value: impl FnMut() -> String + 'static) -> Self {
+        self.accessibility_mut().value = Some(Box::new(value));
+        self
+    }
     /// Whether what this control opens shows, followed (`aria-expanded`):
     /// a disclosure's content, a combobox's list, a tree item's children.
     pub fn expanded_when(mut self, expanded: impl FnMut() -> bool + 'static) -> Self {
@@ -4692,6 +4698,7 @@ pub(crate) struct Accessibility {
     selected: Option<Box<dyn FnMut() -> bool>>,
     checked: Option<Box<dyn FnMut() -> bool>>,
     expanded: Option<Box<dyn FnMut() -> bool>>,
+    value: Option<Box<dyn FnMut() -> String>>,
     numeric: Option<(f64, f64, NumericValue)>,
     live: Option<Live>,
     description: Option<String>,
@@ -4706,6 +4713,7 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
         selected,
         checked,
         expanded,
+        value,
         numeric,
         live,
         description,
@@ -4784,6 +4792,14 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
             {
                 ui.input.set_group_current(&ui.scene.borrow(), root);
             }
+        });
+    }
+    if let Some(mut value) = value {
+        let tree = ui.semantics.clone();
+        ui.bind(root, move || {
+            let value = value();
+            tree.borrow_mut()
+                .update(root, |node| node.value = Some(value));
         });
     }
     if let Some(mut expanded) = expanded {
@@ -5137,7 +5153,9 @@ impl Ui {
 pub use crate::compose_controls::{
     StepperOptions, accordion, disclosure, segmented, separator, stepper,
 };
+pub use crate::compose_select::{SelectOption, select};
 pub use crate::compose_split::{SplitOptions, split};
+pub use crate::compose_tabs::{CloseTab, Tab, TabsOptions, tabs};
 
 /// Common imports for component application code.
 pub mod prelude {
@@ -5149,6 +5167,7 @@ pub mod prelude {
         virtual_list,
     };
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
+    pub use super::{SelectOption, Tab, TabsOptions, select, tabs};
     pub use super::{SplitOptions, split};
     pub use super::{StepperOptions, accordion, disclosure, segmented, separator, stepper};
     pub use super::{animated_image, animated_image_controlled, async_image, canvas};

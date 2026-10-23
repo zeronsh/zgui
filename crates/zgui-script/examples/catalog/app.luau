@@ -82,6 +82,62 @@ local controls = ui.column {
 	),
 }
 
+-- Tabs and select ---------------------------------------------------------
+
+local documents = ui.state(
+	"documents",
+	{
+		{ id = "readme", label = "README.md", closable = true },
+		{ id = "main", label = "main.rs", closable = true },
+		{ id = "cargo", label = "Cargo.toml", closable = true },
+		{ id = "notes", label = "Notes" },
+	} :: { TabItem }
+)
+local document = ui.state("document", "readme")
+local next_document = 1
+local fruit = ui.state("fruit", "banana")
+
+local choosing = section(
+	"Tabs and select",
+	"Tabs: the arrows choose; Delete or a middle click closes; drag, or ⌘⇧ and an arrow, to reorder; too many scroll, with a menu of them all. Select: typing chooses while closed.",
+	ui.column {
+		w = 520,
+		h = 160,
+		ui.tabs {
+			id = "documents",
+			label = "Documents",
+			items = documents,
+			value = document,
+			reorderable = true,
+			panel = function(id: string): Node
+				return ui.column { p = 12, ui.text { `Editing {id}`, color = "$text.secondary" } }
+			end,
+		},
+	},
+	ui.button {
+		id = "new-tab",
+		on_click = function()
+			local id = `untitled-{next_document}`
+			documents:push { id = id, label = `Untitled {next_document}`, closable = true }
+			document:set(id)
+			next_document += 1
+		end,
+		"New tab",
+	},
+	ui.select {
+		id = "fruit",
+		label = "Fruit",
+		value = fruit,
+		placeholder = "Choose a fruit",
+		options = {
+			{ label = "Apple", value = "apple" },
+			{ label = "Banana", value = "banana" },
+			{ label = "Blueberry", value = "blueberry", disabled = true },
+			{ label = "Cherry", value = "cherry" },
+		},
+	}
+)
+
 -- Overlays ----------------------------------------------------------------
 
 local menu_open = ui.state("menu_open", false)
@@ -200,6 +256,6 @@ return ui.column {
 	},
 	ui.scroll {
 		grow = 1,
-		ui.column { gap = 16, px = 16, pb = 24, controls, overlays, containers },
+		ui.column { gap = 16, px = 16, pb = 24, controls, choosing, overlays, containers },
 	},
 }

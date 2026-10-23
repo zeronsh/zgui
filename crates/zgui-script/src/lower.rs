@@ -1040,6 +1040,123 @@ fn kind_view(
             }
         }
         Kind::Separator { vertical } => separator(*vertical),
+        Kind::Tabs {
+            label,
+            items,
+            value,
+            reorderable,
+            on_close,
+            panel,
+        } => {
+            // The script's items, as tabs; written back as its own tables,
+            // reordered or removed.
+            let source = items.clone();
+            let tabs_of = |v: &Value| -> Vec<zgui::compose::Tab> {
+                v.list()
+                    .iter()
+                    .map(|item| zgui::compose::Tab {
+                        id: item.field("id").map(Value::to_string).unwrap_or_default(),
+                        label: item
+                            .field("label")
+                            .map(Value::to_string)
+                            .unwrap_or_default(),
+                        closable: item.field("closable").is_some_and(Value::truthy),
+                    })
+                    .collect()
+            };
+            let tabs_signal = bridge_with(
+                need(&mut cx),
+                items,
+                tabs_of,
+                move |tabs: Vec<zgui::compose::Tab>| {
+                    let old = source.with_untracked(Clone::clone);
+                    let kept: Vec<Value> = tabs
+                        .iter()
+                        .filter_map(|tab| {
+                            old.list()
+                                .iter()
+                                .find(|item| {
+                                    item.field("id").map(Value::to_string).as_deref()
+                                        == Some(tab.id.as_str())
+                                })
+                                .cloned()
+                        })
+                        .collect();
+                    Value::List(kept.into())
+                },
+            );
+            let selected = bridge(
+                need(&mut cx),
+                value,
+                |v| v.to_string(),
+                |s| Value::Str(s.into()),
+            );
+            let on_close = on_close.clone().map(|f| {
+                let vm = vm.clone();
+                let ask: zgui::compose::CloseTab = Rc::new(move |id: &str| {
+                    !matches!(
+                        vm.call::<mlua::Value>(&f, id),
+                        Ok(mlua::Value::Boolean(false))
+                    )
+                });
+                ask
+            });
+            let options = zgui::compose::TabsOptions {
+                reorderable: *reorderable,
+                on_close,
+            };
+            let (panel, vm, low) = (panel.clone(), vm.clone(), low.clone());
+            tabs(
+                label.clone(),
+                tabs_signal,
+                selected,
+                options,
+                move |id, _| match vm.call::<mlua::Value>(&panel, id) {
+                    Ok(mlua::Value::UserData(ud)) if ud.is::<crate::node::NodeUd>() => {
+                        match ud.borrow::<crate::node::NodeUd>() {
+                            Ok(node) => lower(&node.0, &low),
+                            Err(_) => div(),
+                        }
+                    }
+                    Ok(_) => div(),
+                    Err(error) => {
+                        vm.report(error);
+                        div()
+                    }
+                },
+            )
+        }
+        Kind::Select {
+            label,
+            value,
+            options,
+            placeholder,
+        } => {
+            // Options by their value's text; written back as the value itself.
+            let values: Rc<[Value]> = options.iter().map(|(v, _, _)| v.clone()).collect();
+            let texts: Vec<String> = values.iter().map(Value::to_string).collect();
+            let chosen = bridge_with(
+                need(&mut cx),
+                value,
+                |v| v.to_string(),
+                move |text: String| {
+                    values
+                        .iter()
+                        .find(|v| v.to_string() == text)
+                        .cloned()
+                        .unwrap_or_default()
+                },
+            );
+            let list = options
+                .iter()
+                .zip(texts)
+                .map(|((_, shown, disabled), text)| {
+                    let option = zgui::compose::SelectOption::new(text, shown.clone());
+                    if *disabled { option.disabled() } else { option }
+                })
+                .collect();
+            select(label.clone(), chosen, list, placeholder.clone())
+        }
         Kind::Segmented {
             label,
             value,

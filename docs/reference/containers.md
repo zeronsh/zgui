@@ -1,4 +1,4 @@
-# Containers: column, row, div, overlay, grid, split, disclosure, accordion, separator
+# Containers: column, row, div, overlay, grid, split, tabs, disclosure, accordion, separator
 
 Boxes that lay out their children. Each takes one table: string keys are [properties](properties.md) and [events](events.md), array entries are children.
 
@@ -9,6 +9,7 @@ ui.div(props: ContainerProps?) -> Node
 ui.overlay(props: ContainerProps?) -> Node
 ui.grid(props: ContainerProps?) -> Node
 ui.split(props: SplitProps) -> Node
+ui.tabs(props: TabsProps) -> Node
 ui.disclosure(props: DisclosureProps) -> Node
 ui.accordion(props: AccordionProps) -> Node
 ui.section(props: SectionProps) -> Node
@@ -62,6 +63,40 @@ return ui.split {
 | `min_rest` | `number` | `0` | the second pane's smallest size: the divider stops short of it, and a window too small for both shrinks the first pane, down to `min` |
 
 The divider drags without running script (only the panes lay out again), shows a resize cursor, takes Tab focus (the arrows move it ten points, a hundred with Shift; Home and End take it to its ends), and goes back to where it started on a double click. Assistive technology sees a splitter.
+
+## tabs
+
+A strip of tabs and the panel of the chosen one, as WAI-ARIA's tabs and an editor's tab strip. One Tab stop: the arrows move among the tabs and the choice follows (mirrored right to left), Home and End go to the ends. A closable tab closes with its ×, Delete, or a middle click; closing the chosen one chooses its neighbour. Reorderable tabs drag along the strip, or move with ⌘ (Ctrl) Shift and an arrow. A strip too long for its width scrolls, and a menu at its end lists every tab.
+
+```lua
+local items = ui.state("items", {
+	{ id = "a", label = "README.md", closable = true },
+	{ id = "b", label = "main.rs", closable = true },
+} :: { TabItem })
+local chosen = ui.state("chosen", "a")
+return ui.column {
+	w = 400,
+	h = 200,
+	ui.tabs {
+		label = "Files",
+		items = items,
+		value = chosen,
+		reorderable = true,
+		panel = function(id: string): Node
+			return ui.text { `Editing {id}`, p = 12 }
+		end,
+	},
+}
+```
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `items` | `State<{ TabItem }>` | required | `{ id, label, closable? }` each, two-way: closing removes one, reordering moves it; other fields are kept as they are |
+| `value` | `State<string>` | required | the chosen tab's id |
+| `panel` | `(id: string) -> Node` | required | the chosen tab's panel, built as it is chosen |
+| `reorderable` | `boolean` | `false` | |
+| `on_close` | `(id: string) -> boolean?` | none | asked before a tab closes; `false` keeps it open (an editor asking to save first) |
+| `label` | `string` | `""` | the strip's accessible name |
 
 ## disclosure, accordion, separator
 

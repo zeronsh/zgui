@@ -471,6 +471,13 @@ pub(crate) fn mount_press(
                 let (px, py) = pressed.take().expect("checked above");
                 cx.prevent_default();
                 cx.stop_propagation();
+                // A click (no drag): it stays open to click in, though an
+                // item opened under the pointer (a pop-up button's,
+                // `open_over`), as AppKit's does.
+                let clicked = (x - px).hypot(y - py) <= 4.;
+                if clicked {
+                    return;
+                }
                 if let Some(item) = item_at(&ui, panel, x, y) {
                     ui.input.dispatch_to(&ui.scene, item, InputEvent::Activate);
                     return;

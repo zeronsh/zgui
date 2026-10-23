@@ -185,3 +185,99 @@ fn a_menus_button_opens_it() {
     h.key(Key::ArrowDown);
     assert_eq!(h.text("state"), "true");
 }
+
+#[test]
+fn tabs_choose_close_and_keep_the_scripts_tables() {
+    let mut h = Harness::inline(
+        r#"local items = ui.state("items", {
+            { id = "a", label = "Alpha", closable = true, path = "/a" },
+            { id = "b", label = "Beta", closable = true, path = "/b" },
+            { id = "c", label = "Gamma" },
+        })
+        local value = ui.state("value", "a")
+        return ui.column {
+            ui.tabs {
+                label = "Files",
+                items = items,
+                value = value,
+                reorderable = true,
+                on_close = function(id) return id ~= "c" end,
+                panel = function(id) return ui.text { id = "panel", `Panel {id}` } end,
+            },
+            ui.text { id = "order", function()
+                local ids = {}
+                for _, t in items:get() do table.insert(ids, `{t.id}{t.path or ""}`) end
+                return table.concat(ids, ",")
+            end },
+            ui.text { id = "value", "{value}" },
+        }"#,
+    );
+    h.frames(2);
+    assert_eq!(h.error(), None);
+    assert_eq!(h.text("panel"), "Panel a");
+    let tabs = with_role(&mut h, Role::Tab);
+    assert_eq!(tabs.len(), 3);
+    click_node(&mut h, tabs[2]);
+    assert_eq!(h.text("value"), "c");
+    assert_eq!(h.text("panel"), "Panel c");
+    // Closed from the keyboard: the script's own tables stay as they were.
+    h.ui.input.focus(&h.ui.scene, Some(tabs[0]));
+    h.key(Key::Delete);
+    assert_eq!(h.text("order"), "b/b,c");
+    assert_eq!(
+        h.text("value"),
+        "b",
+        "focused, it was chosen; closed, its neighbour is"
+    );
+    let moved = Modifiers {
+        meta: true,
+        shift: true,
+        ..Default::default()
+    };
+    let tabs = with_role(&mut h, Role::Tab);
+    h.ui.input.focus(&h.ui.scene, Some(tabs[0]));
+    h.key_with(Key::ArrowRight, moved);
+    assert_eq!(h.text("order"), "c,b/b");
+}
+
+#[test]
+fn a_select_chooses_values_from_its_menu_and_by_typing() {
+    let mut h = Harness::inline(
+        r#"local size = ui.state("size", 2)
+        return ui.column {
+            ui.select {
+                id = "size",
+                label = "Size",
+                value = size,
+                options = { { label = "Small", value = 1 }, { label = "Medium", value = 2 }, { label = "Large", value = 3, disabled = true } },
+            },
+            ui.text { id = "chosen", "{size}" },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    let trigger = with_role(&mut h, Role::ComboBox)[0];
+    assert_eq!(
+        h.ui.semantics
+            .borrow()
+            .get(trigger)
+            .unwrap()
+            .value
+            .as_deref(),
+        Some("Medium")
+    );
+    h.ui.input.focus(&h.ui.scene, Some(trigger));
+    h.key(Key::Character("s".into()));
+    assert_eq!(h.text("chosen"), "1", "the value itself, a number");
+    h.key(Key::Character("l".into()));
+    assert_eq!(h.text("chosen"), "1", "Large is disabled");
+    click_node(&mut h, trigger);
+    h.frames(2);
+    let medium = with_role(&mut h, Role::MenuItem)
+        .into_iter()
+        .find(|n| h.ui.semantics.borrow().get(*n).unwrap().label == "Medium")
+        .unwrap();
+    h.ui.input.focus(&h.ui.scene, Some(medium));
+    h.key(Key::Enter);
+    h.frames(2);
+    assert_eq!(h.text("chosen"), "2");
+}

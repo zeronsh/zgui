@@ -1,4 +1,4 @@
-# Controls: button, input, textarea, checkbox, slider, progress, segmented, stepper
+# Controls: button, input, textarea, checkbox, slider, progress, segmented, stepper, select
 
 Controls take keyboard focus, show it with an accent ring, and (except `button`) bind a state both ways: the control shows the state, and the user's changes write it. They take any [property](properties.md) and [event](events.md); their defaults below are only defaults.
 
@@ -11,6 +11,7 @@ ui.slider(props: SliderProps) -> Node
 ui.progress(props: ProgressProps) -> Node
 ui.segmented(props: SegmentedProps) -> Node
 ui.stepper(props: StepperProps) -> Node
+ui.select(props: SelectProps) -> Node
 ```
 
 Every control dims while `disabled` (to 45% opacity, as native controls do) unless it says how it looks then.
@@ -103,6 +104,17 @@ A number field with buttons that step it, a spin button to assistive technology.
 | `min`, `max` | `number` | none | |
 | `step` | `number` | `1` | |
 | `decimals` | `number` | `0` | digits shown after the point |
+| `label` | `string` | `""` | its accessible name |
+
+## select
+
+A button showing the chosen option that opens a menu of them over itself, the chosen one under the pointer, as AppKit's pop-up button (and WAI-ARIA's select-only combobox: assistive technology hears its label, the chosen option as its value, and whether it is open). The menu is at least as wide as the button. Closed and focused, typing chooses the next option starting with what was typed (the same letter again goes on through them), and Down, Up, Enter and Space open it; open, it is a menu.
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `value` | `State<any>` | required | the chosen option's value, both ways |
+| `options` | `{ string \| number \| { label, value, disabled } }` | required | a bare string or number is its own value; a disabled option shows but can't be chosen |
+| `placeholder` | `string` | `""` | shown while no option is chosen |
 | `label` | `string` | `""` | its accessible name |
 
 ## progress

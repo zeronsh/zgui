@@ -14,6 +14,8 @@ mod composition_progress;
 mod composition_slider;
 #[path = "../composition_split.rs"]
 mod composition_split;
+#[path = "../composition_tabs.rs"]
+mod composition_tabs;
 #[path = "../deferred_mount_failure.rs"]
 mod deferred_mount_failure;
 #[path = "../lifecycle_resources.rs"]
