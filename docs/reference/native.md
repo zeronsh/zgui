@@ -1,6 +1,6 @@
 # Web views, terminals, commands: webview, web, terminal, term, command
 
-Native content laid out as nodes, and the app's menu commands. A web view is a WebKit page (macOS) and a terminal a Ghostty surface (the desktop host's `ghostty` feature); each is placed, sized, rounded and clipped like any node, and zgui draws over it (a frosted popover over a page works). Without a native host (headless, other platforms) each shows a labelled placeholder box and its controller still answers. Pages and sessions belong to the host, not to a run, so a reload keeps them.
+Native content laid out as nodes, and the app's menu commands. A web view is a WebKit page (macOS) or a WebView2 page (Windows, the desktop host's `webview2` feature; Linux has none yet, see [the Linux notes](../linux.md#web-views)), and a terminal a Ghostty surface (macOS, the `ghostty` feature); each is placed, sized, rounded and clipped like any node, and zgui draws over it (a frosted popover over a page works). Without a native host (headless, other platforms) each shows a labelled placeholder box and its controller still answers. Pages and sessions belong to the host, not to a run, so a reload keeps them.
 
 ```luau
 ui.webview(props: WebViewProps) -> Node

@@ -50,5 +50,5 @@ The interface is built once; Rust re-runs only what reads state that changed. `z
 
 - `docs/scripting.md` (scripts, state, animation, lint), `docs/reference/` (every Luau element and API), `crates/zgui-script/types/zgui.d.luau` (types luau-lsp checks).
 - `docs/composition.md`, `docs/styling.md`, `docs/layout.md` (Rust views).
-- `docs/validation.md` (what is verified, on which platform), `docs/ROADMAP.md`, `docs/windows.md`.
+- `docs/validation.md` (what is verified, on which platform), `docs/ROADMAP.md`, `docs/windows.md`, `docs/linux.md`.
 - `.github/workflows/ci.yml`: Linux, macOS and Windows jobs on every PR.
