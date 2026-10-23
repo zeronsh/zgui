@@ -16,9 +16,18 @@ license = "MIT"
 
 # Dependencies optimized in dev builds too: the Luau VM, text shaping,
 # rasterizing and the GPU stack run many times slower unoptimized, which
-# made debug apps lag. Workspace crates stay quick to rebuild.
+# made debug apps lag. Workspace crates stay quick to rebuild. Their debug
+# info is line tables only (backtraces keep files and lines): full debug
+# info for optimized code was a tenth of a clean build's CPU.
 [profile.dev.package."*"]
 opt-level = 3
+debug = "line-tables-only"
+
+# The shader compiler runs once per pipeline, at startup: optimized less, it
+# compiles in less time on a clean build's critical path, and a debug app's
+# renderer starts as fast (21-24 ms either way).
+[profile.dev.package.naga]
+opt-level = 1
 
 [profile.release]
 lto = "thin"
