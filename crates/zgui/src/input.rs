@@ -204,6 +204,17 @@ pub enum InputEvent {
         /// Points to scroll down; positive moves content up.
         delta_y: f32,
     },
+    /// A trackpad pinch at `x`, `y`: the fingers' spread changed by `delta`,
+    /// a fraction of it (0.05 apart is 5% larger: zoom in; negative, out).
+    /// It goes to the node under the pointer, as a scroll does.
+    Pinch {
+        /// Across the window.
+        x: f32,
+        /// Down the window.
+        y: f32,
+        /// The change in scale.
+        delta: f32,
+    },
     /// A trackpad scroll gesture's phase, which the host reports around its
     /// `Scroll`s: what elastic scrolling springs back on
     /// (`Ui::set_elastic_scrolling`). A mouse wheel has none. The document
@@ -571,6 +582,9 @@ impl ClickTracker {
 }
 #[derive(Default)]
 struct State {
+    /// Views that take keys while nothing is focused (`take_unfocused_keys`),
+    /// the last mounted first.
+    unfocused_keys: Vec<NodeId>,
     entries: crate::scene::NodeMap<Vec<Entry>>,
     options: crate::scene::NodeMap<NodeInput>,
     disabled_observers: crate::scene::NodeMap<Signal<bool>>,
@@ -689,6 +703,14 @@ pub struct DispatchResult {
     pub focus_changed: bool,
 }
 impl InputDispatcher {
+    /// Keys go to `node` while nothing is focused (and no modal is open),
+    /// as a page's go to its body: an app's shortcuts reach its root's
+    /// listeners. The last such node still in the scene takes them.
+    pub fn take_unfocused_keys(&self, node: NodeId) {
+        let mut state = self.state.borrow_mut();
+        state.unfocused_keys.retain(|n| *n != node);
+        state.unfocused_keys.push(node);
+    }
     /// How soon after a press another on the same spot counts as a double
     /// (then triple) click: the system's double-click time, which the
     /// desktop host gives (macOS's and Windows' setting, GNOME's and KDE's);
@@ -1460,6 +1482,7 @@ impl InputDispatcher {
                 | InputEvent::PointerUp { .. }
                 | InputEvent::PointerMove { .. }
                 | InputEvent::Scroll { .. }
+                | InputEvent::Pinch { .. }
                 | InputEvent::PointerEnter
                 | InputEvent::PointerLeave
                 | InputEvent::PointerCancel
@@ -2017,6 +2040,7 @@ impl InputDispatcher {
             | InputEvent::PointerUp { x, y, .. }
             | InputEvent::PointerMove { x, y }
             | InputEvent::Scroll { x, y, .. }
+            | InputEvent::Pinch { x, y, .. }
             | InputEvent::FileHover { x, y, .. }
             | InputEvent::FileDrop { x, y, .. }
             | InputEvent::FilesDrop { x, y, .. }
@@ -2046,6 +2070,7 @@ impl InputDispatcher {
             | InputEvent::PointerUp { .. }
             | InputEvent::PointerMove { .. } => capture.or(hit),
             InputEvent::Scroll { .. }
+            | InputEvent::Pinch { .. }
             | InputEvent::FileHover { .. }
             | InputEvent::FileDrop { .. }
             | InputEvent::FilesDrop { .. }
@@ -2054,8 +2079,14 @@ impl InputDispatcher {
             InputEvent::PointerCancel => capture,
             InputEvent::PointerLeave => None,
             // Empty or disabled modal contents still need dismissal keys.
+            // With nothing focused, a view that takes unfocused keys does.
             InputEvent::KeyDown { .. } | InputEvent::KeyUp { .. } => {
-                self.focused().or_else(|| self.focus_scope())
+                self.focused().or_else(|| self.focus_scope()).or_else(|| {
+                    let scene = scene.borrow();
+                    let mut state = self.state.borrow_mut();
+                    state.unfocused_keys.retain(|n| scene.contains(*n));
+                    state.unfocused_keys.last().copied()
+                })
             }
             _ => self.focused(),
         };

@@ -20,18 +20,22 @@ use std::{
 pub struct SplitOptions {
     /// One pane over the other (a divider across), instead of side by side.
     pub vertical: bool,
-    /// The first pane's smallest size.
+    /// `size` is the second pane's (an inspector at the right), and the
+    /// first fills the rest.
+    pub second: bool,
+    /// The sized pane's smallest size.
     pub min: f32,
-    /// The first pane's largest size.
+    /// The sized pane's largest size.
     pub max: f32,
-    /// The second pane's smallest size: the divider stops short of it, and
-    /// a window too small for both shrinks the first pane down to `min`.
+    /// The other pane's smallest size: the divider stops short of it, and
+    /// a window too small for both shrinks the sized pane down to `min`.
     pub min_rest: f32,
 }
 impl Default for SplitOptions {
     fn default() -> Self {
         Self {
             vertical: false,
+            second: false,
             min: 0.,
             max: f32::INFINITY,
             min_rest: 0.,
@@ -45,8 +49,9 @@ const DIVIDER: f32 = 5.;
 const STEP: f32 = 10.;
 
 /// `first` and `second` side by side (`vertical`: one over the other),
-/// the first `size` points across and the second filling the rest, with a
-/// divider between them that drags to resize the first. `size` is two-way:
+/// the first `size` points across (`options.second`: the second) and the
+/// other filling the rest, with a divider between them that drags to
+/// resize it. `size` is two-way:
 /// the divider writes it as it moves (a persisted state keeps the layout
 /// across launches) and writing it moves the divider. The divider is
 /// focusable: the arrow keys move it, Home and End take it to its ends,
@@ -55,6 +60,7 @@ const STEP: f32 = 10.;
 pub fn split(size: Signal<f32>, options: SplitOptions, first: View, second: View) -> View {
     let SplitOptions {
         vertical,
+        second: sized_second,
         min,
         max,
         min_rest,
@@ -64,34 +70,44 @@ pub fn split(size: Signal<f32>, options: SplitOptions, first: View, second: View
     component(move |cx| {
         let dragging = cx.runtime().signal(false);
         let pane_size = size.clone();
-        // The cross axis stretches the pane's content across it.
-        let first = if vertical { row() } else { column() }
-            .reactive_style(move || {
-                let s = pane_size.get();
-                let s = if s.is_finite() {
-                    s.clamp(min, max)
-                } else {
-                    min
-                };
-                let styles = Styles::default();
-                if vertical {
-                    styles.h(s).min_h(min)
-                } else {
-                    styles.w(s).min_w(min)
-                }
-            })
-            .child(first);
-        let second = if vertical { row() } else { column() }
-            .grow()
-            .flex_basis(0.)
-            .apply(|v| {
-                if vertical {
-                    v.min_h(min_rest)
-                } else {
-                    v.min_w(min_rest)
-                }
-            })
-            .child(second);
+        // The cross axis stretches each pane's content across it.
+        let sized = |pane: View| {
+            let pane_size = pane_size.clone();
+            if vertical { row() } else { column() }
+                .reactive_style(move || {
+                    let s = pane_size.get();
+                    let s = if s.is_finite() {
+                        s.clamp(min, max)
+                    } else {
+                        min
+                    };
+                    let styles = Styles::default();
+                    if vertical {
+                        styles.h(s).min_h(min)
+                    } else {
+                        styles.w(s).min_w(min)
+                    }
+                })
+                .child(pane)
+        };
+        let rest = |pane: View| {
+            if vertical { row() } else { column() }
+                .grow()
+                .flex_basis(0.)
+                .apply(|v| {
+                    if vertical {
+                        v.min_h(min_rest)
+                    } else {
+                        v.min_w(min_rest)
+                    }
+                })
+                .child(pane)
+        };
+        let (first, second) = if sized_second {
+            (rest(first), sized(second))
+        } else {
+            (sized(first), rest(second))
+        };
         // Where the drag started: the pointer, and the first pane's size.
         let grab: Rc<Cell<Option<(f32, f32)>>> = Rc::default();
         // The divider's scene, for the split's size as it drags.
@@ -173,7 +189,8 @@ pub fn split(size: Signal<f32>, options: SplitOptions, first: View, second: View
                     }
                     InputEvent::PointerMove { x, y } => grab.get().map(|(from, start)| {
                         let moved = along(x, y) - from;
-                        start + if rtl { -moved } else { moved }
+                        // The second pane grows as the divider moves back.
+                        start + if rtl != sized_second { -moved } else { moved }
                     }),
                     InputEvent::PointerUp {
                         button: PointerButton::Primary,
@@ -189,11 +206,15 @@ pub fn split(size: Signal<f32>, options: SplitOptions, first: View, second: View
                     }
                     InputEvent::KeyDown { key, modifiers, .. } => {
                         let step = if modifiers.shift { STEP * 10. } else { STEP };
-                        let (less, more) = match (vertical, rtl) {
-                            (true, _) => (Key::ArrowUp, Key::ArrowDown),
-                            (false, false) => (Key::ArrowLeft, Key::ArrowRight),
-                            (false, true) => (Key::ArrowRight, Key::ArrowLeft),
+                        let (back, on) = if vertical {
+                            (Key::ArrowUp, Key::ArrowDown)
+                        } else if rtl {
+                            (Key::ArrowRight, Key::ArrowLeft)
+                        } else {
+                            (Key::ArrowLeft, Key::ArrowRight)
                         };
+                        // The arrows move the divider; what it sizes follows.
+                        let (less, more) = if sized_second { (on, back) } else { (back, on) };
                         match key {
                             k if k == less => Some(now - step),
                             k if k == more => Some(now + step),

@@ -2907,6 +2907,13 @@ impl Host {
                 );
                 self.touch_steps(steps)?;
             }
+            WindowEvent::PinchGesture { delta, .. } if delta.is_finite() && delta != 0. => {
+                self.dispatch(InputEvent::Pinch {
+                    x: self.cursor.0,
+                    y: self.cursor.1,
+                    delta: delta as f32,
+                })?;
+            }
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 // A trackpad gesture's phase: its start goes before its
                 // motion, its end after all of it.

@@ -10,6 +10,8 @@ mod composition_initial_failure;
 mod composition_progress;
 #[path = "../composition_slider.rs"]
 mod composition_slider;
+#[path = "../composition_split.rs"]
+mod composition_split;
 #[path = "../deferred_mount_failure.rs"]
 mod deferred_mount_failure;
 #[path = "../lifecycle_resources.rs"]

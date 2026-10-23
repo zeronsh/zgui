@@ -895,6 +895,16 @@ impl View {
     /// Run `f` once this view's node and children are mounted, with a handle
     /// to that node: for code that drives the scene directly, such as an
     /// animation engine writing transforms each frame.
+    /// With nothing focused (and no modal open), keys go to this view and
+    /// bubble from it, as a page's go to its body: where an app's shortcuts
+    /// listen. The last mounted such view takes them.
+    pub fn takes_unfocused_keys(self) -> Self {
+        self.on_mount(|handle| {
+            if let Some(ui) = handle.ui.upgrade() {
+                ui.input.take_unfocused_keys(handle.node);
+            }
+        })
+    }
     /// Hear every event the document is given while this view is mounted,
     /// before it goes where it goes, and one that goes nowhere (a key with
     /// nothing focused): `Ui::on_document_event`.
