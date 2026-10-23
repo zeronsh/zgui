@@ -50,6 +50,29 @@ done
 
 `crates/zgui-gpu/examples/startup_bench.rs` isolates the renderer's share headless: the GPU device, the system font database and the first text in four styles.
 
+## On Windows
+
+`scripts/windows_compare.py` runs the shared workloads against GPUI's adapter in turn on the same desktop, the Windows counterpart of `scripts/compare.py` (whose sampler reads `/proc`):
+- **Scenes** (zgui example / GPUI binary): `lab` (`component_workload` / `zgui-compare-gpui`) in each mode; `animate` (`animation_workload` / `animate`); `heavy` (`heavy_workload` / `heavy`); `busy` (`busy_workload` / `busy`).
+- **Samples**, every 100 ms after the warmup: CPU time (`GetProcessTimes`), CPU cycles (`QueryProcessCycleTime`, finer than CPU time's scheduler ticks), working set and private bytes.
+- **Work.** Each run must report what it did (`workload_ticks`, `"ticks"` or `animation_frames`), and cycles are given per tick or frame too, so a run that did less cannot look cheaper.
+- **Order.** The frameworks alternate in rotating order over `--repeats`. It prints a table and the binaries' sizes, and writes `summary.json`.
+
+```powershell
+cargo build --profile dist --locked -p zgui-desktop --example component_workload
+cargo build --profile dist --locked -p zgui-desktop --example animation_workload
+cargo build --profile dist --locked -p zgui-desktop --example heavy_workload
+cargo build --profile dist --locked -p zgui-desktop --example busy_workload
+cargo build --profile dist --locked --manifest-path comparisons/gpui/Cargo.toml
+python scripts/windows_compare.py --zgui target/dist/examples --gpui comparisons/gpui/target/dist --output target/windows-compare
+```
+
+Startup and keystroke latency are measured apart:
+- **`scripts/windows_startup_probe.py`** times a launch to its first content as macOS's probe does: spawn, the window, then its header strip until the header's text has drawn. It reports medians of wall time, CPU time and cycles over alternating launches.
+- **`scripts/windows_latency_probe.py --press`** times a key press to the composed screen. Use `key_workload` (zgui-desktop's example) against GPUI's `keys`: each redraws a counter at every key.
+
+Keep the windows uncovered, the machine otherwise idle and on mains power, and repeat a comparison: the same binary's cycles a frame have moved by 10% between sessions on one machine (`animation_workload`, 2.73 then 3.16 million), so compare only runs that alternate within one session. A process's private bytes include the graphics driver's floor, which differs between Direct3D 12 (zgui) and Direct3D 11 (GPUI): see `vendor/wgpu-hal/ZGUI_PATCH.md` and [windows.md](windows.md).
+
 ## Selecting and validating the zgui renderer
 
 `zgui-demo` is `comparisons/demo` (`cargo build --release -p zgui-demo`), apart from the published crates.

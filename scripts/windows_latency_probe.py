@@ -38,6 +38,9 @@ def main():
     parser.add_argument("--region", default="24,412,520,36",
                         help="logical x,y,w,h of the field's pixels to watch")
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    parser.add_argument("--press", action="store_true",
+                        help="press the key (its virtual key) rather than type the character: for "
+                             "apps that count key presses, as the comparison adapters' `keys` do")
     args = parser.parse_args()
     env = dict(os.environ, **dict(pair.split("=", 1) for pair in args.env))
     binary = os.path.abspath(args.binary) if os.path.exists(args.binary) else args.binary
@@ -61,7 +64,10 @@ def main():
             # A random phase against the display's refresh.
             time.sleep(0.05 + random.random() * 0.05)
             start = time.perf_counter()
-            win.type_text("x", delay=0)
+            if args.press:
+                win.key("x", delay=0)
+            else:
+                win.type_text("x", delay=0)
             while region_pixels(window, region) == before:
                 if time.perf_counter() - start > 1:
                     raise SystemExit("the typed character never showed")

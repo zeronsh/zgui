@@ -48,6 +48,21 @@ An application that mounts large trees often can opt in:
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 ```
 
+### Memory
+
+Most of a zgui process's private memory on Windows is the graphics driver's,
+not zgui's. Measured on an RTX 4090 (NVIDIA 32.0.16.1742) by walking the
+process's address space stage by stage:
+- a Direct3D 12 device costs 39.5 MiB and its one queue another 20.5 MiB, a
+  floor no app on Direct3D 12 goes under (Direct3D 11, which GPUI uses, has
+  a device of about 20 MiB);
+- zgui's own share is small: a 2 MiB view heap (images hold at most 16,384
+  views a window), wgpu's 4 MiB upload block, its caches.
+
+zgui opens a device on the one adapter it draws with (DXGI's first for low
+power, `vendor/wgpu-hal/ZGUI_PATCH.md`): wgpu would otherwise open one on
+every adapter to choose, and each driver keeps memory after it is released.
+
 ## Presentation
 
 wgpu runs on Direct3D 12 alone (`WGPU_BACKEND` still overrides, among the
