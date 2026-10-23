@@ -86,6 +86,57 @@ pub(crate) use other::{
     PopupHost, content_origin, enabled, popup_screens, warm, window_at, window_number,
 };
 
+/// Global units (`content_origin`, `window_at`, a platform drag's points)
+/// per logical point of `window`. Windows: the screen's pixels, exact
+/// between windows of different scales, each window's scale apart. Elsewhere
+/// they are points (macOS; X11 has one scale), 1.
+pub(crate) fn global_scale(window: &winit::window::Window) -> f64 {
+    if cfg!(windows) {
+        window.scale_factor()
+    } else {
+        1.
+    }
+}
+/// A window's content in global units: its origin there, and its size in
+/// points at `scale` global units a point.
+pub(crate) fn global_box(origin: (f64, f64), size: (f64, f64), scale: f64) -> [f64; 4] {
+    [origin.0, origin.1, size.0 * scale, size.1 * scale]
+}
+/// Global point `at` in the points of a window whose content is at `origin`.
+pub(crate) fn points_at(at: (f64, f64), origin: (f64, f64), scale: f64) -> (f64, f64) {
+    ((at.0 - origin.0) / scale, (at.1 - origin.1) / scale)
+}
+/// A window's point `at` (its content at `origin`) in global units.
+pub(crate) fn global_at(at: (f64, f64), origin: (f64, f64), scale: f64) -> (f64, f64) {
+    (origin.0 + at.0 * scale, origin.1 + at.1 * scale)
+}
+
+#[cfg(test)]
+mod global_tests {
+    use super::*;
+
+    /// Windows of different scales, side by side: a 100% window at the
+    /// screen's top-left, a 150% one whose content starts at (1920, 100)
+    /// pixels. A point of the first window is found in the second, where it
+    /// is, in the second's points.
+    #[test]
+    fn a_point_crosses_windows_of_different_scales_exactly() {
+        let (first, second) = (((0., 0.), 1.), ((1920., 100.), 1.5));
+        let global = global_at((1950., 200.), first.0, first.1);
+        let second_box = global_box(second.0, (400., 300.), second.1);
+        assert_eq!(second_box, [1920., 100., 600., 450.]);
+        let [left, top, width, height] = second_box;
+        assert!((left..left + width).contains(&global.0));
+        assert!((top..top + height).contains(&global.1));
+        let (x, y) = points_at(global, second.0, second.1);
+        assert_eq!((x, (y * 1000.).round() / 1000.), (20., 66.667));
+        // And back: the second window's point is the first's pixel.
+        assert_eq!(global_at((x, y), second.0, second.1), (1950., 200.));
+        // The second window's far corner, in its points, is its box's.
+        assert_eq!(global_at((400., 300.), second.0, second.1), (2520., 550.));
+    }
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 mod other {
     use super::PopupInput;

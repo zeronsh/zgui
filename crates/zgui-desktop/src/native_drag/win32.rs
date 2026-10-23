@@ -39,7 +39,6 @@ use windows::{
             Threading::GetCurrentProcessId,
         },
         UI::{
-            HiDpi::GetDpiForWindow,
             Shell::{
                 CLSID_DragDropHelper, DROPFILES, DSH_ALLOWDROPDESCRIPTIONTEXT, IDragSourceHelper,
                 IDragSourceHelper2, SHCreateDataObject, SHDRAGIMAGE,
@@ -61,8 +60,6 @@ const BEGIN: u32 = WM_APP + 0x7a;
 /// of it.
 struct Session {
     send: Box<dyn Fn(NativeDrag)>,
-    /// The source window's scale: global points are its.
-    scale: f64,
     at: Cell<POINT>,
     /// Let go over one of this app's windows: its own destinations take it
     /// there, not Windows' (winit's file drop target).
@@ -80,8 +77,9 @@ impl Session {
         }
         self.at.get()
     }
+    /// Global coordinates are the screen's pixels (`popup_window::global_scale`).
     fn global(&self, point: POINT) -> (f64, f64) {
-        (point.x as f64 / self.scale, point.y as f64 / self.scale)
+        (f64::from(point.x), f64::from(point.y))
     }
 }
 
@@ -382,10 +380,9 @@ pub(crate) fn begin(
     let Ok(handle) = window.window_handle() else {
         return false;
     };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+    let RawWindowHandle::Win32(_) = handle.as_raw() else {
         return false;
     };
-    let hwnd = HWND(handle.hwnd.get() as *mut _);
     // SAFETY: Shell's own data object, empty.
     let Ok(data) = (unsafe { SHCreateDataObject::<_, IDataObject>(None, None, None) }) else {
         return false;
@@ -399,11 +396,8 @@ pub(crate) fn begin(
     let Some(starter) = starter() else {
         return false;
     };
-    // SAFETY: reads our own window's DPI.
-    let dpi = unsafe { GetDpiForWindow(hwnd) };
     let session = Rc::new(Session {
         send: Box::new(send),
-        scale: f64::from(dpi.max(96)) / 96.,
         at: Cell::new(POINT::default()),
         own: Cell::new(false),
     });

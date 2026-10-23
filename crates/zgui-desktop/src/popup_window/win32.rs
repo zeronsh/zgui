@@ -55,9 +55,9 @@ use windows::{
             WindowsAndMessaging::{
                 CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, GA_ROOT,
                 GW_HWNDNEXT, GWLP_HWNDPARENT, GWLP_USERDATA, GetAncestor, GetClientRect,
-                GetCursorPos, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
-                HTCLIENT, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_ARROW, IsWindowVisible,
-                KillTimer, LoadCursorW, MA_NOACTIVATE, RegisterClassExW, SPI_SETWORKAREA, SW_HIDE,
+                GetCursorPos, GetWindow, GetWindowLongPtrW, GetWindowRect, HTCLIENT,
+                HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_ARROW, IsWindowVisible, KillTimer,
+                LoadCursorW, MA_NOACTIVATE, RegisterClassExW, SPI_SETWORKAREA, SW_HIDE,
                 SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
                 SWP_NOZORDER, SWP_SHOWWINDOW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
                 ShowWindow, WINDOWPOS, WM_ACTIVATEAPP, WM_DISPLAYCHANGE, WM_LBUTTONDBLCLK,
@@ -697,39 +697,27 @@ fn hwnd_of(window: &winit::window::Window) -> Option<HWND> {
         _ => None,
     }
 }
-/// The window's client origin on the screen, in its points (physical pixels
-/// at its scale): global coordinates, as a platform drag reports them.
+/// The window's client origin on the screen in global coordinates: the
+/// screen's pixels, the same for windows of every scale (`global_scale`), as
+/// a platform drag reports them.
 pub(crate) fn content_origin(window: &winit::window::Window) -> Option<(f64, f64)> {
-    let hwnd = hwnd_of(window)?;
-    let (x, y) = client_origin(hwnd);
-    let scale = f64::from(window_scale(hwnd));
-    Some((f64::from(x) / scale, f64::from(y) / scale))
+    let (x, y) = client_origin(hwnd_of(window)?);
+    Some((f64::from(x), f64::from(y)))
 }
 /// The window's handle, as `window_at` names windows.
 pub(crate) fn window_number(window: &winit::window::Window) -> Option<isize> {
     hwnd_of(window).map(|hwnd| hwnd.0 as isize)
 }
-/// The front-most window (any app's) at global point `(x, y)`, past drag
-/// previews (`PREVIEWS`: below one, the next window down there). Global
-/// points are the dragging window's (`content_origin`): the one holding the
-/// pointer, else the one in front. Between windows of different scales they
-/// are near.
+/// The front-most window (any app's) at global point `(x, y)` (the screen's
+/// pixels, `content_origin`), past drag previews (`PREVIEWS`: below one, the
+/// next window down there).
 pub(crate) fn window_at(x: f64, y: f64) -> Option<isize> {
-    // SAFETY: reads windows of this thread and the system's; the window at
-    // a point and its top-level ancestor into locals.
+    // SAFETY: reads the system's windows; the window at a point and its
+    // top-level ancestor into locals.
     unsafe {
-        let mut source = GetCapture();
-        if source.is_invalid() {
-            source = GetForegroundWindow();
-        }
-        let scale = if source.is_invalid() {
-            1.
-        } else {
-            f64::from(window_scale(source))
-        };
         let point = POINT {
-            x: (x * scale).round() as i32,
-            y: (y * scale).round() as i32,
+            x: x.round() as i32,
+            y: y.round() as i32,
         };
         let window = WindowFromPoint(point);
         if window.is_invalid() {

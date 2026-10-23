@@ -31,8 +31,8 @@
 use zgui::input::DragItem;
 
 /// The platform's drag, as the host hears it: in global coordinates
-/// (top-down from the primary screen's top, in points; on Windows, screen
-/// pixels at the dragging window's scale, as `content_origin` gives).
+/// (top-down from the primary screen's top, in points; on Windows, the
+/// screen's pixels, as `content_origin` gives: `popup_window::global_scale`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum NativeDrag {
     Moved {
