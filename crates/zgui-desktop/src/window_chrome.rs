@@ -1390,7 +1390,7 @@ mod mac {
             Titlebar::Hidden => {
                 content_under_titlebar(&window);
                 // NSWindowCloseButton, MiniaturizeButton, ZoomButton.
-                for button in [0_isize, 1, 2] {
+                for button in [0_usize, 1, 2] {
                     unsafe {
                         let button: *mut AnyObject =
                             msg_send![&*window, standardWindowButton: button];
@@ -1550,7 +1550,8 @@ mod mac {
     /// no saturation boost, through the effect's layer tree.
     unsafe fn strip_layer(layer: &AnyObject) {
         unsafe {
-            let none: *const AnyObject = std::ptr::null();
+            // A CGColorRef, not an object: objc2 checks the type in debug.
+            let none: *const objc2_core_graphics::CGColor = std::ptr::null();
             let _: () = msg_send![layer, setBackgroundColor: none];
             let class_name: Retained<NSString> = msg_send![layer, className];
             if class_name.to_string() == "CAChameleonLayer" {
@@ -1628,6 +1629,22 @@ mod mac {
             "None" => {}
             // "Maximize" (zoom), "Fill" and anything newer: zoom.
             _ => window.zoom(None),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use objc2_quartz_core::CALayer;
+
+        /// objc2 checks each message's argument types in a debug build:
+        /// stripping a layer tree (as `Glass::plain` does) sends only
+        /// well-typed ones (`setBackgroundColor:` takes a CGColorRef).
+        #[test]
+        fn a_plain_glass_strips_layers_with_well_typed_messages() {
+            let (layer, sublayer) = (CALayer::new(), CALayer::new());
+            layer.addSublayer(&sublayer);
+            unsafe { super::strip_layer(&layer) };
+            assert!(layer.backgroundColor().is_none());
         }
     }
 }
