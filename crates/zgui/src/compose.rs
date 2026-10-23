@@ -2542,8 +2542,15 @@ fn mount_element(
     if let Some(preview) = view.drag_preview {
         crate::compose_drag::mount(ui, root, preview);
     }
-    // A selectable region's own menu (Copy, Select All), unless it has one.
+    // A selectable region's own menu (Copy, Select All), or an editor's
+    // (Cut, Copy, Paste, Select All), unless it has one.
     let context_menu = view.context_menu.take().or_else(|| {
+        if let Some(editor) = &editor {
+            return Some(crate::editor_menu::context_menu(
+                editor.clone(),
+                environment.services.get(),
+            ));
+        }
         (view.selectable == Some(true))
             .then(|| crate::selection::context_menu(ui, root, environment.services.get()))
     });

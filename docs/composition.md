@@ -268,6 +268,14 @@ to pointer-down events. Custom hosts use `Ui::dispatch_with_modifiers` (or its
 fallible counterpart). Existing event literals remain unchanged, and ordinary
 `Ui::dispatch` retains unmodified single-click behavior for synthetic input.
 
+A secondary click (Control-click on macOS) in an editor opens its context menu, as a
+browser's text fields do: Cut, Copy, Paste and Select All, through the window's
+clipboard (`Platform`). Each is disabled where it would do nothing: Cut and Copy with
+nothing selected or in a password field, Cut and Paste in a read-only one, and Paste
+with an empty clipboard. A click outside the selection first puts the caret under the
+pointer (on macOS it selects the word there, as AppKit's text views do). A
+`.context_menu(..)` of the app's own replaces it.
+
 Use `.read_only(true)` for selectable output or `.read_only_when(move || locked.get())` for a reactive editing policy. Read-only editors remain focusable and support selection, navigation, scrolling and copy. Typing, paste, deletion, undo/redo, IME composition and accessibility value replacement cannot change their text; cut copies the selection without deleting it. External model updates remain permitted. Entering read-only mode cancels existing preedit while retaining focus, selection and history. The native host disables IME for the read-only editor, and accessibility exposes its read-only state while retaining selection actions. These options apply to editor roots, including components that return an editor; they do not propagate from containers. Direct access to the low-level `TextEditor` remains an application mutation API.
 
 Committed editor text uses LF line endings: CRLF and lone CR become LF, then `text_input` removes line breaks. This applies to initial values, external model updates, typing, paste, accessibility replacements, and IME commits. The bound signal receives the canonical text. Tabs remain intact; ordinary text events still reject other control characters as a whole. Native preedit stays unmodified so its cursor offsets remain valid. Canonical-equivalent model updates preserve selection, preedit, and history, and initial normalization does not create an undo entry.

@@ -2888,6 +2888,54 @@ impl Ui {
                         storage.primary_paste.set(Some(root));
                     }
                 }
+                // A context click outside the selection puts the caret under
+                // the pointer first (and on macOS selects the word there, as
+                // AppKit's text views do), so the menu acts where it opened.
+                // A secondary press while the primary drags a selection is
+                // a chord: the drag goes on, and no menu opens.
+                InputEvent::PointerDown {
+                    button: PointerButton::Secondary,
+                    ..
+                } if gesture.mode.get().is_some() => {
+                    cx.prevent_default();
+                }
+                InputEvent::PointerDown {
+                    x,
+                    y,
+                    button: PointerButton::Secondary,
+                } => {
+                    cx.focus();
+                    let s = scene.borrow();
+                    let bounds = s.bounds(viewport);
+                    let scroll = *scroll.borrow();
+                    let (_, size, font) = typography.borrow().clone();
+                    let mut edit = editor.borrow_mut();
+                    let layout = editor_layout(
+                        &input_storage, &s, root, edit.text(), size,
+                        wrap.get().then_some(bounds.width.max(1.)), &font,
+                    );
+                    let (lx, ly) = (x - bounds.x + scroll.0, y - bounds.y + scroll.1);
+                    let hit = layout.hit_position(lx, ly);
+                    let range = edit.selection().range();
+                    if range.is_empty() || !range.contains(&hit.byte_offset) {
+                        let (start, end) = if cfg!(target_os = "macos") {
+                            let (start, end) = editor_pointer_unit(
+                                edit.text(), &*layout, hit, lx, ly, false, multiline,
+                            );
+                            let word = &edit.text()[start.byte_offset..end.byte_offset];
+                            if word.chars().any(char::is_alphanumeric) {
+                                (start.byte_offset, end.byte_offset)
+                            } else {
+                                (hit.byte_offset, hit.byte_offset)
+                            }
+                        } else {
+                            (hit.byte_offset, hit.byte_offset)
+                        };
+                        edit.set_selection(start, end);
+                        position.set(hit);
+                    }
+                    gesture.cancel();
+                }
                 InputEvent::PointerMove { x, y } if gesture.mode.get().is_some() => {
                     gesture.pointer.set((x, y));
                     drag_select();
