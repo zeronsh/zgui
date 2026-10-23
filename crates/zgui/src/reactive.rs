@@ -2,7 +2,8 @@
 use std::{
     any::{Any, TypeId},
     cell::{Cell, RefCell},
-    collections::{BTreeSet, HashMap, HashSet},
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap, HashSet},
     rc::{Rc, Weak},
 };
 
@@ -27,6 +28,8 @@ struct EffectRecord {
     /// Inline for the few most effects read: no allocation of its own.
     dependencies: smallvec::SmallVec<[Subscription; 2]>,
     run: u64,
+    /// In `pending`, waiting to run: queued once however many writes.
+    queued: bool,
 }
 /// Effect ids are unique integers; a multiplicative hash beats SipHash here.
 #[derive(Default, Clone, Copy)]
@@ -52,7 +55,10 @@ type IdSet = HashSet<EffectId, std::hash::BuildHasherDefault<IdHasher>>;
 #[derive(Default)]
 struct Inner {
     effects: RefCell<IdMap<EffectRecord>>,
-    pending: RefCell<BTreeSet<EffectId>>,
+    /// Effects to run, the oldest first (they were made before what they
+    /// made). A heap keeps its room: a set allocated as writes queued
+    /// effects. A disposed effect's id may stay until it is popped.
+    pending: RefCell<BinaryHeap<Reverse<EffectId>>>,
     active: Cell<Option<EffectId>>,
     next: Cell<EffectId>,
     batch_depth: Cell<usize>,
@@ -114,9 +120,10 @@ impl Runtime {
                 callback: Rc::new(RefCell::new(callback)),
                 dependencies: Default::default(),
                 run: 0,
+                queued: true,
             },
         );
-        self.inner.pending.borrow_mut().insert(id);
+        self.inner.pending.borrow_mut().push(Reverse(id));
         let effect = Effect {
             id,
             runtime: Rc::downgrade(&self.inner),
@@ -143,6 +150,7 @@ impl Runtime {
                 callback: callback.clone(),
                 dependencies: Default::default(),
                 run: 1,
+                queued: false,
             },
         );
         let previous = self.inner.active.replace(Some(id));
@@ -185,12 +193,13 @@ impl Runtime {
         }
         let _guard = Guard(&self.inner);
         loop {
-            let Some(id) = self.inner.pending.borrow_mut().pop_first() else {
+            let Some(Reverse(id)) = self.inner.pending.borrow_mut().pop() else {
                 break;
             };
             let callback = {
                 let mut effects = self.inner.effects.borrow_mut();
                 effects.get_mut(&id).map(|record| {
+                    record.queued = false;
                     record.run = record.run.wrapping_add(1);
                     record.callback.clone()
                 })
@@ -286,7 +295,6 @@ impl Drop for Effect {
                     }
                 }
             }
-            runtime.pending.borrow_mut().remove(&self.id);
         }
     }
 }
@@ -385,10 +393,17 @@ impl<T: 'static> Signal<T> {
     }
     fn notify(&self) {
         if let Some(inner) = self.inner.runtime.upgrade() {
-            inner
-                .pending
-                .borrow_mut()
-                .extend(self.inner.subscribers.borrow().iter().copied());
+            {
+                let mut effects = inner.effects.borrow_mut();
+                let mut pending = inner.pending.borrow_mut();
+                for id in self.inner.subscribers.borrow().iter() {
+                    if let Some(record) = effects.get_mut(id)
+                        && !std::mem::replace(&mut record.queued, true)
+                    {
+                        pending.push(Reverse(*id));
+                    }
+                }
+            }
             Runtime { inner }.flush();
         }
     }
