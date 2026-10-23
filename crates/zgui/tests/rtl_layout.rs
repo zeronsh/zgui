@@ -104,6 +104,29 @@ fn text_starts_at_the_right() {
 }
 
 #[test]
+fn text_aligned_to_its_end_follows_the_direction() {
+    let (ui, view) = mount(
+        column()
+            .id("column")
+            .w(300.)
+            .child(text("12.50").id("end").text_align(TextAlign::End)),
+    );
+    let end = view.find("end").unwrap();
+    assert_eq!(ui.scene.borrow().font(end).align, TextAlign::Right);
+    let column = view.find("column").unwrap();
+    ui.scene
+        .borrow_mut()
+        .set_direction(column, Some(Direction::Rtl));
+    ui.prepare_frame();
+    assert_eq!(ui.scene.borrow().font(end).align, TextAlign::Left);
+    ui.scene
+        .borrow_mut()
+        .set_direction(column, Some(Direction::Ltr));
+    ui.prepare_frame();
+    assert_eq!(ui.scene.borrow().font(end).align, TextAlign::Right);
+}
+
+#[test]
 fn a_wrapping_row_mirrors_its_lines_and_absolute_insets_are_physical() {
     let (ui, view) = mount(
         overlay()

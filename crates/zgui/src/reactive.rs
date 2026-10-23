@@ -497,6 +497,16 @@ impl<T: 'static> Signal<T> {
         self.notify();
         true
     }
+    /// Change the value in place with `f`, which says whether it changed
+    /// anything; what reads it updates if so. For a large value written
+    /// often (a long list's rows), which `update` would clone whole.
+    pub fn mutate(&self, f: impl FnOnce(&mut T) -> bool) -> bool {
+        let changed = f(&mut self.inner.value.borrow_mut());
+        if changed {
+            self.notify();
+        }
+        changed
+    }
     /// Change a clone of the value with `f` and set it; returns whether it changed.
     pub fn update(&self, f: impl FnOnce(&mut T)) -> bool
     where

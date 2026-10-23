@@ -29,6 +29,9 @@ pub enum Role {
     ScrollView,
     /// A scrollbar.
     ScrollBar,
+    /// A divider that resizes the panes beside it (ARIA's focusable
+    /// `separator`, AppKit's split view divider).
+    Splitter,
     /// An item of a `List`.
     ListItem,
     /// A dialog; see `modal`.

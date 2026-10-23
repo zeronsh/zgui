@@ -349,6 +349,7 @@ impl AccessibilityTree {
                     | Role::MultilineTextInput
                     | Role::Slider
                     | Role::ScrollBar
+                    | Role::Splitter
                     | Role::ListItem
                     | Role::ListBoxOption
                     | Role::Tab
@@ -378,7 +379,10 @@ impl AccessibilityTree {
                     }
                 }
             }
-            if matches!(semantic.role, Role::Slider | Role::ScrollBar) {
+            if matches!(
+                semantic.role,
+                Role::Slider | Role::ScrollBar | Role::Splitter
+            ) {
                 n.add_action(Action::Increment);
                 n.add_action(Action::Decrement);
             }
@@ -613,6 +617,7 @@ fn role(r: Role) -> accesskit::Role {
         Role::Progress => accesskit::Role::ProgressIndicator,
         Role::ScrollView => accesskit::Role::ScrollView,
         Role::ScrollBar => accesskit::Role::ScrollBar,
+        Role::Splitter => accesskit::Role::Splitter,
         Role::ListItem => accesskit::Role::ListItem,
         Role::Dialog => accesskit::Role::Dialog,
         Role::Menu => accesskit::Role::Menu,

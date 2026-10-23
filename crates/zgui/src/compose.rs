@@ -4793,6 +4793,8 @@ impl Ui {
         mounted
     }
 }
+pub use crate::compose_split::{SplitOptions, split};
+
 /// Common imports for component application code.
 pub mod prelude {
     pub use super::{
@@ -4803,6 +4805,7 @@ pub mod prelude {
         virtual_list,
     };
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
+    pub use super::{SplitOptions, split};
     pub use super::{animated_image, animated_image_controlled, async_image, canvas};
     #[cfg(target_os = "macos")]
     pub use super::{native_surface, native_surface_signal};

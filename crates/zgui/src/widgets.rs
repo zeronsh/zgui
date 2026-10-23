@@ -380,17 +380,18 @@ fn editor_font<'a>(
     node: NodeId,
     font: &'a FontStyle,
 ) -> std::borrow::Cow<'a, FontStyle> {
-    if font.align == crate::text_layout::TextAlign::Start
-        && scene.contains(node)
-        && scene.direction(node) == crate::scene::Direction::Rtl
-    {
-        std::borrow::Cow::Owned(FontStyle {
-            align: crate::text_layout::TextAlign::Right,
-            ..font.clone()
-        })
-    } else {
-        std::borrow::Cow::Borrowed(font)
-    }
+    use crate::text_layout::TextAlign;
+    let rtl = || scene.contains(node) && scene.direction(node) == crate::scene::Direction::Rtl;
+    let align = match font.align {
+        TextAlign::Start if rtl() => TextAlign::Right,
+        TextAlign::End if rtl() => TextAlign::Left,
+        TextAlign::End => TextAlign::Right,
+        _ => return std::borrow::Cow::Borrowed(font),
+    };
+    std::borrow::Cow::Owned(FontStyle {
+        align,
+        ..font.clone()
+    })
 }
 
 fn editor_layout(

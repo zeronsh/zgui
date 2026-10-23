@@ -101,7 +101,10 @@ pub(crate) fn alignment(font: &zgui::text_layout::FontStyle) -> Option<cosmic_te
         zgui::text_layout::TextAlign::Start => return None,
         zgui::text_layout::TextAlign::Left => cosmic_text::Align::Left,
         zgui::text_layout::TextAlign::Center => cosmic_text::Align::Center,
-        zgui::text_layout::TextAlign::Right => cosmic_text::Align::Right,
+        // The scene makes `End` its side for the line's direction.
+        zgui::text_layout::TextAlign::Right | zgui::text_layout::TextAlign::End => {
+            cosmic_text::Align::Right
+        }
     })
 }
 fn family(family: &zgui::text_layout::FontFamily) -> Family<'_> {

@@ -107,6 +107,9 @@ pub enum TextAlign {
     Center,
     /// At the right.
     Right,
+    /// At the end of the line (CSS's `end`): the right left to right, the
+    /// left right to left. A number column's alignment.
+    End,
 }
 /// Display-only overflow policy. Editor documents are never truncated.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -494,7 +497,7 @@ impl FallbackTextLayout {
         let factor = match alignment {
             TextAlign::Start | TextAlign::Left => return,
             TextAlign::Center => 0.5,
-            TextAlign::Right => 1.,
+            TextAlign::Right | TextAlign::End => 1.,
         };
         let mut start = 0;
         while start < self.cells.len() {

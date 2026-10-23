@@ -1029,8 +1029,9 @@ struct Node {
     /// Its lines run right to left (`Scene::set_direction`, its own or its
     /// parent's): `style` is then laid out mirrored (`laid_out_style`).
     rtl: bool,
-    /// Its font's alignment was `Start`, made `Right` while `rtl`.
-    align_start: bool,
+    /// Its font's alignment as given, if `Start` or `End`, which follow the
+    /// direction: made `Left` or `Right` (`set_font`).
+    align_logical: Option<crate::text_layout::TextAlign>,
 }
 impl Node {
     fn local(&self) -> LocalTransform {
@@ -1769,7 +1770,7 @@ impl Scene {
                     scroll_copy: false,
                     contents: false,
                     rtl: false,
-                    align_start: false,
+                    align_logical: None,
                     layer_revision: 0,
                 }),
             }],
@@ -2527,9 +2528,9 @@ impl Scene {
             let given = self.style(id);
             self.restyle(id, given, true);
         }
-        if turned && self.node(id).align_start {
+        if turned && let Some(logical) = self.node(id).align_logical {
             let mut font = self.node(id).font.clone();
-            font.align = crate::text_layout::TextAlign::Start;
+            font.align = logical;
             self.set_font(id, font);
         }
         self.damage_subtree(id);
@@ -2880,16 +2881,23 @@ impl Scene {
     /// Font changes affect shaping, layout, paint and retained layer contents.
     pub fn set_font(&mut self, id: NodeId, mut font: crate::text_layout::FontStyle) {
         font.weight = font.weight.clamp(1, 1000);
-        // Text starts at the right of a line that runs right to left.
-        let start = font.align == crate::text_layout::TextAlign::Start;
-        if start && self.node(id).rtl {
-            font.align = crate::text_layout::TextAlign::Right;
-        }
-        if self.node(id).font == font && self.node(id).align_start == start {
+        // Text starts at the right of a line that runs right to left, and
+        // ends at its left. `Start` stays for left to right (the shaper's
+        // natural alignment); `End` is the right then.
+        use crate::text_layout::TextAlign;
+        let logical = matches!(font.align, TextAlign::Start | TextAlign::End).then_some(font.align);
+        let rtl = self.node(id).rtl;
+        font.align = match font.align {
+            TextAlign::Start if rtl => TextAlign::Right,
+            TextAlign::End if rtl => TextAlign::Left,
+            TextAlign::End => TextAlign::Right,
+            other => other,
+        };
+        if self.node(id).font == font && self.node(id).align_logical == logical {
             return;
         }
         self.damage_subtree(id);
-        self.node_mut(id).align_start = start;
+        self.node_mut(id).align_logical = logical;
         self.node_mut(id).font = font;
         self.invalidate(id, PAINT);
         self.invalidate_layout(id);
@@ -3169,7 +3177,7 @@ impl Scene {
             scroll_copy: false,
             contents: false,
             rtl,
-            align_start: false,
+            align_logical: None,
             layer_revision: 0,
         };
         let id = if let Some(index) = self.free.pop() {
@@ -4063,7 +4071,9 @@ impl Scene {
         let x = match align {
             crate::text_layout::TextAlign::Start | crate::text_layout::TextAlign::Left => bounds.x,
             crate::text_layout::TextAlign::Center => bounds.x + (bounds.width - width) / 2.,
-            crate::text_layout::TextAlign::Right => bounds.x + bounds.width - width,
+            crate::text_layout::TextAlign::Right | crate::text_layout::TextAlign::End => {
+                bounds.x + bounds.width - width
+            }
         };
         // Italic and antialiased edges reach past advances and line boxes.
         let pad = (font_size * 0.3).max(2.);
