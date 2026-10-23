@@ -3362,6 +3362,29 @@ impl Ui {
                             Key::ArrowDown if cfg!(target_os = "macos") && modifiers.meta => {
                                 e.move_document_end(modifiers.shift)
                             }
+                            // Right-to-left text: the arrows go the way it
+                            // shows (the macOS way), by its layout.
+                            Key::ArrowLeft | Key::ArrowRight
+                                if crate::text_layout::has_rtl(e.text()) =>
+                            {
+                                let s = scene.borrow();
+                                let (_, size, font) = typography.borrow().clone();
+                                let layout = editor_layout(
+                                    &input_storage,
+                                    &s,
+                                    root,
+                                    e.text(),
+                                    size,
+                                    Some(s.bounds(viewport).width.max(1.)),
+                                    &font,
+                                );
+                                e.move_visually(
+                                    word,
+                                    modifiers.shift,
+                                    key == Key::ArrowLeft,
+                                    |byte| layout.caret(byte),
+                                );
+                            }
                             Key::ArrowLeft => e.move_left(word, modifiers.shift),
                             Key::ArrowRight => e.move_right(word, modifiers.shift),
                             Key::Home => {

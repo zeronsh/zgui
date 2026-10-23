@@ -365,6 +365,53 @@ impl TextEditor {
         };
         self.move_to(pos, extend);
     }
+    /// Left (`left`) or right as the text shows it, which right-to-left
+    /// text runs the other way from its order: of the boundaries before and
+    /// after the caret, the nearest whose caret (`caret`) lies that way on
+    /// the same line; else the one its order says. A selection collapses to
+    /// its edge that way.
+    pub fn move_visually(
+        &mut self,
+        word: bool,
+        extend: bool,
+        left: bool,
+        caret: impl Fn(usize) -> crate::scene::Rect,
+    ) {
+        let toward = |from: f32, to: f32| {
+            if left {
+                to < from - 0.5
+            } else {
+                to > from + 0.5
+            }
+        };
+        if !extend && !self.selection.is_empty() {
+            let range = self.selection.range();
+            let (start, end) = (caret(range.start).x, caret(range.end).x);
+            let pos = if toward(end, start) || (start == end && left) {
+                range.start
+            } else {
+                range.end
+            };
+            return self.move_to(pos, false);
+        }
+        let focus = self.selection.focus;
+        let here = caret(focus);
+        let pick = [self.previous(word), self.next(word)]
+            .into_iter()
+            .filter(|p| *p != focus)
+            .map(|p| (p, caret(p)))
+            .filter(|(_, r)| (r.y - here.y).abs() < 0.5 && toward(here.x, r.x))
+            .min_by(|a, b| (a.1.x - here.x).abs().total_cmp(&(b.1.x - here.x).abs()))
+            .map(|(p, _)| p);
+        let pos = pick.unwrap_or_else(|| {
+            if left {
+                self.previous(word)
+            } else {
+                self.next(word)
+            }
+        });
+        self.move_to(pos, extend);
+    }
     pub fn move_home(&mut self, extend: bool) {
         let pos = self.text[..self.selection.focus]
             .rfind('\n')

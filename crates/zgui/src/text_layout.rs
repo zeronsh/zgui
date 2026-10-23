@@ -75,6 +75,14 @@ impl LetterSpacing {
         f32::from_bits(self.0)
     }
 }
+/// Whether `text` holds right-to-left letters (Hebrew, Arabic, Syriac,
+/// Thaana, N'Ko, and their presentation forms): text that a caret moves
+/// through by what it shows, not its order.
+pub fn has_rtl(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF | 0x10800..=0x10FFF | 0x1E800..=0x1EFFF)
+    })
+}
 /// Physical paragraph alignment within an allocated text width.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextAlign {
