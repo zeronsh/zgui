@@ -40,7 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             3 => (1., 600.),
                             4 => (0.25, 600.),
                             5 => (0.25, 200.),
-                            6 => (f32::NAN, 200.),
+                            // (NaN would be indeterminate: a sweep.)
+                            6 => (0., 200.),
                             _ => (0., 400.),
                         };
                         width.set(next_width);

@@ -88,7 +88,7 @@ def main():
         required = ["STATE 1 value=0.250 width=400", "STATE 2 value=1.000 width=400", "STATE 3 value=1.000 width=600", "STATE 4 value=0.250 width=600", "STATE 5 value=0.250 width=200", "STATE 6 value=0.000 width=200", "PROGRESS value=0.000 width=200 stage=6", 'role: Progress, label: "Download"', 'numeric_value: Some(0.0)']
         if any(item not in output for item in required):
             raise AssertionError(output)
-        result = {"platform": "X11/Xvfb", "scale": 1, "result": "pass", "checks": ["zero/quarter/full native pixel extent", "grow/shrink allocation", "padding clip", "inherited fill color", "NaN normalization", "progress semantics", "automatic close"], "pixel_samples": samples, "limitations": "Software rendering; does not validate macOS or hardware GPUs."}
+        result = {"platform": "X11/Xvfb", "scale": 1, "result": "pass", "checks": ["zero/quarter/full native pixel extent", "grow/shrink allocation", "padding clip", "inherited fill color", "progress semantics", "automatic close"], "pixel_samples": samples, "limitations": "Software rendering; does not validate macOS or hardware GPUs."}
         (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         print("PASS: " + ", ".join(result["checks"]))
     finally:
