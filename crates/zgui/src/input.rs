@@ -1844,6 +1844,24 @@ impl InputDispatcher {
         modifiers: Option<Modifiers>,
         bindings: bool,
     ) -> DispatchResult {
+        // A handler that panics skips this dispatch's own clean-up (a
+        // released press, a capture ending): if it unwinds, the gesture it
+        // was part of ends here, so the next press reaches what it is on
+        // rather than the node the failed one captured.
+        struct Unwinding<'a>(&'a RefCell<State>);
+        impl Drop for Unwinding<'_> {
+            fn drop(&mut self) {
+                if std::thread::panicking()
+                    && let Ok(mut state) = self.0.try_borrow_mut()
+                {
+                    state.captured = None;
+                    state.capture_button = None;
+                    state.pressed = None;
+                    state.key_pressed = None;
+                }
+            }
+        }
+        let _unwinding = Unwinding(&self.state);
         if let Some(held) = modifiers {
             self.state.borrow_mut().modifiers = held;
         }

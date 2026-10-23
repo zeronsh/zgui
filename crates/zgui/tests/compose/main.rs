@@ -16,6 +16,8 @@ mod deferred_mount_failure;
 mod lifecycle_resources;
 #[path = "../native_views.rs"]
 mod native_views;
+#[path = "../panic_recovery.rs"]
+mod panic_recovery;
 #[path = "../reactive_dependencies.rs"]
 mod reactive_dependencies;
 #[path = "../widgets.rs"]

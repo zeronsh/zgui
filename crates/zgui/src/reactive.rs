@@ -67,6 +67,26 @@ struct Inner {
     extensions: RefCell<Vec<(TypeId, Rc<dyn Any>)>>,
 }
 
+/// The effect running for as long as it lives: whatever ran before runs
+/// again when it drops, a panicking callback's unwind included, so later
+/// reads never subscribe an effect that is no longer running.
+struct Active<'a> {
+    slot: &'a Cell<Option<EffectId>>,
+    previous: Option<EffectId>,
+}
+impl<'a> Active<'a> {
+    fn run(slot: &'a Cell<Option<EffectId>>, id: EffectId) -> Self {
+        Self {
+            slot,
+            previous: slot.replace(Some(id)),
+        }
+    }
+}
+impl Drop for Active<'_> {
+    fn drop(&mut self) {
+        self.slot.set(self.previous);
+    }
+}
 impl Inner {
     /// Run effect `id` if it is queued. Its heap entry may outlive the
     /// queueing (`Refresh::refresh` ran it early), so an effect that isn't
@@ -81,9 +101,10 @@ impl Inner {
             record.run = record.run.wrapping_add(1);
             record.callback.clone()
         };
-        let previous = self.active.replace(Some(id));
-        (*callback.borrow_mut())();
-        self.active.set(previous);
+        {
+            let _active = Active::run(&self.active, id);
+            (*callback.borrow_mut())();
+        }
         // Drop subscriptions this run no longer read. The record may be
         // gone if the callback disposed its own effect.
         let stale: Vec<Weak<dyn Dependency>> = {
@@ -203,13 +224,17 @@ impl Runtime {
                 queued: false,
             },
         );
-        let previous = self.inner.active.replace(Some(id));
-        (*callback.borrow_mut())();
-        self.inner.active.set(previous);
-        Effect {
+        // Made before it runs: a first run that panics drops it, so
+        // nothing is left subscribed with no handle to dispose of it.
+        let effect = Effect {
             id,
             runtime: Rc::downgrade(&self.inner),
+        };
+        {
+            let _active = Active::run(&self.inner.active, id);
+            (*callback.borrow_mut())();
         }
+        effect
     }
     /// Defers effects until the outermost batch finishes; mutations remain visible.
     pub fn batch<R>(&self, f: impl FnOnce() -> R) -> R {
