@@ -161,3 +161,33 @@ fn reference_examples_run_and_type_check() {
     }
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[test]
+fn the_guide_patches_what_the_workspace_patches() {
+    // A git dependency doesn't bring zgui's `[patch]` with it: an app
+    // copies it from the guide, so the guide's list is the workspace's.
+    let names = |text: &str, start: &str| -> Vec<String> {
+        let mut names: Vec<String> = text
+            .split(start)
+            .nth(1)
+            .expect("a [patch.crates-io] section")
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.starts_with('[') && !line.starts_with("```"))
+            .filter_map(|line| {
+                let name = line.split('=').next()?.trim();
+                (!name.is_empty() && !name.starts_with('#')).then(|| name.to_owned())
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let workspace = std::fs::read_to_string(format!("{root}/Cargo.toml")).unwrap();
+    let guide = std::fs::read_to_string(format!("{root}/docs/getting-started.md")).unwrap();
+    assert_eq!(
+        names(&guide, "[patch.crates-io]"),
+        names(&workspace, "[patch.crates-io]"),
+        "docs/getting-started.md's [patch.crates-io] is the workspace's"
+    );
+}

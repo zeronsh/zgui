@@ -14,7 +14,7 @@ zgui is a retained-mode GUI framework in Rust for macOS, Windows and Linux. Comp
 
 ## Quick start
 
-In Rust ([getting started](docs/getting-started.md) goes further):
+In Rust, with the dependencies [getting started](docs/getting-started.md#in-rust) lists (zgui's crates from git, and the forks it builds with):
 
 ```rust,no_run
 use zgui::compose::prelude::*;
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-In Luau: put this in `hello/app.luau` and run `zgui-run hello/` (`cargo install --git https://github.com/zeronsh/zgui zgui-run`). Saving the file updates the window and keeps the count.
+In Luau: put this in `hello/app.luau` and run `zgui-run hello/` (`LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgui zgui-run`). Saving the file updates the window and keeps the count.
 
 ```lua
 local count = ui.state("count", 0)
@@ -56,10 +56,10 @@ The examples run from a checkout:
 ```sh
 cargo run --release -p zgui-desktop --example gallery
 cargo run --release -p zgui-run -- crates/zgui-script/examples/mail
-cargo run -p zgui-script --bin zgui -- check app.luau
+cargo run -p zgui-script --bin zgui -- check crates/zgui-script/examples/mail
 ```
 
-On Linux, install the fontconfig, xkbcommon and D-Bus development packages and `pkg-config`. On Windows, use the MSVC toolchain ([notes](docs/windows.md)).
+`zgui check` type checks scripts with [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp/releases), which it needs on the `PATH`; `zgui lint` needs nothing. On Linux, install the fontconfig, xkbcommon and D-Bus development packages and `pkg-config`. On Windows, use the MSVC toolchain ([notes](docs/windows.md)).
 
 ## Performance
 

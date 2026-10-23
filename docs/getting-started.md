@@ -6,13 +6,22 @@ zgui runs on macOS, Windows and Linux. On Linux, install the fontconfig, xkbcomm
 
 ## In Rust
 
-Add the crates (they are not on crates.io yet):
+Add the crates (they are not on crates.io yet), and the fixes zgui builds its dependencies with: it carries forks of five of them (`vendor/` in its repository), and a git dependency doesn't bring its `[patch]` with it, so without these zgui-gpu doesn't compile (cosmic-text) or behaves differently (layout margins, VoiceOver headings, Metal's command buffers):
 
 ```toml
 [dependencies]
 zgui = { git = "https://github.com/zeronsh/zgui" }
 zgui-desktop = { git = "https://github.com/zeronsh/zgui" }
+
+[patch.crates-io]
+cosmic-text = { git = "https://github.com/zeronsh/zgui" }
+taffy = { git = "https://github.com/zeronsh/zgui" }
+wgpu-hal = { git = "https://github.com/zeronsh/zgui" }
+accesskit_macos = { git = "https://github.com/zeronsh/zgui" }
+accesskit_windows = { git = "https://github.com/zeronsh/zgui" }
 ```
+
+The first build compiles the stack once (about a minute on an Apple M-series Mac, release); later ones take seconds.
 
 ### A window
 
@@ -173,9 +182,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 The same interface as a script, hot reloaded as you save it, without a Rust host of your own. Install the runner and the checker:
 
 ```sh
-cargo install --git https://github.com/zeronsh/zgui zgui-run
-cargo install --git https://github.com/zeronsh/zgui zgui-script --bin zgui
+LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgui zgui-run
+LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgui zgui-script --bin zgui
 ```
+
+(`LUAU_CXXFLAGS=-DNDEBUG` builds Luau without its asserts, a fifth faster: the repository's own builds set it in `.cargo/config.toml`, which an install doesn't read. Without it, `zgui-run` says so as it starts.)
 
 ### A window
 
