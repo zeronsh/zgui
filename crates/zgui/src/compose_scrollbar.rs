@@ -120,6 +120,11 @@ pub(crate) fn mount(
     horizontal: bool,
 ) {
     let overlay = ui.container(owner, Layout::Overlay, Style::default());
+    // Its parts are placed by transforms from its corner, in points across
+    // whichever way the view runs.
+    ui.scene
+        .borrow_mut()
+        .set_direction(overlay, Some(crate::scene::Direction::Ltr));
     let track = ui.container(overlay, Layout::Overlay, Style::default());
     let theme = ui.theme_scope();
     let background = ui.scene.borrow_mut().append(
@@ -182,10 +187,14 @@ pub(crate) fn mount(
         let limit = (total - length).max(0.);
         let thumb_length = (length * length / total.max(1.)).max(24.).min(length);
         let travel = (length - thumb_length).max(0.);
+        // Right to left, a horizontal bar counts from its right end.
+        let rtl = horizontal && scene.borrow().direction(owner) == crate::scene::Direction::Rtl;
         let position = match cx.event {
             InputEvent::PointerDown { x, y, .. } | InputEvent::PointerMove { x, y } => {
                 let bounds = scene.borrow().bounds(track);
-                Some(if horizontal {
+                Some(if rtl {
+                    length - (x as f64 - bounds.x as f64)
+                } else if horizontal {
                     x as f64 - bounds.x as f64
                 } else {
                     y as f64 - bounds.y as f64
@@ -239,7 +248,13 @@ pub(crate) fn mount(
             InputEvent::Scroll {
                 delta_x, delta_y, ..
             } => {
-                let delta = if horizontal { *delta_x } else { *delta_y };
+                let delta = if rtl {
+                    -*delta_x
+                } else if horizontal {
+                    *delta_x
+                } else {
+                    *delta_y
+                };
                 (delta.is_finite() && delta != 0.).then_some(before + delta as f64)
             }
             InputEvent::KeyDown { key, .. } => match key {
@@ -247,6 +262,8 @@ pub(crate) fn mount(
                 Key::End => Some(limit),
                 Key::PageUp => Some(before - length),
                 Key::PageDown => Some(before + length),
+                Key::ArrowLeft if rtl => Some(before + 40.),
+                Key::ArrowRight if rtl => Some(before - 40.),
                 Key::ArrowLeft | Key::ArrowUp => Some(before - 40.),
                 Key::ArrowRight | Key::ArrowDown => Some(before + 40.),
                 _ => None,
@@ -348,6 +365,9 @@ pub(crate) fn mount(
             ..Default::default()
         };
         let mut scene = ui.scene.borrow_mut();
+        // Right to left, a vertical bar is at the left (the start edge, as
+        // browsers put it) and a horizontal thumb starts at the right.
+        let rtl = scene.direction(owner) == crate::scene::Direction::Rtl;
         // Zero area lets underlying controls receive hits outside the track.
         scene.set_style(
             overlay,
@@ -379,7 +399,7 @@ pub(crate) fn mount(
                 }
             } else {
                 Transform {
-                    x: width - thickness,
+                    x: if rtl { 0. } else { width - thickness },
                     y: 0.,
                 }
             },
@@ -432,6 +452,11 @@ pub(crate) fn mount(
             (value as f64 / limit as f64 * (length - thumb_length) as f64) as f32
         } else {
             0.
+        };
+        let position = if rtl && horizontal {
+            length - thumb_length - position
+        } else {
+            position
         };
         let (start, side) = (position + THUMB_INSET, (thickness - across) / 2.);
         scene.set_transform(

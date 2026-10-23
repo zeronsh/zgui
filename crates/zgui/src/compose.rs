@@ -3606,12 +3606,20 @@ fn mount_scroll(
 ) {
     use crate::scene::{Style, Transform};
     let main_size = move |size: (f32, f32)| if horizontal { size.0 } else { size.1 };
-    let translation = move |offset: f32| {
+    // The offset counts from the start: right to left, a horizontal
+    // view's start is its right, and moving on reveals what is left of it.
+    let translation = move |offset: f32, rtl: bool| {
         if horizontal {
-            Transform { x: -offset, y: 0. }
+            Transform {
+                x: if rtl { offset } else { -offset },
+                y: 0.,
+            }
         } else {
             Transform { x: 0., y: -offset }
         }
+    };
+    let rtl_of = move |scene: &crate::scene::Scene| {
+        horizontal && scene.direction(root) == crate::scene::Direction::Rtl
     };
     let size = ui.observe_content_size(root);
     let extent = ui.observe_content_size(content);
@@ -3697,13 +3705,16 @@ fn mount_scroll(
             };
             let limit =
                 (main_size(wheel_extent.get()) as f64 - main_size(wheel_size.get()) as f64).max(0.);
+            let rtl = rtl_of(&ui.scene.borrow());
+            let movement = if rtl { -movement } else { movement };
             let position = (wheel_offset.get() as f64 + movement).clamp(0., limit) as f32;
             wheel_offset.set(position);
             // A surrounding reactive batch can defer the geometry binding.
             // Publish this translation now for the next ancestor's focus handler.
             let mut scene = ui.scene.borrow_mut();
             if scene.contains(content) && ui.input.focused() == Some(cx.target) {
-                scene.set_transform(content, translation(wheel_offset.get()));
+                let rtl = rtl_of(&scene);
+                scene.set_transform(content, translation(wheel_offset.get(), rtl));
             }
         }
         if let InputEvent::Scroll {
@@ -3717,6 +3728,12 @@ fn mount_scroll(
             if !delta.is_finite() {
                 return;
             }
+            // A wheel's horizontal delta is physical: to the right is back
+            // toward the start, right to left.
+            let delta = match weak.upgrade() {
+                Some(ui) if rtl_of(&ui.scene.borrow()) => -delta,
+                _ => delta,
+            };
             let before = wheel_offset.get();
             let limit =
                 (main_size(wheel_extent.get()) as f64 - main_size(wheel_size.get()) as f64).max(0.);
@@ -3765,7 +3782,8 @@ fn mount_scroll(
         content_style.height = horizontal.then_some(height);
         content_style.flex_shrink = 0.;
         scene.set_style(content, content_style);
-        scene.set_transform(content, translation(position + stretch.get()));
+        let rtl = rtl_of(&scene);
+        scene.set_transform(content, translation(position + stretch.get(), rtl));
     });
 }
 #[cfg(target_os = "macos")]
