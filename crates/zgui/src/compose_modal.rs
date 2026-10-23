@@ -303,11 +303,15 @@ pub(crate) fn deactivate(ui: &Ui, overlay: NodeId) {
 /// from the window's edges. Centred, with no insets, unless set.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ModalPlacement {
+    /// Where it lines up across the window.
     pub x: crate::compose_popover::Edge,
+    /// Where it lines up down the window.
     pub y: crate::compose_popover::Edge,
+    /// Room kept from the window's top, right, bottom and left edges.
     pub insets: [f32; 4],
 }
 impl ModalPlacement {
+    /// Centred on both axes, with no insets.
     pub fn centered() -> Self {
         Self {
             x: crate::compose_popover::Edge::Center,

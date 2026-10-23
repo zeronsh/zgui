@@ -43,6 +43,8 @@ pub struct ViewScope {
 }
 
 impl ViewScope {
+    /// Mount a container with `layout` and `style` under `parent`, owned by
+    /// the new scope.
     pub fn mount(
         runtime: &Runtime,
         scene: Rc<RefCell<Scene>>,
@@ -81,14 +83,17 @@ impl ViewScope {
         self.resources.push(Box::new(resource));
     }
 
+    /// The scope's container node.
     pub fn root(&self) -> NodeId {
         self.root
     }
 
+    /// The services this scope's children inherit.
     pub fn services(&self) -> &ServiceScope {
         &self.services
     }
 
+    /// The services this scope's children inherit, to provide more.
     pub fn services_mut(&mut self) -> &mut ServiceScope {
         &mut self.services
     }
@@ -108,6 +113,7 @@ impl ViewScope {
         self.children.clear();
     }
 
+    /// Append a node to the scope's container. It is removed with the scope.
     pub fn append(&mut self, kind: NodeKind, style: Style) -> NodeId {
         self.scene.borrow_mut().append(self.root, kind, style)
     }
@@ -143,6 +149,8 @@ impl ViewScope {
         });
     }
 
+    /// Append a text node whose text follows what `compute` reads (see
+    /// [`ViewScope::bind_text`]).
     pub fn text<T: Into<Arc<str>>>(
         &mut self,
         style: Style,

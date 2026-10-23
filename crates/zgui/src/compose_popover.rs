@@ -7,19 +7,26 @@ use crate::{
 /// Which side of its trigger an anchored popover or menu opens on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Side {
+    /// Below the trigger.
     #[default]
     Bottom,
+    /// Above it.
     Top,
+    /// To its left.
     Left,
+    /// To its right.
     Right,
 }
 /// How it lines up along that side: the trigger's start edge, centre or
 /// end edge (left/top, middle, right/bottom).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Edge {
+    /// The trigger's start edge (left or top).
     #[default]
     Start,
+    /// Its centre.
     Center,
+    /// Its end edge (right or bottom).
     End,
 }
 /// Where an anchored popover or menu opens: on `side` of the trigger,
@@ -27,8 +34,11 @@ pub enum Edge {
 /// when the preferred one lacks room, and stays inside the window.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
+    /// The side it prefers.
     pub side: Side,
+    /// How it lines up along that side.
     pub align: Edge,
+    /// How far from the trigger, in points.
     pub offset: f32,
 }
 impl Default for Placement {

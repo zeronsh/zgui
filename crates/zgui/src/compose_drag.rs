@@ -55,6 +55,8 @@ impl View {
             }
         })
     }
+    /// Accept drags carrying a `T` and run `callback` with it when one is
+    /// dropped here (see `on_drop_when` to accept only some).
     pub fn on_drop<T: 'static>(
         self,
         callback: impl FnMut(&T, &mut crate::input::EventContext) + 'static,

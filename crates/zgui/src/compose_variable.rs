@@ -17,9 +17,13 @@ pub struct VariableHeights {
     end: Rc<Cell<bool>>,
 }
 impl VariableHeights {
+    /// `count` rows, each `estimate` tall until measured. Panics if `estimate`
+    /// isn't finite and positive.
     pub fn new(runtime: &Runtime, count: usize, estimate: f32) -> Self {
         Self::try_new(runtime, count, estimate).expect("valid variable row heights")
     }
+    /// `count` rows, each `estimate` tall until measured, or an error if
+    /// `estimate` isn't finite and positive.
     pub fn try_new(runtime: &Runtime, count: usize, estimate: f32) -> Result<Self, HeightError> {
         Ok(Self {
             index: Rc::new(RefCell::new(HeightIndex::try_new(count, estimate)?)),
@@ -48,6 +52,8 @@ impl VariableHeights {
         }
         Ok(changed)
     }
+    /// Change the number of rows: existing heights stay, added rows take the
+    /// estimate. Returns whether the count changed.
     pub fn resize(&self, count: usize) -> Result<bool, HeightError> {
         let changed = self.index.borrow_mut().resize(count)?;
         if changed {
@@ -62,25 +68,31 @@ impl VariableHeights {
         self.changed();
         Ok(())
     }
+    /// The number of rows, read reactively.
     pub fn len(&self) -> usize {
         self.revision.get();
         self.index.borrow().count()
     }
+    /// Whether there are no rows.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Row `index`'s height, if it exists.
     pub fn row_height(&self, index: usize) -> Option<f32> {
         self.revision.get();
         self.index.borrow().row_height(index)
     }
+    /// How far down the list row `index` starts.
     pub fn row_offset(&self, index: usize) -> f32 {
         self.revision.get();
         self.index.borrow().row_offset(index)
     }
+    /// The height of all the rows together.
     pub fn content_height(&self) -> f32 {
         self.revision.get();
         self.index.borrow().content_height()
     }
+    /// The row at `offset` down the list (see [`HeightIndex::row_at`]).
     pub fn row_at(&self, offset: f32) -> Option<usize> {
         self.revision.get();
         self.index.borrow().row_at(offset)

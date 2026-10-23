@@ -50,9 +50,13 @@ pub(crate) struct InlineIcon {
 /// follows the text colour takes the span's).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpanIcon {
+    /// The icon.
     pub svg: Arc<crate::svg::SvgData>,
+    /// Its width and height.
     pub size: f32,
+    /// The room between it and the text.
     pub gap: f32,
+    /// Its colour, or a colour token; `None` paints it as the SVG says.
     pub tint: Option<crate::theme::Themed<Color>>,
 }
 /// What keeps an icon's room in the line: a word joiner (zero width, and
@@ -78,9 +82,12 @@ pub struct TextSpan {
 /// `a:hover { text-decoration: underline }`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SpanHover {
+    /// The underline under the pointer.
     pub underline: Option<crate::rich_text::Decoration>,
+    /// The text colour under the pointer, or a colour token.
     pub text_color: Option<crate::theme::Themed<Color>>,
 }
+/// A span of `text`, styled as the paragraph is.
 pub fn text_span(text: impl Into<Arc<str>>) -> TextSpan {
     TextSpan {
         action: None,
@@ -157,10 +164,12 @@ impl TextSpan {
         }
         self
     }
+    /// Underline the span.
     pub fn underline(mut self, decoration: crate::rich_text::Decoration) -> Self {
         self.underline = Some(decoration);
         self
     }
+    /// Strike the span through.
     pub fn strikethrough(mut self, decoration: crate::rich_text::Decoration) -> Self {
         self.strikethrough = Some(decoration);
         self
@@ -170,6 +179,7 @@ impl TextSpan {
         self.styles = std::mem::take(&mut self.styles).text_color(color);
         self
     }
+    /// The font size in points; a size that isn't finite and positive is 16.
     pub fn text_size(mut self, size: f32) -> Self {
         self.styles.text_size = Some(if size.is_finite() && size > 0. {
             size
@@ -178,37 +188,46 @@ impl TextSpan {
         });
         self
     }
+    /// Families to try, in order, for characters the span's font lacks.
     pub fn font_fallbacks(mut self, families: impl Into<std::sync::Arc<[FontFamily]>>) -> Self {
         self.styles.rare_mut().font_fallbacks = Some(families.into());
         self
     }
+    /// OpenType features (ligatures, tabular figures) for the span.
     pub fn font_features(mut self, features: crate::text_layout::FontFeatures) -> Self {
         self.styles.rare_mut().font_features = Some(features);
         self
     }
+    /// The span's font family.
     pub fn font_family(mut self, family: impl Into<FontFamily>) -> Self {
         self.styles.font_family = Some(family.into());
         self
     }
+    /// The span's font weight, from 1 to 1000 (400 regular, 700 bold).
     pub fn font_weight(mut self, weight: u16) -> Self {
         self.styles.font_weight = Some(weight.clamp(1, 1000));
         self
     }
+    /// Italic, or upright.
     pub fn italic(mut self, italic: bool) -> Self {
         self.styles.italic = Some(italic);
         self
     }
+    /// A bold span (weight 700).
     pub fn font_bold(self) -> Self {
         self.font_weight(700)
     }
+    /// The font's own line height.
     pub fn line_height_normal(mut self) -> Self {
         self.styles.line_height = Some(LineHeight::NORMAL);
         self
     }
+    /// A line height of `px` points.
     pub fn line_height(mut self, px: f32) -> Self {
         self.styles.line_height = Some(LineHeight::px(px));
         self
     }
+    /// `px` points added between characters.
     pub fn letter_spacing(mut self, px: f32) -> Self {
         self.styles.rare_mut().letter_spacing = Some(LetterSpacing::px(px));
         self
@@ -219,6 +238,7 @@ pub struct RichTextView {
     view: View,
     spans: Vec<TextSpan>,
 }
+/// A paragraph of spans (see [`text_span`]), laid out and painted as one.
 pub fn rich_text() -> RichTextView {
     RichTextView {
         view: crate::compose::rich_text_signal(Vec::new),
@@ -226,14 +246,17 @@ pub fn rich_text() -> RichTextView {
     }
 }
 impl RichTextView {
+    /// Add `span` after the existing spans.
     pub fn child(mut self, span: TextSpan) -> Self {
         self.spans.push(span);
         self
     }
+    /// Add `spans` after the existing spans, in order.
     pub fn children(mut self, spans: impl IntoIterator<Item = TextSpan>) -> Self {
         self.spans.extend(spans);
         self
     }
+    /// Name the paragraph's view (see `View::id`).
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.view = self.view.id(id);
         self

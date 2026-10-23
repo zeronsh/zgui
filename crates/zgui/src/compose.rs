@@ -42,6 +42,8 @@ impl<G, F: Fn(&G) -> bool> Lease for CheckedLease<G, F> {
 /// Erases a cancel-on-drop executor guard without losing completion information.
 pub struct TaskToken(Box<dyn Lease>);
 impl TaskToken {
+    /// A token holding `guard`, finished once `finished(&guard)` says so.
+    /// Dropping the token drops the guard, which cancels its task.
     pub fn new<G: 'static>(guard: G, finished: impl Fn(&G) -> bool + 'static) -> Self {
         Self(Box::new(CheckedLease {
             guard,
@@ -53,9 +55,11 @@ impl TaskToken {
 #[derive(Clone)]
 pub struct TaskRunner(Rc<dyn Fn(LocalFuture) -> TaskToken>);
 impl TaskRunner {
+    /// Runs each future with `spawn`, which returns the token that cancels it.
     pub fn new(spawn: impl Fn(LocalFuture) -> TaskToken + 'static) -> Self {
         Self(Rc::new(spawn))
     }
+    /// Runs futures on `executor`.
     pub fn from_executor(executor: Rc<RefCell<crate::task::LocalExecutor>>) -> Self {
         let spawner = executor.borrow().spawner();
         Self::new(move |future| {
@@ -84,6 +88,8 @@ pub struct Tasks {
     runner: TaskRunner,
 }
 impl Tasks {
+    /// Run `future` until it finishes or the component unmounts, which
+    /// cancels it. Once the component has unmounted this does nothing.
     pub fn spawn(&self, future: impl Future<Output = ()> + 'static) {
         let Some(owner) = self.owner.upgrade() else {
             return;
@@ -132,15 +138,20 @@ impl Context {
             tasks: None,
         }
     }
+    /// The reactive runtime the component's signals live in.
     pub fn runtime(&self) -> Runtime {
         self.runtime.clone()
     }
+    /// A signal holding `initial`, made once as the component mounts.
     pub fn state<T: 'static>(&self, initial: T) -> Signal<T> {
         self.runtime.signal(initial)
     }
+    /// The nearest `T` an ancestor provides (see [`provide`]), if any.
     pub fn try_service<T: 'static>(&self) -> Option<Rc<T>> {
         self.environment.services.get()
     }
+    /// The nearest `T` an ancestor provides (see [`provide`]). Panics if none
+    /// does.
     pub fn service<T: 'static>(&self) -> Rc<T> {
         self.try_service().unwrap_or_else(|| {
             panic!(
@@ -149,9 +160,12 @@ impl Context {
             )
         })
     }
+    /// Keep `resource` alive until the component unmounts.
     pub fn retain(&mut self, resource: impl Any) {
         self.resources.push(Box::new(resource));
     }
+    /// Spawns futures that are cancelled when the component unmounts. Panics
+    /// without a [`TaskRunner`] provider; zgui-desktop's windows provide one.
     pub fn tasks(&mut self) -> Tasks {
         let runner = self.service::<TaskRunner>();
         let owner = self
@@ -162,12 +176,12 @@ impl Context {
             runner: (*runner).clone(),
         }
     }
-    /// The window's display-paced frame clock. Await it from [`Context::tasks`]
-    /// to animate once per refresh; see [`crate::frame`].
     /// Measures rich text as this tree's layout does.
     pub fn text_measure(&self) -> crate::rich_text::TextMeasure {
         self.environment.measure.clone()
     }
+    /// The window's display-paced frame clock. Await it from [`Context::tasks`]
+    /// to animate once per refresh; see [`crate::frame`].
     pub fn frames(&self) -> crate::frame::FrameClock {
         (*self.service::<crate::frame::FrameClock>()).clone()
     }
@@ -291,6 +305,9 @@ struct PortalOptions {
     /// `View::open_over`: the id of the item over the trigger.
     over: Option<Rc<dyn Fn() -> String>>,
 }
+/// A declarative view: a node to mount, its styles, children, handlers and
+/// semantics. Built with the functions here ([`column()`], [`text()`],
+/// [`button()`]…) and the builder methods, then mounted with `Ui::mount`.
 pub struct View {
     kind: Kind,
     styles: Styles,
@@ -403,6 +420,8 @@ impl View {
         };
         self
     }
+    /// Paint the SVG in `color` instead of its own colours. This method
+    /// requires an SVG view.
     pub fn svg_tint(mut self, color: crate::scene::Color) -> Self {
         self.kind = match self.kind {
             Kind::Svg { label, mut source } => Kind::Svg {
@@ -558,10 +577,12 @@ impl View {
         self.trigger_id = Some(id.into());
         self
     }
+    /// Add `child` after the existing children.
     pub fn child(mut self, child: impl Into<View>) -> Self {
         self.children.push(child.into());
         self
     }
+    /// Add `children` after the existing children, in order.
     pub fn children(mut self, children: impl IntoIterator<Item = View>) -> Self {
         self.children.extend(children);
         self
@@ -617,10 +638,13 @@ impl View {
             }));
         self
     }
+    /// Name the view, so tests and `ViewHandle::find` can reach its node.
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.id = Some(id.into());
         self
     }
+    /// Run `callback` when the view is clicked, or pressed from the keyboard
+    /// once focused.
     pub fn on_click(self, mut callback: impl FnMut() + 'static) -> Self {
         self.on_click_with(move |_| callback())
     }
@@ -680,18 +704,22 @@ impl View {
         self.focusable = Some(focusable);
         self
     }
+    /// Styles merged over the view's own while the pointer is over it.
     pub fn hover(mut self, style: impl FnOnce(Styles) -> Styles) -> Self {
         self.variants.hover = Some(Box::new(style(Styles::new())));
         self
     }
+    /// Styles merged over the view's own while it is pressed.
     pub fn active(mut self, style: impl FnOnce(Styles) -> Styles) -> Self {
         self.variants.active = Some(Box::new(style(Styles::new())));
         self
     }
+    /// Styles merged over the view's own while it has keyboard focus.
     pub fn focus(mut self, style: impl FnOnce(Styles) -> Styles) -> Self {
         self.variants.focus = Some(Box::new(style(Styles::new())));
         self
     }
+    /// Styles merged over the view's own while it is disabled.
     pub fn disabled_style(mut self, style: impl FnOnce(Styles) -> Styles) -> Self {
         self.variants.disabled = Some(Box::new(style(Styles::new())));
         self
@@ -709,10 +737,13 @@ impl View {
         self.variants.reactive = Some(Box::new(styles));
         self
     }
+    /// Disable the view: it takes no clicks or focus, shows its
+    /// `disabled_style`, and assistive technology reports it disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = Some(Box::new(move || disabled));
         self
     }
+    /// `disabled`, followed: it changes as what `disabled` reads does.
     pub fn disabled_when(mut self, disabled: impl FnMut() -> bool + 'static) -> Self {
         self.disabled = Some(Box::new(disabled));
         self
@@ -804,10 +835,13 @@ impl View {
             }
         })
     }
+    /// Run `f` with the mounted node once the view has mounted.
     pub fn on_mount(mut self, f: impl FnOnce(NodeHandle) + 'static) -> Self {
         self.mounted.push(Box::new(f));
         self
     }
+    /// Styles merged over the view's own, computed in an effect: they change
+    /// as what `style` reads does, without mounting again.
     pub fn reactive_style(mut self, style: impl FnMut() -> Styles + 'static) -> Self {
         self.reactive_style = Some(Box::new(style));
         self
@@ -1108,6 +1142,7 @@ pub fn row() -> View {
 pub fn column() -> View {
     View::new(Kind::Container(Layout::Column)).items_stretch()
 }
+/// A [`column()`].
 pub fn div() -> View {
     column()
 }
@@ -1152,9 +1187,11 @@ fn scroll_default_size() -> crate::scene::Style {
         ..Default::default()
     }
 }
+/// A line or paragraph of text, wrapping at its width.
 pub fn text(value: impl Into<String>) -> View {
     View::new(Kind::Text(value.into()))
 }
+/// Text that follows what `compute` reads.
 pub fn text_signal(compute: impl FnMut() -> String + 'static) -> View {
     View::new(Kind::BoundText(Box::new(compute)))
 }
@@ -1172,8 +1209,6 @@ pub(crate) fn with_rich_spans(mut view: View, spans: Vec<TextSpan>) -> View {
     view.kind = Kind::RichText(Box::new(move || spans.clone()));
     view
 }
-/// An immutable decoded image. Unspecified dimensions use the source pixel size;
-/// explicit dimensions stretch its pixels into the allocated content box.
 /// Decoded frames with owned, visibility-aware playback. Offscreen, clipped and
 /// transparent allocations pause and remove their timer; removal cancels it.
 pub fn animated_image(
@@ -1187,6 +1222,7 @@ pub fn animated_image(
     });
     view
 }
+/// An [`animated_image`] that plays while `playing` is true.
 pub fn animated_image_controlled(
     label: impl Into<String>,
     animation: std::sync::Arc<crate::animation::Animation>,
@@ -1196,6 +1232,8 @@ pub fn animated_image_controlled(
     view.animation.as_mut().unwrap().playing = Some(playing);
     view
 }
+/// A retained CoreVideo frame (see [`crate::native_surface`]), shown
+/// without copying its pixels. `label` is its accessible name.
 #[cfg(target_os = "macos")]
 pub fn native_surface(
     label: impl Into<String>,
@@ -1203,6 +1241,7 @@ pub fn native_surface(
 ) -> View {
     native_surface_signal(label, move || source.clone())
 }
+/// A [`native_surface`] whose surface follows what `source` reads.
 #[cfg(target_os = "macos")]
 pub fn native_surface_signal(
     label: impl Into<String>,
@@ -1214,6 +1253,9 @@ pub fn native_surface_signal(
     })
     .object_fit(crate::style::ObjectFit::Contain)
 }
+/// An immutable decoded image. Unspecified dimensions use the source pixel size;
+/// explicit dimensions stretch its pixels into the allocated content box.
+/// `label` is its accessible name.
 pub fn image(label: impl Into<String>, source: std::sync::Arc<crate::image::ImageData>) -> View {
     image_signal(label, move || source.clone())
 }
@@ -1264,6 +1306,7 @@ pub fn async_image<
 pub fn svg(label: impl Into<String>, source: std::sync::Arc<crate::svg::SvgData>) -> View {
     svg_signal(label, move || source.clone())
 }
+/// An [`svg`] whose source follows what `source` reads.
 pub fn svg_signal(
     label: impl Into<String>,
     source: impl FnMut() -> std::sync::Arc<crate::svg::SvgData> + 'static,
@@ -1274,6 +1317,8 @@ pub fn svg_signal(
     })
     .size(24., 24.)
 }
+/// An [`image`] whose decoded source follows what `source` reads. Image
+/// views own their pixels and reject children.
 pub fn image_signal(
     label: impl Into<String>,
     source: impl FnMut() -> std::sync::Arc<crate::image::ImageData> + 'static,
@@ -1335,6 +1380,8 @@ pub fn submenu(label: impl Into<String>, open: Signal<bool>) -> View {
 pub fn menu_item(label: impl Into<String>) -> View {
     View::new(Kind::MenuItem(label.into()))
 }
+/// A push button holding its children. `.on_click` runs when it is
+/// clicked, or pressed from the keyboard.
 pub fn button() -> View {
     View::new(Kind::Button)
 }
@@ -1393,12 +1440,18 @@ pub fn text_area(label: impl Into<String>, value: Signal<String>) -> View {
         multiline: true,
     })
 }
+/// A component: `build` runs once, as it mounts, with a [`Context`] for its
+/// state, services and tasks, and returns its view.
 pub fn component(build: impl FnOnce(&mut Context) -> View + 'static) -> View {
     View::new(Kind::Component(Box::new(build)))
 }
+/// `child`, with `value` provided to its subtree: components inside read it
+/// with [`Context::service`].
 pub fn provide<T: 'static>(value: T, child: View) -> View {
     provide_with(move |_| value, child)
 }
+/// [`provide`], the value made as `child` mounts, from the providing
+/// context.
 pub fn provide_with<T: 'static>(
     factory: impl FnOnce(&mut Context) -> T + 'static,
     child: View,
@@ -4351,6 +4404,7 @@ pub struct NodeHandle {
     node: NodeId,
 }
 impl NodeHandle {
+    /// The mounted node.
     pub fn node(&self) -> NodeId {
         self.node
     }
@@ -4370,6 +4424,7 @@ impl NodeHandle {
     pub fn scene(&self) -> Option<Rc<RefCell<crate::scene::Scene>>> {
         self.ui.upgrade().map(|ui| ui.scene.clone())
     }
+    /// Whether the node is still in the scene.
     pub fn is_mounted(&self) -> bool {
         self.ui
             .upgrade()
@@ -4538,19 +4593,23 @@ pub struct ViewHandle {
     registry: Registry,
 }
 impl ViewHandle {
+    /// The tree's root node.
     pub fn node(&self) -> NodeId {
         self.root
     }
+    /// Whether the tree is still in the scene.
     pub fn is_mounted(&self) -> bool {
         self.ui
             .upgrade()
             .is_some_and(|ui| ui.scene.borrow().contains(self.root))
     }
+    /// Remove the tree from the scene, disposing its state and handlers.
     pub fn unmount(&self) {
         if let Some(mut ui) = self.ui.upgrade() {
             ui.remove(self.root);
         }
     }
+    /// The mounted node named `id` (`View::id`) in this tree, if any.
     pub fn find(&self, id: &str) -> Option<NodeId> {
         let ui = self.ui.upgrade()?;
         let registry = self.registry.borrow();

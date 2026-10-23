@@ -16,9 +16,13 @@ use std::{cell::Cell, rc::Rc};
 /// left of the view that has it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContextMenuEvent {
+    /// Across the window, in points.
     pub x: f32,
+    /// Down the window, in points.
     pub y: f32,
+    /// Across the view, from its left edge.
     pub local_x: f32,
+    /// Down the view, from its top edge.
     pub local_y: f32,
 }
 

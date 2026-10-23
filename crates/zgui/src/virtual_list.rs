@@ -1,14 +1,20 @@
 //! Fixed-height ranges and indexed prefix geometry for variable-height lists.
 use std::ops::Range;
 
+/// Which rows of a fixed-height list a viewport shows, in constant space.
 #[derive(Clone, Copy, Debug)]
 pub struct VirtualList {
+    /// The number of rows.
     pub count: usize,
+    /// Each row's height.
     pub row_height: f32,
+    /// Rows kept mounted beyond each end of the viewport.
     pub overscan: usize,
 }
 
 impl VirtualList {
+    /// A list of `count` rows, each `row_height` tall. Panics if `row_height`
+    /// isn't finite and positive.
     pub fn new(count: usize, row_height: f32, overscan: usize) -> Self {
         assert!(row_height.is_finite() && row_height > 0.0);
         Self {
@@ -17,9 +23,13 @@ impl VirtualList {
             overscan,
         }
     }
+    /// The height of all the rows together.
     pub fn content_height(&self) -> f32 {
         self.row_offset(self.count)
     }
+    /// The rows a viewport `viewport_height` tall, scrolled `offset` down,
+    /// shows, widened by `overscan` each way. The offset is clamped to the
+    /// list.
     pub fn visible_range(&self, offset: f32, viewport_height: f32) -> Range<usize> {
         if self.count == 0
             || !self.row_height.is_finite()
@@ -44,6 +54,7 @@ impl VirtualList {
             .ceil() as usize;
         first.saturating_sub(self.overscan)..end.saturating_add(self.overscan).min(self.count)
     }
+    /// How far down the list row `index` starts.
     pub fn row_offset(&self, index: usize) -> f32 {
         if !self.row_height.is_finite() || self.row_height <= 0.0 {
             return 0.0;
@@ -107,8 +118,16 @@ mod tests {
 /// Failure to construct or update a variable-height index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeightError {
+    /// A height that isn't finite and positive.
     InvalidHeight,
-    Bounds { index: usize, count: usize },
+    /// A row index past the end of the list.
+    Bounds {
+        /// The index asked for.
+        index: usize,
+        /// The number of rows.
+        count: usize,
+    },
+    /// More rows than can be allocated.
     Capacity,
 }
 impl std::fmt::Display for HeightError {
@@ -160,9 +179,13 @@ pub struct HeightIndex {
     minimum: f32,
 }
 impl HeightIndex {
+    /// `count` rows, each `estimate` tall until set. Panics if `estimate` isn't
+    /// finite and positive.
     pub fn new(count: usize, estimate: f32) -> Self {
         Self::try_new(count, estimate).expect("valid height index")
     }
+    /// `count` rows, each `estimate` tall until set, or an error if `estimate`
+    /// isn't finite and positive.
     pub fn try_new(count: usize, estimate: f32) -> Result<Self, HeightError> {
         Self::validate(estimate)?;
         let mut index = Self {
@@ -181,6 +204,7 @@ impl HeightIndex {
             Err(HeightError::InvalidHeight)
         }
     }
+    /// The number of rows.
     pub fn count(&self) -> usize {
         self.heights.len()
     }
@@ -188,9 +212,11 @@ impl HeightIndex {
     pub(crate) fn estimate(&self) -> f32 {
         self.estimate
     }
+    /// Row `index`'s height, if it exists.
     pub fn row_height(&self, index: usize) -> Option<f32> {
         self.heights.get(index).copied()
     }
+    /// Set row `index`'s height. Returns whether it changed.
     pub fn set_height(&mut self, index: usize, height: f32) -> Result<bool, HeightError> {
         Self::validate(height)?;
         let height = height.max(self.minimum);
@@ -258,6 +284,8 @@ impl HeightIndex {
             }
         }
     }
+    /// Change the number of rows: existing heights stay, added rows take the
+    /// estimate. Returns whether the count changed.
     pub fn resize(&mut self, count: usize) -> Result<bool, HeightError> {
         if count == self.count() {
             return Ok(false);
@@ -311,9 +339,11 @@ impl HeightIndex {
         }
         sum.value().max(0.)
     }
+    /// How far down the list row `index` starts.
     pub fn row_offset(&self, index: usize) -> f32 {
         self.prefix(index).min(f64::from(f32::MAX)) as f32
     }
+    /// The height of all the rows together.
     pub fn content_height(&self) -> f32 {
         self.row_offset(self.count())
     }
@@ -369,6 +399,8 @@ impl HeightIndex {
         }
         index
     }
+    /// The rows a viewport `viewport_height` tall, scrolled `offset` down,
+    /// shows, widened by `overscan` each way.
     pub fn visible_range(
         &self,
         offset: f32,
