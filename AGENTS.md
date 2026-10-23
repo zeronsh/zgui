@@ -13,6 +13,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all -- --check
 ```
 
+Integration tests of `zgui` and `zgui-script` build as one binary per area (`tests/<area>/main.rs`; linking 140 binaries made a one-line change in the core cost more than its build). A new test file goes beside the others (`tests/name.rs`) and is listed in its area's `main.rs` as `#[path = "../name.rs"] mod name;`. Run an area, a file or a test by filter: `cargo test -p zgui --test layout`, `... --test layout layout_box_model::`. A test that needs a process of its own (a global allocator, environment variables) gets its own `[[test]]` in the crate's `Cargo.toml`.
+
 Linux native probes (real X11/Wayland windows, input, IME, clipboard, accessibility): `cargo build -p zgui-desktop --examples --locked`, then `python3 scripts/linux_smokes.py --only <name>`. CI runs them all; `docs/validation.md` says what each checks.
 
 ## Before you commit

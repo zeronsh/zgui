@@ -1,4 +1,6 @@
 [package]
+# Integration tests build as a few binaries by area (see AGENTS.md).
+autotests = false
 name = "zgui-script"
 version.workspace = true
 edition.workspace = true
@@ -49,3 +51,27 @@ path = "examples/web_view.rs"
 
 [dev-dependencies]
 zgui-desktop = { path = "../zgui-desktop" }
+
+[[test]]
+name = "anime"
+path = "tests/anime/main.rs"
+
+[[test]]
+name = "examples"
+path = "tests/examples/main.rs"
+
+[[test]]
+name = "state"
+path = "tests/state/main.rs"
+
+[[test]]
+name = "tooling"
+path = "tests/tooling/main.rs"
+
+[[test]]
+name = "ui"
+path = "tests/ui/main.rs"
+
+[[test]]
+name = "bundle"
+path = "tests/bundle.rs"

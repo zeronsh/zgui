@@ -6,7 +6,7 @@
 //! The definitions are written in `types/zgui.d.luau.in`, where element
 //! props are `Merge<Props, { … }>`; luau-lsp gives up on that many type
 //! function calls ("code is too complex"), so `zgui.d.luau` has them written
-//! out. `ZGUI_BLESS=1 cargo test -p zgui-script --test types` writes it.
+//! out. `ZGUI_BLESS=1 cargo test -p zgui-script --test tooling types::` writes it.
 
 const SOURCE: &str = include_str!("../types/zgui.d.luau.in");
 const DEFS: &str = include_str!("../types/zgui.d.luau");
@@ -252,7 +252,7 @@ fn definitions_are_written_out_from_their_source() {
     assert!(
         expanded == DEFS,
         "types/zgui.d.luau is not what zgui.d.luau.in makes: run \
-         `ZGUI_BLESS=1 cargo test -p zgui-script --test types`"
+         `ZGUI_BLESS=1 cargo test -p zgui-script --test tooling types::`"
     );
 }
 

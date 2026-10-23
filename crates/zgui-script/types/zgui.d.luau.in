@@ -11,7 +11,7 @@
 -- Edit zgui.d.luau.in: zgui.d.luau, what editors and `zgui check` read, is
 -- that file with each `export type X = Merge<…>` written out as its table
 -- (luau-lsp finds that many type function calls too complex to check);
--- `ZGUI_BLESS=1 cargo test -p zgui-script --test types` writes it.
+-- `ZGUI_BLESS=1 cargo test -p zgui-script --test tooling types::` writes it.
 --
 -- The `export type`s are global type names scripts can use in their own
 -- annotations: `State<T>`, `Props`, `ContainerProps`, `Child`, `Color`…

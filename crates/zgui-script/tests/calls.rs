@@ -128,7 +128,7 @@ fn await_outside_a_task_says_where_it_belongs() {
 /// What a host call costs: `ui.call` to an action that answers at once,
 /// its promise settled and an `:after` callback run, start to finish, for
 /// batches of 1,000 to 8,000 calls (the cost per call should not grow).
-/// `cargo test --release -p zgui-script --test calls -- --ignored --nocapture`
+/// `cargo test --release -p zgui-script --test state calls:: -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn call_cost() {

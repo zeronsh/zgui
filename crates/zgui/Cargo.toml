@@ -1,4 +1,6 @@
 [package]
+# Integration tests build as a few binaries by area (see AGENTS.md).
+autotests = false
 name = "zgui"
 version.workspace = true
 edition.workspace = true
@@ -14,3 +16,43 @@ smallvec = "1.16"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = "0.3.2"
 objc2-core-video = "0.3.2"
+
+[[test]]
+name = "compose"
+path = "tests/compose/main.rs"
+
+[[test]]
+name = "editor"
+path = "tests/editor/main.rs"
+
+[[test]]
+name = "input"
+path = "tests/input/main.rs"
+
+[[test]]
+name = "layout"
+path = "tests/layout/main.rs"
+
+[[test]]
+name = "lists"
+path = "tests/lists/main.rs"
+
+[[test]]
+name = "overlays"
+path = "tests/overlays/main.rs"
+
+[[test]]
+name = "paint"
+path = "tests/paint/main.rs"
+
+[[test]]
+name = "text"
+path = "tests/text/main.rs"
+
+[[test]]
+name = "font_default_allocations"
+path = "tests/font_default_allocations.rs"
+
+[[test]]
+name = "semantics_text_allocations"
+path = "tests/semantics_text_allocations.rs"

@@ -68,7 +68,7 @@ Engine additions this example needed:
   `border_sides`, and `p` could override `px`, at random. Longhands now
   apply after their shorthand.
 
-Tests: `cargo test --release -p zgui-script --test frame_profiler` opens
+Tests: `cargo test --release -p zgui-script --test examples frame_profiler::` opens
 every menu, the span context menu and its zoom, a tooltip's delay, and checks
 that paused and stopped windows rest. `FRAME_PROFILER_SNAPSHOT=/tmp/fp`
 writes software captures (the headless text measurer is approximate).
