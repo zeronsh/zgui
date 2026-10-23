@@ -2061,9 +2061,11 @@ impl Ui {
             let mut storage = self.storage.editors.borrow_mut();
             ids.iter().filter_map(|id| storage.remove(id)).collect()
         };
-        // Focus inside it falls to its nearest focusable ancestor that stays
-        // (as a page's falls to its body), so keys still reach the app: once
-        // the frame settles (`try_prepare_frame`).
+        // Focus inside it falls to its nearest focusable ancestor that stays,
+        // else to the next Tab stop (as a native toolkit moves it on, rather
+        // than to the window), so keys still reach the app and a screen
+        // reader says where it went: once the frame settles
+        // (`try_prepare_frame`).
         let refocus = self
             .input
             .focused()
@@ -2077,7 +2079,8 @@ impl Ui {
                     }
                     at = s.parent(id);
                 }
-                None
+                // None stays: the next Tab stop takes it, never the window.
+                self.input.successor(&s, node)
             });
         // Detach geometry before listener captures or cached layouts can run
         // user destructors. Reentrant removal of this owner (or an ancestor)

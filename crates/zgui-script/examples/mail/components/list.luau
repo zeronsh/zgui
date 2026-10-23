@@ -19,6 +19,7 @@ local function row(i: number): Node
 	end
 	return ui.row {
 		id = `row-{i}`,
+		ref = state.rows,
 		role = "option",
 		-- Read as one name, as a mail app's rows are: whether it is unread,
 		-- who, what, when.

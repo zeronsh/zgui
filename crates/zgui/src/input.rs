@@ -1504,6 +1504,36 @@ impl InputDispatcher {
         }
         .filter(|id| *id != focused)
     }
+    /// Where focus goes when `gone`, which holds what has focus, leaves
+    /// and no focusable ancestor stays: the next Tab stop after it, else
+    /// the one before, as a native toolkit moves focus on rather than to
+    /// the window. In a focus group, the group's own stop.
+    pub fn successor(&self, scene: &Scene, gone: NodeId) -> Option<NodeId> {
+        let ordered = self.focusables(scene, scene.root());
+        let inside = |id: NodeId| scene.is_within(id, gone);
+        let at = ordered.iter().position(|(id, _)| inside(*id))?;
+        let pick = ordered[at..]
+            .iter()
+            .find(|(id, _)| !inside(*id))
+            .or_else(|| ordered[..at].iter().rev().find(|(id, _)| !inside(*id)))?
+            .0;
+        let current = self
+            .group_of(scene, pick)
+            .and_then(|group| {
+                self.state
+                    .borrow()
+                    .groups
+                    .get(&group)
+                    .and_then(|g| g.current)
+            })
+            .filter(|member| {
+                scene.contains(*member)
+                    && !inside(*member)
+                    && self.options(*member).is_some_and(|o| o.focusable)
+                    && self.enabled(scene, *member)
+            });
+        Some(current.unwrap_or(pick))
+    }
     fn next_focus(&self, scene: &Scene, reverse: bool) -> Option<NodeId> {
         let mut ordered = self.focusables(scene, scene.root());
         // A focus group is one stop: the member that has focus, else its

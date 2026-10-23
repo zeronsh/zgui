@@ -1,5 +1,6 @@
 -- What the app does to its state: buttons, menus and keys call these.
 local state = require("./state")
+local visible = require("@lib/filter")
 
 local M = {}
 
@@ -51,9 +52,23 @@ function M.mark_unread(id: number)
 	end
 end
 
+-- The messages the list shows now.
+local function shown(): { state.Message }
+	return visible(state.messages:peek(), state.mailbox:peek(), state.query:peek())
+end
+
 function M.move(id: number, mailbox: string)
 	local i = index_of(id)
 	if i then
+		-- Where it was in the list: the message after it takes its place,
+		-- and is the one open next, as a mail app moves on.
+		local at: number? = nil
+		for position, m in shown() do
+			if m.id == id then
+				at = position
+				break
+			end
+		end
 		ui.batch(function()
 			-- Its unread count moves with it.
 			local m = state.messages:peek()[i]
@@ -65,7 +80,23 @@ function M.move(id: number, mailbox: string)
 			end
 			state.messages:set_key({ i, "mailbox" }, mailbox)
 			if state.selected:peek() == id then
-				state.selected:set(nil)
+				local list = shown()
+				local place = if at then math.min(at, #list) else nil
+				local next = if place then list[place] else nil
+				if next then
+					M.open(next.id)
+					-- Focus goes with it, to its row in the list, as a mail
+					-- app's does (not to the window): once the list shows it.
+					ui.after(0, function()
+						for _, row in state.rows:elements() do
+							if row.id == `row-{place}` then
+								row:focus()
+							end
+						end
+					end)
+				else
+					state.selected:set(nil)
+				end
 			end
 			state.status:set(`Moved to {mailbox}`)
 		end)

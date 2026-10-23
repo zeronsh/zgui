@@ -392,3 +392,49 @@ fn rows_have_one_name_and_the_body_is_a_document() {
     };
     assert_eq!(documents, ["Message body"]);
 }
+
+#[test]
+fn archiving_opens_the_next_message_and_focus_stays_in_the_list() {
+    use zgui::semantics::Role;
+    let mut h = mail(1180.);
+    h.click("row-2");
+    h.frames(1);
+    let next = {
+        let row3 = h.find("row-3").unwrap();
+        h.ui.semantics.borrow().get(row3).unwrap().label.clone()
+    };
+    let archived = h.text("subject");
+    // The toolbar's Archive (not the Archive mailbox).
+    let archive = {
+        let semantics = h.ui.semantics.borrow();
+        let scene = h.ui.scene.borrow();
+        let mut pending = vec![scene.root()];
+        let mut found = None;
+        while let Some(id) = pending.pop() {
+            if semantics
+                .get(id)
+                .is_some_and(|n| n.role == Role::Button && n.label == "Archive")
+            {
+                found = Some(scene.bounds(id));
+            }
+            pending.extend(scene.children(id).iter().copied());
+        }
+        found.expect("an Archive button")
+    };
+    use zgui::input::{InputEvent, PointerButton};
+    let (x, y) = (archive.x + 4., archive.y + archive.height / 2.);
+    let button = PointerButton::Primary;
+    h.ui.dispatch(InputEvent::PointerDown { x, y, button });
+    h.ui.dispatch(InputEvent::PointerUp { x, y, button });
+    // The open message's pane changes over (its exit, the next's entry).
+    h.frames(30);
+    let subject = h.text("subject");
+    assert_ne!(subject, archived, "the next message opens");
+    assert!(next.contains(&subject), "{next} / {subject}");
+    // Focus is on the list's row for it, not the window.
+    let focused = h.ui.input.focused().expect("focus stays in the content");
+    let semantics = h.ui.semantics.borrow();
+    let node = semantics.get(focused).expect("a named stop");
+    assert_eq!(node.role, Role::ListBoxOption, "{}", node.label);
+    assert!(node.label.contains(&subject), "{}", node.label);
+}

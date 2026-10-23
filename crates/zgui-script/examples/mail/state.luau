@@ -43,6 +43,8 @@ M.settings_open = ui.state("settings_open", false)
 -- The window's root, and the layout its width calls for: read in a
 -- computed, an element's width follows layout (a container query).
 M.root = ui.ref()
+-- The message list's mounted rows, to give one focus.
+M.rows = ui.ref()
 M.layout = ui.computed(function(): Layout
 	local width = M.root.width or 1180
 	return if width >= 1000 then "wide" elseif width >= 680 then "medium" else "narrow"

@@ -882,6 +882,10 @@ means, as ARIA's attributes do in HTML; a view that sets none pays nothing:
   arrows along the axis, Home and End move among them. A field inside keeps its
   arrows. `ListBox` is vertical and `Toolbar` and `TabList` horizontal without
   asking, and a virtual list with `keyboard_navigation(true)` is one stop too.
+- When what has focus leaves (a message archived with its toolbar), focus
+  moves to its nearest focusable ancestor that stays, else to the next Tab
+  stop (a focus group's own), else the one before: never to the window,
+  which a screen reader would announce.
 - Escape in a text field (with no composition to cancel) goes on to the dialog
   or menu around it, which closes and gives focus back.
 
