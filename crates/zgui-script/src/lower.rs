@@ -294,6 +294,95 @@ fn bridge<T: PartialEq + Clone + 'static>(
     typed
 }
 
+/// A controlled input's text (`value = function`): what the function shows
+/// while the input isn't focused; focused, what is being typed, each edit
+/// told to `on_change`. Enter, or leaving it changed, tells `on_commit`, and
+/// it shows the function's text again. With the listener that does that.
+fn controlled_input(
+    cx: &mut Context,
+    shown: &Source,
+    change: Option<Handler>,
+    commit: Option<Handler>,
+    vm: &Rc<Vm>,
+    low: &Rc<Lowering>,
+) -> (
+    Signal<String>,
+    impl FnMut(&mut zgui::input::EventContext) + 'static,
+) {
+    let text = cx.state(String::new());
+    let runtime = cx.runtime();
+    // The function's latest text, and whether the input is being edited.
+    let latest: Rc<std::cell::RefCell<String>> = Rc::default();
+    let editing: Rc<std::cell::Cell<bool>> = Rc::default();
+    let (source, svm) = (resolve_owned(shown), vm.clone());
+    let (t, l, e) = (text.clone(), latest.clone(), editing.clone());
+    cx.retain(runtime.effect(move || {
+        let now = resolve_value(&source, &svm).to_string();
+        *l.borrow_mut() = now.clone();
+        if !e.get() {
+            t.set(now);
+        }
+    }));
+    if let Some(change) = change {
+        let (t, l, e, vm, actions) = (
+            text.clone(),
+            latest.clone(),
+            editing.clone(),
+            vm.clone(),
+            low.actions.clone(),
+        );
+        let quiet = runtime.clone();
+        cx.retain(runtime.effect(move || {
+            let now = t.get();
+            if e.get() && now != *l.borrow() {
+                quiet.untracked(|| run(&change, &vm, &actions, now));
+            }
+        }));
+    }
+    let (t, l, e, vm, actions) = (
+        text.clone(),
+        latest,
+        editing,
+        vm.clone(),
+        low.actions.clone(),
+    );
+    let listener = move |cx: &mut zgui::input::EventContext| {
+        if cx.phase == EventPhase::Capture || cx.target != cx.current_target {
+            return;
+        }
+        let commit_now = |cx: &mut zgui::input::EventContext| {
+            let typed = t.with_untracked(Clone::clone);
+            if typed != *l.borrow()
+                && let Some(commit) = &commit
+            {
+                run(commit, &vm, &actions, typed);
+            }
+            let _ = cx;
+        };
+        match &cx.event {
+            InputEvent::Focus => e.set(true),
+            InputEvent::KeyDown {
+                key: zgui::input::Key::Enter,
+                modifiers,
+                ..
+            } if !modifiers.shift => {
+                commit_now(cx);
+                // Shown as the function has it now, still focused.
+                let now = l.borrow().clone();
+                t.set(now);
+            }
+            InputEvent::Blur => {
+                commit_now(cx);
+                e.set(false);
+                let now = l.borrow().clone();
+                t.set(now);
+            }
+            _ => {}
+        }
+    };
+    (text, listener)
+}
+
 fn need<'a>(cx: &'a mut Option<&mut Context>) -> &'a mut Context {
     cx.as_deref_mut()
         .expect("node lowered without a component context")
@@ -806,12 +895,32 @@ fn kind_view(
             secure,
             spellcheck,
         } => {
-            let value = bridge(
-                need(&mut cx),
-                value,
-                |v| v.to_string(),
-                |s| Value::Str(s.into()),
-            );
+            let (value, controlled) = match value {
+                crate::node::InputValue::State(value) => (
+                    bridge(
+                        need(&mut cx),
+                        value,
+                        |v| v.to_string(),
+                        |s| Value::Str(s.into()),
+                    ),
+                    None,
+                ),
+                crate::node::InputValue::Shown {
+                    shown,
+                    change,
+                    commit,
+                } => {
+                    let (text, control) = controlled_input(
+                        need(&mut cx),
+                        shown,
+                        change.clone(),
+                        commit.clone(),
+                        vm,
+                        low,
+                    );
+                    (text, Some(control))
+                }
+            };
             let mut view = if *multiline {
                 text_area(label.clone(), value)
             } else {
@@ -844,6 +953,9 @@ fn kind_view(
                     });
                 }
                 None => {}
+            }
+            if let Some(control) = controlled {
+                view = view.on_event(control);
             }
             if *secure {
                 view = view.secure(true);
@@ -2318,12 +2430,13 @@ fn with_events(
         events.hover.clone(),
         events.pointer_move.clone(),
     );
-    let (key, key_up, focus, blur, wheel) = (
+    let (key, key_up, focus, blur, wheel, pinch) = (
         events.key.clone(),
         events.key_up.clone(),
         events.focus.clone(),
         events.blur.clone(),
         events.wheel.clone(),
+        events.pinch.clone(),
     );
     // A press that follows the pointer (a divider, a slider of the
     // script's own) keeps it until release, wherever it goes.
@@ -2445,18 +2558,34 @@ fn with_events(
                     run(h, &vm, &actions, ());
                 }
             }
+            // Where, and the keys held: a canvas zooms about the pointer
+            // (⌘ or Ctrl with the wheel). `true` back takes the gesture
+            // from the scroll views around it.
             InputEvent::Scroll {
-                delta_x, delta_y, ..
+                x,
+                y,
+                delta_x,
+                delta_y,
             } => {
-                if let Some(h) = &wheel {
-                    let table = lua.create_table().and_then(|t| {
-                        t.set("dx", *delta_x)?;
-                        t.set("dy", *delta_y)?;
-                        Ok(t)
-                    });
-                    if let Ok(t) = table {
-                        run(h, &vm, &actions, t);
-                    }
+                if let Some(h) = &wheel
+                    && let Ok(t) = point(*x, *y)
+                    && t.set("dx", *delta_x)
+                        .and_then(|_| t.set("dy", *delta_y))
+                        .is_ok()
+                    && run(h, &vm, &actions, t).is_some_and(|v| v.as_boolean() == Some(true))
+                {
+                    event.prevent_default();
+                    event.stop_propagation();
+                }
+            }
+            InputEvent::Pinch { x, y, delta } => {
+                if let Some(h) = &pinch
+                    && let Ok(t) = point(*x, *y)
+                    && t.set("scale", *delta).is_ok()
+                    && run(h, &vm, &actions, t).is_some_and(|v| v.as_boolean() == Some(true))
+                {
+                    event.prevent_default();
+                    event.stop_propagation();
                 }
             }
             _ => {}
@@ -3535,9 +3664,11 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
     }
 }
 
+/// A cursor by its name: `"nwse_resize"`, or CSS's `"nwse-resize"`.
 fn cursor(name: &str) -> zgui::cursor::Cursor {
     use zgui::cursor::Cursor::*;
-    match name {
+    let name = name.replace('-', "_");
+    match name.as_str() {
         "pointer" => Pointer,
         "text" => Text,
         "vertical_text" => VerticalText,

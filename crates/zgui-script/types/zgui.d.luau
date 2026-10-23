@@ -351,6 +351,7 @@ export type TextAlign = "start" | "end" | "left" | "center" | "right"
 -- "mono" (or "monospace"), "sans" ("sans-serif"), "serif", or a family name.
 -- A family name, or a font token (`FontToken`).
 export type Font = string
+-- Cursor names, or CSS's spellings of them ("nwse-resize").
 export type Cursor =
 	"default"
 	| "pointer"
@@ -377,6 +378,19 @@ export type Cursor =
 	| "nwse_resize"
 	| "zoom_in"
 	| "zoom_out"
+	| "vertical-text"
+	| "not-allowed"
+	| "context-menu"
+	| "no-drop"
+	| "all-scroll"
+	| "col-resize"
+	| "row-resize"
+	| "ew-resize"
+	| "ns-resize"
+	| "nesw-resize"
+	| "nwse-resize"
+	| "zoom-in"
+	| "zoom-out"
 
 -- A key into a state's table, an index into its list (from 1), or a path
 -- of them: `{ "tabs", 3, "title" }`.
@@ -825,7 +839,35 @@ export type KeyEvent = {
 	meta: boolean,
 	["repeat"]: boolean,
 }
-export type WheelEvent = { dx: number, dy: number }
+-- Points scrolled (`dy` positive: content moves up), where the pointer is,
+-- and the keys held: ⌘ or Ctrl with the wheel zooms, by convention.
+export type WheelEvent = {
+	x: number,
+	y: number,
+	local_x: number,
+	local_y: number,
+	clicks: number?,
+	shift: boolean,
+	ctrl: boolean,
+	alt: boolean,
+	meta: boolean,
+	dx: number,
+	dy: number,
+}
+-- A trackpad pinch: the fingers' spread changed by `scale` (0.05: 5%
+-- larger, zoom in; negative, out), at the pointer.
+export type PinchEvent = {
+	x: number,
+	y: number,
+	local_x: number,
+	local_y: number,
+	clicks: number?,
+	shift: boolean,
+	ctrl: boolean,
+	alt: boolean,
+	meta: boolean,
+	scale: number,
+}
 -- What a drag carries to other apps (`drag_export`): text, a link, files
 -- (absolute paths).
 export type DragExport = { text: string?, url: string?, files: { string }? }
@@ -1237,7 +1279,9 @@ export type NodeProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -1516,7 +1560,9 @@ export type Props = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -1788,7 +1834,9 @@ export type ContainerProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -2063,7 +2111,9 @@ export type ScrollProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -2345,7 +2395,9 @@ export type TextProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -2667,7 +2719,9 @@ export type RichProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -2939,7 +2993,9 @@ export type ImageProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -3219,7 +3275,9 @@ export type SvgProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -3493,7 +3551,9 @@ export type CanvasProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -3766,7 +3826,9 @@ export type CheckboxProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -4042,7 +4104,9 @@ export type InputProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -4083,7 +4147,15 @@ export type InputProps = {
 	-- rather than at the pointer.
 	context_menu_below: boolean?,
 	[number]: never,
-	value: State<string>,
+	-- A state, both ways; or, controlled as React's inputs are, a function
+	-- (or text) it shows, edits going out by `on_change` and `on_commit`.
+	-- Focused, it keeps what is being typed.
+	value: State<string> | (() -> string | number) | string,
+	-- Each edit's text (a controlled input).
+	on_change: ((text: string) -> ...unknown)?,
+	-- The text on Enter, or on leaving the input changed: where an
+	-- inspector's field applies, and undo records.
+	on_commit: ((text: string) -> ...unknown)?,
 	label: string?,
 	-- input only: several lines (textarea always has them).
 	multiline: boolean?,
@@ -4333,7 +4405,9 @@ export type ProgressProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -4606,7 +4680,9 @@ export type SliderProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -4883,7 +4959,9 @@ export type SplitProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -4933,10 +5011,13 @@ export type SplitProps = {
 	size: State<number>,
 	-- One pane over the other, instead of side by side.
 	vertical: boolean?,
-	-- The first pane's smallest and largest size.
+	-- `size` is the second pane's (an inspector at the right), and the
+	-- first fills the rest.
+	second: boolean?,
+	-- The sized pane's smallest and largest size.
 	min: number?,
 	max: number?,
-	-- The second pane's smallest size: the divider stops short of it.
+	-- The other pane's smallest size: the divider stops short of it.
 	min_rest: number?,
 }
 -- A virtualized list: only visible rows are built.
@@ -5169,7 +5250,9 @@ export type ListProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -5474,7 +5557,9 @@ export type LayerProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -5748,7 +5833,9 @@ export type ModalProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -6031,7 +6118,9 @@ export type PopoverProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -6319,7 +6408,9 @@ export type MenuItemProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -6593,7 +6684,9 @@ export type SubmenuProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -6870,7 +6963,9 @@ export type WebViewProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -7165,7 +7260,9 @@ export type TerminalProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -7438,7 +7535,9 @@ export type SlotProps = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -7716,7 +7815,9 @@ export type EachOptions = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -7997,7 +8098,9 @@ export type PresenceOptions = {
 	on_key_up: (((key: string) -> ...unknown) | Action)?,
 	on_focus: (Handler | Action)?,
 	on_blur: (Handler | Action)?,
-	on_wheel: (((e: WheelEvent) -> ...unknown) | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -8281,6 +8384,13 @@ declare ui: {
 	-- `table.sort` with a comparator for long lists: that calls Luau some
 	-- 1.7 million times for 100,000 rows. Nil keys go last.
 	sort: <T>(list: { T }, by: string | (item: T) -> any, descending: boolean?) -> { T },
+	-- JSON: `encode(value, { pretty = true })` writes what state could hold
+	-- (lists as arrays, tables as objects, `ui.null` as null); `decode(text)`
+	-- gives tables the script may change, and fails saying where.
+	json: {
+		encode: (value: any, opts: { pretty: boolean? }?) -> string,
+		decode: (text: string) -> any,
+	},
 	-- `n` formatted, as `Intl.NumberFormat` would: `ui.number(1234.5)` is
 	-- "1,234.50", `{ style = "percent" }` takes a fraction (0.05 is "5%"),
 	-- `{ notation = "compact" }` gives "1.2K", `{ sign = "always" }` "+3".

@@ -1,7 +1,8 @@
-//! Data helpers whose Luau versions cost too much at an app's sizes:
-//! `ui.sort`, which sorts a list by a key without calling a comparator for
-//! every comparison, and `ui.number`, numbers formatted as `Intl.NumberFormat`
-//! would.
+//! Data helpers whose Luau versions cost too much at an app's sizes, or
+//! that every app writes again: `ui.sort`, which sorts a list by a key
+//! without calling a comparator for every comparison, `ui.number`, numbers
+//! formatted as `Intl.NumberFormat` would, and `ui.json`, a document saved
+//! and opened.
 use mlua::{Lua, Table, ffi};
 use std::{cmp::Ordering, ffi::c_int};
 
@@ -308,7 +309,37 @@ fn number(n: f64, o: &NumberOptions) -> String {
     out
 }
 
+/// `ui.json.encode(value, { pretty })`: `value` as JSON, as state holds it
+/// (lists as arrays, tables as objects, `ui.null` as null).
+fn encode(_: &Lua, (value, options): (mlua::Value, Option<Table>)) -> mlua::Result<String> {
+    let value = crate::value::convert(value, None)
+        .map_err(|e| mlua::Error::runtime(format!("ui.json.encode: {e}")))?;
+    let text = value.to_json();
+    let pretty = match &options {
+        Some(o) => o.get::<Option<bool>>("pretty")?.unwrap_or(false),
+        None => false,
+    };
+    if !pretty {
+        return Ok(text);
+    }
+    serde_json::from_str::<serde_json::Value>(&text)
+        .and_then(|v| serde_json::to_string_pretty(&v))
+        .map_err(|e| mlua::Error::runtime(format!("ui.json.encode: {e}")))
+}
+/// `ui.json.decode(text)`: the data JSON `text` holds, as tables the script
+/// may change; an error says where JSON that isn't fails.
+fn decode(lua: &Lua, text: mlua::LuaString) -> mlua::Result<mlua::Value> {
+    let parsed = serde_json::from_slice::<serde_json::Value>(&text.as_bytes())
+        .map_err(|e| mlua::Error::runtime(format!("ui.json.decode: {e}")))?;
+    crate::value::to_lua(&crate::node::from_json(parsed), lua, false)
+}
+
 pub(crate) fn install(lua: &Lua, ui: &Table) -> mlua::Result<()> {
+    let json = lua.create_table()?;
+    json.set("encode", lua.create_function(encode)?)?;
+    json.set("decode", lua.create_function(decode)?)?;
+    json.set_readonly(true);
+    ui.set("json", json)?;
     let sort_by_keys =
         lua.create_function(|lua, (list, keys, descending): (Table, Table, bool)| {
             let mut result = Ok(());

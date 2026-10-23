@@ -33,7 +33,9 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `value` | `State<string>` | required | the text, both ways |
+| `value` | `State<string>`, or `() -> string \| number` | required | the text, both ways; or, controlled as React's inputs are, a function it shows, edits going out by `on_change` and `on_commit`. Focused, it keeps what is being typed; left, it shows the function's text again |
+| `on_change` | `(text: string) -> ()` | none | a controlled input's every edit |
+| `on_commit` | `(text: string) -> ()` | none | a controlled input's text on Enter, or on leaving it changed: where an inspector's field applies, and an undo step records |
 | `label` | `string` | `""` | its accessible name (not drawn) |
 | `placeholder` | `Reactive<string>` | none | shown while the value is empty, never part of it |
 | `placeholder_color` | `Reactive<Color>` | `"#8a9ab0"` | |

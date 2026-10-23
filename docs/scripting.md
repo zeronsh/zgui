@@ -330,7 +330,7 @@ Reaching for something it was not given is an error that names what it needs; a 
 
 ### Testing an app
 
-`zgui_script::testing::TestApp` mounts a host headless, with the task executor and frame clock a window has, and drives it as a person would. Set up actions, the fetcher and shared state on the host before returning it; `TestApp::wrapped` provides what a window does (a fake `zgui::platform::PlatformService` for the clipboard and file dialogs).
+`zgui_script::testing::TestApp` mounts a host headless, with the task executor and frame clock a window has, and drives it as a person would. Set up actions, the fetcher and shared state on the host before returning it; `TestApp::wrapped` provides what a window does, and `TestApp::with_desktop` a clipboard and file dialogs (`testing::FakeDesktop`) that answer as the test queues (`desktop.pick([path])`, `desktop.save_to(path)`), so open and save run as in a window.
 
 ```rust
 use zgui_script::{ScriptHost, testing::TestApp};

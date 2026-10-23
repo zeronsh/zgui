@@ -24,6 +24,9 @@ impl Harness {
     pub fn inline(code: &str) -> Self {
         Self(TestApp::inline(code))
     }
+    pub fn with_desktop(host: impl FnOnce(&Runtime) -> ScriptHost) -> Self {
+        Self(TestApp::with_desktop(host))
+    }
     pub fn inspected(
         host: impl FnOnce(&Runtime) -> ScriptHost,
         inspector: &zgui::inspect::Inspector,

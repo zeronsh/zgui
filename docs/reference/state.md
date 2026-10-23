@@ -12,6 +12,8 @@ ui.effect(f: () -> ...unknown) -> ()
 ui.batch<R...>(f: () -> R...) -> R...
 ui.sort<T>(list: { T }, by: string | (item: T) -> any, descending: boolean?) -> { T }
 ui.number(n: number, opts: NumberOptions?) -> string
+ui.json.encode(value: any, opts: { pretty: boolean? }?) -> string
+ui.json.decode(text: string) -> any
 ui.ref() -> Ref
 ui.component<P>(build: (props: P) -> Node) -> (props: P) -> Node
 ui.on_mount(f: () -> ...unknown) -> ()
@@ -165,6 +167,8 @@ return ui.list {
 - A computed returning indices into the plain table (or ids) holds a list of numbers; one returning the row tables themselves converts every row each time it runs.
 - Totals over every row (a sum, a count by group) cost a loop over all of them each time they run: keep them as the rows change (the feed adds what it changed) rather than summing in a chart's `draw` each tick.
 - `ui.number(n, opts)` formats numbers as `Intl.NumberFormat` does: `ui.number(1234.5)` is "1,234.50"; `decimals`, `style = "percent"` (`n` a fraction: 0.05 is "5%"), `notation = "compact"` ("1.2K", "3.4M", "5.6B", "7.8T"), `sign` (`"auto"`, `"always"`, `"except_zero"`, `"never"`), `grouping` (thousands separators, on) and `currency` (`"$"`, before the number).
+
+- `ui.json.encode(value, { pretty })` writes what state could hold as JSON (lists as arrays, tables as objects, `ui.null` as null), and `ui.json.decode(text)` gives back tables the script may change, failing with where the JSON is wrong: a document saved and opened with `ui.write_file` and `ui.read_file`.
 
 ## Refs
 

@@ -12,7 +12,8 @@ on_key: (((e: KeyEvent) -> boolean?) | Action)?
 on_key_up: (((key: string) -> ()) | Action)?
 on_focus: (Handler | Action)?
 on_blur: (Handler | Action)?
-on_wheel: (((e: WheelEvent) -> ()) | Action)?
+on_wheel: (((e: WheelEvent) -> boolean?) | Action)?
+on_pinch: (((e: PinchEvent) -> boolean?) | Action)?
 on_mount: ((element: Element) -> ())?
 on_resize: ((size: Size, element: Element) -> ())?
 on_visible: ((visible: boolean, element: Element) -> ())?
@@ -40,7 +41,8 @@ on_drop: ((payload: any, e: DragPoint) -> ())?
 | `on_key` | `{ key, code, shift, ctrl, alt, meta, repeat, editing }` (`code`: the physical key, as the DOM's `KeyboardEvent.code`, `"KeyA"`, `"Digit1"`; `editing`: a text field holds focus, so a bare-key shortcut gives way) | a key goes down while it, or a node inside it, has focus. Return `true` to consume the key: the default action and the ancestors' handlers do not see it |
 | `on_key_up` | the key's name | the key comes up |
 | `on_focus`, `on_blur` | nothing | it takes or loses keyboard focus |
-| `on_wheel` | `{ dx, dy }` | a wheel or trackpad scroll over it |
+| `on_wheel` | `{ dx, dy, x, y, local_x, local_y, shift, ctrl, alt, meta }` | a wheel or trackpad scroll over it. Return `true` to take it from the scroll views around it: a canvas pans with it, or zooms about the pointer with ⌘ or Ctrl held |
+| `on_pinch` | `{ scale, x, y, local_x, local_y, shift, ctrl, alt, meta }` (`scale`: the change in the fingers' spread, 0.05 for 5% apart: zoom in; negative, out) | a trackpad pinch over it (macOS); `true` takes it |
 | `on_mount` | its [element](#elements) | once, when it is mounted: start animations here |
 | `on_resize` | `{ w, h }`, its element | layout gives it a new size, and at its first layout (as a ResizeObserver reports) |
 | `on_visible` | whether any of it shows, its element | it comes into view or all of it leaves (inside every clip and scroll viewport above it), and at its first layout (as an IntersectionObserver reports): build what only matters on screen |
@@ -214,7 +216,7 @@ Query a box whose size does not depend on what the query changes (here the windo
 - `on_click` gets the keys held; `on_press` and `on_release` get the pointer. `on_press` is for what must start before release (dragging a window, a divider); `on_click` is a completed click.
 - The innermost node with `on_click` takes a click: a button inside a clickable row runs its own handler, not the row's. An empty `on_click = function() end` keeps clicks on a panel from reaching a backdrop under it.
 - `on_press`, `on_release`, `on_pointer_move`, `on_key` and `on_wheel` hear their events over (or, for keys, from inside) the node, children included, before its ancestors do. A node with `on_press` and either `on_pointer_move` or `on_release` keeps the pointer from press to release, wherever it goes.
-- Keys go to the node with focus and then up its ancestors. A plain node takes focus with `focusable = true`; buttons and inputs take it themselves. Return `true` from `on_key` only for the keys you handle, or typing into an input inside stops working.
+- Keys go to the node with focus and then up its ancestors; with nothing focused (and no modal open) they go to the app's root node, as a page's go to its body, so an `on_key` there hears the app's shortcuts. Check `editing` before taking a bare key, so a text field keeps its typing. A plain node takes focus with `focusable = true`; buttons and inputs take it themselves. Return `true` from `on_key` only for the keys you handle, or typing into an input inside stops working.
 - `on_hover` reports entering and leaving the node as a whole: moving between its children tells it nothing.
 - `on_resize` reports size changes only, not moves, and `on_visible` changes only; both are called outside any tracking: reading state in them subscribes nothing.
 - Drag payloads are the script's own values (`any` to the types): annotate the parameters of `drag_preview`, `drop_when` and `on_drop` with your payload type. The nearest destination that accepts a payload gets the drag; `drop_when` returning nothing (or `false`) refuses it.

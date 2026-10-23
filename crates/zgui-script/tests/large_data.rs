@@ -214,3 +214,37 @@ fn canvas_colours_follow_theme_tokens() {
     );
     assert_eq!(h.error(), None);
 }
+
+#[test]
+fn ui_json_encodes_and_decodes_what_state_holds() {
+    let mut h = Harness::inline(
+        r#"local doc = { version = 1, shapes = { { id = "a", w = 12.5, tags = {} }, { id = "b", note = ui.null } } }
+        local text = ui.json.encode(doc)
+        local back = ui.json.decode(text)
+        back.shapes[1].w += 1 -- decoded tables are the script's to change
+        local pretty = ui.json.encode({ a = 1 }, { pretty = true })
+        local ok, err = pcall(ui.json.decode, "{ not json")
+        local ok_fn, err_fn = pcall(ui.json.encode, { f = function() end })
+        return ui.column {
+            ui.text { id = "text", text },
+            ui.text { id = "back", `{back.version} {back.shapes[1].w} {#back.shapes} {back.shapes[2].note}` },
+            ui.text { id = "pretty", pretty },
+            ui.text { id = "bad", if ok then "parsed" else tostring(err) },
+            ui.text { id = "fn", if ok_fn then "encoded" else tostring(err_fn) },
+        }"#,
+    );
+    assert_eq!(h.error(), None);
+    assert_eq!(
+        h.text("text"),
+        r#"{"shapes":[{"id":"a","tags":[],"w":12.5},{"id":"b","note":null}],"version":1}"#
+    );
+    assert_eq!(h.text("back"), "1 13.5 2 nil");
+    assert_eq!(h.text("pretty"), "{\n  \"a\": 1\n}");
+    assert!(
+        h.text("bad")
+            .contains("ui.json.decode: key must be a string at line 1"),
+        "{}",
+        h.text("bad")
+    );
+    assert!(h.text("fn").contains("ui.json.encode"), "{}", h.text("fn"));
+}

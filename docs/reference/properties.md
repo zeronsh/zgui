@@ -90,7 +90,7 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `layer` | `boolean` | `false` | paint the subtree into its own layer |
 | `fit` | `"fill" \| "contain" \| "cover" \| "none" \| "scale_down"` | `"fill"` | how an image fills its box |
 | `tint` | `Color` | | recolors an SVG (a state or function re-tints it) |
-| `cursor` | `Cursor` | `"default"` | `"pointer"`, `"text"`, `"vertical_text"`, `"crosshair"`, `"move"`, `"grab"`, `"grabbing"`, `"not_allowed"`, `"wait"`, `"progress"`, `"help"`, `"context_menu"`, `"copy"`, `"alias"`, `"no_drop"`, `"all_scroll"`, `"col_resize"`, `"row_resize"`, `"ew_resize"`, `"ns_resize"`, `"nesw_resize"`, `"nwse_resize"`, `"zoom_in"`, `"zoom_out"` |
+| `cursor` | `Cursor` | `"default"` | `"pointer"`, `"text"`, `"vertical_text"`, `"crosshair"`, `"move"`, `"grab"`, `"grabbing"`, `"not_allowed"`, `"wait"`, `"progress"`, `"help"`, `"context_menu"`, `"copy"`, `"alias"`, `"no_drop"`, `"all_scroll"`, `"col_resize"`, `"row_resize"`, `"ew_resize"`, `"ns_resize"`, `"nesw_resize"`, `"nwse_resize"`, `"zoom_in"`, `"zoom_out"`; CSS's spellings (`"nwse-resize"`) too |
 
 ## Background images, masks, shader fills, clip insets
 

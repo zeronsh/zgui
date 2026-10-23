@@ -312,29 +312,32 @@ impl UserData for WebUd {
 }
 /// JSON as script data (objects as maps, arrays as lists).
 pub(crate) fn json_value(json: &str) -> Value {
-    fn convert(v: serde_json::Value) -> Value {
-        match v {
-            serde_json::Value::Null => Value::Nil,
-            serde_json::Value::Bool(b) => Value::Bool(b),
-            serde_json::Value::Number(n) => Value::Num(n.as_f64().unwrap_or(0.)),
-            serde_json::Value::String(s) => Value::Str(s.into()),
-            serde_json::Value::Array(a) => {
-                Value::List(a.into_iter().map(convert).collect::<Vec<_>>().into())
-            }
-            // Empty, still an object: a script sending it back sends `{}`.
-            serde_json::Value::Object(o) if o.is_empty() => Value::Map(Rc::new([])),
-            serde_json::Value::Object(o) => {
-                let mut fields: Vec<(Rc<str>, Value)> =
-                    o.into_iter().map(|(k, v)| (k.into(), convert(v))).collect();
-                // Sorted, as maps are, whatever order serde_json keeps.
-                fields.sort_by(|a, b| a.0.cmp(&b.0));
-                Value::Map(fields.into())
-            }
+    serde_json::from_str(json)
+        .map(from_json)
+        .unwrap_or_else(|_| Value::Str(json.into()))
+}
+/// Parsed JSON as a value.
+pub(crate) fn from_json(v: serde_json::Value) -> Value {
+    match v {
+        serde_json::Value::Null => Value::Nil,
+        serde_json::Value::Bool(b) => Value::Bool(b),
+        serde_json::Value::Number(n) => Value::Num(n.as_f64().unwrap_or(0.)),
+        serde_json::Value::String(s) => Value::Str(s.into()),
+        serde_json::Value::Array(a) => {
+            Value::List(a.into_iter().map(from_json).collect::<Vec<_>>().into())
+        }
+        // Empty, still an object: a script sending it back sends `{}`.
+        serde_json::Value::Object(o) if o.is_empty() => Value::Map(Rc::new([])),
+        serde_json::Value::Object(o) => {
+            let mut fields: Vec<(Rc<str>, Value)> = o
+                .into_iter()
+                .map(|(k, v)| (k.into(), from_json(v)))
+                .collect();
+            // Sorted, as maps are, whatever order serde_json keeps.
+            fields.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Map(fields.into())
         }
     }
-    serde_json::from_str(json)
-        .map(convert)
-        .unwrap_or_else(|_| Value::Str(json.into()))
 }
 /// A controller's options from a script table.
 fn web_options(table: &Table) -> mlua::Result<zgui::web_view::WebViewOptions> {
@@ -544,8 +547,10 @@ pub(crate) struct Events {
     pub key_up: Option<Handler>,
     pub focus: Option<Handler>,
     pub blur: Option<Handler>,
-    /// `fn({ dx, dy })`.
+    /// `fn({ dx, dy, x, y, local_x, local_y, shift, ctrl, alt, meta })`.
     pub wheel: Option<Handler>,
+    /// `fn({ scale, x, y, local_x, local_y, … })`: a trackpad pinch.
+    pub pinch: Option<Handler>,
     /// `fn(element)` once mounted: start animations here.
     pub mount: Option<Function>,
     /// `fn({ w, h }, element)` when layout gives the node a new size (and
@@ -609,6 +614,7 @@ impl Events {
         focus: None,
         blur: None,
         wheel: None,
+        pinch: None,
         mount: None,
         resize: None,
         visible: None,
@@ -636,6 +642,7 @@ impl Events {
             || self.focus.is_some()
             || self.blur.is_some()
             || self.wheel.is_some()
+            || self.pinch.is_some()
     }
     pub fn any_drag(&self) -> bool {
         self.drag.is_some()
@@ -688,7 +695,7 @@ pub(crate) enum Kind {
     },
     Input {
         label: String,
-        value: Signal<Value>,
+        value: InputValue,
         multiline: bool,
         /// Shown while the value is empty (`placeholder`), in
         /// `placeholder_color`.
@@ -1638,6 +1645,20 @@ fn a11y_role(name: &str) -> Option<zgui::semantics::Role> {
 /// Rows past which `ui.each` suggests `ui.list`.
 const LONG_EACH: usize = 1000;
 
+/// What an input edits: a state, both ways, or (controlled, as React's
+/// inputs are) what a function shows, edits going out by `on_change` and
+/// `on_commit`; focused, the input keeps what is being typed.
+pub(crate) enum InputValue {
+    State(Signal<Value>),
+    /// What it shows, and its `on_change(text)` (each edit) and
+    /// `on_commit(text)` (Enter, or leaving it changed).
+    Shown {
+        shown: Source,
+        change: Option<Handler>,
+        commit: Option<Handler>,
+    },
+}
+
 /// Fields a constructor reads itself rather than as style properties.
 const WIDGET_FIELDS: &[&str] = &[
     "label",
@@ -1683,6 +1704,9 @@ const WIDGET_FIELDS: &[&str] = &[
     "size",
     "vertical",
     "min_rest",
+    "second",
+    "on_change",
+    "on_commit",
 ];
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
@@ -1711,6 +1735,7 @@ fn set_handler(
         "on_focus" => &mut events.focus,
         "on_blur" => &mut events.blur,
         "on_wheel" => &mut events.wheel,
+        "on_pinch" => &mut events.pinch,
         "on_mount" => {
             let mlua::Value::Function(f) = value else {
                 return Err(mlua::Error::runtime("on_mount takes a function"));
@@ -2712,7 +2737,30 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             name,
             lua.create_function(move |lua, table: Table| {
                 let label: Option<String> = table.get("label")?;
-                let value = expect_state(&table.get("value")?, "`value`")?;
+                let value = match table.get::<mlua::Value>("value")? {
+                    v @ (mlua::Value::Function(_)
+                    | mlua::Value::String(_)
+                    | mlua::Value::Number(_)
+                    | mlua::Value::Integer(_)) => {
+                        let handler_of = |key: &str| -> mlua::Result<Option<Handler>> {
+                            match table.get::<mlua::Value>(key)? {
+                                mlua::Value::Nil => Ok(None),
+                                h => handler(h).map(Some),
+                            }
+                        };
+                        InputValue::Shown {
+                            shown: source(lua, Ty::Str, "`value`", v)?,
+                            change: handler_of("on_change")?,
+                            commit: handler_of("on_commit")?,
+                        }
+                    }
+                    v => InputValue::State(state_of(&v).ok_or_else(|| {
+                        mlua::Error::runtime(
+                            "`value` must be a ui.state (two-way), or a function with on_change \
+                             or on_commit (the input shows it, and says what was typed)",
+                        )
+                    })?),
+                };
                 let optional = |key: &str, ty: Ty| -> mlua::Result<Option<Source>> {
                     match table.get::<mlua::Value>(key)? {
                         mlua::Value::Nil => Ok(None),
@@ -2767,6 +2815,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let options = zgui::compose::SplitOptions {
                 vertical: table.get::<Option<bool>>("vertical")?.unwrap_or(false),
+                second: table.get::<Option<bool>>("second")?.unwrap_or(false),
                 min: number("min", 0.)?,
                 max: number("max", f32::INFINITY)?,
                 min_rest: number("min_rest", 0.)?,

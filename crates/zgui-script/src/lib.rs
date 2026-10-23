@@ -1152,7 +1152,9 @@ impl ScriptHost {
                 let current = host.current.borrow().clone();
                 let content = host.windows.content.borrow().get(&id).cloned();
                 match (current, content) {
-                    (Some(loaded), Some(node)) => lower::lower(&node, &loaded.lowering),
+                    (Some(loaded), Some(node)) => {
+                        lower::lower(&node, &loaded.lowering).takes_unfocused_keys()
+                    }
                     _ => div(),
                 }
             },
@@ -1577,7 +1579,10 @@ impl ScriptHost {
             move || generation.get(),
             move |_, _| {
                 let current = host.current.borrow().clone();
-                current.map_or_else(div, |loaded| lower::lower(&loaded.root, &loaded.lowering))
+                // Its root's `on_key` hears what nothing focused takes.
+                current.map_or_else(div, |loaded| {
+                    lower::lower(&loaded.root, &loaded.lowering).takes_unfocused_keys()
+                })
             },
         );
         let (error, type_errors) = (self.0.error.clone(), self.0.type_errors.clone());

@@ -22,8 +22,9 @@
 //!
 //! Host actions, the fetcher (`ScriptHost::fetcher`) and shared state are
 //! set up on the host before it is returned; [`TestApp::wrapped`] provides
-//! services as a window does (a fake `zgui::platform::PlatformService` for
-//! the clipboard and file dialogs).
+//! services as a window does. [`TestApp::with_desktop`] gives the app a
+//! clipboard and file dialogs ([`FakeDesktop`]) that answer as the test
+//! says a person would: open and save run as they do in a window.
 use crate::ScriptHost;
 use std::{
     cell::{Cell, RefCell},
@@ -39,6 +40,66 @@ use zgui::{
     task::LocalExecutor,
     widgets::Ui,
 };
+
+/// A desktop's clipboard and file dialogs, for [`TestApp::with_desktop`]:
+/// each dialog answers with what the test queued for it ([`pick`],
+/// [`save_to`]), or as a cancelled one does when nothing is queued, and
+/// keeps what it was asked ([`asked`]).
+///
+/// [`pick`]: FakeDesktop::pick
+/// [`save_to`]: FakeDesktop::save_to
+/// [`asked`]: FakeDesktop::asked
+#[derive(Default)]
+pub struct FakeDesktop {
+    clipboard: RefCell<String>,
+    opens: RefCell<std::collections::VecDeque<Vec<std::path::PathBuf>>>,
+    saves: RefCell<std::collections::VecDeque<std::path::PathBuf>>,
+    asked: RefCell<Vec<zgui::platform::FilePicker>>,
+}
+impl FakeDesktop {
+    /// The next open dialog picks `files`.
+    pub fn pick(&self, files: impl IntoIterator<Item = impl Into<std::path::PathBuf>>) {
+        let files = files.into_iter().map(Into::into).collect();
+        self.opens.borrow_mut().push_back(files);
+    }
+    /// The next save dialog saves to `path`.
+    pub fn save_to(&self, path: impl Into<std::path::PathBuf>) {
+        self.saves.borrow_mut().push_back(path.into());
+    }
+    /// What the dialogs shown so far were asked to show, in order.
+    pub fn asked(&self) -> Vec<zgui::platform::FilePicker> {
+        self.asked.borrow().clone()
+    }
+    /// The clipboard's text.
+    pub fn clipboard(&self) -> String {
+        self.clipboard.borrow().clone()
+    }
+}
+impl zgui::platform::Platform for FakeDesktop {
+    fn clipboard_text(&self) -> Option<String> {
+        Some(self.clipboard.borrow().clone())
+    }
+    fn set_clipboard_text(&self, text: String) -> bool {
+        *self.clipboard.borrow_mut() = text;
+        true
+    }
+    fn open_files(
+        &self,
+        picker: zgui::platform::FilePicker,
+    ) -> zgui::platform::Pending<Result<Vec<std::path::PathBuf>, String>> {
+        self.asked.borrow_mut().push(picker);
+        let files = self.opens.borrow_mut().pop_front().unwrap_or_default();
+        Box::pin(async move { Ok(files) })
+    }
+    fn save_file(
+        &self,
+        picker: zgui::platform::FilePicker,
+    ) -> zgui::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+        self.asked.borrow_mut().push(picker);
+        let path = self.saves.borrow_mut().pop_front();
+        Box::pin(async move { Ok(path) })
+    }
+}
 
 /// A scripted app mounted headless, 400 by 300 points.
 pub struct TestApp {
@@ -59,6 +120,8 @@ pub struct TestApp {
     /// Native views (web pages, terminals) the script placed: headless, they
     /// show placeholders.
     pub natives: zgui::native_view::NativeViews,
+    /// Its clipboard and file dialogs, made with [`TestApp::with_desktop`].
+    pub desktop: Option<Rc<FakeDesktop>>,
 }
 
 impl TestApp {
@@ -70,6 +133,16 @@ impl TestApp {
     /// An inline script, as `app`.
     pub fn inline(code: &str) -> Self {
         Self::new(|runtime| ScriptHost::inline(runtime, "app", code))
+    }
+    /// With a clipboard and file dialogs ([`FakeDesktop`], in `desktop`):
+    /// `ui.open_files`, `ui.save_file`, `ui.read_file` and `ui.write_file`
+    /// work as in a window, the dialogs answering as the test queues.
+    pub fn with_desktop(host: impl FnOnce(&Runtime) -> ScriptHost) -> Self {
+        let desktop = Rc::new(FakeDesktop::default());
+        let service = zgui::platform::PlatformService(desktop.clone());
+        let mut app = Self::wrapped(host, move |view| provide(service, view));
+        app.desktop = Some(desktop);
+        app
     }
     /// With the window's layout inspector, as a desktop window provides it.
     pub fn inspected(
@@ -109,6 +182,7 @@ impl TestApp {
             frame: Cell::new(0),
             start: Instant::now(),
             natives,
+            desktop: None,
         };
         app.settle();
         // A window lays out before its first frame.
