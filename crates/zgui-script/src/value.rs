@@ -713,6 +713,15 @@ fn shared_lua(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
     if !large(value) {
         return to_lua(value, lua, true);
     }
+    shared_part(value, lua)
+}
+/// `shared_lua` for a large value or any table in one: each row of a long
+/// list keeps its table, so a computed returning some of the rows (a
+/// filter) gives back tables that are their values again, without a walk.
+fn shared_part(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
+    if !matches!(value, Value::List(_) | Value::Map(_)) {
+        return to_lua(value, lua, true);
+    }
     // (The VM registers its cache when it starts: `install_cache`.)
     let Some(cache) = lua.app_data_ref::<Converted>() else {
         return to_lua(value, lua, true);
@@ -728,18 +737,18 @@ fn shared_lua(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
         Value::List(items) => {
             let table = lua.create_table_with_capacity(items.len(), 0)?;
             for (i, item) in items.iter().enumerate() {
-                table.raw_set(i + 1, shared_lua(item, lua)?)?;
+                table.raw_set(i + 1, shared_part(item, lua)?)?;
             }
             table
         }
         Value::Map(fields) => {
             let table = lua.create_table_with_capacity(0, fields.len())?;
             for (key, value) in fields.iter() {
-                table.raw_set(&**key, shared_lua(value, lua)?)?;
+                table.raw_set(&**key, shared_part(value, lua)?)?;
             }
             table
         }
-        _ => unreachable!("large values are lists and tables"),
+        _ => unreachable!("shared parts are lists and tables"),
     };
     table.set_readonly(true);
     let cache = lua.app_data_ref::<Converted>().expect("checked above");
@@ -1101,6 +1110,37 @@ mod tests {
             .set_path(&[key("tabs"), PathKey::Index(2), key("title")], "b".into())
             .unwrap();
         assert_eq!(ptr(&same), ptr(&doc));
+    }
+
+    #[test]
+    fn a_filtered_long_list_gives_back_its_own_rows() {
+        // A mail list: thousands of small rows, read by a computed that
+        // keeps some (a mailbox, a search). Its rows go back as the very
+        // values they were, not walked field by field.
+        let lua = Lua::new();
+        install_cache(&lua);
+        let rows: Vec<Value> = (0..200)
+            .map(|i| map(&[("id", (i as f64).into()), ("subject", "Hello".into())]))
+            .collect();
+        let list = Value::List(rows.clone().into());
+        lua.globals()
+            .set("rows", shared_lua(&list, &lua).unwrap())
+            .unwrap();
+        let kept: mlua::Value = lua
+            .load(
+                "local out = {} for i, r in rows do if i % 2 == 0 then table.insert(out, r) end end return out",
+            )
+            .eval()
+            .unwrap();
+        let back = convert(kept, None).unwrap();
+        let ptr = |v: &Value| match v {
+            Value::Map(m) => Rc::as_ptr(m) as *const u8,
+            _ => std::ptr::null(),
+        };
+        assert_eq!(back.list().len(), 100);
+        for (i, row) in back.list().iter().enumerate() {
+            assert_eq!(ptr(row), ptr(&rows[2 * i + 1]), "row {i}");
+        }
     }
 
     #[test]
