@@ -142,7 +142,11 @@ Assistive technology reads the selection from the region: its semantic node
 (a document, as a browser's page is, unless the view has a role of its own: a window or a scroll view keeps it) carries
 `SemanticNode::document_selection`, which the desktop host projects as an
 AccessKit text selection over the labels' text runs, so a screen reader reads
-the selected text across nodes. A selection that assistive technology sets
+the selected text across nodes. Each label in the region is a paragraph to it,
+as a browser's blocks are: its last text run ends with a line break that is
+not in the label's text (a position after it is the label's end), so reading
+and word or line navigation stop between labels instead of running them
+together. A selection that assistive technology sets
 across the region's labels selects as the pointer would
 (`Ui::select_accessible_text`).
 

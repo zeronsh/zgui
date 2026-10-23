@@ -15,6 +15,9 @@ pub struct AccessibilityTree {
     projection_revisions: HashMap<NodeId, SemanticRevision>,
     text_runs: HashMap<NodeId, Vec<AccessibleId>>,
     text_positions: HashMap<AccessibleId, (NodeId, Vec<usize>)>,
+    /// Labels projected as blocks of a selectable region's text: their runs
+    /// end with a break.
+    blocks: HashSet<NodeId>,
 }
 impl AccessibilityTree {
     pub fn new() -> Self {
@@ -71,18 +74,7 @@ impl AccessibilityTree {
     /// The native position of UTF-8 offset `byte` into label `owner`'s runs.
     fn text_position(&self, owner: NodeId, byte: usize) -> Option<accesskit::TextPosition> {
         let ids = self.text_runs.get(&owner)?;
-        let index = ids
-            .iter()
-            .rposition(|run| self.text_positions[run].1[0] <= byte)
-            .unwrap_or(0);
-        let character_index = self.text_positions[&ids[index]]
-            .1
-            .partition_point(|offset| *offset <= byte)
-            .saturating_sub(1);
-        Some(accesskit::TextPosition {
-            node: ids[index],
-            character_index,
-        })
+        Some(run_position(ids, &self.text_positions, byte))
     }
     pub fn update(
         &mut self,
@@ -157,6 +149,7 @@ impl AccessibilityTree {
             children.entry(parents[id]).or_default().push(child);
         }
         self.text_runs.retain(|owner, _| visible.contains(owner));
+        self.blocks.retain(|owner| visible.contains(owner));
         let mut nodes = Vec::with_capacity(ordered.len() + 1);
         // Selectable regions projected now, and their selections: set once
         // their labels' runs are.
@@ -194,10 +187,14 @@ impl AccessibilityTree {
             );
             let mut native_children = children.remove(&id).unwrap_or_default();
             let runs = self.text_runs.get(&id).map_or(&[][..], Vec::as_slice);
+            // A label in a selectable region is one of its blocks, which
+            // break its text as a browser's paragraphs do.
+            let block = semantic.role == Role::Label && scene.is_selectable(id);
             // Reuse the existing cached node's geometry/children instead of
             // retaining another copy in the revision cache. Text runs must still
             // have live cached nodes/positions before omitting this projection.
             if self.projection_revisions.get(&id) == Some(&revision)
+                && self.blocks.contains(&id) == block
                 && self.cache.get(&native).is_some_and(|cached| {
                     cached.bounds() == Some(bounds)
                         && cached.is_disabled() == disabled
@@ -334,13 +331,19 @@ impl AccessibilityTree {
                     .is_some_and(|cached| {
                         cached.role() == semantic_role(semantic) && cached.value() == text_value
                     })
+                    && self.blocks.contains(&id) == block
                     && self.text_runs.get(&id).is_none_or(|ids| {
                         ids.iter().all(|run| {
                             self.cache.contains_key(run) && self.text_positions.contains_key(run)
                         })
                     });
                 if !reusable {
-                    if let Some(runs) = text_run_data(text_value.unwrap_or("")) {
+                    if block {
+                        self.blocks.insert(id);
+                    } else {
+                        self.blocks.remove(&id);
+                    }
+                    if let Some(runs) = text_run_data(text_value.unwrap_or(""), block) {
                         let ids = self.text_runs.entry(id).or_default();
                         ids.truncate(runs.len());
                         while ids.len() < runs.len() {
@@ -367,20 +370,8 @@ impl AccessibilityTree {
                     }
                 }
                 if let Some(ids) = self.text_runs.get(&id) {
-                    let selection_position = |byte: usize| {
-                        let index = ids
-                            .iter()
-                            .rposition(|run| self.text_positions[run].1[0] <= byte)
-                            .unwrap_or(0);
-                        let character_index = self.text_positions[&ids[index]]
-                            .1
-                            .partition_point(|offset| *offset <= byte)
-                            .saturating_sub(1);
-                        accesskit::TextPosition {
-                            node: ids[index],
-                            character_index,
-                        }
-                    };
+                    let selection_position =
+                        |byte: usize| run_position(ids, &self.text_positions, byte);
                     if semantic.role != Role::Label
                         && let Some((anchor, focus)) = semantic.text_selection
                     {
@@ -396,6 +387,7 @@ impl AccessibilityTree {
                 }
             } else {
                 self.text_runs.remove(&id);
+                self.blocks.remove(&id);
             }
             if let Some(selection) = semantic.document_selection {
                 documents.push((nodes.len(), selection));
@@ -453,7 +445,32 @@ struct TextRunData {
     offsets: Vec<usize>,
     words: Vec<u8>,
 }
-fn text_run_data(value: &str) -> Option<Vec<TextRunData>> {
+/// The native position of UTF-8 offset `byte` into the label whose runs are
+/// `ids`: before the character starting there, so a block's end is before
+/// its break.
+fn run_position(
+    ids: &[AccessibleId],
+    positions: &HashMap<AccessibleId, (NodeId, Vec<usize>)>,
+    byte: usize,
+) -> accesskit::TextPosition {
+    let index = ids
+        .iter()
+        .rposition(|run| positions[run].1[0] <= byte)
+        .unwrap_or(0);
+    let offsets = &positions[&ids[index]].1;
+    let after = offsets.partition_point(|offset| *offset < byte);
+    accesskit::TextPosition {
+        node: ids[index],
+        character_index: if offsets.get(after) == Some(&byte) {
+            after
+        } else {
+            after.saturating_sub(1)
+        },
+    }
+}
+/// `value`'s runs; a `block`'s end with a line break (zero-width in
+/// `value`, at its end) unless its text already does.
+fn text_run_data(value: &str, block: bool) -> Option<Vec<TextRunData>> {
     let word_starts: HashSet<_> = value
         .unicode_word_indices()
         .map(|(offset, _)| offset)
@@ -491,6 +508,20 @@ fn text_run_data(value: &str) -> Option<Vec<TextRunData>> {
                 words: Vec::new(),
             };
         }
+    }
+    if block && !value.is_empty() && !value.ends_with(['\n', '\r']) {
+        if run.lengths.len() == 255 {
+            runs.push(run);
+            run = TextRunData {
+                value: String::new(),
+                lengths: Vec::new(),
+                offsets: vec![value.len()],
+                words: Vec::new(),
+            };
+        }
+        run.value.push('\n');
+        run.lengths.push(1);
+        run.offsets.push(value.len());
     }
     runs.push(run);
     Some(runs)
@@ -887,7 +918,7 @@ mod editor_text_tests {
     #[test]
     fn long_lines_split_bounded_metadata_without_changing_text_or_line_linkage() {
         let value = format!("{}\r\n", "word ".repeat(140));
-        let runs = text_run_data(&value).unwrap();
+        let runs = text_run_data(&value, false).unwrap();
         assert_eq!(
             runs.iter().map(|r| r.value.as_str()).collect::<String>(),
             value
@@ -908,8 +939,8 @@ mod editor_text_tests {
         assert_eq!(runs[runs.len() - 2].lengths.last(), Some(&2));
         assert!(runs.last().unwrap().value.is_empty());
         let unrepresentable = format!("a{}", "\u{301}".repeat(200));
-        assert!(text_run_data(&unrepresentable).is_none());
-        assert_eq!(text_run_data("").unwrap().len(), 1);
+        assert!(text_run_data(&unrepresentable, false).is_none());
+        assert_eq!(text_run_data("", false).unwrap().len(), 1);
     }
 
     #[test]
@@ -1193,7 +1224,11 @@ mod document_selection_tests {
         // TextPattern, NSAccessibility's text ranges): a document's.
         assert_eq!(region.role(), accesskit::Role::Document);
         assert!(region.supports_text_ranges(), "platform text APIs see it");
-        assert_eq!(region.document_range().text(), "Hello worldSecond line");
+        assert_eq!(
+            region.document_range().text(),
+            "Hello world\nSecond line\n",
+            "each label a block"
+        );
         let text = region.text_selection().unwrap().text();
         assert!(
             text.starts_with("world") && text.ends_with("Sec"),
@@ -1216,6 +1251,72 @@ mod document_selection_tests {
             ui.semantics.borrow().get(root).unwrap().document_selection,
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod block_break_tests {
+    use super::*;
+    use zgui::{compose::prelude::*, selection::TextPoint, widgets::Ui};
+
+    #[test]
+    fn a_selectable_regions_labels_are_paragraphs_to_assistive_technology() {
+        let mut ui = Ui::new(400., 200.);
+        let view = ui.mount(
+            column().w(300.).children([
+                column()
+                    .selectable(true)
+                    .children([text("Hello world"), text("Second line")]),
+                text("Plain"),
+            ]),
+        );
+        ui.prepare_frame();
+        let region = ui.scene.borrow().children(view.node())[0];
+        let labels: Vec<_> = ui.scene.borrow().children(region).to_vec();
+        let at = |node, offset| TextPoint { node, offset };
+        // To the first label's end: its text, not its break.
+        assert!(ui.select_text(at(labels[0], 6), at(labels[0], 11)));
+        let mut adapter = AccessibilityTree::new();
+        let update = adapter.update(
+            &ui.scene.borrow(),
+            &ui.semantics.borrow(),
+            Some(region),
+            "Test",
+            1.,
+        );
+        let tree = accesskit_consumer::Tree::new(update, true);
+        let document = tree.state().focus().unwrap();
+        let line = |index| document.line_range_from_index(index).unwrap().text();
+        assert_eq!(line(0), "Hello world\n");
+        assert_eq!(line(1), "Second line\n");
+        assert_eq!(document.text_selection().unwrap().text(), "world");
+        let selection = document.text_selection().unwrap().to_text_selection();
+        assert_eq!(
+            adapter.resolve_document_selection(&selection),
+            Some(((labels[0], 6), (labels[0], 11)))
+        );
+        // A word's move crosses the break to the next paragraph's first.
+        let mut word = document.text_selection().unwrap();
+        let next = word.end().forward_to_word_start();
+        word.set_start(next);
+        word.set_end(next.forward_to_word_end());
+        assert_eq!(word.text().trim_end(), "Second");
+        // After a block's break is its end, as assistive technology sets it.
+        let after_break = accesskit::TextSelection {
+            anchor: selection.anchor,
+            focus: accesskit::TextPosition {
+                node: adapter.text_runs[&labels[0]][0],
+                character_index: 12,
+            },
+        };
+        assert_eq!(
+            adapter.resolve_document_selection(&after_break),
+            Some(((labels[0], 6), (labels[0], 11)))
+        );
+        // A label outside one stays as it was.
+        let plain = ui.scene.borrow().children(view.node())[1];
+        let run = adapter.text_runs[&plain][0];
+        assert_eq!(adapter.cache[&run].value(), Some("Plain"));
     }
 }
 
