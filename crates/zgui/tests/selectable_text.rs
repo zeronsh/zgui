@@ -922,3 +922,54 @@ fn hit_testing_follows_scale_and_rotation() {
     drag(&mut ui, (90., 12.), (90., 36.));
     assert_eq!(ui.selected_text(), "cdef");
 }
+
+#[test]
+fn copying_takes_rows_a_virtual_list_has_not_mounted_from_its_row_text() {
+    let mut ui = Ui::new(400., 300.);
+    let offset = ui.signal(0.);
+    ui.mount(
+        column()
+            .w(300.)
+            .text_size(10.)
+            .line_height(20.)
+            .selectable(true)
+            .child(text("Header"))
+            .child(
+                virtual_list(
+                    offset.clone(),
+                    20.,
+                    1,
+                    || 1000,
+                    |index| index,
+                    |_, key, _| text(format!("Row {key}")),
+                )
+                .row_text(|index| (index < 1000).then(|| format!("Row {index}")))
+                .w(300.)
+                .h(100.),
+            )
+            .child(text("Footer")),
+    );
+    ui.prepare_frame();
+    let every = std::iter::once("Header".to_owned())
+        .chain((0..1000).map(|i| format!("Row {i}")))
+        .chain(std::iter::once("Footer".to_owned()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    press(&mut ui, 0., 10., false);
+    release(&mut ui, 0., 10.);
+    assert!(ui.dispatch(shortcut("a")).default_prevented);
+    assert_eq!(ui.selected_text(), every, "the rows it has not mounted too");
+    // Scrolled to the middle, the mounted rows copy as they show, the
+    // rest from the row text.
+    offset.set(10_000.);
+    ui.prepare_frame();
+    assert_eq!(ui.selected_text(), every);
+    // A selection whose rows all scrolled away still copies them.
+    offset.set(0.);
+    ui.prepare_frame();
+    drag(&mut ui, (6., 50.), (18., 90.));
+    assert_eq!(ui.selected_text(), "ow 1\nRow 2\nRow");
+    offset.set(10_000.);
+    ui.prepare_frame();
+    assert_eq!(ui.selected_text(), "Row 1\nRow 2\nRow 3");
+}

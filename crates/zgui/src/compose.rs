@@ -329,6 +329,8 @@ pub struct View {
     selectable: Option<bool>,
     /// `View::selection_color`, `selected_text_color`: few views have them.
     selection_style: Option<Box<crate::selection::SelectionStyle>>,
+    /// `View::row_text`.
+    row_text: Option<crate::selection::RowText>,
     /// Conditional children (`child_when`), mounted after the others.
     conditional: Vec<RegionBuilder>,
 }
@@ -440,6 +442,7 @@ impl View {
             window_drag: false,
             selectable: None,
             selection_style: None,
+            row_text: None,
             conditional: Vec::new(),
         }
     }
@@ -811,6 +814,15 @@ impl View {
         self.selection_style.get_or_insert_default().text = Some(Box::new(color));
         self
     }
+    /// A virtual list's plain text of row `index` (`None` past its end):
+    /// copying a selection that spans rows the list has not mounted takes
+    /// theirs from it, in order, so selecting all of a long transcript and
+    /// copying it copies it all. Mounted rows copy as they show. Without
+    /// it, only mounted rows copy. For a virtual list.
+    pub fn row_text(mut self, text: impl Fn(usize) -> Option<String> + 'static) -> Self {
+        self.row_text = Some(std::rc::Rc::new(text));
+        self
+    }
     // Wrapper properties refine the component's actual root without an extra layout box.
     fn refine(self, mut inner: View) -> View {
         if self.trigger_id.is_some() {
@@ -940,6 +952,9 @@ impl View {
         }
         if self.selection_style.is_some() {
             inner.selection_style = self.selection_style;
+        }
+        if self.row_text.is_some() {
+            inner.row_text = self.row_text;
         }
         inner.mounted.extend(self.mounted);
         inner.conditional.extend(self.conditional);
@@ -3046,8 +3061,15 @@ fn mount_element(
             update_button_labels(&ui, root);
         });
     }
+    assert!(
+        view.row_text.is_none() || region.is_some(),
+        "row_text is only supported on virtual lists"
+    );
     if let Some(build) = region {
         build(ui, root, environment);
+    }
+    if let Some(text) = view.row_text.take() {
+        crate::selection::mount_row_text(ui, root, text);
     }
     let mut options = ui.input.options(root).unwrap_or_default();
     options.focusable = focusable;

@@ -152,8 +152,11 @@ extends over what scrolls into view, faster the farther the pointer is, as an
 editor's drag does; it stops at the viewport's end and on release. A
 selection in a virtual list outlives the rows it recycles: an end in an
 unmounted row keeps the row's index and path, the rows between stay selected,
-and a row that mounts again shows its part. Copy takes the text that is
-mounted (the visible rows and overscan); rows out of view are not copied.
+and a row that mounts again shows its part. Copy takes the mounted rows as
+they show (the visible ones and overscan). Give the list `.row_text(|index|
+Some(text))` (`None` past its end) and it copies the rows out of view too, in
+order and whole, so select-all and copy on a long transcript copies all of
+it. Without `row_text`, nothing extra is kept, and only mounted rows copy.
 
 A secondary press (a control-click on macOS) on selected text opens a menu
 with Copy and Select All, unless the region has a `context_menu` of its own;

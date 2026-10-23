@@ -200,6 +200,9 @@ pub(crate) struct State {
     leaves: Vec<TextLeaf>,
     /// Virtual list rows in selectable regions, and their indices.
     rows: HashMap<NodeId, crate::reactive::Signal<usize>>,
+    /// Virtual lists' row text for copying rows they have not mounted
+    /// (`View::row_text`), by the node holding their rows.
+    row_texts: HashMap<NodeId, RowText>,
     /// Where the anchor and the focus lie in virtual lists, if they do.
     anchor_row: Option<RowAddress>,
     focus_row: Option<RowAddress>,
@@ -207,6 +210,50 @@ pub(crate) struct State {
     scroll: Option<(Instant, Instant)>,
     /// The region whose semantic node holds the selection.
     semantic_root: Option<NodeId>,
+}
+
+/// Rows a copy takes from one list's row text at most.
+const MAX_PROVIDED_ROWS: usize = 1_000_000;
+
+/// A virtual list's plain text of row `index`, `None` past its end.
+pub(crate) type RowText = Rc<dyn Fn(usize) -> Option<String>>;
+
+/// Removes a virtual list's row text once it is unmounted.
+struct RowTextGuard {
+    ui: WeakUi,
+    content: NodeId,
+}
+impl Drop for RowTextGuard {
+    fn drop(&mut self) {
+        if let Some(ui) = self.ui.upgrade()
+            && let Ok(mut state) = ui.selection_state().try_borrow_mut()
+        {
+            state.row_texts.remove(&self.content);
+        }
+    }
+}
+
+/// The virtual list at `root` copies the rows a selection spans and it has
+/// not mounted from `text` (`View::row_text`).
+pub(crate) fn mount_row_text(ui: &mut Ui, root: NodeId, text: RowText) {
+    // Its rows' parent: the list's content, in its viewport.
+    let content = {
+        let scene = ui.scene.borrow();
+        let viewport = scene.children(root).first().copied();
+        viewport.and_then(|viewport| scene.children(viewport).first().copied())
+    };
+    let Some(content) = content else {
+        return;
+    };
+    ui.selection_state()
+        .borrow_mut()
+        .row_texts
+        .insert(content, text);
+    let guard = RowTextGuard {
+        ui: ui.downgrade(),
+        content,
+    };
+    ui.retain(root, guard);
 }
 
 /// Removes a virtual row's entry once it is unmounted.
@@ -1171,12 +1218,25 @@ impl Ui {
     /// left out.
     pub fn selected_text(&self) -> String {
         let shown = self.selection_state().borrow().shown.clone();
+        let provided = self.provided_rows(&shown);
         let scene = self.scene.borrow();
         let mut out = String::new();
         let mut previous: Option<(NodeId, f32)> = None;
-        for part in shown {
+        let mut provided = provided.into_iter().peekable();
+        for (at, part) in shown.into_iter().enumerate() {
+            // Rows a list has not mounted, from its row text, in order.
+            while let Some((_, row)) = provided.next_if(|(before, _)| *before == at) {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&row);
+                previous = None;
+            }
             if !scene.layout_visible(part.node) {
                 continue;
+            }
+            if previous.is_none() && !out.is_empty() {
+                out.push('\n');
             }
             let Some(text) = text_of(&scene, part.node) else {
                 continue;
@@ -1193,7 +1253,103 @@ impl Ui {
             );
             previous = Some((part.node, size));
         }
+        for (_, row) in provided {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&row);
+        }
         out
+    }
+    /// The text of the rows the selection spans in virtual lists with row
+    /// text (`View::row_text`) that they have not mounted, each with the
+    /// position in `shown` it comes before (`shown.len()`: after it all).
+    /// Nothing without such lists.
+    fn provided_rows(&self, shown: &[Shown]) -> Vec<(usize, String)> {
+        let state = self.selection_state().borrow();
+        if state.row_texts.is_empty() {
+            return Vec::new();
+        }
+        let scene = self.scene.borrow();
+        let rows = &state.rows;
+        let end = |point: Option<TextPoint>, row: &Option<RowAddress>| match point {
+            Some(point) => revive(rows, &scene, point, row.as_ref()),
+            None => End::Gone,
+        };
+        let (anchor, focus) = (
+            end(state.anchor, &state.anchor_row),
+            end(state.focus, &state.focus_row),
+        );
+        if matches!(anchor, End::Gone) || matches!(focus, End::Gone) {
+            return Vec::new();
+        }
+        let (start, end) = match order_ends(rows, &scene, &anchor, &focus).is_le() {
+            true => (anchor, focus),
+            false => (focus, anchor),
+        };
+        // Where an end lies against a list: its row there, or before (Less)
+        // or after (Greater) the whole list.
+        let place = |end: &End, content: NodeId| -> Result<usize, std::cmp::Ordering> {
+            match end {
+                End::Parked(row, _) if row.content == content => Ok(row.index),
+                End::Parked(row, _) => Err(scene.document_order(row.content, content)),
+                End::Live(point) => match row_of(rows, &scene, point.node) {
+                    Some((at, index)) if at == content => Ok(index),
+                    _ => Err(scene.document_order(point.node, content)),
+                },
+                End::Gone => Err(std::cmp::Ordering::Equal),
+            }
+        };
+        let mut provided = Vec::new();
+        for (content, text) in &state.row_texts {
+            if !scene.contains(*content) {
+                continue;
+            }
+            let lo = match place(&start, *content) {
+                Ok(index) => index,
+                Err(std::cmp::Ordering::Less) => 0,
+                Err(_) => continue,
+            };
+            let hi = match place(&end, *content) {
+                Ok(index) => index,
+                Err(std::cmp::Ordering::Greater) => usize::MAX,
+                Err(_) => continue,
+            };
+            // The rows shown here (mounted), by index.
+            let mounted: Vec<(usize, usize)> = shown
+                .iter()
+                .enumerate()
+                .filter_map(|(at, part)| match row_of(rows, &scene, part.node) {
+                    Some((list, index)) if list == *content => Some((at, index)),
+                    _ => None,
+                })
+                .collect();
+            let after_list = shown
+                .iter()
+                .position(|part| scene.document_order(part.node, *content).is_gt())
+                .unwrap_or(shown.len());
+            // Bounded, should a list never end.
+            let hi = hi.min(lo.saturating_add(MAX_PROVIDED_ROWS));
+            let mut index = lo;
+            while index <= hi {
+                if !mounted.iter().any(|(_, m)| *m == index) {
+                    let Some(row) = text(index) else {
+                        break;
+                    };
+                    let before = mounted
+                        .iter()
+                        .find(|(_, m)| *m > index)
+                        .map(|(at, _)| *at)
+                        .or_else(|| mounted.last().map(|(at, _)| at + 1))
+                        .unwrap_or(after_list);
+                    provided.push((before, row));
+                }
+                index += 1;
+            }
+        }
+        // Stable: rows of one list keep their order.
+        provided.sort_by_key(|(before, _)| *before);
+        provided
     }
     /// The selected text as HTML, for pasting into rich text: paragraphs and
     /// line breaks where `selected_text` has them, and bold, italic,
@@ -1776,6 +1932,21 @@ fn boundary(text: &str, offset: usize) -> usize {
         offset -= 1;
     }
     offset
+}
+
+/// The virtual list `node`'s row is in (the node holding its rows) and
+/// the row's index.
+fn row_of(
+    rows: &HashMap<NodeId, crate::reactive::Signal<usize>>,
+    scene: &Scene,
+    node: NodeId,
+) -> Option<(NodeId, usize)> {
+    if rows.is_empty() || !scene.contains(node) {
+        return None;
+    }
+    std::iter::once(node)
+        .chain(scene.ancestors(node))
+        .find_map(|at| Some((scene.parent(at)?, rows.get(&at)?.with_untracked(|i| *i))))
 }
 
 /// Where `node` lies in a virtual list's row, as a `RowAddress`.
