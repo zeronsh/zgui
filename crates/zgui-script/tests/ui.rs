@@ -1817,7 +1817,7 @@ fn on_resize_reports_layout_sizes() {
     let mut h = common::Harness::inline(
         r##"local items = ui.state("items", { 1, 2 })
         local seen = ui.state("seen", "")
-        return ui.column { w = 200,
+        return ui.column { w = 200, items = "start",
             ui.row { flex_wrap = true, gap = 0,
                 on_resize = function(size, el) seen:set(size.w .. "x" .. size.h .. " " .. tostring(el.height)) end,
                 ui.each(items, function() return ui.div { w = 80, h = 10 } end) },

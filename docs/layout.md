@@ -1,6 +1,18 @@
 # Retained component layout
 
-Build children with `div`, `row`, `column`, and reusable functions or components. Layout is a style refinement; it does not require appending scene commands:
+Build children with `div`, `row`, `column`, and reusable functions or components. Layout is a style refinement; it does not require appending scene commands.
+
+**Children stretch across their container, as in CSS's flexbox.** A `column`'s children are as wide as the column and a `row`'s as tall as the row, unless a child sizes itself on that axis (`w`, `h`, `w_percent`, `aspect_ratio`), which it keeps. `div` is a column and does the same, and so do zgui-script's `ui.column`, `ui.row` and `ui.div`. `.items_start()` (`items = "start"`) keeps each child as wide or tall as it is, and `.items_center()` and `.items_end()` align them. Until October 2026 the default was `start`: an app written for that which shows buttons or chips spanning a column, or boxes taller than their content in a row, states `.items_start()` where it relied on it.
+
+```rust
+use zgui::compose::prelude::*;
+// The button spans the column; the chip keeps its own width.
+let stretched = column().w(240.).child(button().child(text("Save"))).child(div().w(60.).h(20.));
+// Each child as wide as it is.
+let hugging = column().items_start().child(button().child(text("Save")));
+```
+
+Grids and wrapping rows:
 
 ```rust
 use zgui::{compose::prelude::*, layout::ContentAlign};

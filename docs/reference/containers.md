@@ -25,7 +25,7 @@ Children, and any [property](properties.md) and [event](events.md). What the con
 | Option | Type | Default | |
 | --- | --- | --- | --- |
 | children (array entries) | `Child` | none | nodes, strings (text), functions (computed text), nested lists (flattened); `nil` and `false` are skipped |
-| `items` | `"start" \| "center" \| "end" \| "baseline" \| "stretch"` | `"start"` (`overlay`: `"stretch"`) | alignment across the main axis |
+| `items` | `"start" \| "center" \| "end" \| "baseline" \| "stretch"` | `"stretch"` | alignment across the main axis: as CSS's flexbox, children stretch across it unless they have a size of their own there; `"start"` keeps each as wide (or tall) as it is |
 | `justify` | `"start" \| "center" \| "end" \| "between" \| "around" \| "evenly" \| "stretch"` | `"start"` (`overlay`: `"stretch"`) | distribution along it |
 | `gap` | `number` | `0` | between children; `gap_x`, `gap_y` per axis |
 | `grow`, `shrink` | `number` | `0`, `0` | as a child of a row or column |

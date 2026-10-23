@@ -15,7 +15,9 @@ fn inherited_spacing_reaches_components_and_slots_without_rebuilding() {
             .child(component(move |cx| {
                 count.set(count.get() + 1);
                 let body = cx.slot(|_| text("abcd").id("slot"));
+                // Each text its own width, to measure its spacing.
                 column()
+                    .items_start()
                     .child(text("abcd").id("inherited"))
                     .child(text("abcd").letter_spacing(0.).id("reset"))
                     .child(

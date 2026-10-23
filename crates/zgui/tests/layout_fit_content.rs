@@ -21,7 +21,8 @@ fn tiles() -> View {
 /// Mount `view` in a 300 px column; the bounds along its first-child chain.
 fn chain(view: View) -> Vec<zgui::scene::Rect> {
     let mut ui = Ui::new(400., 300.);
-    let _view = ui.mount(column().w(300.).child(view));
+    // The view as wide as it makes itself (or asks to be), not stretched.
+    let _view = ui.mount(column().w(300.).items_start().child(view));
     ui.prepare_frame();
     let scene = ui.scene.borrow();
     let mut id: NodeId = scene.children(scene.root())[0];

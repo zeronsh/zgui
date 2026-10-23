@@ -32,6 +32,8 @@ end
 
 local function card(title: string, ...: Child)
 	return ui.column {
+		-- Each entry as wide as it is, not the card's width.
+		items = "start",
 		p = 16,
 		gap = 12,
 		rounded = 12,

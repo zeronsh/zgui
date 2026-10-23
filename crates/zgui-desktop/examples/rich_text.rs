@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let link_write = count.clone();
             let view = cx.render(
                 column()
+                    .items_start()
                     .w_full()
                     .h_full()
                     .p(24.)

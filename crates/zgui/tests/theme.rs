@@ -222,7 +222,7 @@ fn metric_switches_relayout_only_what_uses_them() {
         column()
             .children((0..50).map(|_| div().size(10., 10.).bg(rgb(0x222222))))
             .child(
-                div().size(100., 100.).child(
+                div().size(100., 100.).items_start().child(
                     div()
                         .id("padded")
                         .p(tok::SPACE_3)

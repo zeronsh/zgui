@@ -96,7 +96,7 @@ return ui.row {
 - Every list row is `height` points: a taller row overlaps the next and a shorter one leaves a gap. For rows of different heights give `heights` (each row's own, still never measured).
 - A list row is built once for its index, when it comes into view. Reading state in `row` (`items:get()[i]`) takes the value at that moment; to follow a change, read it in a function property or text inside the row (`ui.text(function() return items:get()[i].name end)`), or change `count`. Rows are keyed by index, so a row's own state stays with its position, not its data.
 - List rows do not stretch across the list: give a row's root `w_full = true`.
-- A `scroll` with no size and nothing sizing it is 320 by 240; inside a column that does not stretch (`items = "start"`, the default) it keeps that width. Use `w_full = true`, `grow = 1` or a stretching parent.
+- A `scroll` with no size and nothing sizing it is 320 by 240 along its scrolling axis; across it, a column or row stretches it (the default `items`), and inside one with `items = "start"` it keeps 320. Use `w_full = true`, `grow = 1` or a stretching parent.
 - All of a `scroll`'s children stay mounted however far away they are; past a few thousand rows, use `list`.
 - `offset` counts points from the top (the left for `scroll_x`). Setting it beyond the content clamps it, and a binding to a state that is not a number reads as 0.
 - There is no scrollbar unless asked (`scrollbar = true`): a viewport scrolls by wheel, touchpad, keyboard focus and `offset`, and with the keys as a page does (Space, Shift+Space, Page Up/Down, Home/End, arrows) once it has been pressed in or is under the pointer, while nothing has focus (a focused control keeps its keys).

@@ -16,7 +16,7 @@ impl Harness {
 #[test]
 fn borders_take_room_inside_a_box() {
     let mut h = Harness::inline(
-        r##"return ui.column {
+        r##"return ui.column { items = "start",
             ui.column { id = "card", w = 100, h = 50, p = 4, border = 1, border_color = "#fff",
                 ui.div { id = "fill", w_full = true, h_full = true },
             },

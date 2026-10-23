@@ -1016,11 +1016,17 @@ impl From<String> for View {
 pub fn canvas(draw: impl FnMut((f32, f32)) -> crate::canvas::Canvas + 'static) -> View {
     View::new(Kind::Canvas(Box::new(draw)))
 }
+/// Children side by side. As CSS's flexbox, they stretch to the row's
+/// height unless they have one of their own (`items_*` aligns them
+/// otherwise).
 pub fn row() -> View {
-    View::new(Kind::Container(Layout::Row))
+    View::new(Kind::Container(Layout::Row)).items_stretch()
 }
+/// Children one above the other. As CSS's flexbox, they stretch to the
+/// column's width unless they have one of their own (`items_*` aligns them
+/// otherwise).
 pub fn column() -> View {
-    View::new(Kind::Container(Layout::Column))
+    View::new(Kind::Container(Layout::Column)).items_stretch()
 }
 pub fn div() -> View {
     column()

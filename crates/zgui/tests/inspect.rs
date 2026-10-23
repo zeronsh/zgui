@@ -128,7 +128,13 @@ fn healthy_layouts_have_no_warnings() {
                     .h(50.)
                     .child(column().child(div().h(500.))),
             )
-            .child(div().w(0.).h(10.).child(text("deliberately collapsed")))
+            .child(
+                div()
+                    .w(0.)
+                    .h(10.)
+                    .items_start()
+                    .child(text("deliberately collapsed")),
+            )
             // An empty placeholder (a hidden conditional): nothing to show.
             .child(row().child(column().child(div())))
             .child(text_input("name", ui.signal(String::new())).w(80.))

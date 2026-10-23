@@ -6,6 +6,7 @@ local likes = ui.state("likes", 0)
 ui.contribute(
 	"sidebar",
 	ui.column {
+		items = "start",
 		p = 12,
 		gap = 8,
 		rounded = 10,

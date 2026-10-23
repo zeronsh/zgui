@@ -45,7 +45,7 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `shrink` | `number` | `0` | share of an overflow given up; `0` means it never shrinks |
 | `basis` | `Length` | its size | |
 | `flex_wrap`, `wrap_reverse` | `boolean` | `false` | wrap children onto lines |
-| `items` | `"start" \| "center" \| "end" \| "baseline" \| "stretch"` | `"start"` (overlay: `"stretch"`) | children across the axis |
+| `items` | `"start" \| "center" \| "end" \| "baseline" \| "stretch"` | `"stretch"` | children across the axis: stretched to the container's width (a column's) or height (a row's) unless they size themselves there, as in CSS |
 | `justify` | `"start" \| "center" \| "end" \| "between" \| "around" \| "evenly" \| "stretch"` | `"start"` | children along it |
 | `self` | `"start" \| "center" \| "end" \| "baseline" \| "stretch"` | the parent's `items` | this child across the parent's axis |
 | `content` | `"start" \| "center" \| "end" \| "stretch" \| "between" \| "around" \| "evenly"` | `"start"` | wrapped lines |

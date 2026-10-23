@@ -63,7 +63,8 @@ fn borders_sit_inside_a_box_and_its_content_inside_them() {
             .border_color(Color(0, 0, 0, 0))
             .child(div().id("sides_child").w(10.).h(10.))
             .when(taffy, |v| v.child(advanced()));
-        let (ui, h) = mount(column().child(sized).child(fit).child(sides));
+        // Each box its own size: not stretched across the column.
+        let (ui, h) = mount(column().items_start().child(sized).child(fit).child(sides));
         let case = format!("taffy {taffy}");
         assert_eq!(
             rect(&ui, &h, "sized"),
