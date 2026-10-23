@@ -275,6 +275,33 @@ impl Scene {
             );
         }
     }
+    /// Window point (`x`, `y`) in the space `id` is laid out in (its
+    /// `bounds`, translated): mapped through the inverse of each local
+    /// transform (scale, rotation, skew) from the root down, `id`'s own
+    /// included, as hit testing maps it. `None` where one is singular.
+    /// Without transforms in the scene, the point itself.
+    pub fn point_in(&self, id: NodeId, x: f32, y: f32) -> Option<(f32, f32)> {
+        if self.transformed == 0 || !self.contains(id) {
+            return Some((x, y));
+        }
+        let mut path: Vec<NodeId> = std::iter::once(id).chain(self.ancestors(id)).collect();
+        path.reverse();
+        let (mut translation, mut point) = (Transform::default(), (x, y));
+        for node in path {
+            let node = self.node(node);
+            translation.x += node.transform.x;
+            translation.y += node.transform.y;
+            if node.transformed() {
+                let bounds = node.bounds.translated(translation);
+                point = node
+                    .local()
+                    .matrix(bounds)
+                    .inverse()?
+                    .point(point.0, point.1);
+            }
+        }
+        Some(point)
+    }
     /// Order `a` and `b` as a document would: an ancestor before what it
     /// holds, siblings as their parent orders them. Both must be in the
     /// scene.

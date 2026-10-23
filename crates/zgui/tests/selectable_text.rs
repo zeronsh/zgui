@@ -883,3 +883,42 @@ fn selected_text_keeps_its_colour_unless_styled_and_regions_override_the_theme()
     );
     assert_eq!(themed.glyph_color(r.x + r.width + 5., r.y + 1.), None);
 }
+
+#[test]
+fn hit_testing_follows_scale_and_rotation() {
+    let mut ui = Ui::new(400., 300.);
+    ui.mount(
+        column()
+            .w(100.)
+            .text_size(10.)
+            .line_height(20.)
+            .selectable(true)
+            .scale(2.)
+            .transform_origin(0., 0.)
+            .child(text("abcdefghij")),
+    );
+    ui.prepare_frame();
+    // Drawn twice as large: a character is 12 points wide on screen.
+    drag(&mut ui, (24., 20.), (72., 20.));
+    assert_eq!(ui.selected_text(), "cdef");
+    let mut ui = Ui::new(400., 300.);
+    ui.mount(
+        column().size(400., 300.).child(
+            column()
+                .ml(100.)
+                .w(60.)
+                .h(20.)
+                .text_size(10.)
+                .line_height(20.)
+                .selectable(true)
+                .rotate(std::f32::consts::FRAC_PI_2)
+                .transform_origin(0., 0.)
+                .child(text("abcdefghij")),
+        ),
+    );
+    ui.prepare_frame();
+    // Turned a quarter clockwise about its corner (100, 0): the text runs
+    // down the screen, left of the corner.
+    drag(&mut ui, (90., 12.), (90., 36.));
+    assert_eq!(ui.selected_text(), "cdef");
+}

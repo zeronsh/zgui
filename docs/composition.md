@@ -187,7 +187,7 @@ Text that is not selectable costs nothing: no listeners, nodes or layouts. A
 selectable region adds one listener; a press shapes the text it lands on, and
 the layouts a gesture moves over are kept until it ends. Changing the
 selection repaints only where a highlight changed, and an unchanged one
-repaints nothing. Hit testing uses translation only, not scale or rotation.
+repaints nothing. Hit testing maps the pointer through local transforms (scale, rotation, skew), as the scene's does.
 
 ## Editable text
 

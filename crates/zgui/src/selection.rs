@@ -549,12 +549,15 @@ impl Ui {
     fn point_at(&self, root: NodeId, x: f32, y: f32) -> Option<Hit> {
         self.point_near(root, x, y, true)
     }
-    /// `point_at`, over all the region's laid-out text when not `visible`
-    /// only (the keyboard's steps reach text scrolled out of view).
+    /// `point_at`; not `visible`, over all the region's laid-out text, at a
+    /// point already in its layout space: the keyboard's steps, which reach
+    /// text scrolled out of view.
     fn point_near(&self, root: NodeId, x: f32, y: f32, visible: bool) -> Option<Hit> {
         let only_visible = visible;
         let scene = self.scene.borrow();
-        let mut best: Option<(TextLeaf, (f32, f32))> = None;
+        // The nearest text, its distance and the pointer in its space.
+        type Nearest = (TextLeaf, (f32, f32), (f32, f32));
+        let mut best: Option<Nearest> = None;
         scene.selectable_text(
             root,
             |id| self.is_editor(id),
@@ -563,6 +566,14 @@ impl Ui {
                     leaf.visible
                 } else {
                     Some(leaf.bounds)
+                }) else {
+                    return;
+                };
+                // The pointer where the text is laid out, through scales
+                // and rotations on the way.
+                let Some((x, y)) = (match only_visible {
+                    true => scene.point_in(leaf.id, x, y),
+                    false => Some((x, y)),
                 }) else {
                     return;
                 };
@@ -580,12 +591,12 @@ impl Ui {
                     distance(x, visible.x, visible.width),
                 );
                 // Ties go to what paints later, over the rest.
-                if best.is_none_or(|(_, best)| key <= best) {
-                    best = Some((leaf, key));
+                if best.is_none_or(|(_, best, _)| key <= best) {
+                    best = Some((leaf, key, (x, y)));
                 }
             },
         );
-        let (leaf, _) = best?;
+        let (leaf, _, (x, y)) = best?;
         let bounds = leaf.bounds;
         let visible = match only_visible {
             true => leaf.visible.unwrap(),
@@ -1045,6 +1056,9 @@ impl Ui {
                 return false;
             };
             let bounds = scene.bounds(part.node);
+            let Some((x, y)) = scene.point_in(part.node, x, y) else {
+                return false;
+            };
             highlight.rects.iter().any(|r| {
                 let (left, top) = (bounds.x + r.x, bounds.y + r.y);
                 x >= left && x < left + r.width && y >= top && y < top + r.height
