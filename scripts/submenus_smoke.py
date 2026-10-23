@@ -70,7 +70,10 @@ def main():
         report(1)
         key("Down","Right")
         report(2)
-        xdo("windowsize",window,600,420)
+        # Popups reach past the window: a submenu flips at the screen's
+        # right edge (1024), not the window's. Moved right, the window
+        # leaves the submenu no room there.
+        xdo("windowmove",window,420,0)
         time.sleep(.3)
         report(3)
         key("Left")
@@ -116,7 +119,7 @@ def main():
         if any(item not in output for item in required):raise AssertionError(output)
         for stage,expected_x in [(2,456),(3,84)]:
             if not re.search(rf"BOUNDS {stage} child-menu Rect \{{ x: {expected_x}.0, y: 152.0,",output):raise AssertionError(output)
-        result={"platform":"X11/Xvfb","scale":1,"result":"pass","checks":["Right opens child without closing parent","Left closes only child and restores trigger","Enter and pointer open child","viewport resize flips side placement","Escape closes only child","action closes chain before callback","focus restores root anchor","single click activates parent through child scope","outside click closes chain without background activation","automatic close"],"samples":samples,"limitations":"Software rendering; does not validate macOS or hardware GPUs."}
+        result={"platform":"X11/Xvfb","scale":1,"result":"pass","checks":["Right opens child without closing parent","Left closes only child and restores trigger","Enter and pointer open child","a submenu flips at the screen's edge","Escape closes only child","action closes chain before callback","focus restores root anchor","single click activates parent through child scope","outside click closes chain without background activation","automatic close"],"samples":samples,"limitations":"Software rendering; does not validate macOS or hardware GPUs."}
         (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         print("PASS: " + ", ".join(result["checks"]))
     finally:

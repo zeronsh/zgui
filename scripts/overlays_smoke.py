@@ -81,7 +81,10 @@ def main():
         report(2,(30,238,(54,81,110)))
         xdo("windowsize",window,600,240)
         time.sleep(.3)
-        report(3,(30,98,(54,81,110)))
+        # Popups reach past the window: the panel keeps below its trigger,
+        # past the 240-point window's bottom edge, where only its own
+        # window paints.
+        report(3,(30,244,(54,81,110)))
         xdo("windowsize",window,600,420)
         time.sleep(.3)
         key("Escape")
@@ -117,9 +120,10 @@ def main():
             'SNAPSHOT 11 popup=false modal=false nested=false offset=40 focus=Some("Open anchored popup")',
             'OVERLAYS popup=false modal=false nested=false offset=40 reports=11']
         if any(item not in output for item in required):raise AssertionError(output)
-        for stage,expected_y in [(1,188),(2,148),(3,8)]:
+        # Stage 3: past the window's bottom edge, not flipped above.
+        for stage,expected_y in [(1,188),(2,148),(3,148)]:
             if not re.search(rf"BOUNDS {stage} popup Rect \{{ x: 24.0, y: {expected_y}.0,",output):raise AssertionError(output)
-        result={"platform":"X11/Xvfb","scale":1,"result":"pass","checks":["anchored popup native opening","anchor compositor scroll tracking","viewport resize flip","Escape focus restore","modal Tab containment","nested popup focus scope","backdrop dismissal","panel pixels","automatic close"],"samples":samples,"limitations":"Software rendering; does not validate macOS or hardware GPUs."}
+        result={"platform":"X11/Xvfb","scale":1,"result":"pass","checks":["anchored popup native opening","anchor compositor scroll tracking","popup past the window's edge","Escape focus restore","modal Tab containment","nested popup focus scope","backdrop dismissal","panel pixels","automatic close"],"samples":samples,"limitations":"Software rendering; does not validate macOS or hardware GPUs."}
         (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         print("PASS: " + ", ".join(result["checks"]))
     finally:

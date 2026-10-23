@@ -97,7 +97,10 @@ pub(crate) fn fitted(
     ((width, height) != inner).then_some((width, height))
 }
 
-fn intersect(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> Option<(i32, i32, i32, i32)> {
+pub(crate) fn intersect(
+    a: (i32, i32, i32, i32),
+    b: (i32, i32, i32, i32),
+) -> Option<(i32, i32, i32, i32)> {
     let (x, y) = (a.0.max(b.0), a.1.max(b.1));
     let (right, bottom) = ((a.0 + a.2).min(b.0 + b.2), (a.1 + a.3).min(b.1 + b.3));
     (right > x && bottom > y).then_some((x, y, right - x, bottom - y))
@@ -121,6 +124,22 @@ fn cardinals(connection: &impl Connection, window: u32, property: u32) -> Option
         .reply()
         .ok()?;
     Some(reply.value32()?.collect())
+}
+
+/// The current desktop's work area, on a connection kept for it: what
+/// popups may cover (`popup_window`), asked as the window moves.
+pub(crate) fn current() -> Option<(i32, i32, i32, i32)> {
+    thread_local! {
+        static CONNECTION: Option<(x11rb::rust_connection::RustConnection, u32)> =
+            x11rb::connect(None).ok().map(|(connection, screen)| {
+                let root = connection.setup().roots[screen].root;
+                (connection, root)
+            });
+    }
+    CONNECTION.with(|connection| {
+        let (connection, root) = connection.as_ref()?;
+        work_area(connection, *root)
+    })
 }
 
 /// The work area of the current desktop (`_NET_WORKAREA`, x, y, width,

@@ -1,4 +1,5 @@
-//! Measures popup windows (macOS): a menu hanging past the window's bottom
+//! Measures popup windows (macOS; on X11 it reports its menu for
+//! `scripts/popup_windows_smoke.py` to drive): a menu hanging past the window's bottom
 //! edge, opened, hovered and chosen from by synthetic AppKit events posted
 //! to this process alone (the user's pointer is never moved).
 //!
@@ -71,11 +72,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     window.close();
                 });
             }
+            // Elsewhere (X11) a script drives it from outside
+            // (`scripts/popup_windows_smoke.py`): it reports the menu.
             #[cfg(not(target_os = "macos"))]
             {
-                let _ = (view, open, chosen);
-                eprintln!("popup_probe: macOS only");
-                cx.window.close();
+                let _ = view;
+                let report = cx.ui.runtime.effect(move || {
+                    println!("OPEN {} CHOSEN {:?}", open.get(), chosen.get());
+                });
+                cx.on_closed(move || drop(report));
+                println!("READY");
             }
         })
 }

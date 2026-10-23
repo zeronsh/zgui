@@ -34,8 +34,11 @@
 //!   `WM_WINDOWPOSCHANGED`; close popups on `WM_ACTIVATEAPP` (false) and on
 //!   a press in the owner's non-client area (`WM_NCLBUTTONDOWN`).
 //!
-//! todo(x11): override-redirect ARGB windows (`_NET_WM_WINDOW_TYPE_POPUP_MENU`),
-//! placed by the app, with a pointer grab or `FocusOut` to dismiss them.
+//! X11 (`x11`): override-redirect ARGB windows typed as popup menus
+//! (`_NET_WM_WINDOW_TYPE_POPUP_MENU`), placed by the app on the monitors
+//! winit reports, dismissed with the parent's focus. winit makes them, so
+//! they are made where the event loop is (`make`, as the pointer nears a
+//! trigger, or the frame after a popup found none ready).
 //! todo(wayland): `xdg_popup` with an `xdg_positioner` (the compositor places,
 //! flips and dismisses it; the app cannot learn screen bounds), which winit
 //! does not expose.
@@ -70,10 +73,13 @@ pub(crate) enum PopupInput {
 #[cfg(target_os = "macos")]
 pub(crate) use macos::{PopupHost, enabled, popup_screens, warm};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) use other::{PopupHost, enabled, popup_screens, warm};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub(crate) use x11::{PopupHost, enabled, make, pointer, popup_screens, route, wanted, warm};
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod other {
     use super::PopupInput;
     use zgui::scene::{Rect, Scene};
@@ -950,5 +956,499 @@ mod macos {
                 release(panel);
             }
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod x11 {
+    use super::PopupInput;
+    use std::{
+        cell::{Cell, RefCell},
+        collections::HashMap,
+        rc::Rc,
+        sync::Arc,
+    };
+    use winit::{
+        dpi::{PhysicalPosition, PhysicalSize},
+        event::WindowEvent,
+        event_loop::ActiveEventLoop,
+        platform::x11::{WindowAttributesExtX11, WindowType},
+        raw_window_handle::{HasDisplayHandle, RawDisplayHandle},
+        window::{Window, WindowId},
+    };
+    use zgui::{
+        scene::{NodeId, Rect, Scene},
+        semantics::{Role, Semantics},
+    };
+    use zgui_gpu::{GpuContext, GpuError, GpuRenderer};
+
+    /// Popup windows kept made while hidden: a menu, its submenu and a
+    /// tooltip open together without making one.
+    const POOL: usize = 3;
+    /// Where a popup window is mapped before its first frame and moved to
+    /// before it is unmapped: off every screen. An unmapped window's
+    /// swapchain never completes a present (Mesa's X11 presentation waits
+    /// for the server's notice), so a frame only goes to a mapped window;
+    /// and hidden ones stay unmapped, so they are no window of the app's
+    /// to anything looking for one.
+    const PARKED: PhysicalPosition<i32> = PhysicalPosition::new(-10_000, -10_000);
+
+    /// What hands a popup's input to its parent window's host.
+    type Sink = Rc<dyn Fn(PopupInput)>;
+    /// Where a popup window's input goes: its popup's origin in its parent
+    /// window, the scale, and the parent's host.
+    struct Target {
+        origin: Cell<(f32, f32)>,
+        scale: Cell<f64>,
+        cursor: Cell<(f32, f32)>,
+        send: Sink,
+    }
+    struct Popup {
+        window: Arc<Window>,
+        renderer: Option<GpuRenderer>,
+        revision: Option<u64>,
+        rect: Option<Rect>,
+    }
+    thread_local! {
+        static HIDDEN: RefCell<Vec<Popup>> = const { RefCell::new(Vec::new()) };
+        static TARGETS: RefCell<HashMap<WindowId, Rc<Target>>> = RefCell::new(HashMap::new());
+        /// A popup found no window ready: make one where the event loop is.
+        static WANTED: Cell<bool> = const { Cell::new(false) };
+        static ON: bool = std::env::var_os("ZGUI_POPUP_WINDOWS").is_none_or(|v| v != "0");
+    }
+
+    pub(crate) fn enabled() -> bool {
+        ON.with(|on| *on)
+    }
+    fn x11(window: &Window) -> bool {
+        enabled()
+            && window.display_handle().is_ok_and(|handle| {
+                matches!(
+                    handle.as_raw(),
+                    RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
+                )
+            })
+    }
+    /// The monitors popups may show on, in `window`'s logical coordinates
+    /// (X11; none on Wayland, where popups stay inside their window).
+    pub(crate) fn popup_screens(window: &Window) -> Vec<Rect> {
+        if !x11(window) {
+            return Vec::new();
+        }
+        let Ok(origin) = window.inner_position() else {
+            return Vec::new();
+        };
+        let scale = window.scale_factor();
+        // Each monitor less the panels on it (the current desktop's work
+        // area, `_NET_WORKAREA`), as menus keep off a panel.
+        let work = crate::x11_work_area::current();
+        window
+            .available_monitors()
+            .filter_map(|monitor| {
+                let (at, size) = (monitor.position(), monitor.size());
+                let screen = (at.x, at.y, size.width as i32, size.height as i32);
+                let (x, y, width, height) = match work {
+                    Some(work) => crate::x11_work_area::intersect(screen, work)?,
+                    None => screen,
+                };
+                Some(Rect::new(
+                    ((x - origin.x) as f64 / scale) as f32,
+                    ((y - origin.y) as f64 / scale) as f32,
+                    (width as f64 / scale) as f32,
+                    (height as f64 / scale) as f32,
+                ))
+            })
+            .collect()
+    }
+    /// An X11 window's id.
+    fn xid(window: &Window) -> Option<u32> {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        match window.window_handle().ok()?.as_raw() {
+            RawWindowHandle::Xlib(handle) => Some(handle.window as u32),
+            RawWindowHandle::Xcb(handle) => Some(handle.window.get()),
+            _ => None,
+        }
+    }
+    thread_local! {
+        /// A connection of zgui's own, for what winit does not ask.
+        static CONNECTION: Option<x11rb::rust_connection::RustConnection> =
+            x11rb::connect(None).ok().map(|(connection, _)| connection);
+    }
+    /// Mark `popup` its parent's (`WM_TRANSIENT_FOR`), as menus are: what
+    /// compositors and accessibility read it as part of.
+    fn transient_for(popup: &Window, parent: &Window) {
+        use x11rb::{
+            connection::Connection as _,
+            protocol::xproto::{AtomEnum, PropMode},
+            wrapper::ConnectionExt as _,
+        };
+        let (Some(popup), Some(parent)) = (xid(popup), xid(parent)) else {
+            return;
+        };
+        CONNECTION.with(|connection| {
+            if let Some(connection) = connection {
+                let _ = connection.change_property32(
+                    PropMode::REPLACE,
+                    popup,
+                    AtomEnum::WM_TRANSIENT_FOR,
+                    AtomEnum::WINDOW,
+                    &[parent],
+                );
+                let _ = connection.flush();
+            }
+        });
+    }
+    /// winit's X display: XI2 requests go on its connection, as winit hears
+    /// XI2 events alone.
+    fn display(window: &Window) -> Option<*mut x11_dl::xlib::Display> {
+        use winit::raw_window_handle::RawDisplayHandle;
+        match window.display_handle().ok()?.as_raw() {
+            RawDisplayHandle::Xlib(handle) => Some(handle.display?.as_ptr().cast()),
+            _ => None,
+        }
+    }
+    thread_local! {
+        static XI: Option<(x11_dl::xinput2::XInput2, x11_dl::xlib::Xlib)> = (|| {
+            Some((
+                x11_dl::xinput2::XInput2::open().ok()?,
+                x11_dl::xlib::Xlib::open().ok()?,
+            ))
+        })();
+    }
+    /// Hold the pointer for `parent` while a menu or popover shows, as GTK's
+    /// menus do: presses in the app's windows arrive as ever (owner
+    /// events), and one anywhere else arrives at `parent`, outside it, which
+    /// closes its popups. The display held, to let go with `release_grab`.
+    fn grab(parent: &Window) -> Option<usize> {
+        use x11_dl::{xinput2, xlib};
+        let (window, display) = (xid(parent)?, display(parent)?);
+        XI.with(|xi| {
+            let (xi, x) = xi.as_ref()?;
+            // SAFETY: winit's open display, on its event loop's thread; the
+            // mask outlives the call.
+            unsafe {
+                let mut pointer = 0;
+                if (xi.XIGetClientPointer)(display, 0, &mut pointer) == 0 {
+                    return None;
+                }
+                let mut bits = [0u8; 4];
+                for event in [
+                    xinput2::XI_ButtonPress,
+                    xinput2::XI_ButtonRelease,
+                    xinput2::XI_Motion,
+                ] {
+                    bits[event as usize >> 3] |= 1 << (event & 7);
+                }
+                let mut mask = xinput2::XIEventMask {
+                    deviceid: pointer,
+                    mask_len: bits.len() as i32,
+                    mask: bits.as_mut_ptr(),
+                };
+                let status = (xi.XIGrabDevice)(
+                    display,
+                    pointer,
+                    window as _,
+                    xlib::CurrentTime,
+                    0,
+                    xlib::GrabModeAsync,
+                    xlib::GrabModeAsync,
+                    xlib::True,
+                    &mut mask,
+                );
+                (x.XFlush)(display);
+                (status == xlib::GrabSuccess).then_some(display as usize)
+            }
+        })
+    }
+    /// Let go of the pointer `grab` held on `display`.
+    fn release_grab(display: usize) {
+        let display = display as *mut x11_dl::xlib::Display;
+        XI.with(|xi| {
+            let Some((xi, x)) = xi.as_ref() else {
+                return;
+            };
+            // SAFETY: winit's display, still open: the event loop outlives
+            // the windows whose popups grabbed.
+            unsafe {
+                let mut pointer = 0;
+                if (xi.XIGetClientPointer)(display, 0, &mut pointer) != 0 {
+                    (xi.XIUngrabDevice)(display, pointer, x11_dl::xlib::CurrentTime);
+                    (x.XFlush)(display);
+                }
+            }
+        });
+    }
+    /// macOS readies a panel here; X11's windows are made by `make`.
+    pub(crate) fn warm(_: &GpuContext, _: f32) {}
+    /// Whether a popup found no window ready (`make` one).
+    pub(crate) fn wanted() -> bool {
+        WANTED.with(|wanted| wanted.replace(false))
+    }
+    /// Have a hidden popup window ready, if none is.
+    pub(crate) fn make(event_loop: &ActiveEventLoop) {
+        let x11 = event_loop.display_handle().is_ok_and(|handle| {
+            matches!(
+                handle.as_raw(),
+                RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
+            )
+        });
+        if !enabled() || !x11 {
+            return;
+        }
+        HIDDEN.with(|hidden| {
+            let mut hidden = hidden.borrow_mut();
+            if hidden.is_empty() {
+                let attributes = Window::default_attributes()
+                    .with_visible(false)
+                    // Its parent keeps the keyboard (and its popups).
+                    .with_active(false)
+                    .with_position(PARKED)
+                    .with_decorations(false)
+                    .with_transparent(true)
+                    .with_inner_size(PhysicalSize::new(1, 1))
+                    .with_override_redirect(true)
+                    .with_x11_window_type(vec![WindowType::PopupMenu]);
+                let Ok(window) = event_loop.create_window(attributes) else {
+                    return;
+                };
+                hidden.push(Popup {
+                    window: Arc::new(window),
+                    renderer: None,
+                    revision: None,
+                    rect: None,
+                });
+            }
+        });
+    }
+    /// Where the pointer is in `window` (physical), as it comes back from
+    /// a popup window: winit tells the parent only that the pointer
+    /// entered, and sends no move to a point it last saw it at, so the
+    /// parent would act where the popup last had it.
+    pub(crate) fn pointer(window: &Window) -> Option<PhysicalPosition<f64>> {
+        use x11rb::protocol::xproto::ConnectionExt as _;
+        if !x11(window) {
+            return None;
+        }
+        let id = xid(window)?;
+        CONNECTION.with(|connection| {
+            let reply = connection.as_ref()?.query_pointer(id).ok()?.reply().ok()?;
+            reply
+                .same_screen
+                .then(|| PhysicalPosition::new(reply.win_x as f64, reply.win_y as f64))
+        })
+    }
+    /// A popup window's event, as its parent's host hears it; whether
+    /// `window` was a popup's.
+    pub(crate) fn route(window: WindowId, event: &WindowEvent) -> bool {
+        let Some(target) = TARGETS.with(|targets| targets.borrow().get(&window).cloned()) else {
+            return HIDDEN.with(|hidden| hidden.borrow().iter().any(|p| p.window.id() == window));
+        };
+        let (x, y) = target.origin.get();
+        let scale = target.scale.get();
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                let at = (
+                    x + (position.x / scale) as f32,
+                    y + (position.y / scale) as f32,
+                );
+                target.cursor.set(at);
+                (target.send)(PopupInput::Moved { x: at.0, y: at.1 });
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let (x, y) = target.cursor.get();
+                (target.send)(PopupInput::Button {
+                    x,
+                    y,
+                    button: *button,
+                    pressed: state.is_pressed(),
+                });
+            }
+            WindowEvent::MouseWheel { delta, phase, .. } => {
+                let (x, y) = target.cursor.get();
+                (target.send)(PopupInput::Wheel {
+                    x,
+                    y,
+                    delta: *delta,
+                    phase: *phase,
+                });
+            }
+            WindowEvent::CursorLeft { .. } => (target.send)(PopupInput::Left),
+            _ => {}
+        }
+        true
+    }
+
+    /// A window's shown popups.
+    pub(crate) struct PopupHost {
+        shown: Vec<(NodeId, Popup)>,
+        send: Sink,
+        /// The display whose pointer a menu or popover holds (`grab`).
+        grabbed: Option<usize>,
+    }
+    impl PopupHost {
+        pub fn new(send: impl Fn(PopupInput) + 'static) -> Self {
+            Self {
+                shown: Vec::new(),
+                send: Rc::new(send),
+                grabbed: None,
+            }
+        }
+        /// Hold the pointer for `parent`, or let go of it.
+        fn hold(&mut self, parent: &Window, on: bool) {
+            if on && self.grabbed.is_none() {
+                self.grabbed = grab(parent);
+            } else if !on && let Some(display) = self.grabbed.take() {
+                release_grab(display);
+            }
+        }
+        /// Whether any popup shows.
+        pub fn showing(&self) -> bool {
+            !self.shown.is_empty()
+        }
+        /// After the scene's flush: show each visible popup root in a window
+        /// over `parent`, draw it again where it changed (always when
+        /// `full`), and hide the rest.
+        #[allow(clippy::too_many_arguments)]
+        pub fn update(
+            &mut self,
+            parent: &Window,
+            scene: &Scene,
+            semantics: &Semantics,
+            context: &GpuContext,
+            scale: f32,
+            full: bool,
+        ) -> Result<(), GpuError> {
+            if (self.shown.is_empty() && scene.popups().is_empty()) || !x11(parent) {
+                return Ok(());
+            }
+            let wanted: Vec<(NodeId, Rect)> = scene
+                .popups()
+                .iter()
+                .filter_map(|root| scene.popup_bounds(*root).map(|bounds| (*root, bounds)))
+                .collect();
+            let mut index = 0;
+            while index < self.shown.len() {
+                if wanted.iter().any(|(root, _)| *root == self.shown[index].0) {
+                    index += 1;
+                    continue;
+                }
+                let (root, popup) = self.shown.swap_remove(index);
+                zgui_gpu::present_log::log(|| format!("popup hide {root:?}"));
+                release(popup);
+            }
+            let Ok(origin) = parent.inner_position() else {
+                return Ok(());
+            };
+            for (root, bounds) in wanted {
+                let new = !self.shown.iter().any(|(shown, _)| *shown == root);
+                if new {
+                    zgui_gpu::present_log::log(|| format!("popup show {root:?} at {bounds:?}"));
+                    let Some(popup) = HIDDEN.with(|hidden| hidden.borrow_mut().pop()) else {
+                        // Made where the event loop is; drawn next frame.
+                        WANTED.with(|wanted| wanted.set(true));
+                        parent.request_redraw();
+                        continue;
+                    };
+                    // Mapped off screen, to take its first frame.
+                    popup.window.set_visible(true);
+                    transient_for(&popup.window, parent);
+                    self.shown.push((root, popup));
+                }
+                let popup = &mut self
+                    .shown
+                    .iter_mut()
+                    .find(|(shown, _)| *shown == root)
+                    .expect("pushed above")
+                    .1;
+                if popup.renderer.is_none() {
+                    popup.renderer = Some(GpuRenderer::for_window_with_context(
+                        popup.window.clone(),
+                        context,
+                    )?);
+                }
+                let renderer = popup.renderer.as_mut().expect("made above");
+                renderer.set_popup(root, bounds);
+                let rect = renderer.plane_rect().unwrap_or(bounds);
+                let moved = popup.rect != Some(rect);
+                if moved {
+                    // The window to the popup's box, in whole device pixels,
+                    // before its surface draws at that size.
+                    let size = PhysicalSize::new(
+                        (rect.width * scale).round() as u32,
+                        (rect.height * scale).round() as u32,
+                    );
+                    let _ = popup.window.request_inner_size(size);
+                }
+                // Popups are small: one that changed is drawn whole.
+                let revision = scene.layer_revision(root);
+                if new || full || moved || popup.revision != Some(revision) {
+                    popup.revision = Some(revision);
+                    renderer.repaint_all();
+                    renderer.render(scene, &[])?;
+                    renderer.present()?;
+                }
+                // Onto the screen once its frame is there.
+                if moved {
+                    popup.window.set_outer_position(PhysicalPosition::new(
+                        origin.x + (rect.x * scale).round() as i32,
+                        origin.y + (rect.y * scale).round() as i32,
+                    ));
+                }
+                popup.rect = Some(rect);
+                TARGETS.with(|targets| {
+                    let mut targets = targets.borrow_mut();
+                    let target = targets.entry(popup.window.id()).or_insert_with(|| {
+                        Rc::new(Target {
+                            origin: Cell::new((rect.x, rect.y)),
+                            scale: Cell::new(scale as f64),
+                            cursor: Cell::new((rect.x, rect.y)),
+                            send: self.send.clone(),
+                        })
+                    });
+                    target.origin.set((rect.x, rect.y));
+                    target.scale.set(scale as f64);
+                });
+            }
+            // A menu or popover holds the pointer; a tooltip does not.
+            let modal = self.shown.iter().any(|(root, _)| {
+                semantics
+                    .get(*root)
+                    .is_some_and(|node| matches!(node.role, Role::Menu | Role::Dialog))
+            });
+            self.hold(parent, modal);
+            Ok(())
+        }
+        /// Hide every popup (the window closes or goes away).
+        pub fn hide_all(&mut self, parent: &Window) {
+            for (_, popup) in self.shown.drain(..) {
+                release(popup);
+            }
+            self.hold(parent, false);
+        }
+    }
+    impl Drop for PopupHost {
+        fn drop(&mut self) {
+            for (_, popup) in self.shown.drain(..) {
+                release(popup);
+            }
+            if let Some(display) = self.grabbed.take() {
+                release_grab(display);
+            }
+        }
+    }
+    /// Hide `popup` (parked off screen, unmapped), and keep it made if few
+    /// are.
+    fn release(mut popup: Popup) {
+        popup.window.set_outer_position(PARKED);
+        popup.window.set_visible(false);
+        popup.revision = None;
+        popup.rect = None;
+        TARGETS.with(|targets| targets.borrow_mut().remove(&popup.window.id()));
+        HIDDEN.with(|hidden| {
+            let mut hidden = hidden.borrow_mut();
+            if hidden.len() < POOL {
+                hidden.push(popup);
+            }
+        });
     }
 }

@@ -996,6 +996,10 @@ struct Host {
     /// start (Linux): content hears nothing there.
     #[cfg(target_os = "linux")]
     resize_edge: Option<winit::window::ResizeDirection>,
+    /// The pointer has been over a popup window of this one (X11): winit
+    /// may not report its move back, so a press asks where it is.
+    #[cfg(target_os = "linux")]
+    had_popups: bool,
     /// When the display link last delivered a refresh, aligning `frame_timer`
     /// to its grid: until `VSYNC_RESYNC` later the timer paces frames and the
     /// link (a thread spinning to each refresh) stays stopped.
@@ -1230,6 +1234,8 @@ impl Host {
             caption: None,
             #[cfg(target_os = "linux")]
             resize_edge: None,
+            #[cfg(target_os = "linux")]
+            had_popups: false,
             #[cfg(target_os = "macos")]
             vsync_synced: None,
             #[cfg(target_os = "macos")]
@@ -2466,6 +2472,7 @@ impl Host {
             WindowEvent::CursorMoved { position, .. } => {
                 let p = position.to_logical::<f32>(self.scale_factor);
                 self.cursor = (p.x, p.y);
+
                 self.pointer_inside = true;
                 // An undecorated window's edge resizes it: the content
                 // hears the pointer leave, and nothing more until it is
@@ -2485,6 +2492,21 @@ impl Host {
                     }
                     PointerStep::Leave(_) => self.dispatch(InputEvent::PointerLeave)?,
                     PointerStep::Over(_) => {}
+                }
+            }
+            // Back from a popup window (X11): where the pointer is, which
+            // winit does not say.
+            #[cfg(target_os = "linux")]
+            WindowEvent::CursorEntered { device_id } => {
+                if let Some(position) = self
+                    .window
+                    .as_deref()
+                    .and_then(crate::popup_window::pointer)
+                {
+                    return self.window_event(WindowEvent::CursorMoved {
+                        device_id,
+                        position,
+                    });
                 }
             }
             WindowEvent::CursorLeft { .. } => {
@@ -2526,6 +2548,21 @@ impl Host {
                     MouseButton::Forward => PointerButton::Other(5),
                     MouseButton::Other(n) => PointerButton::Other(n),
                 };
+                // Back from a popup window, the pointer sends no move to
+                // where winit last saw it (X11; its enter does not count):
+                // a press in a window that had popups asks where it is.
+                #[cfg(target_os = "linux")]
+                if self.had_popups
+                    && let Some(position) = self
+                        .window
+                        .as_deref()
+                        .and_then(crate::popup_window::pointer)
+                {
+                    self.window_event(WindowEvent::CursorMoved {
+                        device_id: winit::event::DeviceId::dummy(),
+                        position,
+                    })?;
+                }
                 let (x, y) = self.cursor;
                 // A click stops a coasting scroll, as in a browser.
                 if state == ElementState::Pressed {
@@ -2782,10 +2819,17 @@ impl Host {
         let device_id = winit::event::DeviceId::dummy();
         let at = |x: f32, y: f32| LogicalPosition::new(x, y).to_physical(self.scale_factor);
         match input {
-            PopupInput::Moved { x, y } => self.window_event(WindowEvent::CursorMoved {
-                device_id,
-                position: at(x, y),
-            }),
+            PopupInput::Moved { x, y } => {
+                let moved = self.window_event(WindowEvent::CursorMoved {
+                    device_id,
+                    position: at(x, y),
+                });
+                #[cfg(target_os = "linux")]
+                {
+                    self.had_popups = true;
+                }
+                moved
+            }
             PopupInput::Button {
                 x,
                 y,
@@ -3636,6 +3680,8 @@ impl ApplicationHandler<Event> for WindowManager {
                 }
             }
             Event::PopupSoon(token) => {
+                #[cfg(target_os = "linux")]
+                crate::popup_window::make(event_loop);
                 if let Some(host) = self.hosts.get(&token) {
                     host.context.ui.popup_soon_heard();
                     if let Some(renderer) = &host.renderer {
@@ -3692,6 +3738,11 @@ impl ApplicationHandler<Event> for WindowManager {
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // A popup window's input goes to its parent's host (X11).
+        #[cfg(target_os = "linux")]
+        if crate::popup_window::route(id, &event) {
+            return;
+        }
         let Some(token) = self.native.get(&id).copied() else {
             return;
         };
@@ -3729,6 +3780,11 @@ impl ApplicationHandler<Event> for WindowManager {
         {
             event_loop.exit();
             return;
+        }
+        // A popup found no window ready: one is made for its next frame.
+        #[cfg(target_os = "linux")]
+        if crate::popup_window::wanted() {
+            crate::popup_window::make(event_loop);
         }
         // Wake tasks whose sleeps are due before the hosts poll them.
         self.timers.fire();

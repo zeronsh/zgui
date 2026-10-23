@@ -86,6 +86,29 @@ or its request is dropped (the waiting thread sleeps on the process and the
 request together, through a pidfd). Without zenity either, the request fails
 with `BackendUnavailable`. `zenity_dialog_smoke.py` checks it.
 
+## Popups past the window
+
+On X11 a menu, submenu, popover, context menu, select or tooltip that opens
+shows in a window of its own, as on macOS (`popup_window.rs`), so it reaches
+past its window's edges and flips or clamps at the screen's: each monitor
+less its panels (`_NET_WORKAREA`), given to the core as `Ui::set_popup_screens`.
+The window is override-redirect, typed a popup menu
+(`_NET_WM_WINDOW_TYPE_POPUP_MENU`), transient for its parent, with an ARGB
+visual for its rounded corners and shadow, and never takes the keyboard: the
+parent keeps it, and with it the popup's focus and keys. Its pointer input
+goes to the parent's host in the parent's coordinates. A menu or popover
+holds the pointer (an XI2 grab with owner events, as GTK's menus do): presses
+in the app's windows arrive as ever, one anywhere else closes it; a tooltip
+holds nothing. Popups close as the parent loses focus, too.
+
+Nothing is made before the pointer first nears something that opens a popup
+(`Ui::on_popup_soon`); then a window is made, unmapped, and up to three are
+kept for reuse. A popup's window is mapped off screen, takes its first
+frame there (an unmapped window's swapchain never completes a present), then
+moves into place; closed, it moves off and is unmapped. On Wayland popups stay
+inside their window: `xdg_popup` is not something winit exposes.
+`popup_windows_smoke.py` checks a menu past its window's edge.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a

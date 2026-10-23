@@ -1144,6 +1144,10 @@ mod linux {
     /// The edge or corner at (`x`, `y`) of a window `width` by `height`
     /// points, if the pointer there resizes it.
     pub(super) fn edge(x: f32, y: f32, width: f32, height: f32) -> Option<ResizeDirection> {
+        // Outside the window: a press a pointer grab reports (a popup's).
+        if !(0. ..width).contains(&x) || !(0. ..height).contains(&y) {
+            return None;
+        }
         let near = |at: f32, size: f32, reach: f32| (at < reach, at >= size - reach);
         let (left, right) = near(x, width, RESIZE_BAND);
         let (top, bottom) = near(y, height, RESIZE_BAND);
@@ -1479,6 +1483,7 @@ mod linux {
             assert_eq!(at(12., 598.), Some(SouthWest));
             assert_eq!(at(797., 10.), Some(NorthEast));
             assert_eq!(at(790., 590.), None, "inside, near a corner");
+            assert_eq!(at(-3., 300.), None, "outside, as a grab reports a press");
         }
     }
 }
