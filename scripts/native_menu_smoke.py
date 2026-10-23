@@ -58,7 +58,7 @@ def main():
                         time.sleep(.05)
                     xdo('windowactivate','--sync',host)
                 else:
-                    deadline=time.monotonic()+10
+                    deadline=time.monotonic()+20
                     while True:
                         found=subprocess.run(['xdotool','search','--name','^'+title+'$'],env=env,text=True,stdout=subprocess.PIPE)
                         if found.returncode==0:target=found.stdout.strip().splitlines()[0];break

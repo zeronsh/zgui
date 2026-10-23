@@ -71,7 +71,7 @@ def main():
                 return subprocess.check_output(['xdotool', *map(str,arguments)], env=env, text=True).strip()
             with (args.output / 'application.log').open('w') as output:
                 app = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=output, stderr=output)
-                deadline=time.monotonic()+8
+                deadline=time.monotonic()+20
                 while True:
                     found=subprocess.run(['xdotool','search','--onlyvisible','--pid',str(app.pid)],env=env,capture_output=True,text=True)
                     if found.returncode==0 and found.stdout.strip():

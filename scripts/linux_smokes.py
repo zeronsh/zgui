@@ -168,8 +168,20 @@ def main():
     group = os.environ.get("GITHUB_ACTIONS") == "true"
     failures, results = [], []
     started = time.monotonic()
-    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        for done in as_completed([pool.submit(run, smoke, args) for smoke in smokes]):
+    # A fresh runner builds font caches on first use: once, here, rather
+    # than in every probe of the first wave at the same time.
+    subprocess.run(["fc-cache"], check=False)
+    jobs = max(1, args.jobs)
+
+    def staggered(index, smoke):
+        # The first wave starts half a second apart: cold binaries and
+        # shader caches load one at a time.
+        if index < jobs:
+            time.sleep(index * .5)
+        return run(smoke, args)
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        for done in as_completed([pool.submit(staggered, i, smoke) for i, smoke in enumerate(smokes)]):
             name, status, seconds, log = done.result()
             results.append((seconds, name, status))
             ok = status == 0

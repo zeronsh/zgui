@@ -113,8 +113,8 @@ def main():
                             subprocess.run(['grim',str(args.output.resolve()/'timeout.png')],env=env,check=False)
                             raise RuntimeError('Missing application result: '+token)
                         time.sleep(.05)
-                def find_dialog(title="Open fixture"):
-                    deadline=time.monotonic()+12
+                def find_dialog(title="Open fixture",seconds=30):
+                    deadline=time.monotonic()+seconds
                     while time.monotonic()<deadline:
                         tree=json.loads(subprocess.check_output(['swaymsg','-t','get_tree','-r'],env=env,text=True))
                         pending=[tree]
@@ -189,9 +189,18 @@ def main():
                 assert str(destination) in (args.output/'application.log').read_text()
                 assert not destination.exists(), 'Selecting save path unexpectedly wrote a file'
                 # Open through the rendered File menu and cancel the real picker.
-                click_app(40,35); time.sleep(.15)
-                xdo('key','--clearmodifiers','Return')
-                cancel_dialog=find_dialog()
+                # The menu opens a frame after the click: a Return before it
+                # does goes elsewhere, so a picker that never comes is asked
+                # for again, from a closed menu.
+                for attempt in range(3):
+                    click_app(40,35); time.sleep(.3)
+                    xdo('key','--clearmodifiers','Return')
+                    try:
+                        cancel_dialog=find_dialog(seconds=5 if attempt<2 else 30)
+                        break
+                    except RuntimeError:
+                        if attempt==2: raise
+                        xdo('key','--clearmodifiers','Escape'); time.sleep(.3)
                 time.sleep(.2)
                 if args.escape_cancel:xdo('key','--clearmodifiers','Escape')
                 else:

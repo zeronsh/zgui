@@ -37,7 +37,7 @@ def main():
             app = subprocess.Popen([str(args.binary.resolve()), "--smoke-test"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             def xdo(*arguments):
                 return subprocess.check_output(["xdotool", *map(str, arguments)], env=env, text=True).strip()
-            deadline = time.monotonic() + 8
+            deadline = time.monotonic() + 20
             window = None
             while time.monotonic() < deadline and app.poll() is None:
                 found = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(app.pid)], env=env, capture_output=True, text=True)

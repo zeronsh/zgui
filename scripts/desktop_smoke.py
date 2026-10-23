@@ -29,7 +29,7 @@ def main():
     def xdo(*arguments):
         return subprocess.check_output(["xdotool", *map(str, arguments)], env=env, text=True).strip()
     try:
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 20
         window = None
         while time.monotonic() < deadline and proc.poll() is None:
             found = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(proc.pid)],

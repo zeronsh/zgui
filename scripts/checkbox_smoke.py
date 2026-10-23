@@ -36,7 +36,7 @@ def main():
         def xdo(*args):
             return subprocess.check_output(["xdotool", *map(str, args)], env=env, text=True).strip()
 
-        deadline = time.monotonic() + 6
+        deadline = time.monotonic() + 20
         window = None
         while time.monotonic() < deadline and app.poll() is None:
             found = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(app.pid)], env=env, capture_output=True, text=True)

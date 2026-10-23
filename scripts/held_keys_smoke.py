@@ -36,7 +36,7 @@ def main():
         def xdo(*arguments):
             return subprocess.check_output(["xdotool", *map(str, arguments)], env=env, text=True).strip()
         subprocess.check_call(["xset", "r", "off"], env=env)
-        deadline = time.monotonic() + 6
+        deadline = time.monotonic() + 20
         windows = {}
         while time.monotonic() < deadline and app.poll() is None:
             for name in ("source", "target"):

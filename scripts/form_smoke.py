@@ -43,7 +43,7 @@ def main():
         time.sleep(.1)
 
     try:
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 20
         window = None
         while time.monotonic() < deadline and process.poll() is None:
             found = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid)],
