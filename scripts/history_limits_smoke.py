@@ -52,8 +52,11 @@ def main():
                 time.sleep(.3)
                 def snapshot():
                     time.sleep(.25)
-                    matches = re.findall(r'HISTORY limited=(true|false) model=(".*")', output.read_text())
-                    assert matches, output.read_text()
+                    # The window can show before the first sample.
+                    first = time.monotonic() + 10
+                    while not (matches := re.findall(r'HISTORY limited=(true|false) model=(".*")', output.read_text())):
+                        assert time.monotonic() < first, output.read_text()
+                        time.sleep(.05)
                     limited, model = matches[-1]
                     return dict(limited=limited == "true", model=json.loads(model))
                 def click(x, y):

@@ -52,8 +52,11 @@ def main():
                 time.sleep(.3)
                 def snapshot():
                     time.sleep(.25)
-                    matches = re.findall(r"DISABLED disabled=(true|false) accepted=(\d+) amount=([\d.]+) focus=(true|false) capture=(true|false)", output.read_text())
-                    assert matches, output.read_text()
+                    # The window can show before the first sample.
+                    first = time.monotonic() + 10
+                    while not (matches := re.findall(r"DISABLED disabled=(true|false) accepted=(\d+) amount=([\d.]+) focus=(true|false) capture=(true|false)", output.read_text())):
+                        assert time.monotonic() < first, output.read_text()
+                        time.sleep(.05)
                     disabled, accepted, amount, focus, capture = matches[-1]
                     return dict(disabled=disabled == "true", accepted=int(accepted), amount=float(amount), focus=focus == "true", capture=capture == "true")
                 def move(x, y):

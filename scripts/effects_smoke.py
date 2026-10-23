@@ -59,7 +59,11 @@ def main():
                     time.sleep(.25)
                     while True:
                         matches = re.findall(r'EFFECTS opacity=([\d.]+) blur=([\d.]+) fade=([\d.]+) animate=(true|false) x=([\d.]+)', output.read_text())
-                        assert matches, output.read_text()
+                        if not matches:
+                            # The window can show before the first report.
+                            assert time.monotonic() < deadline, output.read_text()
+                            time.sleep(.05)
+                            continue
                         opacity, blur, fade, animate, x = matches[-1]
                         state = dict(opacity=float(opacity), blur=float(blur), fade=float(fade), animate=animate == "true", x=float(x))
                         if until(state) or time.monotonic() > deadline:

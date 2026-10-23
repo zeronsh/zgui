@@ -88,8 +88,11 @@ def main():
                 def type_text(text):
                     xdo('type','--clearmodifiers','--delay',90,text);time.sleep(.5)
                 def sample():
-                    matches = re.findall(r'EXTERNAL replaced=(true|false) preedit=(true|false) focus=(true|false) focus_changes=(\d+) model=(".*")', (args.output/'application.log').read_text())
-                    assert matches, 'Missing native editor sample'
+                    # The window can show before the first sample.
+                    first = time.monotonic() + 10
+                    while not (matches := re.findall(r'EXTERNAL replaced=(true|false) preedit=(true|false) focus=(true|false) focus_changes=(\d+) model=(".*")', (args.output/'application.log').read_text())):
+                        assert time.monotonic() < first, 'Missing native editor sample'
+                        time.sleep(.05)
                     replaced, preedit, focus, changes, model = matches[-1]
                     return dict(replaced=replaced == 'true', preedit=preedit == 'true', focus=focus == 'true', focus_changes=int(changes), model=json.loads(model))
                 click(100, 76)
