@@ -64,7 +64,16 @@ does: on Wayland it activates the window (`xdg_activation_v1`), so GNOME
 focuses it rather than announcing it "is ready"; on X11 it ends the launch's
 startup notification, and with it the launcher's busy cursor. The token then
 leaves the environment, so processes the app starts later do not take it as
-theirs. `launch_token_smoke.py` checks both.
+theirs.
+
+A launch of an app that already runs (one with an application ID) hands its
+token over with its D-Bus `Activate` or `Open` (GApplication's
+`platform_data`: `activation-token`, `desktop-startup-id`). A window the app
+opens for it takes the token; opening none, the app's window in front (the
+last focused) is raised with it: on Wayland through `xdg_activation_v1`
+(winit's `focus_window` does nothing there), on X11 through the window
+manager, restoring it if minimized and ending that launch's startup
+notification. `launch_token_smoke.py` checks all four.
 
 ## Frame pacing and latency
 

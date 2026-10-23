@@ -85,7 +85,8 @@ impl Default for WindowOptions {
 #[derive(Debug)]
 enum Event {
     Quit,
-    Application(crate::ApplicationEvent),
+    /// An event, with the token of the launch that sent it (Linux).
+    Application(crate::ApplicationEvent, Option<String>),
     MenuAction(u64, crate::MenuAction),
     MenuFallback(u64, crate::MenuAction),
     MenusChanged,
@@ -628,8 +629,8 @@ impl Application {
             let wake = proxy.clone();
             let events = crate::native_events::NativeApplicationEvents::new(
                 id,
-                Arc::new(move |event| {
-                    let _ = wake.send_event(Event::Application(event));
+                Arc::new(move |event, token| {
+                    let _ = wake.send_event(Event::Application(event, token));
                 }),
             )?;
             // Windows: another instance runs and took this launch's files
@@ -696,6 +697,8 @@ impl Application {
             native_menu,
             hosts: HashMap::from([(token, root)]),
             native: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            last_focused: None,
             factory,
             active: false,
             error: None,
@@ -3141,12 +3144,43 @@ struct WindowManager {
     native_menu: Option<crate::app_menu::NativeMenu>,
     hosts: HashMap<u64, Host>,
     native: HashMap<WindowId, u64>,
+    /// The window last focused: the one another launch raises (Linux).
+    #[cfg(target_os = "linux")]
+    last_focused: Option<u64>,
     factory: WindowFactory,
     active: bool,
     error: Option<String>,
     timers: zgui::timer::Hosted,
 }
 impl WindowManager {
+    /// Raise the window in front (the last focused, else any) for another
+    /// launch of the app, with its `token`: on Wayland the compositor
+    /// activates it (`xdg_activation_v1`); on X11 the window manager does,
+    /// restoring a minimized window, and that launch's startup notification
+    /// ends.
+    #[cfg(target_os = "linux")]
+    fn raise(&mut self, token: String) {
+        let Some(window) = self
+            .last_focused
+            .and_then(|focused| self.hosts.get(&focused))
+            .or_else(|| self.hosts.values().next())
+            .and_then(|host| host.window.clone())
+        else {
+            return;
+        };
+        let wayland = window
+            .display_handle()
+            .is_ok_and(|handle| matches!(handle.as_raw(), RawDisplayHandle::Wayland(_)));
+        if wayland {
+            if let Some(data) = &self.native_data {
+                data.activate(token, window);
+            }
+        } else {
+            window.set_minimized(false);
+            window.focus_window();
+            crate::x11_startup::complete(&window, &token);
+        }
+    }
     fn menu_action(&mut self, token: u64, action: crate::MenuAction) {
         if !crate::app_menu::enabled_action(&self.factory.menus.borrow(), &action) {
             return;
@@ -3320,9 +3354,25 @@ impl ApplicationHandler<Event> for WindowManager {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
         match event {
             Event::Quit => event_loop.exit(),
-            Event::Application(event) => {
+            Event::Application(event, token) => {
+                // The window this brings up takes the launch's token...
+                #[cfg(target_os = "linux")]
+                if let Some(token) = &token {
+                    *self.factory.activation.borrow_mut() =
+                        Some(winit::window::ActivationToken::from_raw(token.clone()));
+                }
+                #[cfg(not(target_os = "linux"))]
+                let _ = token;
                 if let Some(handler) = &mut self.application_event {
                     handler(event, &self.factory);
+                }
+                // ...or, bringing up none, the one in front is raised.
+                #[cfg(target_os = "linux")]
+                if self.factory.pending.borrow().is_empty() {
+                    let token = self.factory.activation.borrow_mut().take();
+                    if let Some(token) = token {
+                        self.raise(token.into_raw());
+                    }
                 }
             }
             Event::MenuAction(token, action) => self.menu_action(token, action),
@@ -3536,6 +3586,10 @@ impl ApplicationHandler<Event> for WindowManager {
         if matches!(event, WindowEvent::Destroyed) {
             self.close(token);
             return;
+        }
+        #[cfg(target_os = "linux")]
+        if matches!(event, WindowEvent::Focused(true)) {
+            self.last_focused = Some(token);
         }
         if let Some(host) = self.hosts.get_mut(&token)
             && let Err(e) = host.window_event(event)
@@ -4285,6 +4339,8 @@ mod tests {
             native_menu: None,
             hosts: HashMap::new(),
             native: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            last_focused: None,
             factory,
             active: false,
             error: None,

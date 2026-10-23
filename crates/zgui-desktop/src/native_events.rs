@@ -13,7 +13,10 @@ impl fmt::Display for ApplicationEventError {
     }
 }
 impl std::error::Error for ApplicationEventError {}
-pub(crate) type Handler = Arc<dyn Fn(ApplicationEvent) + Send + Sync>;
+/// An event, and the activation token of the launch that sent it (Linux:
+/// `activation-token` on Wayland, `desktop-startup-id` on X11), which lets
+/// the app raise its window for it.
+pub(crate) type Handler = Arc<dyn Fn(ApplicationEvent, Option<String>) + Send + Sync>;
 pub(crate) fn validate_id(id: &str) -> Result<(), ApplicationEventError> {
     let pieces: Vec<_> = id.split('.').collect();
     if id.len() > 255
@@ -41,6 +44,13 @@ mod platform {
         channel::MatchingReceiver, message::MatchRule,
     };
     use std::{sync::mpsc, thread, time::Duration};
+    /// The token a launch hands over with its call (GApplication's
+    /// `platform_data`): Wayland's activation token, or X11's startup id.
+    fn launch_token(platform_data: &PropMap) -> Option<String> {
+        ["activation-token", "desktop-startup-id"]
+            .iter()
+            .find_map(|key| Some(platform_data.get(*key)?.0.as_str()?.to_owned()))
+    }
     pub(crate) struct NativeApplicationEvents {
         stop: Arc<crate::linux_dbus::Stop>,
         thread: Option<thread::JoinHandle<()>>,
@@ -64,14 +74,14 @@ mod platform {
                     if reply!=RequestNameReply::PrimaryOwner {return Err(ApplicationEventError(format!("application ID {id} is already owned")))}
                     let mut routes=dbus_crossroads::Crossroads::new();
                     let interface=routes.register("org.freedesktop.Application",|builder| {
-                        builder.method("Activate",("platform_data",),(),|_:&mut dbus_crossroads::Context,handler:&mut Handler,(_,): (PropMap,)| {
-                            handler(ApplicationEvent::Reopen);Ok(())
+                        builder.method("Activate",("platform_data",),(),|_:&mut dbus_crossroads::Context,handler:&mut Handler,(platform_data,): (PropMap,)| {
+                            handler(ApplicationEvent::Reopen,launch_token(&platform_data));Ok(())
                         });
-                        builder.method("Open",("uris","platform_data"),(),|_:&mut dbus_crossroads::Context,handler:&mut Handler,(urls,_):(Vec<String>,PropMap)| {
+                        builder.method("Open",("uris","platform_data"),(),|_:&mut dbus_crossroads::Context,handler:&mut Handler,(urls,platform_data):(Vec<String>,PropMap)| {
                             if urls.len()>256 || urls.iter().any(|url|url.len()>65536 || !crate::url::valid_url(url)) {
                                 return Err(dbus::MethodErr::invalid_arg("invalid URL batch"));
                             }
-                            handler(ApplicationEvent::OpenUrls(urls));Ok(())
+                            handler(ApplicationEvent::OpenUrls(urls),launch_token(&platform_data));Ok(())
                         });
                     });
                     let path=format!("/{}",id.replace('.',"/").replace('-',"_"));
@@ -169,7 +179,7 @@ mod platform {
             }
             #[unsafe(method(handleReopen:withReplyEvent:))]
             fn reopen(&self, _: &NSAppleEventDescriptor, _: &NSAppleEventDescriptor) {
-                (self.ivars().handler)(ApplicationEvent::Reopen);
+                (self.ivars().handler)(ApplicationEvent::Reopen, None);
             }
         }
     );
@@ -181,7 +191,7 @@ mod platform {
                     .iter()
                     .all(|url| url.len() <= 65536 && crate::url::valid_url(url))
             {
-                (self.ivars().handler)(ApplicationEvent::OpenUrls(urls));
+                (self.ivars().handler)(ApplicationEvent::OpenUrls(urls), None);
             }
         }
     }
@@ -471,7 +481,7 @@ mod platform {
                 )));
             };
             if !launch.is_empty() {
-                handler(ApplicationEvent::OpenUrls(launch));
+                handler(ApplicationEvent::OpenUrls(launch), None);
             }
             let stop = Arc::new(AtomicBool::new(false));
             let stopped = stop.clone();
@@ -489,7 +499,7 @@ mod platform {
                             break;
                         }
                         if let Some(event) = read(pipe).as_deref().and_then(event) {
-                            handler(event);
+                            handler(event, None);
                         }
                         // SAFETY: our pipe, listened on again.
                         let _ = unsafe { DisconnectNamedPipe(pipe) };
@@ -535,13 +545,13 @@ mod tests {
         let send = Mutex::new(send);
         let first = NativeApplicationEvents::serving(
             &id,
-            Arc::new(move |event| send.lock().unwrap().send(event).unwrap()),
+            Arc::new(move |event, _| send.lock().unwrap().send(event).unwrap()),
             vec!["https://example.com/launch".into()],
         )
         .unwrap()
         .expect("the first launch serves");
         let next = |launch: Vec<String>| {
-            NativeApplicationEvents::serving(&id, Arc::new(|_| {}), launch)
+            NativeApplicationEvents::serving(&id, Arc::new(|_, _| {}), launch)
                 .unwrap()
                 .is_none()
         };
@@ -569,7 +579,7 @@ mod tests {
         assert_eq!(wait(), ApplicationEvent::Reopen);
         drop(first);
         // Once the first has gone, the next launch serves.
-        let again = NativeApplicationEvents::serving(&id, Arc::new(|_| {}), Vec::new());
+        let again = NativeApplicationEvents::serving(&id, Arc::new(|_, _| {}), Vec::new());
         assert!(again.unwrap().is_some());
     }
 

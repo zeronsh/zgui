@@ -4,7 +4,12 @@ and ends the launch's busy cursor. On X11 (Xvfb) with DESKTOP_STARTUP_ID
 set, the window announces the launch complete (`_NET_STARTUP_INFO` on the
 root window, as `xev` sees it); as a native Wayland client of a headless
 sway with XDG_ACTIVATION_TOKEN set, it activates its surface with the token
-(`xdg_activation_v1.activate`, in the client's WAYLAND_DEBUG log)."""
+(`xdg_activation_v1.activate`, in the client's WAYLAND_DEBUG log).
+
+Then a running app with an application ID is relaunched: a D-Bus
+`Activate` hands over the new launch's token (GApplication's
+`platform_data`), and the running window takes it, on X11 ending that
+launch's startup notification, on Wayland activating its surface."""
 import argparse
 import json
 import os
@@ -20,6 +25,7 @@ from platform_smoke import stop
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path, help="the gallery example")
+    parser.add_argument("relaunched", type=pathlib.Path, help="the native_platform example (an application ID)")
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -33,6 +39,37 @@ def main():
             while time.monotonic() < deadline and app.poll() is None:
                 if done():
                     return True
+                time.sleep(.1)
+            return done()
+        finally:
+            stop(app)
+
+    def private_bus(env):
+        bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"], env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        if not select.select([bus.stdout], [], [], 10)[0]:
+            raise RuntimeError("dbus-daemon startup timed out")
+        return bus, bus.stdout.readline().strip()
+
+    def relaunch(env, log, platform_data, done):
+        """native_platform running; `Activate` with `platform_data`; until `done`."""
+        with log.open("w") as out:
+            app = subprocess.Popen([str(args.relaunched.resolve())], env=env, stdout=out, stderr=out)
+        try:
+            deadline = time.monotonic() + 15
+            while subprocess.run(["gdbus", "call", "--session", "--dest", "org.zgui.NativePlatform",
+                                  "--object-path", "/org/zgui/NativePlatform", "--method",
+                                  "org.freedesktop.DBus.Peer.Ping"], env=env, capture_output=True).returncode:
+                if time.monotonic() > deadline or app.poll() is not None:
+                    raise RuntimeError("native_platform's D-Bus service did not start; see " + log.name)
+                time.sleep(.1)
+            time.sleep(1)
+            subprocess.check_call(["gdbus", "call", "--session", "--dest", "org.zgui.NativePlatform",
+                                   "--object-path", "/org/zgui/NativePlatform", "--method",
+                                   "org.freedesktop.Application.Activate", platform_data],
+                                  env=env, stdout=subprocess.DEVNULL)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not done():
                 time.sleep(.1)
             return done()
         finally:
@@ -58,6 +95,13 @@ def main():
         announced = run_until([str(args.binary.resolve())], dict(env, DESKTOP_STARTUP_ID="zgui-probe_TIME0"),
                               args.output / "x11.log", lambda: "_NET_STARTUP_INFO" in xev_log.read_text())
         result["x11_startup_notification"] = announced
+        bus, address = private_bus(env)
+        processes.append(bus)
+        before = xev_log.read_text().count("_NET_STARTUP_INFO_BEGIN")
+        result["x11_relaunch_completed"] = relaunch(
+            dict(env, DBUS_SESSION_BUS_ADDRESS=address), args.output / "x11-relaunch.log",
+            "{'desktop-startup-id': <'zgui-relaunch_TIME0'>}",
+            lambda: xev_log.read_text().count("_NET_STARTUP_INFO_BEGIN") > before)
     finally:
         for process in reversed(processes):
             stop(process)
@@ -86,12 +130,22 @@ def main():
                 dict(env, WAYLAND_DISPLAY=display, WAYLAND_DEBUG="1", XDG_ACTIVATION_TOKEN="zgui-probe-token"),
                 log, lambda: 'activate("zgui-probe-token"' in log.read_text(errors="replace"))
             result["wayland_activation"] = activated
+            bus, address = private_bus(env)
+            try:
+                log = args.output / "wayland-relaunch.log"
+                result["wayland_relaunch_activation"] = relaunch(
+                    dict(env, WAYLAND_DISPLAY=display, WAYLAND_DEBUG="1", DBUS_SESSION_BUS_ADDRESS=address),
+                    log, "{'activation-token': <'zgui-relaunch-token'>}",
+                    lambda: 'activate("zgui-relaunch-token"' in log.read_text(errors="replace"))
+            finally:
+                stop(bus)
         finally:
             stop(sway)
 
     (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     assert all(result.values()), result
-    print("PASS: the launch token ends X11's startup notification and activates the Wayland window")
+    print("PASS: a launch's token, at start or relaunched through D-Bus, ends X11's startup "
+          "notification and activates the Wayland window")
 
 
 if __name__ == "__main__":

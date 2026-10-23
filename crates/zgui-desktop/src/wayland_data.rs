@@ -1,5 +1,7 @@
 //! Owned Wayland data devices: the clipboard, the primary selection and
-//! external file drags, through one device of each kind per seat.
+//! external file drags, through one device of each kind per seat; and
+//! raising a window with another launch's token (`xdg_activation_v1`, which
+//! winit uses only for a new window).
 //!
 //! One device, not one per feature: Weston serves a selection only through
 //! the newest offer of it, so a second device in this process would leave
@@ -23,6 +25,7 @@ use wayland_client::{
         wl_data_device_manager::{self, DndAction},
         wl_data_offer, wl_data_source, wl_keyboard, wl_pointer, wl_registry,
         wl_seat::{self, Capability},
+        wl_surface,
     },
 };
 use wayland_protocols::wp::primary_selection::zv1::client::{
@@ -31,6 +34,7 @@ use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_offer_v1::{self, ZwpPrimarySelectionOfferV1 as PrimaryOffer},
     zwp_primary_selection_source_v1::{self, ZwpPrimarySelectionSourceV1 as PrimarySource},
 };
+use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1 as XdgActivation;
 use winit::{
     event_loop::OwnedDisplayHandle,
     raw_window_handle::{HasDisplayHandle, RawDisplayHandle},
@@ -74,6 +78,12 @@ enum Command {
     Load {
         primary: bool,
         reply: mpsc::Sender<Result<Loaded, String>>,
+    },
+    /// Raise `window` with an activation token; held here until done, so
+    /// its surface lives as long.
+    Activate {
+        token: String,
+        window: Arc<winit::window::Window>,
     },
 }
 /// The selection owner writes into the stream; `bool` asks for CRLF
@@ -150,6 +160,10 @@ impl WaylandClipboard {
     }
 }
 impl NativeData {
+    /// Raise `window` with another launch's activation `token`.
+    pub fn activate(&self, token: String, window: Arc<winit::window::Window>) {
+        let _ = self.commands.send(Command::Activate { token, window });
+    }
     pub fn new(
         display: OwnedDisplayHandle,
         routes: Routes,
@@ -191,6 +205,7 @@ impl NativeData {
                     serial: None,
                     drag: None,
                     completion: None,
+                    activation: None,
                     exit: false,
                 };
                 let Ok(mut event_loop) = calloop::EventLoop::<State>::try_new() else {
@@ -216,6 +231,7 @@ impl NativeData {
                             Command::Load { primary, reply } => {
                                 let _ = reply.send(state.load(primary));
                             }
+                            Command::Activate { token, window } => state.activate(&token, &window),
                         }
                         let _ = state.connection.flush();
                     })
@@ -264,6 +280,9 @@ impl NativeData {
                 }
                 if let Some(manager) = state.primary_manager.take() {
                     manager.destroy();
+                }
+                if let Some(activation) = state.activation.take() {
+                    activation.destroy();
                 }
                 if let Some(manager) = state.manager.take() {
                     drop(manager);
@@ -372,9 +391,33 @@ struct State {
     serial: Option<(u32, u32)>,
     drag: Option<Drag>,
     completion: Option<Completion>,
+    activation: Option<XdgActivation>,
     exit: bool,
 }
 impl State {
+    /// Activate `window`'s surface with another launch's `token`.
+    fn activate(&self, token: &str, window: &winit::window::Window) {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let (Some(activation), Ok(handle)) = (&self.activation, window.window_handle()) else {
+            return;
+        };
+        let RawWindowHandle::Wayland(handle) = handle.as_raw() else {
+            return;
+        };
+        // SAFETY: winit's live surface on this connection: `window` holds
+        // it until this returns.
+        let Ok(id) = (unsafe {
+            wayland_backend::client::ObjectId::from_ptr(
+                wl_surface::WlSurface::interface(),
+                handle.surface.as_ptr().cast(),
+            )
+        }) else {
+            return;
+        };
+        if let Ok(surface) = wl_surface::WlSurface::from_id(&self.connection, id) {
+            activation.activate(token.to_owned(), &surface);
+        }
+    }
     fn devices(&mut self, qh: &QueueHandle<Self>) {
         for seat in &mut self.seats {
             if let Some(manager) = &self.manager
@@ -557,6 +600,17 @@ impl State {
         }
     }
 }
+impl Dispatch<XdgActivation, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &XdgActivation,
+        _: <XdgActivation as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
         state: &mut Self,
@@ -574,6 +628,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
             } => {
                 if interface == "wl_data_device_manager" {
                     state.manager = Some(registry.bind(name, version.min(3), qh, ()));
+                }
+                if interface == "xdg_activation_v1" {
+                    state.activation = Some(registry.bind(name, 1, qh, ()));
                 }
                 if interface == "zwp_primary_selection_device_manager_v1" {
                     state.primary_manager = Some(registry.bind(name, 1, qh, ()));
