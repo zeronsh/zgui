@@ -51,12 +51,19 @@ def main():
                     raise RuntimeError("effects window did not open: " + output.read_text())
                 xdo("windowactivate", "--sync", window)
                 time.sleep(.4)
-                def report():
+                def report(until=lambda state: True):
+                    # The latest report, once it shows what the input asked
+                    # for (or after 5 s): a loaded runner may take a while.
+                    deadline = time.monotonic() + 5
                     time.sleep(.25)
-                    matches = re.findall(r'EFFECTS opacity=([\d.]+) blur=([\d.]+) fade=([\d.]+) animate=(true|false) x=([\d.]+)', output.read_text())
-                    assert matches, output.read_text()
-                    opacity, blur, fade, animate, x = matches[-1]
-                    return dict(opacity=float(opacity), blur=float(blur), fade=float(fade), animate=animate == "true", x=float(x))
+                    while True:
+                        matches = re.findall(r'EFFECTS opacity=([\d.]+) blur=([\d.]+) fade=([\d.]+) animate=(true|false) x=([\d.]+)', output.read_text())
+                        assert matches, output.read_text()
+                        opacity, blur, fade, animate, x = matches[-1]
+                        state = dict(opacity=float(opacity), blur=float(blur), fade=float(fade), animate=animate == "true", x=float(x))
+                        if until(state) or time.monotonic() > deadline:
+                            return state
+                        time.sleep(.05)
                 def click(x, y):
                     xdo("mousemove", "--sync", "--window", window, x, y, "click", 1)
                 def capture(name):
@@ -68,49 +75,49 @@ def main():
                 def difference(a, b):
                     pixels = ImageChops.difference(a, b).tobytes()
                     return sum(max(pixel) > 3 for pixel in zip(pixels[0::3], pixels[1::3], pixels[2::3]))
-                reports = {"initial": report()}
+                reports = {"initial": report(lambda r: r["blur"] == 10)}
                 initial = capture("initial")
                 assert reports["initial"]["blur"] == 10 and reports["initial"]["opacity"] == .88, reports
                 click(760, 286)
                 xdo("key", "Home")
-                reports["no_blur"] = report()
+                reports["no_blur"] = report(lambda r: r["blur"] == 0)
                 no_blur = capture("no-blur")
                 assert reports["no_blur"]["blur"] == 0, reports
                 changes = {"blur": difference(initial, no_blur)}
                 assert changes["blur"] > 100, changes
                 click(760, 368)
                 xdo("key", "End")
-                reports["fade"] = report()
+                reports["fade"] = report(lambda r: r["fade"] == 80)
                 faded = capture("fade")
                 assert reports["fade"]["fade"] == 80, reports
                 changes["fade"] = difference(no_blur, faded)
                 assert changes["fade"] > 100, changes
                 click(760, 204)
                 xdo("key", "Home")
-                reports["hidden"] = report()
+                reports["hidden"] = report(lambda r: r["opacity"] == 0)
                 hidden = capture("hidden")
                 assert reports["hidden"]["opacity"] == 0, reports
                 changes["opacity"] = difference(faded, hidden)
                 assert changes["opacity"] > 100, changes
                 xdo("key", "End")
-                reports["restored"] = report()
+                reports["restored"] = report(lambda r: r["opacity"] == 1)
                 restored = capture("restored")
                 assert reports["restored"]["opacity"] == 1, reports
                 assert difference(hidden, restored) > 100
                 click(760, 286)
                 xdo("key", "End")
-                reports["blur_restored"] = report()
+                reports["blur_restored"] = report(lambda r: r["blur"] == 24)
                 assert reports["blur_restored"]["blur"] == 24, reports
                 restored = capture("blur-restored")
                 click(680, 412)
-                reports["moving"] = report()
+                reports["moving"] = report(lambda r: r["animate"] and abs(r["x"] - 120) > 1)
                 time.sleep(.25)
                 moving = capture("moving")
                 assert reports["moving"]["animate"] and abs(reports["moving"]["x"] - 120) > 1, reports
                 changes["animation"] = difference(restored, moving)
                 assert changes["animation"] > 100, changes
                 click(680, 412)
-                reports["paused"] = report()
+                reports["paused"] = report(lambda r: not r["animate"])
                 time.sleep(.25)
                 reports["still_paused"] = report()
                 assert not reports["paused"]["animate"], reports
