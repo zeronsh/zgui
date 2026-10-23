@@ -35,6 +35,21 @@ On this development machine native windows were smoke-tested using Xvfb `:98` wi
 
 The timer drops missed deadlines rather than processing a backlog of updates; every adapter uses this policy. Logs report completed workload ticks so you can detect unequal delivered work. `ZGUI_SECONDS=0` keeps the UI open for interactive use. Wheel events scroll the viewport independently of the automatic workload. Screenshots in `docs/images` show the shared 120-tick frozen state; font baseline/rasterization differences remain.
 
+## Startup on macOS
+
+`scripts/startup_probe.swift` times a launch to its first content, the same way for every framework: it spawns the binary, waits for its window, then captures the window's top-left strip until the header text has drawn, and reports the process's instructions retired and CPU time at that point. Alternate the frameworks over many launches and compare medians of instructions; wall times swing with system load and the window server.
+
+```sh
+swiftc -O scripts/startup_probe.swift -o /tmp/zgui-startup-probe
+for i in $(seq 10); do
+  for app in target/release/examples/component_workload comparisons/gpui/target/release/zgui-compare-gpui; do
+    env -i HOME=$HOME PATH=$PATH ZGUI_MODE=idle /tmp/zgui-startup-probe $app
+  done
+done
+```
+
+`crates/zgui-gpu/examples/startup_bench.rs` isolates the renderer's share headless: the GPU device, the system font database and the first text in four styles.
+
 ## Selecting and validating the zgui renderer
 
 ```sh
