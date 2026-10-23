@@ -324,10 +324,15 @@ fn push_draw(draws: &mut Vec<Draw>, quads: &[Quad], draw: Draw, split: bool, sca
         while end < draw.end && shading(&quads[end as usize], scale) == kind {
             end += 1;
         }
+        // One run (the usual item): the draw's own bounds.
+        let bounds = match (start, end) == (draw.start, draw.end) {
+            true => draw.bounds,
+            false => quad_bounds(&quads[start as usize..end as usize]),
+        };
         draws.push(Draw {
             start,
             end,
-            bounds: quad_bounds(&quads[start as usize..end as usize]),
+            bounds,
             shading: kind,
             ..draw.clone()
         });
