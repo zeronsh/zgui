@@ -9,7 +9,7 @@ import select
 import subprocess
 import tempfile
 import time
-from platform_smoke import stop, wait_for_wm
+from platform_smoke import dump_display, stop, wait_for_wm
 
 
 def main():
@@ -47,6 +47,7 @@ def main():
                         break
                     time.sleep(.05)
                 if window is None:
+                    dump_display(env, args.output, app.pid)
                     raise RuntimeError("editor selection window did not open: " + output.read_text())
                 xdo("windowactivate", "--sync", window)
                 deadline = time.monotonic() + 12

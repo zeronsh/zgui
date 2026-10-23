@@ -41,6 +41,20 @@ def wait_for_wm(env, seconds=20):
     raise RuntimeError("the window manager did not start")
 
 
+def dump_display(env, output, pid=None):
+    """What the display shows, for a probe that cannot find its window: the
+    window tree, the root's properties, the pid's windows and a screenshot."""
+    def run(*command):
+        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=10)
+        return f"$ {' '.join(command)}\n{result.stdout}{result.stderr}\n"
+    report = run("xwininfo", "-root", "-tree") + run("xprop", "-root")
+    if pid:
+        report += run("xdotool", "search", "--pid", str(pid))
+    (output / "display.log").write_text(f"DISPLAY={env.get('DISPLAY')}\n" + report)
+    subprocess.run(["import", "-window", "root", str(output / "display.png")], env=env,
+                   capture_output=True, timeout=10)
+
+
 def wait_for_ibus_xim(env, seconds=20):
     """Wait until IBus's XIM frontend serves the display: a client started
     before then runs without the input method."""
