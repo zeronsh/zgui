@@ -446,6 +446,8 @@ struct UiStorage {
     /// What the last primary press went to: the keyboard scrolls the scroll
     /// view around it (`scroll_keys`).
     last_pressed: Cell<Option<NodeId>>,
+    /// Elastic scrolling (`Ui::set_elastic_scrolling`): off, never read.
+    elastic: RefCell<crate::elastic::State>,
     /// Scrollbars hide until their view scrolls (`Ui::set_overlay_scrollbars`).
     overlay_scrollbars: Signal<bool>,
     /// Overlay scrollbars shown, to fade once their view stops scrolling.
@@ -619,6 +621,7 @@ impl Ui {
             primary_paste: Cell::new(None),
             selection: Default::default(),
             last_pressed: Cell::new(None),
+            elastic: Default::default(),
             scrollbar_fades: RefCell::new(Vec::new()),
             dispatching: Cell::new(false),
             document_listeners: RefCell::new(Vec::new()),
@@ -1368,6 +1371,18 @@ impl Ui {
             index += 1;
         }
     }
+    /// Stretch a scroll view a trackpad gesture pushes past its edge, and
+    /// spring it back as the fingers lift, as macOS's scroll views and
+    /// Safari's pages do; momentum reaching an edge bounces. The offset an
+    /// app reads stays in range. The host turns it on (macOS's does) and
+    /// reports the gesture's phases (`InputEvent::ScrollGesture`); a mouse
+    /// wheel never stretches. Off (the default), nothing of it runs.
+    pub fn set_elastic_scrolling(&self, elastic: bool) {
+        self.storage.elastic.borrow_mut().enabled = elastic;
+    }
+    pub(crate) fn elastic_state(&self) -> &RefCell<crate::elastic::State> {
+        &self.storage.elastic
+    }
     pub(crate) fn observe_presentation(&self) -> Signal<bool> {
         self.storage.presented.clone()
     }
@@ -1585,8 +1600,9 @@ impl Ui {
         );
         self.storage.dispatching.set(true);
         self.tell_document(&event);
-        let mut result = self.input.dispatch(&self.scene, event);
-        self.after_dispatch(after, &mut result);
+        let result = self.route(event, after, |ui, event| {
+            ui.input.dispatch(&ui.scene, event)
+        });
         self.storage.dispatching.set(false);
         Ok(result)
     }
@@ -1621,12 +1637,49 @@ impl Ui {
         );
         self.storage.dispatching.set(true);
         self.tell_document(&event);
-        let mut result = self
-            .input
-            .dispatch_with_modifiers(&self.scene, event, modifiers);
-        self.after_dispatch(after, &mut result);
+        let result = self.route(event, after, |ui, event| {
+            ui.input
+                .dispatch_with_modifiers(&ui.scene, event, modifiers)
+        });
         self.storage.dispatching.set(false);
         Ok(result)
+    }
+    /// Give `event` to the nodes with `dispatch`, with elastic scrolling
+    /// around it when that is on, then what the selection and keyboard
+    /// scrolling make of it.
+    fn route(
+        &self,
+        event: InputEvent,
+        after: (
+            crate::selection::SelectionEvent,
+            crate::scroll_keys::ScrollKey,
+            bool,
+        ),
+        dispatch: impl FnOnce(&Self, InputEvent) -> crate::input::DispatchResult,
+    ) -> crate::input::DispatchResult {
+        let elastic = self.storage.elastic.borrow().enabled;
+        let event = match event {
+            InputEvent::ScrollGesture(phase) => {
+                if elastic {
+                    crate::elastic::gesture(self, phase);
+                }
+                return Default::default();
+            }
+            event @ InputEvent::Scroll { .. } if elastic => {
+                match crate::elastic::before_scroll(self, event) {
+                    Some(event) => event,
+                    None => return Default::default(),
+                }
+            }
+            event => event,
+        };
+        let scroll = (elastic && matches!(event, InputEvent::Scroll { .. })).then(|| event.clone());
+        let mut result = dispatch(self, event);
+        self.after_dispatch(after, &mut result);
+        if let Some(event) = scroll {
+            crate::elastic::after_scroll(self, &event, &result);
+        }
+        result
     }
     fn interaction_valid(&self, job: &EditorInteraction) -> bool {
         job.gesture.mode.get().is_some()
@@ -1642,6 +1695,7 @@ impl Ui {
             self.next_editor_interaction_deadline(),
             self.next_selection_deadline(),
             crate::compose_scrollbar::next_fade(self),
+            crate::elastic::next_step(self),
         ]
         .into_iter()
         .flatten()
@@ -1679,6 +1733,13 @@ impl Ui {
         }
         // A selection drag held past a scroll viewport's edge.
         let keys = if self.advance_selection_scroll(now) {
+            self.try_prepare_frame()?;
+            true
+        } else {
+            keys
+        };
+        // A stretched scroll view springing back.
+        let keys = if crate::elastic::advance(self, now) {
             self.try_prepare_frame()?;
             true
         } else {

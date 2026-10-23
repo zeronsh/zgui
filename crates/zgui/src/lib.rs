@@ -23,6 +23,7 @@ pub mod timer;
 
 pub mod frame;
 
+pub(crate) mod elastic;
 pub mod rich_text;
 mod scroll_keys;
 pub mod selection;

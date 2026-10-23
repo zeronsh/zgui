@@ -71,6 +71,15 @@ pub enum FileDropError {
     InvalidData,
     TimedOut,
 }
+/// A trackpad scroll gesture's phase (`InputEvent::ScrollGesture`): the
+/// fingers touching and lifting, then the momentum that may follow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollGesture {
+    Began,
+    Ended,
+    MomentumBegan,
+    MomentumEnded,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputEvent {
     Action(crate::actions::Action),
@@ -120,6 +129,11 @@ pub enum InputEvent {
         delta_x: f32,
         delta_y: f32,
     },
+    /// A trackpad scroll gesture's phase, which the host reports around its
+    /// `Scroll`s: what elastic scrolling springs back on
+    /// (`Ui::set_elastic_scrolling`). A mouse wheel has none. The document
+    /// takes it; it goes to no node.
+    ScrollGesture(ScrollGesture),
     KeyDown {
         key: Key,
         modifiers: Modifiers,

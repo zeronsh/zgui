@@ -3210,6 +3210,16 @@ fn mount_scroll(
     };
     let size = ui.observe_content_size(root);
     let extent = ui.observe_content_size(content);
+    // What a trackpad stretches it by past an edge (`elastic`): zero unless
+    // the host scrolls elastically.
+    let stretch = crate::elastic::register(
+        ui,
+        root,
+        horizontal,
+        size.clone(),
+        extent.clone(),
+        offset.clone(),
+    );
     if scrollbar {
         let main_extent = ui.signal(main_size(extent.get()));
         let read_extent = extent.clone();
@@ -3350,7 +3360,7 @@ fn mount_scroll(
         content_style.height = horizontal.then_some(height);
         content_style.flex_shrink = 0.;
         scene.set_style(content, content_style);
-        scene.set_transform(content, translation(position));
+        scene.set_transform(content, translation(position + stretch.get()));
     });
 }
 #[cfg(target_os = "macos")]

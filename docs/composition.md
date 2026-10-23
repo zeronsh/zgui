@@ -562,7 +562,19 @@ a delta crossing an edge is consumed by the inner viewport for that event.
 The desktop host turns a mouse wheel's lines into pixels as browsers do:
 40 per line on macOS and Linux (Chromium's and WebKit's line step), and on
 Windows, which reports notches, 100 per notch (the system's default three lines).
-Trackpads' pixel deltas pass as they are. Disabled viewports ignore input while still following model updates. Offset-only
+Trackpads' pixel deltas pass as they are.
+
+`Ui::set_elastic_scrolling(true)`, which the macOS host turns on, gives scroll views
+macOS's and Safari's rubber band. A trackpad gesture pushed past an edge stretches
+the view: its content moves on, ever less for each further pixel (AppKit's curve),
+while the offset an app reads stays in range. Pulling back unwinds the stretch
+before the content scrolls, and lifting the fingers springs it back, critically
+damped, in about 0.4 s. A flick's momentum that reaches an edge bounces. It
+stretches the view the gesture is latched to; otherwise, as a page bounces rather
+than a box in it, the outermost view under the pointer that scrolls along that
+axis. The host reports the gesture's phases as `InputEvent::ScrollGesture`. A mouse
+wheel, and scrolling the app does, never stretch. Off, a dispatch checks one flag.
+Virtual lists do not stretch yet. Disabled viewports ignore input while still following model updates. Offset-only
 changes translate the retained subtree without layout or remounting children.
 All children remain mounted offscreen; use `virtual_list` for large collections
 that need bounded row construction and memory.

@@ -1023,6 +1023,9 @@ struct Host {
     damage_check: Option<u64>,
     /// Wheel and trackpad motion waiting for display refreshes.
     scroll: crate::scroll_resample::ScrollResampler,
+    /// Where the trackpad's scroll gesture is: what its phases report
+    /// (`InputEvent::ScrollGesture`, for elastic scrolling).
+    trackpad: Trackpad,
     /// Native views (web pages) over and under this window's zgui content.
     native: crate::native_host::NativeHost,
     /// The theme's `background` when it changes, for the renderer's clear
@@ -1129,6 +1132,7 @@ impl Host {
             primary: None,
             cursor: (0., 0.),
             scroll: Default::default(),
+            trackpad: Trackpad::Idle,
             pending_file_drops: Default::default(),
             modifiers: Modifiers::default(),
             ime_active: false,
@@ -1812,6 +1816,10 @@ impl Host {
         }
         crate::system_colors::sync(&self.context.ui);
         crate::scrollers::sync(&self.context.ui);
+        // A trackpad pushed past an edge stretches it, as AppKit's views do.
+        self.context
+            .ui
+            .set_elastic_scrolling(cfg!(target_os = "macos"));
         renderer.install_text(&mut self.context.ui.scene.borrow_mut());
         self.context.ui.refresh_text_geometry();
         self.renderer = Some(renderer);
@@ -2312,7 +2320,23 @@ impl Host {
                     self.window_gesture(gesture)?;
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } => {
+            WindowEvent::MouseWheel { delta, phase, .. } => {
+                // A trackpad gesture's phase: its start goes before its
+                // motion, its end after all of it.
+                let gesture = if cfg!(target_os = "macos")
+                    && matches!(delta, MouseScrollDelta::PixelDelta(_))
+                {
+                    self.trackpad.phase(phase, std::time::Instant::now())
+                } else {
+                    None
+                };
+                if let Some(
+                    gesture @ (zgui::input::ScrollGesture::Began
+                    | zgui::input::ScrollGesture::MomentumBegan),
+                ) = gesture
+                {
+                    self.dispatch(InputEvent::ScrollGesture(gesture))?;
+                }
                 let (dx, dy) = wheel_delta(delta, self.scale_factor);
                 if crate::scroll_resample::enabled() {
                     // Applied on display refreshes; see `update`.
@@ -2332,6 +2356,23 @@ impl Host {
                         delta_x: dx,
                         delta_y: dy,
                     })?;
+                }
+                if let Some(
+                    gesture @ (zgui::input::ScrollGesture::Ended
+                    | zgui::input::ScrollGesture::MomentumEnded),
+                ) = gesture
+                {
+                    // What the refreshes have not applied yet, first.
+                    if let Some((delta_x, delta_y)) = self.scroll.flush() {
+                        let (x, y) = self.scroll.position;
+                        self.dispatch(InputEvent::Scroll {
+                            x,
+                            y,
+                            delta_x,
+                            delta_y,
+                        })?;
+                    }
+                    self.dispatch(InputEvent::ScrollGesture(gesture))?;
                 }
             }
             WindowEvent::Focused(false) => {
@@ -3455,6 +3496,46 @@ fn cursor_for_role(role: Option<Role>) -> CursorIcon {
 /// Windows reports notches, not lines, and a notch is the system's wheel
 /// lines (3 by default) at a third of 100 each: 100, as Chromium scrolls.
 const WHEEL_LINE: f32 = if cfg!(windows) { 100. } else { 40. };
+/// A trackpad scroll gesture, from winit's phases: the fingers' Started,
+/// Moved and Ended, then (if they flicked) the momentum's, reported alike.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Trackpad {
+    Idle,
+    Fingers,
+    /// The fingers lifted then: a start within a moment is momentum's.
+    Lifted(std::time::Instant),
+    Momentum,
+}
+impl Trackpad {
+    /// The gesture phase `phase` reports at `now`, if any.
+    fn phase(
+        &mut self,
+        phase: winit::event::TouchPhase,
+        now: std::time::Instant,
+    ) -> Option<zgui::input::ScrollGesture> {
+        use winit::event::TouchPhase;
+        use zgui::input::ScrollGesture;
+        const MOMENTUM: std::time::Duration = std::time::Duration::from_millis(50);
+        let (next, gesture) = match (phase, *self) {
+            (TouchPhase::Started, Trackpad::Lifted(at))
+                if now.saturating_duration_since(at) < MOMENTUM =>
+            {
+                (Trackpad::Momentum, Some(ScrollGesture::MomentumBegan))
+            }
+            (TouchPhase::Started, Trackpad::Momentum) => (Trackpad::Momentum, None),
+            (TouchPhase::Started, _) => (Trackpad::Fingers, Some(ScrollGesture::Began)),
+            (TouchPhase::Ended | TouchPhase::Cancelled, Trackpad::Fingers) => {
+                (Trackpad::Lifted(now), Some(ScrollGesture::Ended))
+            }
+            (TouchPhase::Ended | TouchPhase::Cancelled, Trackpad::Momentum) => {
+                (Trackpad::Idle, Some(ScrollGesture::MomentumEnded))
+            }
+            (_, state) => (state, None),
+        };
+        *self = next;
+        gesture
+    }
+}
 fn wheel_delta(delta: MouseScrollDelta, scale: f64) -> (f32, f32) {
     match delta {
         MouseScrollDelta::LineDelta(x, y) => (-x * WHEEL_LINE, -y * WHEEL_LINE),
@@ -3816,6 +3897,25 @@ mod tests {
             Some(Key::Function(35))
         );
         assert_eq!(map_key(&WKey::Named(NamedKey::Insert)), Some(Key::Insert));
+    }
+    #[test]
+    fn trackpad_phases_tell_the_fingers_from_their_momentum() {
+        use winit::event::TouchPhase::{Ended, Moved, Started};
+        use zgui::input::ScrollGesture::{self as G, Began, MomentumBegan, MomentumEnded};
+        let start = std::time::Instant::now();
+        let at = |ms| start + std::time::Duration::from_millis(ms);
+        let mut pad = Trackpad::Idle;
+        assert_eq!(pad.phase(Started, at(0)), Some(Began));
+        assert_eq!(pad.phase(Moved, at(8)), None);
+        assert_eq!(pad.phase(Ended, at(16)), Some(G::Ended));
+        // A start right after the lift is the flick's momentum.
+        assert_eq!(pad.phase(Started, at(24)), Some(MomentumBegan));
+        assert_eq!(pad.phase(Moved, at(32)), None);
+        assert_eq!(pad.phase(Ended, at(400)), Some(MomentumEnded));
+        // Lifted without a flick, a later touch is a new gesture.
+        assert_eq!(pad.phase(Started, at(1000)), Some(Began));
+        assert_eq!(pad.phase(Ended, at(1100)), Some(G::Ended));
+        assert_eq!(pad.phase(Started, at(1500)), Some(Began));
     }
     #[test]
     fn wheel_down_is_positive_in_logical_scene_coordinates() {
