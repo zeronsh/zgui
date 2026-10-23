@@ -449,19 +449,20 @@ impl Scene {
         style
     }
     pub(super) fn uses_advanced_layout(&self, id: NodeId) -> bool {
-        let options = self
+        // By reference: most nodes have no options, and a copy is ~170 bytes.
+        let own = self
             .node(id)
             .style
             .layout_options
             .as_deref()
-            .copied()
-            .unwrap_or_default();
-        let own = matches!(options.display, Some(ViewDisplay::Grid | ViewDisplay::None))
-            || options.wrap.is_some()
-            || options.reverse == Some(true)
-            || options.gap_x.is_some()
-            || options.gap_y.is_some()
-            || options.align_content.is_some();
+            .is_some_and(|options| {
+                matches!(options.display, Some(ViewDisplay::Grid | ViewDisplay::None))
+                    || options.wrap.is_some()
+                    || options.reverse == Some(true)
+                    || options.gap_x.is_some()
+                    || options.gap_y.is_some()
+                    || options.align_content.is_some()
+            });
         own || self.node(id).style.align == Align::Baseline
             || self.node(id).children.iter().any(|child| {
                 self.node(*child)
