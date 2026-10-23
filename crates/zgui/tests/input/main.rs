@@ -22,6 +22,8 @@ mod document_events;
 mod drag_drop;
 #[path = "../focus_groups.rs"]
 mod focus_groups;
+#[path = "../focus_removal.rs"]
+mod focus_removal;
 #[path = "../focus_visible.rs"]
 mod focus_visible;
 #[path = "../hover_refresh.rs"]
