@@ -1,55 +1,144 @@
 name: Rust
-on: [push, pull_request]
-# Dozens of desktop fixtures link the renderer; keep runner disk/memory bounded.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**"
+      - "!site/**"
+      - "!**/*.md"
+      # Markdown compiled as doctests.
+      - "README.md"
+      - "docs/composition.md"
+      - "docs/styling.md"
+      - "docs/window-controls.md"
+  pull_request:
+    paths:
+      - "**"
+      - "!site/**"
+      - "!**/*.md"
+      # Markdown compiled as doctests.
+      - "README.md"
+      - "docs/composition.md"
+      - "docs/styling.md"
+      - "docs/window-controls.md"
+# A newer push to the same branch or PR supersedes a running check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+# Dozens of desktop fixtures link the renderer; keep runner disk bounded.
 env:
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
-  CARGO_BUILD_JOBS: "2"
 jobs:
-  core-and-desktop:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  # Checks, unit tests, Vulkan rendering and every native Linux probe in one
+  # job: the examples the tests build are the probes' fixtures.
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Ubuntu mirrors are sometimes very slow; reuse last month's .debs.
+      - id: apt-key
+        run: echo "month=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: apt-cache
+        with:
+          path: ~/apt-archives
+          key: apt-${{ runner.arch }}-${{ steps.apt-key.outputs.month }}-${{ hashFiles('.github/linux-packages.txt') }}
+      - name: Linux packages
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update
+          if [ -d ~/apt-archives ]; then sudo cp ~/apt-archives/*.deb /var/cache/apt/archives/; fi
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $(grep -v '^#' .github/linux-packages.txt)
+          mkdir -p ~/apt-archives && cp /var/cache/apt/archives/*.deb ~/apt-archives/
+      - uses: actions/cache/save@v4
+        if: steps.apt-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}
       - uses: Swatinem/rust-cache@v2
-      - name: Linux native build dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libxkbcommon-dev libfontconfig1-dev pkg-config
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Benchmark sampler failure evidence
         run: python3 scripts/test_compare.py -v
       - run: cargo fmt --all -- --check
       # Luau scripts, as stylua.toml and .styluaignore have them.
       - uses: JohnnyMorganz/stylua-action@v4
-        if: runner.os == 'Linux'
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 2.6.0
           args: --check crates/zgui-script
-      - run: cargo check --workspace --all-targets --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test -p zgui -p zgui-desktop -p zgui-workload --all-targets --locked
       - run: cargo test --workspace --doc --locked
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-  macos-gpu:
+      # Concurrent device tests need Vulkan-Loader#1866; older distro loaders
+      # can crash inside vkSetDebugUtilsObjectNameEXT. Keep debug/validation on.
+      - name: Build private patched Vulkan loader
+        if: ${{ !cancelled() }}
+        run: |
+          scripts/build_vulkan_loader.sh "$RUNNER_TEMP/zgui-vulkan-loader"
+          printf 'LD_LIBRARY_PATH=%s/build/loader\n' "$RUNNER_TEMP/zgui-vulkan-loader" >> "$GITHUB_ENV"
+      - name: Vulkan rendering and damage readback
+        if: ${{ !cancelled() }}
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: |
+          set -o pipefail
+          cargo test -p zgui-gpu --locked 2>&1 | tee "$RUNNER_TEMP/zgui-vulkan-tests.log"
+      - name: Build native fixtures
+        id: native-fixtures
+        if: ${{ !cancelled() }}
+        run: |
+          cargo build -p zgui-desktop --examples --locked
+          cargo test -p zgui-desktop --lib --no-run --locked
+      # X11, Wayland, IME, clipboard, DPI, accessibility and input probes. Each
+      # owns its display or compositor, so they run side by side; every probe
+      # runs and reports even after another fails.
+      - name: Native Linux probes
+        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
+        timeout-minutes: 15
+        run: python3 scripts/linux_smokes.py --jobs 4
+      - name: Preserve Vulkan and native window evidence
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 3
+          name: linux-evidence
+          path: |
+            ${{ runner.temp }}/zgui-vulkan-tests.log
+            /tmp/zgui-*
+  macos:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test -p zgui -p zgui-desktop -p zgui-workload --all-targets --locked
+      - run: cargo test --workspace --doc --locked
       - name: Metal rendering and damage readback
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -o pipefail
           python3 scripts/macos_native_validation.py --target-dir target --output "$RUNNER_TEMP/zgui-macos-parity" 2>&1 | tee "$RUNNER_TEMP/zgui-metal-tests.log"
-      - run: cargo build -p zgui-desktop --example component_workload --locked
       - name: Native component window lifecycle
-        run: python3 scripts/component_host_smoke.py target/debug/examples/component_workload --output "$RUNNER_TEMP/zgui-macos-host"
+        if: ${{ !cancelled() }}
+        run: |
+          cargo build -p zgui-desktop --example component_workload --locked
+          python3 scripts/component_host_smoke.py target/debug/examples/component_workload --output "$RUNNER_TEMP/zgui-macos-host"
       # Keep textual diagnostics even if account artifact storage is exhausted.
       - name: Print Metal validation diagnostics
         if: always()
@@ -82,276 +171,20 @@ jobs:
       - name: Report incomplete Metal artifact upload
         if: always() && steps.macos-evidence-upload.outcome == 'failure'
         run: echo "::warning::Metal artifact upload failed. Text diagnostics remain in job logs; downloadable evidence preservation is incomplete (check artifact quota). This is not native validation completion."
-  linux-gpu:
-    runs-on: ubuntu-latest
+  # Compile everything and run the core unit tests; native Windows probes and
+  # the GPU suite run on developer machines.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    # Until main builds cleanly on Windows.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libdbus-1-dev pkg-config xdg-desktop-portal xdg-desktop-portal-gtk zenity gir1.2-gtk-3.0 libxkbcommon-dev libfontconfig1-dev xvfb xauth openbox picom xdotool x11-utils x11-xserver-utils imagemagick python3-pil cmake libwayland-dev libxrandr-dev libxcb1-dev weston sway swaybg grim ibus ibus-libpinyin fcitx5 fcitx5-chinese-addons fonts-droid-fallback python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11
       - uses: Swatinem/rust-cache@v2
-      # Concurrent device tests need Vulkan-Loader#1866; older distro loaders
-      # can crash inside vkSetDebugUtilsObjectNameEXT. Keep debug/validation on.
-      - name: Build private patched Vulkan loader
-        shell: bash
-        run: |
-          scripts/build_vulkan_loader.sh "$RUNNER_TEMP/zgui-vulkan-loader"
-          printf 'LD_LIBRARY_PATH=%s/build/loader\n' "$RUNNER_TEMP/zgui-vulkan-loader" >> "$GITHUB_ENV"
-      - name: Vulkan rendering and damage readback
-        shell: bash
-        env:
-          XDG_RUNTIME_DIR: /tmp
-        run: |
-          set -o pipefail
-          cargo test -p zgui-gpu --locked 2>&1 | tee "$RUNNER_TEMP/zgui-vulkan-tests.log"
-      - name: Build native fixtures
-        id: native-fixtures
-        run: cargo build -p zgui-desktop --examples --locked
-      # Each native probe owns its display/session; collect independent failures.
-      # A failed probe still fails the job. Only successful fixture builds permit probes.
-      - name: Native input and window lifecycle
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        shell: bash
-        env:
-          DISPLAY: ':96'
-          XDG_RUNTIME_DIR: /tmp
-          DBUS_SESSION_BUS_ADDRESS: unix:path=/nonexistent
-        run: |
-          unset WAYLAND_DISPLAY
-          Xvfb :96 -screen 0 1280x900x24 -ac &
-          xvfb_pid=$!
-          trap 'kill "$wm_pid" "$xvfb_pid" 2>/dev/null || true' EXIT
-          sleep 1
-          openbox > /tmp/zgui-openbox.log 2>&1 &
-          wm_pid=$!
-          sleep 1
-          python3 scripts/component_host_smoke.py target/debug/examples/component_workload --output /tmp/zgui-component-host
-          python3 scripts/desktop_smoke.py target/debug/examples/gallery
-          timeout 30s target/debug/examples/windows --smoke-test
-          timeout 30s target/debug/examples/window_controls --smoke-test
-          python3 scripts/form_smoke.py target/debug/examples/form
-          python3 scripts/checkbox_smoke.py target/debug/examples/checkbox --output /tmp/zgui-checkbox
-          python3 scripts/slider_smoke.py target/debug/examples/slider --output /tmp/zgui-slider
-          python3 scripts/progress_smoke.py target/debug/examples/progress --output /tmp/zgui-progress
-          python3 scripts/images_smoke.py target/debug/examples/images --output /tmp/zgui-images
-          python3 scripts/scroll_smoke.py target/debug/examples/scroll --output /tmp/zgui-scroll
-          python3 scripts/focus_scroll_smoke.py target/debug/examples/focus_scroll --output /tmp/zgui-focus-scroll
-          python3 scripts/horizontal_scroll_smoke.py target/debug/examples/horizontal_scroll --output /tmp/zgui-horizontal-scroll
-          python3 scripts/scrollbars_smoke.py target/debug/examples/scrollbars --output /tmp/zgui-scrollbars
-          python3 scripts/virtual_keyboard_smoke.py target/debug/examples/virtual_keyboard --output /tmp/zgui-virtual-keyboard
-          python3 scripts/overlays_smoke.py target/debug/examples/overlays --output /tmp/zgui-overlays
-          python3 scripts/menus_smoke.py target/debug/examples/menus --output /tmp/zgui-menus
-          python3 scripts/submenus_smoke.py target/debug/examples/submenus --output /tmp/zgui-submenus
-          python3 scripts/hidden_updates_smoke.py target/debug/examples/hidden_updates --output /tmp/zgui-hidden-updates
-          python3 scripts/paint_media_smoke.py --binaries target/debug/examples --output /tmp/zgui-paint-media
-          python3 scripts/cursors_smoke.py target/debug/examples/cursors --output /tmp/zgui-cursors
-      - name: Rich text, actions, advanced layout and typed drag
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: |
-          python3 scripts/rich_text_smoke.py target/debug/examples/rich_text --output /tmp/zgui-rich-text
-          python3 scripts/actions_smoke.py target/debug/examples/actions --output /tmp/zgui-actions
-          python3 scripts/layout_smoke.py target/debug/examples/layout --output /tmp/zgui-layout
-          python3 scripts/drag_drop_smoke.py target/debug/examples/drag_drop --output /tmp/zgui-drag-drop
-      - name: Native menus, dialogs and external file drops
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: |
-          python3 scripts/native_menu_smoke.py target/debug/examples/dynamic_menus --output /tmp/zgui-native-menus
-          python3 scripts/native_menu_smoke.py target/debug/examples/dynamic_menus --wayland --output /tmp/zgui-native-menus-wayland
-          python3 scripts/native_services_smoke.py target/debug/examples/platform_services --native-prompts --output /tmp/zgui-native-services
-          python3 scripts/file_drop_smoke.py target/debug/examples/drag_drop --output /tmp/zgui-file-drop
-          python3 scripts/wayland_file_drop_smoke.py target/debug/examples/drag_drop --output /tmp/zgui-file-drop-wayland
-      - name: Variable-height virtual rows and streaming growth
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/variable_virtual_list_smoke.py target/debug/examples/variable_virtual_list --output /tmp/zgui-variable-virtual-list
-      - name: Naturally measured virtual rows and streaming children
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/measured_virtual_list_smoke.py target/debug/examples/measured_virtual_list --output /tmp/zgui-measured-virtual-list
-      - name: Native Wayland input and clipboard
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/wayland_input_smoke.py target/debug/examples/form --output /tmp/zgui-wayland-input
-      - name: Component event hooks and native keyboard cancellation
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/event_hooks_smoke.py target/debug/examples/event_hooks --output /tmp/zgui-event-hooks
-      - name: Wrapped editor native input and resize
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/wrapped_editor_smoke.py target/debug/examples/wrapped_editor --output /tmp/zgui-wrapped-editor
-      - name: Native editor paging and read-only selection
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/editor_paging_smoke.py target/debug/examples/editor_paging --output /tmp/zgui-editor-paging
-      - name: Native editor Shift and multi-click selection
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/editor_selection_smoke.py target/debug/examples/editor_selection --output /tmp/zgui-editor-selection
-      - name: Native stationary editor drag autoscroll
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/editor_autoscroll_smoke.py target/debug/examples/editor_autoscroll --output /tmp/zgui-editor-autoscroll
-      - name: Native transparent-window composition
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/transparency_smoke.py target/debug/examples/transparency --output /tmp/zgui-transparency
-      - name: Native Wayland transparent-window composition
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/wayland_transparency_smoke.py target/debug/examples/transparency --output /tmp/zgui-wayland-transparency
-      - name: Native IME composition and candidate placement
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/native_ime_smoke.py target/debug/examples/native_ime --output /tmp/zgui-native-ime
-      - name: Native Wayland IME composition and focus cancellation
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/wayland_ime_smoke.py target/debug/examples/native_ime --output /tmp/zgui-wayland-ime
-      - name: Native Wayland model and read-only IME cancellation
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: |
-          python3 scripts/wayland_external_ime_smoke.py target/debug/examples/external_ime --output /tmp/zgui-wayland-external-ime
-          python3 scripts/wayland_external_ime_smoke.py target/debug/examples/external_ime --read-only-test --output /tmp/zgui-wayland-readonly-ime
-      - name: Native held-key focus transitions
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/held_keys_smoke.py target/debug/examples/held_keys --output /tmp/zgui-held-keys
-      - name: Live Wayland output scaling
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/dpi_transition_smoke.py target/debug/examples/dpi_transition --output /tmp/zgui-live-dpi
-      - name: Live X11 DPI and stationary pointer input
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/live_dpi_pointer_smoke.py target/debug/examples/live_dpi_pointer --output /tmp/zgui-live-dpi-pointer
-      - name: Live X11 DPI with maximized window
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/live_dpi_pointer_smoke.py target/debug/examples/live_dpi_pointer --maximized --output /tmp/zgui-live-dpi-maximized
-      - name: Native inherited line-height styles
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/line_height_smoke.py target/debug/examples/line_height --output /tmp/zgui-line-height
-      - name: Native percentage layout and retained editor resize
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/percent_sizes_smoke.py target/debug/examples/percent_sizes --output /tmp/zgui-percent-sizes
-      - name: Native inherited letter-spacing styles
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/letter_spacing_smoke.py target/debug/examples/letter_spacing --output /tmp/zgui-letter-spacing
-      - name: Native clipboard shutdown with retained window factory
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: xvfb-run -a cargo test -p zgui-desktop --lib retained_window_factory_releases_native_clipboard_after_manager_shutdown --locked -- --ignored --test-threads=1
-      - name: Native host suspension and retained editor recreation
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -o pipefail
-          xvfb-run -a cargo test -p zgui-desktop --lib host_suspend_recreates_native_resources_and_retains_editor_state --locked -- --ignored --test-threads=1 2>&1 | tee "$RUNNER_TEMP/zgui-host-suspend.log"
-      - name: Live Linux accessibility bus actions and text
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: /usr/bin/python3 scripts/atspi_smoke.py target/debug/examples/atspi --output /tmp/zgui-atspi
-      - name: Native image fitting and resize
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/image_fit_smoke.py target/debug/examples/image_fit --output /tmp/zgui-image-fit
-      - name: Native component effects and blur controls
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/effects_smoke.py target/debug/examples/effects --output /tmp/zgui-effects
-      - name: Native pointer button chords during editor and slider drags
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/pointer_chords_smoke.py target/debug/examples/pointer_chords --output /tmp/zgui-pointer-chords
-      - name: Native keyboard activation chords
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/keyboard_chords_smoke.py target/debug/examples/keyboard_chords --output /tmp/zgui-keyboard-chords
-      - name: Native disabled interaction cleanup
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/disabled_interaction_smoke.py target/debug/examples/disabled_interaction --output /tmp/zgui-disabled-interaction
-      - name: Native undo and redo after reducing history limits
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/history_limits_smoke.py target/debug/examples/history_limits --output /tmp/zgui-history-limits
-      - name: Native IME cancellation after external model replacement
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/external_ime_smoke.py target/debug/examples/external_ime --output /tmp/zgui-external-ime
-      - name: Native editor model text normalization
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/model_text_smoke.py target/debug/examples/model_text --output /tmp/zgui-model-text
-      - name: Native read-only editors
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/read_only_smoke.py target/debug/examples/read_only --output /tmp/zgui-read-only
-      - name: Native read-only toggle during IME composition
-        if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
-        run: python3 scripts/external_ime_smoke.py target/debug/examples/external_ime --read-only-test --output /tmp/zgui-readonly-ime
-      - name: Print Linux native validation diagnostics
-        if: always()
-        shell: bash
-        run: |
-          python3 - <<'PYLOG'
-          import os
-          from pathlib import Path
-          paths = set()
-          for root in (Path('/tmp'), Path(os.environ['RUNNER_TEMP'])):
-              for candidate in root.glob('zgui-*'):
-                  if candidate.is_file() and candidate.suffix in ('.log', '.json'):
-                      paths.add(candidate)
-                  elif candidate.is_dir() and 'loader' not in candidate.name:
-                      paths.update(path for path in candidate.rglob('*')
-                                   if path.is_file() and path.suffix in ('.log', '.json'))
-          for path in sorted(paths):
-              print(f'::group::{path}', flush=True)
-              print(path.read_text(errors='replace'), flush=True)
-              print('::endgroup::', flush=True)
-          PYLOG
-      - name: Preserve Vulkan and native window evidence
-        id: linux-evidence-upload
-        continue-on-error: true
-        if: always()
-        uses: actions/upload-artifact@v4
         with:
-          retention-days: 3
-          name: linux-gpu-evidence
-          path: |
-            ${{ runner.temp }}/zgui-vulkan-tests.log
-            ${{ runner.temp }}/zgui-host-suspend.log
-            /tmp/zgui-openbox.log
-            /tmp/zgui-component-host
-            /tmp/zgui-checkbox
-            /tmp/zgui-slider
-            /tmp/zgui-progress
-            /tmp/zgui-images
-            /tmp/zgui-scroll
-            /tmp/zgui-focus-scroll
-            /tmp/zgui-horizontal-scroll
-            /tmp/zgui-scrollbars
-            /tmp/zgui-virtual-keyboard
-            /tmp/zgui-overlays
-            /tmp/zgui-menus
-            /tmp/zgui-submenus
-            /tmp/zgui-hidden-updates
-            /tmp/zgui-paint-media
-            /tmp/zgui-cursors
-            /tmp/zgui-rich-text
-            /tmp/zgui-actions
-            /tmp/zgui-layout
-            /tmp/zgui-drag-drop
-            /tmp/zgui-native-menus
-            /tmp/zgui-native-menus-wayland
-            /tmp/zgui-native-services
-            /tmp/zgui-file-drop
-            /tmp/zgui-file-drop-wayland
-            /tmp/zgui-variable-virtual-list
-            /tmp/zgui-measured-virtual-list
-            /tmp/zgui-wayland-input
-            /tmp/zgui-event-hooks
-            /tmp/zgui-wrapped-editor
-            /tmp/zgui-editor-paging
-            /tmp/zgui-editor-selection
-            /tmp/zgui-editor-autoscroll
-            /tmp/zgui-transparency
-            /tmp/zgui-wayland-transparency
-            /tmp/zgui-native-ime
-            /tmp/zgui-wayland-ime
-            /tmp/zgui-wayland-external-ime
-            /tmp/zgui-wayland-readonly-ime
-            /tmp/zgui-held-keys
-            /tmp/zgui-live-dpi
-            /tmp/zgui-live-dpi-pointer
-            /tmp/zgui-live-dpi-maximized
-            /tmp/zgui-line-height
-            /tmp/zgui-percent-sizes
-            /tmp/zgui-letter-spacing
-            /tmp/zgui-atspi
-            /tmp/zgui-image-fit
-            /tmp/zgui-effects
-            /tmp/zgui-pointer-chords
-            /tmp/zgui-keyboard-chords
-            /tmp/zgui-disabled-interaction
-            /tmp/zgui-history-limits
-            /tmp/zgui-external-ime
-            /tmp/zgui-model-text
-            /tmp/zgui-read-only
-            /tmp/zgui-readonly-ime
-      - name: Report incomplete Linux artifact upload
-        if: always() && steps.linux-evidence-upload.outcome == 'failure'
-        run: echo "::warning::Linux artifact upload failed. Text diagnostics remain in job logs; downloadable evidence preservation is incomplete (check artifact quota). This is not native validation completion."
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo test -p zgui --lib --locked
+      - run: cargo test -p zgui-desktop --lib --locked

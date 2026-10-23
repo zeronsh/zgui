@@ -74,7 +74,9 @@ def main():
                 empty_pixels = [screenshot.getpixel((origin_x+x,origin_y+y))[:3] for x,y in ((212,200),(460,136))]
                 if vertical or horizontal or any(pixel != (32,48,64) for pixel in empty_pixels):
                     raise AssertionError("scrollbar remained visible without overflow")
-            elif len(vertical)<60 or len(horizontal)<74:
+            # Thumbs span viewport²/content less a 2px inset at each end:
+            # 144²/320-4 and 224²/640-4. Rounded ends blend one pixel each.
+            elif not (58<=len(vertical)<=62 and 72<=len(horizontal)<=76):
                 raise AssertionError(f"missing native scrollbar thumbs: {samples[-1]}")
         def drag(x,y,end_x,end_y):
             xdo("mousemove","--window",window,x,y,"mousedown",1)
