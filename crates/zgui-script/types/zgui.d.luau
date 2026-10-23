@@ -724,6 +724,20 @@ export type CommandOptions = {
 	[number]: never,
 }
 
+-- `ui.window { id, open = state, node }`: a window of the app's own (a
+-- settings window), open while `open` is true; closing it sets `open` false.
+-- Its node is its content. It shares the app's state.
+export type WindowOptions = {
+	id: string,
+	-- Defaults to the id.
+	title: string?,
+	-- Points; 480 by 360 by default.
+	width: number?,
+	height: number?,
+	open: State<boolean>,
+	[number]: Node,
+}
+
 ---------------------------------------------------------------------------
 -- Properties.
 
@@ -6799,6 +6813,7 @@ declare ui: {
 	-- options only looks it up.
 	term: (id: string, opts: TermOptions?) -> Term,
 	command: (opts: CommandOptions) -> (),
+	window: (opts: WindowOptions) -> (),
 	checkbox: (props: CheckboxProps) -> Node,
 	input: (props: InputProps) -> Node,
 	textarea: (props: InputProps) -> Node,

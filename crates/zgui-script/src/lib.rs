@@ -48,6 +48,7 @@ mod timers;
 mod transform;
 mod value;
 mod variants;
+mod windows;
 
 pub use bundle::{Bundle, BundleFile, build};
 pub use calls::{Request, Response};
@@ -55,6 +56,7 @@ pub use command::Command;
 pub use design::DesignLint;
 pub use persist::app_data_dir;
 pub use value::{ElementHandle, PathKey, Shared, Store, Value, tables_converted};
+pub use windows::Window;
 
 use mlua::{Lua, VmState};
 use std::{
@@ -697,6 +699,8 @@ struct Inner {
     webs: Rc<node::Webs>,
     /// App commands (`ui.command`) the last successful load declared.
     commands: Rc<command::Commands>,
+    /// Windows the scripts declare (`ui.window`).
+    windows: Rc<windows::Windows>,
     /// State saved across runs (`ui.persist`).
     persist: Rc<persist::Persist>,
     /// `ui.every` and `ui.after`.
@@ -834,6 +838,7 @@ impl ScriptHost {
             terms: Rc::default(),
             webs: Rc::default(),
             commands: Rc::new(command::Commands::new(runtime)),
+            windows: Rc::new(windows::Windows::new(runtime)),
             persist: persist::Persist::new(runtime, warnings.clone()),
             timers: Rc::default(),
             warnings,
@@ -1068,6 +1073,30 @@ impl ScriptHost {
     /// order, as of the last successful load: show them as menu items.
     pub fn commands(&self) -> Signal<Vec<Command>> {
         self.0.commands.list.clone()
+    }
+    /// The windows the scripts declare (`ui.window`), as of the last good
+    /// load: open each while its `open` state is true, showing
+    /// `window_view(id)`, and set the state false when it is closed.
+    pub fn windows(&self) -> Signal<Vec<Window>> {
+        self.0.windows.list.clone()
+    }
+    /// Window `id`'s content (`ui.window`), following reloads; empty while
+    /// no load declares it. Mount it in a window on this host's runtime.
+    pub fn window_view(&self, id: &str) -> View {
+        let host = self.0.clone();
+        let generation = self.0.generation.clone();
+        let id = id.to_owned();
+        switch(
+            move || generation.get(),
+            move |_, _| {
+                let current = host.current.borrow().clone();
+                let content = host.windows.content.borrow().get(&id).cloned();
+                match (current, content) {
+                    (Some(loaded), Some(node)) => lower::lower(&node, &loaded.lowering),
+                    _ => div(),
+                }
+            },
+        )
     }
     /// Run the command `id` (a menu item was chosen); whether one ran.
     pub fn run_command(&self, id: &str) -> bool {
@@ -1304,6 +1333,7 @@ impl ScriptHost {
     /// On failure the previous interface stays mounted and the error is shown.
     pub fn reload(&self) -> Result<(), String> {
         self.0.commands.begin();
+        self.0.windows.begin();
         let loaded = self.load();
         // After loading: the files it required are watched too.
         *self.0.stamps.borrow_mut() = self.stamps();
@@ -1315,6 +1345,7 @@ impl ScriptHost {
                 }
                 *self.0.current.borrow_mut() = Some(Rc::new(loaded));
                 self.0.commands.publish();
+                self.0.windows.publish();
                 self.0.runtime.batch(|| {
                     self.0.error.set(broken);
                     self.0.generation.update(|g| *g += 1);
@@ -1846,6 +1877,7 @@ impl ScriptHost {
         term::install(&lua, &ui, self.0.terms.clone()).map_err(fail)?;
         node::install_web(&lua, &ui, self.0.webs.clone()).map_err(fail)?;
         command::install(&lua, &ui, self.0.commands.clone()).map_err(fail)?;
+        windows::install(&lua, &ui, self.0.windows.clone()).map_err(fail)?;
         let may = |capability: Capability| grants.allows(&capability);
         let fetch = may(Capability::Fetch).then(|| self.0.fetcher.clone());
         calls::install(&lua, &ui, self.0.async_actions.clone(), fetch).map_err(fail)?;

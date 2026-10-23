@@ -367,6 +367,9 @@ pub struct WindowFactory {
     clipboard: Rc<RefCell<Option<crate::clipboard::Clipboard>>>,
     gpu_contexts: Rc<RefCell<Vec<GpuContext>>>,
     proxy: EventLoopProxy<Event>,
+    /// What every window's `Ui` runs on: one runtime, so state one window
+    /// shows the others follow (`Ui::with_runtime`).
+    runtime: zgui::reactive::Runtime,
 }
 impl WindowFactory {
     /// Replace the application menu model for existing and future windows.
@@ -653,6 +656,7 @@ impl Application {
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
             proxy: proxy.clone(),
+            runtime: zgui::reactive::Runtime::new(),
         };
         let handle = factory.allocate();
         let token = handle.token;
@@ -1045,7 +1049,11 @@ impl Host {
         let wake = proxy.clone();
         let token = handle.token;
         let pending = Rc::new(RefCell::new(VecDeque::new()));
-        let ui = Ui::new(options.width as f32, options.height as f32);
+        let ui = Ui::with_runtime(
+            windows.runtime.clone(),
+            options.width as f32,
+            options.height as f32,
+        );
         let viewport = ui.signal((options.width as f32, options.height as f32));
         let frames = FrameClock::new();
         frames.set_max_rate(options.max_frame_rate);
@@ -3991,6 +3999,7 @@ mod tests {
             ))),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
             proxy: event_loop.create_proxy(),
+            runtime: zgui::reactive::Runtime::new(),
         };
         let retained = factory.clone();
         let manager = WindowManager {
@@ -4123,6 +4132,7 @@ mod tests {
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
             proxy: event_loop.create_proxy(),
+            runtime: zgui::reactive::Runtime::new(),
         };
         let mut probe = Probe {
             factory,

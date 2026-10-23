@@ -309,6 +309,10 @@ impl<T> Clone for Signal<T> {
 /// (`Signal::subscribe`).
 const KEPT: u64 = u64::MAX;
 impl<T: 'static> Signal<T> {
+    /// Whether `other` is this signal (a clone of it), not just equal.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
     fn track(&self) {
         self.track_as(false);
     }

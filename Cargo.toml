@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/zgui", "crates/zgui-desktop", "crates/zgui-ghostty-sys", "crates/zgui-gpu", "crates/zgui-script", "comparisons/workload"]
+members = ["crates/zgui", "crates/zgui-desktop", "crates/zgui-ghostty-sys", "crates/zgui-gpu", "crates/zgui-script", "crates/zgui-run", "comparisons/workload"]
 exclude = ["comparisons/gpui", "comparisons/quickgui", "vendor/cosmic-text", "vendor/taffy"]
 resolver = "2"
 

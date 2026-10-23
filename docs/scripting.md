@@ -19,6 +19,8 @@ cx.tasks.spawn(host.watch(Duration::from_millis(250))); // hot reload in develop
 cx.render(host.view());
 ```
 
+Or run a script with no host of your own: `cargo run -p zgui-run -- path/to/app/` (`zgui-run app.luau`, once installed with `cargo install --path crates/zgui-run`) opens it in a window and reloads it as its files change. A `zgui.json` beside the script sets the window (`title`, `width`, `height`, `min_width`, `min_height`, `titlebar`: `"standard"`, `"inset"` or `"hidden"`, `glass`) and `app_id` (where `ui.persist` keeps its data); `ui.command` entries are its menu bar and `ui.window` declarations its other windows.
+
 State is Rust-owned and keyed, so a reload keeps it. Each script gets its own sandboxed VM (read-only globals, a 32 MiB heap limit and a time budget per call, counted in the CPU time the script uses, so a busy machine does not fail it), which makes plugins safe to load next to the application. A failed reload keeps the last good interface running and shows the error, with file and line, until a good save.
 
 The [Luau reference](reference/index.md) has a page per element and API group: signatures, every option with its type and default, an example and the gotchas. [App structure](reference/app-structure.md) shows how to split a large app across modules that share its state.

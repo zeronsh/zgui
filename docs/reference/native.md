@@ -76,6 +76,44 @@ A `Term`'s `id`, `title`, `pwd`, `process`, `pid`, `focused`, `bell` (it rang si
 | `run` | `() -> ()` | required | called when it is chosen |
 | `separator` | `boolean` | `false` | a separator line in `menu` instead of a command (`id` and `run` are not needed) |
 
+## Windows
+
+```luau
+ui.window(opts: WindowOptions) -> ()
+```
+
+`ui.window { id, open = state, node }` declares a window of the app's own, a settings window say: it is open while `open` is true, closing it sets `open` false, and its node is its content. Declared at a script's top level, as commands are, each load declares them again; what a window shows follows reloads. The windows share the app's state: a switch in the settings window changes what the main window shows (and `ui.theme.set` restyles every window). `zgui-run` opens them, and a Rust host opens them from `ScriptHost::windows()` with `ScriptHost::window_view(id)` (`zgui_run::follow_windows` does both).
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `id` | `string` | required | unique among the run's windows |
+| `open` | `State<boolean>` | required | the window shows while true |
+| `title` | `string` | the id | |
+| `width`, `height` | `number` | `480`, `360` | points |
+| `[1]` | `Node` | required | its content |
+
+```lua
+local settings = ui.state("settings", false)
+local dark = ui.persist("dark", true)
+ui.command {
+	id = "settings",
+	title = "Settings…",
+	key = "cmd+,",
+	run = function()
+		settings:set(true)
+	end,
+}
+ui.window {
+	id = "settings",
+	title = "Settings",
+	width = 420,
+	height = 240,
+	open = settings,
+	ui.column { p = 24, ui.checkbox { label = "Dark appearance", value = dark } },
+}
+return ui.button { on_click = ui.set(settings, true), "Settings…" }
+```
+
 ## Example
 
 ```lua

@@ -89,6 +89,8 @@ accesskit_consumer = "0.38.0"
 # The terminal example's interface is a Luau script. Image formats come
 # through this crate's own features.
 zgui-script = { path = "../zgui-script", default-features = false }
+# The script examples' menus (`zgui_run::menus`).
+zgui-run = { path = "../zgui-run" }
 # The terminal example's session server keeps each shell's screen to redraw
 # it for a new window.
 vt100 = "0.16"

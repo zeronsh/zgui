@@ -4484,6 +4484,7 @@ dependencies = [
  "zgui",
  "zgui-ghostty-sys",
  "zgui-gpu",
+ "zgui-run",
  "zgui-script",
  "zgui-workload",
 ]
@@ -4517,6 +4518,16 @@ dependencies = [
  "windows",
  "winit",
  "zgui",
+]
+
+[[package]]
+name = "zgui-run"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "zgui",
+ "zgui-desktop",
+ "zgui-script",
 ]
 
 [[package]]

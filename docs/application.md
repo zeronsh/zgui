@@ -169,7 +169,7 @@ cx.tasks.spawn(async move {
 // Keep the pool in an application service while its queued work is needed.
 ```
 
-Use `cx.windows.open(options, builder)` to create another independent window. Closing an opener does not close its child windows. The application exits when no windows or pending window requests remain. `WindowHandle` is thread-safe and targets exactly one window; requests after closure are inert.
+Use `cx.windows.open(options, builder)` to create another window. An application's windows share one reactive runtime (`Ui::with_runtime`): each has its own scene, focus and tasks, but a signal one window shows, another can change, and a theme change restyles them all. Closing an opener does not close its child windows. The application exits when no windows or pending window requests remain. `WindowHandle` is thread-safe and targets exactly one window; requests after closure are inert.
 
 `cx.on_close_requested(|| bool)` handles native close requests and `window.request_close()`: return false to keep the window open, for example while a save-confirmation dialog is shown. `window.close()` closes immediately and bypasses that policy. `cx.on_closed(|| ...)` runs once during window disposal. Asynchronous confirmation should reject the initial request and call `close` after the user completes it.
 

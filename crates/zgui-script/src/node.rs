@@ -1132,10 +1132,10 @@ fn state_of(value: &mlua::Value) -> Option<Signal<Value>> {
         _ => None,
     }
 }
-fn expect_state(value: &mlua::Value, what: &str) -> mlua::Result<Signal<Value>> {
+pub(crate) fn expect_state(value: &mlua::Value, what: &str) -> mlua::Result<Signal<Value>> {
     state_of(value).ok_or_else(|| mlua::Error::runtime(format!("{what} must be a ui.state")))
 }
-fn expect_node(value: mlua::Value, what: &str) -> mlua::Result<Rc<Node>> {
+pub(crate) fn expect_node(value: mlua::Value, what: &str) -> mlua::Result<Rc<Node>> {
     match value {
         mlua::Value::UserData(ud) if ud.is::<NodeUd>() => Ok(ud.borrow::<NodeUd>()?.0.clone()),
         other => Err(mlua::Error::runtime(format!(

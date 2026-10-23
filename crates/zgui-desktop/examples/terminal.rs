@@ -15,8 +15,6 @@ mod activity;
 mod plugins;
 #[path = "terminal/program_status.rs"]
 mod program_status;
-#[path = "support/script_menus.rs"]
-mod script_menus;
 #[path = "terminal/session.rs"]
 mod session;
 
@@ -267,7 +265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let windows = cx.windows.clone();
             let menus = cx.ui.runtime.effect(move || {
                 let list = commands.get();
-                if let Err(error) = windows.set_menus(script_menus::menus(&list)) {
+                if let Err(error) = windows.set_menus(zgui_run::menus(&list)) {
                     eprintln!("terminal: menus: {error}");
                 }
             });

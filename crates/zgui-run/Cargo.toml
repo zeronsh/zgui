@@ -1,0 +1,16 @@
+[package]
+name = "zgui-run"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Run a zgui Luau script as a desktop app, with hot reload: `zgui-run app/`."
+
+[dependencies]
+zgui = { path = "../zgui" }
+zgui-desktop = { path = "../zgui-desktop" }
+zgui-script = { path = "../zgui-script" }
+serde_json = "1"
+
+[[bin]]
+name = "zgui-run"
+path = "src/main.rs"

@@ -590,7 +590,12 @@ impl Drop for UiStorage {
 }
 impl Ui {
     pub fn new(width: f32, height: f32) -> Self {
-        let runtime = Runtime::new();
+        Self::with_runtime(Runtime::new(), width, height)
+    }
+    /// A document on `runtime`, which other documents may share: an app's
+    /// windows share one, so the state one shows the others follow (a
+    /// settings window's switch, every window's theme).
+    pub fn with_runtime(runtime: Runtime, width: f32, height: f32) -> Self {
         let storage = Rc::new(UiStorage {
             themes: Themes::of(&runtime),
             mount_theme: RefCell::new(None),

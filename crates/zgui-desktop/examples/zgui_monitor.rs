@@ -16,8 +16,6 @@
 //! process a panel shows (`history:<pid>`, for the pids in `watch`).
 //! Run: cargo run --release -p zgui-desktop --example zgui_monitor
 //! (build the target first: cargo build --release -p zgui-desktop --example kitchen_sink)
-#[path = "support/script_menus.rs"]
-mod script_menus;
 
 use std::{
     cell::RefCell,
@@ -154,7 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let windows = cx.windows.clone();
             let menus = cx.ui.runtime.effect(move || {
                 let list = commands.get();
-                if let Err(error) = windows.set_menus(script_menus::menus(&list)) {
+                if let Err(error) = windows.set_menus(zgui_run::menus(&list)) {
                     eprintln!("zgui_monitor: menus: {error}");
                 }
             });
