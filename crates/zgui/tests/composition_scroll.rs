@@ -75,8 +75,12 @@ fn nested_scroll_consumes_motion_until_edge_then_bubbles() {
     assert_eq!((inner.get(), outer.get()), (100., 0.));
     wheel(&mut ui, 20., 20., 100.);
     assert_eq!((inner.get(), outer.get()), (200., 0.));
+    // Each a gesture of its own: one latches to the view it scrolls.
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(350));
+    pause();
     wheel(&mut ui, 20., 20., 40.);
     assert_eq!((inner.get(), outer.get()), (200., 40.));
+    pause();
     wheel(&mut ui, 20., 20., -50.);
     assert_eq!((inner.get(), outer.get()), (150., 40.));
 }

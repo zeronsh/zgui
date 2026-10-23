@@ -84,7 +84,13 @@ architecture. Rows retain their state while mounted; removing an offscreen row
 disposes its owned subscriptions and tasks. See [virtual lists](composition.md)
 for complete signatures, anchoring and cache costs.
 
-The lower-level `ScrollView::mount(ui, parent, width, height)` returns a clipped viewport, a `content` node, and signals for offset, extent, and viewport size. Set its content height explicitly as data changes. Scroll offsets clamp when content or viewport dimensions change. Moving content changes a retained transform; it does not relayout every child. Nested wheel scrolling chains to a parent when the inner scroll view cannot move farther.
+The lower-level `ScrollView::mount(ui, parent, width, height)` returns a clipped viewport, a `content` node, and signals for offset, extent, and viewport size. Set its content height explicitly as data changes. Scroll offsets clamp when content or viewport dimensions change. Moving content changes a retained transform; it does not relayout every child. Nested wheel scrolling chains to a parent when the inner scroll view cannot
+move farther, at the start of a gesture. Once a view scrolls, the gesture
+latches to it, as on macOS. The rest of the gesture along that axis, momentum
+included, goes to that view alone until a 300 ms pause, so it neither chains
+outward at the edge nor jumps to an inner view that slides under the pointer.
+A view takes only its own axis of a diagonal swipe and passes the other on, so
+a vertical swipe over a horizontal carousel still scrolls the page.
 
 `VirtualListView::mount` takes a count, fixed row height, overscan, stable key function, and row initializer. It retains only visible rows plus overscan. Overlapping visible keys keep their node IDs and scopes; offscreen scopes are disposed. The initializer receives a `ViewScope`, so it can mount text, descendants, and subscriptions. `scope.retain(input.register(...))` ties an input binding to that row's lifetime. Store persistent edits and selection in a model keyed by item identity: an offscreen row deliberately does not keep a hidden widget alive. This low-level `VirtualListView` remains fixed-height; variable and naturally measured rows use the component APIs above.
 

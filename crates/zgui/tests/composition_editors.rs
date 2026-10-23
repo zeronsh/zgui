@@ -273,6 +273,11 @@ fn multiline_wheel_scroll_preserves_selection_clamps_and_bubbles_at_edges() {
         at_bottom.y, -extent,
         "wheel scrolling clamps to content extent"
     );
+    // Within the gesture the editor keeps the wheel at its edge (latched,
+    // as macOS's views are); a new gesture after a pause bubbles out.
+    assert!(!ui.dispatch(scroll(100_000.)).default_prevented);
+    assert_eq!(bubbled.get(), 0);
+    std::thread::sleep(std::time::Duration::from_millis(350));
     assert!(!ui.dispatch(scroll(100_000.)).default_prevented);
     assert_eq!(ui.scene.borrow().transform(text), at_bottom);
     assert_eq!(bubbled.get(), 1);

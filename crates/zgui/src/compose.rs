@@ -1457,8 +1457,7 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         .min((wheel_extent.get() - wheel_size.get().1).max(0.0));
                     if before != after {
                         wheel_offset.set(after);
-                        cx.prevent_default();
-                        cx.stop_propagation();
+                        cx.scrolled(false);
                     }
                 }
             });
@@ -3241,8 +3240,7 @@ fn mount_scroll(
             let after = (before as f64 + delta as f64).clamp(0., limit) as f32;
             if before != after {
                 wheel_offset.set(after);
-                cx.prevent_default();
-                cx.stop_propagation();
+                cx.scrolled(horizontal);
             }
         }
     });

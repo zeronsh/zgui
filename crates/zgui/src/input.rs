@@ -174,6 +174,9 @@ pub struct EventContext {
     key_code: Option<Rc<str>>,
     /// `take_pointer`'s taker: what the pointer was pressed on gives it up.
     take_pointer: Option<NodeId>,
+    /// The node whose listener first prevented the default: a scroll view
+    /// that took a wheel gesture, which latches to it.
+    prevented_by: Option<NodeId>,
 }
 impl EventContext {
     /// `event` at `target`, in the target phase, nothing decided yet.
@@ -194,6 +197,7 @@ impl EventContext {
             drag_accepted: None,
             key_code: None,
             take_pointer: None,
+            prevented_by: None,
         }
     }
     /// Request a typed drag from this listener during a pointer move.
@@ -248,6 +252,29 @@ impl EventContext {
     }
     pub fn prevent_default(&mut self) {
         self.prevented = true;
+        self.prevented_by.get_or_insert(self.current_target);
+    }
+    /// A scroll view moved along its axis (`horizontal` or not) for this
+    /// wheel event: the event is used, unless it also moves along the other
+    /// axis, which goes on to the views around it (a vertical swipe over a
+    /// horizontal carousel still scrolls the page).
+    pub(crate) fn scrolled(&mut self, horizontal: bool) {
+        if let InputEvent::Scroll {
+            delta_x, delta_y, ..
+        } = &mut self.event
+        {
+            let (own, other) = if horizontal {
+                (delta_x, delta_y)
+            } else {
+                (delta_y, delta_x)
+            };
+            if *other != 0. && other.is_finite() {
+                *own = 0.;
+                return;
+            }
+        }
+        self.prevent_default();
+        self.stop_propagation();
     }
     pub fn focus(&mut self) {
         self.focus = Some(self.current_target);
@@ -279,6 +306,10 @@ impl EventContext {
         self.prevented
     }
 }
+/// How long a wheel gesture stays latched to its scroll view after its
+/// last event: longer than the gaps between a gesture's and its momentum's
+/// events, shorter than a person's pause between gestures.
+const SCROLL_LATCH: Duration = Duration::from_millis(300);
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NodeInput {
     pub focusable: bool,
@@ -382,6 +413,10 @@ struct State {
     drag_ending: Option<NodeId>,
     /// The physical key of the key event being dispatched (`set_key_code`).
     key_code: Option<Rc<str>>,
+    /// The scroll view a wheel gesture is latched to, the axis it moves
+    /// along (horizontal or not) and when it last scrolled: the rest of the
+    /// gesture along that axis goes to it alone.
+    scroll_latch: Option<(NodeId, bool, Instant)>,
     /// The modifier keys last known held (from the platform's pointer and
     /// key events): what an activation (a click) was made with.
     modifiers: Modifiers,
@@ -1170,8 +1205,10 @@ impl InputDispatcher {
         } else {
             Modifiers::default()
         };
-        self.route_pointer(scene, target, event, held, count)
+        self.route_pointer(scene, target, event, held, count, false)
     }
+    /// Route `event` from `target` through its ancestors (capture, target,
+    /// bubble), or to `target` `alone`: a latched wheel gesture's.
     fn route_pointer(
         &self,
         scene: &Rc<RefCell<Scene>>,
@@ -1179,6 +1216,7 @@ impl InputDispatcher {
         event: InputEvent,
         modifiers: Modifiers,
         click_count: u8,
+        alone: bool,
     ) -> EventContext {
         if matches!(event, InputEvent::Blur) {
             let mut state = self.state.borrow_mut();
@@ -1202,7 +1240,7 @@ impl InputDispatcher {
             Modifiers::default()
         };
         let mut path = vec![target];
-        {
+        if !alone {
             let scene = scene.borrow();
             let mut id = target;
             while let Some(parent) = scene.parent(id) {
@@ -1509,6 +1547,33 @@ impl InputDispatcher {
         if capture.is_none() {
             self.set_capture(None, &event);
         }
+        // The rest of a wheel gesture goes to the scroll view it latched
+        // to, alone, as macOS latches one: it neither chains to the views
+        // around it at an edge nor moves to one that slides under the
+        // pointer. A pause ends the gesture.
+        if let InputEvent::Scroll {
+            delta_x, delta_y, ..
+        } = &event
+        {
+            let now = Instant::now();
+            let horizontal = delta_x.abs() > delta_y.abs();
+            let latched = self.state.borrow().scroll_latch.filter(|(node, axis, at)| {
+                *axis == horizontal
+                    && now.saturating_duration_since(*at) < SCROLL_LATCH
+                    && scene.borrow().contains(*node)
+                    && self.enabled(&scene.borrow(), *node)
+            });
+            if let Some((node, ..)) = latched {
+                let ctx =
+                    self.route_pointer(scene, node, event, modifiers.unwrap_or_default(), 0, true);
+                self.state.borrow_mut().scroll_latch = Some((node, horizontal, now));
+                return DispatchResult {
+                    target: Some(node),
+                    default_prevented: ctx.prevented,
+                    focus_changed: false,
+                };
+            }
+        }
         let hit = match &event {
             InputEvent::PointerDown { x, y, .. }
             | InputEvent::PointerUp { x, y, .. }
@@ -1597,8 +1662,19 @@ impl InputDispatcher {
                 event.clone(),
                 modifiers.unwrap_or_default(),
                 click_count,
+                false,
             );
             prevented = ctx.prevented;
+            if let InputEvent::Scroll {
+                delta_x, delta_y, ..
+            } = event
+            {
+                let horizontal = delta_x.abs() > delta_y.abs();
+                self.state.borrow_mut().scroll_latch = ctx
+                    .prevented_by
+                    .filter(|_| ctx.prevented)
+                    .map(|node| (node, horizontal, Instant::now()));
+            }
             if let Some((source, payload, pressed_at)) = ctx.drag_request.clone()
                 && let InputEvent::PointerMove { x, y } = event
             {
