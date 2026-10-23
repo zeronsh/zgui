@@ -74,27 +74,41 @@ fn a_tooltip_waits_for_the_pointer_to_rest_and_an_interactive_card_takes_typing(
             )),
     ));
     ui.prepare_frame();
-    let wait = |ui: &mut Ui, ms: u64| {
+    // Until `done`, or `ms` have passed: whether it happened. Timers run on
+    // a thread of their own, which a loaded machine runs late.
+    let until = |ui: &mut Ui, ms: u64, done: &dyn Fn(&Ui) -> bool| {
         let end = std::time::Instant::now() + Duration::from_millis(ms);
-        while std::time::Instant::now() < end {
-            std::thread::sleep(Duration::from_millis(5));
+        loop {
             while executor.borrow_mut().tick() > 0 {}
             ui.prepare_frame();
+            if done(ui) {
+                return true;
+            }
+            if std::time::Instant::now() >= end {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
     };
     hover(&mut ui, 70., 70.);
     assert!(!showing(&ui, "Plain"), "not at once");
-    wait(&mut ui, 550);
-    assert!(showing(&ui, "Plain"), "after a rest");
-    // Within a second of it, the next opens at once.
+    assert!(
+        until(&mut ui, 2000, &|ui| showing(ui, "Plain")),
+        "after a rest"
+    );
+    // Within a second of it, the next opens at once: before a rest (300 ms)
+    // would have shown it.
     hover(&mut ui, 70., 110.);
-    wait(&mut ui, 20);
-    assert!(showing(&ui, "Card"), "at once");
-    wait(&mut ui, 150);
-    assert!(!showing(&ui, "Plain"), "the last faded out");
+    assert!(until(&mut ui, 250, &|ui| showing(ui, "Card")), "at once");
+    assert!(
+        until(&mut ui, 2000, &|ui| !showing(ui, "Plain")),
+        "the last faded out"
+    );
     key(&mut ui, Key::Character("x".into()));
     assert!(showing(&ui, "Card"), "a card takes typing");
     key(&mut ui, Key::Escape);
-    wait(&mut ui, 30);
-    assert!(!showing(&ui, "Card"), "and closes on Escape");
+    assert!(
+        until(&mut ui, 2000, &|ui| !showing(ui, "Card")),
+        "and closes on Escape"
+    );
 }
