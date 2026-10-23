@@ -14,13 +14,19 @@
 //! still shows its title bar. AppKit's window tabs have no Windows
 //! counterpart: `Tabbing` does nothing there.
 //!
-//! X11 (`x11`): a window goes under the pointer: the pointer is the server's
-//! (`XQueryPointer`), and the window's frame the window manager's
-//! (`_NET_REQUEST_FRAME_EXTENTS`); the position is the user's
+//! Linux (`linux`): on X11 a window goes under the pointer: the pointer is
+//! the server's (`XQueryPointer`), and the window's frame the window
+//! manager's (`_NET_REQUEST_FRAME_EXTENTS`); the position is the user's
 //! (`USPosition`), which window managers keep rather than place the window
-//! themselves.
-//! todo(x11): cascading and saved frames. todo(wayland): the compositor
-//! places new windows, and the app cannot.
+//! themselves. A saved frame is kept in `$XDG_STATE_HOME/zgui/<executable>/
+//! frames` as the window moves and resizes (the host saves it once they
+//! settle, `save`), and reopened at its size, maximized if it was left so,
+//! and on X11 where it was if a monitor still shows its title bar. Placed
+//! nowhere in particular, an X11 window opens a step on from the app's
+//! front window (the program's position, `PPosition`); with none, where the
+//! window manager puts it. On Wayland the compositor places every window:
+//! a saved frame keeps its size and maximized state alone. `Tabbing` does
+//! nothing there.
 
 /// AppKit's window tabs (macOS; elsewhere none): an app's windows gather as
 /// tabs of one window, as Finder's do.
@@ -160,9 +166,9 @@ mod win32;
 pub(crate) use win32::place;
 
 #[cfg(target_os = "linux")]
-mod x11;
+mod linux;
 #[cfg(target_os = "linux")]
-pub(crate) use x11::place;
+pub(crate) use linux::{maximize_hidden, place, save};
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) fn place(

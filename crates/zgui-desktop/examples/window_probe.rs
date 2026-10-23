@@ -4,7 +4,10 @@
 //! and what ⌘` cycles through. ⌘` itself is a system hotkey AppKit hears
 //! from the window server, not a key event the app could post itself: the
 //! probe sends one anyway and prints whether the key window changed. On
-//! Windows it checks the cascade and saved frames (see `win32`).
+//! Windows it checks the cascade and saved frames (see `win32`). On Linux
+//! `scripts/window_frames_smoke.py` checks them from outside: the second
+//! window opens a moment after the first, as from File ▸ New Window, and
+//! `window_probe saved` opens one window that keeps its frame.
 use zgui::compose::prelude::*;
 use zgui_desktop::{Application, WindowOptions};
 
@@ -15,39 +18,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         height: 200.,
         ..Default::default()
     };
+    #[cfg(target_os = "linux")]
+    if std::env::args().nth(1).as_deref() == Some("saved") {
+        let saved = WindowOptions {
+            frame_autosave: Some("zgui window_probe".into()),
+            ..options("Saved")
+        };
+        return Application::new().window(saved).run(|cx| {
+            cx.render(div().p(20.).child(text("Saved")));
+            // Its size once shown: on Wayland nothing outside the app can
+            // read it.
+            let bounds = cx.window_info.bounds.clone();
+            cx.tasks.spawn(async move {
+                zgui::timer::sleep(std::time::Duration::from_millis(1500)).await;
+                let (width, height) = bounds.get().size;
+                println!("SIZE {width} {height}");
+            });
+        });
+    }
     let second = options("Second");
     // A window with content under its title bar, reopening a frame saved
-    // larger than its options ask: the saved size stands.
+    // larger than its options ask: the saved size stands. (Not on Linux,
+    // where the second window cascades from the first alone.)
     #[cfg(target_os = "macos")]
     macos::save_frame();
+    #[cfg(not(target_os = "linux"))]
     let restored = WindowOptions {
         titlebar: zgui_desktop::Titlebar::Inset,
         frame_autosave: Some("zgui window_probe restored".into()),
         ..options("Restored")
     };
+    #[cfg(not(target_os = "linux"))]
     let standard = WindowOptions {
         frame_autosave: Some("zgui window_probe standard".into()),
         ..options("Standard")
     };
+    #[cfg(not(target_os = "linux"))]
     let hidden = WindowOptions {
         titlebar: zgui_desktop::Titlebar::Hidden,
         frame_autosave: Some("zgui window_probe hidden".into()),
         ..options("Hidden")
     };
     Application::new().window(options("First")).run(move |cx| {
-        cx.windows.open(restored, |cx| {
-            cx.render(div().p(20.).child(text("Restored")));
-        });
-        cx.windows.open(standard, |cx| {
-            cx.render(div().p(20.).child(text("Standard")));
-        });
-        cx.windows.open(hidden, |cx| {
-            cx.render(div().p(20.).child(text("Hidden")));
-        });
+        #[cfg(not(target_os = "linux"))]
+        {
+            cx.windows.open(restored, |cx| {
+                cx.render(div().p(20.).child(text("Restored")));
+            });
+            cx.windows.open(standard, |cx| {
+                cx.render(div().p(20.).child(text("Standard")));
+            });
+            cx.windows.open(hidden, |cx| {
+                cx.render(div().p(20.).child(text("Hidden")));
+            });
+        }
         cx.render(div().p(20.).child(text("First")));
-        cx.windows.open(second, |cx| {
-            cx.render(div().p(20.).child(text("Second")));
+        let open_second = {
+            let windows = cx.windows.clone();
+            move || {
+                windows.open(second, |cx| {
+                    cx.render(div().p(20.).child(text("Second")));
+                });
+            }
+        };
+        // On X11 a window cascades from one the window manager shows.
+        #[cfg(target_os = "linux")]
+        cx.tasks.spawn(async move {
+            zgui::timer::sleep(std::time::Duration::from_millis(1000)).await;
+            open_second();
         });
+        #[cfg(not(target_os = "linux"))]
+        open_second();
         #[cfg(target_os = "macos")]
         cx.tasks.spawn(async move {
             macos::run().await;

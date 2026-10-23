@@ -144,7 +144,7 @@ pub(crate) fn current() -> Option<(i32, i32, i32, i32)> {
 
 /// The work area of the current desktop (`_NET_WORKAREA`, x, y, width,
 /// height per desktop).
-fn work_area(connection: &impl Connection, root: u32) -> Option<(i32, i32, i32, i32)> {
+pub(crate) fn work_area(connection: &impl Connection, root: u32) -> Option<(i32, i32, i32, i32)> {
     let areas = cardinals(connection, root, atom(connection, "_NET_WORKAREA")?)?;
     let desktop = atom(connection, "_NET_CURRENT_DESKTOP")
         .and_then(|current| cardinals(connection, root, current))

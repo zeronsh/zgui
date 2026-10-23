@@ -78,7 +78,9 @@ pub struct WindowOptions {
     /// Save the window's frame under this name as it moves and resizes, and
     /// open where it was left (macOS's frame autosave; on Windows its
     /// placement, maximized or not, in the registry, reopened only where a
-    /// monitor still shows its title bar).
+    /// monitor still shows its title bar; on Linux the same in
+    /// `$XDG_STATE_HOME/zgui/<executable>/frames`, its size and maximized
+    /// state alone on Wayland).
     pub frame_autosave: Option<String>,
 }
 impl WindowOptions {
@@ -804,6 +806,10 @@ impl Default for Application {
 /// A window that has presented nothing for this long releases animation-only
 /// renderer memory.
 const TRIM_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
+/// A window's frame is saved this long after it last moved or resized
+/// (`frame_autosave`, Linux): once for a drag, not for each of its steps.
+#[cfg(target_os = "linux")]
+const FRAME_SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 /// Frames presented this close together are a steady run.
 #[cfg(target_os = "macos")]
 const STEADY_GAP: std::time::Duration = std::time::Duration::from_millis(50);
@@ -1117,6 +1123,9 @@ struct Host {
     /// When to release animation-only renderer memory if nothing presents
     /// before then (see `GpuRenderer::trim`).
     trim_at: Option<std::time::Instant>,
+    /// When to save the window's frame (`frame_autosave`, Linux): once its
+    /// moves and resizes settle.
+    frame_save_at: Option<std::time::Instant>,
     startup_trim: StartupTrim,
     /// Timer tick (no native source) or watchdog deadline (native source).
     frame_deadline: Option<std::time::Instant>,
@@ -1352,6 +1361,7 @@ impl Host {
             latch: Latch::default(),
             frame_arrived: false,
             trim_at: None,
+            frame_save_at: None,
             startup_trim: StartupTrim::Pending,
             frame_timer: crate::frame_source::FrameTimer::new(std::time::Instant::now()),
             frame_interval: crate::frame_source::DEFAULT_INTERVAL,
@@ -2089,6 +2099,21 @@ impl Host {
             }
         }
     }
+    /// Save the window's frame under its `frame_autosave` name (Linux; macOS
+    /// and Windows save their own): the frame it had when last neither
+    /// maximized nor fullscreen, and whether it is maximized. Fullscreen,
+    /// the frame saved before stands.
+    fn save_frame(&self) {
+        #[cfg(target_os = "linux")]
+        if let (Some(window), Some(name), Some(bounds)) = (
+            &self.window,
+            &self.options.frame_autosave,
+            self.options.bounds,
+        ) && window.fullscreen().is_none()
+        {
+            crate::window_place::save(name, bounds, window.is_maximized());
+        }
+    }
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), Box<dyn Error>> {
         if self.window.is_some() {
             return Ok(());
@@ -2228,6 +2253,11 @@ impl Host {
         self.renderer = Some(renderer);
         self.adapter = Some(adapter);
         window.set_maximized(self.state.maximized);
+        // Not shown yet, an X11 window's state is its own to set.
+        #[cfg(target_os = "linux")]
+        if self.state.maximized {
+            crate::window_place::maximize_hidden(&window);
+        }
         if self.options.bounds.is_none() {
             self.options.bounds = Some(crate::WindowBounds::read(&window));
         }
@@ -2603,6 +2633,10 @@ impl Host {
                 if bounds.size.0 > 0 && bounds.size.1 > 0 {
                     self.options.bounds = Some(bounds);
                 }
+            }
+            #[cfg(target_os = "linux")]
+            if self.options.frame_autosave.is_some() {
+                self.frame_save_at = Some(std::time::Instant::now() + FRAME_SAVE_DELAY);
             }
         }
         self.sync_ime_cancellation();
@@ -3295,6 +3329,13 @@ impl Host {
             release_freed_heap();
         }
         if self
+            .frame_save_at
+            .is_some_and(|at| std::time::Instant::now() >= at)
+        {
+            self.frame_save_at = None;
+            self.save_frame();
+        }
+        if self
             .trim_at
             .is_some_and(|at| std::time::Instant::now() >= at)
         {
@@ -3614,6 +3655,10 @@ fn borderless_resize_never_calls_the_style_mutating_native_zoom_query() {
 
 impl Drop for Host {
     fn drop(&mut self) {
+        // Closed before its last move settled: saved now.
+        if self.frame_save_at.take().is_some() {
+            self.save_frame();
+        }
         self.unregister_file_surface();
         self.context.window.closed.store(true, Ordering::Release);
         self.context.ui.set_presented(false);
@@ -4517,6 +4562,7 @@ impl WindowManager {
                     host.renderer_retry,
                     host.touch.hold_deadline(),
                     host.trim_at,
+                    host.frame_save_at,
                     match host.startup_trim {
                         StartupTrim::At(at) => Some(at),
                         _ => None,

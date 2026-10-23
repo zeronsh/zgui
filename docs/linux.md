@@ -133,6 +133,17 @@ opens with the point it was grabbed by under the pointer. That point is
 (`_NET_REQUEST_FRAME_EXTENTS`), set as the user's position (`USPosition`) so
 window managers keep it. `drag_windows_smoke.py` checks all three.
 
+A window with no position opens a step on from the app's front window, as
+on macOS and Windows: down and right by its title bar's height, as the
+program's position (`PPosition`). A window's frame is kept under its
+`frame_autosave` name in `$XDG_STATE_HOME/zgui/<executable>/frames`, half a
+second after it last moved or resized and as it closes, and reopened there,
+maximized if it was left so. A window opened maximized, saved so or asked
+to, has `_NET_WM_STATE` set before it maps: winit asks the window manager
+with a message, which it ignores for a window it does not manage yet. On
+Wayland the compositor places windows, so a saved frame keeps its size and
+maximized state alone. `window_frames_smoke.py` checks both.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a

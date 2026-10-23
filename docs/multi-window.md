@@ -8,11 +8,12 @@ On macOS a zgui app's menus, drags and windows behave as AppKit's do, past the e
 | A popover's arrow at its trigger | `View::arrow` / Luau `arrow` | everywhere (drawn in the window where popups stay in it) |
 | A drag's preview over every window and app | any drag with a `drag_preview` | macOS, X11 |
 | Drag out to other apps | `View::drag_export` / Luau `drag_export` | macOS |
-| Drags between the app's windows | any drag and drop; `DragEvent::visiting` | macOS |
-| Tear a tab off into a window of its own | `View::on_drag_outside`, `WindowOptions::under_pointer` | macOS; Windows places the new window |
+| Drags between the app's windows | any drag and drop; `DragEvent::visiting` | macOS, X11 |
+| Tear a tab off into a window of its own | `View::on_drag_outside`, `WindowOptions::under_pointer` | macOS, X11; Windows places the new window |
 | A window's only tab moves the window | `View::drag_moves_window` | macOS |
-| Window menu, ⌘`, cascading, AppKit tabs | `WindowOptions::{tabbing, tabbing_identifier}` | macOS |
-| Windows reopening where they were left | `WindowOptions::frame_autosave` / Luau `ui.window { frame_autosave }` | macOS, Windows |
+| Window menu, ⌘`, AppKit tabs | `WindowOptions::{tabbing, tabbing_identifier}` | macOS |
+| New windows cascading from the front one | a window with no position | macOS, Windows, X11 |
+| Windows reopening where they were left | `WindowOptions::frame_autosave` / Luau `ui.window { frame_autosave }` | macOS, Windows, X11; Wayland keeps the size and maximized state |
 
 Elsewhere each one falls back to what the window alone can do: popups stay inside it, and drags stay in it. The source files' `todo(windows)`, `todo(x11)` and `todo(wayland)` notes say what each platform needs, and #193 lists what X11 needs for drags between windows and out to other apps.
 
