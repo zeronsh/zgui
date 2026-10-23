@@ -1870,6 +1870,13 @@ impl ScriptHost {
             Grants::All
         });
         let code = script.code(files)?;
+        #[cfg(all(luau_asserts, not(debug_assertions)))]
+        warning(
+            Some(&self.0.warnings),
+            "Luau was built with its asserts, which slow scripts by about a fifth: \
+             build with LUAU_CXXFLAGS=-DNDEBUG (docs/scripting.md, Cost)"
+                .into(),
+        );
         // The handle `Lua::new` returns collects all garbage when it drops,
         // a full pass over everything the script just built; a clone does
         // not, and the VM frees all it holds when the last one goes.
