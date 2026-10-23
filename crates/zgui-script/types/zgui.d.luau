@@ -480,21 +480,22 @@ export type FilePickerOptions = {
 	multiple: boolean?,
 }
 
--- `ui.call(name, arg)`: a host call's result to come. Reads of its fields
--- are tracked: what reads them follows it as it settles.
-declare extern type Promise with
+-- A value to come (`ui.call`, `ui.fetch`, the file functions), of type
+-- `T`. Reads of its fields are tracked: what reads them follows it as it
+-- settles.
+export type Promise<T = unknown> = {
 	-- It settled, with a value or an error.
-	done: boolean
-	value: unknown
-	error: string?
+	done: boolean,
+	value: T?,
+	error: string?,
 	-- `on_value(value)` or `on_error(message)` once it settles (at once if
 	-- it has). Without `on_error` (or a read of `error`, or an `await` in a
 	-- pcall), a rejection is reported as a script error.
-	function after(self, on_value: ((value: unknown) -> ())?, on_error: ((message: string) -> ())?): ()
+	after: (self: Promise<T>, on_value: ((value: T) -> ())?, on_error: ((message: string) -> ())?) -> (),
 	-- Inside `ui.task`: wait for it, and return its value (or raise its
 	-- error, the host's message as it wrote it).
-	function await(self): unknown
-end
+	await: (self: Promise<T>) -> T,
+}
 
 -- A mounted node a script reaches: through `on_mount`, `on_resize`, a ref
 -- or an animation's function values.
@@ -6890,7 +6891,7 @@ declare ui: {
 	task: <A...>(f: (A...) -> (), A...) -> (),
 	-- An HTTP request through the host's transport (`ScriptHost::fetcher`):
 	-- a promise of a `Response`. A plugin needs the host's grant.
-	fetch: (url: string, opts: FetchOptions?) -> Promise,
+	fetch: (url: string, opts: FetchOptions?) -> Promise<Response>,
 	-- The clipboard's text (nil if it holds none), and putting text on it.
 	clipboard: {
 		read: () -> string?,
@@ -6898,13 +6899,13 @@ declare ui: {
 	},
 	-- The files the user picks: a promise of a list of `File` (empty if
 	-- they cancel).
-	open_files: (opts: FilePickerOptions?) -> Promise,
+	open_files: (opts: FilePickerOptions?) -> Promise<{ File }>,
 	-- Where the user chooses to save: a promise of a `File`, or nil.
-	save_file: (opts: FilePickerOptions?) -> Promise,
+	save_file: (opts: FilePickerOptions?) -> Promise<File?>,
 	-- A file the user picked, read as text off the main thread: a promise.
-	read_file: (file: File | string) -> Promise,
+	read_file: (file: File | string) -> Promise<string>,
 	-- Write `text` to a file the user picked (beside it, then over it).
-	write_file: (file: File | string, text: string) -> Promise,
+	write_file: (file: File | string, text: string) -> Promise<nil>,
 	set: <T>(state: State<T>, value: T) -> Action,
 	toggle: (state: State<boolean>) -> Action,
 	add: (state: State<number>, by: number?) -> Action,

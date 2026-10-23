@@ -1,5 +1,6 @@
 --!nonstrict
--- (Non-strict until promises carry their values' types in zgui.d.luau.)
+-- (Non-strict until slot-provided props and decoded JSON are typed: the
+-- solver cannot see `props.slot` arrive or narrow API data yet.)
 -- Editor: a text editor in a pane. Open a file (⌘O), edit it with its
 -- lines numbered, save it (⌘S, ⇧⌘S for elsewhere). A changed file shows a
 -- dot; opening another asks first.

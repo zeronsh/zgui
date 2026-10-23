@@ -22,13 +22,13 @@ ui.action(name: string, arg: unknown?) -> Action
 ui.invoke(name: string, arg: unknown?) -> ()
 ui.call(name: string, arg: unknown?) -> Promise
 ui.task<A...>(f: (A...) -> (), A...) -> ()
-ui.fetch(url: string, opts: FetchOptions?) -> Promise
+ui.fetch(url: string, opts: FetchOptions?) -> Promise<Response>
 ui.clipboard.read() -> string?
 ui.clipboard.write(text: string) -> boolean
-ui.open_files(opts: FilePickerOptions?) -> Promise
-ui.save_file(opts: FilePickerOptions?) -> Promise
-ui.read_file(file: File | string) -> Promise
-ui.write_file(file: File | string, text: string) -> Promise
+ui.open_files(opts: FilePickerOptions?) -> Promise<{ File }>
+ui.save_file(opts: FilePickerOptions?) -> Promise<File?>
+ui.read_file(file: File | string) -> Promise<string>
+ui.write_file(file: File | string, text: string) -> Promise<nil>
 ```
 
 ## Making state

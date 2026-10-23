@@ -1,5 +1,6 @@
 --!nonstrict
--- (Non-strict until promises carry their values' types in zgui.d.luau.)
+-- (Non-strict until slot-provided props and decoded JSON are typed: the
+-- solver cannot see `props.slot` arrive or narrow API data yet.)
 -- Notes: a notepad in a pane, kept per pane across launches. It asks for
 -- nothing: it only shows its panel (`panels` in plugin.json), opened from
 -- ⌘K. zterm gives the component its pane in `props.slot`.
