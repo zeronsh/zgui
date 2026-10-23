@@ -2462,7 +2462,8 @@ impl Ui {
                 let mutation = match &cx.event {
                     InputEvent::Text(_) | InputEvent::ImePreedit { .. } | InputEvent::ImeCommit(_) | InputEvent::SetValue(_) => true,
                     InputEvent::KeyDown { key, modifiers, .. } => matches!(key, Key::Backspace | Key::Delete | Key::Enter)
-                        || (modifiers.primary_shortcut() && matches!(key, Key::Character(k) if k.eq_ignore_ascii_case("z") || k.eq_ignore_ascii_case("y"))),
+                        || (modifiers.primary_shortcut() && matches!(key, Key::Character(k) if k.eq_ignore_ascii_case("z") || k.eq_ignore_ascii_case("y")))
+                        || (mac_control(*modifiers) && matches!(key, Key::Character(k) if ["d", "h", "k"].iter().any(|c| k.eq_ignore_ascii_case(c)))),
                     _ => false,
                 };
                 if mutation { cx.prevent_default(); return; }
@@ -2637,6 +2638,34 @@ impl Ui {
                     return;
                 }
                 InputEvent::KeyDown { key, modifiers, .. } => {
+                    // macOS's Control keys, as its text system binds them: a
+                    // line's start and end, a character or a line either way,
+                    // deleting either way, and to the line's end (Control+K).
+                    let mut kill = false;
+                    let (key, modifiers) = match &key {
+                        Key::Character(k) if mac_control(modifiers) => {
+                            let plain = crate::input::Modifiers {
+                                control: false,
+                                ..modifiers
+                            };
+                            match k.to_ascii_lowercase().as_str() {
+                                "a" => (Key::Home, plain),
+                                "e" => (Key::End, plain),
+                                "f" => (Key::ArrowRight, plain),
+                                "b" => (Key::ArrowLeft, plain),
+                                "n" => (Key::ArrowDown, plain),
+                                "p" => (Key::ArrowUp, plain),
+                                "d" => (Key::Delete, plain),
+                                "h" => (Key::Backspace, plain),
+                                "k" => {
+                                    kill = true;
+                                    (key.clone(), plain)
+                                }
+                                _ => (key.clone(), modifiers),
+                            }
+                        }
+                        _ => (key.clone(), modifiers),
+                    };
                     let paging = matches!(key, Key::PageUp | Key::PageDown);
                     // Single-line fields and platform shortcuts leave paging to
                     // their ancestors without disturbing editor navigation state.
@@ -2800,6 +2829,16 @@ impl Ui {
                                 };
                                 e.set_selection(anchor, index);
                             }
+                            Key::Character(_) if kill => {
+                                changed = e.delete_to_line_end();
+                            }
+                            // ⌘⌫ and ⌘⌦: to the line's start or end.
+                            Key::Backspace if cfg!(target_os = "macos") && modifiers.meta => {
+                                changed = e.delete_to_line_start();
+                            }
+                            Key::Delete if cfg!(target_os = "macos") && modifiers.meta => {
+                                changed = e.delete_to_line_end();
+                            }
                             Key::Backspace => {
                                 changed = e.delete_backward(word);
                             }
@@ -2874,6 +2913,11 @@ impl Ui {
             .dispatch_to(&self.scene, node, InputEvent::SetNumericValue(value))
             .default_prevented
     }
+}
+
+/// Control alone on macOS: the text system's Emacs-style keys.
+fn mac_control(modifiers: crate::input::Modifiers) -> bool {
+    cfg!(target_os = "macos") && modifiers.control && !modifiers.meta && !modifiers.alt
 }
 
 fn editor_drag_velocity(pointer: f32, start: f32, extent: f32, offset: f32, limit: f32) -> f32 {

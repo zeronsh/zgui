@@ -257,6 +257,17 @@ Use `.read_only(true)` for selectable output or `.read_only_when(move || locked.
 
 Committed editor text uses LF line endings: CRLF and lone CR become LF, then `text_input` removes line breaks. This applies to initial values, external model updates, typing, paste, accessibility replacements, and IME commits. The bound signal receives the canonical text. Tabs remain intact; ordinary text events still reject other control characters as a whole. Native preedit stays unmodified so its cursor offsets remain valid. Canonical-equivalent model updates preserve selection, preedit, and history, and initial normalization does not create an undo entry.
 
+Undo goes back a run at a time, as AppKit's text views do. Consecutive typed
+graphemes join one step, as do consecutive deletions one way (Backspace, or
+forward Delete). A caret move, a selection change, a line break, a different
+kind of edit, a paste or multi-character insert, or undo/redo ends a run.
+Option+Backspace / Control+Backspace delete a word; ⌘⌫ and ⌘⌦ on macOS delete
+to the line's start or end (at its edge, the line break). On macOS the Control
+keys work as in every Cocoa text field: A and E go to the line's start and end,
+F, B, N and P move a character or line, D and H delete forward and back, and K
+deletes to the line's end. In read-only editors the deleting ones are refused
+like other edits.
+
 External model replacements record a single changed UTF-8 span after removing the common prefix and suffix, so appending a small token does not retain another whole-document undo snapshot. The default limits remain 100 entries and 4 MiB of inserted/deleted payload **per undo or redo stack**; metadata and allocator overhead are additional. A changed replacement still moves the caret to the document end, and undo restores the prior selection. Canonical model ingress borrows the signal text instead of cloning the full document. Comparing replacements still takes time proportional to document length; this is not a rope or constant-time append API.
 
 Selection and read-only refreshes retain unchanged paint text and semantic value storage. The semantic text-input update reuses its string capacity when committed text changes. These avoid document copies in the core refresh path; cold text shaping and native accessibility projection have separate allocation costs.

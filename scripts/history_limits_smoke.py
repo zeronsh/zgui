@@ -60,7 +60,11 @@ def main():
                     xdo("mousemove", "--sync", "--window", window, x, y, "click", 1)
                 reports = {"initial": snapshot()}
                 assert reports["initial"] == dict(limited=False, model=""), reports
-                xdo("type", "--delay", 100, "abc")
+                # Each character an undo step of its own: moving the caret
+                # (End) ends a typing run, which would otherwise undo whole.
+                for character in "abc":
+                    xdo("type", "--delay", 100, character)
+                    xdo("key", "End")
                 reports["typed"] = snapshot()
                 assert reports["typed"]["model"] == "abc", reports
                 xdo("key", "ctrl+z")

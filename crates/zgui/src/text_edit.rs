@@ -20,6 +20,13 @@ pub struct Preedit {
     pub text: String,
     pub cursor: Option<(usize, usize)>,
 }
+/// What an edit was, for joining runs of them into one undo step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Run {
+    Typing,
+    DeletingBackward,
+    DeletingForward,
+}
 #[derive(Clone)]
 struct Edit {
     start: usize,
@@ -39,6 +46,9 @@ pub struct TextEditor {
     redo_bytes: usize,
     history_limit: usize,
     history_bytes: usize,
+    /// The run the last undo step is, while the next edit of its kind can
+    /// join it: typing, or deleting one way, as AppKit's text views undo.
+    run: Option<Run>,
 }
 impl Default for TextEditor {
     fn default() -> Self {
@@ -63,6 +73,7 @@ impl TextEditor {
             redo_bytes: 0,
             history_limit: 100,
             history_bytes: 4 * 1024 * 1024,
+            run: None,
         }
     }
     pub fn text(&self) -> &str {
@@ -124,6 +135,7 @@ impl TextEditor {
         }
     }
     pub fn set_selection(&mut self, anchor: usize, focus: usize) {
+        self.run = None;
         self.cancel_preedit();
         self.selection = Selection {
             anchor: self.boundary(anchor),
@@ -133,13 +145,23 @@ impl TextEditor {
     pub fn select_all(&mut self) {
         self.set_selection(0, self.text.len());
     }
+    /// Replace the selection with `value`. Typing (one grapheme at a time)
+    /// joins the undo step typing before it made, until the caret moves,
+    /// another kind of edit comes, or a line break is typed; a paste or a
+    /// longer insert is a step of its own.
     pub fn insert(&mut self, value: &str) -> bool {
+        let typing = value != "\n" && value.graphemes(true).count() == 1;
+        self.replace(value, typing.then_some(Run::Typing))
+    }
+    /// `insert`, as an edit of `run`'s kind (`None`: a step of its own).
+    fn replace(&mut self, value: &str, run: Option<Run>) -> bool {
         let range = self.selection.range();
         if self.text[range.clone()] == *value {
             self.cancel_preedit();
             self.set_selection(range.start + value.len(), range.start + value.len());
             return false;
         }
+        let joins = run.is_some() && self.run == run;
         let before = self.selection;
         let deleted = self.text[range.clone()].to_owned();
         self.cancel_preedit();
@@ -168,13 +190,47 @@ impl TextEditor {
             focus: end,
         };
         self.undo_bytes += deleted.len() + value.len();
-        self.undo.push_back(Edit {
-            start: range.start,
-            deleted,
-            inserted: value.to_owned(),
-            before,
-            after: self.selection,
-        });
+        let joined = joins
+            && self.undo.back_mut().is_some_and(|last| {
+                // Contiguous with the step before: type on at its end, delete
+                // on before it or after it.
+                match run {
+                    Some(Run::Typing)
+                        if deleted.is_empty()
+                            && last.start + last.inserted.len() == range.start =>
+                    {
+                        last.inserted.push_str(value);
+                    }
+                    Some(Run::DeletingBackward)
+                        if value.is_empty()
+                            && last.inserted.is_empty()
+                            && range.end == last.start =>
+                    {
+                        last.deleted.insert_str(0, &deleted);
+                        last.start = range.start;
+                    }
+                    Some(Run::DeletingForward)
+                        if value.is_empty()
+                            && last.inserted.is_empty()
+                            && range.start == last.start =>
+                    {
+                        last.deleted.push_str(&deleted);
+                    }
+                    _ => return false,
+                }
+                last.after = self.selection;
+                true
+            });
+        if !joined {
+            self.undo.push_back(Edit {
+                start: range.start,
+                deleted,
+                inserted: value.to_owned(),
+                before,
+                after: self.selection,
+            });
+        }
+        self.run = run;
         Self::trim(
             &mut self.undo,
             &mut self.undo_bytes,
@@ -225,6 +281,7 @@ impl TextEditor {
         }
         let old_end = self.text.len() - suffix;
         let new_end = value.len() - suffix;
+        self.run = None;
         let before = self.selection;
         let deleted = self.text[prefix..old_end].to_owned();
         let inserted = value[prefix..new_end].to_owned();
@@ -285,6 +342,7 @@ impl TextEditor {
         }
     }
     fn move_to(&mut self, offset: usize, extend: bool) {
+        self.run = None;
         self.cancel_preedit();
         self.selection.focus = self.boundary(offset);
         if !extend {
@@ -335,15 +393,9 @@ impl TextEditor {
             if pos == self.selection.focus {
                 return false;
             }
-            let old = self.selection;
-            self.selection.anchor = pos;
-            let changed = self.insert("");
-            if let Some(s) = self.undo.back_mut() {
-                s.before = old;
-            }
-            changed
+            self.delete_to(pos, Run::DeletingBackward)
         } else {
-            self.insert("")
+            self.replace("", None)
         }
     }
     pub fn delete_forward(&mut self) -> bool {
@@ -355,24 +407,73 @@ impl TextEditor {
             if pos == self.selection.focus {
                 return false;
             }
-            let old = self.selection;
-            self.selection.anchor = pos;
-            let changed = self.insert("");
-            if let Some(s) = self.undo.back_mut() {
-                s.before = old;
-            }
-            changed
+            self.delete_to(pos, Run::DeletingForward)
         } else {
-            self.insert("")
+            self.replace("", None)
         }
+    }
+    /// Delete from the caret to `pos`, as one edit of `run`'s kind; undo
+    /// restores the caret where it was.
+    fn delete_to(&mut self, pos: usize, run: Run) -> bool {
+        let old = self.selection;
+        let joins = self.run == Some(run);
+        self.selection.anchor = pos;
+        let changed = self.replace("", Some(run));
+        // A new step undoes to the caret it started from; a joined one
+        // keeps its first.
+        if changed
+            && !joins
+            && let Some(s) = self.undo.back_mut()
+        {
+            s.before = old;
+        }
+        changed
+    }
+    /// Delete from the caret to the start of its line (Cmd+Backspace on
+    /// macOS), or the selection if there is one.
+    pub fn delete_to_line_start(&mut self) -> bool {
+        if !self.selection.is_empty() {
+            return self.replace("", None);
+        }
+        let focus = self.selection.focus;
+        let start = self.text[..focus].rfind('\n').map_or(0, |i| i + 1);
+        // At a line's start, the line break before it.
+        let start = if start == focus {
+            self.previous(false)
+        } else {
+            start
+        };
+        if start == focus {
+            return false;
+        }
+        self.run = None;
+        self.delete_to(start, Run::DeletingBackward)
+    }
+    /// Delete from the caret to the end of its line (Cmd+Delete, and
+    /// Control+K, on macOS), or the line break there.
+    pub fn delete_to_line_end(&mut self) -> bool {
+        if !self.selection.is_empty() {
+            return self.replace("", None);
+        }
+        let focus = self.selection.focus;
+        let end = self.text[focus..]
+            .find('\n')
+            .map_or(self.text.len(), |i| focus + i);
+        let end = if end == focus { self.next(false) } else { end };
+        if end == focus {
+            return false;
+        }
+        self.run = None;
+        self.delete_to(end, Run::DeletingForward)
     }
     /// Return selected text and remove it in one undoable operation. The host owns the OS clipboard.
     pub fn cut(&mut self) -> String {
         let value = self.selected_text().to_owned();
-        self.insert("");
+        self.replace("", None);
         value
     }
     pub fn undo(&mut self) -> bool {
+        self.run = None;
         let Some(edit) = self.undo.pop_back() else {
             return false;
         };
@@ -393,6 +494,7 @@ impl TextEditor {
         true
     }
     pub fn redo(&mut self) -> bool {
+        self.run = None;
         let Some(edit) = self.redo.pop_back() else {
             return false;
         };
@@ -448,12 +550,19 @@ impl TextEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Insert `text` as an undo step of its own: placing the caret ends a
+    /// typing run.
+    fn step(editor: &mut TextEditor, text: &str) {
+        let end = editor.selection().focus;
+        editor.set_selection(end, end);
+        editor.insert(text);
+    }
     #[test]
     fn large_document_keeps_only_edit_deltas() {
         let mut editor = TextEditor::new("x".repeat(1_000_000));
         editor.set_history_limits(10, 8);
-        editor.insert("a");
-        editor.insert("b");
+        step(&mut editor, "a");
+        step(&mut editor, "b");
         assert_eq!(
             editor
                 .undo
@@ -508,7 +617,7 @@ mod tests {
     fn lowered_history_limits_remain_bounded_when_transferring_between_stacks() {
         let mut editor = TextEditor::new("");
         for text in ["a", "b", "c", "d", "e", "f"] {
-            editor.insert(text);
+            step(&mut editor, text);
         }
         for _ in 0..3 {
             assert!(editor.undo());
@@ -750,9 +859,9 @@ mod tests {
     fn history_is_bounded() {
         let mut e = TextEditor::new("");
         e.set_history_limits(2, 100);
-        e.insert("a");
-        e.insert("b");
-        e.insert("c");
+        step(&mut e, "a");
+        step(&mut e, "b");
+        step(&mut e, "c");
         assert!(e.undo());
         assert!(e.undo());
         assert!(!e.undo());
@@ -768,5 +877,70 @@ mod tests {
         assert_eq!(e.selection().focus, e.text().len());
         e.move_left(false, false);
         assert_eq!(e.selection().focus, 0);
+    }
+}
+
+#[cfg(test)]
+mod undo_run_tests {
+    use super::*;
+    #[test]
+    fn typing_and_deleting_undo_in_runs_as_appkit_does() {
+        let mut e = TextEditor::new("");
+        for c in "hello world".chars() {
+            e.insert(&c.to_string());
+        }
+        // One run of typing: one undo.
+        assert!(e.undo());
+        assert_eq!(e.text(), "");
+        assert!(e.redo());
+        assert_eq!(e.text(), "hello world");
+        // Backspaces join each other, not the typing before them.
+        for _ in 0..5 {
+            e.delete_backward(false);
+        }
+        assert_eq!(e.text(), "hello ");
+        assert!(e.undo());
+        assert_eq!(e.text(), "hello world");
+        assert_eq!(e.selection().focus, 11, "the caret goes back where it was");
+        // Moving the caret ends a run; a line break is a step of its own.
+        e.insert("!");
+        e.move_left(false, false);
+        e.insert("?");
+        assert!(e.undo());
+        assert_eq!(e.text(), "hello world!");
+        e.move_document_end(false);
+        e.insert("a");
+        e.insert("\n");
+        e.insert("b");
+        assert!(e.undo());
+        assert_eq!(e.text(), "hello world!a\n");
+        assert!(e.undo());
+        assert_eq!(e.text(), "hello world!a");
+        // Forward deletes join too; a paste is a step of its own.
+        e.set_selection(0, 0);
+        e.delete_next(false);
+        e.delete_next(false);
+        assert_eq!(e.text(), "llo world!a");
+        e.insert("pasted text");
+        assert!(e.undo());
+        assert_eq!(e.text(), "llo world!a");
+        assert!(e.undo());
+        assert_eq!(e.text(), "hello world!a");
+    }
+    #[test]
+    fn deleting_to_a_lines_edges() {
+        let mut e = TextEditor::new("one\ntwo three\nfour");
+        e.set_selection(8, 8);
+        assert!(e.delete_to_line_start());
+        assert_eq!(e.text(), "one\nthree\nfour");
+        assert!(
+            e.delete_to_line_start(),
+            "at a line's start: its line break"
+        );
+        assert_eq!(e.text(), "onethree\nfour");
+        assert!(e.delete_to_line_end());
+        assert_eq!(e.text(), "one\nfour");
+        assert!(e.undo());
+        assert_eq!(e.text(), "onethree\nfour");
     }
 }
