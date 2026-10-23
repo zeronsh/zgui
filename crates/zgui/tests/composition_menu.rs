@@ -443,3 +443,23 @@ fn a_popovers_arrow_points_at_its_trigger() {
         "under the trigger's centre"
     );
 }
+#[test]
+fn a_menu_in_a_popup_window_names_its_trigger_while_open() {
+    let mut ui = Ui::new(500., 400.);
+    ui.set_popup_screens(vec![zgui::scene::Rect::new(0., 0., 1000., 800.)]);
+    let open = ui.signal(false);
+    let view = ui.mount(
+        menu("Actions", open.clone(), button().id("anchor").child("Menu"))
+            .children([menu_item("Alpha").id("alpha")]),
+    );
+    ui.prepare_frame();
+    assert!(ui.scene.borrow().popups().is_empty());
+    open.set(true);
+    ui.prepare_frame();
+    let root = *ui.scene.borrow().popups().first().expect("a popup root");
+    assert_eq!(ui.scene.borrow().popup_anchor(root), view.find("anchor"));
+    open.set(false);
+    ui.prepare_frame();
+    assert!(ui.scene.borrow().popups().is_empty());
+    assert_eq!(ui.scene.borrow().popup_anchor(root), None);
+}

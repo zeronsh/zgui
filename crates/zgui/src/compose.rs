@@ -2437,7 +2437,12 @@ fn mount_portal_panel(
         ui.bind(owner, move || {
             let popup = visible.get() && screens.with(|screens| !screens.is_empty());
             if let Some(ui) = weak.upgrade() {
-                ui.scene.borrow_mut().set_popup(position, popup);
+                let mut scene = ui.scene.borrow_mut();
+                scene.set_popup(position, popup);
+                // Its trigger, which a platform placing it flips it around.
+                if popup && let Some(anchor) = anchor {
+                    scene.set_popup_anchor(position, anchor);
+                }
             }
         });
         ui.register_popup(portal.position, open_signal);

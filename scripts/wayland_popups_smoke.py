@@ -9,7 +9,10 @@ Under a headless sway, driven with a virtual pointer (`wayland_pointer.py`):
   window's bottom edge, drawn there;
 - a click on its last item, outside the window, chooses it, and the popup
   goes;
-- opened again, a click elsewhere in the window closes it.
+- opened again, a click elsewhere in the window closes it;
+- moved near the output's bottom, the menu flips above its trigger (the
+  compositor's doing: the positioner is anchored on the trigger), and its
+  first item takes a click there.
 
 Under a headless Weston, whose windows winit decorates itself (the window
 geometry starts at its title bar, above the content), the menu opened by the
@@ -131,6 +134,26 @@ def main():
             until("the menu closed", lambda: log.read_text().count("popup hide") >= 2)
             reports = [line for line in log.read_text().splitlines() if line.startswith("OPEN")]
             checks["sway: a click in the window closes it"] = reports[-1].startswith("OPEN false")
+            # Near the output's bottom, the menu has no room below its
+            # trigger: the compositor flips it above, where its items take
+            # clicks as before.
+            sway_socket = str(next(pathlib.Path(private).glob("sway-ipc*.sock")))
+            subprocess.run(["swaymsg", "-s", sway_socket, "[app_id=popup_probe] move position 0 520"], env=env,
+                           check=True, capture_output=True)
+            time.sleep(.5)
+            content = until("the moved window", lambda: (lambda b: b if b and b[1] == 520 else None)(
+                box(shot("moved"), CONTENT)))
+            click(*FILE)
+            until("the flipped menu", lambda: log.read_text().count("popup configured") >= 3)
+            time.sleep(.3)
+            image = shot("flipped")
+            menu = box(image.crop((0, 0, image.width, content[1] + FILE[1] - 14)), MENU)
+            checks["sway: flipped"] = {"content": content, "menu": menu}
+            checks["sway: flipped above its trigger"] = bool(menu) and menu[3] == content[1] + FILE[1] - 14 - 4
+            # Its first item, at the top of the flipped menu.
+            click(menu[0] - content[0] + 100, menu[1] - content[1] + 17)
+            until("the choice", lambda: 'CHOSEN "Item 1"' in log.read_text())
+            checks["sway: chosen in the flipped menu"] = True
             pointer.close()
             stop(app)
             stop(sway)
@@ -158,7 +181,7 @@ def main():
         (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
-        print("PASS: Wayland popups: past the window on sway and Weston, chosen from and closed")
+        print("PASS: Wayland popups: past the window on sway and Weston, chosen from, closed, and flipped at the output's edge")
     finally:
         for process in reversed(processes):
             stop(process)

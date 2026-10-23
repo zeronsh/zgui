@@ -269,12 +269,16 @@ winit reads the socket for both queues, and zgui's is dispatched where the
 event loop turns, so it costs no wakeup. A popup is a `wl_surface` with an
 `xdg_surface` and `xdg_popup`, made as it shows and destroyed as it hides,
 drawn by a renderer of its own on the window's device
-(`GpuRenderer::for_raw_surface`). Its positioner anchors it where the scene
-placed it, in the window geometry's coordinates, and lets the compositor
-slide it onto the output; pointer input over it reaches the window's host in
-the window's coordinates, by where the scene drew it. The scene places popups
-unbounded (the app cannot learn the outputs), so a menu past the window's
-bottom edge opens downward, past it. Opening one (configured, its surface
+(`GpuRenderer::for_raw_surface`). Its positioner anchors it on its trigger
+(`Scene::popup_anchor`, the menu's button or the submenu's item), on the side
+the scene put it, in the window geometry's coordinates, and lets the
+compositor flip it to the other side at the output's edge, or slide it on.
+The gap from the trigger widens the anchor rectangle rather than going in the
+offset, which wlroots keeps as it is through a flip. Pointer input over it
+reaches the window's host in the window's coordinates, by where the scene
+drew it, so a flipped menu's items take clicks as before. The scene places
+popups unbounded (the app cannot learn the outputs), so a menu past the
+window's bottom edge opens downward, past it, unless the output ends first. Opening one (configured, its surface
 made) took 3.8 to 5.8 ms and its first frame 2.2 to 4.5 ms, in a debug build
 on lavapipe: within a frame, so popups are not pooled.
 
@@ -284,14 +288,15 @@ them, as without a grab on X11. Drag previews stay inside the window (a popup
 moved with the pointer needs the compositor's configure each move).
 `wayland_popups_smoke.py` clicks popup_probe's menu open under sway, past
 the window's edge where the scene put it, chooses its last item below the
-window, and closes it with a press in the window; under Weston, the menu sits
-the same on the content below winit's title bar.
+window, closes it with a press in the window, and, the window moved near the
+output's bottom, sees it flip above its trigger and take a click there; under
+Weston, the menu sits the same on the content below winit's title bar.
 
 Not yet: the grab (`xdg_popup.grab`, which moves the keyboard to the popup,
 so keys must come through a `wl_keyboard` of zgui's own with winit's
-keymap); flipping above a trigger at the output's bottom rather than sliding
-(the positioner anchored on the trigger, the compositor's placement coming
-back to the scene); and a menu taller than the output.
+keymap); a popover's arrow pointing back at its trigger once the compositor
+flips it (the scene drew it on the side it chose); and a menu taller than the
+output.
 
 ## Web views
 

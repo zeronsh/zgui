@@ -1629,6 +1629,8 @@ pub struct Scene {
     /// and those of them promoted for it (their layer revision counts
     /// changes inside them, `Node::promoted`).
     popups: Vec<NodeId>,
+    /// Each popup root's trigger, where it has one (`set_popup_anchor`).
+    popup_anchors: Vec<(NodeId, NodeId)>,
     popups_promoted: Vec<NodeId>,
     blur_nodes: Vec<NodeId>,
     /// `fade_overflow` nodes, with how far their content runs past each edge
@@ -1782,6 +1784,7 @@ impl Scene {
             damage_grid: None,
             viewport: Rect::new(0.0, 0.0, width, height),
             popups: Vec::new(),
+            popup_anchors: Vec::new(),
             popups_promoted: Vec::new(),
             blur_nodes: Vec::new(),
             overflow_fades: Vec::new(),
@@ -1863,6 +1866,7 @@ impl Scene {
             }
         } else {
             self.popups.retain(|n| *n != id);
+            self.popup_anchors.retain(|(root, _)| *root != id);
             if self.popups_promoted.contains(&id) {
                 self.popups_promoted.retain(|n| *n != id);
                 self.node_mut(id).promoted = false;
@@ -1876,6 +1880,26 @@ impl Scene {
     /// Roots shown in popup windows (`set_popup`), in the order set.
     pub fn popups(&self) -> &[NodeId] {
         &self.popups
+    }
+    /// The trigger popup root `id` opens against (a menu's button), for a
+    /// host whose platform places popups itself (Wayland's
+    /// `xdg_positioner`), which then flips one at the screen's edge around
+    /// its trigger. Kept while `id` is a popup root (`set_popup`).
+    pub fn set_popup_anchor(&mut self, id: NodeId, anchor: NodeId) {
+        if !self.popups.contains(&id) {
+            return;
+        }
+        self.popup_anchors.retain(|(root, _)| *root != id);
+        self.popup_anchors.push((id, anchor));
+    }
+    /// Popup root `id`'s trigger (`set_popup_anchor`), while both are in
+    /// the scene.
+    pub fn popup_anchor(&self, id: NodeId) -> Option<NodeId> {
+        self.popup_anchors
+            .iter()
+            .find(|(root, _)| *root == id)
+            .map(|(_, anchor)| *anchor)
+            .filter(|anchor| self.contains(*anchor))
     }
     /// What popup root `id`'s subtree paints, in window coordinates (past
     /// the viewport as it may be); `None` while it shows nothing (it or what

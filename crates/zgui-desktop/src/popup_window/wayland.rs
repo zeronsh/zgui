@@ -9,17 +9,18 @@
 //! shows and destroyed as it hides, drawn by a renderer of its own on the
 //! window's device. Its positioner anchors it where the scene placed it (the
 //! window geometry's coordinates, which start above the content by any title
-//! bar winit draws) and lets the compositor slide it onto the output; the
-//! compositor's word on where it went is final, and input goes by where the
-//! scene drew it, so what is under the pointer is what shows there.
+//! bar winit draws), against its trigger where it has one
+//! (`Scene::popup_anchor`): the compositor flips it to the trigger's other
+//! side at the output's edge, as GTK's menus, or slides it onto the output.
+//! The compositor's word on where it went is final, and input goes by where
+//! the scene drew it, so what is under the pointer is what shows there.
 //!
 //! The popup takes no grab: keys stay the window's, which drives menus as
 //! before, and a press on another app takes the window's focus, which
 //! closes them. Pointer input over a popup comes from zgui's own
 //! `wl_pointer`, in the window's coordinates, to its host.
 //! todo(wayland): the grab (`xdg_popup.grab`), with keys through a
-//! `wl_keyboard` of zgui's own; flips at the output's edge from the
-//! placement's side (`xdg_positioner` anchored on the trigger).
+//! `wl_keyboard` of zgui's own.
 use super::PopupInput;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use wayland_client::{
@@ -267,7 +268,9 @@ impl Popups {
                 let index = match kept.iter().position(|(shown, _)| shown == root) {
                     Some(index) => index,
                     None => {
-                        let Some(popup) = show(client, parent, *root, *bounds, scale, context)
+                        let trigger = scene.popup_anchor(*root).map(|anchor| scene.bounds(anchor));
+                        let Some(popup) =
+                            show(client, parent, *root, *bounds, trigger, scale, context)
                         else {
                             continue;
                         };
@@ -319,13 +322,69 @@ fn rects_match(a: Rect, b: Rect) -> bool {
         && (a.height - b.height).abs() < 0.5
 }
 
-/// Show popup `root` at `rect` (`parent`'s points) in an `xdg_popup` of
-/// `parent`, configured and ready to draw.
+/// Where an `xdg_positioner` puts a popup the scene placed at `rect` (in the
+/// window geometry's coordinates, as `trigger`): against its trigger, on the
+/// side the scene put it, the compositor free to flip it to the other side
+/// at the output's edge; with no trigger, or over it (`open_over`), at its
+/// place, slid onto the output. Anchor rectangle, anchor, gravity, offset
+/// and adjustments.
+fn position(
+    rect: Rect,
+    trigger: Option<Rect>,
+) -> (Rect, Anchor, Gravity, (i32, i32), ConstraintAdjustment) {
+    let slide = ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY;
+    let point = (
+        Rect::new(rect.x.round(), rect.y.round(), 1., 1.),
+        Anchor::TopLeft,
+        Gravity::BottomRight,
+        (0, 0),
+        slide,
+    );
+    let Some(t) = trigger.filter(|t| t.width >= 1. && t.height >= 1.) else {
+        return point;
+    };
+    let t = Rect::new(t.x.round(), t.y.round(), t.width.round(), t.height.round());
+    let (right, bottom) = (t.x + t.width, t.y + t.height);
+    let offset = |x: f32, y: f32| (x.round() as i32, y.round() as i32);
+    let (flip_x, flip_y) = (
+        ConstraintAdjustment::FlipX | slide,
+        ConstraintAdjustment::FlipY | slide,
+    );
+    // The gap from the trigger widens the anchor rectangle on both sides,
+    // rather than going in the offset, which a flip keeps as it is
+    // (wlroots): flipped, it opens as far from the other side.
+    let tall = |gap: f32| Rect::new(t.x, t.y - gap, t.width, t.height + 2. * gap);
+    let wide = |gap: f32| Rect::new(t.x - gap, t.y, t.width + 2. * gap, t.height);
+    if rect.y >= bottom - 0.5 {
+        let anchor = tall((rect.y - bottom).round());
+        let at = offset(rect.x - t.x, 0.);
+        (anchor, Anchor::BottomLeft, Gravity::BottomRight, at, flip_y)
+    } else if rect.y + rect.height <= t.y + 0.5 {
+        let anchor = tall((t.y - rect.y - rect.height).round());
+        let at = offset(rect.x - t.x, 0.);
+        (anchor, Anchor::TopLeft, Gravity::TopRight, at, flip_y)
+    } else if rect.x >= right - 0.5 {
+        let anchor = wide((rect.x - right).round());
+        let at = offset(0., rect.y - t.y);
+        (anchor, Anchor::TopRight, Gravity::BottomRight, at, flip_x)
+    } else if rect.x + rect.width <= t.x + 0.5 {
+        let anchor = wide((t.x - rect.x - rect.width).round());
+        let at = offset(0., rect.y - t.y);
+        (anchor, Anchor::TopLeft, Gravity::BottomLeft, at, flip_x)
+    } else {
+        point
+    }
+}
+
+/// Show popup `root` at `rect` (`parent`'s points), opened against
+/// `trigger` if it has one, in an `xdg_popup` of `parent`, configured and
+/// ready to draw.
 fn show(
     client: &mut Client,
     parent: &Window,
     root: NodeId,
     rect: Rect,
+    trigger: Option<Rect>,
     scale: f32,
     context: &GpuContext,
 ) -> Option<Shown> {
@@ -355,12 +414,19 @@ fn show(
     let xdg = wm_base.get_xdg_surface(&surface, &qh, ());
     let positioner = wm_base.create_positioner(&qh, ());
     positioner.set_size(width, height);
-    // Where the scene put it, in the window geometry's coordinates.
-    positioner.set_anchor_rect(rect.x.round() as i32 - gx, rect.y.round() as i32 - gy, 1, 1);
-    positioner.set_anchor(Anchor::TopLeft);
-    positioner.set_gravity(Gravity::BottomRight);
-    positioner
-        .set_constraint_adjustment(ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY);
+    // In the window geometry's coordinates.
+    let geometry = |r: Rect| Rect::new(r.x - gx as f32, r.y - gy as f32, r.width, r.height);
+    let (anchor, edge, gravity, (dx, dy), adjust) = position(geometry(rect), trigger.map(geometry));
+    positioner.set_anchor_rect(
+        anchor.x as i32,
+        anchor.y as i32,
+        anchor.width as i32,
+        anchor.height as i32,
+    );
+    positioner.set_anchor(edge);
+    positioner.set_gravity(gravity);
+    positioner.set_offset(dx, dy);
+    positioner.set_constraint_adjustment(adjust);
     let popup = xdg.get_popup(Some(&parent_xdg), &positioner, &qh, ());
     positioner.destroy();
     xdg.set_window_geometry(0, 0, width, height);
@@ -646,3 +712,48 @@ delegate_noop!(State: ignore WlSurface);
 delegate_noop!(State: ignore XdgPositioner);
 delegate_noop!(State: ignore WpViewporter);
 delegate_noop!(State: ignore WpViewport);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_popup_opens_against_its_trigger_on_the_side_the_scene_chose() {
+        let trigger = Rect::new(16., 396., 120., 28.);
+        // Below, 4 points under it: the gap is the anchor rectangle's, on
+        // both sides, so a flip opens it as far above.
+        let grown = Rect::new(16., 392., 120., 36.);
+        let below = position(Rect::new(16., 428., 200., 202.), Some(trigger));
+        assert_eq!(
+            (below.0, below.1, below.2, below.3),
+            (grown, Anchor::BottomLeft, Gravity::BottomRight, (0, 0))
+        );
+        assert!(below.4.contains(ConstraintAdjustment::FlipY));
+        let above = position(Rect::new(16., 190., 200., 202.), Some(trigger));
+        assert_eq!(
+            (above.0, above.1, above.2, above.3),
+            (grown, Anchor::TopLeft, Gravity::TopRight, (0, 0))
+        );
+        // A submenu beside its item, 2 points off it, its top 4 above the
+        // item's: free to flip left.
+        let item = Rect::new(20., 100., 180., 24.);
+        let beside = position(Rect::new(202., 96., 160., 80.), Some(item));
+        assert_eq!(
+            (beside.0, beside.1, beside.2, beside.3),
+            (
+                Rect::new(18., 100., 184., 24.),
+                Anchor::TopRight,
+                Gravity::BottomRight,
+                (0, -4)
+            )
+        );
+        assert!(beside.4.contains(ConstraintAdjustment::FlipX));
+        // Over its trigger (`open_over`), or with none: at its place.
+        let over = position(Rect::new(10., 390., 200., 202.), Some(trigger));
+        assert_eq!((over.0, over.3), (Rect::new(10., 390., 1., 1.), (0, 0)));
+        assert_eq!(
+            position(Rect::new(5., 6., 7., 8.), None).0,
+            Rect::new(5., 6., 1., 1.)
+        );
+    }
+}
