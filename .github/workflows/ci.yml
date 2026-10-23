@@ -50,12 +50,17 @@ jobs:
         with:
           path: ~/apt-archives
           key: apt-${{ runner.arch }}-${{ steps.apt-key.outputs.month }}-${{ hashFiles('.github/linux-packages.txt') }}
+          # A changed package list still starts from the last month's .debs.
+          restore-keys: apt-${{ runner.arch }}-
+      # A stalled mirror fails fast and retries rather than holding the job.
       - name: Linux packages
+        timeout-minutes: 10
         run: |
           sudo rm -f /var/lib/man-db/auto-update
           if [ -d ~/apt-archives ]; then sudo cp ~/apt-archives/*.deb /var/cache/apt/archives/; fi
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $(grep -v '^#' .github/linux-packages.txt)
+          apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+          sudo apt-get update -qq $apt
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $apt $(grep -v '^#' .github/linux-packages.txt)
           mkdir -p ~/apt-archives && cp /var/cache/apt/archives/*.deb ~/apt-archives/
       - uses: actions/cache/save@v4
         if: steps.apt-cache.outputs.cache-hit != 'true'
