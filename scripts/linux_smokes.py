@@ -56,6 +56,7 @@ SMOKES = [
     ("wayland-input", "python3 scripts/wayland_input_smoke.py {bin}/form --output {out}", False),
     ("primary-selection", "python3 scripts/primary_selection_smoke.py {bin}/primary_selection --output {out}", False),
     ("portal-appearance", "python3 scripts/portal_appearance_smoke.py {bin}/primary_selection --output {out}", False),
+    ("native-platform", "python3 scripts/native_platform_smoke.py {bin}/native_platform --output {out}", False),
     ("primary-selection-wayland", "python3 scripts/primary_selection_smoke.py {bin}/primary_selection --wayland --output {out}", False),
     ("event-hooks", "python3 scripts/event_hooks_smoke.py {bin}/event_hooks --output {out}", False),
     ("wrapped-editor", "python3 scripts/wrapped_editor_smoke.py {bin}/wrapped_editor --output {out}", False),

@@ -34,6 +34,7 @@ Further native Linux probes, each on a private Xvfb/Openbox desktop or a nested 
 - Wayland clipboard: copy and paste go through the compositor (`set_selection`, `receive`, `send` in the protocol trace) via one data device per seat, which Weston requires (`wayland_input_smoke.py`).
 - The primary selection: an editor's double-clicked word and Ctrl+A reach other clients, and another client's selection lands where a middle click puts the caret, on X11 (`xclip`) and as a native Wayland client of Sway (`wl-paste`/`wl-copy --primary`) (`primary_selection_smoke.py`). Selected display text is the primary selection too (`selectable_text_smoke.py`).
 - Cursor styles as a native Wayland client: `wp_cursor_shape_v1` shapes for move, not-allowed, crosshair, a reactive wait and the default (`wayland_cursors_smoke.py`), beside the X11 cursor-image check.
+- An application ID's D-Bus service (`org.freedesktop.Application`): a later launch's `Open` URLs and `Activate` reach the running app, which reopens a window after its last one closed, besides fullscreen, minimum size and a custom title bar's drag (`native_platform_smoke.py`). Its thread and the portal settings' sleep until a message arrives (`linux_dbus.rs`).
 - Live Wayland scaling through 1×, 2×, 1.5× (fractional, `preferred_scale(180)`) and back: viewport, viewporter destination, editor geometry, typed input and pixel extents (`dpi_transition_smoke.py`).
 
 Every probe is listed in `scripts/linux_smokes.py`, which runs them side by side (each owns its display or compositor) and reports each one:

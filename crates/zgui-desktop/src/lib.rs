@@ -23,6 +23,8 @@ pub mod app_menu;
 mod clipboard;
 pub mod file_dialog;
 #[cfg(target_os = "linux")]
+mod linux_dbus;
+#[cfg(target_os = "linux")]
 mod linux_spelling;
 mod native_events;
 mod native_prompt;

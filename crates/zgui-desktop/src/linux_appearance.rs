@@ -6,18 +6,15 @@
 //! settings), which scales the themes' font tokens, and KDE's wheel lines
 //! (`WheelScrollLines`, how far a wheel notch scrolls). They
 //! are read at start, before the first window shows, and a thread follows
-//! `SettingChanged`; the event loop then gives them to every window's
-//! themes.
+//! `SettingChanged`, asleep until one arrives; the event loop then gives them
+//! to every window's themes.
 use dbus::{
     arg::{RefArg, Variant},
     blocking::Connection,
     message::MatchRule,
 };
 use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -65,12 +62,12 @@ pub(crate) fn current() -> Appearance {
 
 /// Follows the portal's settings until dropped.
 pub(crate) struct Watcher {
-    stop: Arc<AtomicBool>,
+    stop: Arc<crate::linux_dbus::Stop>,
     worker: Option<thread::JoinHandle<()>>,
 }
 impl Drop for Watcher {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        self.stop.stop();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -83,11 +80,11 @@ impl Drop for Watcher {
 /// up the first window: the watcher reads it again, waiting longer. None
 /// without a session bus.
 pub(crate) fn watch(changed: impl Fn() + Send + 'static) -> Option<Watcher> {
-    let connection = Connection::new_session().ok()?;
+    let connection = crate::linux_dbus::session().ok()?;
     let (read_now, answered) = read(&connection, Duration::from_millis(300));
     set(read_now);
-    let stop = Arc::new(AtomicBool::new(false));
-    let running = stop.clone();
+    let stop = Arc::new(crate::linux_dbus::Stop::new()?);
+    let told = stop.clone();
     let worker = thread::Builder::new()
         .name("zgui-appearance".into())
         .spawn(move || {
@@ -118,11 +115,7 @@ pub(crate) fn watch(changed: impl Fn() + Send + 'static) -> Option<Watcher> {
             if subscribed.is_err() {
                 return;
             }
-            while !running.load(Ordering::Acquire) {
-                if connection.process(Duration::from_millis(250)).is_err() {
-                    return;
-                }
-            }
+            crate::linux_dbus::serve(&connection, &told);
         })
         .ok()?;
     Some(Watcher {

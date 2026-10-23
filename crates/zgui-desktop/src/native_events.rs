@@ -37,21 +37,12 @@ pub(crate) fn validate_id(id: &str) -> Result<(), ApplicationEventError> {
 mod platform {
     use super::*;
     use dbus::{
-        arg::PropMap,
-        blocking::{Connection, stdintf::org_freedesktop_dbus::RequestNameReply},
-        channel::MatchingReceiver,
-        message::MatchRule,
+        arg::PropMap, blocking::stdintf::org_freedesktop_dbus::RequestNameReply,
+        channel::MatchingReceiver, message::MatchRule,
     };
-    use std::{
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            mpsc,
-        },
-        thread,
-        time::Duration,
-    };
+    use std::{sync::mpsc, thread, time::Duration};
     pub(crate) struct NativeApplicationEvents {
-        stop: Arc<AtomicBool>,
+        stop: Arc<crate::linux_dbus::Stop>,
         thread: Option<thread::JoinHandle<()>>,
     }
     impl NativeApplicationEvents {
@@ -61,12 +52,14 @@ mod platform {
         ) -> Result<Option<Self>, ApplicationEventError> {
             validate_id(id)?;
             let id = id.to_owned();
-            let stop = Arc::new(AtomicBool::new(false));
+            let stop = Arc::new(crate::linux_dbus::Stop::new().ok_or_else(|| {
+                ApplicationEventError("no event descriptor for the service's thread".into())
+            })?);
             let stopped = stop.clone();
             let (ready, started) = mpsc::sync_channel(1);
             let thread=thread::Builder::new().name("zgui-application-events".into()).spawn(move || {
                 let setup=(||->Result<_,ApplicationEventError>{
-                    let connection=Connection::new_session().map_err(|e|ApplicationEventError(e.to_string()))?;
+                    let connection=crate::linux_dbus::session().map_err(|e|ApplicationEventError(e.to_string()))?;
                     let reply=connection.request_name(&id,false,false,true).map_err(|e|ApplicationEventError(e.to_string()))?;
                     if reply!=RequestNameReply::PrimaryOwner {return Err(ApplicationEventError(format!("application ID {id} is already owned")))}
                     let mut routes=dbus_crossroads::Crossroads::new();
@@ -91,9 +84,8 @@ mod platform {
                 match setup {
                     Ok(connection)=>{
                         let _=ready.send(Ok(()));
-                        while !stopped.load(Ordering::Acquire) {
-                            if connection.process(Duration::from_millis(100)).is_err(){break}
-                        }
+                        // Asleep until a launch calls, or the app ends.
+                        crate::linux_dbus::serve(&connection,&stopped);
                     }
                     Err(error)=>{let _=ready.send(Err(error));}
                 }
@@ -104,7 +96,7 @@ mod platform {
                     thread: Some(thread),
                 })),
                 result => {
-                    stop.store(true, Ordering::Release);
+                    stop.stop();
                     Err(match result {
                         Ok(Err(error)) => error,
                         _ => ApplicationEventError(
@@ -117,7 +109,7 @@ mod platform {
     }
     impl Drop for NativeApplicationEvents {
         fn drop(&mut self) {
-            self.stop.store(true, Ordering::Release);
+            self.stop.stop();
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();
             }
