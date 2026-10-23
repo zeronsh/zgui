@@ -1847,10 +1847,25 @@ impl ScriptHost {
             // Reading the clock costs more than most of what runs between
             // two interrupts: it is read at every 64th.
             let ticks = Cell::new(0u8);
-            lua.set_interrupt(move |_| {
+            // Luau collects as the VM allocates, but builtins such as
+            // `table.clone` allocate without giving the collector a turn: a
+            // loop of them between host calls fills the VM with garbage
+            // until the memory limit fails the script. Halfway from what
+            // was live at the last collection to the limit, it collects.
+            let limit = limits.memory;
+            let collect_at = Cell::new(limit / 2);
+            lua.set_interrupt(move |lua| {
                 ticks.set(ticks.get().wrapping_add(1));
+                if !ticks.get().is_multiple_of(64) {
+                    return Ok(VmState::Continue);
+                }
+                if limit > 0 && lua.used_memory() > collect_at.get() {
+                    lua.gc_collect()?;
+                    let live = lua.used_memory();
+                    collect_at.set(live + limit.saturating_sub(live) / 2);
+                }
                 match deadline.get() {
-                    Some(d) if ticks.get().is_multiple_of(64) && d.exceeded() => {
+                    Some(d) if d.exceeded() => {
                         Err(mlua::Error::runtime("script exceeded its time budget"))
                     }
                     _ => Ok(VmState::Continue),

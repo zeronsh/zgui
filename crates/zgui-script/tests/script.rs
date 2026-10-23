@@ -149,6 +149,44 @@ fn runaway_scripts_hit_their_time_budget() {
 }
 
 #[test]
+fn garbage_from_builtins_is_collected_before_the_memory_limit() {
+    // `table.clone` allocates without giving the collector a turn, and
+    // setting an equal value allocates nothing in Lua: before, this filled
+    // the VM with garbage until the limit failed the script (40 KB a turn,
+    // 10 MB here).
+    let limits = Limits {
+        memory: 4 << 20,
+        load: Duration::from_secs(20),
+        ..Limits::default()
+    };
+    let runtime = Runtime::new();
+    let churn = ScriptHost::inline(
+        &runtime,
+        "churn",
+        r#"local big = {}
+        for i = 1, 1000 do big["k" .. i] = i end
+        local map = ui.state("map", big)
+        for i = 1, 250 do map:set(table.clone(map:peek())) end
+        return ui.div {}"#,
+    )
+    .limits(limits);
+    churn.reload().expect("garbage is collected");
+    // What a script keeps still meets the limit.
+    let keep = ScriptHost::inline(
+        &runtime,
+        "keep",
+        r#"local big = {}
+        for i = 1, 1000 do big["k" .. i] = i end
+        local kept = {}
+        for i = 1, 1000 do kept[i] = table.clone(big) end
+        return ui.div {}"#,
+    )
+    .limits(limits);
+    let error = keep.reload().unwrap_err();
+    assert!(error.contains("memory"), "{error}");
+}
+
+#[test]
 fn scripts_are_sandboxed() {
     let runtime = Runtime::new();
     for code in [
