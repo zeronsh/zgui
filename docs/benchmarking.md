@@ -52,6 +52,8 @@ done
 
 ## Selecting and validating the zgui renderer
 
+`zgui-demo` is `comparisons/demo` (`cargo build --release -p zgui-demo`), apart from the published crates.
+
 ```sh
 # Native GPU adapter (default); save retained GPU output when the run ends.
 ZGUI_MODE=both ZGUI_SECONDS=10 ZGUI_SCREENSHOT=/tmp/zgui-gpu.ppm target/release/zgui-demo

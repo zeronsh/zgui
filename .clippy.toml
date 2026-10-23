@@ -1,3 +1,0 @@
-# Keep suggested APIs compatible with the toolchain used for native macOS validation.
-# Rust 1.98 adds integer helpers that are still unstable on this supported version.
-msrv = "1.96.0"

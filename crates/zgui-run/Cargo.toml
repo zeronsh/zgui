@@ -3,12 +3,17 @@ name = "zgui-run"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords = ["gui", "luau", "hot-reload", "desktop"]
+categories = ["gui", "command-line-utilities"]
 description = "Run a zgui Luau script as a desktop app, with hot reload: `zgui-run app/`."
 
 [dependencies]
-zgui = { path = "../zgui" }
-zgui-desktop = { path = "../zgui-desktop" }
-zgui-script = { path = "../zgui-script" }
+zgui = { path = "../zgui", version = "0.1.0" }
+zgui-desktop = { path = "../zgui-desktop", version = "0.1.0" }
+zgui-script = { path = "../zgui-script", version = "0.1.0" }
 serde_json = "1"
 
 [[bin]]

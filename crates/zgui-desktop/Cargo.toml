@@ -3,6 +3,12 @@ name = "zgui-desktop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+description = "The desktop host for zgui: windows, menus, dialogs, clipboard, IME and accessibility on macOS, Windows and Linux."
+keywords = ["gui", "desktop", "winit", "accessibility", "ime"]
+categories = ["gui"]
 
 [features]
 # Image formats (see zgui-gpu): all by default.
@@ -29,8 +35,8 @@ terminal-bundle = ["dep:zgui-script"]
 webview2 = ["dep:webview2-com", "zgui-gpu/composition", "windows/Win32_Graphics_DirectComposition", "windows/Win32_Graphics_Gdi", "windows/Win32_System_Com", "windows/Win32_System_Com_StructuredStorage", "windows/Win32_System_Ole"]
 
 [dependencies]
-zgui = { path = "../zgui" }
-zgui-gpu = { path = "../zgui-gpu", default-features = false }
+zgui = { path = "../zgui", version = "0.1.0" }
+zgui-gpu = { path = "../zgui-gpu", version = "0.1.0", default-features = false }
 winit = "0.30.13"
 softbuffer = "0.4.8"
 fontdue = "0.9.3"
@@ -41,7 +47,6 @@ unicode-segmentation = "1.12"
 accesskit_winit = "0.33.2"
 rfd = "=0.17.2"
 open = "=5.4.4"
-zgui-workload = { path = "../../comparisons/workload" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "=0.9.12"
@@ -72,14 +77,14 @@ webview2-com = { version = "0.39", optional = true }
 # A drag handed to Windows (src/native_drag.rs) is a COM drop source.
 windows-core = "0.62"
 # Popup windows draw into DirectComposition visuals (src/popup_window/win32.rs).
-zgui-gpu = { path = "../zgui-gpu", default-features = false, features = ["composition"] }
+zgui-gpu = { path = "../zgui-gpu", version = "0.1.0", default-features = false, features = ["composition"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.18.0", default-features = false }
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSTextInputContext", "NSColor", "NSGraphics", "NSEvent", "objc2-core-foundation", "objc2-quartz-core", "block2", "NSTextInputClient", "NSTrackingArea", "NSCursor", "NSPasteboard", "NSGraphicsContext", "NSScreen", "NSVisualEffectView", "NSColorSpace", "NSControl", "NSScroller", "NSWorkspace", "NSAccessibility", "NSSpellChecker", "NSPanel", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSAppleEventManager", "NSAppleEventDescriptor", "objc2-core-services", "NSDictionary", "NSError", "NSURLRequest", "NSUUID", "NSKeyValueObserving", "NSValue", "NSData", "NSJSONSerialization", "NSGeometry", "objc2-core-foundation", "NSAttributedString", "NSRange", "NSURLResponse", "NSNotification", "NSOperation", "block2", "NSOrthography", "NSTextCheckingResult", "NSLocale"] }
-zgui-ghostty-sys = { path = "../zgui-ghostty-sys", optional = true }
+zgui-ghostty-sys = { path = "../zgui-ghostty-sys", version = "0.1.0", optional = true }
 libc = { version = "0.2", optional = true }
 # Native views over zgui (src/native_host): web pages, clipping masks, backdrops.
 objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "WKWebView", "WKWebViewConfiguration", "WKBackForwardList", "WKBackForwardListItem", "WKNavigationDelegate", "WKNavigation", "WKNavigationAction", "WKNavigationResponse", "WKWebsiteDataStore", "WKUserContentController", "WKUserScript", "WKScriptMessageHandler", "WKScriptMessage", "WKUIDelegate", "WKWindowFeatures", "WKFrameInfo", "WKSecurityOrigin", "WKPreferences", "WKURLSchemeHandler", "WKURLSchemeTask"] }
@@ -89,10 +94,6 @@ block2 = "0.6"
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CAShapeLayer", "CATransaction", "objc2-core-foundation", "objc2-core-graphics"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGPath", "CGColor", "CGAffineTransform"] }
-
-[[bin]]
-name = "zgui-demo"
-path = "src/main.rs"
 
 [[example]]
 name = "ghostty_pane"
@@ -104,7 +105,7 @@ required-features = ["ghostty"]
 
 [build-dependencies]
 # `terminal-bundle`: compiles the terminal example's scripts (build.rs).
-zgui-script = { path = "../zgui-script", optional = true }
+zgui-script = { path = "../zgui-script", version = "0.1.0", optional = true }
 
 [dev-dependencies]
 accesskit_consumer = "0.38.0"
@@ -113,6 +114,8 @@ accesskit_consumer = "0.38.0"
 zgui-script = { path = "../zgui-script", default-features = false }
 # The script examples' menus (`zgui_run::menus`).
 zgui-run = { path = "../zgui-run" }
+# The benchmark workloads the examples run.
+zgui-workload = { path = "../../comparisons/workload" }
 # The terminal example's session server keeps each shell's screen to redraw
 # it for a new window.
 vt100 = "0.16"

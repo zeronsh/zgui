@@ -4453,6 +4453,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zgui-demo"
+version = "0.1.0"
+dependencies = [
+ "softbuffer",
+ "winit",
+ "zgui",
+ "zgui-desktop",
+ "zgui-gpu",
+ "zgui-workload",
+]
+
+[[package]]
 name = "zgui-desktop"
 version = "0.1.0"
 dependencies = [

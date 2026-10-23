@@ -3,6 +3,12 @@ name = "zgui-gpu"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "README.md"
+rust-version.workspace = true
+description = "The GPU renderer for zgui scenes, on wgpu: Metal, Direct3D 12 and Vulkan, repainting only what changed."
+keywords = ["gui", "renderer", "wgpu", "gpu", "text"]
+categories = ["gui", "rendering"]
 
 # Image formats, each on by default. An app that never shows one can leave
 # it out (`default-features = false`) and save its decoder in the binary: a
@@ -19,7 +25,7 @@ gif = ["dep:gif"]
 composition = ["windows/Win32_Graphics_DirectComposition"]
 
 [dependencies]
-zgui = { path = "../zgui" }
+zgui = { path = "../zgui", version = "0.1.0" }
 wgpu = "29.0.4"
 winit = "0.30.13"
 cosmic-text = { version = "0.19.0", features = ["shape-run-cache"] }

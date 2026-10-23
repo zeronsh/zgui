@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/zgui", "crates/zgui-desktop", "crates/zgui-ghostty-sys", "crates/zgui-gpu", "crates/zgui-script", "crates/zgui-run", "comparisons/workload"]
+members = ["crates/zgui", "crates/zgui-desktop", "crates/zgui-ghostty-sys", "crates/zgui-gpu", "crates/zgui-script", "crates/zgui-run", "comparisons/workload", "comparisons/demo"]
 exclude = [
     "comparisons/gpui",
     "comparisons/quickgui",
@@ -11,9 +11,14 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
+# One version for every published crate (see docs/releasing.md).
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/zeronsh/zgui"
+readme = "README.md"
+# The oldest Rust that builds the workspace (CI checks it).
+rust-version = "1.95"
 
 # Dependencies optimized in dev builds too: the Luau VM, text shaping,
 # rasterizing and the GPU stack run many times slower unoptimized, which

@@ -5,6 +5,12 @@ name = "zgui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+description = "Fine-grained reactive state and a retained, damage-tracked scene: layout, text, input and accessibility for GUIs."
+keywords = ["gui", "ui", "reactive", "layout", "accessibility"]
+categories = ["gui"]
 
 [dependencies]
 unicode-linebreak = "0.1.5"

@@ -5,6 +5,11 @@ name = "zgui-script"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords = ["gui", "luau", "scripting", "hot-reload", "ui"]
+categories = ["gui", "development-tools"]
 description = "Luau scripts that describe zgui component trees, with hot reload."
 
 [features]
@@ -16,9 +21,9 @@ jpeg = ["zgui-gpu/jpeg"]
 gif = ["zgui-gpu/gif"]
 
 [dependencies]
-zgui = { path = "../zgui" }
+zgui = { path = "../zgui", version = "0.1.0" }
 # Image decoding for `ui.image` (PNG, JPEG).
-zgui-gpu = { path = "../zgui-gpu", default-features = false }
+zgui-gpu = { path = "../zgui-gpu", version = "0.1.0", default-features = false }
 mlua = { version = "0.12.2", features = ["luau"] }
 # `.luaurc` aliases for `require("@alias/...")`.
 serde_json = "1"

@@ -1,0 +1,37 @@
+# A release's checks, publishing nothing: on a version tag (`v0.1.0`), or by
+# hand, every published crate is packaged and built from its package, as
+# `cargo publish` would, and nothing is uploaded. See docs/releasing.md.
+name: Release dry run
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux packages
+        timeout-minutes: 10
+        run: |
+          apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+          sudo apt-get update -qq $apt
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $apt $(grep -v '^#' .github/linux-packages.txt)
+      - uses: Swatinem/rust-cache@v2
+      - name: The tag is the workspace's version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "the tag $GITHUB_REF_NAME is not v$version, the workspace's version" >&2
+            exit 1
+          fi
+      - name: Package and verify every published crate (no upload)
+        run: cargo publish --workspace --dry-run --locked

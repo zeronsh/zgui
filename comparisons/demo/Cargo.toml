@@ -1,0 +1,16 @@
+[package]
+# The direct retained-scene benchmark host (docs/benchmarking.md): built as
+# `target/release/zgui-demo` with `cargo build --release -p zgui-demo`.
+name = "zgui-demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+zgui = { path = "../../crates/zgui" }
+zgui-desktop = { path = "../../crates/zgui-desktop" }
+zgui-gpu = { path = "../../crates/zgui-gpu", default-features = false }
+zgui-workload = { path = "../workload" }
+winit = "0.30.13"
+softbuffer = "0.4.8"
