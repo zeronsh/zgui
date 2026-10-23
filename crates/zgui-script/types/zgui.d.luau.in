@@ -1254,8 +1254,9 @@ export type Props = Merge<Merge<StyleProps, NodeProps>, { [number]: never }>
 export type ContainerProps = Merge<Props, {
 	[number]: Child,
 	-- The name assistive technology reads for it, instead of its text: a
-	-- switch, a button showing only an icon.
-	label: string?,
+	-- switch, a button showing only an icon. A state or function is
+	-- followed: a list row's name made from what it shows now.
+	label: (string | Readable<string> | (() -> string))?,
 }>
 export type ScrollProps = Merge<ContainerProps, {
 	-- The scroll position in points, both ways.

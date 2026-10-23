@@ -1786,6 +1786,13 @@ fn styled(
         if let Some(axis) = a11y.focus_group {
             view = view.focus_group(axis);
         }
+        if let Some(label) = &a11y.label {
+            let (label, vm) = (resolve_owned(label), vm.clone());
+            view = view.accessible_label_when(move || match resolve(&label, Ty::Str, None, &vm) {
+                Some(Lit::Str(s)) => s.to_string(),
+                _ => String::new(),
+            });
+        }
     }
     if let Some(layout) = node.layout.as_ref().filter(|_| node.sizes_layout()) {
         view = layout_box(view, layout, vm, low);

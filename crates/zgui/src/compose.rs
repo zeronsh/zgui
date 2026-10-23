@@ -735,6 +735,12 @@ impl View {
         self.accessible_label = Some(label.into());
         self
     }
+    /// `accessible_label` followed: a recycled row's name, made from what it
+    /// shows now ("Unread, Grace Hopper, Lunch?, Oct 28").
+    pub fn accessible_label_when(mut self, label: impl FnMut() -> String + 'static) -> Self {
+        self.accessibility_mut().label = Some(Box::new(label));
+        self
+    }
     fn accessibility_mut(&mut self) -> &mut Accessibility {
         self.accessibility.get_or_insert_with(Default::default)
     }
@@ -4202,6 +4208,7 @@ pub(crate) struct Accessibility {
     description: Option<String>,
     hidden: bool,
     focus_group: Option<crate::input::FocusGroup>,
+    label: Option<Box<dyn FnMut() -> String>>,
 }
 fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) {
     let Accessibility {
@@ -4212,6 +4219,7 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
         description,
         hidden,
         focus_group,
+        label,
     } = accessibility;
     // Composite widgets keep one Tab stop, as a browser's do.
     let focus_group = focus_group.or(match role {
@@ -4253,6 +4261,16 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
             node.live = live.or(node.live);
             node.description = description.or(node.description.take());
             node.hidden |= hidden;
+        });
+    }
+    if let Some(mut label) = label {
+        let tree = ui.semantics.clone();
+        ui.bind(root, move || {
+            let label = label();
+            tree.borrow_mut().update(root, |node| {
+                node.label = label;
+                node.named = true;
+            });
         });
     }
     if let Some(mut selected) = selected {

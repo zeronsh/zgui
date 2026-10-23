@@ -1564,6 +1564,8 @@ pub(crate) struct A11y {
     pub description: Option<Rc<str>>,
     pub hidden: bool,
     pub focus_group: Option<zgui::input::FocusGroup>,
+    /// A `label` given as a state or function.
+    pub label: Option<Source>,
 }
 /// `focus_group`'s axes.
 fn focus_group(axis: &str) -> mlua::Result<zgui::input::FocusGroup> {
@@ -2164,7 +2166,14 @@ fn fill_from(
                         | Kind::List { .. }
                 ) =>
             {
-                node.label = Some(lua.unpack::<String>(value)?.into());
+                match value {
+                    mlua::Value::String(label) => node.label = Some(label.to_string_lossy().into()),
+                    // A state or function: followed (a recycled row's name).
+                    value => {
+                        node.a11y.get_or_insert_default().label =
+                            Some(source(lua, Ty::Str, "label", value)?);
+                    }
+                }
             }
             "role" => {
                 let name: String = lua.unpack(value)?;

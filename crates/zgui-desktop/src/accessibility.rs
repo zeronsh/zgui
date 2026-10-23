@@ -91,6 +91,11 @@ impl AccessibilityTree {
             .paint_items()
             .filter(|p| p.effects.opacity > 0.0)
             .filter_map(|p| semantics.get(p.id).map(|s| (p.id, s)))
+            // Text with nothing in it (a count at zero) says nothing: it
+            // joins the tree when it has something to say.
+            .filter(|(_, s)| {
+                s.role != Role::Label || !s.value.as_deref().unwrap_or(&s.label).is_empty()
+            })
             .collect();
         // What is hidden from assistive technology (`aria-hidden`) goes with
         // its subtree; only a tree that hides something looks.
@@ -1610,5 +1615,29 @@ mod vocabulary_tests {
             .filter_map(|n| n.label())
             .collect();
         assert_eq!(names, ["Archive", "Unread"]);
+    }
+
+    #[test]
+    fn empty_text_leaves_the_tree_until_it_says_something() {
+        let mut ui = Ui::new(400., 300.);
+        let count = ui.signal(String::new());
+        let read = count.clone();
+        ui.mount(
+            row()
+                .child(text("Inbox"))
+                .child(text_signal(move || read.get())),
+        );
+        let labels = |ui: &mut Ui| -> Vec<String> {
+            project(ui)
+                .iter()
+                .filter(|n| n.role() == accesskit::Role::Label)
+                .filter_map(|n| n.value().map(str::to_owned))
+                .collect()
+        };
+        assert_eq!(labels(&mut ui), ["Inbox"]);
+        count.set("3".into());
+        assert_eq!(labels(&mut ui), ["Inbox", "3"]);
+        count.set(String::new());
+        assert_eq!(labels(&mut ui), ["Inbox"]);
     }
 }

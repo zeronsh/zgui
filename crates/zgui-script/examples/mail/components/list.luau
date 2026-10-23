@@ -20,6 +20,22 @@ local function row(i: number): Node
 	return ui.row {
 		id = `row-{i}`,
 		role = "option",
+		-- Read as one name, as a mail app's rows are: whether it is unread,
+		-- who, what, when.
+		label = function()
+			local m = message()
+			if not m then
+				return ""
+			end
+			local parts = { m.from, m.subject, m.date }
+			if state.is_unread(m) then
+				table.insert(parts, 1, "Unread")
+			end
+			if m.starred then
+				table.insert(parts, "Starred")
+			end
+			return table.concat(parts, ", ")
+		end,
 		selected = function()
 			local m = message()
 			return m ~= nil and state.selected:get() == m.id

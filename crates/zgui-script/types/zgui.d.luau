@@ -1779,8 +1779,9 @@ export type ContainerProps = {
 	context_menu_below: boolean?,
 	[number]: Child,
 	-- The name assistive technology reads for it, instead of its text: a
-	-- switch, a button showing only an icon.
-	label: string?,
+	-- switch, a button showing only an icon. A state or function is
+	-- followed: a list row's name made from what it shows now.
+	label: (string | Readable<string> | (() -> string))?,
 }
 export type ScrollProps = {
 	-- Size and position.
@@ -2043,8 +2044,9 @@ export type ScrollProps = {
 	context_menu_below: boolean?,
 	[number]: Child,
 	-- The name assistive technology reads for it, instead of its text: a
-	-- switch, a button showing only an icon.
-	label: string?,
+	-- switch, a button showing only an icon. A state or function is
+	-- followed: a list row's name made from what it shows now.
+	label: (string | Readable<string> | (() -> string))?,
 	-- The scroll position in points, both ways.
 	offset: State<number>?,
 	-- Stays at the end while the content grows, until scrolled away.

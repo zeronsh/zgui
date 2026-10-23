@@ -24,6 +24,7 @@ end
 
 return function(): Node
 	return ui.column {
+		label = "Message",
 		grow = 1,
 		h_full = true,
 		bg = "$surface.raised",
@@ -87,9 +88,13 @@ return function(): Node
 					grow = 1,
 					w_full = true,
 					scrollbar = true,
-					selectable = true,
-					gap = 12,
-					ui.text { m.body, wrap = true, line_height = 22 },
+					-- The body, read and selected as a document.
+					ui.column {
+						selectable = true,
+						label = "Message body",
+						gap = 12,
+						ui.text { m.body, wrap = true, line_height = 22 },
+					},
 				},
 			}
 		end, { grow = 1 }),

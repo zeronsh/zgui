@@ -857,7 +857,10 @@ Controls report their role, name and state to assistive technology
 themselves (AccessKit: VoiceOver, Narrator, Orca). These say what a plain view
 means, as ARIA's attributes do in HTML; a view that sets none pays nothing:
 
-- `.accessible_label(name)`: the name read for it (`aria-label`).
+- `.accessible_label(name)`: the name read for it (`aria-label`);
+  `.accessible_label_when(|| …)` follows one, for a recycled row's name.
+  Empty text says nothing: it leaves the accessibility tree until it has
+  some.
 - `.role(Role::…)`: what it is taken for, keeping what it does. Use
   `ListBox` and `ListBoxOption` for a choice among clickable rows, and
   `Toolbar`, `List` / `ListItem`, `TabList` / `Tab`, `Status` and so on.

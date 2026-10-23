@@ -191,7 +191,7 @@ fn the_keyboard_alone_reaches_every_part_once() {
         "Button New Message",
         "ListBoxOption Inbox 426",
         "TextInput Search",
-        "ListBoxOption Donald Knuth Oct 28 Quar",
+        "ListBoxOption Donald Knuth, Quarterly ",
     ];
     assert_eq!(stops[..4], expected.map(str::to_owned), "{stops:#?}");
     assert!(stops[4].starts_with("Button Reply"), "{stops:#?}");
@@ -363,4 +363,32 @@ fn what_an_action_did_is_said_in_a_live_status() {
     h.click("send");
     h.frames(1);
     assert_eq!(said(&h), "Message sent");
+}
+
+#[test]
+fn rows_have_one_name_and_the_body_is_a_document() {
+    use zgui::semantics::Role;
+    let mut h = mail(1180.);
+    let row = h.find("row-3").unwrap();
+    let name = h.ui.semantics.borrow().get(row).unwrap().label.clone();
+    assert!(name.starts_with("Unread, "), "{name}");
+    assert!(!name.contains('●'), "{name}");
+    h.click("row-3");
+    h.frames(1);
+    let name = h.ui.semantics.borrow().get(row).unwrap().label.clone();
+    assert!(!name.starts_with("Unread"), "read now: {name}");
+    let documents = {
+        let semantics = h.ui.semantics.borrow();
+        let scene = h.ui.scene.borrow();
+        let mut found = Vec::new();
+        let mut pending = vec![scene.root()];
+        while let Some(id) = pending.pop() {
+            if let Some(node) = semantics.get(id).filter(|n| n.role == Role::Document) {
+                found.push(node.label.clone());
+            }
+            pending.extend(scene.children(id).iter().copied());
+        }
+        found
+    };
+    assert_eq!(documents, ["Message body"]);
 }
