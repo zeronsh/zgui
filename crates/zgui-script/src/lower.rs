@@ -1531,7 +1531,10 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
                     vm.report(e);
                 }
             }
-            if let (Some(f), Some(sizes)) = (resize.clone(), mounted.observe_size()) {
+            // Observers only for handlers: each costs every frame that moves anything.
+            if let Some(f) = resize.clone()
+                && let Some(sizes) = mounted.observe_size()
+            {
                 // Size changes only: moving does not report.
                 let (vm, element, runtime) = (vm.clone(), element.clone(), vm.runtime.clone());
                 let last = std::cell::Cell::new(None::<(f32, f32)>);
@@ -1558,7 +1561,9 @@ fn build(node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>, mut cx: Option<&mut C
                 });
                 mounted.retain(effect);
             }
-            if let (Some(f), Some(shown)) = (visible.clone(), mounted.observe_visibility()) {
+            if let Some(f) = visible.clone()
+                && let Some(shown) = mounted.observe_visibility()
+            {
                 // Changes only, and the first layout's answer, delivered
                 // after the frame as an IntersectionObserver does: what the
                 // handler builds or drops lays out next frame, never feeding
