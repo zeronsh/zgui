@@ -21,10 +21,12 @@ on:
       - "docs/composition.md"
       - "docs/styling.md"
       - "docs/window-controls.md"
-# A newer push to the same branch or PR supersedes a running check.
+# A newer push to a PR supersedes its running check. On main every run
+# finishes (a full signal per commit, and the caches it saves); a newer
+# push waits, replacing any run still waiting.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 # Dozens of desktop fixtures link the renderer; keep runner disk bounded.
 env:
   CARGO_PROFILE_DEV_DEBUG: "0"
@@ -74,7 +76,7 @@ jobs:
           version: 2.6.0
           args: --check crates/zgui-script
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test -p zgui -p zgui-desktop -p zgui-workload --all-targets --locked
+      - run: cargo test -p zgui -p zgui-desktop -p zgui-workload -p zgui-script --all-targets --locked
       - run: cargo test --workspace --doc --locked
       # Concurrent device tests need Vulkan-Loader#1866; older distro loaders
       # can crash inside vkSetDebugUtilsObjectNameEXT. Keep debug/validation on.
@@ -176,8 +178,6 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 25
-    # Until main builds cleanly on Windows.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -186,5 +186,6 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --locked
-      - run: cargo test -p zgui --lib --locked
-      - run: cargo test -p zgui-desktop --lib --locked
+      - run: cargo test -p zgui -p zgui-desktop --lib --locked
+      # Bundled script paths: caught a Windows separator bug.
+      - run: cargo test -p zgui-script --test bundle --locked
