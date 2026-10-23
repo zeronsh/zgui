@@ -659,7 +659,7 @@ impl<F: Fn(&str, f32, Option<f32>) -> (f32, f32)> TextMeasurer for F {
         self(text, font_size, max_width)
     }
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Style {
     /// Opt-in grid, wrapping, richer lengths and positioning.
     pub layout_options: Option<Arc<crate::layout::LayoutOptions>>,
@@ -731,6 +731,45 @@ pub struct Style {
     pub text_options: crate::text_layout::TextOptions,
 }
 
+/// Every field empty, zero or off, except `flex_shrink`, which is 1 as
+/// CSS's initial value is: an item gives way in a container too small for
+/// it, down to its content's min-content size (its automatic minimum).
+impl Default for Style {
+    fn default() -> Self {
+        Self {
+            layout_options: None,
+            absolute: false,
+            relative: false,
+            intrinsic_width: false,
+            intrinsic_height: false,
+            width: None,
+            height: None,
+            width_percent: None,
+            height_percent: None,
+            padding: 0.,
+            padding_edges: None,
+            gap: 0.,
+            clip: false,
+            fade_edges: [0.; 2],
+            fade_insets: [0.; 2],
+            fade_edges_x: [0.; 2],
+            fade_insets_x: [0.; 2],
+            fade_overflow: false,
+            snap: false,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            margin: Insets::default(),
+            flex_grow: 0.,
+            flex_shrink: 1.,
+            align: Align::default(),
+            justify: Justify::default(),
+            text_wrap: false,
+            text_options: Default::default(),
+        }
+    }
+}
 /// As derived, but with the flags and small enums compared together rather
 /// than one branch each: restyles compare a node's whole style every time.
 impl PartialEq for Style {
@@ -979,6 +1018,16 @@ fn keep_sizes(sizes: &mut Vec<ProbeSize>, evicted: Vec<ProbeSize>) {
     sizes.retain(|kept| !evicted.iter().any(|m| m.constraints == kept.constraints));
     sizes.splice(0..0, evicted);
     sizes.truncate(PROBE_SIZES);
+}
+/// A size flex distribution gives, on a 1/256 point grid: sharing out the
+/// room in floats drifts (644.00073 where 644 fits), and the drift would
+/// reach every box placed after it. Boxes on the grid still meet exactly.
+fn flexed(size: f32) -> f32 {
+    if size.is_finite() {
+        (size * 256.).round() / 256.
+    } else {
+        size
+    }
 }
 /// Whether a node clips its content on either axis, which makes it a
 /// scroll container to CSS: its automatic minimum is 0.
@@ -3508,6 +3557,18 @@ impl Scene {
         if !heights {
             constraints.percent_height = None;
         }
+        // Scroll content is as large as its content along an axis nothing
+        // sizes it on: the viewport's room does not fit it (it scrolls),
+        // so nothing in it shrinks or wraps to the viewport there.
+        let node = self.node(id);
+        if node.scroll_copy {
+            if node.style.width.is_none() && node.style.width_percent.is_none() {
+                constraints.width = None;
+            }
+            if node.style.height.is_none() && node.style.height_percent.is_none() {
+                constraints.height = None;
+            }
+        }
         let (reads_width, reads_height) = self.reads_available(id);
         if constraints.force_width.is_some() || !reads_width {
             constraints.width = constraints.force_width;
@@ -3971,7 +4032,7 @@ impl Scene {
                             if weights[i] == 0.0 {
                                 continue;
                             }
-                            let wanted = main(sizes[i]) + remaining * weights[i] / weight;
+                            let wanted = flexed(main(sizes[i]) + remaining * weights[i] / weight);
                             let (own_min, set_elsewhere) = {
                                 let s = &self.node(*child).style;
                                 let options = s.layout_options.as_deref();

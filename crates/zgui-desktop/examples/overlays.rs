@@ -24,12 +24,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .child(text("Settings").h(24.).text_size(20.))
             .child(nested)
             .child(button().id("modal-close").h(32.).child(text("Close modal")).on_click({let open=modal_open.clone();move||{open.set(false);}}));
-        let open_button=button().id("open-modal").size(180.,32.).p(0.).child(text("Open modal"))
+        let open_button=button().id("open-modal").size(180.,32.).shrink_0().p(0.).child(text("Open modal"))
             .on_click({let open=modal_open.clone();move||{open.set(true);}});
         let view=cx.render(column().p(24.).gap(12.).text_size(14.).text_color(rgb(0xe5edf7))
-            .child(text("Retained component overlays").h(32.).text_size(22.))
+            .child(text("Retained component overlays").h(32.).shrink_0().text_size(22.))
             .child(open_button)
-            .child(scroll(offset.clone()).size(300.,120.).bg(rgb(0x203040)).child(column().child(div().h(40.)).child(popup).child(div().h(200.))))
+            .child(scroll(offset.clone()).size(300.,120.).shrink_0().bg(rgb(0x203040)).child(column().child(div().h(40.)).child(popup).child(div().h(200.))))
             .child(dialog));
         if smoke{
             let observed_nodes=[cx.ui.root(),view.find("popup").unwrap(),view.find("modal").unwrap(),view.find("nested").unwrap()];

@@ -28,7 +28,7 @@ Children, and any [property](properties.md) and [event](events.md). What the con
 | `items` | `"start" \| "center" \| "end" \| "baseline" \| "stretch"` | `"stretch"` | alignment across the main axis: as CSS's flexbox, children stretch across it unless they have a size of their own there; `"start"` keeps each as wide (or tall) as it is |
 | `justify` | `"start" \| "center" \| "end" \| "between" \| "around" \| "evenly" \| "stretch"` | `"start"` (`overlay`: `"stretch"`) | distribution along it |
 | `gap` | `number` | `0` | between children; `gap_x`, `gap_y` per axis |
-| `grow`, `shrink` | `number` | `0`, `0` | as a child of a row or column |
+| `grow`, `shrink` | `number` | `0`, `1` | as a child of a row or column: it gives way in one too small for its children, no further than its content needs |
 | `cols`, `rows` | `number` | unset | `grid`'s equal tracks: `cols = 3` makes three columns |
 
 ## Example
@@ -82,8 +82,8 @@ return ui.row {
 
 ## Gotchas
 
-- Children do not stretch across a column or row by default (`items = "start"`, not CSS's `stretch`): give the container `items = "stretch"`, or the child `w_full = true` (`h_full` in a row).
-- Children do not shrink by default (`shrink = 0`): a row of long text overflows rather than squeezing. Give the child that should give way `shrink = 1` and `min_w = 0` (with `truncate = true` on text to end it with "…").
+- Children stretch across a column or row by default (`items = "stretch"`, as CSS): `items = "start"` keeps each as wide (or tall) as it is.
+- Children shrink in a row too narrow for them (`shrink = 1`, as CSS), but a text no narrower than its longest word, and a box no narrower than its content needs. `shrink = 0` holds a child at its size; `min_w = 0` lets one shrink past its content (with `truncate = true` on text to end it with "…").
 - Text does not wrap by default: `wrap = true` on the text, inside a box with a width.
 - A percentage size inside a box sized by its content falls back to the content's size (`ZGUI_LAYOUT_WARNINGS=1` reports it).
 - `show`, `switch` and `presence` lay out as what they show, as if it stood in their place; `each` and `slot` are a box of their own that lays its rows out as its parent would. Absolute positioning searches for a `relative` ancestor, so mark the one you mean rather than relying on being its direct child ([properties](properties.md#position)).

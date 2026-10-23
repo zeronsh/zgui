@@ -66,7 +66,7 @@ buttons so pointer and keyboard input share behavior.
 
 ## Layout and resizing
 
-Rows and columns support fixed/intrinsic sizing, min/max constraints, margin insets, padding, gaps, flex grow/shrink, main-axis justification, and cross-axis alignment. Flex shrink defaults to zero to preserve explicitly sized content. Overlays retain back-to-front child order. Text wrapping is opt-in through `.text_wrap(true)`; the desktop host installs the same font system used by its renderer. `Transform` is translation-only.
+Rows and columns support fixed/intrinsic sizing, min/max constraints, margin insets, padding, gaps, flex grow/shrink, main-axis justification, and cross-axis alignment. Flex shrink defaults to 1, as CSS's does: children give way in a container too small for them, each no further than its content's min-content size (`shrink_0()` holds one). Overlays retain back-to-front child order. Text wrapping is opt-in through `.text_wrap(true)`; the desktop host installs the same font system used by its renderer. `Transform` is translation-only.
 
 Use `.w_full()`, `.h_full()`, flex styles and `.reactive_style(...)` for responsive component geometry. `WindowContext.viewport` supplies logical `(width, height)` when application policy depends on the window size. Low-level integrations can bind it to an owner and update retained styles or call `ScrollView::resize`. Release any `RefCell<Scene>` borrow before setting signals, because a signal can synchronously run code that borrows the scene. The host performs physical-pixel surface resizing and DPI conversion separately. `Scene::prepare_layout` makes geometry current for hit testing without discarding pending damage; `flush` is the renderer's frame-consumption boundary.
 

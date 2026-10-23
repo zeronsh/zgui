@@ -67,7 +67,7 @@ fn shrink_to_fit_boxes_fit_the_room_but_not_below_their_content() {
     assert_eq!(chain1[1].height, 24.);
     // Tiles that cannot shrink keep their width (their min-content), as in
     // CSS, overflowing the room.
-    let fixed = || div().w(120.).h(10.);
+    let fixed = || div().w(120.).h(10.).shrink_0();
     let rigid = row().min_w(0.).child(fixed()).child(fixed()).child(fixed());
     let chain2 = chain(column().child(rigid));
     assert_eq!(chain2[1].width, 360., "{chain2:?}");

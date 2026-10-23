@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .run(move |cx| {
             let fit = cx.ui.signal(ObjectFit::Fill);
-            let mut controls = column().w(100.).gap(6.);
+            let mut controls = column().w(100.).shrink_0().gap(6.);
             for (label, next) in [
                 ("Fill", ObjectFit::Fill),
                 ("Contain", ObjectFit::Contain),

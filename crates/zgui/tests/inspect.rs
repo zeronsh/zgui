@@ -17,13 +17,17 @@ fn suspicious(ui: &Ui) -> View {
         .child(
             // A 200 px row whose second child shrinks to nothing: allowed
             // below its text's width (`min-width: 0`, as CSS needs it).
-            row().w(200.).h(20.).child(div().w(200.).h(20.)).child(
-                row()
-                    .id("squeezed")
-                    .flex_shrink(1.)
-                    .min_w(0.)
-                    .child(text("squeezed out")),
-            ),
+            row()
+                .w(200.)
+                .h(20.)
+                .child(div().w(200.).h(20.).shrink_0())
+                .child(
+                    row()
+                        .id("squeezed")
+                        .flex_shrink(1.)
+                        .min_w(0.)
+                        .child(text("squeezed out")),
+                ),
         )
         .child(
             // A 40 px clip around 120 px of content, not a scroll view.
@@ -32,11 +36,12 @@ fn suspicious(ui: &Ui) -> View {
                 .w(100.)
                 .h(40.)
                 .overflow_hidden()
-                .child(div().w(80.).h(120.)),
+                .child(div().w(80.).h(120.).shrink_0()),
         )
         .child(
-            // Half the width of a parent that sizes to its content.
-            row().child(
+            // Half the width of a parent that sizes to its content (in a
+            // row it would flex, and its flexed width would resolve it).
+            column().items_start().child(
                 row()
                     .id("parent")
                     .child(div().id("half").w_percent(50.).h(10.).child(text("half")))
@@ -202,7 +207,7 @@ fn overlay_outlines_boxes_and_describes_the_one_under_the_pointer() {
     assert!(details.contains("padding 6"), "{details}");
     assert!(details.contains("margin 2"), "{details}");
     assert!(details.contains("gap 3"), "{details}");
-    assert!(details.contains("grow 0 · shrink 0"), "{details}");
+    assert!(details.contains("grow 0 · shrink 1"), "{details}");
     assert!(details.contains("3 warnings"), "{details}");
 
     // A child inherits its creator's location.

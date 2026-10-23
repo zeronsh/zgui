@@ -12,14 +12,16 @@ let stretched = column().w(240.).child(button().child(text("Save"))).child(div()
 let hugging = column().items_start().child(button().child(text("Save")));
 ```
 
-**A child that shrinks stops at its content's narrowest, as CSS's `min-width: auto` does.** In a row too narrow for its children, a child with `flex_shrink` gives way only down to its min-content width: the longest word of a text, an unwrappable label's whole width, a box's children's needs plus its padding. Its siblings shrink further. A child that clips (`scroll`, `overflow_hidden`) may shrink to nothing, as a CSS scroll container does. A minimum the child sets is its own: `.min_w(0.)` (`min_w = 0`) lets a truncated label or a pane shrink past its content, as CSS needs `min-width: 0`. Columns do the same with heights.
+**Children shrink to fit, as in CSS's flexbox (`flex-shrink: 1`).** In a row too narrow for its children every child gives way, in proportion to its size, and a column does the same with heights. `.shrink_0()` (`shrink = 0`) holds a child at its size: a fixed sidebar, a chip that must not narrow. Until October 2026 the default was 0, so nothing shrank: an app written for that whose sidebar, icon or fixed-width box now narrows in a small window states `.shrink_0()` on it. Scroll content is the exception: along the axis it scrolls it keeps its extent, and scrolls rather than shrinking what is in it.
+
+**A child that shrinks stops at its content's narrowest, as CSS's `min-width: auto` does.** In a row too narrow for its children, a child gives way only down to its min-content width: the longest word of a text, an unwrappable label's whole width, a box's children's needs plus its padding. Its siblings shrink further. A child that clips (`scroll`, `overflow_hidden`) may shrink to nothing, as a CSS scroll container does. A minimum the child sets is its own: `.min_w(0.)` (`min_w = 0`) lets a truncated label or a pane shrink past its content, as CSS needs `min-width: 0`. Columns do the same with heights.
 
 ```rust
 use zgui::compose::prelude::*;
-// The sidebar gives way; the title keeps its words whole.
-let bar = row().w(200.).child(div().w(180.).flex_shrink(1.)).child(text("Unbreakable").flex_shrink(1.));
-// A truncated title shrinks past its text.
-let truncated = row().w(200.).child(text("A long title").truncate().flex_shrink(1.).min_w(0.));
+// The empty box gives way; the title keeps its words whole.
+let bar = row().w(200.).child(div().w(180.)).child(text("Unbreakable"));
+// A fixed icon holds; a truncated title shrinks past its text.
+let truncated = row().w(200.).child(div().w(24.).shrink_0()).child(text("A long title").truncate().min_w(0.));
 ```
 
 Grids and wrapping rows:

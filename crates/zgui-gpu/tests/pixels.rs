@@ -677,7 +677,10 @@ fn layer_texture_budget_fails_before_allocation_and_recovers_after_removal() {
     let huge = scene.append(
         scene.root(),
         NodeKind::Container(Layout::Overlay),
-        fixed(4096., 4096.),
+        Style {
+            flex_shrink: 0.,
+            ..fixed(4096., 4096.)
+        },
     );
     scene.set_isolated(huge, true);
     let d = scene.flush().damage;

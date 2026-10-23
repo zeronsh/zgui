@@ -144,7 +144,7 @@ fn the_inspector_names_nodes_by_the_script_line_that_made_them() {
     w = 400, h = 300,
     ui.column {
         id = "clip", class = "pane", w = 100, h = 40, overflow = "hidden",
-        ui.div { w = 100, h = 120 },
+        ui.div { w = 100, h = 120, shrink = 0 },
     },
     ui.text { "plain", id = "plain" },
 }

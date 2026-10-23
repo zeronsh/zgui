@@ -160,7 +160,7 @@ Text is not selectable unless asked, as in native apps. `selectable = true` on a
 
 - Text from data is a template too: a commit message with `{id}` in it looks for state named `id` (an error if there is none), and `{{` shows as `{`. Pass `literal = true` (on `ui.text`, `ui.rich` or a span) for text the script didn't write.
 - A template names state by its key, not by its Luau variable: `"{count}"` shows `ui.state("count", …)` whatever the local is called. A name no state has is an error when the text is built.
-- Text does not wrap by default, and a row does not shrink it: `wrap = true` (in a box with a width), or `shrink = 1, min_w = 0, truncate = true` in a row.
+- Text does not wrap by default, and a row shrinks it no narrower than it is (its min-content, unwrapped): `wrap = true` (in a box with a width) lets it wrap down to its longest word, or `min_w = 0, truncate = true` ends it with "…" in a row.
 - Span options are plain values, read once: a state or function there is not followed (its value at build time is used). Only the run's text follows state. To restyle a run, build the paragraph in a function, or use two texts.
 - A span's `font` only knows `"mono"`; any other family is ignored (`ui.text`'s `font` takes names).
 - A span is used once: putting the same `ui.span` in two paragraphs is an error. Make a new one each time.

@@ -43,7 +43,7 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `w`, `h` | `Length` | `240` wide (an intrinsic width), `36` high (`textarea`: `156`) | |
 | `px`, `py` | `Length` | `8`, `6` | |
 | `bg`, `rounded` | | `"#232e40"`, `6` | |
-| `shrink` | `number` | `1` | a row too narrow for it shrinks it; `shrink = 0` or a `w` holds it |
+| `shrink` | `number` | `1` | a row too narrow for it shrinks it, to nothing if need be (it scrolls its text); `shrink = 0` holds it |
 | `wrap` | `boolean` | `false` | `textarea`: wrap long lines rather than scroll them |
 | `line_numbers` | `boolean` | `false` | `textarea`: number the lines in a gutter at the left, the caret's brighter (a code editor); only the lines in view are built |
 

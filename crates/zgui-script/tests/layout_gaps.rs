@@ -79,14 +79,14 @@ fn scroll_views_fill_a_stretching_parent() {
     let mut h = Harness::inline(
         r##"local words = string.rep("word ", 80)
         return ui.row {
-            ui.column { id = "sidebar", w = 190, h = 280, items = "stretch", border_sides = { 0, 1, 0, 0 },
+            ui.column { id = "sidebar", w = 190, h = 280, shrink = 0, items = "stretch", border_sides = { 0, 1, 0, 0 },
                 ui.scroll { id = "list", grow = 1,
                     ui.column { id = "content", px = 8,
                         ui.text { words, id = "words", wrap = true },
                     },
                 },
             },
-            ui.column {
+            ui.column { shrink = 0,
                 ui.scroll { id = "plain", ui.text { "hi" } },
             },
         }"##,
@@ -106,11 +106,11 @@ fn inputs_fit_their_rows_whatever_their_text() {
         r##"local url = ui.state("url", string.rep("x", 300))
         return ui.column {
             ui.row { id = "bar", w = 200, h = 30, items = "center",
-                ui.div { w = 50, h = 20 },
+                ui.div { w = 50, h = 20, shrink = 0 },
                 ui.input { id = "address", label = "Address", value = url, grow = 1, min_w = 0 },
             },
             ui.row { w = 200, h = 30,
-                ui.div { w = 50, h = 20 },
+                ui.div { w = 50, h = 20, shrink = 0 },
                 ui.input { id = "narrow", label = "Narrow", value = url },
             },
             ui.column { w = 300, items = "stretch",

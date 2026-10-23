@@ -374,11 +374,13 @@ fn an_overlay_pane_in_a_row_shows_a_growing_child() {
 
 #[test]
 fn an_unsized_scroll_fills_a_stretching_parent_and_its_content_fills_it() {
-    let mut ui = Ui::new(600., 400.);
+    let mut ui = Ui::new(600., 800.);
     let offset = ui.signal(0.);
     let across = ui.signal(0.);
     let h = ui.mount(
-        row()
+        // Each box at its own size, stacked.
+        column()
+            .items_start()
             .child(
                 column().id("pane").w(190.).h(300.).items_stretch().child(
                     scroll(offset.clone())
@@ -434,18 +436,18 @@ fn inputs_fit_rows_whatever_their_text() {
                         .id("bar")
                         .w(200.)
                         .h(36.)
-                        .child(div().w(50.))
+                        .child(div().w(50.).shrink_0())
                         .child(text_input("grow", value.clone()).id("grow").flex_grow(1.)),
                 )
                 .child(
                     row()
                         .w(200.)
                         .h(36.)
-                        .child(div().w(50.))
+                        .child(div().w(50.).shrink_0())
                         .child(text_input("narrow", value.clone()).id("narrow")),
                 )
                 .child(
-                    row().w(200.).h(36.).child(div().w(50.)).child(
+                    row().w(200.).h(36.).child(div().w(50.).shrink_0()).child(
                         text_input("rigid", value.clone())
                             .id("rigid")
                             .flex_shrink(0.),
