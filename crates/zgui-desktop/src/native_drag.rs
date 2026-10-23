@@ -18,7 +18,10 @@
 //! windows is cancelled for Windows and dropped by zgui, as AppKit's own
 //! drop is refused there. Its modal loop runs in place of winit's, so the
 //! host steps and paints its windows after each event meanwhile.
-//! todo(x11): an XDND source (selection ownership and the XdndAware dance).
+//!
+//! X11 speaks XDND (`native_drag/x11.rs`): the pointer stays the window's
+//! (the button's implicit grab), so the manager hands it its moves, and the
+//! preview stays the window of its own it was.
 //! todo(wayland): `wl_data_device.start_drag` with a `wl_data_source`,
 //! which winit does not expose.
 use zgui::input::DragItem;
@@ -27,7 +30,6 @@ use zgui::input::DragItem;
 /// (top-down from the primary screen's top, in points; on Windows, screen
 /// pixels at the dragging window's scale, as `content_origin` gives).
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 pub(crate) enum NativeDrag {
     Moved {
         x: f64,
@@ -57,7 +59,12 @@ mod win32;
 #[cfg(windows)]
 pub(crate) use win32::begin;
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+mod x11;
+#[cfg(target_os = "linux")]
+pub(crate) use x11::{active, begin, cancel, end_session, moved, released};
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) fn begin(
     _: &winit::window::Window,
     _: &[DragItem],

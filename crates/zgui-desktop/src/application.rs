@@ -3106,7 +3106,9 @@ impl Host {
         let (Some(drag), Some(window)) = (self.context.ui.input.drag_state(), &self.window) else {
             return;
         };
-        if !self.native_drag {
+        // X11 leaves the preview the app's to move, its drag the platform's
+        // or not.
+        if !self.native_drag || cfg!(target_os = "linux") {
             self.popups.follow(window, &drag);
         }
     }
@@ -3878,6 +3880,59 @@ impl WindowManager {
             ui.input.end_drag_elsewhere(&ui.scene, accepted, outside);
         }
     }
+    /// Window `token`'s pointer while its drag is X11's (`native_drag`):
+    /// its moves, release and Escape go to the drag, which the host then
+    /// hears as the platform's; other pointer input waits until it ends.
+    /// Whether the event was the drag's.
+    #[cfg(target_os = "linux")]
+    fn x11_drag_input(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        token: u64,
+        id: WindowId,
+        event: &WindowEvent,
+    ) -> bool {
+        use crate::native_drag::{self, NativeDrag};
+        if !native_drag::active(id) {
+            return false;
+        }
+        let Some(host) = self.hosts.get(&token) else {
+            return false;
+        };
+        let (scale, (left, top)) = (host.scale_factor, host.content_origin.unwrap_or_default());
+        let ended = match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                let (x, y) = (left + position.x / scale, top + position.y / scale);
+                let own = self.window_under(x, y).is_some();
+                let root = ((x * scale).round() as i32, (y * scale).round() as i32);
+                native_drag::moved(root, (x, y), own);
+                if let Err(error) = self.native_drag(token, NativeDrag::Moved { x, y }) {
+                    self.fail(event_loop, error);
+                }
+                return true;
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => native_drag::released(),
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed
+                    && event.logical_key == WKey::Named(NamedKey::Escape) =>
+            {
+                native_drag::cancel().map(|(x, y)| (x, y, false))
+            }
+            WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } => return true,
+            _ => return false,
+        };
+        if let Some((x, y, accepted)) = ended {
+            native_drag::end_session();
+            if let Err(error) = self.native_drag(token, NativeDrag::Ended { x, y, accepted }) {
+                self.fail(event_loop, error);
+            }
+        }
+        true
+    }
     /// The platform's drag of window `token` moved or ended, at a global
     /// point. Over another of the app's windows, that window's destinations
     /// hear it, and a release drops there; else the source's host takes it
@@ -4040,6 +4095,11 @@ impl WindowManager {
             && let Some(window) = &host.window
         {
             self.native.remove(&window.id());
+            // Its drag, if X11's, goes with it.
+            #[cfg(target_os = "linux")]
+            if crate::native_drag::active(window.id()) {
+                crate::native_drag::end_session();
+            }
         }
     }
 }
@@ -4336,6 +4396,11 @@ impl WindowManager {
                 {
                     self.fail(event_loop, error);
                 }
+                // An X11 drag's target finished with it.
+                #[cfg(target_os = "linux")]
+                if matches!(drag, crate::native_drag::NativeDrag::Ended { .. }) {
+                    crate::native_drag::end_session();
+                }
             }
             Event::PopupSoon(token) => {
                 #[cfg(target_os = "linux")]
@@ -4437,6 +4502,10 @@ impl WindowManager {
         #[cfg(target_os = "linux")]
         if matches!(event, WindowEvent::Focused(true)) {
             self.last_focused = Some(token);
+        }
+        #[cfg(target_os = "linux")]
+        if self.x11_drag_input(event_loop, token, id, &event) {
+            return;
         }
         // A drag released over another of the app's windows drops there.
         let pointer = matches!(

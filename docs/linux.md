@@ -121,6 +121,25 @@ does not say which part). `drag_preview_smoke.py` checks the preview
 under picom: it follows the pointer past the window with nothing drawn, and
 slides back.
 
+A drag carrying what other apps take (`drag_export`) is theirs past the
+app's windows, over XDND (version 5). The button pressed in the window
+grabs the pointer until it is released, so the window goes on hearing every
+move; while the drag is X11's the manager hands those to the drag rather
+than the window (`native_drag/x11.rs`). A session owns `XdndSelection` with
+an input-only window on a connection of its own. Over another app's window
+that says it takes drops (`XdndAware`, through any `XdndProxy`) it sends
+`XdndEnter` and `XdndPosition`, the next position waiting for the target's
+`XdndStatus`; released where the target accepted, `XdndDrop`, and a thread
+on the session's connection hands the target the data it asks for and ends
+the drag when the target says it finished (taken, or after 3 s, taken if
+it asked for the data). Released elsewhere, or with Escape, the target
+hears `XdndLeave`. The app's own windows are never targets (winit's say
+they take files): over them the drag is zgui's. The preview stays its own
+window, moved as the pointer moves and never drawn again. A conversion
+larger than one X request (with BIG-REQUESTS, usually 16 MB) is refused;
+there is no INCR transfer. `xdnd_source_smoke.py` drags text onto GTK
+windows of its own (`xdnd_target.py`).
+
 Drags go between the app's windows, as on macOS: the host asks where each
 window's content is on the root (`XTranslateCoordinates`, kept as the window
 moves) and which window is in front at the pointer. The X server finds that
