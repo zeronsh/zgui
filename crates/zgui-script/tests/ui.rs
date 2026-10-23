@@ -775,6 +775,60 @@ fn tooltips_show_after_a_rest_and_at_once_after_another() {
     h.frames(1);
     assert!(visible(&mut h, "bee"), "at once just after another");
 }
+#[test]
+fn a_key_closes_a_tooltip_and_escape_an_interactive_card() {
+    use zgui::input::{InputEvent, Key, Modifiers};
+    let mut h = Harness::inline(
+        r##"return ui.column { p = 40, gap = 10,
+            ui.button { id = "a", w = 40, h = 20, tooltip = ui.text { "Tip", id = "tip" }, "a" },
+            ui.button { id = "b", w = 40, h = 20, "b", tooltip_interactive = true,
+                tooltip = ui.column { id = "card", w = 120, h = 60, bg = "#202020" } },
+            ui.div { id = "away", w = 40, h = 20, mt = 200 } }"##,
+    );
+    h.frames(2);
+    let visible = |h: &mut Harness, id: &str| {
+        h.frames(1);
+        h.find(id).is_some_and(|n| {
+            let scene = h.ui.scene.borrow();
+            scene.visible_bounds(n).is_some_and(|b| b.width > 0.) && scene.effects(n).opacity > 0.
+        })
+    };
+    let to = |h: &mut Harness, id: &str| {
+        let b = h.bounds(id);
+        h.ui.dispatch(InputEvent::PointerMove {
+            x: b.x + 5.,
+            y: b.y + 5.,
+        });
+        h.frames(1);
+    };
+    let press = |h: &mut Harness, key: Key| {
+        h.ui.dispatch(InputEvent::KeyDown {
+            key: key.clone(),
+            modifiers: Modifiers::default(),
+            repeat: false,
+        });
+        h.ui.dispatch(InputEvent::KeyUp {
+            key,
+            modifiers: Modifiers::default(),
+        });
+        h.frames(1);
+    };
+    to(&mut h, "a");
+    wait_ms(&mut h, 550);
+    assert!(visible(&mut h, "tip"));
+    press(&mut h, Key::Character("x".into()));
+    assert!(!visible(&mut h, "tip"), "a key closes it, at once");
+    // Away and back after the second's grace: it shows again.
+    to(&mut h, "away");
+    wait_ms(&mut h, 1100);
+    to(&mut h, "b");
+    wait_ms(&mut h, 550);
+    assert!(visible(&mut h, "card"));
+    press(&mut h, Key::Character("x".into()));
+    assert!(visible(&mut h, "card"), "an interactive card takes typing");
+    press(&mut h, Key::Escape);
+    assert!(!visible(&mut h, "card"), "and closes on Escape");
+}
 /// Waits `ms` and lets timers (a tooltip's delay, its fade) run.
 fn wait_ms(h: &mut Harness, ms: u64) {
     // In steps, settling as it goes: a timer that starts as one settles

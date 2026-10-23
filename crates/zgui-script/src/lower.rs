@@ -166,8 +166,9 @@ pub(crate) fn lower(node: &Rc<Node>, low: &Rc<Lowering>) -> View {
     }
 }
 
-/// A tooltip showing: its number, and what closes it.
-type Showing = (u64, Rc<dyn Fn()>);
+/// A tooltip showing: its number, what closes it, and whether it is an
+/// interactive card.
+type Showing = (u64, Rc<dyn Fn()>, bool);
 thread_local! {
     /// Tooltips showing, and when the last one closed: within a second of
     /// one, the next opens at once (as a tooltip provider's `timeout`).
@@ -177,6 +178,22 @@ thread_local! {
     static SHOWING: std::cell::RefCell<Option<Showing>> =
         const { std::cell::RefCell::new(None) };
     static NEXT_TOOLTIP: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+/// A key pressed anywhere in the interface (`ScriptHost::view` hears each,
+/// focused or not): the tooltip showing closes, as a
+/// browser's and the system's do, so it never covers what is typed. An
+/// interactive card closes on Escape only, so its own fields take keys.
+pub(crate) fn tooltip_keys(event: &InputEvent) {
+    let InputEvent::KeyDown { key, .. } = event else {
+        return;
+    };
+    let close = SHOWING.with(|s| {
+        let mut s = s.borrow_mut();
+        s.take_if(|(_, _, interactive)| !*interactive || *key == Key::Escape)
+    });
+    if let Some((_, close, _)) = close {
+        close();
+    }
 }
 /// Tooltip `open`'s showing ends (`shown` says whether it was showing).
 fn hide_tooltip(open: &Signal<bool>, shown: &std::cell::Cell<bool>) {
@@ -246,6 +263,7 @@ fn tooltip(anchor: View, tip: &crate::node::Tooltip, vm: &Rc<Vm>, low: &Rc<Lower
             }));
         }
     };
+    let interactive = tip.interactive;
     // One tooltip shows at a time: showing this one closes the last, at once.
     let number = NEXT_TOOLTIP.with(|n| {
         n.set(n.get() + 1);
@@ -258,7 +276,7 @@ fn tooltip(anchor: View, tip: &crate::node::Tooltip, vm: &Rc<Vm>, low: &Rc<Lower
             if !on {
                 SHOWING.with(|s| {
                     let mut s = s.borrow_mut();
-                    if s.as_ref().is_some_and(|(n, _)| *n == number) {
+                    if s.as_ref().is_some_and(|(n, _, _)| *n == number) {
                         *s = None;
                     }
                 });
@@ -279,8 +297,8 @@ fn tooltip(anchor: View, tip: &crate::node::Tooltip, vm: &Rc<Vm>, low: &Rc<Lower
                     hide_tooltip(&open, &shown);
                 })
             };
-            let last = SHOWING.with(|s| s.borrow_mut().replace((number, close)));
-            if let Some((n, close_last)) = last
+            let last = SHOWING.with(|s| s.borrow_mut().replace((number, close, interactive)));
+            if let Some((n, close_last, _)) = last
                 && n != number
             {
                 close_last();
@@ -298,7 +316,6 @@ fn tooltip(anchor: View, tip: &crate::node::Tooltip, vm: &Rc<Vm>, low: &Rc<Lower
     let waiting: Rc<std::cell::RefCell<Option<crate::timers::Stop>>> = Rc::default();
     // An interactive card: the pointer may cross from the node to the card
     // (a moment's grace) and stay on either.
-    let interactive = tip.interactive;
     let (over_anchor, over_card) = (
         Rc::new(std::cell::Cell::new(false)),
         Rc::new(std::cell::Cell::new(false)),

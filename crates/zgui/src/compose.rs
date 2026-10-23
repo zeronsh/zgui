@@ -706,6 +706,16 @@ impl View {
     /// Run `f` once this view's node and children are mounted, with a handle
     /// to that node: for code that drives the scene directly, such as an
     /// animation engine writing transforms each frame.
+    /// Hear every event the document is given while this view is mounted,
+    /// before it goes where it goes, and one that goes nowhere (a key with
+    /// nothing focused): `Ui::on_document_event`.
+    pub fn on_document_event(self, listener: impl FnMut(&InputEvent) + 'static) -> Self {
+        self.on_mount(move |handle| {
+            if let Some(mut ui) = handle.ui.upgrade() {
+                ui.on_document_event(handle.node, listener);
+            }
+        })
+    }
     pub fn on_mount(mut self, f: impl FnOnce(NodeHandle) + 'static) -> Self {
         self.mounted.push(Box::new(f));
         self

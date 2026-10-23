@@ -144,9 +144,9 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | `selection_color` | `Color \| Readable<Color> \| (() -> Color)` | `$selection` | a selectable node's highlight (CSS `::selection { background }`), in either window state |
 | `selected_text_color` | `Color \| Readable<Color> \| (() -> Color)` | `$selection.text` | the selected glyphs' colour (CSS `::selection { color }`); transparent keeps their own |
 | `window_drag` | `boolean` | `false` | a press on it, or on what inside takes no input, moves the window; a double click zooms it (CSS `-webkit-app-region: drag`) |
-| `tooltip` | `string` or a node | none | shown over it while the pointer rests on it: after 300 ms, at once within a second of another tooltip; gone when the pointer leaves or presses. Text takes the theme's look (an overlay card, small text); a node is the app's own content. It fades in over 140 ms and out over 100 ms, at once when it takes over from another; one shows at a time. It takes no focus and lets the pointer through |
+| `tooltip` | `string` or a node | none | shown over it while the pointer rests on it: after 300 ms, at once within a second of another tooltip; gone when the pointer leaves or presses, or a key is pressed anywhere (as a browser's and the system's do). Text takes the theme's look (an overlay card, small text); a node is the app's own content. It fades in over 140 ms and out over 100 ms, at once when it takes over from another; one shows at a time. It takes no focus and lets the pointer through |
 | `tooltip_placement` | `Placement` | above, centred, 6 points off | where the tooltip sits (as a popover's `placement`) |
-| `tooltip_interactive` | `boolean` | `false` | a hover card the pointer can move into and click in: it stays while the pointer is over the node or the card (a moment's grace to cross between them) |
+| `tooltip_interactive` | `boolean` | `false` | a hover card the pointer can move into and click in: it stays while the pointer is over the node or the card (a moment's grace to cross between them); typing goes to its fields, and Escape closes it |
 | `id` | `string` | | for selectors (`"#id"`) and the inspector |
 | `class` | `string` | | space-separated, for selectors (`".name"`) |
 | `ref` | `Ref \| { Ref }` | | see [State](state.md#refs) |

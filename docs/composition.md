@@ -803,6 +803,13 @@ underlying view, preserving the component's behavior. Listeners live with the
 mounted root and are released on unmount, including keyed/conditional removal.
 Disabled roots and descendants follow the dispatcher's inherited disabled policy.
 
+`.on_document_event(|event| { ... })` hears every event the document is given
+while the view is mounted, before it is routed. That includes one that goes nowhere,
+such as a key pressed with nothing focused. It is a browser's
+`document.addEventListener`, for what answers input anywhere (a tooltip that any key
+closes). It only observes: the event still goes where it goes. With no such
+listener, dispatch checks an empty list.
+
 `prevent_default()` cancels default actions without stopping propagation;
 `stop_propagation()` stops travel to another node, while
 `stop_immediate_propagation()` also stops remaining listeners on the current node.

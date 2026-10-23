@@ -452,6 +452,24 @@ struct UiStorage {
     scrollbar_fades: RefCell<Vec<std::rc::Weak<crate::compose_scrollbar::Fade>>>,
     /// Input is being dispatched: what scrolls now, the user scrolled.
     dispatching: Cell<bool>,
+    /// What hears every event the document gets (`Ui::on_document_event`):
+    /// usually nothing.
+    document_listeners: RefCell<Vec<(u64, DocumentListener)>>,
+}
+type DocumentListener = Rc<RefCell<dyn FnMut(&InputEvent)>>;
+/// Ends a document listener as its owner goes.
+struct DocumentListening {
+    storage: std::rc::Weak<UiStorage>,
+    token: u64,
+}
+impl Drop for DocumentListening {
+    fn drop(&mut self) {
+        if let Some(storage) = self.storage.upgrade()
+            && let Ok(mut listeners) = storage.document_listeners.try_borrow_mut()
+        {
+            listeners.retain(|(token, _)| *token != self.token);
+        }
+    }
 }
 /// A press in a window drag region (`View::window_drag`), for the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -603,6 +621,7 @@ impl Ui {
             last_pressed: Cell::new(None),
             scrollbar_fades: RefCell::new(Vec::new()),
             dispatching: Cell::new(false),
+            document_listeners: RefCell::new(Vec::new()),
         });
         Self::from_storage(storage)
     }
@@ -1302,6 +1321,53 @@ impl Ui {
     ) -> &RefCell<Vec<std::rc::Weak<crate::compose_scrollbar::Fade>>> {
         &self.storage.scrollbar_fades
     }
+    /// Hear every event the document is given, before it goes where it goes
+    /// (and one that goes nowhere: a key with nothing focused), while
+    /// `owner` is mounted: a browser's `document.addEventListener`. For what
+    /// answers input anywhere, such as a tooltip any key closes.
+    pub fn on_document_event(
+        &mut self,
+        owner: NodeId,
+        listener: impl FnMut(&InputEvent) + 'static,
+    ) {
+        thread_local! {
+            static NEXT: Cell<u64> = const { Cell::new(0) };
+        }
+        let token = NEXT.with(|next| {
+            next.set(next.get() + 1);
+            next.get()
+        });
+        self.storage
+            .document_listeners
+            .borrow_mut()
+            .push((token, Rc::new(RefCell::new(listener))));
+        let guard = DocumentListening {
+            storage: Rc::downgrade(&self.storage),
+            token,
+        };
+        self.retain(owner, guard);
+    }
+    /// Give `event` to the document's listeners (`on_document_event`).
+    fn tell_document(&self, event: &InputEvent) {
+        // One at a time, the list free while each runs (it may add or end
+        // listeners); nothing allocated per event.
+        let mut index = 0;
+        loop {
+            let Some(listener) = self
+                .storage
+                .document_listeners
+                .borrow()
+                .get(index)
+                .map(|(_, f)| f.clone())
+            else {
+                return;
+            };
+            if let Ok(mut f) = listener.try_borrow_mut() {
+                f(event);
+            }
+            index += 1;
+        }
+    }
     pub(crate) fn observe_presentation(&self) -> Signal<bool> {
         self.storage.presented.clone()
     }
@@ -1518,6 +1584,7 @@ impl Ui {
             ),
         );
         self.storage.dispatching.set(true);
+        self.tell_document(&event);
         let mut result = self.input.dispatch(&self.scene, event);
         self.after_dispatch(after, &mut result);
         self.storage.dispatching.set(false);
@@ -1553,6 +1620,7 @@ impl Ui {
             ),
         );
         self.storage.dispatching.set(true);
+        self.tell_document(&event);
         let mut result = self
             .input
             .dispatch_with_modifiers(&self.scene, event, modifiers);
