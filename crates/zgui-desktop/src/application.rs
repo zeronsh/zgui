@@ -2464,6 +2464,10 @@ impl Host {
                     MouseButton::Other(n) => PointerButton::Other(n),
                 };
                 let (x, y) = self.cursor;
+                // A click stops a coasting scroll, as in a browser.
+                if state == ElementState::Pressed {
+                    self.touch.stop();
+                }
                 #[cfg(target_os = "linux")]
                 if let Some(direction) = self.resize_edge
                     && state == ElementState::Pressed
@@ -2533,6 +2537,13 @@ impl Host {
                     self.context.viewport.with_untracked(|viewport| *viewport),
                 );
                 let (dx, dy) = wheel_delta(delta, self.scale_factor, step);
+                // A touchpad's scroll coasts on after the fingers lift
+                // (Wayland says when: libinput's axis stop).
+                #[cfg(target_os = "linux")]
+                if matches!(delta, MouseScrollDelta::PixelDelta(_)) {
+                    self.touch
+                        .wheel(phase, self.cursor, (dx, dy), std::time::Instant::now());
+                }
                 if crate::scroll_resample::enabled() {
                     // Applied on display refreshes; see `update`.
                     let now = std::time::Instant::now();

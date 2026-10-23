@@ -81,6 +81,9 @@ pub(crate) struct Touches {
     pan: (f32, f32),
     /// The pan's recent positions, for its speed at lift.
     trail: Vec<(Instant, (f32, f32))>,
+    /// A touchpad scroll's recent steps (`wheel`), for its speed at lift.
+    #[cfg(target_os = "linux")]
+    wheel_trail: Vec<(Instant, (f32, f32))>,
     fling: Option<Fling>,
 }
 
@@ -91,6 +94,8 @@ impl Default for Touches {
             contacts: Vec::new(),
             pan: (0., 0.),
             trail: Vec::new(),
+            #[cfg(target_os = "linux")]
+            wheel_trail: Vec::new(),
             fling: None,
         }
     }
@@ -335,10 +340,65 @@ impl Touches {
         Some((x, y, delta.0, delta.1))
     }
 
+    /// A touchpad's two-finger scroll of `delta` at `at` (Linux, where
+    /// Wayland reports the fingers lifting: libinput's axis stop, `Ended`).
+    /// The fingers lifting at speed fling it, as GTK coasts it; fingers
+    /// back on the touchpad stop the fling, as does a click (`stop`).
+    #[cfg(target_os = "linux")]
+    pub(crate) fn wheel(
+        &mut self,
+        phase: TouchPhase,
+        at: (f32, f32),
+        delta: (f32, f32),
+        now: Instant,
+    ) {
+        if phase == TouchPhase::Started {
+            self.fling = None;
+            self.wheel_trail.clear();
+        }
+        self.wheel_trail
+            .retain(|(t, _)| now.duration_since(*t) <= SPEED_WINDOW);
+        self.wheel_trail.push((now, delta));
+        match phase {
+            TouchPhase::Ended => {
+                if let Some(speed) = wheel_speed(&self.wheel_trail)
+                    && self.mode == Mode::Idle
+                {
+                    self.fling = Some(Fling {
+                        at,
+                        speed,
+                        began: now,
+                        elapsed: 0.,
+                    });
+                }
+                self.wheel_trail.clear();
+            }
+            TouchPhase::Cancelled => self.wheel_trail.clear(),
+            _ => {}
+        }
+    }
+
     /// The fling hit the end of what it scrolls: it stops.
     pub(crate) fn stop(&mut self) {
         self.fling = None;
     }
+}
+
+/// A touchpad scroll's speed over its last steps (`SPEED_WINDOW`), in the
+/// scroll's direction; `None` below `STILL`. Each step is the scroll since
+/// the one before, so the first only marks when the span starts.
+#[cfg(target_os = "linux")]
+fn wheel_speed(trail: &[(Instant, (f32, f32))]) -> Option<(f32, f32)> {
+    let ((first, _), (last, _)) = (trail.first()?, trail.last()?);
+    let seconds = last.duration_since(*first).as_secs_f32();
+    if seconds < 0.008 {
+        return None;
+    }
+    let (dx, dy) = trail[1..]
+        .iter()
+        .fold((0., 0.), |(x, y), (_, (dx, dy))| (x + dx, y + dy));
+    let speed = (dx / seconds, dy / seconds);
+    (speed.0.hypot(speed.1) >= STILL).then_some(speed)
 }
 
 /// Whether contact `id` is a pen's (Windows tells; elsewhere a touch).
@@ -371,6 +431,58 @@ mod tests {
                 step => panic!("not a dispatch: {step:?}"),
             })
             .collect()
+    }
+
+    /// A two-finger scroll at 120 Hz, `step` points each, lifting after `n`.
+    #[cfg(target_os = "linux")]
+    fn swipe(touches: &mut Touches, t: Instant, step: f32, n: u64) -> Instant {
+        let at = |i: u64| t + Duration::from_micros(8333 * i);
+        touches.wheel(Started, (50., 50.), (0., step), at(0));
+        for i in 1..n {
+            touches.wheel(Moved, (50., 50.), (0., step), at(i));
+        }
+        // libinput's axis stop: the fingers lift, nothing more scrolled.
+        touches.wheel(Ended, (50., 50.), (0., 0.), at(n));
+        at(n)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_touchpad_flick_coasts_on_and_a_slow_one_does_not() {
+        let mut touches = Touches::default();
+        let lifted = swipe(&mut touches, Instant::now(), 20., 12);
+        assert!(touches.flinging(), "20 points a frame at 120 Hz is a flick");
+        let (_, _, dx, dy) = touches.coast(lifted + Duration::from_millis(16)).unwrap();
+        assert_eq!(dx, 0.);
+        assert!(dy > 20., "on in the scroll's direction, at its speed: {dy}");
+        // It slows, and stops.
+        let (_, _, _, later) = touches.coast(lifted + Duration::from_millis(400)).unwrap();
+        assert!(later > 0.);
+        let mut at = lifted + Duration::from_millis(400);
+        while touches.flinging() {
+            at += Duration::from_millis(16);
+            touches.coast(at);
+            assert!(at < lifted + Duration::from_secs(5), "never stopped");
+        }
+
+        let mut touches = Touches::default();
+        swipe(&mut touches, Instant::now(), 0.2, 12);
+        assert!(!touches.flinging(), "24 points a second only scrolls");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fingers_back_on_the_touchpad_stop_a_fling() {
+        let mut touches = Touches::default();
+        let lifted = swipe(&mut touches, Instant::now(), 20., 12);
+        assert!(touches.flinging());
+        touches.wheel(
+            Started,
+            (50., 50.),
+            (0., 1.),
+            lifted + Duration::from_millis(100),
+        );
+        assert!(!touches.flinging());
     }
 
     #[test]
