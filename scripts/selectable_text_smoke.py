@@ -63,13 +63,19 @@ def main():
                 xdo("windowactivate", "--sync", window)
 
                 def report():
+                    # A report once the input settled: one taken between a
+                    # double click's clicks shows the first's. Two the same in
+                    # a row, both after the input, are the state it left.
                     count = output.read_text().count("SELECTABLE ")
                     deadline = time.monotonic() + 8
-                    while output.read_text().count("SELECTABLE ") <= count:
+                    while True:
+                        rows = re.findall(r'^SELECTABLE (.*)$', output.read_text(), re.MULTILINE)
+                        if len(rows) >= count + 2 and rows[-1] == rows[-2]:
+                            break
                         if time.monotonic() > deadline or app.poll() is not None:
                             raise RuntimeError("selection report timed out: " + output.read_text())
                         time.sleep(.05)
-                    row = re.findall(r'^SELECTABLE (.*)$', output.read_text(), re.MULTILINE)[-1]
+                    row = rows[-1]
                     boxes = dict(re.findall(r'(\w+)=([\d.,-]+) ', row))
                     state = {name: [float(v) for v in value.split(",")] for name, value in boxes.items()}
                     state["text"] = json.loads(row.split(" text=", 1)[1])
