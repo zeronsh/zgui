@@ -1,11 +1,12 @@
 //! Menus opened at the pointer: a secondary click (or a control-click on
-//! macOS) on a view with [`View::context_menu`] builds its entries then and
-//! shows them in a menu where the pointer is (or under the view, with
+//! macOS, or Shift+F10 or the Menu key on what has focus) on a view with
+//! [`View::context_menu`] builds its entries then and shows them in a menu
+//! where the pointer is (under the focused view, from the keyboard) (or under the view, with
 //! [`View::context_menu_below`]), over everything. The innermost view with a
 //! context menu takes the click.
 use crate::{
     compose::{Environment, View, div, menu},
-    input::{EventPhase, InputEvent, PointerButton},
+    input::{EventPhase, InputEvent, Key, Modifiers, PointerButton},
     scene::NodeId,
     style::{Styled, Styles},
     widgets::Ui,
@@ -102,6 +103,25 @@ pub(crate) fn mount(
                 y,
                 button: PointerButton::Primary,
             } if cfg!(target_os = "macos") && cx.pointer_modifiers().control => (x, y),
+            // From the keyboard (Shift+F10, or the Menu key): under what
+            // has focus, at its start.
+            InputEvent::KeyDown {
+                key: Key::ContextMenu,
+                ..
+            }
+            | InputEvent::KeyDown {
+                key: Key::Function(10),
+                modifiers: Modifiers { shift: true, .. },
+                ..
+            } => {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                let scene = ui.scene.borrow();
+                let b = scene.bounds(cx.target);
+                let rtl = scene.direction(cx.target) == crate::scene::Direction::Rtl;
+                (if rtl { b.x + b.width } else { b.x }, b.y + b.height)
+            }
             _ => return,
         };
         let Some(mut ui) = weak.upgrade() else {

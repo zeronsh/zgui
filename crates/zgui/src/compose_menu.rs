@@ -242,7 +242,25 @@ pub(crate) fn mount(
         {
             return;
         }
-        if *key == Key::ArrowLeft && menu.submenu {
+        // A submenu opens towards the line's end: right to left, the left.
+        // The panels are in an overlay; the menu's own trigger says which
+        // way its text runs.
+        let rtl = {
+            let mut root = menu.clone();
+            while let Some(parent) = root.parent.clone() {
+                root = parent;
+            }
+            let scene = ui.scene.borrow();
+            root.trigger
+                .filter(|t| scene.contains(*t))
+                .is_some_and(|t| scene.direction(t) == crate::scene::Direction::Rtl)
+        };
+        let (back, into) = if rtl {
+            (Key::ArrowRight, Key::ArrowLeft)
+        } else {
+            (Key::ArrowLeft, Key::ArrowRight)
+        };
+        if *key == back && menu.submenu {
             menu.open.set(false);
             if let Some(trigger) = menu.trigger {
                 ui.input.focus(&ui.scene, Some(trigger));
@@ -251,7 +269,7 @@ pub(crate) fn mount(
             cx.stop_propagation();
             return;
         }
-        if *key == Key::ArrowRight {
+        if *key == into {
             let child = menu
                 .children
                 .borrow()

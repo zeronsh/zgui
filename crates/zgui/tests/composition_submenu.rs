@@ -103,3 +103,41 @@ fn batched_parent_pointer_handoff_preserves_one_activation_and_full_width_trigge
     assert!(!child.get());
     assert!(ui.input.focus_scope().is_none());
 }
+
+#[test]
+fn right_to_left_the_arrows_open_and_close_submenus_mirrored() {
+    use zgui::input::{Key, Modifiers};
+    let key = |ui: &mut Ui, key: Key| {
+        ui.dispatch(InputEvent::KeyDown {
+            key,
+            modifiers: Modifiers::default(),
+            repeat: false,
+        });
+        ui.prepare_frame();
+    };
+    let mut ui = Ui::new(900., 600.);
+    let root = ui.signal(true);
+    let child = ui.signal(false);
+    let mounted = ui.mount(
+        row().w_full().rtl().child(
+            menu("Actions", root.clone(), button().child(text("Actions")))
+                .w(240.)
+                .child(
+                    submenu("More", child.clone())
+                        .trigger_id("more")
+                        .child(menu_item("Child")),
+                ),
+        ),
+    );
+    ui.prepare_frame();
+    ui.prepare_frame();
+    let more = mounted.find("more").unwrap();
+    ui.input.focus(&ui.scene, Some(more));
+    key(&mut ui, Key::ArrowRight);
+    assert!(!child.get(), "right goes back, right to left");
+    key(&mut ui, Key::ArrowLeft);
+    assert!(child.get(), "left opens it, the way it opens");
+    key(&mut ui, Key::ArrowRight);
+    assert!(!child.get());
+    assert_eq!(ui.input.focused(), Some(more), "back on its trigger");
+}

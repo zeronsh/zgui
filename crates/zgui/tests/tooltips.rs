@@ -112,3 +112,115 @@ fn a_tooltip_waits_for_the_pointer_to_rest_and_an_interactive_card_takes_typing(
         "and closes on Escape"
     );
 }
+
+#[test]
+fn a_tooltip_describes_its_view_and_shows_on_keyboard_focus() {
+    use zgui::{input::PointerButton, semantics::Role};
+    let mut ui = Ui::new(300., 200.);
+    let view = ui.mount(
+        column()
+            .p(60.)
+            .gap(20.)
+            .child(
+                button()
+                    .id("copy")
+                    .size(60., 24.)
+                    .child(text("Copy"))
+                    .tooltip("Copy link"),
+            )
+            .child(button().id("other").size(60., 24.).child(text("Other"))),
+    );
+    ui.prepare_frame();
+    let copy = view.find("copy").unwrap();
+    {
+        let semantics = ui.semantics.borrow();
+        let node = semantics.get(copy).unwrap();
+        assert_eq!(node.role, Role::Button);
+        assert!(!node.hidden, "the view itself stays");
+        assert_eq!(node.description.as_deref(), Some("Copy link"));
+    }
+    // Tabbed to, it shows; tabbed past, it goes.
+    key(&mut ui, Key::Tab);
+    assert_eq!(ui.input.focused(), Some(copy));
+    assert!(showing(&ui, "Copy link"), "shown on keyboard focus");
+    key(&mut ui, Key::Tab);
+    assert!(!showing(&ui, "Copy link"), "gone as focus leaves");
+    // Its tip is not in the accessibility tree: no dialog of its own.
+    key(&mut ui, Key::Tab);
+    key(&mut ui, Key::Tab);
+    let dialogs = ui
+        .semantics
+        .borrow()
+        .iter()
+        .filter(|(_, n)| n.role == Role::Dialog && !n.hidden)
+        .count();
+    assert_eq!(dialogs, 0);
+    // A click focuses it without showing it (the press hides it anyway).
+    let b = ui.scene.borrow().bounds(view.find("other").unwrap());
+    let (x, y) = (b.x + 5., b.y + 5.);
+    ui.dispatch(InputEvent::PointerMove { x, y });
+    let button = PointerButton::Primary;
+    ui.dispatch(InputEvent::PointerDown { x, y, button });
+    ui.dispatch(InputEvent::PointerUp { x, y, button });
+    ui.prepare_frame();
+    assert!(!showing(&ui, "Copy link"));
+}
+
+#[test]
+fn a_popovers_trigger_says_it_opens_a_dialog_and_whether_it_shows() {
+    use zgui::semantics::{PopupKind, Role};
+    let mut ui = Ui::new(400., 300.);
+    let open = ui.signal(false);
+    let view = ui.mount(
+        column().p(20.).child(
+            popover(
+                "Filters",
+                open.clone(),
+                button().id("trigger").size(80., 28.),
+            )
+            .w(200.)
+            .child(text("Panel")),
+        ),
+    );
+    ui.prepare_frame();
+    let trigger = view.find("trigger").unwrap();
+    let state = |ui: &Ui| {
+        let semantics = ui.semantics.borrow();
+        let node = semantics.get(trigger).unwrap();
+        (node.has_popup, node.expanded)
+    };
+    open.set(true);
+    ui.prepare_frame();
+    assert_eq!(state(&ui), (Some(PopupKind::Dialog), Some(true)));
+    let modal = ui
+        .semantics
+        .borrow()
+        .iter()
+        .any(|(_, n)| n.role == Role::Dialog && n.modal);
+    assert!(modal, "it traps focus, so it is modal to assistive technology");
+    open.set(false);
+    ui.prepare_frame();
+    assert_eq!(state(&ui), (Some(PopupKind::Dialog), Some(false)));
+}
+
+#[test]
+fn a_menu_matching_its_trigger_is_as_wide_as_it() {
+    let mut ui = Ui::new(500., 300.);
+    let open = ui.signal(true);
+    let view = ui.mount(
+        column().p(20.).child(
+            menu("Size", open, button().id("trigger").size(220., 28.))
+                .id("menu")
+                .match_anchor_width()
+                .child(menu_item("S")),
+        ),
+    );
+    ui.prepare_frame();
+    ui.prepare_frame();
+    let scene = ui.scene.borrow();
+    let (trigger, panel) = (
+        scene.bounds(view.find("trigger").unwrap()),
+        scene.bounds(view.find("menu").unwrap()),
+    );
+    assert!(panel.width >= trigger.width, "{panel:?} {trigger:?}");
+}

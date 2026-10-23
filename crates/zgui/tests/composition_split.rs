@@ -69,6 +69,16 @@ fn the_divider_drags_the_first_pane_within_its_limits() {
     assert_eq!(size.get(), 110.);
     key(&mut ui, Key::End);
     assert_eq!(size.get(), 400.);
+    // Assistive technology reads its size, range and name.
+    let divider = ui.input.focused().unwrap();
+    let semantics = ui.semantics.borrow();
+    let node = semantics.get(divider).unwrap();
+    assert_eq!(node.role, zgui::semantics::Role::Splitter);
+    assert_eq!(
+        (node.min, node.max, node.numeric_value),
+        (Some(100.), Some(400.), Some(400.))
+    );
+    assert_eq!(node.label, "Resize");
 }
 
 #[test]

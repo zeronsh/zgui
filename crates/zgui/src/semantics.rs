@@ -66,6 +66,37 @@ pub enum Role {
     TabList,
     /// A tab of a `TabList`.
     Tab,
+    /// The panel a `Tab` shows (`role="tabpanel"`).
+    TabPanel,
+    /// One choice of several (`role="radiogroup"`), each a `RadioButton`
+    /// that says whether it is `checked`: a segmented control.
+    RadioGroup,
+    /// A choice of a `RadioGroup`.
+    RadioButton,
+    /// An on and off switch (`role="switch"`), `checked` when on.
+    Switch,
+    /// A number field stepped up and down (`role="spinbutton"`), with
+    /// `min`, `max` and `numeric_value`.
+    SpinButton,
+    /// A field with a list of options to pick from (`role="combobox"`):
+    /// `expanded` while its list shows.
+    ComboBox,
+    /// A hierarchy of items (`role="tree"`).
+    Tree,
+    /// An item of a `Tree`: its `level`, `expanded` when it has children
+    /// shown, and `selected`.
+    TreeItem,
+    /// A table of cells read and moved through by row and column
+    /// (`role="grid"`).
+    Grid,
+    /// A row of a `Grid`.
+    Row,
+    /// A cell of a `Row`.
+    Cell,
+    /// A column's header cell, which may sort it.
+    ColumnHeader,
+    /// A message that matters at once (`role="alert"`, assertively live).
+    Alert,
 }
 /// How a change to a node's text is announced (ARIA's `aria-live`): only
 /// once the reader is idle, or at once, interrupting it.
@@ -154,6 +185,10 @@ pub struct SemanticNode {
     /// Left out of the accessibility tree with its subtree (`aria-hidden`):
     /// decoration, or a copy of what is said elsewhere.
     pub hidden: bool,
+    /// A checkable menu item that is one of a group: a radio item.
+    pub radio: bool,
+    /// The keys that do what it does, as its menu shows them ("⌘C").
+    pub shortcut: Option<String>,
 }
 impl SemanticNode {
     /// A node of `role` named `label`, everything else unset.
@@ -185,6 +220,8 @@ impl SemanticNode {
             live: None,
             description: None,
             hidden: false,
+            radio: false,
+            shortcut: None,
         }
     }
 }

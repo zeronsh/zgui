@@ -57,12 +57,8 @@ fn progress_normalizes_external_values_and_retains_disabled_semantics() {
     let mut ui = Ui::new(500., 200.);
     let value = ui.signal(f32::NAN);
     let mounted = ui.mount(progress("Download", value.clone()).disabled(true));
-    for (input, expected) in [
-        (f32::NAN, 0.),
-        (f32::INFINITY, 1.),
-        (f32::NEG_INFINITY, 0.),
-        (1.5, 1.),
-    ] {
+    // (NaN is indeterminate, below.)
+    for (input, expected) in [(f32::INFINITY, 1.), (f32::NEG_INFINITY, 0.), (1.5, 1.)] {
         value.set(input);
         assert_eq!(value.get(), expected);
         assert_eq!(
@@ -80,4 +76,35 @@ fn progress_normalizes_external_values_and_retains_disabled_semantics() {
     }));
     assert!(bad.is_err());
     assert_eq!(ui.scene.borrow().children(ui.root()), &[mounted.node()]);
+}
+
+#[test]
+fn an_indeterminate_bar_sweeps_a_stretch_and_tells_no_value() {
+    let mut ui = Ui::new(500., 200.);
+    let value = ui.signal(f32::NAN);
+    let mounted = ui.mount(progress("Syncing", value.clone()).w(200.).h(8.).p(0.));
+    ui.prepare_frame();
+    let root = mounted.node();
+    let viewport = ui.scene.borrow().children(root)[0];
+    let fill = ui.scene.borrow().children(viewport)[0];
+    let stretch = ui.scene.borrow().bounds(fill).width;
+    assert!(
+        (stretch - 60.).abs() < 0.01,
+        "a third of the track: {stretch}"
+    );
+    assert!(
+        ui.scene.borrow().transform(fill).x < 0.,
+        "starting off the track"
+    );
+    assert!(value.get().is_nan(), "left indeterminate");
+    assert_eq!(ui.semantics.borrow().get(root).unwrap().numeric_value, None);
+    // A value makes it determinate again.
+    value.set(0.5);
+    ui.prepare_frame();
+    assert_eq!(ui.scene.borrow().bounds(fill).width, 200.);
+    assert_eq!(ui.scene.borrow().transform(fill).x, -100.);
+    assert_eq!(
+        ui.semantics.borrow().get(root).unwrap().numeric_value,
+        Some(0.5)
+    );
 }

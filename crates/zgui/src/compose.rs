@@ -351,9 +351,19 @@ pub(crate) struct Rare {
     layout_target: Option<Signal<Option<NodeId>>>,
     trigger_id: Option<String>,
     menu_trigger: Option<Signal<bool>>,
-    menu_checked: Option<bool>,
+    /// Whether a menu item is checked, followed, and whether it is a radio.
+    menu_check: Option<(Rc<dyn Fn() -> bool>, bool)>,
+    /// The shortcut a menu item shows at its end.
+    shortcut: Option<String>,
     /// A menu item that leaves its menu open (a toggle, a pin).
     menu_keep_open: bool,
+    /// A slider's step (`View::step`).
+    slider_step: Option<f64>,
+    /// A popover at least as wide as its trigger (`match_anchor_width`).
+    match_anchor_width: bool,
+    /// An overlay's panel left out of the accessibility tree (a tooltip's,
+    /// which describes its view instead).
+    panel_hidden: bool,
     accessible_label: Option<String>,
     accessibility: Option<Box<Accessibility>>,
     placeholder: Option<Box<dyn FnMut() -> String>>,
@@ -448,18 +458,72 @@ impl View {
     pub(crate) fn rare_mut(&mut self) -> &mut Rare {
         self.rare.get_or_insert_default()
     }
+    /// What a slider moves by: an arrow key moves one step (Page Up and
+    /// Down, or Shift with an arrow, ten), and dragging lands on steps from
+    /// its start. Without one, an arrow moves a hundredth of its range.
+    pub fn step(mut self, step: f32) -> Self {
+        assert!(
+            matches!(self.kind, Kind::Slider { .. }),
+            "step requires a slider"
+        );
+        assert!(step.is_finite() && step > 0., "a slider's step is positive");
+        self.rare_mut().slider_step = Some(step as f64);
+        self
+    }
+    /// A popover or menu at least as wide as its trigger, as a select's
+    /// list is (Radix's `--radix-popper-anchor-width`).
+    pub fn match_anchor_width(mut self) -> Self {
+        self.rare_mut().match_anchor_width = true;
+        self
+    }
+    /// Leave an overlay's panel out of the accessibility tree.
+    pub(crate) fn panel_hidden(mut self) -> Self {
+        self.rare_mut().panel_hidden = true;
+        self
+    }
     /// Merge `styles` over this view's own (the crate's builders use it).
     pub(crate) fn merge_styles(mut self, styles: &Styles) -> Self {
         self.styles.merge(styles);
         self
     }
     /// Set the controlled checked state of a menu item, including accessibility.
-    pub fn menu_checked(mut self, checked: bool) -> Self {
+    pub fn menu_checked(self, checked: bool) -> Self {
+        self.menu_checked_when(move || checked)
+    }
+    /// A menu item checked while `checked` says so, followed: a check in
+    /// the item's leading gutter, and a checkbox item to assistive
+    /// technology (`menu_radio`: a radio item, a dot).
+    pub fn menu_checked_when(mut self, checked: impl Fn() -> bool + 'static) -> Self {
         assert!(
             matches!(self.kind, Kind::MenuItem(_)),
             "menu_checked requires a menu item"
         );
-        self.rare_mut().menu_checked = Some(checked);
+        let radio = self
+            .rare
+            .as_ref()
+            .and_then(|r| r.menu_check.as_ref())
+            .is_some_and(|c| c.1);
+        self.rare_mut().menu_check = Some((Rc::new(checked), radio));
+        self
+    }
+    /// A checked menu item that is one of a group, chosen alone: a dot
+    /// where a check would be (`menu_checked_when` says which).
+    pub fn menu_radio(mut self) -> Self {
+        assert!(
+            matches!(self.kind, Kind::MenuItem(_)),
+            "menu_radio requires a menu item"
+        );
+        let rare = self.rare_mut();
+        match &mut rare.menu_check {
+            Some(check) => check.1 = true,
+            None => rare.menu_check = Some((Rc::new(|| false), true)),
+        }
+        self
+    }
+    /// The keys that do what a menu item does, shown at its end in the
+    /// tertiary text colour and told to assistive technology ("⌘C").
+    pub fn shortcut(mut self, keys: impl Into<String>) -> Self {
+        self.rare_mut().shortcut = Some(keys.into());
         self
     }
     /// A menu item that leaves its menu open when chosen (a toggle, a pin):
@@ -866,6 +930,29 @@ impl View {
         self.accessibility_mut().selected = Some(Box::new(selected));
         self
     }
+    /// Whether this checkbox, switch or radio is on, followed
+    /// (`aria-checked`). A checked radio is where Tab lands in its group.
+    pub fn checked_when(mut self, checked: impl FnMut() -> bool + 'static) -> Self {
+        self.accessibility_mut().checked = Some(Box::new(checked));
+        self
+    }
+    /// Whether what this control opens shows, followed (`aria-expanded`):
+    /// a disclosure's content, a combobox's list, a tree item's children.
+    pub fn expanded_when(mut self, expanded: impl FnMut() -> bool + 'static) -> Self {
+        self.accessibility_mut().expanded = Some(Box::new(expanded));
+        self
+    }
+    /// A number control's range and value, followed (`aria-valuemin`,
+    /// `aria-valuemax`, `aria-valuenow`): a stepper, a spin button.
+    pub fn numeric_when(
+        mut self,
+        min: f64,
+        max: f64,
+        value: impl FnMut() -> f64 + 'static,
+    ) -> Self {
+        self.accessibility_mut().numeric = Some((min, max, Box::new(value)));
+        self
+    }
     /// Announce changes to the text in this subtree (`aria-live`): a
     /// count, a "Sent" note, a message arriving.
     pub fn live(mut self, live: Live) -> Self {
@@ -892,9 +979,6 @@ impl View {
         self.accessibility_mut().focus_group = Some(axis);
         self
     }
-    /// Run `f` once this view's node and children are mounted, with a handle
-    /// to that node: for code that drives the scene directly, such as an
-    /// animation engine writing transforms each frame.
     /// With nothing focused (and no modal open), keys go to this view and
     /// bubble from it, as a page's go to its body: where an app's shortcuts
     /// listen. The last mounted such view takes them.
@@ -1416,7 +1500,8 @@ pub fn checkbox(label: impl Into<String>, value: Signal<bool>) -> View {
         mixed: None,
     })
 }
-/// A determinate progress indicator. Values normalize to 0..=1 (NaN becomes 0).
+/// A progress indicator: values normalize to 0..=1; NaN is indeterminate
+/// (work of unknown size), a stretch of the fill sweeping across.
 /// The accessible label is not drawn. This leaf owns its clipped fill;
 /// `text_color` controls the fill color and `bg` controls the track.
 pub fn progress(label: impl Into<String>, value: Signal<f32>) -> View {
@@ -2024,6 +2109,7 @@ fn mount_overlay(
             false,
         ),
         Kind::Submenu { label, open } => {
+            dim_when_disabled(&mut view);
             // The app's own trigger row (a menu item with content), or the
             // label with a chevron.
             let trigger = view.rare.as_mut().and_then(|r| r.portal.as_mut());
@@ -2092,12 +2178,50 @@ fn mount_portal(
             }
         });
     }
+    // A button with no click handler of its own.
+    let bare = anchor
+        .as_ref()
+        .is_some_and(|a| a.click.is_none() && matches!(a.kind, Kind::Button));
     let anchor = anchor.map(|anchor| mount(ui, owner, *anchor, environment.clone()));
     if let Some(anchor) = anchor {
         ui.listen_popup_soon(anchor);
     }
+    // A bare button opening a menu (no handlers of its own) is a menu
+    // button, as WAI-ARIA's: a press, Enter, Space or Down opens it, even
+    // before its panel is first built (`lazy`).
+    // Whether its panel is built: until then (`lazy`) nothing else opens
+    // it from a press.
+    let built = Rc::new(Cell::new(false));
+    if let Some(anchor) = anchor.filter(|_| is_menu && !is_submenu && bare) {
+        {
+            let (open, built) = (open.clone(), built.clone());
+            let binding = ui.input.listen(anchor, move |cx| {
+                if cx.phase == EventPhase::Capture || open.with_untracked(|o| *o) {
+                    return;
+                }
+                let opens = match cx.event {
+                    InputEvent::PointerDown {
+                        button: crate::input::PointerButton::Primary,
+                        ..
+                    } => !built.get(),
+                    InputEvent::Activate
+                    | InputEvent::KeyDown {
+                        key: crate::input::Key::ArrowDown,
+                        ..
+                    } => true,
+                    _ => false,
+                };
+                if opens {
+                    cx.prevent_default();
+                    open.set(true);
+                }
+            });
+            ui.retain(anchor, binding);
+        }
+    }
     let options = view.rare.as_ref().and_then(|r| r.portal.as_ref());
     if !options.is_some_and(|p| p.lazy) {
+        built.set(true);
         mount_portal_panel(
             ui,
             owner,
@@ -2124,6 +2248,7 @@ fn mount_portal(
             return;
         }
         let (label, open, view, environment) = pending.take().expect("checked above");
+        built.set(true);
         runtime.untracked(|| {
             mount_portal_panel(
                 &mut ui,
@@ -2154,6 +2279,17 @@ fn mount_portal_panel(
     is_submenu: bool,
 ) {
     let anchored = anchor.is_some();
+    let panel_hidden = view.rare.as_ref().is_some_and(|r| r.panel_hidden);
+    if let Some(anchor) =
+        anchor.filter(|_| view.rare.as_ref().is_some_and(|r| r.match_anchor_width))
+    {
+        let bounds = ui.observe_bounds(anchor);
+        let mut own = view.reactive_style.take();
+        view.reactive_style = Some(Box::new(move || {
+            let styles = own.as_mut().map_or_else(Styles::new, |f| f());
+            styles.min_w(bounds.get().width)
+        }));
+    }
     let portal_parent = environment
         .portal
         .as_ref()
@@ -2164,16 +2300,21 @@ fn mount_portal_panel(
         .map(|(_, visible)| visible.clone());
     let portal = crate::compose_modal::create(ui, owner, portal_parent);
     if !anchored {
-        ui.scene.borrow_mut().set_kind(
-            portal.overlay,
-            NodeKind::Panel {
-                layout: Layout::Overlay,
-                quad: crate::scene::QuadStyle {
-                    fill: crate::scene::Color(0, 0, 0, 130),
-                    ..Default::default()
+        // The theme's backdrop, following it.
+        let (scene, theme, overlay) = (ui.scene.clone(), ui.theme_scope(), portal.overlay);
+        ui.bind(overlay, move || {
+            let fill = theme.color(tok::BACKDROP);
+            scene.borrow_mut().set_kind(
+                overlay,
+                NodeKind::Panel {
+                    layout: Layout::Overlay,
+                    quad: crate::scene::QuadStyle {
+                        fill,
+                        ..Default::default()
+                    },
                 },
-            },
-        );
+            );
+        });
     }
     environment.portal = Some((portal.overlay, portal.visible.clone()));
     let menu_context = is_menu.then(|| {
@@ -2393,6 +2534,7 @@ fn mount_portal_panel(
         }
     }
     let open_signal = open.clone();
+    let popup_open = open.clone();
     crate::compose_modal::activate(
         ui,
         owner,
@@ -2413,6 +2555,24 @@ fn mount_portal_panel(
         autofocus.unwrap_or(true),
         is_layer,
     );
+    // A layer (a toast, a tooltip) traps nothing, so it isn't modal; a
+    // popover traps focus as a dialog does, so it is.
+    ui.semantics.borrow_mut().update(panel, |node| {
+        node.modal = node.modal && !is_layer;
+        node.hidden |= panel_hidden;
+    });
+    // A popover's trigger says it opens a dialog, and whether it shows (a
+    // menu's says so of its menu; a tooltip's says nothing).
+    if let Some(anchor) = anchor.filter(|_| !is_menu && !panel_hidden) {
+        let semantics = ui.semantics.clone();
+        ui.bind(panel, move || {
+            let expanded = popup_open.get();
+            semantics.borrow_mut().update(anchor, |node| {
+                node.has_popup = Some(crate::semantics::PopupKind::Dialog);
+                node.expanded = Some(expanded);
+            });
+        });
+    }
     // A pop-up button's menu opens with its chosen item (`open_over`)
     // highlighted, rather than its first.
     if let Some(item) = over_focus {
@@ -2515,6 +2675,13 @@ impl WidgetStyles {
                 .border_color(tok::BORDER)
                 .border_over(true),
         }
+    }
+}
+/// Dimmed while disabled, as native controls are, unless the view says
+/// how it looks then (`disabled_style`).
+fn dim_when_disabled(view: &mut View) {
+    if view.variants.disabled.is_none() {
+        view.variants.disabled = Some(Box::new(Styles::new().opacity(0.45)));
     }
 }
 fn widget_style(pick: impl FnOnce(&WidgetStyles) -> &Styles) -> Styles {
@@ -2788,6 +2955,7 @@ fn open_element(
         }
         Kind::Container(layout) => ui.container(parent, layout, Default::default()),
         Kind::MenuItem(label) => {
+            dim_when_disabled(&mut view);
             // An item draws its label, unless it brings content of its own
             // (an icon, the label, a shortcut): the label stays its
             // accessible name and what typing finds it by.
@@ -2802,18 +2970,54 @@ fn open_element(
             }
             let root = ui.container(parent, Layout::Row, Default::default());
             let mut semantic = SemanticNode::new(Role::MenuItem, label.clone());
-            semantic.checked = rare.as_deref().and_then(|r| r.menu_checked);
+            let check = rare.as_deref().and_then(|r| r.menu_check.clone());
+            let shortcut = rare.as_deref().and_then(|r| r.shortcut.clone());
+            semantic.checked = check.as_ref().map(|(checked, _)| checked());
+            semantic.radio = check.as_ref().is_some_and(|(_, radio)| *radio);
+            semantic.shortcut = shortcut.clone();
             ui.semantics.borrow_mut().set(root, semantic);
+            if let Some((checked, _)) = &check {
+                let (tree, checked) = (ui.semantics.clone(), checked.clone());
+                ui.bind(root, move || {
+                    let now = checked();
+                    tree.borrow_mut().update(root, |n| n.checked = Some(now));
+                });
+            }
             if view.children.is_empty() {
-                if is_submenu_trigger {
+                // The check (or a radio's dot) in a gutter of its own.
+                if let Some((checked, radio)) = check {
+                    let mark = if radio { "•" } else { "✓" };
+                    view.children.push(
+                        text_signal(move || {
+                            if checked() {
+                                mark.into()
+                            } else {
+                                String::new()
+                            }
+                        })
+                        .w(16.)
+                        .shrink_0()
+                        .accessible_hidden(),
+                    );
+                }
+                if is_submenu_trigger || shortcut.is_some() {
                     view.children.push(text(label).flex_grow(1.));
                 } else {
                     view.children.push(text(label));
+                }
+                if let Some(keys) = shortcut {
+                    view.children.push(
+                        text(keys)
+                            .ml(24.)
+                            .text_color(tok::TEXT_TERTIARY)
+                            .accessible_hidden(),
+                    );
                 }
             }
             root
         }
         Kind::Button => {
+            dim_when_disabled(&mut view);
             let mut defaults = widget_style(|w| &w.button);
             defaults.merge(&view.styles);
             view.styles = defaults;
@@ -2846,10 +3050,7 @@ fn open_element(
             if view.variants.focus.is_none() {
                 view.variants.defaults[2] = Some(focus_ring(&view.styles));
             }
-            // Dimmed while disabled, as a native checkbox is.
-            if view.variants.disabled.is_none() {
-                view.variants.disabled = Some(Box::new(Styles::new().opacity(0.45)));
-            }
+            dim_when_disabled(&mut view);
             let root = ui.container(parent, Layout::Row, Default::default());
             let mut semantics = SemanticNode::new(Role::CheckBox, label.clone());
             semantics.checked = Some(value.get());
@@ -2876,6 +3077,7 @@ fn open_element(
             root
         }
         Kind::Progress { label, value } => {
+            dim_when_disabled(&mut view);
             assert!(view.children.is_empty(), "progress views own their fill");
             let mut defaults = widget_style(|w| &w.progress);
             defaults.merge(&view.styles);
@@ -2893,6 +3095,7 @@ fn open_element(
             value,
             range,
         } => {
+            dim_when_disabled(&mut view);
             assert!(
                 view.children.is_empty(),
                 "slider views own their rail and thumb"
@@ -2908,7 +3111,8 @@ fn open_element(
             semantic.min = Some(*range.start() as f64);
             semantic.max = Some(*range.end() as f64);
             ui.semantics.borrow_mut().set(root, semantic);
-            slider_state = Some((value, range));
+            let step = rare.as_deref().and_then(|r| r.slider_step);
+            slider_state = Some((value, range, step));
             root
         }
         Kind::Editor {
@@ -2916,6 +3120,7 @@ fn open_element(
             value,
             multiline,
         } => {
+            dim_when_disabled(&mut view);
             let mut defaults = widget_style(|w| &w.editor);
             // The default outline is drawn over; a border the app gives
             // takes room, as CSS's does, unless it says otherwise.
@@ -3475,10 +3680,16 @@ fn open_element(
         }
     }
     if let Some(value) = progress_state {
-        mount_progress(ui, root, value, environment.typography.clone());
+        mount_progress(
+            ui,
+            root,
+            value,
+            environment.typography.clone(),
+            environment.services.get::<TaskRunner>(),
+        );
     }
-    if let Some((value, range)) = slider_state {
-        mount_slider(ui, root, value, range, environment.typography.clone());
+    if let Some((value, range, step)) = slider_state {
+        mount_slider(ui, root, value, range, step, environment.typography.clone());
     }
     if let Some(editor) = editor {
         if let Some(mut read_only) = rare.as_deref_mut().and_then(|r| r.read_only.take()) {
@@ -4121,7 +4332,20 @@ fn fitted_image_size(
         (source_height as f64 * scale).min(f32::MAX as f64) as f32,
     )
 }
-fn mount_progress(ui: &mut Ui, root: NodeId, value: Signal<f32>, typography: Signal<Typography>) {
+/// How long an indeterminate bar takes to cross, and how much of the track
+/// it covers.
+const SWEEP: std::time::Duration = std::time::Duration::from_millis(1400);
+const SWEEP_WIDTH: f32 = 0.3;
+/// A progress bar's fill: `value` of its width, or (NaN, "indeterminate")
+/// a stretch of it sweeping across while the work's size is unknown, as
+/// AppKit's and the web's do; still headless (no runner).
+fn mount_progress(
+    ui: &mut Ui,
+    root: NodeId,
+    value: Signal<f32>,
+    typography: Signal<Typography>,
+    runner: Option<Rc<TaskRunner>>,
+) {
     use crate::scene::{Style, Transform};
     let size = ui.observe_content_size(root);
     let viewport = ui.container(
@@ -4140,10 +4364,14 @@ fn mount_progress(ui: &mut Ui, root: NodeId, value: Signal<f32>, typography: Sig
     let theme = ui.theme_scope();
     let scene = ui.scene.clone();
     let semantics = ui.semantics.clone();
+    let sweeping: Rc<RefCell<Option<TaskToken>>> = Rc::default();
+    // Where the sweep is, 0 to 1 across: a task moves it a frame at a time.
+    let phase = ui.signal(0_f32);
     ui.bind(root, move || {
         let raw = value.get();
-        let normalized = if raw.is_nan() { 0. } else { raw.clamp(0., 1.) };
-        if raw != normalized {
+        let indeterminate = raw.is_nan();
+        let normalized = if indeterminate { 0. } else { raw.clamp(0., 1.) };
+        if !indeterminate && raw != normalized {
             value.set(normalized);
         }
         let (width, height) = size.get();
@@ -4160,26 +4388,61 @@ fn mount_progress(ui: &mut Ui, root: NodeId, value: Signal<f32>, typography: Sig
                 ..geometry.clone()
             },
         );
-        scene.set_style(fill, geometry);
         scene.set_kind(
             fill,
             NodeKind::Rect(typography.get().color_in(Some(&theme))),
         );
-        // A translated full-size fill stays clipped to the content viewport.
-        // Value-only updates therefore avoid changing layout dimensions.
-        // Right to left it fills from the right, as a browser's does.
         let rtl = scene.direction(root) == crate::scene::Direction::Rtl;
-        let hidden = width * (1. - normalized);
-        scene.set_transform(
-            fill,
-            Transform {
-                x: if rtl { hidden } else { -hidden },
-                y: 0.,
-            },
-        );
-        semantics
-            .borrow_mut()
-            .update(root, |node| node.numeric_value = Some(normalized as f64));
+        if indeterminate {
+            let stretch = width * SWEEP_WIDTH;
+            scene.set_style(
+                fill,
+                Style {
+                    width: Some(stretch),
+                    ..geometry
+                },
+            );
+            // From the start across, entering and leaving off the track.
+            let t = phase.get();
+            let eased = t * t * (3. - 2. * t);
+            let x = -stretch + eased * (width + stretch);
+            scene.set_transform(
+                fill,
+                Transform {
+                    x: if rtl { width - stretch - x } else { x },
+                    y: 0.,
+                },
+            );
+            if sweeping.borrow().is_none()
+                && let Some(runner) = &runner
+            {
+                let (phase, start) = (phase.clone(), std::time::Instant::now());
+                *sweeping.borrow_mut() = Some(runner.spawn(Box::pin(async move {
+                    loop {
+                        crate::timer::sleep(std::time::Duration::from_millis(16)).await;
+                        let t = (start.elapsed().as_secs_f32() / SWEEP.as_secs_f32()).fract();
+                        phase.set(t);
+                    }
+                })));
+            }
+        } else {
+            sweeping.borrow_mut().take();
+            scene.set_style(fill, geometry);
+            // A translated full-size fill stays clipped to the content
+            // viewport, so value-only updates change no layout. Right to
+            // left it fills from the right, as a browser's does.
+            let hidden = width * (1. - normalized);
+            scene.set_transform(
+                fill,
+                Transform {
+                    x: if rtl { hidden } else { -hidden },
+                    y: 0.,
+                },
+            );
+        }
+        semantics.borrow_mut().update(root, |node| {
+            node.numeric_value = (!indeterminate).then_some(normalized as f64)
+        });
     });
 }
 fn mount_slider(
@@ -4187,6 +4450,7 @@ fn mount_slider(
     root: NodeId,
     value: Signal<f32>,
     range: std::ops::RangeInclusive<f32>,
+    step_size: Option<f64>,
     typography: Signal<Typography>,
 ) {
     use crate::{
@@ -4340,12 +4604,24 @@ fn mount_slider(
                 x as f64 - bounds.x as f64
             };
             let fraction = (from_start / bounds.width as f64).clamp(0., 1.);
-            (min + fraction * span).clamp(min, max) as f32
+            let v = min + fraction * span;
+            // On a step, counting from the start.
+            let v = match step_size {
+                Some(s) => min + ((v - min) / s).round() * s,
+                None => v,
+            };
+            v.clamp(min, max) as f32
         };
         // Left and right go the way it shows (right to left, Left is more).
         let toward_right = if rtl { -1. } else { 1. };
-        let step =
-            |direction: f64| (value.get() as f64 + direction * span / 100.).clamp(min, max) as f32;
+        let unit = step_size.unwrap_or(span / 100.);
+        let big = matches!(&cx.event, InputEvent::KeyDown { modifiers, .. } if modifiers.shift);
+        let step = |direction: f64| {
+            let by = if big { unit * 10. } else { unit };
+            (value.get() as f64 + direction * by).clamp(min, max) as f32
+        };
+        let page =
+            |direction: f64| (value.get() as f64 + direction * unit * 10.).clamp(min, max) as f32;
         let next = match &cx.event {
             InputEvent::SetNumericValue(v) if v.is_finite() => Some(v.clamp(min, max) as f32),
             InputEvent::SetValue(v) => v
@@ -4360,6 +4636,8 @@ fn mount_slider(
                 Key::ArrowRight => Some(step(toward_right)),
                 Key::ArrowDown => Some(step(-1.)),
                 Key::ArrowUp => Some(step(1.)),
+                Key::PageUp => Some(page(1.)),
+                Key::PageDown => Some(page(-1.)),
                 Key::Home => Some(min as f32),
                 Key::End => Some(max as f32),
                 _ => None,
@@ -4400,11 +4678,16 @@ fn mount_slider(
 /// What a view says to assistive technology beyond its name (`View::role`,
 /// `heading`, `selected_when`, `live`, `accessible_description`,
 /// `accessible_hidden`), boxed: most views say none of it.
+/// A number control's value, followed (`View::numeric_when`).
+type NumericValue = Box<dyn FnMut() -> f64>;
 #[derive(Default)]
 pub(crate) struct Accessibility {
     role: Option<Role>,
     level: Option<usize>,
     selected: Option<Box<dyn FnMut() -> bool>>,
+    checked: Option<Box<dyn FnMut() -> bool>>,
+    expanded: Option<Box<dyn FnMut() -> bool>>,
+    numeric: Option<(f64, f64, NumericValue)>,
     live: Option<Live>,
     description: Option<String>,
     hidden: bool,
@@ -4416,6 +4699,9 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
         role,
         level,
         selected,
+        checked,
+        expanded,
+        numeric,
         live,
         description,
         hidden,
@@ -4437,7 +4723,10 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
             let mut pending = scene.children(root).to_vec();
             let mut found = None;
             while let Some(id) = pending.pop() {
-                if semantics.get(id).is_some_and(|n| n.selected == Some(true)) {
+                if semantics.get(id).is_some_and(|n| {
+                    n.selected == Some(true)
+                        || (n.role == Role::RadioButton && n.checked == Some(true))
+                }) {
                     found = Some(id);
                     break;
                 }
@@ -4471,6 +4760,43 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
             tree.borrow_mut().update(root, |node| {
                 node.label = label;
                 node.named = true;
+            });
+        });
+    }
+    if let Some(mut checked) = checked {
+        let tree = ui.semantics.clone();
+        let weak = ui.downgrade();
+        ui.bind(root, move || {
+            let checked = checked();
+            let mut radio = false;
+            tree.borrow_mut().update(root, |node| {
+                node.checked = Some(checked);
+                radio = node.role == Role::RadioButton;
+            });
+            if radio
+                && checked
+                && let Some(ui) = weak.upgrade()
+            {
+                ui.input.set_group_current(&ui.scene.borrow(), root);
+            }
+        });
+    }
+    if let Some(mut expanded) = expanded {
+        let tree = ui.semantics.clone();
+        ui.bind(root, move || {
+            let expanded = expanded();
+            tree.borrow_mut()
+                .update(root, |node| node.expanded = Some(expanded));
+        });
+    }
+    if let Some((min, max, mut value)) = numeric {
+        let tree = ui.semantics.clone();
+        ui.bind(root, move || {
+            let value = value();
+            tree.borrow_mut().update(root, |node| {
+                node.min = Some(min);
+                node.max = Some(max);
+                node.numeric_value = Some(value);
             });
         });
     }
@@ -4803,6 +5129,9 @@ impl Ui {
         mounted
     }
 }
+pub use crate::compose_controls::{
+    StepperOptions, accordion, disclosure, segmented, separator, stepper,
+};
 pub use crate::compose_split::{SplitOptions, split};
 
 /// Common imports for component application code.
@@ -4816,6 +5145,7 @@ pub mod prelude {
     };
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
     pub use super::{SplitOptions, split};
+    pub use super::{StepperOptions, accordion, disclosure, segmented, separator, stepper};
     pub use super::{animated_image, animated_image_controlled, async_image, canvas};
     #[cfg(target_os = "macos")]
     pub use super::{native_surface, native_surface_signal};

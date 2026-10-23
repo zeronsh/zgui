@@ -81,3 +81,43 @@ fn a_menu_below_its_view_opens_under_it_wherever_the_click_was() {
     assert!(b.y >= 48. && b.y < 70., "under the view: {b:?}");
     assert!(b.x >= 50. && b.x < 70., "from its left edge: {b:?}");
 }
+
+#[test]
+fn shift_f10_and_the_menu_key_open_it_under_what_has_focus() {
+    use zgui::input::{Key, Modifiers};
+    let mut ui = Ui::new(400., 300.);
+    let view = ui.mount(
+        div().p(40.).child(
+            button()
+                .id("file")
+                .size(120., 30.)
+                .child(text("Report.pdf"))
+                .context_menu(|_| vec![menu_item("Rename").id("rename")]),
+        ),
+    );
+    ui.prepare_frame();
+    let file = view.find("file").unwrap();
+    ui.input.focus(&ui.scene, Some(file));
+    let press = |ui: &mut Ui, key: Key, shift: bool| {
+        ui.dispatch(InputEvent::KeyDown {
+            key,
+            modifiers: Modifiers {
+                shift,
+                ..Default::default()
+            },
+            repeat: false,
+        });
+        ui.prepare_frame();
+        ui.prepare_frame();
+    };
+    press(&mut ui, Key::Function(10), true);
+    let item = view.find("rename").expect("open from Shift+F10");
+    let (b, at) = {
+        let scene = ui.scene.borrow();
+        (scene.bounds(file), scene.bounds(item))
+    };
+    assert!(at.y >= b.y + b.height, "under the button: {at:?} {b:?}");
+    press(&mut ui, Key::Escape, false);
+    press(&mut ui, Key::ContextMenu, false);
+    assert!(view.find("rename").is_some(), "and from the Menu key");
+}

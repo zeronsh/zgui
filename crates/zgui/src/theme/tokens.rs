@@ -276,6 +276,8 @@ schema! {
     MENU_HOVER: Color = "menu.hover" => "over({menu.bg}, {hover})",
     /// Popovers' and tooltips' panels (modals keep `surface.overlay`).
     POPOVER_BG: Color = "popover.bg" => "{surface.overlay}",
+    /// What a modal dims the window with behind it.
+    BACKDROP: Color = "backdrop" => "#00000082",
     /// Selected text while its window is in the background.
     SELECTION_INACTIVE: Color = "selection.inactive" => "alpha({text.secondary}, 0.25)",
     /// The colour of selected text's glyphs (CSS `::selection { color }`):

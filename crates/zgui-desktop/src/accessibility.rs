@@ -256,6 +256,9 @@ impl AccessibilityTree {
                 n.set_label(semantic.label.clone());
                 semantic.value.as_deref()
             };
+            if let Some(shortcut) = &semantic.shortcut {
+                n.set_keyboard_shortcut(shortcut.clone());
+            }
             if let Some(expanded) = semantic.expanded {
                 n.set_expanded(expanded);
             }
@@ -329,12 +332,22 @@ impl AccessibilityTree {
                     | Role::MenuItem
                     | Role::ListBoxOption
                     | Role::Tab
+                    | Role::RadioButton
+                    | Role::Switch
+                    | Role::TreeItem
+                    | Role::ColumnHeader
             ) {
                 n.add_action(Action::Click);
             }
             if matches!(
                 semantic.role,
-                Role::TextInput | Role::MultilineTextInput | Role::Slider | Role::ScrollBar
+                Role::TextInput
+                    | Role::MultilineTextInput
+                    | Role::Slider
+                    | Role::ScrollBar
+                    | Role::SpinButton
+                    | Role::ComboBox
+                    | Role::Splitter
             ) && !semantic.read_only
             {
                 n.add_action(Action::SetValue);
@@ -350,6 +363,13 @@ impl AccessibilityTree {
                     | Role::Slider
                     | Role::ScrollBar
                     | Role::Splitter
+                    | Role::RadioButton
+                    | Role::Switch
+                    | Role::SpinButton
+                    | Role::ComboBox
+                    | Role::TreeItem
+                    | Role::Cell
+                    | Role::ColumnHeader
                     | Role::ListItem
                     | Role::ListBoxOption
                     | Role::Tab
@@ -597,7 +617,9 @@ fn text_run_data(value: &str, block: bool) -> Option<Vec<TextRunData>> {
 }
 
 fn semantic_role(semantic: &zgui::semantics::SemanticNode) -> accesskit::Role {
-    if semantic.role == Role::MenuItem && semantic.checked.is_some() {
+    if semantic.role == Role::MenuItem && semantic.checked.is_some() && semantic.radio {
+        accesskit::Role::MenuItemRadio
+    } else if semantic.role == Role::MenuItem && semantic.checked.is_some() {
         accesskit::Role::MenuItemCheckBox
     } else {
         role(semantic.role)
@@ -632,6 +654,19 @@ fn role(r: Role) -> accesskit::Role {
         Role::Status => accesskit::Role::Status,
         Role::TabList => accesskit::Role::TabList,
         Role::Tab => accesskit::Role::Tab,
+        Role::TabPanel => accesskit::Role::TabPanel,
+        Role::RadioGroup => accesskit::Role::RadioGroup,
+        Role::RadioButton => accesskit::Role::RadioButton,
+        Role::Switch => accesskit::Role::Switch,
+        Role::SpinButton => accesskit::Role::SpinButton,
+        Role::ComboBox => accesskit::Role::ComboBox,
+        Role::Tree => accesskit::Role::Tree,
+        Role::TreeItem => accesskit::Role::TreeItem,
+        Role::Grid => accesskit::Role::Grid,
+        Role::Row => accesskit::Role::Row,
+        Role::Cell => accesskit::Role::Cell,
+        Role::ColumnHeader => accesskit::Role::ColumnHeader,
+        Role::Alert => accesskit::Role::Alert,
     }
 }
 

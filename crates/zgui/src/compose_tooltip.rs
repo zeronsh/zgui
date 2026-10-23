@@ -25,6 +25,7 @@ pub struct Tooltip {
     content: Content,
     placement: Option<Placement>,
     interactive: bool,
+    delay: Option<Duration>,
 }
 enum Content {
     Text(String),
@@ -41,6 +42,7 @@ impl From<String> for Tooltip {
             content: Content::Text(text),
             placement: None,
             interactive: false,
+            delay: None,
         }
     }
 }
@@ -50,6 +52,7 @@ impl From<View> for Tooltip {
             content: Content::View(Box::new(view)),
             placement: None,
             interactive: false,
+            delay: None,
         }
     }
 }
@@ -64,6 +67,12 @@ impl Tooltip {
     /// typing goes to its fields, and Escape closes it.
     pub fn interactive(mut self, interactive: bool) -> Self {
         self.interactive = interactive;
+        self
+    }
+    /// How long the pointer rests on the view before it shows: 300 ms by
+    /// default, AppKit's; once one shows, the next shows at once.
+    pub fn delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
         self
     }
 }
@@ -149,7 +158,15 @@ fn wrap(anchor: View, tip: Tooltip) -> View {
             content,
             placement,
             interactive,
+            delay,
         } = tip;
+        let delay = delay.unwrap_or(Duration::from_millis(300));
+        // A text tip describes the view to assistive technology, which
+        // doesn't see the tip itself; a view tip is the app's to name.
+        let description = match &content {
+            Content::Text(text) => Some(text.clone()),
+            Content::View(_) => None,
+        };
         let content = match content {
             Content::View(view) => *view,
             Content::Text(text) => crate::compose::column()
@@ -281,8 +298,13 @@ fn wrap(anchor: View, tip: Tooltip) -> View {
                 });
             }
         };
+        let anchor = match description {
+            Some(text) => anchor.accessible_description(text),
+            None => anchor,
+        };
         let anchor = {
             let (leave, over_anchor, ui) = (leave.clone(), over_anchor.clone(), ui.clone());
+            let ui_focus = ui.clone();
             anchor
                 .on_mount(move |handle| {
                     let _ = ui.set(handle.weak_ui());
@@ -309,14 +331,31 @@ fn wrap(anchor: View, tip: Tooltip) -> View {
                             } else {
                                 let set = set.clone();
                                 *waiting.borrow_mut() =
-                                    after(&runner, Duration::from_millis(300), move || {
-                                        set(true, false)
-                                    });
+                                    after(&runner, delay, move || set(true, false));
                             }
                         }
                         InputEvent::PointerLeave if cx.target == cx.current_target => {
                             over_anchor.set(false);
                             leave();
+                        }
+                        // Focused from the keyboard, it shows (as WAI-ARIA's
+                        // tooltip does), and goes as focus leaves; a click's
+                        // focus shows none.
+                        InputEvent::Focus if cx.target == cx.current_target => {
+                            let keyboard = ui_focus
+                                .get()
+                                .and_then(WeakUi::upgrade)
+                                .is_some_and(|ui| ui.input.focus_visible_now());
+                            if keyboard {
+                                waiting.borrow_mut().take();
+                                set(true, false);
+                            }
+                        }
+                        InputEvent::Blur
+                            if cx.target == cx.current_target && !over_anchor.get() =>
+                        {
+                            waiting.borrow_mut().take();
+                            set(false, false);
                         }
                         InputEvent::PointerDown { .. } | InputEvent::Scroll { .. }
                             if !interactive =>
@@ -353,12 +392,18 @@ fn wrap(anchor: View, tip: Tooltip) -> View {
         let content = crate::compose::column()
             .child(content)
             .reactive_style(move || Styles::new().opacity(fade.get()));
-        crate::compose::popover("Tooltip", open, anchor)
+        let panel = crate::compose::popover("Tooltip", open, anchor)
             .layer()
             .lazy()
             .autofocus(false)
             .placement(placement)
             .pointer_events(interactive)
-            .child(content)
+            .child(content);
+        // A plain tip is the view's description, not a dialog of its own.
+        if interactive {
+            panel
+        } else {
+            panel.panel_hidden()
+        }
     })
 }

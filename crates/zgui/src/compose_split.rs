@@ -16,7 +16,7 @@ use std::{
 };
 
 /// How a [`split`] lays out and where its divider stops.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct SplitOptions {
     /// One pane over the other (a divider across), instead of side by side.
     pub vertical: bool,
@@ -30,6 +30,9 @@ pub struct SplitOptions {
     /// The other pane's smallest size: the divider stops short of it, and
     /// a window too small for both shrinks the sized pane down to `min`.
     pub min_rest: f32,
+    /// What assistive technology calls the divider ("Resize" by default):
+    /// "Sidebar width".
+    pub label: Option<String>,
 }
 impl Default for SplitOptions {
     fn default() -> Self {
@@ -39,6 +42,7 @@ impl Default for SplitOptions {
             min: 0.,
             max: f32::INFINITY,
             min_rest: 0.,
+            label: None,
         }
     }
 }
@@ -64,6 +68,7 @@ pub fn split(size: Signal<f32>, options: SplitOptions, first: View, second: View
         min,
         max,
         min_rest,
+        label,
     } = options;
     let max = max.max(min);
     let initial = size.with_untracked(|s| *s);
@@ -124,7 +129,19 @@ pub fn split(size: Signal<f32>, options: SplitOptions, first: View, second: View
             })
             .focusable(true)
             .role(Role::Splitter)
-            .accessible_label("Resize")
+            .accessible_label(label.clone().unwrap_or_else(|| "Resize".into()))
+            .numeric_when(
+                min as f64,
+                if max.is_finite() {
+                    max as f64
+                } else {
+                    f64::MAX
+                },
+                {
+                    let size = size.clone();
+                    move || size.get() as f64
+                },
+            )
             .hover(|s| s.bg(tok::BORDER_STRONG))
             .focus(|s| s.bg(tok::ACCENT))
             .reactive_style(move || {

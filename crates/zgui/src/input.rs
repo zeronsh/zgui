@@ -73,6 +73,8 @@ pub enum Key {
     PageDown,
     /// Insert.
     Insert,
+    /// The Menu (Application) key: opens the focused view's context menu.
+    ContextMenu,
     /// Function key number (native host supplies 1–35).
     Function(u8),
     /// A key that types a character, as the layout makes it (`"a"`, `"A"`).

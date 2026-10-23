@@ -4920,6 +4920,7 @@ fn map_key(key: &WKey) -> Option<Key> {
             NamedKey::PageUp => Key::PageUp,
             NamedKey::PageDown => Key::PageDown,
             NamedKey::Insert => Key::Insert,
+            NamedKey::ContextMenu => Key::ContextMenu,
             NamedKey::F1 => Key::Function(1),
             NamedKey::F2 => Key::Function(2),
             NamedKey::F3 => Key::Function(3),

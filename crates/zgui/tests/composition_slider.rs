@@ -161,3 +161,39 @@ fn slider_value_only_updates_avoid_layout() {
         assert!(!frame.damage.is_empty());
     }
 }
+
+#[test]
+fn a_slider_steps_by_its_step_pages_by_ten_and_drags_onto_steps() {
+    let mut ui = Ui::new(400., 100.);
+    let value = ui.signal(20.);
+    let view = ui.mount(
+        slider("Volume", value.clone(), 0. ..=100.)
+            .step(5.)
+            .w(216.)
+            .px(8.),
+    );
+    ui.prepare_frame();
+    ui.input.focus(&ui.scene, Some(view.node()));
+    key(&mut ui, Key::ArrowRight);
+    assert_eq!(value.get(), 25.);
+    key(&mut ui, Key::PageUp);
+    assert_eq!(value.get(), 75.);
+    ui.dispatch(InputEvent::KeyDown {
+        key: Key::ArrowLeft,
+        modifiers: Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+        repeat: false,
+    });
+    assert_eq!(value.get(), 25.);
+    key(&mut ui, Key::PageDown);
+    assert_eq!(value.get(), 0.);
+    // A press a third of the way along lands on a step.
+    let b = ui.scene.borrow().bounds(view.node());
+    let x = b.x + 8. + 200. * 0.33;
+    down(&mut ui, x, b.y + b.height / 2.);
+    up(&mut ui, x, b.y + b.height / 2.);
+    let v = value.get();
+    assert!(v % 5. == 0. && (25. ..=40.).contains(&v), "{v}");
+}
