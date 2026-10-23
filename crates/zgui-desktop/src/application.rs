@@ -951,9 +951,9 @@ struct Host {
     /// Until when input keeps frames at the display's full rate (`INPUT_FULL_RATE`).
     #[cfg(any(target_os = "macos", windows))]
     input_until: Option<std::time::Instant>,
-    /// Input changed the scene since the last frame: Windows draws it at once
-    /// rather than at the next tick (see `tick`).
-    #[cfg(windows)]
+    /// Input changed the scene since the last frame: drawn at once rather
+    /// than at the next tick (Windows: any input; macOS: typing).
+    #[cfg(any(target_os = "macos", windows))]
     input_arrived: bool,
     present_ready: bool,
     frames: FrameClock,
@@ -1143,7 +1143,7 @@ impl Host {
             frame_paced: false,
             #[cfg(any(target_os = "macos", windows))]
             input_until: None,
-            #[cfg(windows)]
+            #[cfg(any(target_os = "macos", windows))]
             input_arrived: false,
             present_ready: false,
             gpu_stats: crate::gpu_stats::GpuStatsLog::from_env(),
@@ -1206,6 +1206,18 @@ impl Host {
         }
         #[cfg(windows)]
         {
+            self.input_arrived = true;
+        }
+        // macOS: typing draws at once even mid-animation (see `process`);
+        // pointer motion and scrolling keep the refresh's pace.
+        #[cfg(target_os = "macos")]
+        if matches!(
+            event,
+            InputEvent::KeyDown { .. }
+                | InputEvent::Text(_)
+                | InputEvent::ImePreedit { .. }
+                | InputEvent::ImeCommit(_)
+        ) {
             self.input_arrived = true;
         }
         let result = self
@@ -2509,12 +2521,16 @@ impl Host {
         if let Some(caption) = &mut self.caption {
             caption.sync(&mut self.context.ui);
         }
+        // A key typed while frames follow the refresh draws at once: waiting
+        // for the next refresh's frame cost it a refresh (8 ms at 120 Hz)
+        // more than at rest. The newest frame is the one shown.
         #[cfg(target_os = "macos")]
-        let paced = self.vsync_paced
-            || self
-                .display_link
-                .as_ref()
-                .is_some_and(|link| link.running());
+        let paced = !std::mem::take(&mut self.input_arrived)
+            && (self.vsync_paced
+                || self
+                    .display_link
+                    .as_ref()
+                    .is_some_and(|link| link.running()));
         // Input draws at once: presents replace one another until the
         // compositor takes the newest (`present_mode`), so a key typed
         // mid-refresh shows on the next, as it does at rest.
