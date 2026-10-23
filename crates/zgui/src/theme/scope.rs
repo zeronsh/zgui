@@ -253,6 +253,26 @@ struct Shared {
     state: RefCell<State>,
     /// The root theme's name, for what shows it (a theme picker).
     current: Signal<Arc<str>>,
+    /// The system's display settings (`Themes::set_system_preferences`).
+    preferences: Signal<SystemPreferences>,
+}
+
+/// The system's accessibility display settings, as a page's CSS media
+/// queries read them (`prefers-reduced-motion`, `prefers-contrast`,
+/// `prefers-reduced-transparency`). The desktop host reports them
+/// (`Themes::set_system_preferences`) and gives the themes' tokens their
+/// system values: motion durations of zero, stronger borders, opaque glass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SystemPreferences {
+    /// Animation should be kept to a minimum (macOS's Reduce motion,
+    /// Windows' animation effects off).
+    pub reduced_motion: bool,
+    /// Colours should contrast more (macOS's Increase contrast, Windows'
+    /// contrast themes).
+    pub increased_contrast: bool,
+    /// Translucent surfaces should be opaque (macOS's Reduce transparency):
+    /// a backdrop blur paints its background opaque, without the blur.
+    pub reduced_transparency: bool,
 }
 
 /// Token values for a subtree. The root scope is the runtime's theme;
@@ -600,6 +620,7 @@ impl Themes {
                 text_scale: 1.,
             }),
             current: runtime.signal(DARK.into()),
+            preferences: runtime.signal(SystemPreferences::default()),
         });
         let root = ThemeScope::new(shared.clone(), None, ThemeOverride::default());
         Themes { shared, root }
@@ -696,6 +717,14 @@ impl Themes {
     }
     pub fn system_appearance(&self) -> Appearance {
         self.shared.state.borrow().appearance
+    }
+    /// The system's display settings changed (the desktop host calls this).
+    pub fn set_system_preferences(&self, preferences: SystemPreferences) {
+        self.shared.preferences.set(preferences);
+    }
+    /// The system's display settings. Read inside an effect, it follows them.
+    pub fn system_preferences(&self) -> SystemPreferences {
+        self.shared.preferences.get()
     }
     /// The system's text size, as a factor (the desktop host calls this):
     /// Windows' "Text size" (Settings, Accessibility), GNOME's

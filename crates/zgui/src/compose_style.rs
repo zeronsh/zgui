@@ -620,6 +620,9 @@ pub(crate) fn mount_style_with_intrinsic(
     // What re-runs compare against, kept from a node's second run: most
     // nodes are styled once, and each memo costs about 1.2 KB.
     let mut memo: Option<Box<Memo>> = None;
+    // A frosted glass's: whether it last painted opaque (`opaque_glass`).
+    // `None` for a node without a backdrop blur, which never reads it.
+    let mut glass: Option<bool> = None;
     let mut ran = false;
     // Theme tokens in the base and variants resolve in place, each run
     // reading (and so subscribing to) exactly the tokens they use.
@@ -742,7 +745,9 @@ pub(crate) fn mount_style_with_intrinsic(
                 }
                 _ => false,
             };
-            let unchanged = paint.map(|p| p.set()) == last.paint
+            let unchanged = glass.is_none_or(|opaque| {
+                opaque == ui.theme().system_preferences().reduced_transparency
+            }) && paint.map(|p| p.set()) == last.paint
                 && (resized || produced == last.dynamic)
                 && last
                     .parent
@@ -1041,6 +1046,8 @@ pub(crate) fn mount_style_with_intrinsic(
         } else {
             current
         };
+        let (resolved, opaque) = opaque_glass(&ui, resolved, &originals.kind);
+        glass = opaque;
         let inputs = (resolved, current, intrinsic_size, content_layout);
         if memo
             .as_ref()
@@ -1230,6 +1237,30 @@ struct Originals {
 /// (layout, kind and paint), out of line so that the paint-only path every
 /// animation frame takes stays small.
 #[inline(never)]
+/// With the system's transparency reduced, frosted glass paints opaque: no
+/// backdrop blur, and its background solid (a clear one the theme's raised
+/// surface). Only a node with a backdrop blur reads (and follows) the
+/// setting; as a change of its styles, it restyles as any other.
+/// Returns the styles to apply, and for frosted glass whether it is opaque.
+fn opaque_glass(ui: &Ui, mut resolved: Styles, kind: &NodeKind) -> (Styles, Option<bool>) {
+    if !resolved.blur.is_some_and(|sigma| sigma > 0.) {
+        return (resolved, None);
+    }
+    if !ui.theme().system_preferences().reduced_transparency {
+        return (resolved, Some(false));
+    }
+    let fill = resolved.background.unwrap_or(match kind {
+        NodeKind::Panel { quad, .. } => quad.fill,
+        _ => Color(0, 0, 0, 0),
+    });
+    resolved.background = Some(if fill.3 == 0 {
+        ui.theme().root().color(tok::SURFACE_RAISED)
+    } else {
+        Color(fill.0, fill.1, fill.2, 255)
+    });
+    resolved.blur = Some(0.);
+    (resolved, Some(true))
+}
 #[allow(clippy::too_many_arguments)]
 fn apply_resolved(
     ui: &Ui,

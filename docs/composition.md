@@ -193,6 +193,18 @@ the built-in themes only, so an app theme or `theme_scope` that sets these
 tokens keeps its own (`Themes::set_system_tokens`). Windows and Linux keep the
 theme's colours for now.
 
+The system's display settings reach the themes in the same way, reported as
+`Themes::system_preferences()` (`SystemPreferences`, tracked, as CSS's
+`prefers-reduced-motion`, `prefers-contrast` and `prefers-reduced-transparency`).
+On macOS, Reduce motion sets the `motion.duration.*` tokens to zero. Increase
+contrast makes `border.subtle` and `border` as strong as `text.secondary`,
+`border.strong` as `text.primary`, and `text.tertiary` as `text.secondary`.
+Reduce transparency makes `glass.tint` the raised surface and `glass.blur` zero,
+and any view with a backdrop blur paints its background opaque without the blur
+(a clear one gets the raised surface). The host follows changes as they happen
+(`NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`). Windows reports
+its animation and contrast settings with the tokens it already sets.
+
 The highlight paints under the glyphs in the theme's `selection` colour, or
 `selection.inactive` while the window is in the background (desktop hosts call
 `Ui::set_window_active`). It follows layout and reshaping. Removing a selected

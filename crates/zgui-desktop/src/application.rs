@@ -3307,6 +3307,19 @@ impl ApplicationHandler<Event> for WindowManager {
             self.fail(event_loop, e);
             return;
         }
+        // macOS's Reduce motion, Increase contrast or Reduce transparency
+        // changed: every window's themes follow at once.
+        if crate::system_colors::display_options_changed() {
+            for host in self.hosts.values() {
+                crate::system_colors::sync(&host.context.ui);
+            }
+        }
+        // And the scroll bar style: overlay scrollbars come and go with it.
+        if crate::scrollers::style_changed() {
+            for host in self.hosts.values() {
+                crate::scrollers::sync(&host.context.ui);
+            }
+        }
         let closed: Vec<_> = self
             .hosts
             .iter()

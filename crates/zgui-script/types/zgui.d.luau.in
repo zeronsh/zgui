@@ -1440,6 +1440,16 @@ export type ThemeApi = {
 
 declare ui: {
 	theme: ThemeApi,
+	-- The system's display settings, as CSS's media queries read them
+	-- (`prefers-reduced-motion`, `prefers-contrast: more`,
+	-- `prefers-reduced-transparency`): each follows the system (`:get()`
+	-- tracked). The themes' tokens already take them (zero motion
+	-- durations, stronger borders, opaque glass); read them for the rest.
+	prefers: {
+		reduced_motion: Readable<boolean>,
+		more_contrast: Readable<boolean>,
+		reduced_transparency: Readable<boolean>,
+	},
 	-- Call `fn` every `ms` milliseconds on zgui's clock (no frames between);
 	-- returning false stops it. Returns a function that stops it. It lives as
 	-- long as what made it: a component, a builder, or the script.

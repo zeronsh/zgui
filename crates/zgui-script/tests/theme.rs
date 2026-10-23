@@ -320,3 +320,24 @@ fn the_notes_example_keeps_its_look_and_takes_any_theme() {
     assert!(!light.contains(&Color(0xff, 0xff, 0xff, 0xeb)));
     assert_eq!(h.host.error().get(), None);
 }
+
+#[test]
+fn ui_prefers_follows_the_systems_display_settings() {
+    use zgui::theme::SystemPreferences;
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.text { function()
+                local p = ui.prefers
+                return `{p.reduced_motion:get()} {p.more_contrast:get()} {p.reduced_transparency:get()}`
+            end, id = "p" } }"##,
+    );
+    h.frames(2);
+    assert_eq!(h.text("p"), "false false false");
+    h.ui.theme().set_system_preferences(SystemPreferences {
+        reduced_motion: true,
+        increased_contrast: false,
+        reduced_transparency: true,
+    });
+    h.frames(1);
+    assert_eq!(h.text("p"), "true false true", "as the system changes");
+}

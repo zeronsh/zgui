@@ -278,7 +278,30 @@ pub(crate) fn install(lua: &Lua, ui: &Table, dir: Option<PathBuf>) -> mlua::Resu
         })?,
     )?;
     theme.set_readonly(true);
-    ui.set("theme", theme)
+    ui.set("theme", theme)?;
+    // `ui.prefers`: the system's display settings as CSS's media queries
+    // read them, each state that follows the system (`:get()` tracked).
+    let prefers = lua.create_table()?;
+    let runtime = env(lua)?.runtime.clone();
+    let shared = Themes::of(&runtime);
+    type Setting = fn(zgui::theme::SystemPreferences) -> bool;
+    let settings: [(&str, Setting); 3] = [
+        ("reduced_motion", |p| p.reduced_motion),
+        ("more_contrast", |p| p.increased_contrast),
+        ("reduced_transparency", |p| p.reduced_transparency),
+    ];
+    for (name, read) in settings {
+        let initial = runtime.untracked(|| read(shared.system_preferences()));
+        let state = runtime.signal(Value::Bool(initial));
+        let (from, mirror) = (shared.clone(), state.clone());
+        let follow = runtime.effect(move || {
+            mirror.set(Value::Bool(read(from.system_preferences())));
+        });
+        env(lua)?.retained.borrow_mut().push(Box::new(follow));
+        prefers.set(name, crate::value::State(state))?;
+    }
+    prefers.set_readonly(true);
+    ui.set("prefers", prefers)
 }
 
 #[cfg(test)]

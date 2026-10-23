@@ -6,7 +6,7 @@
 //! own; the text size scales the font tokens of every theme.
 use zgui::{
     scene::Color,
-    theme::{TokenId, TokenInput, tok},
+    theme::{SystemPreferences, TokenId, TokenInput, tok},
 };
 
 /// The system's values for theme tokens. Selection colours: macOS's in a key
@@ -261,6 +261,77 @@ fn windows_motion() -> Vec<(TokenId, TokenInput)> {
     still()
 }
 
+/// The system's accessibility display settings (`SystemPreferences`):
+/// macOS's Reduce motion, Increase contrast and Reduce transparency;
+/// Windows' animation effects off and contrast themes; the Linux desktop's
+/// reduced motion and high contrast (`linux_appearance`).
+fn preferences() -> SystemPreferences {
+    #[cfg(target_os = "macos")]
+    {
+        let workspace = objc2_app_kit::NSWorkspace::sharedWorkspace();
+        SystemPreferences {
+            reduced_motion: workspace.accessibilityDisplayShouldReduceMotion(),
+            increased_contrast: workspace.accessibilityDisplayShouldIncreaseContrast(),
+            reduced_transparency: workspace.accessibilityDisplayShouldReduceTransparency(),
+        }
+    }
+    #[cfg(windows)]
+    {
+        SystemPreferences {
+            reduced_motion: !windows_motion().is_empty(),
+            increased_contrast: windows_contrast().is_some(),
+            reduced_transparency: false,
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let settings = crate::linux_appearance::current();
+        SystemPreferences {
+            reduced_motion: settings.reduced_motion,
+            increased_contrast: settings.contrast,
+            reduced_transparency: false,
+        }
+    }
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+    {
+        SystemPreferences::default()
+    }
+}
+
+/// What macOS's display settings make of the themes' tokens. Reduce motion:
+/// motion durations of zero, so what takes them changes at once. Increase
+/// contrast: borders as strong as secondary text and tertiary text as
+/// secondary, as AppKit darkens separators and secondary labels. Reduce
+/// transparency: glass opaque, unblurred. (Windows' come with its own
+/// colours, in `tokens`.)
+#[cfg(target_os = "macos")]
+fn preference_tokens(preferences: SystemPreferences) -> Vec<(TokenId, TokenInput)> {
+    let expr = |text: &str| TokenInput::parse(text).expect("a theme expression");
+    let mut tokens = Vec::new();
+    if preferences.reduced_motion {
+        tokens.extend([
+            (tok::MOTION_DURATION_FAST.0, 0f32.into()),
+            (tok::MOTION_DURATION_NORMAL.0, 0f32.into()),
+            (tok::MOTION_DURATION_SLOW.0, 0f32.into()),
+        ]);
+    }
+    if preferences.increased_contrast {
+        tokens.extend([
+            (tok::BORDER_SUBTLE.0, expr("{text.secondary}")),
+            (tok::BORDER.0, expr("{text.secondary}")),
+            (tok::BORDER_STRONG.0, expr("{text.primary}")),
+            (tok::TEXT_TERTIARY.0, expr("{text.secondary}")),
+        ]);
+    }
+    if preferences.reduced_transparency {
+        tokens.extend([
+            (tok::GLASS_TINT.0, expr("{surface.raised}")),
+            (tok::GLASS_BLUR.0, 0f32.into()),
+        ]);
+    }
+    tokens
+}
+
 /// Read the system's values again and give them to `ui`'s themes: at startup,
 /// and when the system's appearance or settings or the window's activity
 /// change (the user may have picked another accent meanwhile).
@@ -270,7 +341,13 @@ pub(crate) fn sync(ui: &zgui::widgets::Ui) {
     if let Some(scheme) = crate::linux_appearance::current().scheme {
         ui.theme().set_system_appearance(scheme);
     }
-    ui.theme().set_system_tokens(tokens());
+    let preferences = preferences();
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut tokens = tokens();
+    #[cfg(target_os = "macos")]
+    tokens.extend(preference_tokens(preferences));
+    ui.theme().set_system_tokens(tokens);
+    ui.theme().set_system_preferences(preferences);
     #[cfg(windows)]
     ui.theme().set_system_text_scale(windows_text_scale());
     #[cfg(target_os = "linux")]
@@ -286,4 +363,41 @@ fn windows_text_scale() -> f32 {
     UISettings::new()
         .and_then(|settings| settings.TextScaleFactor())
         .map_or(1., |scale| scale as f32)
+}
+
+/// macOS's display settings changed since the last call: the host syncs
+/// every window then. The first call starts listening.
+pub(crate) fn display_options_changed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static CHANGED: AtomicBool = AtomicBool::new(false);
+        static LISTENING: std::sync::Once = std::sync::Once::new();
+        LISTENING.call_once(|| {
+            let center = objc2_app_kit::NSWorkspace::sharedWorkspace().notificationCenter();
+            let block =
+                block2::RcBlock::new(|_: std::ptr::NonNull<objc2_foundation::NSNotification>| {
+                    CHANGED.store(true, Ordering::Relaxed);
+                });
+            // SAFETY: a notification name, no sender filter, delivered on the
+            // posting (main) thread; the block only sets a flag. The
+            // observer lives as long as the app.
+            let observer = unsafe {
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(
+                        objc2_app_kit::NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
+                    ),
+                    None,
+                    None,
+                    &block,
+                )
+            };
+            std::mem::forget(observer);
+        });
+        CHANGED.swap(false, Ordering::Relaxed)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }

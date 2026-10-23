@@ -34,3 +34,39 @@ pub(crate) fn sync(ui: &zgui::widgets::Ui) {
         ui.set_overlay_scrollbars(overlay);
     }
 }
+
+/// macOS's scroll bar style changed since the last call ("Show scroll bars",
+/// or a mouse plugged in under "Automatically"): the host syncs every window
+/// then. The first call starts listening.
+pub(crate) fn style_changed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static CHANGED: AtomicBool = AtomicBool::new(false);
+        static LISTENING: std::sync::Once = std::sync::Once::new();
+        LISTENING.call_once(|| {
+            let center = objc2_foundation::NSNotificationCenter::defaultCenter();
+            let block =
+                block2::RcBlock::new(|_: std::ptr::NonNull<objc2_foundation::NSNotification>| {
+                    CHANGED.store(true, Ordering::Relaxed);
+                });
+            // SAFETY: a notification name, no sender filter, delivered on the
+            // posting (main) thread; the block only sets a flag. The
+            // observer lives as long as the app.
+            let observer = unsafe {
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(objc2_app_kit::NSPreferredScrollerStyleDidChangeNotification),
+                    None,
+                    None,
+                    &block,
+                )
+            };
+            std::mem::forget(observer);
+        });
+        CHANGED.swap(false, Ordering::Relaxed)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}

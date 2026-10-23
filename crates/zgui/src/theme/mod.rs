@@ -39,7 +39,7 @@ pub(crate) use bind::{Bindings, StyleTheme, bind_in, bind_mix, merge, rebound, r
 pub use bind::{Field, Themed};
 pub use file::{Theme, ThemeError, ThemeKind, ThemeOverride, TokenInput};
 pub(crate) use scope::Body;
-pub use scope::{Appearance, DARK, LIGHT, ThemeReader, ThemeScope, Themes};
+pub use scope::{Appearance, DARK, LIGHT, SystemPreferences, ThemeReader, ThemeScope, Themes};
 pub use tokens::{
     ColorToken, FontToken, NumberToken, ShadowToken, TextToken, TokenId, TokenKind, interned,
     lookup, standard, standard_kind, tok, token,
