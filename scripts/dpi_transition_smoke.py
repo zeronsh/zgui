@@ -3,6 +3,7 @@
 from sway_host import wait_for_openbox
 import argparse
 import json
+import math
 import os
 import pathlib
 import re
@@ -80,10 +81,11 @@ def main():
                         raise RuntimeError("native client did not receive fullscreen viewport")
                     time.sleep(.05)
                 def click(x, y):
-                    xdo("mousemove", "--window", window, x * scale, y * scale, "click", 1)
+                    xdo("mousemove", "--window", window, round(x * scale), round(y * scale), "click", 1)
                     time.sleep(.1)
                 stages = []
-                for stage, scale, character in [(1, 1, "A"), (2, 2, "B"), (3, 1, "C")]:
+                # 1.5: fractional scaling, edges between pixels.
+                for stage, scale, character in [(1, 1, "A"), (2, 2, "B"), (3, 1.5, "D"), (4, 1, "C")]:
                     response = ipc("output", output_name, "scale", scale)
                     assert all(item.get("success") for item in response), response
                     time.sleep(.4)
@@ -94,12 +96,17 @@ def main():
                     time.sleep(.15)
                     subprocess.run(["grim", "-o", output_name, str((args.output / f"dpi-{stage}.png").resolve())], env=env, check=True)
                     picture = Image.open(args.output / f"dpi-{stage}.png").convert("RGB")
-                    assert picture.size == (1200, 800), picture.size
+                    # Sway's logical output is whole points: 533 at 1.5 makes 799.
+                    height = int(math.floor(800 / scale) * scale)
+                    assert picture.size == (1200, height), picture.size
                     # Solid editor fill below glyphs and above rounded corners:
                     # one logical border pixel surrounds a 398-pixel interior.
                     fill = [x for x in range(picture.width)
-                            if picture.getpixel((x, 90 * scale)) == (32, 48, 80)]
-                    assert fill == list(range(21 * scale, 419 * scale)), (stage, fill[:3], fill[-3:])
+                            if picture.getpixel((x, round(90 * scale))) == (32, 48, 80)]
+                    # An edge between pixels blends the one it crosses.
+                    first, last = 21 * scale, 419 * scale - 1
+                    assert fill == list(range(fill[0], fill[-1] + 1)), (stage, "gaps", fill[:3], fill[-3:])
+                    assert math.floor(first) <= fill[0] <= math.ceil(first) and math.floor(last) <= fill[-1] <= math.ceil(last), (stage, fill[:3], fill[-3:])
                     click(60, 125)
                     stages.append({"stage": stage, "scale": scale, "output": state,
                                    "screenshot_size": picture.size, "editor_fill_pixel_width": len(fill)})
@@ -108,8 +115,8 @@ def main():
                 raise RuntimeError((args.output / "protocol.log").read_text()[-4000:])
             output = (args.output / "probe.log").read_text()
             reports = [line for line in output.splitlines() if line.startswith("DPI ")]
-            assert len(reports) == 3, output
-            for report, expected_viewport, model in zip(reports, ["(1200.0, 800.0)", "(600.0, 400.0)", "(1200.0, 800.0)"], ["A0123456789", "BA0123456789", "CBA0123456789"]):
+            assert len(reports) == 4, output
+            for report, expected_viewport, model in zip(reports, ["(1200.0, 800.0)", "(600.0, 400.0)", "(800.0, 533.33", "(1200.0, 800.0)"], ["A0123456789", "BA0123456789", "DBA0123456789", "CDBA0123456789"]):
                 assert "viewport=" + expected_viewport in report, report
                 assert 'model="' + model + '"' in report and "selection=1 " in report, report
                 assert "editor=Rect { x: 20.0, y: 54.0, width: 400.0, height: 44.0 }" in report, report
@@ -121,9 +128,9 @@ def main():
             assert len(carets) == 1 and 28 + 8.8 <= min(carets) <= 28 + 10.4, reports
             protocol = (args.output / "protocol.log").read_text()
             scales = re.findall(r"preferred_scale\((\d+)\)", protocol)
-            assert scales == ["120", "240", "120"], scales
+            assert scales == ["120", "240", "180", "120"], scales
             destinations = re.findall(r"set_destination\((\d+), (\d+)\)", protocol)
-            assert destinations[-3:] == [("1200", "800"), ("600", "400"), ("1200", "800")], destinations
+            assert destinations[-4:] == [("1200", "800"), ("600", "400"), ("800", "533"), ("1200", "800")], destinations
             (args.output / "results.json").write_text(json.dumps({"passed": True, "compositor": subprocess.check_output(["sway", "--version"], text=True).strip(), "backend": "native Wayland / owned Sway X11 / Xvfb / pixman", "transitions": stages, "reports": reports, "client_pid": app.pid, "native_scale_notifications": scales}, indent=2) + "\n")
             print("Native live DPI transition checks passed")
         finally:
