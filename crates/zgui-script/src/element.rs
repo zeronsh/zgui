@@ -65,6 +65,8 @@ pub(crate) struct Element {
     compositor_changed: Cell<bool>,
     /// Queued for this frame's flush.
     queued: Cell<bool>,
+    /// Its node went: its selector entries are stale (`Registered`).
+    unregistered: Cell<bool>,
     /// The animation that owns each animated property (`replace`
     /// composition): later animations take a property over.
     pub owners: RefCell<Vec<(crate::anime::Key, crate::anime::engine::Owner)>>,
@@ -106,6 +108,7 @@ impl Element {
             styles_changed: Cell::new(false),
             compositor_changed: Cell::new(false),
             queued: Cell::new(false),
+            unregistered: Cell::new(false),
             owners: RefCell::default(),
             scene: OnceCell::new(),
             listeners: RefCell::default(),
@@ -570,9 +573,36 @@ pub(crate) struct Elements {
     mounted: Cell<bool>,
     wake: RefCell<Option<Rc<dyn Fn()>>>,
     by_node: RefCell<HashMap<NodeId, Weak<Element>>>,
-    ids: RefCell<HashMap<Rc<str>, Vec<Weak<Element>>>>,
-    classes: RefCell<HashMap<Rc<str>, Vec<Weak<Element>>>>,
-    tags: RefCell<HashMap<&'static str, Vec<Weak<Element>>>>,
+    ids: RefCell<HashMap<Rc<str>, Registered>>,
+    classes: RefCell<HashMap<Rc<str>, Registered>>,
+    tags: RefCell<HashMap<&'static str, Registered>>,
+}
+/// The elements under one id, class or kind. An element that unmounts is
+/// counted stale, not searched for: rows sharing a class unmounting together
+/// would each search the list, N² for N rows. The list sheds its stale
+/// entries once they are half of it.
+#[derive(Default)]
+struct Registered {
+    entries: Vec<Weak<Element>>,
+    stale: usize,
+}
+impl Registered {
+    fn live(&self) -> impl Iterator<Item = Rc<Element>> + '_ {
+        self.entries
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|e| !e.unregistered.get())
+    }
+    /// Counts one entry stale; whether the list is now empty.
+    fn unregistered(&mut self) -> bool {
+        self.stale += 1;
+        if self.stale * 2 > self.entries.len() {
+            self.entries
+                .retain(|e| e.upgrade().is_some_and(|e| !e.unregistered.get()));
+            self.stale = 0;
+        }
+        self.entries.is_empty()
+    }
 }
 impl Elements {
     pub fn set_wake(&self, wake: Rc<dyn Fn()>) {
@@ -611,6 +641,7 @@ impl Elements {
                 .borrow_mut()
                 .entry(id.clone())
                 .or_default()
+                .entries
                 .push(weak.clone());
         }
         for class in element.classes.iter() {
@@ -618,12 +649,14 @@ impl Elements {
                 .borrow_mut()
                 .entry(class.clone())
                 .or_default()
+                .entries
                 .push(weak.clone());
         }
         self.tags
             .borrow_mut()
             .entry(element.tag)
             .or_default()
+            .entries
             .push(weak.clone());
         handle.retain(Registration {
             elements: Rc::downgrade(self),
@@ -631,24 +664,19 @@ impl Elements {
         });
     }
     fn unregister(&self, element: &Rc<Element>) {
-        let ptr = Rc::as_ptr(element);
-        let remove = |map: &mut HashMap<_, Vec<Weak<Element>>>, key| {
-            if let Some(list) = map.get_mut(key) {
-                list.retain(|e| e.as_ptr() != ptr && e.strong_count() > 0);
-                if list.is_empty() {
-                    map.remove(key);
-                }
+        element.unregistered.set(true);
+        fn stale<K: std::hash::Hash + Eq>(map: &mut HashMap<K, Registered>, key: &K) {
+            if map.get_mut(key).is_some_and(Registered::unregistered) {
+                map.remove(key);
             }
-        };
+        }
         if let Some(id) = &element.id {
-            remove(&mut self.ids.borrow_mut(), id);
+            stale(&mut self.ids.borrow_mut(), id);
         }
         for class in element.classes.iter() {
-            remove(&mut self.classes.borrow_mut(), class);
+            stale(&mut self.classes.borrow_mut(), class);
         }
-        if let Some(list) = self.tags.borrow_mut().get_mut(element.tag) {
-            list.retain(|e| e.as_ptr() != ptr && e.strong_count() > 0);
-        }
+        stale(&mut self.tags.borrow_mut(), &element.tag);
         if let Some(node) = element.node() {
             self.by_node.borrow_mut().remove(&node);
         }
@@ -657,6 +685,7 @@ impl Elements {
     /// `button`, `*`, comma separated, in document order without repeats.
     pub fn select(&self, selector: &str) -> Vec<Rc<Element>> {
         let mut found: Vec<Rc<Element>> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for part in selector.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             // Compound selectors (`button.primary`) match all their parts.
             let (tag, rest) = match part.find(['#', '.']) {
@@ -677,27 +706,32 @@ impl Elements {
                 }
                 cursor = &cursor[end..];
             }
-            let candidates: Vec<Weak<Element>> = if let Some(id) = ids.first() {
-                self.ids.borrow().get(*id).cloned().unwrap_or_default()
+            let candidates: Vec<Rc<Element>> = if let Some(id) = ids.first() {
+                let ids = self.ids.borrow();
+                ids.get(*id).map_or_else(Vec::new, |r| r.live().collect())
             } else if let Some(class) = classes.first() {
-                self.classes
-                    .borrow()
+                let classes = self.classes.borrow();
+                classes
                     .get(*class)
-                    .cloned()
-                    .unwrap_or_default()
+                    .map_or_else(Vec::new, |r| r.live().collect())
             } else if let Some(tag) = tag.filter(|t| *t != "*") {
-                self.tags.borrow().get(tag).cloned().unwrap_or_default()
+                let tags = self.tags.borrow();
+                tags.get(tag).map_or_else(Vec::new, |r| r.live().collect())
             } else {
-                self.tags.borrow().values().flatten().cloned().collect()
+                self.tags
+                    .borrow()
+                    .values()
+                    .flat_map(Registered::live)
+                    .collect()
             };
-            for element in candidates.iter().filter_map(Weak::upgrade) {
+            for element in candidates {
                 let matches = element.is_mounted()
                     && tag.is_none_or(|t| t == "*" || t == element.tag)
                     && ids.iter().all(|id| element.id.as_deref() == Some(*id))
                     && classes
                         .iter()
                         .all(|c| element.classes.iter().any(|own| &**own == *c));
-                if matches && !found.iter().any(|f| Rc::ptr_eq(f, &element)) {
+                if matches && seen.insert(Rc::as_ptr(&element)) {
                     found.push(element);
                 }
             }
@@ -717,19 +751,22 @@ pub(crate) fn sort_by_document_order(elements: &mut [Rc<Element>]) {
         return;
     };
     let scene = scene.borrow();
-    let path = |element: &Rc<Element>| {
+    // Each node's place among its siblings, a parent's children indexed
+    // once: a thousand rows of one list are not each searched for.
+    let mut places: HashMap<NodeId, usize> = HashMap::new();
+    let mut indexed = std::collections::HashSet::new();
+    let mut path = |element: &Rc<Element>| {
         let mut path = Vec::new();
         let mut node = element.node();
         while let Some(id) = node {
             let parent = scene.parent(id);
             if let Some(parent) = parent {
-                path.push(
-                    scene
-                        .children(parent)
-                        .iter()
-                        .position(|c| *c == id)
-                        .unwrap_or(0),
-                );
+                if indexed.insert(parent) {
+                    for (i, child) in scene.children(parent).iter().enumerate() {
+                        places.insert(*child, i);
+                    }
+                }
+                path.push(places.get(&id).copied().unwrap_or(0));
             }
             node = parent;
         }

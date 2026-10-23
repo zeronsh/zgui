@@ -86,6 +86,34 @@ fn stagger_delays_hold_from_values_until_each_target_starts() {
 }
 
 #[test]
+fn a_selector_finds_only_what_is_still_mounted_after_rows_go() {
+    // Six of eight classed rows go, and the two left are rebuilt: the class
+    // keeps entries for the gone ones until it sheds them in bulk, and a
+    // selector must stagger over the two alone.
+    let mut h = Harness::inline(
+        r##"local ids = ui.state("ids", { "a", "b", "c", "d", "e", "f", "g", "h" })
+        ui.command { id = "trim", run = function() ids:set({ "g", "h" }) end }
+        ui.command { id = "go", run = function()
+            anime.animate(".dot", { opacity = { 0, 1 }, delay = anime.stagger(100), duration = 200, ease = "linear" })
+        end }
+        return ui.row {
+            ui.each(ids, function(id) return ui.div { class = "dot", id = id, w = 4, h = 4 } end),
+        }"##,
+    );
+    h.frame();
+    assert!(h.host.run_command("trim"));
+    h.frame();
+    assert!(h.find("a").is_none() && h.find("g").is_some());
+    assert!(h.host.run_command("go"));
+    h.frame();
+    h.run_ms(150.);
+    // Second of two, 100 ms behind: half the 200 ms tween.
+    let (g, h) = (h.opacity("g"), h.opacity("h"));
+    assert!(h > 0., "the second has started");
+    close((g - h) * 100., 50., "the second is one step behind");
+}
+
+#[test]
 fn loops_alternate_and_end_where_alternation_leaves_them() {
     let mut h = Harness::inline(&script(
         r##"anime.animate("#box", { x = 100, duration = 100, loop = 1, alternate = true, ease = "linear" })"##,
