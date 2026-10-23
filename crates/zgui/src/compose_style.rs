@@ -483,14 +483,17 @@ pub(crate) fn mount_style_with_intrinsic(
         inherited.clone()
     };
     let output = own.then(|| typography.clone());
-    let interaction = ui.signal(Interaction::default());
-    if interactive
+    // Only a node whose style can follow interaction keeps its state: most
+    // styled nodes have no hover, press or focus style and are not
+    // interactive, and a signal and its subscription each cost them.
+    let interaction = (interactive
         || reactive.is_some()
         || variants.hover.is_some()
         || variants.active.is_some()
         || variants.focus.is_some()
-        || defaults.iter().any(Option::is_some)
-    {
+        || defaults.iter().any(Option::is_some))
+    .then(|| ui.signal(Interaction::default()));
+    if let Some(interaction) = &interaction {
         let interaction = interaction.clone();
         // Only a press that shows (or activates) follows the pointer: a
         // view styled on hover alone leaves it to what is under it (a window
@@ -666,7 +669,7 @@ pub(crate) fn mount_style_with_intrinsic(
             swapped = true;
         }
         let mut produced = dynamic.as_mut().map(|dynamic| dynamic());
-        let state = interaction.get();
+        let state = interaction.as_ref().map(Signal::get).unwrap_or_default();
         let is_disabled = disabled.as_mut().is_some_and(|read| read());
         let in_effect = [
             !is_disabled && state.hover,
