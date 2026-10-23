@@ -9,27 +9,46 @@
 //! `drag_state`.
 use super::*;
 use crate::actions::Action;
+/// Which point a drag between nodes is at (see [`DragEvent`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DragPhase {
+    /// It began; sent to the source.
     Start,
+    /// The pointer moved; sent to the source.
     Move,
+    /// The pointer is over a node with listeners, which takes the drag as
+    /// its destination by calling `accept_drag`.
     Over,
+    /// The pointer left the destination, or the drag ended over it; sent to
+    /// the destination.
     Leave,
+    /// The primary button came up over the destination, which takes the
+    /// drop by calling `prevent_default`.
     Drop,
+    /// It ended, dropped or not; sent to the source.
     End,
 }
+/// A drag between nodes, at one of its phases.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DragEvent {
+    /// Which phase.
     pub phase: DragPhase,
+    /// What it carries.
     pub payload: Action,
+    /// The node it started from.
     pub source: NodeId,
+    /// The pointer, across the window.
     pub x: f32,
+    /// The pointer, down the window.
     pub y: f32,
-    /// Pointer position within the source's bounds when the gesture was pressed.
-    /// Subtracting it from `x`/`y` keeps a preview under the original grab point.
+    /// The press's distance from the source's left edge. Subtracting it and
+    /// `grab_y` from `x`/`y` keeps a preview under the original grab point.
     pub grab_x: f32,
+    /// The press's distance from the source's top edge (see `grab_x`).
     pub grab_y: f32,
-    /// True on End only when the accepted destination consumed Drop.
+    /// Whether something took the drop: on `End`, and on the destination's
+    /// final `Leave`. A destination here consumed `Drop`, or another app took
+    /// it.
     pub accepted: bool,
     /// On End: released outside every window of the app (where its host
     /// can tell), as a tab torn off its window is.
@@ -42,8 +61,11 @@ pub struct DragEvent {
 /// as it leaves the window (`View::drag_export`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum DragItem {
+    /// Plain text.
     Text(String),
+    /// A URL.
     Url(String),
+    /// A file, by its path.
     File(std::path::PathBuf),
     /// An encoded image (PNG, JPEG, TIFF).
     Image(Rc<[u8]>),
@@ -51,15 +73,21 @@ pub enum DragItem {
 /// A window's drag, as its host reads it (`InputDispatcher::drag_state`).
 #[derive(Clone, Debug)]
 pub struct DragState {
+    /// What it carries.
     pub payload: Action,
+    /// The node it started from.
     pub source: NodeId,
     /// The pointer, in the window's coordinates.
     pub x: f32,
+    /// The pointer's y, in the window's coordinates.
     pub y: f32,
+    /// The node shown as its preview, if one is set (`set_drag_preview`).
     pub preview: Option<NodeId>,
     /// Where the preview's top-left goes, where a host shows it in a window
     /// of its own (`set_drag_preview_origin`).
     pub preview_origin: Option<(f32, f32)>,
+    /// What it carries to other apps, if its source set any as it started
+    /// (`View::drag_export`).
     pub export: Option<Rc<[DragItem]>>,
     /// Over another window (`set_drag_away`).
     pub away: bool,
@@ -68,8 +96,12 @@ pub struct DragState {
 /// its own slides back to its source when nothing took it).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DragEnded {
+    /// The node it started from.
     pub source: NodeId,
+    /// Its preview node, if it had one.
     pub preview: Option<NodeId>,
+    /// Whether something took it: a destination here took the drop, or
+    /// the host reported another app did (`end_drag_elsewhere`).
     pub accepted: bool,
     /// Released outside the app's windows and taken there by its source
     /// (`View::on_drag_outside`: a tab torn off into a window of its own).
@@ -129,6 +161,7 @@ impl Visit {
     }
 }
 impl InputDispatcher {
+    /// Whether a drag is under way.
     pub fn is_dragging(&self) -> bool {
         self.state.borrow().drag.is_some()
     }
@@ -145,6 +178,7 @@ impl InputDispatcher {
             drag.preview_origin = origin;
         }
     }
+    /// The drag under way, if any.
     pub fn drag_state(&self) -> Option<DragState> {
         self.state.borrow().drag.as_ref().map(|drag| DragState {
             payload: drag.payload.clone(),
@@ -275,9 +309,14 @@ impl InputDispatcher {
         }
         accepted
     }
+    /// End the drag without a drop: the destination hears `Leave`, and the
+    /// source `End`, not accepted.
     pub fn cancel_drag(&self, scene: &Rc<RefCell<Scene>>) {
         self.finish_drag(scene, false);
     }
+    /// Cancel the drag if its source can no longer take input (hidden,
+    /// disabled or outside the modal scope), and let go of a destination
+    /// that can't, which hears `Leave`.
     pub fn validate_drag(&self, scene: &Rc<RefCell<Scene>>) {
         let source = self.state.borrow().drag.as_ref().map(|drag| drag.source);
         if source.is_some_and(|source| !self.enabled(&scene.borrow(), source)) {

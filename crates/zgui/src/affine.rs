@@ -4,11 +4,17 @@ use crate::scene::Rect;
 /// Column-vector affine matrix: `(a*x + c*y + tx, b*x + d*y + ty)`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Affine {
+    /// The new x's factor of x.
     pub a: f32,
+    /// The new y's factor of x.
     pub b: f32,
+    /// The new x's factor of y.
     pub c: f32,
+    /// The new y's factor of y.
     pub d: f32,
+    /// Added to the new x.
     pub tx: f32,
+    /// Added to the new y.
     pub ty: f32,
 }
 impl Default for Affine {
@@ -17,6 +23,7 @@ impl Default for Affine {
     }
 }
 impl Affine {
+    /// Leaves every point where it is.
     pub const IDENTITY: Self = Self {
         a: 1.,
         b: 0.,
@@ -25,6 +32,7 @@ impl Affine {
         tx: 0.,
         ty: 0.,
     };
+    /// Moves points `x` across and `y` down.
     pub fn translation(x: f32, y: f32) -> Self {
         Self {
             tx: x,
@@ -32,6 +40,7 @@ impl Affine {
             ..Self::IDENTITY
         }
     }
+    /// Scales by `x` across and `y` down, about the origin.
     pub fn scale(x: f32, y: f32) -> Self {
         Self {
             a: x,
@@ -62,16 +71,19 @@ impl Affine {
             ty: next.b * self.tx + next.d * self.ty + next.ty,
         }
     }
+    /// `self` about the point `x`, `y` instead of the origin.
     pub fn around(self, x: f32, y: f32) -> Self {
         Self::translation(-x, -y)
             .then(self)
             .then(Self::translation(x, y))
     }
+    /// Whether every component is finite.
     pub fn is_finite(self) -> bool {
         [self.a, self.b, self.c, self.d, self.tx, self.ty]
             .iter()
             .all(|n| n.is_finite())
     }
+    /// Where it moves the point `x`, `y`.
     pub fn point(self, x: f32, y: f32) -> (f32, f32) {
         (
             self.a * x + self.c * y + self.tx,

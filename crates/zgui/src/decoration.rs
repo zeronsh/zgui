@@ -4,14 +4,20 @@ use crate::{
     scene::{BoxShadow, Insets},
 };
 use std::sync::Arc;
+/// A radius for each corner of a box, in logical points.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Corners {
+    /// The top-left corner's.
     pub top_left: f32,
+    /// The top-right corner's.
     pub top_right: f32,
+    /// The bottom-right corner's.
     pub bottom_right: f32,
+    /// The bottom-left corner's.
     pub bottom_left: f32,
 }
 impl Corners {
+    /// The same `radius` at every corner.
     pub fn all(radius: f32) -> Self {
         Self {
             top_left: radius,
@@ -21,21 +27,30 @@ impl Corners {
         }
     }
 }
+/// How a border is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum BorderStyle {
+    /// One unbroken line.
     #[default]
     Solid,
+    /// Dashes `length` long with `gap` between them.
     Dashed {
+        /// Each dash's length, in logical points (above 0).
         length: f32,
+        /// The room between dashes, in logical points (above 0).
         gap: f32,
     },
 }
+/// What fills a box, in place of or over its `fill` colour.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Background {
+    /// A brush: one colour, a gradient or stripes.
     Brush(Brush),
     /// Angle in clockwise radians; endpoints span the allocated box.
     Linear {
+        /// The direction, in radians clockwise from left to right.
         angle: f32,
+        /// The colours along it, in offset order.
         stops: Arc<[GradientStop]>,
     },
     /// An image filling the box as `fit` places it (centred; CSS
@@ -43,7 +58,9 @@ pub enum Background {
     /// box's `fill` colour, cut to its rounded corners, under its border
     /// and children.
     Image {
+        /// The decoded image.
         image: Arc<crate::image::ImageData>,
+        /// How it is fitted to the box.
         fit: crate::style::ObjectFit,
     },
     /// A fragment shader filling the box (see `FillShader`), over its
@@ -86,9 +103,11 @@ impl FillShader {
     pub fn id(&self) -> u64 {
         self.id
     }
+    /// Its WGSL source.
     pub fn source(&self) -> &str {
         &self.source
     }
+    /// The most times a second its time advances; `None`, every frame.
     pub fn fps(&self) -> Option<f32> {
         self.fps
     }
@@ -106,11 +125,18 @@ pub struct ShaderUniforms {
     /// Sixteen user values, as four vec4s.
     pub params: [[f32; 4]; 4],
 }
+/// What a box's plain style can't say: per-corner radii, per-side and
+/// dashed borders, gradient, image and shader backgrounds, more shadows.
+/// Each unset field keeps the plain style's.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Decoration {
+    /// What fills the box; `None`, the style's `fill` colour.
     pub background: Option<Background>,
+    /// Its corner radii; `None`, the style's `radius` at every corner.
     pub corners: Option<Corners>,
+    /// Its border widths; `None`, the style's `border_width` on every side.
     pub border_widths: Option<Insets>,
+    /// Solid or dashed.
     pub border_style: BorderStyle,
     /// Some(empty) explicitly clears all shadows; None inherits the legacy shadow.
     pub shadows: Option<Arc<[BoxShadow]>>,

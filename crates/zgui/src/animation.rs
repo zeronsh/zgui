@@ -1,19 +1,27 @@
 //! Decoded animation data and a monotonic, seekable frame timeline.
 use crate::image::ImageData;
 use std::{num::NonZeroU32, sync::Arc, time::Duration};
+/// How many times an [`Animation`] plays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopCount {
+    /// Forever.
     Infinite,
+    /// This many times, then it holds its last frame.
     Finite(NonZeroU32),
 }
 impl LoopCount {
+    /// Play once.
     pub const ONCE: Self = Self::Finite(NonZeroU32::MIN);
 }
+/// One frame of an [`Animation`].
 #[derive(Clone, Debug)]
 pub struct Frame {
+    /// Its decoded pixels.
     pub image: Arc<ImageData>,
+    /// How long it shows.
     pub duration: Duration,
 }
+/// An animated image's decoded frames and how many times it plays.
 #[derive(Debug)]
 pub struct Animation {
     frames: Arc<[Frame]>,
@@ -22,6 +30,9 @@ pub struct Animation {
     loops: LoopCount,
 }
 impl Animation {
+    /// `frames`, played `loops` times. Errs unless there are 1 to 4096
+    /// frames, all one size, each shown for 10 ms to a day, with at most
+    /// 64 MiB of pixels between them.
     pub fn new(frames: Vec<Frame>, loops: LoopCount) -> Result<Self, &'static str> {
         if frames.is_empty() || frames.len() > 4096 {
             return Err("animation requires 1..=4096 frames");
@@ -57,12 +68,15 @@ impl Animation {
             loops,
         })
     }
+    /// Its frames, in order.
     pub fn frames(&self) -> &[Frame] {
         &self.frames
     }
+    /// How many times it plays.
     pub fn loop_count(&self) -> LoopCount {
         self.loops
     }
+    /// One play through every frame: their durations added up.
     pub fn cycle_duration(&self) -> Duration {
         self.duration
     }

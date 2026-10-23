@@ -49,6 +49,7 @@ impl TextMeasure {
 /// A solid text decoration. An unspecified color uses the run foreground.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Decoration {
+    /// Its colour; `None`, the run's text colour.
     pub color: Option<Color>,
     thickness: f32,
     /// How far below the baseline it sits (CSS `text-underline-offset`);
@@ -56,6 +57,8 @@ pub struct Decoration {
     offset: Option<f32>,
 }
 impl Decoration {
+    /// A decoration `thickness` logical pixels thick (1 unless that is
+    /// finite and positive), in the run's colour.
     pub fn new(thickness: f32) -> Self {
         Self {
             color: None,
@@ -72,13 +75,17 @@ impl Decoration {
         self.offset = px.is_finite().then_some(px);
         self
     }
+    /// How far below the baseline an underline sits (`offset`); `None`, a
+    /// tenth of the font size.
     pub fn offset_px(self) -> Option<f32> {
         self.offset
     }
+    /// Drawn in `color` rather than the run's text colour.
     pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
     }
+    /// Its thickness, in logical pixels.
     pub fn thickness(self) -> f32 {
         self.thickness
     }
@@ -92,12 +99,19 @@ impl Default for Decoration {
 /// One resolved style over a contiguous UTF-8 byte range.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextRun {
+    /// The UTF-8 byte range of the text it styles.
     pub range: Range<usize>,
+    /// Its font: family, weight, italic, line height, spacing and features.
     pub font: FontStyle,
+    /// The font size, in logical pixels (16 by default).
     pub font_size: f32,
+    /// The text colour (white by default).
     pub color: Color,
+    /// A colour behind its text.
     pub background: Option<Color>,
+    /// A line under its text.
     pub underline: Option<Decoration>,
+    /// A line through its text.
     pub strikethrough: Option<Decoration>,
     /// Room around the run, as CSS's inline padding: across, it is added
     /// before and after the run's text (it takes space in the line); both
@@ -149,6 +163,9 @@ pub struct RichText {
     runs: Arc<[TextRun]>,
 }
 impl RichText {
+    /// `text` styled by `runs`. Errs unless the runs cover the text in
+    /// order, each a nonempty range on char boundaries following the last,
+    /// with a finite, positive font size; empty text takes no runs.
     pub fn new(
         text: impl Into<Arc<str>>,
         runs: impl Into<Arc<[TextRun]>>,
@@ -179,10 +196,12 @@ impl RichText {
             options: Default::default(),
         })
     }
+    /// With `options`: how text that doesn't fit ends, and its line clamp.
     pub fn with_options(mut self, options: crate::text_layout::TextOptions) -> Self {
         self.options = options;
         self
     }
+    /// How text that doesn't fit ends, and its line clamp.
     pub fn options(&self) -> crate::text_layout::TextOptions {
         self.options
     }
@@ -209,9 +228,11 @@ impl RichText {
                 .zip(other.runs.iter())
                 .all(|(a, b)| a.range == b.range && a.font == b.font && a.font_size == b.font_size)
     }
+    /// The text.
     pub fn text(&self) -> &str {
         &self.text
     }
+    /// The text, sharing its allocation.
     pub fn text_arc(&self) -> Arc<str> {
         self.text.clone()
     }
@@ -228,6 +249,7 @@ impl RichText {
                     .fold(0usize, usize::saturating_add),
             )
     }
+    /// Its runs, covering the text in order.
     pub fn runs(&self) -> &[TextRun] {
         &self.runs
     }

@@ -2,22 +2,32 @@
 //! All offsets are UTF-8 bytes, clamped to extended grapheme boundaries.
 use std::{collections::VecDeque, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
+/// A text selection, from `anchor` to `focus`; equal, it is a caret.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
+    /// Where it began: the end that stays put as it extends.
     pub anchor: usize,
+    /// Where the caret is: the end that moves.
     pub focus: usize,
 }
 impl Selection {
+    /// From its earlier end to its later.
     pub fn range(self) -> Range<usize> {
         self.anchor.min(self.focus)..self.anchor.max(self.focus)
     }
+    /// Whether it is a caret, selecting nothing.
     pub fn is_empty(self) -> bool {
         self.anchor == self.focus
     }
 }
+/// Text an input method is composing at the caret, not yet part of
+/// the text (IME preedit).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preedit {
+    /// The text being composed.
     pub text: String,
+    /// The caret, or the range the input method selects, in `text`: start
+    /// and end UTF-8 byte offsets. `None` hides the caret.
     pub cursor: Option<(usize, usize)>,
 }
 /// What an edit was, for joining runs of them into one undo step.
@@ -35,6 +45,8 @@ struct Edit {
     before: Selection,
     after: Selection,
 }
+/// A plain-text editing model: the text, its selection, IME preedit
+/// and a bounded undo history.
 pub struct TextEditor {
     text: String,
     selection: Selection,
@@ -56,6 +68,8 @@ impl Default for TextEditor {
     }
 }
 impl TextEditor {
+    /// An editor holding `text`, with the caret at its end. Its history
+    /// keeps 100 steps and 4 MiB of edited text (`set_history_limits`).
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         let end = text.len();
@@ -76,15 +90,19 @@ impl TextEditor {
             run: None,
         }
     }
+    /// The committed text, without any preedit.
     pub fn text(&self) -> &str {
         &self.text
     }
+    /// The selection.
     pub fn selection(&self) -> Selection {
         self.selection
     }
+    /// The selected text.
     pub fn selected_text(&self) -> &str {
         &self.text[self.selection.range()]
     }
+    /// What an input method is composing, if anything.
     pub fn preedit(&self) -> Option<&Preedit> {
         self.preedit.as_ref()
     }
@@ -134,6 +152,8 @@ impl TextEditor {
                 .unwrap_or(0)
         }
     }
+    /// Select from `anchor` to `focus`, each moved back to a grapheme
+    /// boundary. Ends a typing run and cancels any preedit.
     pub fn set_selection(&mut self, anchor: usize, focus: usize) {
         self.run = None;
         self.cancel_preedit();
@@ -142,6 +162,7 @@ impl TextEditor {
             focus: self.boundary(focus),
         };
     }
+    /// Select all the text.
     pub fn select_all(&mut self) {
         self.set_selection(0, self.text.len());
     }
@@ -349,6 +370,9 @@ impl TextEditor {
             self.selection.anchor = self.selection.focus;
         }
     }
+    /// Move the caret back a grapheme, or to the start of a word with
+    /// `word`. `extend` moves only the focus; without it, a selection
+    /// collapses to its start.
     pub fn move_left(&mut self, word: bool, extend: bool) {
         let pos = if !extend && !self.selection.is_empty() {
             self.selection.range().start
@@ -357,6 +381,9 @@ impl TextEditor {
         };
         self.move_to(pos, extend);
     }
+    /// Move the caret forward a grapheme, or to the end of a word with
+    /// `word`. `extend` moves only the focus; without it, a selection
+    /// collapses to its end.
     pub fn move_right(&mut self, word: bool, extend: bool) {
         let pos = if !extend && !self.selection.is_empty() {
             self.selection.range().end
@@ -412,12 +439,16 @@ impl TextEditor {
         });
         self.move_to(pos, extend);
     }
+    /// Move the caret to the start of its line, just after the line break
+    /// before it. `extend` moves only the focus.
     pub fn move_home(&mut self, extend: bool) {
         let pos = self.text[..self.selection.focus]
             .rfind('\n')
             .map_or(0, |i| i + 1);
         self.move_to(pos, extend);
     }
+    /// Move the caret to the end of its line, just before the next line
+    /// break. `extend` moves only the focus.
     pub fn move_end(&mut self, extend: bool) {
         let focus = self.selection.focus;
         let pos = self.text[focus..]
@@ -425,15 +456,24 @@ impl TextEditor {
             .map_or(self.text.len(), |i| focus + i);
         self.move_to(pos, extend);
     }
+    /// Move the caret to the start of the text. `extend` moves only the
+    /// focus.
     pub fn move_document_start(&mut self, extend: bool) {
         self.move_to(0, extend);
     }
+    /// Move the caret to the end of the text. `extend` moves only the
+    /// focus.
     pub fn move_document_end(&mut self, extend: bool) {
         self.move_to(self.text.len(), extend);
     }
+    /// Delete the selection, or the grapheme before the caret. False when
+    /// there was nothing to delete.
     pub fn backspace(&mut self) -> bool {
         self.delete_backward(false)
     }
+    /// Delete the selection, or before the caret: a grapheme, or back to
+    /// the start of a word with `word`. False when there was nothing to
+    /// delete.
     pub fn delete_backward(&mut self, word: bool) -> bool {
         if self.selection.is_empty() {
             let pos = self.previous(word);
@@ -445,9 +485,13 @@ impl TextEditor {
             self.replace("", None)
         }
     }
+    /// Delete the selection, or the grapheme after the caret. False when
+    /// there was nothing to delete.
     pub fn delete_forward(&mut self) -> bool {
         self.delete_next(false)
     }
+    /// Delete the selection, or after the caret: a grapheme, or on to the
+    /// end of a word with `word`. False when there was nothing to delete.
     pub fn delete_next(&mut self, word: bool) -> bool {
         if self.selection.is_empty() {
             let pos = self.next(word);
@@ -519,6 +563,8 @@ impl TextEditor {
         self.replace("", None);
         value
     }
+    /// Undo the last step, restoring the selection from before it. False
+    /// when there is none.
     pub fn undo(&mut self) -> bool {
         self.run = None;
         let Some(edit) = self.undo.pop_back() else {
@@ -540,6 +586,8 @@ impl TextEditor {
         );
         true
     }
+    /// Redo the last undone step, restoring the selection after it. False
+    /// when there is none; any new edit clears what can be redone.
     pub fn redo(&mut self) -> bool {
         self.run = None;
         let Some(edit) = self.redo.pop_back() else {
@@ -584,10 +632,14 @@ impl TextEditor {
         let cursor = cursor.map(|(a, b)| (clamp(a), clamp(b)));
         self.preedit = Some(Preedit { text, cursor });
     }
+    /// Clear the preedit and insert `text`, what the input method
+    /// committed, as typing. False when the text didn't change.
     pub fn commit_preedit(&mut self, text: &str) -> bool {
         self.preedit = None;
         self.insert(text)
     }
+    /// Drop any preedit, advancing `composition_cancel_revision` if there
+    /// was one.
     pub fn cancel_preedit(&mut self) {
         if self.preedit.take().is_some() {
             self.composition_cancel_revision = self.composition_cancel_revision.wrapping_add(1);
