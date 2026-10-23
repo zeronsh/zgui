@@ -179,3 +179,116 @@ fn a_secondary_press_during_a_drag_neither_moves_the_selection_nor_opens_a_menu(
     assert_eq!(after.0, before.0, "the drag keeps its anchor");
     assert!(after.1 > before.1, "and goes on: {before:?} → {after:?}");
 }
+
+/// A checker that knows one misspelling, "teh", and guesses "the".
+#[derive(Default)]
+struct Speller {
+    clipboard: Clipboard,
+    learned: RefCell<Vec<String>>,
+}
+impl zgui::platform::Platform for Speller {
+    fn clipboard_text(&self) -> Option<String> {
+        self.clipboard.clipboard_text()
+    }
+    fn set_clipboard_text(&self, text: String) -> bool {
+        self.clipboard.set_clipboard_text(text)
+    }
+    fn misspellings(&self, text: &str) -> Vec<std::ops::Range<usize>> {
+        text.match_indices("teh")
+            .filter(|_| !self.learned.borrow().iter().any(|w| w == "teh"))
+            .map(|(i, w)| i..i + w.len())
+            .collect()
+    }
+    fn spelling_guesses(&self, word: &str) -> Vec<String> {
+        if word == "teh" {
+            vec!["the".into(), "ten".into()]
+        } else {
+            Vec::new()
+        }
+    }
+    fn learn_spelling(&self, word: &str) {
+        self.learned.borrow_mut().push(word.into());
+    }
+    fn open_files(
+        &self,
+        picker: zgui::platform::FilePicker,
+    ) -> zgui::platform::Pending<Result<Vec<std::path::PathBuf>, String>> {
+        self.clipboard.open_files(picker)
+    }
+    fn save_file(
+        &self,
+        picker: zgui::platform::FilePicker,
+    ) -> zgui::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+        self.clipboard.save_file(picker)
+    }
+}
+
+/// The dotted marks under misspelled words: where each is.
+fn marks(ui: &Ui) -> Vec<zgui::scene::Rect> {
+    let scene = ui.scene.borrow();
+    scene
+        .paint_items()
+        .filter(|item| {
+            matches!(scene.kind(item.id), zgui::scene::NodeKind::Quad(quad)
+            if quad.decoration.as_ref().is_some_and(|d| matches!(
+                d.border_style,
+                zgui::decoration::BorderStyle::Dashed { .. }
+            )))
+        })
+        .map(|item| scene.bounds(item.id))
+        .collect()
+}
+
+#[test]
+fn a_spellchecked_editor_marks_misspellings_and_its_menu_corrects_them() {
+    let mut ui = Ui::new(400., 200.);
+    let speller = Rc::new(Speller::default());
+    let value = ui.signal("fix teh bug".to_owned());
+    let view = ui.mount(provide(
+        zgui::platform::PlatformService(speller.clone()),
+        column().size(400., 200.).child(
+            text_area("Notes", value.clone())
+                .id("field")
+                .spellcheck(true)
+                .w(300.)
+                .h(80.),
+        ),
+    ));
+    ui.prepare_frame();
+    assert_eq!(marks(&ui).len(), 1, "teh is marked");
+    let node = view.find("field").unwrap();
+    let editor = ui.editor(node).unwrap();
+    // In a focused editor, the word being typed is not marked until the
+    // caret leaves it.
+    ui.input.focus(&ui.scene, Some(node));
+    editor.set_selection(7, 7);
+    ui.prepare_frame();
+    assert!(marks(&ui).is_empty());
+    editor.set_selection(0, 0);
+    ui.prepare_frame();
+    assert_eq!(marks(&ui).len(), 1);
+    // A context click on it: the guesses, then the editing items.
+    let on = |ui: &Ui| {
+        let mark = marks(ui)[0];
+        (mark.x + mark.width / 2., mark.y - 6.)
+    };
+    let (x, y) = on(&ui);
+    context_click(&mut ui, x, y);
+    assert!(view.find("spelling-learn").is_some());
+    choose(&mut ui, &view, "spelling-guess-0");
+    assert_eq!(value.get(), "fix the bug", "corrected");
+    assert!(marks(&ui).is_empty(), "and no longer marked");
+    // Learn Spelling: it stays unmarked from then on.
+    editor.set_selection(11, 11);
+    editor.paste(" teh");
+    ui.prepare_frame();
+    assert!(marks(&ui).is_empty(), "still being typed");
+    editor.set_selection(0, 0);
+    ui.prepare_frame();
+    assert_eq!(marks(&ui).len(), 1, "left, it is marked");
+    let (x, y) = on(&ui);
+    context_click(&mut ui, x, y);
+    choose(&mut ui, &view, "spelling-learn");
+    assert!(marks(&ui).is_empty());
+    assert_eq!(*speller.learned.borrow(), ["teh"]);
+}

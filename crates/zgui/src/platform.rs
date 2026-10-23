@@ -32,6 +32,25 @@ pub trait Platform {
         let _ = url;
         false
     }
+    /// The misspelled words in `text`, as UTF-8 byte ranges, by the system's
+    /// spelling checker (`View::spellcheck`). None checks nothing.
+    fn misspellings(&self, text: &str) -> Vec<std::ops::Range<usize>> {
+        let _ = text;
+        Vec::new()
+    }
+    /// The checker's suggestions for misspelled `word`, best first.
+    fn spelling_guesses(&self, word: &str) -> Vec<String> {
+        let _ = word;
+        Vec::new()
+    }
+    /// Add `word` to the user's dictionary (the menu's Learn Spelling).
+    fn learn_spelling(&self, word: &str) {
+        let _ = word;
+    }
+    /// Stop flagging `word` for the rest of the session (Ignore Spelling).
+    fn ignore_spelling(&self, word: &str) {
+        let _ = word;
+    }
     /// Put `text` on the clipboard with `html`, its rich form, where the
     /// platform takes both; plain text alone otherwise.
     fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {

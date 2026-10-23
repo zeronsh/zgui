@@ -56,6 +56,9 @@ struct EditorHint {
     select_on_focus: Cell<bool>,
     /// A password field: its text shows masked and never leaves it.
     secure: Cell<bool>,
+    /// Misspelled words (`View::spellcheck`), as byte ranges: marked with a
+    /// dotted line. Usually none.
+    misspelled: RefCell<Vec<std::ops::Range<usize>>>,
 }
 impl EditorHandle {
     /// The selection as UTF-8 byte offsets into the committed text,
@@ -80,6 +83,31 @@ impl EditorHandle {
         self.refresh();
     }
     /// Select the whole text.
+    /// Mark `ranges` (UTF-8 byte ranges of the text) misspelled.
+    pub(crate) fn set_misspellings(&self, ranges: Vec<std::ops::Range<usize>>) {
+        if *self.hint.misspelled.borrow() == ranges {
+            return;
+        }
+        *self.hint.misspelled.borrow_mut() = ranges;
+        self.refresh();
+    }
+    /// The misspelled word the selection is in (or the caret touches).
+    pub(crate) fn misspelling_at_selection(&self) -> Option<std::ops::Range<usize>> {
+        let (anchor, focus) = self.selection();
+        let (start, end) = (anchor.min(focus), anchor.max(focus));
+        self.hint
+            .misspelled
+            .borrow()
+            .iter()
+            .find(|range| range.start <= start && end <= range.end)
+            .cloned()
+    }
+    pub(crate) fn misspellings(&self) -> Vec<std::ops::Range<usize>> {
+        self.hint.misspelled.borrow().clone()
+    }
+    pub(crate) fn text(&self) -> String {
+        self.editor.borrow().text().to_owned()
+    }
     pub fn select_all(&self) {
         let end = self.editor.borrow().text().len();
         self.set_selection(0, end);
@@ -2018,6 +2046,7 @@ impl Ui {
         self.semantics.borrow_mut().remove(text);
         let preedit_layer = self.container(viewport, Layout::Overlay, Style::default());
         let preedit_nodes = Rc::new(RefCell::new(Vec::new()));
+        let spell_nodes: Rc<RefCell<Vec<NodeId>>> = Rc::new(RefCell::new(Vec::new()));
         let caret = self.rect(
             viewport,
             theme.color_untracked(tok::TEXT_PRIMARY),
@@ -2434,6 +2463,38 @@ impl Ui {
             }
             for (id, (x, y, w)) in underline.iter().zip(lines) {
                 s.set_style(*id, fixed(w, 1.));
+                s.set_transform(*id, Transform { x, y });
+            }
+            drop(underline);
+            // Misspelled words: a dotted line under each, but not under the
+            // word the caret of a focused editor is in (it is being typed).
+            let caret_at =
+                (*focus.borrow() && selection.anchor == selection.focus).then_some(selection.focus);
+            let marks: Vec<_> = draw_hint
+                .misspelled
+                .borrow()
+                .iter()
+                .filter(|range| range.end <= e.text().len())
+                .filter(|range| caret_at.is_none_or(|at| at < range.start || at > range.end))
+                .flat_map(|range| layout.selection(range.clone()))
+                .filter_map(|r| {
+                    let y = r.y + r.height - 2. - scroll.1;
+                    (y >= 0. && y < inner_height).then_some((r.x - scroll.0, y, r.width))
+                })
+                .collect();
+            let mut spelled = spell_nodes.borrow_mut();
+            while spelled.len() > marks.len() {
+                s.remove(spelled.pop().unwrap());
+            }
+            while spelled.len() < marks.len() {
+                spelled.push(s.append(
+                    preedit_layer,
+                    spelling_mark(theme.color_untracked(tok::DANGER)),
+                    Style::default(),
+                ));
+            }
+            for (id, (x, y, w)) in spelled.iter().zip(marks) {
+                s.set_style(*id, fixed(w, 2.));
                 s.set_transform(*id, Transform { x, y });
             }
             let mut semantics = sem.borrow_mut();
@@ -3397,6 +3458,24 @@ impl Ui {
             }
         });
     }
+}
+/// A misspelled word's mark: a dotted line, as macOS draws one.
+fn spelling_mark(color: Color) -> NodeKind {
+    NodeKind::Quad(crate::scene::QuadStyle {
+        border_color: color,
+        decoration: Some(std::sync::Arc::new(crate::decoration::Decoration {
+            border_widths: Some(crate::scene::Insets {
+                bottom: 2.,
+                ..Default::default()
+            }),
+            border_style: crate::decoration::BorderStyle::Dashed {
+                length: 2.,
+                gap: 2.,
+            },
+            ..Default::default()
+        })),
+        ..Default::default()
+    })
 }
 fn surface(theme: &ThemeScope, color: Color) -> NodeKind {
     NodeKind::Quad(crate::scene::QuadStyle {

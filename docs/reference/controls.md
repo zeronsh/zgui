@@ -38,6 +38,7 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 | `placeholder` | `Reactive<string>` | none | shown while the value is empty, never part of it |
 | `placeholder_color` | `Reactive<Color>` | `"#8a9ab0"` | |
 | `select_on_focus` | `boolean` | `false` | focusing selects all the text (an address bar) |
+| `spellcheck` | `boolean` | `false` | check the spelling as it is typed (HTML's `spellcheck`): misspelled words get a dotted line (not the word being typed), and the context menu offers the system checker's guesses, Learn Spelling and Ignore Spelling. Never in a password field |
 | `multiline` | `boolean` | `false` (`textarea`: always) | `input` with several lines |
 | `w`, `h` | `Length` | `240` wide (an intrinsic width), `36` high (`textarea`: `156`) | |
 | `px`, `py` | `Length` | `8`, `6` | |
