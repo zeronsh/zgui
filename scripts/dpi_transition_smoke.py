@@ -114,7 +114,11 @@ def main():
                 assert 'model="' + model + '"' in report and "selection=1 " in report, report
                 assert "editor=Rect { x: 20.0, y: 54.0, width: 400.0, height: 44.0 }" in report, report
                 # The single line is centred in the 44-pixel box: (44 - 23) / 2 below its top.
-                assert "caret=Rect { x: 37.6, y: 64.5, width: 1.0, height: 23.0 }" in report, report
+                assert re.search(r"caret=Rect \{ x: [\d.]+, y: 64\.5, width: 1\.0, height: 23\.0 \}", report), report
+            # One 16px monospace advance (0.55-0.65 em, whichever system face
+            # answers) past the 28px text origin, unmoved by scale changes.
+            carets = {float(re.search(r"caret=Rect \{ x: ([\d.]+)", report)[1]) for report in reports}
+            assert len(carets) == 1 and 28 + 8.8 <= min(carets) <= 28 + 10.4, reports
             protocol = (args.output / "protocol.log").read_text()
             scales = re.findall(r"preferred_scale\((\d+)\)", protocol)
             assert scales == ["120", "240", "120"], scales
