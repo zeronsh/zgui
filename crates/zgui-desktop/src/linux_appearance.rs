@@ -4,7 +4,9 @@
 //! contrast, reduced motion (or GNOME's animations turned off) and GNOME's
 //! text size (`text-scaling-factor`, Large Text in its accessibility
 //! settings), which scales the themes' font tokens, and KDE's wheel lines
-//! (`WheelScrollLines`, how far a wheel notch scrolls). They
+//! (`WheelScrollLines`, how far a wheel notch scrolls), and GNOME's window
+//! buttons (`button-layout`, which an undecorated window's title bar draws).
+//! They
 //! are read at start, before the first window shows, and a thread follows
 //! `SettingChanged`, asleep until one arrives; the event loop then gives them
 //! to every window's themes.
@@ -25,6 +27,7 @@ const PATH: &str = "/org/freedesktop/portal/desktop";
 const SETTINGS: &str = "org.freedesktop.portal.Settings";
 const APPEARANCE: &str = "org.freedesktop.appearance";
 const GNOME: &str = "org.gnome.desktop.interface";
+const GNOME_WM: &str = "org.gnome.desktop.wm.preferences";
 /// kdeglobals' `[KDE]` group, as KDE's portal gives it.
 const KDE: &str = "org.kde.kdeglobals.KDE";
 
@@ -44,6 +47,8 @@ pub(crate) struct Appearance {
     /// The lines a wheel notch scrolls, if the desktop sets them (KDE's
     /// `WheelScrollLines`, 3 by default; GNOME has no such setting).
     pub wheel_lines: Option<u32>,
+    /// Which window buttons go where (GNOME's `button-layout`).
+    pub buttons: Option<crate::window_chrome::ButtonLayout>,
 }
 
 static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
@@ -53,6 +58,7 @@ static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
     reduced_motion: false,
     text_scale: None,
     wheel_lines: None,
+    buttons: None,
 });
 
 /// The settings as last read (the default until the portal answers).
@@ -140,6 +146,7 @@ fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
         (GNOME, "enable-animations"),
         (GNOME, "text-scaling-factor"),
         (KDE, "WheelScrollLines"),
+        (GNOME_WM, "button-layout"),
     ] {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -197,6 +204,11 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
                 .and_then(|lines| u32::try_from(lines).ok())
                 .filter(|&lines| lines > 0)
         }
+        (GNOME_WM, "button-layout") => {
+            appearance.buttons = value
+                .as_str()
+                .map(crate::window_chrome::ButtonLayout::parse)
+        }
         _ => {}
     }
 }
@@ -233,6 +245,16 @@ mod tests {
         assert_eq!(a.scheme, None, "no preference");
         apply(&mut a, APPEARANCE, "contrast", &1u32);
         assert!(a.contrast);
+        apply(
+            &mut a,
+            GNOME_WM,
+            "button-layout",
+            &"appmenu:close".to_owned(),
+        );
+        assert_eq!(
+            a.buttons,
+            Some(crate::window_chrome::ButtonLayout::parse(":close"))
+        );
         apply(&mut a, APPEARANCE, "reduced-motion", &1u32);
         assert!(a.reduced_motion);
         apply(&mut a, GNOME, "enable-animations", &true);

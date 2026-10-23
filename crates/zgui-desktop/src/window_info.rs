@@ -173,6 +173,12 @@ pub(crate) fn attributes(
         use winit::platform::wayland::WindowAttributesExtWayland;
         attrs = attrs.with_name(&id, &id);
     }
+    // Linux: a title bar of the app's own is an undecorated window, as a
+    // GTK header bar's (the rest is `window_chrome`).
+    #[cfg(target_os = "linux")]
+    if options.titlebar != crate::Titlebar::Standard {
+        attrs = attrs.with_decorations(false);
+    }
     // Windows: a title bar of the app's own is a frameless window keeping
     // the frame's shadow (the rest is `window_chrome`).
     #[cfg(windows)]

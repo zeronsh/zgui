@@ -57,6 +57,7 @@ SMOKES = [
     ("primary-selection", "python3 scripts/primary_selection_smoke.py {bin}/primary_selection --output {out}", False),
     ("portal-appearance", "python3 scripts/portal_appearance_smoke.py {bin}/primary_selection --output {out}", False),
     ("native-platform", "python3 scripts/native_platform_smoke.py {bin}/native_platform --output {out}", False),
+    ("window-buttons", "python3 scripts/window_buttons_smoke.py {bin}/glass_counter --output {out}", False),
     ("primary-selection-wayland", "python3 scripts/primary_selection_smoke.py {bin}/primary_selection --wayland --output {out}", False),
     ("event-hooks", "python3 scripts/event_hooks_smoke.py {bin}/event_hooks --output {out}", False),
     ("wrapped-editor", "python3 scripts/wrapped_editor_smoke.py {bin}/wrapped_editor --output {out}", False),

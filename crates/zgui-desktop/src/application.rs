@@ -974,9 +974,14 @@ struct Host {
     frames: FrameClock,
     #[cfg(any(target_os = "macos", windows))]
     display_link: Option<crate::frame_source::DisplayLink>,
-    /// `Titlebar::Inset`'s caption buttons (Windows).
-    #[cfg(windows)]
+    /// `Titlebar::Inset`'s caption buttons (Windows, Linux) and an
+    /// undecorated window's resize bands (Linux).
+    #[cfg(any(windows, target_os = "linux"))]
     caption: Option<crate::window_chrome::CaptionHost>,
+    /// The resize an undecorated window's edge under the pointer would
+    /// start (Linux): content hears nothing there.
+    #[cfg(target_os = "linux")]
+    resize_edge: Option<winit::window::ResizeDirection>,
     /// When the display link last delivered a refresh, aligning `frame_timer`
     /// to its grid: until `VSYNC_RESYNC` later the timer paces frames and the
     /// link (a thread spinning to each refresh) stays stopped.
@@ -1191,8 +1196,10 @@ impl Host {
             frames,
             #[cfg(any(target_os = "macos", windows))]
             display_link: None,
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             caption: None,
+            #[cfg(target_os = "linux")]
+            resize_edge: None,
             #[cfg(target_os = "macos")]
             vsync_synced: None,
             #[cfg(target_os = "macos")]
@@ -1581,6 +1588,9 @@ impl Host {
                 .input
                 .hovered()
                 .is_some_and(|node| self.native.is_native(node));
+        // Over an undecorated window's resize band, the band sets it.
+        #[cfg(target_os = "linux")]
+        let over_native = over_native || self.resize_edge.is_some();
         #[cfg(target_os = "macos")]
         if !std::mem::replace(&mut self.cursor_rects_off, true) {
             crate::native_host::disable_cursor_rects(&window);
@@ -1822,6 +1832,15 @@ impl Host {
                 crate::window_chrome::CaptionHost::new(&window, &self.context.ui, move || {
                     let _ = proxy.send_event(Event::Wake(token));
                 });
+        }
+        #[cfg(target_os = "linux")]
+        {
+            self.caption = crate::window_chrome::CaptionHost::new(
+                &window,
+                &self.context.ui,
+                self.options.titlebar,
+                self.context.window.clone(),
+            );
         }
         self.x11 = window.display_handle().is_ok_and(|handle| {
             matches!(
@@ -2086,6 +2105,38 @@ impl Host {
             WindowCommand::MaxFrameRate(_) => {}
         }
     }
+    /// The pointer at (`x`, `y`): over an undecorated window's resize band
+    /// (Linux), show the resize cursor while the content hears the pointer
+    /// leave. Whether it is over one; none while a press is held.
+    #[cfg(target_os = "linux")]
+    fn resize_band(&mut self, x: f32, y: f32) -> Result<bool, zgui::widgets::LayoutFeedbackError> {
+        let input = &self.context.ui.input;
+        let held = input.captured().is_some() || input.is_dragging();
+        let edge = self
+            .caption
+            .as_ref()
+            .filter(|_| !held)
+            .and_then(|caption| caption.edge(x, y, self.scale_factor));
+        let was = std::mem::replace(&mut self.resize_edge, edge);
+        if was == edge {
+            return Ok(edge.is_some());
+        }
+        if let Some(window) = &self.window {
+            match edge {
+                Some(direction) => {
+                    window.set_cursor(crate::window_chrome::resize_cursor(direction))
+                }
+                // Back on the content: its cursor, at the next frame.
+                None => window.request_redraw(),
+            }
+        }
+        self.native_cursor = None;
+        if was.is_none() {
+            self.dispatch(InputEvent::PointerLeave)?;
+        }
+        Ok(edge.is_some())
+    }
+
     /// A press in a `window_drag` region: move the window, or what a double
     /// click on its title bar does.
     fn window_gesture(
@@ -2181,7 +2232,7 @@ impl Host {
         {
             self.display_link = None;
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         {
             self.caption = None;
         }
@@ -2332,6 +2383,13 @@ impl Host {
                 let p = position.to_logical::<f32>(self.scale_factor);
                 self.cursor = (p.x, p.y);
                 self.pointer_inside = true;
+                // An undecorated window's edge resizes it: the content
+                // hears the pointer leave, and nothing more until it is
+                // back inside the bands.
+                #[cfg(target_os = "linux")]
+                if self.resize_band(p.x, p.y)? {
+                    return Ok(());
+                }
                 // Over a native view taking input zgui hears one leave, then
                 // nothing until the pointer is back (unless a press of
                 // zgui's follows it there).
@@ -2347,6 +2405,10 @@ impl Host {
             }
             WindowEvent::CursorLeft { .. } => {
                 self.pointer_inside = false;
+                #[cfg(target_os = "linux")]
+                {
+                    self.resize_edge = None;
+                }
                 // Outside, others set the cursor: back in, zgui sets its own
                 // again rather than trust what it last set.
                 self.native_cursor = None;
@@ -2381,6 +2443,15 @@ impl Host {
                     MouseButton::Other(n) => PointerButton::Other(n),
                 };
                 let (x, y) = self.cursor;
+                #[cfg(target_os = "linux")]
+                if let Some(direction) = self.resize_edge
+                    && state == ElementState::Pressed
+                    && button == PointerButton::Primary
+                    && let Some(window) = &self.window
+                {
+                    let _ = window.drag_resize_window(direction);
+                    return Ok(());
+                }
                 self.dispatch(if state == ElementState::Pressed {
                     InputEvent::PointerDown { x, y, button }
                 } else {
@@ -2480,6 +2551,10 @@ impl Host {
             }
             WindowEvent::Focused(false) => {
                 zgui_gpu::present_log::log(|| "window-focus false".into());
+                #[cfg(target_os = "linux")]
+                if let Some(caption) = &mut self.caption {
+                    caption.sync(&mut self.context.ui);
+                }
                 self.deactivate()
             }
             WindowEvent::ThemeChanged(appearance) => {
@@ -2504,6 +2579,10 @@ impl Host {
                 self.native_focused = true;
                 self.focus_memory.activate(&self.context.ui);
                 self.context.ui.set_window_active(true);
+                #[cfg(target_os = "linux")]
+                if let Some(caption) = &mut self.caption {
+                    caption.sync(&mut self.context.ui);
+                }
             }
             WindowEvent::Ime(event) => {
                 if self.ime_restart.accepts(&event)
@@ -2679,7 +2758,7 @@ impl Host {
         if self.tasks.has_ready() {
             self.tasks.tick();
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         if let Some(caption) = &mut self.caption {
             caption.sync(&mut self.context.ui);
         }
@@ -3244,8 +3323,13 @@ impl ApplicationHandler<Event> for WindowManager {
             }
             #[cfg(target_os = "linux")]
             Event::AppearanceChanged => {
-                for host in self.hosts.values() {
+                for host in self.hosts.values_mut() {
                     crate::system_colors::sync(&host.context.ui);
+                    // The desktop's window buttons may have moved.
+                    #[cfg(target_os = "linux")]
+                    if let Some(caption) = &mut host.caption {
+                        caption.sync(&mut host.context.ui);
+                    }
                 }
             }
             Event::MenusChanged => {

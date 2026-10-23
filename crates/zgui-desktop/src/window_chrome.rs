@@ -1,10 +1,9 @@
 //! Window chrome from `WindowOptions`: the title bar's style and a frosted
 //! glass behind a translucent window. Applied when the window is made, on
-//! macOS and Windows; elsewhere windows keep their own title bars and draw no
-//! glass.
+//! macOS and Windows; on Linux zgui draws an undecorated window's buttons
+//! and resizes it from its edges, and draws no glass.
 
-/// How a window's title bar looks (macOS and Windows; elsewhere the
-/// platform's own).
+/// How a window's title bar looks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Titlebar {
     /// The platform's title bar.
@@ -15,11 +14,14 @@ pub enum Titlebar {
     /// Electron's `hiddenInset`. Mark the strip `View::window_drag` so it
     /// moves the window. On Windows, zgui draws Windows 11's caption buttons
     /// over the content's top right (46 by 32 points each) and Windows takes
-    /// them for its own: their tooltips, and snap layouts on maximize.
+    /// them for its own: their tooltips, and snap layouts on maximize. On
+    /// Linux the window is undecorated, as a GTK header bar's, and zgui
+    /// draws libadwaita's window buttons over the strip, in the order the
+    /// desktop asks.
     Inset,
     /// None: content fills the window and the window buttons are hidden.
-    /// The window keeps its rounded corners and shadow; on Windows its edges
-    /// resize it (5 points in from them).
+    /// The window keeps its rounded corners and shadow; on Windows and Linux
+    /// its edges resize it (5 points in from them).
     Hidden,
 }
 
@@ -964,6 +966,372 @@ mod win {
                 fit((-1700, 50, 1600, 900), (-1600, 0, 1600, 860), (0, 0)),
                 (-1600, 0, 1600, 860)
             );
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) use linux::{ButtonLayout, CaptionHost, resize_cursor};
+
+#[cfg(target_os = "linux")]
+mod linux {
+    //! Linux title bars, drawn by the app as GTK's header bars are (client
+    //! side). `Titlebar::Hidden` and `Titlebar::Inset` are undecorated
+    //! windows that zgui resizes from bands along their edges (winit's
+    //! `drag_resize_window`: the window manager or compositor moves the
+    //! edge). `Titlebar::Inset` adds the window buttons over the content's
+    //! top corners, in the order and on the side the desktop asks (GNOME's
+    //! `button-layout`, through the settings portal, as GTK 4 reads it),
+    //! looking as libadwaita's: 24-point circles centred in the 40-point
+    //! strip, a faint fill that deepens under the pointer.
+    use std::sync::{Arc, Weak};
+    use winit::window::{CursorIcon, ResizeDirection, Window};
+    use zgui::{
+        compose::prelude::*,
+        reactive::Signal,
+        style::Styled,
+        theme::{Field, tok},
+        widgets::Ui,
+    };
+
+    /// Resize bands inside an undecorated window's edges, in logical pixels:
+    /// it has no frame outside them to take the pointer.
+    const RESIZE_BAND: f32 = 5.;
+    /// Along an edge, how far from a corner the corner's diagonal resize
+    /// reaches, as GTK's: a corner is easier to catch than a 5-point square.
+    const CORNER: f32 = 16.;
+    /// libadwaita's window buttons: circles of this size, this far apart and
+    /// from the window's edge, centred in `Titlebar::Inset`'s strip.
+    const BUTTON: f32 = 24.;
+    const GAP: f32 = 8.;
+    const MARGIN: f32 = 8.;
+    const STRIP: f32 = 40.;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum WindowButton {
+        Minimize,
+        Maximize,
+        Close,
+    }
+
+    /// Which window buttons go on which side, in order.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) struct ButtonLayout {
+        pub left: [Option<WindowButton>; 3],
+        pub right: [Option<WindowButton>; 3],
+    }
+
+    impl Default for ButtonLayout {
+        /// Minimize, maximize and close on the right: KDE's, Ubuntu's and
+        /// most window managers' (GNOME's own asks for close alone).
+        fn default() -> Self {
+            Self {
+                left: [None; 3],
+                right: [
+                    Some(WindowButton::Minimize),
+                    Some(WindowButton::Maximize),
+                    Some(WindowButton::Close),
+                ],
+            }
+        }
+    }
+
+    impl ButtonLayout {
+        /// GNOME's `button-layout` (and GTK's `gtk-decoration-layout`):
+        /// the buttons left of the colon, then right of it, by name
+        /// (`"appmenu:minimize,maximize,close"`); the names zgui draws no
+        /// button for (`appmenu`, `icon`, `spacer`) are left out.
+        pub fn parse(layout: &str) -> Self {
+            let side = |names: &str| {
+                let mut buttons = [None; 3];
+                let mut found = names
+                    .split(',')
+                    .filter_map(|name| match name.trim() {
+                        "minimize" => Some(WindowButton::Minimize),
+                        "maximize" => Some(WindowButton::Maximize),
+                        "close" => Some(WindowButton::Close),
+                        _ => None,
+                    })
+                    .fuse();
+                for slot in &mut buttons {
+                    *slot = found.next();
+                }
+                buttons
+            };
+            let (left, right) = layout.split_once(':').unwrap_or(("", layout));
+            Self {
+                left: side(left),
+                right: side(right),
+            }
+        }
+    }
+
+    /// The edge or corner at (`x`, `y`) of a window `width` by `height`
+    /// points, if the pointer there resizes it.
+    pub(super) fn edge(x: f32, y: f32, width: f32, height: f32) -> Option<ResizeDirection> {
+        let near = |at: f32, size: f32, reach: f32| (at < reach, at >= size - reach);
+        let (left, right) = near(x, width, RESIZE_BAND);
+        let (top, bottom) = near(y, height, RESIZE_BAND);
+        let (corner_x, corner_y) = (near(x, width, CORNER), near(y, height, CORNER));
+        use ResizeDirection::*;
+        Some(match () {
+            _ if (top || left) && corner_x.0 && corner_y.0 => NorthWest,
+            _ if (top || right) && corner_x.1 && corner_y.0 => NorthEast,
+            _ if (bottom || left) && corner_x.0 && corner_y.1 => SouthWest,
+            _ if (bottom || right) && corner_x.1 && corner_y.1 => SouthEast,
+            _ if top => North,
+            _ if bottom => South,
+            _ if left => West,
+            _ if right => East,
+            _ => return None,
+        })
+    }
+
+    /// The cursor a resize toward `direction` shows.
+    pub(crate) fn resize_cursor(direction: ResizeDirection) -> CursorIcon {
+        use ResizeDirection::*;
+        match direction {
+            North => CursorIcon::NResize,
+            South => CursorIcon::SResize,
+            East => CursorIcon::EResize,
+            West => CursorIcon::WResize,
+            NorthEast => CursorIcon::NeResize,
+            NorthWest => CursorIcon::NwResize,
+            SouthEast => CursorIcon::SeResize,
+            SouthWest => CursorIcon::SwResize,
+        }
+    }
+
+    /// An undecorated window's side of its title bar: the window buttons of
+    /// `Titlebar::Inset` over its content (the window's state and the
+    /// desktop's layout follow, a frame after they change), and the resize
+    /// bands along its edges.
+    pub(crate) struct CaptionHost {
+        window: Weak<Window>,
+        close: crate::WindowHandle,
+        buttons: bool,
+        layout: ButtonLayout,
+        maximized: Signal<bool>,
+        active: Signal<bool>,
+        view: Option<zgui::compose::ViewHandle>,
+    }
+
+    impl CaptionHost {
+        /// For a window `titlebar` made undecorated; `None` for a standard
+        /// one, which the platform decorates.
+        pub(crate) fn new(
+            window: &Arc<Window>,
+            ui: &Ui,
+            titlebar: super::Titlebar,
+            close: crate::WindowHandle,
+        ) -> Option<Self> {
+            if titlebar == super::Titlebar::Standard {
+                return None;
+            }
+            Some(Self {
+                window: Arc::downgrade(window),
+                close,
+                buttons: titlebar == super::Titlebar::Inset,
+                layout: ButtonLayout::default(),
+                maximized: ui.signal(false),
+                active: ui.signal(true),
+                view: None,
+            })
+        }
+
+        /// Before a frame and when the window's state changes: bring the
+        /// buttons up to date, and back if the content was rendered again
+        /// over them.
+        pub(crate) fn sync(&mut self, ui: &mut Ui) {
+            if !self.buttons {
+                return;
+            }
+            if let Some(window) = self.window.upgrade() {
+                self.maximized.set(window.is_maximized());
+                self.active.set(window.has_focus());
+            }
+            let layout = crate::linux_appearance::current()
+                .buttons
+                .unwrap_or_default();
+            if layout != self.layout {
+                self.layout = layout;
+                if let Some(view) = self.view.take() {
+                    view.unmount();
+                }
+            }
+            if !self.view.as_ref().is_some_and(|view| view.is_mounted()) {
+                self.view = Some(ui.mount(self.buttons()));
+            }
+        }
+
+        /// The resize the pointer at (`x`, `y`) would start, if any: none
+        /// while the window is maximized, fullscreen or of a fixed size.
+        pub(crate) fn edge(&self, x: f32, y: f32, scale: f64) -> Option<ResizeDirection> {
+            let window = self.window.upgrade()?;
+            if !window.is_resizable() || window.is_maximized() || window.fullscreen().is_some() {
+                return None;
+            }
+            let size = window.inner_size().to_logical::<f32>(scale);
+            edge(x, y, size.width, size.height)
+        }
+
+        fn buttons(&self) -> View {
+            let side = |buttons: [Option<WindowButton>; 3], right: bool| {
+                let strip = row()
+                    .absolute()
+                    .top((STRIP - BUTTON) / 2.)
+                    .gap(GAP)
+                    .children(buttons.into_iter().flatten().map(|kind| self.button(kind)));
+                if right {
+                    strip.right(MARGIN)
+                } else {
+                    strip.left(MARGIN)
+                }
+            };
+            div()
+                .absolute()
+                .top(0.)
+                .left(0.)
+                .w_full()
+                .h(STRIP)
+                .pointer_events(false)
+                .child(side(self.layout.left, false))
+                .child(side(self.layout.right, true))
+        }
+
+        fn button(&self, kind: WindowButton) -> View {
+            let window = self.window.clone();
+            let close = self.close.clone();
+            let maximized = self.maximized.clone();
+            // libadwaita's: the text colour at 10% over what is behind,
+            // 15% under the pointer, 30% pressed (mixed into the window's
+            // background, where these sit).
+            let fill = |t: f32| {
+                move |s: Styles| {
+                    s.token_mix(Field::Background, tok::BACKGROUND, tok::TEXT_PRIMARY, t)
+                }
+            };
+            button()
+                .size(BUTTON, BUTTON)
+                .p(0.)
+                .border(0.)
+                .rounded(BUTTON / 2.)
+                .items_center()
+                .justify_center()
+                .shadow_none()
+                .focusable(false)
+                .pointer_events(true)
+                .token_mix(Field::Background, tok::BACKGROUND, tok::TEXT_PRIMARY, 0.1)
+                .hover(fill(0.15))
+                .active(fill(0.3))
+                .accessible_label(match kind {
+                    WindowButton::Minimize => "Minimize",
+                    WindowButton::Maximize => "Maximize",
+                    WindowButton::Close => "Close",
+                })
+                .on_click(move || {
+                    let Some(window) = window.upgrade() else {
+                        return;
+                    };
+                    match kind {
+                        WindowButton::Minimize => window.set_minimized(true),
+                        WindowButton::Maximize => window.set_maximized(!window.is_maximized()),
+                        // As the window manager's close: the app may refuse.
+                        WindowButton::Close => close.request_close(),
+                    }
+                })
+                .child(self.glyph(kind, maximized))
+        }
+
+        /// The button's symbol, drawn in the text colour (dimmer while the
+        /// window is in the back), as Adwaita's symbolic icons.
+        fn glyph(&self, kind: WindowButton, maximized: Signal<bool>) -> View {
+            let active = self.active.clone();
+            let ink = move |s: Styles| {
+                s.bg(if active.get() {
+                    tok::TEXT_PRIMARY
+                } else {
+                    tok::TEXT_TERTIARY
+                })
+            };
+            let bar = |w: f32, h: f32| div().size(w, h).rounded(h / 2.);
+            match kind {
+                WindowButton::Minimize => div()
+                    .size(10., 10.)
+                    .items_center()
+                    .justify_end()
+                    .flex_col()
+                    .child(bar(8., 2.).reactive_style(move || ink(Styles::new()))),
+                WindowButton::Maximize => {
+                    let active = self.active.clone();
+                    div().reactive_style(move || {
+                        let size = if maximized.get() { 7. } else { 9. };
+                        Styles::new()
+                            .size(size, size)
+                            .rounded(1.5)
+                            .border(1.5)
+                            .border_color(if active.get() {
+                                tok::TEXT_PRIMARY
+                            } else {
+                                tok::TEXT_TERTIARY
+                            })
+                    })
+                }
+                WindowButton::Close => {
+                    let line = |turn: f32| {
+                        let ink = ink.clone();
+                        bar(11., 2.)
+                            .absolute()
+                            .left(0.)
+                            .top(4.5)
+                            .rotate(turn)
+                            .reactive_style(move || ink(Styles::new()))
+                    };
+                    div()
+                        .size(11., 11.)
+                        .child(line(std::f32::consts::FRAC_PI_4))
+                        .child(line(-std::f32::consts::FRAC_PI_4))
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{ButtonLayout, WindowButton::*, edge};
+        use winit::window::ResizeDirection::*;
+
+        #[test]
+        fn button_layouts_read_as_gnome_writes_them() {
+            let gnome = ButtonLayout::parse("appmenu:close");
+            assert_eq!(gnome.left, [None; 3]);
+            assert_eq!(gnome.right, [Some(Close), None, None]);
+            let left = ButtonLayout::parse("close,minimize,maximize:");
+            assert_eq!(left.left, [Some(Close), Some(Minimize), Some(Maximize)]);
+            assert_eq!(left.right, [None; 3]);
+            assert_eq!(
+                ButtonLayout::parse("icon:minimize,spacer,maximize,close"),
+                ButtonLayout::default()
+            );
+            assert_eq!(
+                ButtonLayout::parse("minimize,maximize,close").right,
+                ButtonLayout::default().right
+            );
+        }
+
+        #[test]
+        fn edges_resize_and_corners_reach_further() {
+            let at = |x, y| edge(x, y, 800., 600.);
+            assert_eq!(at(400., 300.), None);
+            assert_eq!(at(400., 2.), Some(North));
+            assert_eq!(at(400., 598.), Some(South));
+            assert_eq!(at(1., 300.), Some(West));
+            assert_eq!(at(799., 300.), Some(East));
+            assert_eq!(at(2., 2.), Some(NorthWest));
+            // Along an edge near a corner: the corner's diagonal.
+            assert_eq!(at(12., 598.), Some(SouthWest));
+            assert_eq!(at(797., 10.), Some(NorthEast));
+            assert_eq!(at(790., 590.), None, "inside, near a corner");
         }
     }
 }

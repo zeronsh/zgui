@@ -5,6 +5,31 @@ zgui runs natively on Wayland and on X11 (winit picks Wayland when
 Linux probes check on both: input, IME, clipboard and the primary selection,
 scaling, cursors, accessibility (AT-SPI) and the desktop's settings.
 
+## Title bars
+
+`Titlebar::Inset` and `Titlebar::Hidden` are undecorated windows, as a GTK
+header bar's window is (client-side decorations): the window manager or
+compositor draws no frame, on X11 or Wayland, whatever `decorations` says.
+Their edges resize them: a press within 5 points of an edge, or 16 along it
+from a corner, starts the window manager's own resize (winit's
+`drag_resize_window`, `_NET_WM_MOVERESIZE` on X11 and `xdg_toplevel.resize` on
+Wayland), with the matching cursor; the content hears the pointer leave
+meanwhile. A maximized or fullscreen window, or one of a fixed size, has no
+bands.
+
+`Inset` adds libadwaita's window buttons over the content's top corners,
+centred in its 40-point strip: 24-point circles in the text colour at 10% over
+the window's background, 15% under the pointer, 30% pressed, with the
+symbols dimmed while the window is in the back. Which buttons, and on which
+side, follow the desktop as GTK 4 does: GNOME's `button-layout` through the
+settings portal (`appmenu:close` shows close alone, on the right;
+`close,minimize,maximize:` puts all three on the left), live; without it,
+minimize, maximize and close on the right. Close asks the app's close policy,
+as the window manager's would. Mark the strip `View::window_drag` so it moves
+the window; a double click on it maximizes or restores.
+`window_buttons_smoke.py` checks it on X11: no frame, maximize and restore,
+a corner drag, minimize, and close.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a
