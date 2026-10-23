@@ -29,10 +29,13 @@ impl std::fmt::Display for TokenId {
 /// What a token holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind {
+    /// A colour.
     Color,
     /// Logical pixels, a weight, milliseconds: a plain number.
     Number,
+    /// A font family.
     Font,
+    /// A list of box shadows.
     Shadow,
     /// An easing curve, in anime.js syntax (`"cubicBezier(0.2, 0, 0, 1)"`).
     Text,
@@ -145,9 +148,13 @@ schema! {
     ACCENT_HOVER: Color = "accent.hover",
     /// Text and icons on the accent.
     ACCENT_TEXT: Color = "accent.text",
+    /// Errors and destructive actions.
     DANGER: Color = "danger",
+    /// Warnings.
     WARNING: Color = "warning",
+    /// Success and completion.
     SUCCESS: Color = "success",
+    /// Information.
     INFO: Color = "info",
     /// Selected text.
     SELECTION: Color = "selection",
@@ -159,9 +166,11 @@ schema! {
     HOVER: Color = "hover",
     /// A translucent wash laid over a surface while pressed.
     PRESSED: Color = "pressed",
+    /// A scrollbar's thumb at rest.
     SCROLLBAR_THUMB: Color = "scrollbar.thumb",
     /// The thumb under the pointer, dragged or focused.
     SCROLLBAR_THUMB_ACTIVE: Color = "scrollbar.thumb.active",
+    /// A scrollbar's track.
     SCROLLBAR_TRACK: Color = "scrollbar.track",
     /// The colour laid over frosted glass (a backdrop blur).
     GLASS_TINT: Color = "glass.tint",
@@ -171,47 +180,78 @@ schema! {
     FONT_SANS: Font = "font.sans",
     /// Code, terminals, numbers in columns.
     FONT_MONO: Font = "font.mono",
+    /// The smallest font size, in points.
     FONT_SIZE_XS: Number = "font.size.xs",
+    /// A small font size, in points.
     FONT_SIZE_SM: Number = "font.size.sm",
     /// Body text: what text is unless it says otherwise.
     FONT_SIZE_MD: Number = "font.size.md",
+    /// A large font size, in points.
     FONT_SIZE_LG: Number = "font.size.lg",
+    /// A larger font size, in points.
     FONT_SIZE_XL: Number = "font.size.xl",
+    /// The largest font size, in points.
     FONT_SIZE_XXL: Number = "font.size.xxl",
-    /// Line heights, in points, for each font size.
+    /// `FONT_SIZE_XS`'s line height, in points; each `FONT_LINE_*` is its
+    /// size's.
     FONT_LINE_XS: Number = "font.line.xs",
+    /// `FONT_SIZE_SM`'s line height.
     FONT_LINE_SM: Number = "font.line.sm",
+    /// `FONT_SIZE_MD`'s line height.
     FONT_LINE_MD: Number = "font.line.md",
+    /// `FONT_SIZE_LG`'s line height.
     FONT_LINE_LG: Number = "font.line.lg",
+    /// `FONT_SIZE_XL`'s line height.
     FONT_LINE_XL: Number = "font.line.xl",
+    /// `FONT_SIZE_XXL`'s line height.
     FONT_LINE_XXL: Number = "font.line.xxl",
+    /// The regular font weight (400 built in).
     FONT_WEIGHT_REGULAR: Number = "font.weight.regular",
+    /// The medium font weight (500 built in).
     FONT_WEIGHT_MEDIUM: Number = "font.weight.medium",
+    /// The semibold font weight (600 built in).
     FONT_WEIGHT_SEMIBOLD: Number = "font.weight.semibold",
+    /// The bold font weight (700 built in).
     FONT_WEIGHT_BOLD: Number = "font.weight.bold",
+    /// The smallest corner radius.
     RADIUS_SM: Number = "radius.sm",
+    /// A medium corner radius.
     RADIUS_MD: Number = "radius.md",
+    /// A large corner radius.
     RADIUS_LG: Number = "radius.lg",
+    /// The largest corner radius short of `RADIUS_FULL`.
     RADIUS_XL: Number = "radius.xl",
     /// A pill or a circle.
     RADIUS_FULL: Number = "radius.full",
+    /// The spacing scale for padding, margins and gaps, step 1, the smallest.
     SPACE_1: Number = "space.1",
+    /// Step 2 of the spacing scale.
     SPACE_2: Number = "space.2",
+    /// Step 3 of the spacing scale.
     SPACE_3: Number = "space.3",
+    /// Step 4 of the spacing scale.
     SPACE_4: Number = "space.4",
+    /// Step 5 of the spacing scale.
     SPACE_5: Number = "space.5",
+    /// Step 6 of the spacing scale.
     SPACE_6: Number = "space.6",
+    /// Step 7 of the spacing scale.
     SPACE_7: Number = "space.7",
+    /// Step 8 of the spacing scale.
     SPACE_8: Number = "space.8",
     /// The height of buttons, inputs and sliders.
     CONTROL_HEIGHT: Number = "control.height",
+    /// A small shadow: controls.
     SHADOW_SM: Shadow = "shadow.sm",
+    /// A medium shadow: cards and raised panels.
     SHADOW_MD: Shadow = "shadow.md",
     /// Overlays: menus, popovers, modals.
     SHADOW_LG: Shadow = "shadow.lg",
-    /// Durations in milliseconds.
+    /// A fast duration, in milliseconds.
     MOTION_DURATION_FAST: Number = "motion.duration.fast",
+    /// A normal duration, in milliseconds.
     MOTION_DURATION_NORMAL: Number = "motion.duration.normal",
+    /// A slow duration, in milliseconds.
     MOTION_DURATION_SLOW: Number = "motion.duration.slow",
     /// Easing for movement within the screen.
     MOTION_EASE_STANDARD: Text = "motion.ease.standard",
@@ -222,12 +262,17 @@ schema! {
     // zgui's widgets' own tokens. They are declared like an app's, with
     // defaults in terms of the standard ones, so a theme can restyle a
     // widget without changing what the standard tokens mean.
+    /// Buttons at rest.
     BUTTON_BG: Color = "button.bg" => "{surface.raised}",
+    /// Buttons under the pointer.
     BUTTON_HOVER: Color = "button.hover" => "over({button.bg}, {hover})",
+    /// Buttons while pressed.
     BUTTON_PRESSED: Color = "button.pressed" => "over({button.bg}, {pressed})",
     /// Text inputs, sliders and progress bars.
     INPUT_BG: Color = "input.bg" => "{surface.raised}",
+    /// Menus' panels.
     MENU_BG: Color = "menu.bg" => "{surface.overlay}",
+    /// A menu item under the pointer.
     MENU_HOVER: Color = "menu.hover" => "over({menu.bg}, {hover})",
     /// Popovers' and tooltips' panels (modals keep `surface.overlay`).
     POPOVER_BG: Color = "popover.bg" => "{surface.overlay}",

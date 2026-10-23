@@ -36,6 +36,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
+/// How a terminal session starts.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TerminalOptions {
     /// The command line to run; `None` runs the user's login shell.
@@ -74,8 +75,9 @@ pub struct TerminalState {
     pub status: Option<ProgramStatus>,
     /// The process ended, with this exit code.
     pub exited: Option<i32>,
-    /// Grid size in cells.
+    /// Grid width in cells.
     pub columns: u16,
+    /// Grid height in cells.
     pub rows: u16,
 }
 
@@ -84,6 +86,7 @@ pub struct TerminalState {
 /// it (a worker) is blocked.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct ProgramStatus {
+    /// The root record's state.
     pub state: ProgramState,
     /// With [`ProgramState::Blocked`]: what it waits for (`permission`,
     /// `question`, `auth`).
@@ -92,8 +95,9 @@ pub struct ProgramStatus {
     pub progress: Option<u8>,
     /// The program's stable identifier (`claude-code`), not a label.
     pub app: Option<String>,
-    /// A short label, and one line of detail, as the program wrote them.
+    /// A short label, as the program wrote it.
     pub title: Option<String>,
+    /// One line of detail, as the program wrote it.
     pub msg: Option<String>,
     /// A record under the root is blocked, whatever the root says.
     pub child_blocked: bool,
@@ -106,6 +110,7 @@ pub enum ProgramState {
     /// At rest, waiting for the user's next instruction.
     #[default]
     Idle,
+    /// Busy on a task.
     Working,
     /// Finished; the result is ready and not yet seen.
     Done,
@@ -115,6 +120,7 @@ pub enum ProgramState {
     Error,
 }
 impl ProgramState {
+    /// Its protocol name: `idle`, `working`, `done`, `blocked` or `error`.
     pub fn name(self) -> &'static str {
         match self {
             Self::Idle => "idle",
@@ -124,6 +130,7 @@ impl ProgramState {
             Self::Error => "error",
         }
     }
+    /// The state `name` names (see [`ProgramState::name`]); `None` for any other.
     pub fn parse(name: &str) -> Option<Self> {
         Some(match name {
             "idle" => Self::Idle,
@@ -136,38 +143,53 @@ impl ProgramState {
     }
 }
 
+/// An event from a terminal session's platform terminal (see
+/// [`Terminal::on_event`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminalEvent {
+    /// The running program set its title (OSC 0/2).
     TitleChanged {
+        /// The new title.
         title: String,
     },
+    /// The shell reported its working directory (OSC 7).
     PwdChanged {
+        /// The new working directory.
         pwd: String,
     },
     /// The foreground process changed (a command started or finished).
     ProcessChanged {
+        /// The foreground process's name.
         process: String,
+        /// Its process id (0: unknown).
         pid: u32,
     },
+    /// The bell rang.
     Bell,
     /// A shell-integrated command finished (OSC 133): its exit code (when
     /// reported) and how long it ran.
     CommandFinished {
+        /// Its exit code, when reported.
         exit_code: Option<i32>,
+        /// How long it ran, in milliseconds.
         duration_ms: u64,
     },
     /// A desktop notification the program asked for (OSC 9/777).
     Notification {
+        /// The notification's title.
         title: String,
+        /// Its body text.
         body: String,
     },
     /// The terminal asks to close (its process exited, or a close binding):
     /// whether a process other than an idle shell is still running.
     CloseRequested {
+        /// Whether a process other than an idle shell is still running.
         process_alive: bool,
     },
     /// The process ended.
     Exited {
+        /// Its exit code.
         code: i32,
     },
 }
@@ -190,11 +212,13 @@ pub enum TerminalCommand {
 
 /// A platform's terminal (implemented by the desktop host).
 pub trait TerminalBackend {
+    /// Carry out `command`.
     fn run(&self, command: TerminalCommand);
     /// Whether closing would end something other than an idle shell.
     fn needs_confirm_close(&self) -> bool {
         false
     }
+    /// The backend as `Any`, for the host to downcast to its own type.
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -222,6 +246,7 @@ pub struct Terminal(Rc<Inner>);
 #[derive(Clone)]
 pub struct WeakTerminal(Weak<Inner>);
 impl WeakTerminal {
+    /// The controller, if it still exists.
     pub fn upgrade(&self) -> Option<Terminal> {
         self.0.upgrade().map(Terminal)
     }
@@ -254,6 +279,8 @@ impl std::fmt::Debug for Terminal {
     }
 }
 impl Terminal {
+    /// A controller whose session starts with `options` once a platform terminal is
+    /// attached; its state lives in `runtime`.
     pub fn new(runtime: &Runtime, options: TerminalOptions) -> Self {
         let id = NEXT_ID.with(|next| {
             let id = next.get() + 1;
@@ -278,6 +305,7 @@ impl Terminal {
     pub fn id(&self) -> u64 {
         self.0.id
     }
+    /// How the session starts, or started.
     pub fn options(&self) -> TerminalOptions {
         self.0.options.borrow().clone()
     }
@@ -291,6 +319,7 @@ impl Terminal {
         *self.0.options.borrow_mut() = options;
         true
     }
+    /// A weak reference, which does not keep the session alive.
     pub fn downgrade(&self) -> WeakTerminal {
         WeakTerminal(Rc::downgrade(&self.0))
     }
@@ -298,18 +327,23 @@ impl Terminal {
     pub fn state(&self) -> Signal<TerminalState> {
         self.0.state.clone()
     }
+    /// The title the running program set (reactive); empty until one does.
     pub fn title(&self) -> String {
         self.0.state.with(|state| state.title.clone())
     }
+    /// The working directory the shell reported (reactive); empty until it does.
     pub fn pwd(&self) -> String {
         self.0.state.with(|state| state.pwd.clone())
     }
+    /// The foreground process's name (reactive); empty until it is known.
     pub fn process(&self) -> String {
         self.0.state.with(|state| state.process.clone())
     }
+    /// Whether the terminal has keyboard focus (reactive).
     pub fn focused(&self) -> bool {
         self.0.state.with(|state| state.focused)
     }
+    /// The process's exit code, once it has ended (reactive).
     pub fn exited(&self) -> Option<i32> {
         self.0.state.with(|state| state.exited)
     }
@@ -352,6 +386,7 @@ impl Terminal {
     pub fn input(&self, text: impl Into<String>) {
         self.run(TerminalCommand::Input(text.into()));
     }
+    /// Paste `text`, bracketed when the program asked for bracketed paste.
     pub fn paste(&self, text: impl Into<String>) {
         self.run(TerminalCommand::Paste(text.into()));
     }
@@ -409,6 +444,7 @@ impl Terminal {
         }
         backend
     }
+    /// The attached platform terminal, if any.
     pub fn backend(&self) -> Option<Rc<dyn TerminalBackend>> {
         self.0.backend.borrow().clone()
     }

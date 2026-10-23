@@ -6,9 +6,12 @@ use objc2_core_video::{
     CVPixelBufferGetWidth, kCVPixelFormatType_32BGRA,
     kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
 };
+/// A [`NativeSurface`]'s pixel format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SurfaceFormat {
+    /// 32-bit BGRA with premultiplied alpha.
     Bgra,
+    /// Bi-planar 4:2:0 YCbCr (NV12), full range, BT.601.
     Nv12FullRange,
 }
 /// An immutable frame; retaining it prevents pixel-buffer pools reclaiming its storage.
@@ -65,18 +68,23 @@ impl NativeSurface {
             format,
         })
     }
+    /// Its identity, unique in the process among images, SVGs and surfaces.
     pub fn id(&self) -> u64 {
         self.id
     }
+    /// Its width in pixels.
     pub fn width(&self) -> u32 {
         self.width
     }
+    /// Its height in pixels.
     pub fn height(&self) -> u32 {
         self.height
     }
+    /// Its pixel format.
     pub fn format(&self) -> SurfaceFormat {
         self.format
     }
+    /// The CoreVideo pixel buffer it holds.
     pub fn pixel_buffer(&self) -> &CVPixelBuffer {
         &self.buffer
     }

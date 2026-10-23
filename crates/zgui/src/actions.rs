@@ -18,18 +18,23 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// A typed command value: key bindings dispatch it and `View::on_action`
+/// handlers for its type receive it. Clones are equal; separately made actions
+/// are not.
 #[derive(Clone)]
 pub struct Action {
     value: Rc<dyn Any>,
     name: &'static str,
 }
 impl Action {
+    /// An action carrying `value`.
     pub fn new<T: 'static>(value: T) -> Self {
         Self {
             value: Rc::new(value),
             name: std::any::type_name::<T>(),
         }
     }
+    /// The value, if it is a `T`.
     pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
         self.value.downcast_ref()
     }
@@ -45,17 +50,24 @@ impl PartialEq for Action {
     }
 }
 
+/// A key with the modifiers held. Bindings match it exactly: the same key and
+/// exactly these modifiers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Keystroke {
+    /// The key.
     pub key: Key,
+    /// The modifiers held with it.
     pub modifiers: Modifiers,
 }
 impl Keystroke {
+    /// `key` with `modifiers`.
     pub fn new(key: Key, modifiers: Modifiers) -> Self {
         Self { key, modifiers }
     }
 }
 
+/// A sequence of one to four keystrokes bound to an action, optionally only
+/// where a context predicate holds.
 #[derive(Clone, Debug)]
 pub struct KeyBinding {
     sequence: Vec<Keystroke>,
@@ -78,6 +90,8 @@ impl KeyBinding {
             context: None,
         })
     }
+    /// Apply only where a context in the stack has `context` (see
+    /// [`ContextPredicate::Flag`]).
     pub fn when(mut self, context: impl Into<String>) -> Self {
         self.context = Some(ContextPredicate::Flag(context.into()));
         self
@@ -88,6 +102,7 @@ impl KeyBinding {
         self
     }
 }
+/// The key bindings and key context a component adds (`View::keymap`).
 #[derive(Clone, Debug, Default)]
 pub struct Keymap {
     pub(crate) bindings: Vec<KeyBinding>,
@@ -95,17 +110,21 @@ pub struct Keymap {
     pub(crate) context: KeyContext,
 }
 impl Keymap {
+    /// An empty keymap.
     pub fn new() -> Self {
         Self::default()
     }
+    /// Add `binding`. Bindings added later are tried first.
     pub fn bind(mut self, binding: KeyBinding) -> Self {
         self.bindings.push(binding);
         self
     }
+    /// Set the flag `context` on the component's key context.
     pub fn context(mut self, context: impl Into<String>) -> Self {
         self.contexts.push(context.into());
         self
     }
+    /// Add `context`'s flags and attributes to the component's key context.
     pub fn key_context(mut self, context: KeyContext) -> Self {
         self.context.extend(&context);
         self
@@ -146,6 +165,8 @@ impl From<Pending> for Replay {
         }
     }
 }
+/// Keeps a keymap registered (`InputDispatcher::bind_keys`); dropping it
+/// unregisters the keymap.
 #[must_use = "Dropping the binding unregisters the keymap"]
 pub struct KeymapBinding {
     registry: Weak<RefCell<Registry>>,

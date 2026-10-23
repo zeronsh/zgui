@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
     task::{Context, Poll, Wake, Waker},
 };
+/// Why an image could not be loaded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageLoadError(pub Arc<str>);
 impl From<&str> for ImageLoadError {
@@ -50,6 +51,8 @@ impl Default for ImageCache {
     }
 }
 impl ImageCache {
+    /// A cache keeping at most `byte_budget` bytes of loaded pixels, capped at 64
+    /// MiB (the default is 16 MiB).
     pub fn new(byte_budget: usize) -> Self {
         Self(Rc::new(RefCell::new(Cache {
             entries: HashMap::new(),
@@ -58,14 +61,20 @@ impl ImageCache {
             clock: 0,
         })))
     }
+    /// The bytes of loaded pixels it keeps.
     pub fn bytes(&self) -> usize {
         self.0.borrow().bytes
     }
+    /// Forget every image and pending load. Loads in flight still finish for their
+    /// requests, but are not cached.
     pub fn clear(&self) {
         let mut cache = self.0.borrow_mut();
         cache.entries.clear();
         cache.bytes = 0;
     }
+    /// The image for `key`: the cached one, a load in flight for the same key, or
+    /// else the future `fetch` makes. Fails for keys over 1024 bytes and when 256
+    /// loads are pending. An image larger than the budget is not cached.
     pub fn load<F: Future<Output = ResultImage> + 'static>(
         &self,
         key: impl Into<String>,
@@ -155,6 +164,8 @@ struct Shared {
     cache: Weak<RefCell<Cache>>,
     key: String,
 }
+/// A future of one [`ImageCache::load`]'s result. Clones share the load;
+/// dropping the last one cancels it.
 pub struct ImageRequest {
     shared: Rc<Shared>,
     id: u64,

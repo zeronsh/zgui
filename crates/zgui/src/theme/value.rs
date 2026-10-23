@@ -17,13 +17,19 @@ pub enum TokenValue {
     /// No theme defines the token and no app declared it.
     #[default]
     Unset,
+    /// A colour.
     Color(Color),
+    /// A number.
     Number(f32),
+    /// A font family.
     Font(FontFamily),
+    /// Box shadows.
     Shadow(Arc<[BoxShadow]>),
+    /// Text, such as an easing curve.
     Text(Arc<str>),
 }
 impl TokenValue {
+    /// The kind of value it is; `None` when unset.
     pub fn kind(&self) -> Option<TokenKind> {
         Some(match self {
             TokenValue::Unset => return None,
@@ -34,18 +40,22 @@ impl TokenValue {
             TokenValue::Text(_) => TokenKind::Text,
         })
     }
+    /// The colour, if it is one.
     pub fn color(&self) -> Option<Color> {
         match self {
             TokenValue::Color(c) => Some(*c),
             _ => None,
         }
     }
+    /// The number, if it is one.
     pub fn number(&self) -> Option<f32> {
         match self {
             TokenValue::Number(n) => Some(*n),
             _ => None,
         }
     }
+    /// The font family, if it is one; text reads as a CSS `font-family` list, of
+    /// which the first family counts.
     pub fn font(&self) -> Option<FontFamily> {
         match self {
             TokenValue::Font(f) => Some(f.clone()),
@@ -53,12 +63,14 @@ impl TokenValue {
             _ => None,
         }
     }
+    /// The shadows, if it is a shadow value.
     pub fn shadows(&self) -> Option<Arc<[BoxShadow]>> {
         match self {
             TokenValue::Shadow(s) => Some(s.clone()),
             _ => None,
         }
     }
+    /// The text, if it is text.
     pub fn text(&self) -> Option<Arc<str>> {
         match self {
             TokenValue::Text(t) => Some(t.clone()),

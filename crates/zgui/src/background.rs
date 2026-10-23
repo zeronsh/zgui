@@ -57,14 +57,21 @@ impl Drop for Owner {
 pub struct BackgroundPool {
     owner: Arc<Owner>,
 }
+/// Why [`BackgroundPool::spawn`] refused work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpawnError {
+    /// `capacity` closures are already queued.
     QueueFull,
+    /// The pool has shut down.
     Closed,
 }
+/// Why a background task gave no result.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskError {
+    /// The task was cancelled, or its pool dropped it before it ran.
     Cancelled,
+    /// The closure panicked, with this message (`non-string panic` when the payload
+    /// was not a string).
     Panicked(String),
 }
 impl std::fmt::Display for SpawnError {
@@ -124,6 +131,8 @@ pub struct BackgroundTask<T> {
     consumed: bool,
 }
 impl<T> BackgroundTask<T> {
+    /// Cancel the task: queued work is dropped without running, a running closure's
+    /// result is discarded, and awaiting gives `Err(TaskError::Cancelled)`.
     pub fn cancel(&self) {
         let (wake, work, result) = {
             let mut state = self.state.lock().unwrap();
@@ -141,6 +150,7 @@ impl<T> BackgroundTask<T> {
             waker.wake();
         }
     }
+    /// Whether its result, or its cancellation, is in, or it has been awaited.
     pub fn is_finished(&self) -> bool {
         self.consumed || self.state.lock().unwrap().finished
     }
@@ -231,9 +241,12 @@ impl BackgroundPool {
         }
         Ok(pool)
     }
+    /// How many closures are waiting for a worker; running ones are not counted.
     pub fn queued(&self) -> usize {
         self.owner.0.queue.lock().unwrap().jobs.len()
     }
+    /// Queue `work` for a worker thread; await the returned task for its result.
+    /// Fails with `QueueFull` when `capacity` closures are already waiting.
     pub fn spawn<T: Send + 'static>(
         &self,
         work: impl FnOnce() -> T + Send + 'static,

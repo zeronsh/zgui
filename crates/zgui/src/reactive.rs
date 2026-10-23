@@ -121,6 +121,7 @@ pub struct Runtime {
     inner: Rc<Inner>,
 }
 impl Runtime {
+    /// A runtime with no signals or effects.
     pub fn new() -> Self {
         Self::default()
     }
@@ -147,6 +148,7 @@ impl Runtime {
         };
         callback()
     }
+    /// A signal in this runtime holding `value`.
     pub fn signal<T: 'static>(&self, value: T) -> Signal<T> {
         Signal {
             inner: Rc::new(SignalInner {
@@ -247,6 +249,7 @@ impl Runtime {
             self.inner.run(id);
         }
     }
+    /// How many effects are alive.
     pub fn effect_count(&self) -> usize {
         self.inner.effects.borrow().len()
     }
@@ -282,6 +285,7 @@ impl Runtime {
 #[derive(Clone, Default)]
 pub struct WeakRuntime(Weak<Inner>);
 impl WeakRuntime {
+    /// The runtime, if it still exists.
     pub fn upgrade(&self) -> Option<Runtime> {
         self.0.upgrade().map(|inner| Runtime { inner })
     }
@@ -350,6 +354,8 @@ impl<T> Dependency for SignalInner<T> {
         self.subscribers.borrow_mut().remove(&id);
     }
 }
+/// A reactive value. Reading it in an effect subscribes the effect, and a write
+/// that changes it re-runs its subscribers. Clones share the value.
 pub struct Signal<T> {
     inner: Rc<SignalInner<T>>,
 }
@@ -419,13 +425,16 @@ impl<T: 'static> Signal<T> {
     pub fn addr(&self) -> usize {
         Rc::as_ptr(&self.inner).cast::<()>() as usize
     }
+    /// Call `f` with the value, subscribing the running effect.
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         self.track();
         f(&self.inner.value.borrow())
     }
+    /// Call `f` with the value, without subscribing.
     pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         f(&self.inner.value.borrow())
     }
+    /// A clone of the value, subscribing the running effect.
     pub fn get(&self) -> T
     where
         T: Clone,
@@ -463,6 +472,7 @@ impl<T: 'static> Signal<T> {
         self.notify();
         true
     }
+    /// Change a clone of the value with `f` and set it; returns whether it changed.
     pub fn update(&self, f: impl FnOnce(&mut T)) -> bool
     where
         T: PartialEq + Clone,
@@ -480,20 +490,25 @@ pub struct ServiceScope {
     values: HashMap<TypeId, Rc<dyn Any>>,
 }
 impl ServiceScope {
+    /// An empty scope with no parent.
     pub fn new() -> Self {
         Self::default()
     }
+    /// A child scope: it sees this scope's values as they are now, and what it
+    /// provides itself shadows them.
     pub fn child(&self) -> Self {
         Self {
             parent: Some(Rc::new(self.clone())),
             values: HashMap::new(),
         }
     }
+    /// Store `value` as this scope's `T`, replacing any; returns it shared.
     pub fn provide<T: 'static>(&mut self, value: T) -> Rc<T> {
         let value = Rc::new(value);
         self.values.insert(TypeId::of::<T>(), value.clone());
         value
     }
+    /// The nearest `T`: this scope's, else its parent's, and so on up.
     pub fn get<T: 'static>(&self) -> Option<Rc<T>> {
         self.values
             .get(&TypeId::of::<T>())

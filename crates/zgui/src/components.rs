@@ -36,13 +36,21 @@ fn clamped_offset(offset: f32, content: f32, viewport: f32) -> f32 {
 /// logical pixels. Nested scrolling chains to its parent when already at an edge.
 #[derive(Clone)]
 pub struct ScrollView {
+    /// The clipping viewport node.
     pub root: NodeId,
+    /// The column holding the content: mount children here.
     pub content: NodeId,
+    /// The scroll offset in logical pixels, 0 at the top; kept between 0 and the
+    /// content height less the viewport's.
     pub offset: Signal<f32>,
+    /// The content's height in logical pixels, which bounds scrolling.
     pub content_height: Signal<f32>,
+    /// The viewport's width and height in logical pixels.
     pub size: Signal<(f32, f32)>,
 }
 impl ScrollView {
+    /// Mount a `width` by `height` viewport under `parent`, scrolled by the wheel.
+    /// Non-finite or negative sizes count as 0.
     pub fn mount(ui: &mut Ui, parent: NodeId, width: f32, height: f32) -> Self {
         let width = finite_nonnegative(width);
         let height = finite_nonnegative(height);
@@ -108,6 +116,7 @@ impl ScrollView {
         });
         scroll
     }
+    /// Scroll to `offset`, clamped to the scrollable range.
     pub fn scroll_to(&self, offset: f32) {
         self.offset.set(clamped_offset(
             offset,
@@ -115,9 +124,11 @@ impl ScrollView {
             self.size.get().1,
         ));
     }
+    /// Set the content's height; non-finite or negative is 0.
     pub fn set_content_height(&self, height: f32) {
         self.content_height.set(finite_nonnegative(height));
     }
+    /// Set the viewport's size; non-finite or negative sizes are 0.
     pub fn resize(&self, width: f32, height: f32) {
         self.size
             .set((finite_nonnegative(width), finite_nonnegative(height)));
@@ -128,11 +139,18 @@ impl ScrollView {
 /// nodes and subscriptions. Keys must be unique in the visible range. Offscreen
 /// rows are disposed; put persistent row state in your model, keyed by identity.
 pub struct VirtualListView<K: Eq + Hash> {
+    /// The viewport the rows scroll in.
     pub scroll: ScrollView,
+    /// The number of rows; set it as the data changes.
     pub count: Signal<usize>,
     rows: Weak<RefCell<KeyedChildren<K>>>,
 }
 impl<K: Eq + Hash + Clone + 'static> VirtualListView<K> {
+    /// Mount a `width` by `height` list of `count` rows, each `row_height` tall,
+    /// under `parent`. The rows in view, and `overscan` more on either side, are
+    /// mounted: `key` names the row at an index, and `initialize` fills a row's
+    /// scope when its key is first shown. Panics unless `row_height` is finite and
+    /// positive, and when keys in view repeat.
     #[allow(clippy::too_many_arguments)]
     pub fn mount(
         ui: &mut Ui,
@@ -195,11 +213,13 @@ impl<K: Eq + Hash + Clone + 'static> VirtualListView<K> {
             rows: Rc::downgrade(&rows),
         }
     }
+    /// How many rows are mounted now (0 once the list is gone).
     pub fn mounted_rows(&self) -> usize {
         self.rows
             .upgrade()
             .map_or(0, |rows| rows.borrow().keys().len())
     }
+    /// The root node of row `key`, if it is mounted.
     pub fn row(&self, key: &K) -> Option<NodeId> {
         self.rows
             .upgrade()
@@ -212,13 +232,20 @@ impl<K: Eq + Hash + Clone + 'static> VirtualListView<K> {
 /// under the currently active dialog root so scope nesting follows scene ancestry.
 #[derive(Clone)]
 pub struct Dialog {
+    /// The full-viewport root holding the backdrop and the panel.
     pub root: NodeId,
+    /// The panel: mount the dialog's content here.
     pub body: NodeId,
+    /// Whether it is open. `Escape`, a backdrop press (when enabled) and the
+    /// closing of its focus scope set it false.
     pub open: Signal<bool>,
     scene: Weak<RefCell<crate::scene::Scene>>,
     centered: bool,
 }
 impl Dialog {
+    /// Mount a closed `width` by `height` modal titled `title` (its accessible
+    /// name) under `overlay_parent`, centred over a dimming backdrop. With
+    /// `dismiss_on_backdrop`, a press on the backdrop closes it.
     pub fn mount(
         ui: &mut Ui,
         overlay_parent: NodeId,
@@ -359,10 +386,12 @@ impl Dialog {
             );
         }
     }
+    /// Fit it to the viewport and open it: it takes focus and traps it.
     pub fn show(&self) {
         self.resize_to_viewport();
         self.open.set(true);
     }
+    /// Close it; focus returns to where it was.
     pub fn close(&self) {
         self.open.set(false);
     }
@@ -373,6 +402,7 @@ impl Dialog {
 /// `show` so a moved/scrolled anchor is followed, and clamped to the viewport.
 #[derive(Clone)]
 pub struct Popover {
+    /// The modal it is built on; its `body` holds the items.
     pub dialog: Dialog,
     anchor: NodeId,
     width: f32,
@@ -380,6 +410,9 @@ pub struct Popover {
     items: Rc<RefCell<Vec<NodeId>>>,
 }
 impl Popover {
+    /// Mount a closed `width` by `height` menu under `overlay_parent`, placed by
+    /// `anchor` when shown. The up and down arrows, Home and End move focus between
+    /// its items.
     pub fn mount(
         ui: &mut Ui,
         overlay_parent: NodeId,
@@ -470,6 +503,8 @@ impl Popover {
         self.items.borrow_mut().push(node);
         node
     }
+    /// Place it below `anchor` (above when there is no room below), open it and
+    /// focus its first item.
     pub fn show(&self, ui: &Ui) {
         self.show_with(&ui.scene, &ui.input);
     }
@@ -516,6 +551,7 @@ impl Popover {
             }
         }
     }
+    /// Close it.
     pub fn close(&self) {
         self.dialog.close();
     }

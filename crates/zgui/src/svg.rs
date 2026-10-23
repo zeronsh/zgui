@@ -4,6 +4,8 @@ use crate::{
     scene::{Color, Rect},
 };
 use std::sync::Arc;
+/// SVG source to paint, with an optional tint and paint transform. Clones share
+/// the bytes.
 #[derive(Clone, Debug)]
 pub struct SvgData {
     source_id: u64,
@@ -33,12 +35,16 @@ impl SvgData {
     pub fn source_id(&self) -> u64 {
         self.source_id
     }
+    /// The SVG source.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+    /// The colour it paints in, if tinted.
     pub fn tint(&self) -> Option<Color> {
         self.tint
     }
+    /// A copy painted in `color`: each pixel takes its red, green and blue, and its
+    /// alpha is scaled by the colour's. Replaces `current_color`.
     pub fn tinted(&self, color: Color) -> Self {
         Self {
             tint: Some(color),
@@ -56,9 +62,12 @@ impl SvgData {
             ..self.clone()
         }
     }
+    /// Whether it paints in its view's text colour (see `current_color`).
     pub fn follows_text_color(&self) -> bool {
         self.current_color
     }
+    /// A copy painted through `transform` about its box's centre; layout is
+    /// unchanged, and a non-finite matrix becomes the identity.
     pub fn transformed(&self, transform: Affine) -> Self {
         Self {
             transform: if transform.is_finite() {
@@ -69,12 +78,15 @@ impl SvgData {
             ..self.clone()
         }
     }
+    /// Its paint transform (the identity unless `transformed`).
     pub fn transform(&self) -> Affine {
         self.transform
     }
+    /// Whether both rasterise to the same pixels: the same source and tint.
     pub fn same_pixels(&self, other: &Self) -> bool {
         self.bytes == other.bytes && self.tint == other.tint
     }
+    /// Its transform about the centre of `bounds`, the box it is laid out in.
     pub fn paint_transform(&self, bounds: Rect) -> Affine {
         if self.transform == Affine::IDENTITY {
             self.transform
@@ -85,6 +97,8 @@ impl SvgData {
             )
         }
     }
+    /// Where it paints when laid out in `bounds`: the box covering `bounds` under
+    /// its transform; empty when the transform is singular.
     pub fn paint_bounds(&self, bounds: Rect) -> Rect {
         if self.transform.inverse().is_none() {
             Rect::default()

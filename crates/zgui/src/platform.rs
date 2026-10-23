@@ -10,6 +10,7 @@ pub type Pending<T> = Pin<Box<dyn Future<Output = T>>>;
 /// What a file dialog shows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FilePicker {
+    /// The dialog's title.
     pub title: String,
     /// Where it opens.
     pub directory: Option<PathBuf>,
@@ -21,6 +22,8 @@ pub struct FilePicker {
     pub multiple: bool,
 }
 
+/// The clipboard, the system's URL handler and file dialogs, as a desktop
+/// host provides them (see the module docs).
 pub trait Platform {
     /// The clipboard's text, if it holds text.
     fn clipboard_text(&self) -> Option<String>;

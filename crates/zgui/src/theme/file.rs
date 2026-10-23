@@ -29,8 +29,10 @@ use std::sync::Arc;
 /// way it leans (icons, images, syntax colours).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ThemeKind {
+    /// Light content on a dark background.
     #[default]
     Dark,
+    /// Dark content on a light background.
     Light,
     /// High contrast on dark.
     HighContrast,
@@ -38,9 +40,12 @@ pub enum ThemeKind {
     HighContrastLight,
 }
 impl ThemeKind {
+    /// Whether it is `Dark` or `HighContrast`.
     pub fn is_dark(self) -> bool {
         matches!(self, ThemeKind::Dark | ThemeKind::HighContrast)
     }
+    /// Its name in theme files: `dark`, `light`, `high-contrast` or
+    /// `high-contrast-light`.
     pub fn as_str(self) -> &'static str {
         match self {
             ThemeKind::Dark => "dark",
@@ -49,6 +54,9 @@ impl ThemeKind {
             ThemeKind::HighContrastLight => "high-contrast-light",
         }
     }
+    /// The kind a theme file's `type` names: one of `as_str`'s names or a VS Code
+    /// one (`vs-dark`, `vs`, `hc`, `hc-black`, `hc-dark`, `hc-light`); `None` for
+    /// anything else.
     pub fn parse(text: &str) -> Option<Self> {
         Some(match text {
             "dark" | "vs-dark" => ThemeKind::Dark,
@@ -139,7 +147,10 @@ pub(crate) struct Entry {
 /// A theme: a name, a type, an optional base and the tokens it sets.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
+    /// Its name, which other themes' `extends` and scopes refer to it by.
     pub name: String,
+    /// Dark or light, and whether high-contrast; picks the built-in theme it falls
+    /// back to.
     pub kind: ThemeKind,
     /// The theme this one starts from; by default, the built-in theme of
     /// its kind.
@@ -147,6 +158,8 @@ pub struct Theme {
     pub(crate) tokens: Vec<Entry>,
 }
 impl Theme {
+    /// A theme named `name`, of kind `kind`, that sets no tokens and starts from
+    /// its kind's built-in theme.
     pub fn new(name: impl Into<String>, kind: ThemeKind) -> Self {
         Self {
             name: name.into(),
@@ -385,6 +398,7 @@ pub struct ThemeOverride {
     pub(crate) fixed_text_size: bool,
 }
 impl ThemeOverride {
+    /// An override that changes nothing.
     pub fn new() -> Self {
         Self::default()
     }
@@ -417,6 +431,7 @@ impl ThemeOverride {
         let input = TokenInput::parse_for(id, text)?;
         Ok(self.with(id, input))
     }
+    /// Whether it changes neither the theme nor any token.
     pub fn is_empty(&self) -> bool {
         self.theme.is_none() && self.tokens.is_empty()
     }

@@ -103,6 +103,7 @@ impl Drop for NativeRegistration {
     }
 }
 impl NativeViews {
+    /// No native views, and not supported until `set_supported`.
     pub fn new() -> Self {
         Self::default()
     }
@@ -112,9 +113,12 @@ impl NativeViews {
     pub fn set_supported(&self, supported: bool) {
         self.0.supported.set(supported);
     }
+    /// Whether this window composites native views itself (see `set_supported`).
     pub fn supported(&self) -> bool {
         self.0.supported.get()
     }
+    /// Register `node` as showing `content`; it stays registered while the
+    /// registration lives.
     pub fn register(&self, node: NodeId, content: NativeContent) -> NativeRegistration {
         let token = self.0.next.get() + 1;
         self.0.next.set(token);
@@ -139,6 +143,7 @@ impl NativeViews {
             .map(|entry| (entry.node, entry.content.clone()))
             .collect()
     }
+    /// The mounted native nodes, in registration order.
     pub fn nodes(&self) -> Vec<NodeId> {
         self.0
             .entries
@@ -147,6 +152,7 @@ impl NativeViews {
             .map(|entry| entry.node)
             .collect()
     }
+    /// What `node` shows, if it is a registered native node.
     pub fn content(&self, node: NodeId) -> Option<NativeContent> {
         self.0
             .entries
@@ -155,6 +161,7 @@ impl NativeViews {
             .find(|entry| entry.node == node)
             .map(|entry| entry.content.clone())
     }
+    /// Whether `node` is a registered native node.
     pub fn contains(&self, node: NodeId) -> bool {
         self.0
             .entries
@@ -162,6 +169,7 @@ impl NativeViews {
             .iter()
             .any(|entry| entry.node == node)
     }
+    /// Whether no native node is mounted.
     pub fn is_empty(&self) -> bool {
         self.0.entries.borrow().is_empty()
     }
@@ -173,6 +181,7 @@ impl NativeViews {
     pub fn split(&self) -> Rc<PlaneSplit> {
         self.0.split.borrow().clone()
     }
+    /// Record the split of the frame just presented (the desktop host calls this).
     pub fn set_split(&self, split: Rc<PlaneSplit>) {
         *self.0.split.borrow_mut() = split;
     }
@@ -248,6 +257,7 @@ pub enum Plane {
 /// Where a native view goes this frame, in window (logical) coordinates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativePlacement {
+    /// The native node.
     pub node: NodeId,
     /// The view's box on screen: its laid-out box under its transforms (the
     /// covering box when rotated or skewed).
@@ -280,19 +290,23 @@ impl NativePlacement {
 /// draws the node's own tint, border and content on top.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackdropPlacement {
+    /// The overlay node with the blur.
     pub node: NodeId,
     /// The blurred box in window coordinates.
     pub rect: Rect,
     /// Its corner radii (top-left, top-right, bottom-right, bottom-left).
     pub radii: [f32; 4],
+    /// The rectangular clip of its ancestors.
     pub clip: Option<Rect>,
     /// Ancestors' rounded clips, innermost first.
     pub rounded: Vec<RoundRect>,
     /// Gaussian sigma in window points (scaled by transformed ancestors).
     pub sigma: f32,
+    /// Its effective opacity (ancestors' included).
     pub opacity: f32,
 }
 impl BackdropPlacement {
+    /// The part of `rect` its clip leaves visible, if any.
     pub fn visible(&self) -> Option<Rect> {
         match self.clip {
             Some(clip) => self.rect.intersection(clip),
@@ -331,6 +345,7 @@ pub struct PageReport {
     pub at: Option<(crate::web_view::WebView, (f32, f32))>,
 }
 impl PageReport {
+    /// Whether no page needs telling.
     pub fn is_empty(&self) -> bool {
         self.left.is_none() && self.at.is_none()
     }
@@ -360,6 +375,7 @@ pub struct NativePointer {
     page: RefCell<Option<crate::web_view::WeakWebView>>,
 }
 impl NativePointer {
+    /// Not over any native view.
     pub fn new() -> Self {
         Self::default()
     }
@@ -901,15 +917,19 @@ impl PlaneSplit {
     pub fn has_overlay(&self) -> bool {
         !self.overlay.is_empty()
     }
+    /// This frame's native views' placements, in paint order.
     pub fn natives(&self) -> &[NativePlacement] {
         &self.natives
     }
+    /// `node`'s placement this frame, if it is a native view.
     pub fn native(&self, node: NodeId) -> Option<&NativePlacement> {
         self.natives.iter().find(|placement| placement.node == node)
     }
+    /// Whether `node` is a native view this frame.
     pub fn is_native(&self, node: NodeId) -> bool {
         self.native_nodes.contains(&node)
     }
+    /// This frame's overlay backdrop blurs, for the platform to draw.
     pub fn backdrops(&self) -> &[BackdropPlacement] {
         &self.backdrops
     }

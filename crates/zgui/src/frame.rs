@@ -65,6 +65,7 @@ struct Waiter {
 }
 
 impl FrameClock {
+    /// A clock with no requests waiting.
     pub fn new() -> Self {
         Self::default()
     }
@@ -86,6 +87,7 @@ impl FrameClock {
     pub fn set_max_rate(&self, hz: Option<f64>) {
         self.0.max_rate.set(valid_rate(hz));
     }
+    /// The cap `set_max_rate` set, if any.
     pub fn max_rate(&self) -> Option<f64> {
         self.0.max_rate.get()
     }

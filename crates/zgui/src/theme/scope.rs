@@ -63,8 +63,10 @@ fn widget_defaults() -> &'static [Declaration] {
 /// Whether the system shows light or dark windows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Appearance {
+    /// Dark windows.
     #[default]
     Dark,
+    /// Light windows.
     Light,
 }
 
@@ -512,6 +514,7 @@ impl ThemeScope {
     pub fn color(&self, token: ColorToken) -> Color {
         self.get(token).color().unwrap_or(Color(0, 0, 0, 0))
     }
+    /// A colour token's value (transparent if unset), without subscribing.
     pub fn color_untracked(&self, token: ColorToken) -> Color {
         self.get_untracked(token)
             .color()
@@ -521,15 +524,19 @@ impl ThemeScope {
     pub fn number(&self, token: NumberToken) -> f32 {
         self.get(token).number().unwrap_or(0.)
     }
+    /// A number token's value (0 if unset), without subscribing.
     pub fn number_untracked(&self, token: NumberToken) -> f32 {
         self.get_untracked(token).number().unwrap_or(0.)
     }
+    /// A font token's value (the sans-serif font if unset).
     pub fn font(&self, token: FontToken) -> FontFamily {
         self.get(token).font().unwrap_or_default()
     }
+    /// A shadow token's shadows (none if unset).
     pub fn shadows(&self, token: ShadowToken) -> Arc<[BoxShadow]> {
         self.get(token).shadows().unwrap_or_else(|| Arc::from([]))
     }
+    /// A text token's value (empty if unset).
     pub fn text(&self, token: TextToken) -> Arc<str> {
         self.get(token).text().unwrap_or_else(|| "".into())
     }
@@ -715,6 +722,8 @@ impl Themes {
         self.shared.state.borrow_mut().appearance = appearance;
         self.apply_appearance();
     }
+    /// The system's appearance, as the desktop host last reported it; dark until it
+    /// does.
     pub fn system_appearance(&self) -> Appearance {
         self.shared.state.borrow().appearance
     }
@@ -746,6 +755,8 @@ impl Themes {
         }
         self.refresh();
     }
+    /// The system's text size factor (see `set_system_text_scale`); 1 until the
+    /// host sets one.
     pub fn system_text_scale(&self) -> f32 {
         self.shared.state.borrow().text_scale
     }
@@ -913,9 +924,11 @@ impl Themes {
     pub fn get(&self, token: impl Into<TokenId>) -> TokenValue {
         self.root.get(token)
     }
+    /// The root scope's value of a colour token (tracked; transparent if unset).
     pub fn color(&self, token: ColorToken) -> Color {
         self.root.color(token)
     }
+    /// The root scope's value of a number token (tracked; 0 if unset).
     pub fn number(&self, token: NumberToken) -> f32 {
         self.root.number(token)
     }

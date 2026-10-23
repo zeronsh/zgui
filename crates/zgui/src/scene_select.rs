@@ -12,9 +12,13 @@ use std::collections::HashMap;
 /// it (CSS `::selection { color }`), from the glyphs already laid out.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextHighlight {
+    /// The highlight's fill colour.
     pub color: Color,
+    /// The highlighted rectangles, from the text box's origin.
     pub rects: Vec<Rect>,
+    /// The colour the glyphs they hold paint in; `None` keeps the glyphs' own.
     pub text_color: Option<Color>,
+    /// The rectangles' corner radius.
     pub radius: f32,
 }
 impl TextHighlight {
@@ -56,6 +60,7 @@ impl Selectable {
 /// A selectable text node `Scene::selectable_text` visits.
 #[derive(Clone, Copy, Debug)]
 pub struct TextLeaf {
+    /// The text node.
     pub id: NodeId,
     /// Its box, translated (scrolling included).
     pub bounds: Rect,
@@ -147,6 +152,7 @@ impl Scene {
         // Its layers repaint; its own retained glyphs stay as they are.
         self.invalidate(id, PAINTED);
     }
+    /// The selection highlight shown on text node `id`, if any.
     pub fn text_highlight(&self, id: NodeId) -> Option<&TextHighlight> {
         if self.selectable.highlights.is_empty() {
             return None;

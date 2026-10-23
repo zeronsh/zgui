@@ -32,10 +32,14 @@ use std::{
     rc::Rc,
 };
 
+/// Why [`KeyedChildren::reconcile`] failed; nothing was changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReconcileError {
     /// The input contains a repeated key at this zero-based index.
-    DuplicateKey { index: usize },
+    DuplicateKey {
+        /// The zero-based index of the repeated key.
+        index: usize,
+    },
     /// The managed container was removed externally.
     Unmounted,
     /// External children were inserted into the exclusively managed container.
@@ -52,11 +56,16 @@ impl std::fmt::Display for ReconcileError {
 }
 impl std::error::Error for ReconcileError {}
 
+/// What a reconcile did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReconcileReport {
+    /// Keys newly mounted.
     pub inserted: usize,
+    /// Keys unmounted.
     pub removed: usize,
+    /// Keys kept, with their nodes and state.
     pub retained: usize,
+    /// Whether the keys differ from the last reconcile's, in membership or order.
     pub reordered: bool,
 }
 
@@ -75,6 +84,8 @@ pub struct KeyedChildren<K: Eq + Hash> {
     order: Vec<K>,
 }
 impl<K: Eq + Hash + Clone> KeyedChildren<K> {
+    /// Mount the managed container, with `layout` and `style`, under `parent`, with
+    /// no children.
     pub fn mount(
         runtime: &Runtime,
         scene: Rc<RefCell<Scene>>,
@@ -90,15 +101,19 @@ impl<K: Eq + Hash + Clone> KeyedChildren<K> {
             order: Vec::new(),
         }
     }
+    /// The managed container.
     pub fn root(&self) -> NodeId {
         self.container.root()
     }
+    /// The keys, in child order.
     pub fn keys(&self) -> &[K] {
         &self.order
     }
+    /// The scope of child `key`.
     pub fn get(&self, key: &K) -> Option<&ViewScope> {
         self.entries.get(key)
     }
+    /// The scope of child `key`, mutably.
     pub fn get_mut(&mut self, key: &K) -> Option<&mut ViewScope> {
         self.entries.get_mut(key)
     }

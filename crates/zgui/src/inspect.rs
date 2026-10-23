@@ -38,11 +38,13 @@ use std::{
 /// script's element kind, `#id` and `.class`es) and where it was created.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Label {
+    /// Its description: the element kind, `#id` and `.class`es.
     pub name: Rc<str>,
     /// Where it was created, such as `app.luau:42`.
     pub source: Option<Rc<str>>,
 }
 
+/// What a layout [`Warning`] is about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WarningKind {
     /// A zero-width or zero-height box with children or text.
@@ -56,12 +58,15 @@ pub enum WarningKind {
 /// A suspicious layout result.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Warning {
+    /// The node warned about.
     pub node: NodeId,
+    /// What kind of problem it is.
     pub kind: WarningKind,
     /// The node, as the inspector names it (`column #list`).
     pub subject: String,
     /// The nearest creator's location (`app.luau:42`), when known.
     pub source: Option<Rc<str>>,
+    /// What is wrong, with a hint to fix it.
     pub message: String,
 }
 impl fmt::Display for Warning {
@@ -170,6 +175,7 @@ impl Inspector {
     pub fn active(&self) -> bool {
         self.0.active.get()
     }
+    /// Whether the overlay shows.
     pub fn enabled(&self) -> bool {
         self.0.enabled.get()
     }
@@ -192,6 +198,7 @@ impl Inspector {
             wake();
         }
     }
+    /// Show the overlay if it is hidden, else hide it.
     pub fn toggle(&self) {
         self.set_enabled(!self.enabled());
     }

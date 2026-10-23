@@ -162,14 +162,17 @@ impl Drop for Hosted {
         }
     }
 }
+/// A future that resolves at its deadline (see [`sleep`]).
 #[must_use = "Futures do nothing unless awaited or polled"]
 pub struct Sleep {
     deadline: Instant,
     registration: Option<(Arc<Driver>, u64)>,
 }
+/// A future that resolves `duration` from now.
 pub fn sleep(duration: Duration) -> Sleep {
     sleep_until(Instant::now() + duration)
 }
+/// A future that resolves at `deadline` (at once if it has passed).
 pub fn sleep_until(deadline: Instant) -> Sleep {
     Sleep {
         deadline,

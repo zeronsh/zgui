@@ -6,11 +6,26 @@ use std::{
     rc::Rc,
 };
 
+/// Why a [`List`] or [`Row`] operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListError {
-    Capacity { requested: usize, limit: usize },
-    Bounds { index: usize, length: usize },
+    /// Appending would make the list longer than its capacity.
+    Capacity {
+        /// The length it would have had.
+        requested: usize,
+        /// The list's capacity.
+        limit: usize,
+    },
+    /// The index is past the end of the list.
+    Bounds {
+        /// The index asked for.
+        index: usize,
+        /// The list's length.
+        length: usize,
+    },
+    /// Row identifiers, or memory for another row, ran out.
     Exhausted,
+    /// The row has been removed from its list.
     RowRemoved,
 }
 impl fmt::Display for ListError {
@@ -44,13 +59,17 @@ impl<T> Clone for Row<T> {
     }
 }
 impl<T: 'static> Row<T> {
+    /// Its identity: unique in its list, kept while rows before it are removed, and
+    /// never reused.
     pub fn id(&self) -> u64 {
         self.id
     }
+    /// Call `f` with its value, tracking it; `RowRemoved` once it is removed.
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> Result<R, ListError> {
         self.value
             .with(|value| value.as_ref().map(f).ok_or(ListError::RowRemoved))
     }
+    /// A clone of its value, tracking it; `RowRemoved` once it is removed.
     pub fn read(&self) -> Result<T, ListError>
     where
         T: Clone,
@@ -77,6 +96,8 @@ struct ListInner<T> {
     next_id: Cell<u64>,
     capacity: usize,
 }
+/// A reactive list of at most `capacity` rows, each holding its value in its
+/// own signal. Clones share it.
 pub struct List<T> {
     inner: Rc<ListInner<T>>,
 }
@@ -101,12 +122,15 @@ impl<T: PartialEq + 'static> List<T> {
             }),
         }
     }
+    /// Its length (tracked; changes to rows' values do not notify).
     pub fn len(&self) -> usize {
         self.inner.length.get()
     }
+    /// Whether it has no rows (tracked, as `len`).
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// The most rows it can hold.
     pub fn capacity(&self) -> usize {
         self.inner.capacity
     }
@@ -119,6 +143,8 @@ impl<T: PartialEq + 'static> List<T> {
             length: rows.len(),
         })
     }
+    /// Add a row holding `value` at the end and return it; `Capacity` when the list
+    /// is full.
     pub fn append(&self, value: T) -> Result<Row<T>, ListError> {
         let length = self.inner.rows.borrow().len();
         let requested = length.checked_add(1).ok_or(ListError::Exhausted)?;
@@ -149,6 +175,7 @@ impl<T: PartialEq + 'static> List<T> {
         });
         Ok(row)
     }
+    /// Remove the row at `index`; its handles fail with `RowRemoved` from then on.
     pub fn remove(&self, index: usize) -> Result<(), ListError> {
         let row = {
             let mut rows = self.inner.rows.borrow_mut();

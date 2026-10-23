@@ -19,28 +19,46 @@ use std::sync::Arc;
 /// (top 1, right 2, bottom 4, left 8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Field {
+    /// The background colour, `Styled::bg`.
     Background,
+    /// The text colour, `Styled::text_color`.
     TextColor,
+    /// The border colour, `Styled::border_color`.
     BorderColor,
+    /// The corner radius of every corner, `Styled::rounded`.
     Radius,
+    /// The border width, `Styled::border`.
     BorderWidth,
+    /// Padding on the given sides, `Styled::p` (or `pt`, `pr`, `pb`, `pl`).
     Padding(u8),
+    /// Margin on the given sides, `Styled::m` (or `mt`, `mr`, `mb`, `ml`).
     Margin(u8),
+    /// The room between children, `Styled::gap`.
     Gap,
+    /// The font size, `Styled::text_size`.
     TextSize,
+    /// The line height, `Styled::line_height`; a value that is not a number gives
+    /// `line_height_normal`.
     LineHeight,
+    /// The letter spacing, `Styled::letter_spacing`.
     LetterSpacing,
+    /// The font weight, held between 1 and 1000, `Styled::font_weight`.
     FontWeight,
+    /// The font family, `Styled::font_family`.
     FontFamily,
+    /// The box shadows, `Styled::shadows`; an empty list is no shadow.
     Shadow,
     /// `Styled::inset_shadows`.
     InsetShadow,
     /// `Styled::outline_color`.
     OutlineColor,
+    /// The opacity, `Styled::opacity`; 1 when the value is not a number.
     Opacity,
     /// Backdrop blur (frosted glass).
     Blur,
+    /// The width, `Styled::w`.
     Width,
+    /// The height, `Styled::h`.
     Height,
     /// One of a shader fill's four parameters (a colour, as 0 to 1).
     ShaderParam(u8),
@@ -69,7 +87,9 @@ impl Field {
 /// A style value or a token standing for one.
 #[derive(Clone, Copy, Debug)]
 pub enum Themed<T> {
+    /// A value as written.
     Value(T),
+    /// The token's value in the node's theme scope.
     Token(TokenId),
 }
 /// As derived, but inlined: restyling text compares inherited colours on

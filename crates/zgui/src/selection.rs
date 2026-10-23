@@ -31,7 +31,9 @@ use std::{
 /// its text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextPoint {
+    /// The text node.
     pub node: NodeId,
+    /// The UTF-8 byte offset into its text.
     pub offset: usize,
 }
 
@@ -1263,6 +1265,7 @@ impl Ui {
         self.set_selection(Some(root), Some(anchor), Some(focus));
         true
     }
+    /// Clear the text selection.
     pub fn clear_text_selection(&self) {
         self.set_selection(None, None, None);
     }

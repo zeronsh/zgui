@@ -1,17 +1,23 @@
 //! Bounded keyboard-context predicate parser. Context stack is root to focus.
 use std::{collections::BTreeMap, fmt};
+/// One level of the keyboard context stack: the flags and `name == value`
+/// attributes a component sets for key bindings' predicates (see
+/// [`ContextPredicate`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KeyContext {
     pub(crate) entries: BTreeMap<String, Option<String>>,
 }
 impl KeyContext {
+    /// An empty context.
     pub fn new() -> Self {
         Self::default()
     }
+    /// Set the flag `name`.
     pub fn flag(mut self, name: impl Into<String>) -> Self {
         self.entries.insert(name.into(), None);
         self
     }
+    /// Set the attribute `name` to `value`, which `name == value` predicates match.
     pub fn attribute(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.entries.insert(name.into(), Some(value.into()));
         self
@@ -20,19 +26,33 @@ impl KeyContext {
         self.entries.extend(other.entries.clone());
     }
 }
+/// A condition on the keyboard context stack under which a key binding applies,
+/// parsed from text such as `Workspace > (Editor && mode == insert)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContextPredicate {
+    /// A context has `name`, as a flag or an attribute (`Editor`).
     Flag(String),
+    /// A context's attribute (first) is the value (second) (`mode == insert`).
     Equal(String, String),
+    /// A context's attribute (first) is not the value (second), or is unset (`mode
+    /// != normal`).
     NotEqual(String, String),
+    /// No context in the stack matches it (`!Terminal`).
     Not(Box<Self>),
+    /// Both match the same context (`a && b`).
     And(Box<Self>, Box<Self>),
+    /// Either matches (`a || b`).
     Or(Box<Self>, Box<Self>),
+    /// The second matches a context that has an ancestor the first matches, at any
+    /// depth (`Workspace > Editor`).
     Descendant(Box<Self>, Box<Self>),
 }
+/// Why a context predicate did not parse, and where.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextParseError {
+    /// The UTF-8 byte offset where parsing failed.
     pub offset: usize,
+    /// What was wrong.
     pub message: &'static str,
 }
 impl fmt::Display for ContextParseError {
@@ -56,6 +76,8 @@ impl ContextPredicate {
         }
         Ok(result)
     }
+    /// Whether the predicate holds at any level of `stack`, which runs from the
+    /// root to the focused component.
     pub fn matches(&self, stack: &[KeyContext]) -> bool {
         (0..stack.len())
             .rev()

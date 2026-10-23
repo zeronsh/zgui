@@ -72,10 +72,13 @@ pub struct TaskHandle {
     wake: Arc<TaskWake>,
 }
 impl TaskHandle {
+    /// Cancel the task: the executor drops its future at its next tick.
     pub fn cancel(&self) {
         self.wake.cancelled.store(true, Ordering::Release);
         self.wake.wake_by_ref();
     }
+    /// Whether its future is gone: finished, cancelled or dropped with the
+    /// executor.
     pub fn is_finished(&self) -> bool {
         !self.wake.active.load(Ordering::Acquire)
     }
@@ -100,6 +103,7 @@ impl Default for LocalExecutor {
     }
 }
 impl LocalExecutor {
+    /// An executor that wakes no event loop: its host ticks it.
     pub fn new() -> Self {
         Self::with_wake(|| {})
     }
@@ -115,6 +119,8 @@ impl LocalExecutor {
             }),
         }
     }
+    /// Run `future` until it finishes; it is first polled at the next tick. Only
+    /// dropping the executor cancels it (see `spawn_scoped`).
     pub fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
         self.spawn_inner(future);
     }
@@ -183,9 +189,11 @@ impl LocalExecutor {
         }
         polled
     }
+    /// Whether a task is waiting to be polled.
     pub fn has_ready(&self) -> bool {
         !self.scheduler.ready.lock().unwrap().queue.is_empty()
     }
+    /// Whether it holds no tasks.
     pub fn is_empty(&self) -> bool {
         self.tasks.is_empty() && self.pending.borrow().is_empty()
     }
