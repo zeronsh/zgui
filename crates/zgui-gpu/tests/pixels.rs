@@ -269,6 +269,7 @@ fn rounded_border_shadow_images_and_background_damage() {
     assert_eq!(&p[..4], &[5, 10, 15, 128]);
 }
 
+#[cfg(all(feature = "svg", feature = "png"))]
 #[test]
 fn image_and_svg_decoding_are_bounded_and_alpha_correct() {
     let _gpu_fixture = gpu_fixture();

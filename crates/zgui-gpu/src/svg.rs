@@ -182,7 +182,8 @@ impl SvgCache {
     }
 }
 
-#[cfg(test)]
+// They rasterize SVG documents.
+#[cfg(all(test, feature = "svg"))]
 mod tests {
     use super::*;
     #[test]

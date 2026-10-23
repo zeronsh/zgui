@@ -11,6 +11,17 @@ pub fn decode_image(bytes: &[u8]) -> Result<Arc<ImageData>, GpuError> {
     let mut reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| GpuError(e.to_string()))?;
+    match reader.format() {
+        Some(image::ImageFormat::Png) if !cfg!(feature = "png") => {
+            return Err(GpuError("PNG images need zgui-gpu's `png` feature".into()));
+        }
+        Some(image::ImageFormat::Jpeg) if !cfg!(feature = "jpeg") => {
+            return Err(GpuError(
+                "JPEG images need zgui-gpu's `jpeg` feature".into(),
+            ));
+        }
+        _ => {}
+    }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(8192);
     limits.max_image_height = Some(8192);
@@ -39,46 +50,37 @@ pub fn decode_svg(bytes: &[u8], width: u32, height: u32) -> Result<Arc<ImageData
     {
         return Err(GpuError("SVG input or output exceeds bounds".into()));
     }
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| GpuError("SVG image allocation failed".into()))?;
     // A raster where an SVG was asked for (a URL that serves either): drawn
     // as that picture, scaled to fit.
     if image::guess_format(bytes).is_ok() {
         let image = decode_image(bytes)?;
-        let mut source = resvg::tiny_skia::Pixmap::new(image.width(), image.height())
+        let mut source = tiny_skia::Pixmap::new(image.width(), image.height())
             .ok_or_else(|| GpuError("SVG image allocation failed".into()))?;
         for (to, from) in source
             .pixels_mut()
             .iter_mut()
             .zip(image.pixels().as_chunks::<4>().0)
         {
-            *to = resvg::tiny_skia::ColorU8::from_rgba(from[0], from[1], from[2], from[3])
-                .premultiply();
+            *to = tiny_skia::ColorU8::from_rgba(from[0], from[1], from[2], from[3]).premultiply();
         }
         pixmap.draw_pixmap(
             0,
             0,
             source.as_ref(),
-            &resvg::tiny_skia::PixmapPaint {
-                quality: resvg::tiny_skia::FilterQuality::Bicubic,
+            &tiny_skia::PixmapPaint {
+                quality: tiny_skia::FilterQuality::Bicubic,
                 ..Default::default()
             },
-            resvg::tiny_skia::Transform::from_scale(
+            tiny_skia::Transform::from_scale(
                 width as f32 / image.width() as f32,
                 height as f32 / image.height() as f32,
             ),
             None,
         );
     } else {
-        let mut options = resvg::usvg::Options::default();
-        options.image_href_resolver.resolve_string = Box::new(|_, _| None);
-        let tree =
-            resvg::usvg::Tree::from_data(bytes, &options).map_err(|e| GpuError(e.to_string()))?;
-        let transform = resvg::tiny_skia::Transform::from_scale(
-            width as f32 / tree.size().width(),
-            height as f32 / tree.size().height(),
-        );
-        resvg::render(&tree, transform, &mut pixmap.as_mut());
+        render_svg(bytes, width, height, &mut pixmap)?;
     }
     let mut pixels = pixmap.take();
     for p in pixels.as_chunks_mut::<4>().0 {
@@ -97,11 +99,36 @@ pub fn decode_svg(bytes: &[u8], width: u32, height: u32) -> Result<Arc<ImageData
         .map_err(|e| GpuError(e.into()))
 }
 
+/// An SVG document drawn into `pixmap`, scaled to fill it.
+#[cfg(feature = "svg")]
+fn render_svg(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    pixmap: &mut tiny_skia::Pixmap,
+) -> Result<(), GpuError> {
+    let mut options = resvg::usvg::Options::default();
+    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    let tree =
+        resvg::usvg::Tree::from_data(bytes, &options).map_err(|e| GpuError(e.to_string()))?;
+    let transform = tiny_skia::Transform::from_scale(
+        width as f32 / tree.size().width(),
+        height as f32 / tree.size().height(),
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Ok(())
+}
+#[cfg(not(feature = "svg"))]
+fn render_svg(_: &[u8], _: u32, _: u32, _: &mut tiny_skia::Pixmap) -> Result<(), GpuError> {
+    Err(GpuError("SVG images need zgui-gpu's `svg` feature".into()))
+}
+
 /// Decode GIF frames once, compositing offsets and Keep/Background/Previous
 /// disposal into full straight-alpha frames. Background disposal is transparent,
 /// matching GUI image compositing rather than filling the window with GIF palette
 /// background. Absent looping extension plays once; finite repetitions add to the
 /// initial play. Zero-delay GIF frames use 100 ms; other delays floor at 10 ms.
+#[cfg(feature = "gif")]
 pub fn decode_gif(bytes: &[u8]) -> Result<Arc<zgui::animation::Animation>, GpuError> {
     use zgui::animation::{Animation, Frame, LoopCount};
     if bytes.len() > MAX_BYTES {
@@ -179,4 +206,30 @@ pub fn decode_gif(bytes: &[u8]) -> Result<Arc<zgui::animation::Animation>, GpuEr
     Animation::new(frames, loops)
         .map(Arc::new)
         .map_err(|e| GpuError(e.into()))
+}
+#[cfg(not(feature = "gif"))]
+pub fn decode_gif(_: &[u8]) -> Result<Arc<zgui::animation::Animation>, GpuError> {
+    Err(GpuError("GIF images need zgui-gpu's `gif` feature".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    /// A format left out fails to decode, with an error naming the feature
+    /// that brings it back.
+    #[cfg(not(all(feature = "svg", feature = "png", feature = "gif")))]
+    #[test]
+    fn a_format_left_out_names_its_feature() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>"#;
+        let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+        for (left_out, error) in [
+            (!cfg!(feature = "svg"), super::decode_svg(svg, 4, 4).err()),
+            (!cfg!(feature = "png"), super::decode_image(&png).err()),
+            (!cfg!(feature = "gif"), super::decode_gif(b"GIF89a").err()),
+        ] {
+            if left_out {
+                let error = error.expect("an error").0;
+                assert!(error.contains("feature"), "{error}");
+            }
+        }
+    }
 }

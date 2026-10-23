@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [features]
+# Image formats (see zgui-gpu): all by default.
+default = ["svg", "png", "jpeg", "gif"]
+svg = ["zgui-gpu/svg"]
+png = ["zgui-gpu/png"]
+jpeg = ["zgui-gpu/jpeg"]
+gif = ["zgui-gpu/gif"]
 # Terminals (`zgui::terminal`) as Ghostty surfaces: builds Ghostty with Zig
 # 0.16 (see crates/zgui-ghostty-sys). macOS only for now.
 ghostty = ["dep:zgui-ghostty-sys", "zgui-ghostty-sys/link", "dep:libc"]
@@ -13,7 +19,7 @@ terminal-bundle = ["dep:zgui-script"]
 
 [dependencies]
 zgui = { path = "../zgui" }
-zgui-gpu = { path = "../zgui-gpu" }
+zgui-gpu = { path = "../zgui-gpu", default-features = false }
 winit = "0.30.13"
 softbuffer = "0.4.8"
 fontdue = "0.9.3"
@@ -74,8 +80,9 @@ zgui-script = { path = "../zgui-script", optional = true }
 
 [dev-dependencies]
 accesskit_consumer = "0.38.0"
-# The terminal example's interface is a Luau script.
-zgui-script = { path = "../zgui-script" }
+# The terminal example's interface is a Luau script. Image formats come
+# through this crate's own features.
+zgui-script = { path = "../zgui-script", default-features = false }
 # The terminal example's session server keeps each shell's screen to redraw
 # it for a new window.
 vt100 = "0.16"

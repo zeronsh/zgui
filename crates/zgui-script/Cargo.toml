@@ -5,10 +5,18 @@ edition.workspace = true
 license.workspace = true
 description = "Luau scripts that describe zgui component trees, with hot reload."
 
+[features]
+# Image formats (see zgui-gpu): all by default.
+default = ["svg", "png", "jpeg", "gif"]
+svg = ["zgui-gpu/svg"]
+png = ["zgui-gpu/png"]
+jpeg = ["zgui-gpu/jpeg"]
+gif = ["zgui-gpu/gif"]
+
 [dependencies]
 zgui = { path = "../zgui" }
 # Image decoding for `ui.image` (PNG, JPEG).
-zgui-gpu = { path = "../zgui-gpu" }
+zgui-gpu = { path = "../zgui-gpu", default-features = false }
 mlua = { version = "0.12.2", features = ["luau"] }
 # `.luaurc` aliases for `require("@alias/...")`.
 serde_json = "1"

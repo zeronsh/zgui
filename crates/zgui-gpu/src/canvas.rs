@@ -1,11 +1,11 @@
 //! Shared bounded vector raster cache. Rasterization only follows changed content,
 //! allocated size or device scale; GPU upload uses ordinary retained image identity.
 use crate::GpuError;
-use resvg::tiny_skia as sk;
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
 };
+use tiny_skia as sk;
 use zgui::{
     canvas::*,
     image::ImageData,

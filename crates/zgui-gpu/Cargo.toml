@@ -4,6 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# Image formats, each on by default. An app that never shows one can leave
+# it out (`default-features = false`) and save its decoder in the binary: a
+# source in a missing format fails to decode, with an error naming the
+# feature. Canvases, gradients and shadows need none of them.
+[features]
+default = ["svg", "png", "jpeg", "gif"]
+svg = ["dep:resvg"]
+png = ["image/png"]
+jpeg = ["image/jpeg"]
+gif = ["dep:gif"]
+
 [dependencies]
 zgui = { path = "../zgui" }
 wgpu = "29.0.4"
@@ -11,13 +22,15 @@ winit = "0.30.13"
 cosmic-text = { version = "0.19.0", features = ["shape-run-cache"] }
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
-image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
-resvg = { version = "0.46.0", default-features = false }
+image = { version = "0.25.10", default-features = false }
+resvg = { version = "0.46.0", default-features = false, optional = true }
+# Canvas, decoration and image rasterization (what resvg draws with).
+tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"] }
 unicode-segmentation = "1.12"
 # Per-glyph and per-node lookups every frame; already in the tree via cosmic-text.
 rustc-hash = "2.1"
 
-gif = { version = "=0.14.2", default-features = false, features = ["std"] }
+gif = { version = "=0.14.2", default-features = false, features = ["std"], optional = true }
 
 # DXGI frame statistics for ZGUI_PRESENT_LOG (dxgi.rs); the version wgpu-hal uses.
 [target.'cfg(windows)'.dependencies]
@@ -34,3 +47,12 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 objc2-io-surface = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"] }
+
+# Tests of a format need its feature.
+[[test]]
+name = "gif"
+required-features = ["gif"]
+
+[[test]]
+name = "svg"
+required-features = ["svg"]

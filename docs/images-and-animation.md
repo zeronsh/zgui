@@ -35,3 +35,18 @@ GIF path and includes a pause/resume control. A `TaskRunner` provider is require
 for asynchronous loading/playback; the desktop host supplies one.
 
 For code-driven animation (spinners, transitions, springs), await the window's display-paced frame clock instead of a timer; see [animation frames](application.md#animation-frames).
+
+## Image formats are features
+
+SVG, PNG, JPEG and GIF decoding are cargo features of `zgui-gpu`, `zgui-desktop`
+and `zgui-script` (`svg`, `png`, `jpeg`, `gif`), all on by default. An app that
+never shows a format can leave its decoder out of the binary:
+
+```toml
+zgui-desktop = { version = "…", default-features = false, features = ["png"] }
+```
+
+A source in a format left out fails to decode, with an error naming the feature,
+as any undecodable image does. Canvases, gradients, shadows and decorations need
+none of them. Leaving all four out takes about 1 MB off `component_workload`
+(12.8 MB to 11.8 MB on macOS arm64).
