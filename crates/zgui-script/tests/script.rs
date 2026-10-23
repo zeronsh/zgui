@@ -128,11 +128,24 @@ fn runaway_scripts_hit_their_time_budget() {
         load: Duration::from_millis(30),
         ..Limits::default()
     };
-    let host = ScriptHost::inline(&runtime, "spin", "while true do end").limits(limits);
-    let started = Instant::now();
-    let error = host.reload().unwrap_err();
-    assert!(error.contains("time budget"), "{error}");
-    assert!(started.elapsed() < Duration::from_secs(2));
+    // A bare loop, one in a coroutine, and one calling the host: each is
+    // stopped once its budget runs out, not long after.
+    for code in [
+        "while true do end",
+        "coroutine.wrap(function() while true do end end)()",
+        "local n = ui.state('n', 0) while true do n:set(n:peek() + 1) end",
+        "while true do pcall(function() while true do end end) end",
+    ] {
+        let host = ScriptHost::inline(&runtime, "spin", code).limits(limits);
+        let started = Instant::now();
+        let error = host.reload().unwrap_err();
+        assert!(error.contains("time budget"), "{code}: {error}");
+        let spent = started.elapsed();
+        assert!(
+            spent < Duration::from_millis(500),
+            "{code}: stopped after {spent:?}"
+        );
+    }
 
     // A handler that spins is stopped too, and the interface keeps running.
     let mut h = Harness::inline(

@@ -40,6 +40,7 @@ mod file_events;
 #[cfg(target_os = "linux")]
 #[path = "file_events_linux.rs"]
 mod file_events;
+mod interrupt;
 mod io;
 pub mod lint;
 mod lower;
@@ -64,7 +65,7 @@ pub use persist::app_data_dir;
 pub use value::{ElementHandle, PathKey, Shared, Store, Value, tables_converted, values_converted};
 pub use windows::Window;
 
-use mlua::{Lua, VmState};
+use mlua::Lua;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -143,7 +144,7 @@ fn normalize(path: &std::path::Path) -> PathBuf {
 /// so a busy machine does not fail a script that is not looping; the cheap
 /// wall clock decides when the CPU time is worth reading.
 #[derive(Clone, Copy)]
-struct Deadline {
+pub(crate) struct Deadline {
     wall: Instant,
     cpu: Duration,
     budget: Duration,
@@ -165,7 +166,7 @@ impl Deadline {
             budget: self.budget,
         }
     }
-    fn exceeded(&self) -> bool {
+    pub(crate) fn exceeded(&self) -> bool {
         self.wall.elapsed() > self.budget && thread_cpu().saturating_sub(self.cpu) > self.budget
     }
 }
@@ -234,6 +235,8 @@ fn thread_cpu() -> Duration {
 
 pub(crate) struct Vm {
     name: String,
+    /// The time budget and memory watch (see `interrupt`).
+    _interrupt: interrupt::Installed,
     /// Keeps the state alive: script values only hold weak references to it.
     pub(crate) lua: Lua,
     /// Where relative image and SVG paths resolve from.
@@ -1874,39 +1877,11 @@ impl ScriptHost {
         let limits = self.0.limits;
         lua.set_memory_limit(limits.memory).map_err(fail)?;
         let deadline: Rc<Cell<Option<Deadline>>> = Rc::default();
-        {
-            let deadline = deadline.clone();
-            // Reading the clock costs more than most of what runs between
-            // two interrupts: it is read at every 64th.
-            let ticks = Cell::new(0u8);
-            // Luau collects as the VM allocates, but builtins such as
-            // `table.clone` allocate without giving the collector a turn: a
-            // loop of them between host calls fills the VM with garbage
-            // until the memory limit fails the script. Halfway from what
-            // was live at the last collection to the limit, it collects.
-            let limit = limits.memory;
-            let collect_at = Cell::new(limit / 2);
-            lua.set_interrupt(move |lua| {
-                ticks.set(ticks.get().wrapping_add(1));
-                if !ticks.get().is_multiple_of(64) {
-                    return Ok(VmState::Continue);
-                }
-                if limit > 0 && lua.used_memory() > collect_at.get() {
-                    lua.gc_collect()?;
-                    let live = lua.used_memory();
-                    collect_at.set(live + limit.saturating_sub(live) / 2);
-                }
-                match deadline.get() {
-                    Some(d) if d.exceeded() => {
-                        Err(mlua::Error::runtime("script exceeded its time budget"))
-                    }
-                    _ => Ok(VmState::Continue),
-                }
-            });
-        }
+        let interrupt = interrupt::install(&lua, deadline.clone(), limits.memory);
         let vm = Rc::new(Vm {
             name: name.clone(),
             lua: lua.clone(),
+            _interrupt: interrupt,
             base: script.dir(),
             deadline,
             budget: limits.call,
