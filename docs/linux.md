@@ -150,7 +150,12 @@ not the app's window's. A tab torn off (released over no window of the app's)
 opens with the point it was grabbed by under the pointer. That point is
 `XQueryPointer`'s, less the frame the window manager reports
 (`_NET_REQUEST_FRAME_EXTENTS`), set as the user's position (`USPosition`) so
-window managers keep it. `drag_windows_smoke.py` checks all three.
+window managers keep it. A window's only tab moves the window itself
+(`drag_moves_window`): its frame moves by request, which the window manager
+carries out, placed from the pointer the server reports (`XQueryPointer`),
+and what is below it is found among the root's windows in stacking order,
+past the moving window and override-redirect ones, as Chromium finds it.
+`drag_windows_smoke.py` checks all four.
 
 A window with no position opens a step on from the app's front window, as
 on macOS and Windows: down and right by its title bar's height, as the

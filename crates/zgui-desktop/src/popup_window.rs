@@ -77,8 +77,8 @@ pub(crate) use win32::{
 
 #[cfg(target_os = "linux")]
 pub(crate) use x11::{
-    PopupHost, content_origin, enabled, make, pointer, popup_screens, route, wanted, warm,
-    window_at, window_number,
+    PopupHost, content_origin, enabled, global_pointer, make, move_window, pointer, popup_screens,
+    route, settle_window, wanted, warm, window_at, window_below, window_number,
 };
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
@@ -1674,6 +1674,153 @@ mod x11 {
                 window = child;
             }
             top.map(|top| top as isize)
+        })
+    }
+    thread_local! {
+        /// While a drag moves its window: that window's frame (its
+        /// top-level window, the window manager's), its frame's left and
+        /// top, and each of the app's windows' top-levels.
+        static MOVING: RefCell<Option<Moving>> = const { RefCell::new(None) };
+    }
+    struct Moving {
+        window: u32,
+        top: u32,
+        frame: (i32, i32),
+        tops: Vec<(u32, u32)>,
+    }
+    /// `window`'s top-level window: its ancestor that is the root's child.
+    fn top_level(connection: &impl x11rb::connection::Connection, window: u32) -> Option<u32> {
+        use x11rb::protocol::xproto::ConnectionExt;
+        let mut window = window;
+        for _ in 0..8 {
+            let tree = connection.query_tree(window).ok()?.reply().ok()?;
+            if tree.parent == tree.root || tree.parent == x11rb::NONE {
+                return Some(window);
+            }
+            window = tree.parent;
+        }
+        None
+    }
+    /// `MOVING` for `window`, found once per drag.
+    fn moving<T>(window: u32, read: impl FnOnce(&Moving) -> T) -> Option<T> {
+        use x11rb::connection::Connection;
+        MOVING.with(|moving| {
+            let mut moving = moving.borrow_mut();
+            if moving.as_ref().is_none_or(|moving| moving.window != window) {
+                *moving = CONNECTION.with(|connection| {
+                    let connection = connection.as_ref()?;
+                    let root = connection.setup().roots.first()?.root;
+                    let extents = crate::x11_work_area::frame_extents(connection, root, window)
+                        .unwrap_or_default();
+                    let own = OWN.with(|own| own.borrow().clone());
+                    Some(Moving {
+                        window,
+                        top: top_level(connection, window)?,
+                        frame: (extents.0 as i32, extents.2 as i32),
+                        tops: own
+                            .into_iter()
+                            .filter_map(|own| Some((top_level(connection, own)?, own)))
+                            .collect(),
+                    })
+                });
+            }
+            moving.as_ref().map(read)
+        })
+    }
+    /// The pointer in global coordinates (points from the root's top-left),
+    /// as the X server has it.
+    pub(crate) fn global_pointer() -> Option<(f64, f64)> {
+        use x11rb::{connection::Connection, protocol::xproto::ConnectionExt};
+        let scale = SCALE.with(Cell::get);
+        CONNECTION.with(|connection| {
+            let connection = connection.as_ref()?;
+            let root = connection.setup().roots.first()?.root;
+            let pointer = connection.query_pointer(root).ok()?.reply().ok()?;
+            Some((pointer.root_x as f64 / scale, pointer.root_y as f64 / scale))
+        })
+    }
+    /// Put `window`'s content top-left at global point `to`, as a drag of
+    /// its only tab does (`View::drag_moves_window`): its frame moved (a
+    /// request the window manager carries out), drawing nothing.
+    pub(crate) fn move_window(window: &Window, to: (f64, f64)) {
+        use x11rb::{
+            connection::Connection,
+            protocol::xproto::{ConfigureWindowAux, ConnectionExt},
+        };
+        let Some(id) = xid(window) else {
+            return;
+        };
+        let Some((left, top)) = moving(id, |moving| moving.frame) else {
+            return;
+        };
+        let scale = window.scale_factor();
+        let (x, y) = (
+            (to.0 * scale).round() as i32 - left,
+            (to.1 * scale).round() as i32 - top,
+        );
+        CONNECTION.with(|connection| {
+            if let Some(connection) = connection {
+                let _ = connection.configure_window(id, &ConfigureWindowAux::new().x(x).y(y));
+                let _ = connection.flush();
+            }
+        });
+    }
+    /// The drag that moved a window ended.
+    pub(crate) fn settle_window() {
+        MOVING.with(|moving| moving.borrow_mut().take());
+    }
+    /// The front-most window at global point `(x, y)` below window
+    /// `number`, which a drag is moving under the pointer: one of the app's
+    /// (`window_number`), or another's top-level window. The root's
+    /// children, top down, as the stacking order has them, past windows not
+    /// shown and override-redirect ones (popups, drag previews).
+    pub(crate) fn window_below(x: f64, y: f64, number: isize) -> Option<isize> {
+        use x11rb::{
+            connection::Connection,
+            protocol::xproto::{ConnectionExt, MapState},
+        };
+        let scale = SCALE.with(Cell::get);
+        let (x, y) = ((x * scale).round() as i32, (y * scale).round() as i32);
+        let (moved, tops) = moving(number as u32, |moving| (moving.top, moving.tops.clone()))?;
+        CONNECTION.with(|connection| {
+            let connection = connection.as_ref()?;
+            let root = connection.setup().roots.first()?.root;
+            let children = connection.query_tree(root).ok()?.reply().ok()?.children;
+            // Asked all at once: one round trip, however many windows.
+            let asked: Vec<_> = children
+                .iter()
+                .rev()
+                .filter(|child| **child != moved)
+                .filter_map(|child| {
+                    Some((
+                        *child,
+                        connection.get_window_attributes(*child).ok()?,
+                        connection.get_geometry(*child).ok()?,
+                    ))
+                })
+                .collect();
+            let mut found = None;
+            for (child, attributes, geometry) in asked {
+                let (Ok(attributes), Ok(geometry)) = (attributes.reply(), geometry.reply()) else {
+                    continue;
+                };
+                if found.is_some()
+                    || attributes.map_state != MapState::VIEWABLE
+                    || attributes.override_redirect
+                {
+                    continue;
+                }
+                let border = 2 * geometry.border_width as i32;
+                let (left, top) = (geometry.x as i32, geometry.y as i32);
+                if (left..left + geometry.width as i32 + border).contains(&x)
+                    && (top..top + geometry.height as i32 + border).contains(&y)
+                {
+                    found = Some(child);
+                }
+            }
+            let found = found?;
+            let own = tops.iter().find(|(top, _)| *top == found);
+            Some(own.map_or(found, |(_, own)| *own) as isize)
         })
     }
     /// Whether a popup found no window ready (`make` one).

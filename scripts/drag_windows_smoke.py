@@ -2,8 +2,11 @@
 """Drags between windows on X11 (Xvfb/Openbox/picom): drag_probe's tab
 dragged onto its other window's strip drops there; over another app's
 window covering that strip (xmessage), it does not, and released there it
-is torn off, as over the desktop; and tab_windows' tab torn off opens in a
-window of its own with the tab under the pointer where it was grabbed."""
+is torn off, as over the desktop; tab_windows' tab torn off opens in a
+window of its own with the tab under the pointer where it was grabbed; and
+that window's only tab moves the window itself (`drag_moves_window`),
+following the pointer to the pixel, and dropped on the other window's strip
+merges into it."""
 import argparse
 import json
 import os
@@ -133,10 +136,30 @@ def main():
         checks["torn off under the pointer"] = (abs(tx - release[0] + grab[0]) <= 1
                                                 and abs(ty - release[1] + grab[1]) <= 1)
 
+        # The torn-off window's only tab moves the window itself: it follows
+        # the pointer, and left on the desktop stays there.
+        start = (tx + grab[0], ty + grab[1])
+        end = (start[0] + 160, start[1] + 90)
+        drag(start, end)
+        time.sleep(.5)
+        mx, my, _, _ = geometry(torn)
+        checks["moved window at"] = [mx, my]
+        # The point under the pointer as the drag began (past `drag`'s
+        # threshold step) stays under it.
+        checks["only tab moves its window"] = (mx - tx, my - ty) == (end[0] - start[0] - 12, end[1] - start[1] - 4)
+        checks["moved window stays"] = bool(named("Inbox"))
+        # Onto the other window's strip: it merges there, its window gone.
+        x, y, _, _ = geometry(one)
+        drag((mx + grab[0], my + grab[1]), (x + 400, y + grab[1]))
+        checks["merges into the other strip"] = bool(until("the moved window to merge", lambda: not named("Inbox"),
+                                                           app, log))
+
         (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
-        assert all(checks[key] for key in ("not over another app's window", "torn off under the pointer")), checks
+        assert all(checks[key] for key in ("not over another app's window", "torn off under the pointer",
+                                           "only tab moves its window", "moved window stays",
+                                           "merges into the other strip")), checks
         print("PASS: X11 drags between windows: dropped on the other window's strip, not through another app's "
-              "window, and a tab torn off opens under the pointer")
+              "window, a tab torn off opens under the pointer, and a window's only tab moves it and merges")
     finally:
         for process in reversed(processes):
             stop(process)

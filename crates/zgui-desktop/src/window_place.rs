@@ -277,21 +277,44 @@ pub(crate) fn window_below(x: f64, y: f64, number: isize) -> Option<isize> {
     (found > 0).then_some(found)
 }
 
+// X11: the window's frame moved by request (the window manager carries it
+// out), and what is below it from the root's children in stacking order
+// (`popup_window`'s X11 module); Wayland gives the app neither.
+#[cfg(target_os = "linux")]
+pub(crate) fn move_to(window: &winit::window::Window, to: (f64, f64), _: &mut Option<(f64, f64)>) {
+    crate::popup_window::move_window(window, to);
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn pointer() -> Option<(f64, f64)> {
+    crate::popup_window::global_pointer()
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn settle(_: &winit::window::Window, _: &mut Option<(f64, f64)>) {
+    crate::popup_window::settle_window();
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn window_below(x: f64, y: f64, number: isize) -> Option<isize> {
+    crate::popup_window::window_below(x, y, number)
+}
+
 // todo(windows): `SetWindowPos` and `WindowFromPoint` past the moved window
-// (`GetWindow(GW_HWNDNEXT)`). todo(x11): `XMoveWindow` and the stacking
-// order. Until then such a drag shows its preview, as any drag does.
-#[cfg(not(target_os = "macos"))]
+// (`GetWindow(GW_HWNDNEXT)`). Until then such a drag shows its preview, as
+// any drag does.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn move_to(_: &winit::window::Window, _: (f64, f64), _: &mut Option<(f64, f64)>) {}
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn pointer() -> Option<(f64, f64)> {
     None
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn settle(_: &winit::window::Window, _: &mut Option<(f64, f64)>) {}
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn window_below(_: f64, _: f64, _: isize) -> Option<isize> {
     None
 }
