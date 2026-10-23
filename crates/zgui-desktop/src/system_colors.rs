@@ -49,18 +49,120 @@ fn tokens() -> Vec<(TokenId, TokenInput)> {
     }
     #[cfg(target_os = "linux")]
     {
-        let Some(Color(r, g, b, _)) = crate::linux_appearance::current().accent else {
-            return Vec::new();
+        let settings = crate::linux_appearance::current();
+        let mut tokens = if settings.contrast {
+            // The portal says only that contrast is high, not in which
+            // colours: the standard high-contrast palettes, light or dark.
+            let light = settings.scheme == Some(zgui::theme::Appearance::Light);
+            contrast_tokens(if light { Palette::LIGHT } else { Palette::DARK })
+        } else if let Some(Color(r, g, b, _)) = settings.accent {
+            vec![
+                (tok::SELECTION.0, Color(r, g, b, 0x66).into()),
+                (tok::SELECTION_INACTIVE.0, Color(r, g, b, 0x33).into()),
+            ]
+        } else {
+            Vec::new()
         };
-        vec![
-            (tok::SELECTION.0, Color(r, g, b, 0x66).into()),
-            (tok::SELECTION_INACTIVE.0, Color(r, g, b, 0x33).into()),
-        ]
+        if settings.reduced_motion {
+            tokens.extend(still());
+        }
+        tokens
     }
     #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     {
         Vec::new()
     }
+}
+
+/// High contrast's colours: the system's (Windows) or a standard palette
+/// (Linux, where the portal gives none).
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+struct Palette {
+    window: Color,
+    text: Color,
+    gray: Color,
+    link: Color,
+    highlight: Color,
+    highlight_text: Color,
+    button: Color,
+}
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl Palette {
+    /// Windows' High Contrast Black and White, which GNOME's and KDE's
+    /// high-contrast themes resemble.
+    const DARK: Self = Self {
+        window: Color(0, 0, 0, 255),
+        text: Color(255, 255, 255, 255),
+        gray: Color(63, 242, 63, 255),
+        link: Color(255, 255, 0, 255),
+        highlight: Color(26, 235, 255, 255),
+        highlight_text: Color(0, 0, 0, 255),
+        button: Color(0, 0, 0, 255),
+    };
+    const LIGHT: Self = Self {
+        window: Color(255, 255, 255, 255),
+        text: Color(0, 0, 0, 255),
+        gray: Color(96, 0, 0, 255),
+        link: Color(0, 0, 159, 255),
+        highlight: Color(55, 0, 110, 255),
+        highlight_text: Color(255, 255, 255, 255),
+        button: Color(255, 255, 255, 255),
+    };
+}
+/// The tokens high contrast sets, from its palette: the app's controls take
+/// its colours then, through the tokens the built-in themes set. Colours an
+/// app sets itself stay its own, as in a browser.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+fn contrast_tokens(p: Palette) -> Vec<(TokenId, TokenInput)> {
+    vec![
+        (tok::BACKGROUND.0, p.window.into()),
+        (tok::SURFACE_SUNKEN.0, p.window.into()),
+        (tok::SURFACE_BASE.0, p.window.into()),
+        (tok::SURFACE_RAISED.0, p.window.into()),
+        (tok::SURFACE_OVERLAY.0, p.window.into()),
+        (tok::TEXT_PRIMARY.0, p.text.into()),
+        (tok::TEXT_SECONDARY.0, p.text.into()),
+        (tok::TEXT_TERTIARY.0, p.text.into()),
+        (tok::TEXT_DISABLED.0, p.gray.into()),
+        (tok::BORDER.0, p.text.into()),
+        (tok::BORDER_SUBTLE.0, p.text.into()),
+        (tok::BORDER_STRONG.0, p.text.into()),
+        (tok::ACCENT.0, p.link.into()),
+        (tok::ACCENT_HOVER.0, p.highlight.into()),
+        (tok::ACCENT_TEXT.0, p.highlight_text.into()),
+        (tok::SELECTION.0, p.highlight.into()),
+        (tok::SELECTION_INACTIVE.0, p.highlight.into()),
+        (tok::SELECTION_TEXT.0, p.highlight_text.into()),
+        (tok::SELECTION_TEXT_INACTIVE.0, p.highlight_text.into()),
+        (tok::SELECTION_ITEM.0, p.highlight.into()),
+        (tok::FOCUS_RING.0, p.text.into()),
+        (tok::SCROLLBAR_THUMB.0, p.text.into()),
+        (tok::SCROLLBAR_THUMB_ACTIVE.0, p.highlight.into()),
+        (tok::SCROLLBAR_TRACK.0, p.window.into()),
+        (tok::GLASS_TINT.0, p.window.into()),
+        (tok::BUTTON_BG.0, p.button.into()),
+        (tok::INPUT_BG.0, p.window.into()),
+        (tok::MENU_BG.0, p.window.into()),
+        // Over a control, the highlight, as Windows' own lists show it.
+        (tok::HOVER.0, p.highlight.into()),
+        (tok::PRESSED.0, p.highlight.into()),
+        (tok::BUTTON_HOVER.0, p.highlight.into()),
+        (tok::BUTTON_PRESSED.0, p.highlight.into()),
+        (tok::MENU_HOVER.0, p.highlight.into()),
+        (tok::DANGER.0, p.text.into()),
+        (tok::WARNING.0, p.text.into()),
+        (tok::SUCCESS.0, p.text.into()),
+        (tok::INFO.0, p.text.into()),
+    ]
+}
+/// Animations turned off: every motion duration token at zero.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+fn still() -> Vec<(TokenId, TokenInput)> {
+    vec![
+        (tok::MOTION_DURATION_FAST.0, 0f32.into()),
+        (tok::MOTION_DURATION_NORMAL.0, 0f32.into()),
+        (tok::MOTION_DURATION_SLOW.0, 0f32.into()),
+    ]
 }
 
 #[cfg(windows)]
@@ -119,53 +221,20 @@ fn windows_contrast() -> Option<Vec<(TokenId, TokenInput)>> {
     if !contrast.dwFlags.contains(HCF_HIGHCONTRASTON) {
         return None;
     }
-    let color = |index: SYS_COLOR_INDEX| -> TokenInput {
+    let color = |index: SYS_COLOR_INDEX| -> Color {
         // SAFETY: reads one of the system's colours (0x00BBGGRR).
         let bgr = unsafe { GetSysColor(index) };
-        Color(bgr as u8, (bgr >> 8) as u8, (bgr >> 16) as u8, 255).into()
+        Color(bgr as u8, (bgr >> 8) as u8, (bgr >> 16) as u8, 255)
     };
-    let (window, text) = (COLOR_WINDOW, COLOR_WINDOWTEXT);
-    let (highlight, highlight_text) = (COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT);
-    Some(vec![
-        (tok::BACKGROUND.0, color(window)),
-        (tok::SURFACE_SUNKEN.0, color(window)),
-        (tok::SURFACE_BASE.0, color(window)),
-        (tok::SURFACE_RAISED.0, color(window)),
-        (tok::SURFACE_OVERLAY.0, color(window)),
-        (tok::TEXT_PRIMARY.0, color(text)),
-        (tok::TEXT_SECONDARY.0, color(text)),
-        (tok::TEXT_TERTIARY.0, color(text)),
-        (tok::TEXT_DISABLED.0, color(COLOR_GRAYTEXT)),
-        (tok::BORDER.0, color(text)),
-        (tok::BORDER_SUBTLE.0, color(text)),
-        (tok::BORDER_STRONG.0, color(text)),
-        (tok::ACCENT.0, color(COLOR_HOTLIGHT)),
-        (tok::ACCENT_HOVER.0, color(highlight)),
-        (tok::ACCENT_TEXT.0, color(highlight_text)),
-        (tok::SELECTION.0, color(highlight)),
-        (tok::SELECTION_INACTIVE.0, color(highlight)),
-        (tok::SELECTION_TEXT.0, color(highlight_text)),
-        (tok::SELECTION_TEXT_INACTIVE.0, color(highlight_text)),
-        (tok::SELECTION_ITEM.0, color(highlight)),
-        (tok::FOCUS_RING.0, color(text)),
-        (tok::SCROLLBAR_THUMB.0, color(text)),
-        (tok::SCROLLBAR_THUMB_ACTIVE.0, color(highlight)),
-        (tok::SCROLLBAR_TRACK.0, color(window)),
-        (tok::GLASS_TINT.0, color(window)),
-        (tok::BUTTON_BG.0, color(COLOR_BTNFACE)),
-        (tok::INPUT_BG.0, color(window)),
-        (tok::MENU_BG.0, color(window)),
-        // Over a control, the highlight, as Windows' own lists show it.
-        (tok::HOVER.0, color(highlight)),
-        (tok::PRESSED.0, color(highlight)),
-        (tok::BUTTON_HOVER.0, color(highlight)),
-        (tok::BUTTON_PRESSED.0, color(highlight)),
-        (tok::MENU_HOVER.0, color(highlight)),
-        (tok::DANGER.0, color(text)),
-        (tok::WARNING.0, color(text)),
-        (tok::SUCCESS.0, color(text)),
-        (tok::INFO.0, color(text)),
-    ])
+    Some(contrast_tokens(Palette {
+        window: color(COLOR_WINDOW),
+        text: color(COLOR_WINDOWTEXT),
+        gray: color(COLOR_GRAYTEXT),
+        link: color(COLOR_HOTLIGHT),
+        highlight: color(COLOR_HIGHLIGHT),
+        highlight_text: color(COLOR_HIGHLIGHTTEXT),
+        button: color(COLOR_BTNFACE),
+    }))
 }
 
 /// Windows' "Animation effects" off (Settings, Accessibility, Visual effects):
@@ -188,17 +257,18 @@ fn windows_motion() -> Vec<(TokenId, TokenInput)> {
     if read.is_err() || animate.as_bool() {
         return Vec::new();
     }
-    vec![
-        (tok::MOTION_DURATION_FAST.0, 0f32.into()),
-        (tok::MOTION_DURATION_NORMAL.0, 0f32.into()),
-        (tok::MOTION_DURATION_SLOW.0, 0f32.into()),
-    ]
+    still()
 }
 
 /// Read the system's values again and give them to `ui`'s themes: at startup,
 /// and when the system's appearance or settings or the window's activity
 /// change (the user may have picked another accent meanwhile).
 pub(crate) fn sync(ui: &zgui::widgets::Ui) {
+    // Linux's dark or light: winit reports none there.
+    #[cfg(target_os = "linux")]
+    if let Some(scheme) = crate::linux_appearance::current().scheme {
+        ui.theme().set_system_appearance(scheme);
+    }
     ui.theme().set_system_tokens(tokens());
     #[cfg(windows)]
     ui.theme().set_system_text_scale(windows_text_scale());

@@ -1,16 +1,14 @@
 //! X11's and Wayland's primary selection: what an editor selects becomes the
-//! primary selection, and a middle click pastes it where it lands.
+//! primary selection, and a middle click pastes it where it lands. It wears
+//! the built-in themes, following the system's dark or light, accent, high
+//! contrast (the Linux settings portal probe uses that).
 //! `--smoke-test` reports the editors' text as it closes, after 14 s.
 use std::time::Duration;
-use zgui::{compose::prelude::*, scene::Color};
+use zgui::compose::prelude::*;
 use zgui_desktop::{Application, WindowOptions};
 
 fn field(view: View) -> View {
-    view.w(440.0)
-        .p(10.0)
-        .rounded(6.0)
-        .bg(Color(28, 35, 48, 255))
-        .text_color(Color(229, 237, 247, 255))
+    view.w(440.0).p(10.0).rounded(6.0)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,6 +21,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         })
         .run(move |cx| {
+            cx.ui
+                .theme()
+                .follow_system(Some((zgui::theme::DARK, zgui::theme::LIGHT)));
             let source = cx.ui.signal("select these words".to_owned());
             let target = cx.ui.signal(String::new());
             cx.render(
@@ -30,7 +31,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .p(20.0)
                     .gap(16.0)
                     .text_size(16.0)
-                    .bg(Color(16, 20, 28, 255))
                     .child(field(
                         text_input("Source", source.clone()).id("source").h(44.0),
                     ))

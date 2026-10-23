@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""The desktop's accent colour through the XDG settings portal, on X11.
+"""The desktop's appearance through the XDG settings portal, on X11.
 
 A stand-in portal on a private session bus answers
-org.freedesktop.portal.Settings for org.freedesktop.appearance accent-color,
-as GNOME and KDE's portals do. The primary_selection example's selected text
-must take the accent (red), then follow it live when the portal announces a
-new one (blue).
+org.freedesktop.portal.Settings for org.freedesktop.appearance, as GNOME and
+KDE's portals do. The primary_selection example (which follows the system's
+appearance) must start dark with a red accent on its selected text, then
+follow the portal live: a blue accent, light, high contrast in light
+(white), then in dark (black).
 """
 import argparse
 import json
@@ -29,15 +30,19 @@ XML = """<node><interface name="org.freedesktop.portal.Settings">
   <signal name="SettingChanged"><arg type="s"/><arg type="s"/><arg type="v"/></signal>
   <property name="version" type="u" access="read"/>
 </interface></node>"""
-accent = (1.0, 0.0, 0.0)
+settings = {
+    "color-scheme": GLib.Variant("u", 1),
+    "accent-color": GLib.Variant("(ddd)", (1.0, 0.0, 0.0)),
+    "contrast": GLib.Variant("u", 0),
+}
 connection = None
 
 def call(conn, sender, path, iface, method, params, invocation):
     namespace, key = params.unpack()
-    if namespace != "org.freedesktop.appearance" or key != "accent-color":
+    if namespace != "org.freedesktop.appearance" or key not in settings:
         invocation.return_dbus_error("org.freedesktop.portal.Error.NotFound", "no such setting")
         return
-    value = GLib.Variant("(ddd)", accent)
+    value = settings[key]
     if method == "Read":
         value = GLib.Variant("v", value)
     invocation.return_value(GLib.Variant("(v)", (value,)))
@@ -53,16 +58,15 @@ def acquired(conn, name):
     print("PORTAL ready", flush=True)
 
 def command(source, condition):
-    global accent
+    # "key signature value", as GLib.Variant.parse reads it.
     line = sys.stdin.readline()
     if not line:
         loop.quit()
         return False
-    r, g, b = map(float, line.split())
-    accent = (r, g, b)
+    key, signature, text = line.strip().split(" ", 2)
+    settings[key] = GLib.Variant.parse(GLib.VariantType(signature), text, None, None)
     connection.emit_signal(None, "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings",
-                           "SettingChanged", GLib.Variant("(ssv)", ("org.freedesktop.appearance", "accent-color",
-                                                                   GLib.Variant("(ddd)", accent))))
+                           "SettingChanged", GLib.Variant("(ssv)", ("org.freedesktop.appearance", key, settings[key])))
     print("PORTAL changed", flush=True)
     return True
 
@@ -133,30 +137,42 @@ def main():
 
             from PIL import Image
 
-            def tint(stage):
-                # The selected field's average colour, behind its glyphs.
+            def sample(stage):
+                # The selected field's average colour (behind its glyphs),
+                # and the window's background below the editors.
                 path = args.output / f"{stage}.png"
                 subprocess.run(["import", "-window", window, str(path)], env=env, check=True, timeout=10)
                 with Image.open(path) as picture:
-                    field = picture.convert("RGB").crop((34, 30, 180, 54))
-                    pixels = list(field.getdata())
-                return tuple(sum(p[i] for p in pixels) / len(pixels) for i in range(3))
+                    picture = picture.convert("RGB")
+                    pixels = list(picture.crop((34, 30, 180, 54)).getdata())
+                    background = picture.getpixel((8, 248))
+                return tuple(sum(p[i] for p in pixels) / len(pixels) for i in range(3)), background
 
-            def wait_tint(stage, accepts):
+            def wait(stage, accepts):
                 deadline = time.monotonic() + 10
-                while not accepts(seen := tint(stage)):
+                while not accepts(*(seen := sample(stage))):
                     if time.monotonic() > deadline:
-                        raise AssertionError(f"{stage}: the selection is {seen}")
+                        raise AssertionError(f"{stage}: selection and background are {seen}")
                     time.sleep(.2)
                 return seen
 
-            red = wait_tint("red", lambda c: c[0] > c[2] + 20)
-            portal.stdin.write("0 0.3 1\n")
-            portal.stdin.flush()
-            blue = wait_tint("blue", lambda c: c[2] > c[0] + 20)
+            def portal_sets(key, signature, value):
+                portal.stdin.write(f"{key} {signature} {value}\n")
+                portal.stdin.flush()
+
+            seen = {"dark, red accent": wait("dark-red", lambda tint, bg: tint[0] > tint[2] + 20 and sum(bg) < 200)}
+            portal_sets("accent-color", "(ddd)", "(0, 0.3, 1)")
+            seen["blue accent"] = wait("blue", lambda tint, bg: tint[2] > tint[0] + 20)
+            portal_sets("color-scheme", "u", "2")
+            seen["light"] = wait("light", lambda tint, bg: sum(bg) > 600)
+            portal_sets("contrast", "u", "1")
+            seen["high contrast, light"] = wait("contrast-light", lambda tint, bg: bg == (255, 255, 255))
+            portal_sets("color-scheme", "u", "1")
+            seen["high contrast, dark"] = wait("contrast-dark", lambda tint, bg: bg == (0, 0, 0))
             result = {"result": "pass", "platform": "X11 / Xvfb / stand-in settings portal",
-                      "selection_tint": {"red_accent": red, "blue_accent": blue},
-                      "checks": ["accent read at start", "accent followed live through SettingChanged"]}
+                      "samples": {stage: {"selection": tint, "background": bg} for stage, (tint, bg) in seen.items()},
+                      "checks": ["dark and accent read at start", "accent followed live", "light followed live",
+                                 "high contrast in light and dark"]}
             (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
             print("PASS: " + ", ".join(result["checks"]))
         finally:

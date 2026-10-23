@@ -1,8 +1,10 @@
 //! The desktop's appearance settings on Linux, from the XDG settings portal
 //! (`org.freedesktop.portal.Settings`, which GNOME, KDE and others back):
-//! today the accent colour, which the text selection takes, as on macOS.
-//! A thread reads the settings at start and follows `SettingChanged`; the
-//! event loop then gives them to every window's themes.
+//! dark or light, the accent colour (the text selection takes it), high
+//! contrast, and reduced motion (or GNOME's animations turned off). They
+//! are read at start, before the first window shows, and a thread follows
+//! `SettingChanged`; the event loop then gives them to every window's
+//! themes.
 use dbus::{
     arg::{RefArg, Variant},
     blocking::Connection,
@@ -14,7 +16,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use zgui::scene::Color;
 
@@ -22,15 +24,27 @@ const SERVICE: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
 const SETTINGS: &str = "org.freedesktop.portal.Settings";
 const APPEARANCE: &str = "org.freedesktop.appearance";
+const GNOME: &str = "org.gnome.desktop.interface";
 
 /// The portal's settings as last read.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Appearance {
+    /// Dark or light, if the user prefers one (`color-scheme`).
+    pub scheme: Option<zgui::theme::Appearance>,
     /// The user's accent colour, if they chose one.
     pub accent: Option<Color>,
+    /// High contrast (`contrast`).
+    pub contrast: bool,
+    /// Reduced motion (`reduced-motion`), or GNOME's animations turned off.
+    pub reduced_motion: bool,
 }
 
-static CURRENT: Mutex<Appearance> = Mutex::new(Appearance { accent: None });
+static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
+    scheme: None,
+    accent: None,
+    contrast: false,
+    reduced_motion: false,
+});
 
 /// The settings as last read (the default until the portal answers).
 pub(crate) fn current() -> Appearance {
@@ -51,38 +65,23 @@ impl Drop for Watcher {
     }
 }
 
-/// Read the settings and follow them; `changed` runs (on the watcher's
-/// thread) whenever what `current` returns changes. None without a session
-/// bus.
+/// Read the settings now, then follow them; `changed` runs (on the
+/// watcher's thread) whenever what `current` returns changes. A portal that
+/// doesn't answer within a moment (one D-Bus is still starting) doesn't hold
+/// up the first window: the watcher reads it again, waiting longer. None
+/// without a session bus.
 pub(crate) fn watch(changed: impl Fn() + Send + 'static) -> Option<Watcher> {
     let connection = Connection::new_session().ok()?;
+    let (read_now, answered) = read(&connection, Duration::from_millis(300));
+    set(read_now);
     let stop = Arc::new(AtomicBool::new(false));
     let running = stop.clone();
     let worker = thread::Builder::new()
         .name("zgui-appearance".into())
         .spawn(move || {
-            let proxy = connection.with_proxy(SERVICE, PATH, Duration::from_secs(2));
-            let read = |key: &str| -> Option<Box<dyn RefArg>> {
-                // Version 2's ReadOne; version 1's Read wraps the value in a
-                // second variant.
-                if let Ok((Variant(value),)) = proxy
-                    .method_call::<(Variant<Box<dyn RefArg>>,), _, _, _>(
-                        SETTINGS,
-                        "ReadOne",
-                        (APPEARANCE, key),
-                    )
-                {
-                    return Some(value);
-                }
-                let (Variant(outer),): (Variant<Box<dyn RefArg>>,) = proxy
-                    .method_call(SETTINGS, "Read", (APPEARANCE, key))
-                    .ok()?;
-                outer.as_iter()?.next().map(|inner| inner.box_clone())
-            };
-            set(Appearance {
-                accent: read("accent-color").as_deref().and_then(accent),
-            });
-            changed();
+            if !answered && set(read(&connection, Duration::from_secs(10)).0) {
+                changed();
+            }
             // By path, not sender: signals carry the portal's unique name,
             // not the well-known one.
             let mut rule = MatchRule::new_signal(SETTINGS, "SettingChanged");
@@ -96,12 +95,10 @@ pub(crate) fn watch(changed: impl Fn() + Send + 'static) -> Option<Watcher> {
                 ),
                       _,
                       _| {
-                    if namespace == APPEARANCE && key == "accent-color" {
-                        let mut next = current();
-                        next.accent = accent(&*value);
-                        if set(next) {
-                            changed();
-                        }
+                    let mut next = current();
+                    apply(&mut next, &namespace, &key, &*value);
+                    if set(next) {
+                        changed();
                     }
                     true
                 },
@@ -122,6 +119,71 @@ pub(crate) fn watch(changed: impl Fn() + Send + 'static) -> Option<Watcher> {
     })
 }
 
+/// Read the settings, giving the portal `budget` in all to answer; whether
+/// it answered in time. No portal, or one without a setting, answers at once.
+fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
+    const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
+    let deadline = Instant::now() + budget;
+    let mut appearance = Appearance::default();
+    // Version 1 has no ReadOne; its Read wraps the value in a second variant.
+    let mut version_one = false;
+    for (namespace, key) in [
+        (APPEARANCE, "color-scheme"),
+        (APPEARANCE, "accent-color"),
+        (APPEARANCE, "contrast"),
+        (APPEARANCE, "reduced-motion"),
+        (GNOME, "enable-animations"),
+    ] {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return (appearance, false);
+        }
+        let proxy = connection.with_proxy(SERVICE, PATH, left);
+        let call = |method: &str| {
+            proxy
+                .method_call(SETTINGS, method, (namespace, key))
+                .map(|(Variant(value),): (Variant<Box<dyn RefArg>>,)| value)
+        };
+        let value = match (!version_one).then(|| call("ReadOne")) {
+            Some(Err(e)) if e.name() != Some(UNKNOWN_METHOD) => Err(e),
+            Some(Ok(value)) => Ok(Some(value)),
+            _ => {
+                version_one = true;
+                call("Read").map(|outer| Some(outer.as_iter()?.next()?.box_clone()))
+            }
+        };
+        match value {
+            Ok(Some(value)) => apply(&mut appearance, namespace, key, &*value),
+            Err(e) if e.name() == Some("org.freedesktop.DBus.Error.NoReply") => {
+                return (appearance, false);
+            }
+            Err(e) if e.name() == Some("org.freedesktop.DBus.Error.ServiceUnknown") => break,
+            // A setting this desktop doesn't have.
+            _ => {}
+        }
+    }
+    (appearance, true)
+}
+
+/// One setting's value into `appearance`.
+fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn RefArg) {
+    use zgui::theme::Appearance::{Dark, Light};
+    match (namespace, key) {
+        (APPEARANCE, "color-scheme") => {
+            appearance.scheme = match value.as_u64() {
+                Some(1) => Some(Dark),
+                Some(2) => Some(Light),
+                _ => None,
+            }
+        }
+        (APPEARANCE, "accent-color") => appearance.accent = accent(value),
+        (APPEARANCE, "contrast") => appearance.contrast = value.as_u64() == Some(1),
+        (APPEARANCE, "reduced-motion") => appearance.reduced_motion = value.as_u64() == Some(1),
+        // A bool's RefArg reads as an integer.
+        (GNOME, "enable-animations") => appearance.reduced_motion = value.as_i64() == Some(0),
+        _ => {}
+    }
+}
 /// Store `appearance`; whether it changed.
 fn set(appearance: Appearance) -> bool {
     let mut current = CURRENT.lock().unwrap();
@@ -142,6 +204,28 @@ fn accent(value: &dyn RefArg) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_read_as_the_portal_defines_them() {
+        use zgui::theme::Appearance::{Dark, Light};
+        let mut a = Appearance::default();
+        apply(&mut a, APPEARANCE, "color-scheme", &1u32);
+        assert_eq!(a.scheme, Some(Dark));
+        apply(&mut a, APPEARANCE, "color-scheme", &2u32);
+        assert_eq!(a.scheme, Some(Light));
+        apply(&mut a, APPEARANCE, "color-scheme", &0u32);
+        assert_eq!(a.scheme, None, "no preference");
+        apply(&mut a, APPEARANCE, "contrast", &1u32);
+        assert!(a.contrast);
+        apply(&mut a, APPEARANCE, "reduced-motion", &1u32);
+        assert!(a.reduced_motion);
+        apply(&mut a, GNOME, "enable-animations", &true);
+        assert!(!a.reduced_motion, "GNOME's animations on");
+        apply(&mut a, GNOME, "enable-animations", &false);
+        assert!(a.reduced_motion);
+        apply(&mut a, "org.example", "contrast", &0u32);
+        assert!(a.contrast, "other namespaces change nothing");
+    }
 
     #[test]
     fn accents_are_srgb_triples_in_range() {
