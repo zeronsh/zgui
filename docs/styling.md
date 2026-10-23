@@ -28,6 +28,8 @@ let card = column()
         .on_click(|| println!("connect")));
 ```
 
+`.active(..)` applies while a press on the view is held, as a native button's pressed look does. A press dragged off the view looks let go, and dragged back on it looks pressed again, since letting go there still clicks. A press let go elsewhere is over: coming back later is only a hover.
+
 Mount with `Ui::mount(card)` or use the native window's view rendering entry point. A background, rounded border, or shadow decorates the container itself; it does not add a layout child. Children remain retained when a visual style changes.
 
 ## Box model

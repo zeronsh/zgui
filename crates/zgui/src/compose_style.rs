@@ -198,6 +198,9 @@ enum ActivationKey {
 struct Interaction {
     hover: bool,
     pointer_active: bool,
+    /// Pressed, but the pointer left it with the button held: it looks
+    /// unpressed until the pointer comes back (as a native button does).
+    pressed_outside: bool,
     key_active: Option<ActivationKey>,
     focus: bool,
     /// The focus shows (CSS's `:focus-visible`): it came from the keyboard,
@@ -508,16 +511,29 @@ pub(crate) fn mount_style_with_intrinsic(
                 return;
             }
             interaction.update(|state| match event.event {
-                InputEvent::PointerEnter => state.hover = true,
+                InputEvent::PointerEnter => {
+                    state.hover = true;
+                    // Back with the press still held (its capture in it):
+                    // pressed again. A press let go elsewhere is over.
+                    let held = state.pointer_active
+                        && input.captured().is_some_and(|captured| {
+                            owner
+                                .upgrade()
+                                .is_some_and(|ui| ui.scene.borrow().is_within(captured, node))
+                        });
+                    state.pointer_active = held;
+                    state.pressed_outside = false;
+                }
                 InputEvent::PointerLeave => {
                     state.hover = false;
-                    state.pointer_active = false;
+                    state.pressed_outside = state.pointer_active;
                 }
                 InputEvent::PointerDown {
                     button: PointerButton::Primary,
                     ..
                 } => {
                     state.pointer_active = true;
+                    state.pressed_outside = false;
                     if event.target == node && presses {
                         event.capture_pointer();
                     }
@@ -526,7 +542,10 @@ pub(crate) fn mount_style_with_intrinsic(
                     button: PointerButton::Primary,
                     ..
                 }
-                | InputEvent::PointerCancel => state.pointer_active = false,
+                | InputEvent::PointerCancel => {
+                    state.pointer_active = false;
+                    state.pressed_outside = false;
+                }
                 InputEvent::Focus if event.target == node => {
                     state.focus = true;
                     state.focus_visible = input.focus_visible_now()
@@ -651,7 +670,8 @@ pub(crate) fn mount_style_with_intrinsic(
         let is_disabled = disabled.as_mut().is_some_and(|read| read());
         let in_effect = [
             !is_disabled && state.hover,
-            !is_disabled && (state.pointer_active || state.key_active.is_some()),
+            !is_disabled
+                && ((state.pointer_active && !state.pressed_outside) || state.key_active.is_some()),
             !is_disabled && state.focus && state.focus_visible,
             is_disabled,
         ];
