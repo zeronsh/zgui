@@ -48,6 +48,26 @@ impl FrameTimer {
         let next = self.index(now, interval) + 1;
         self.epoch + interval.mul_f64(next as f64)
     }
+    /// The first refresh after `now` whose index is a multiple of `every`:
+    /// the refreshes a native source paced to every `every`th delivers
+    /// (`zgui::frame::divisor`), so frames the timer paces keep its cadence
+    /// as one hands over to the other.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn next_deadline_every(
+        &self,
+        now: Instant,
+        interval: Duration,
+        every: u64,
+    ) -> Instant {
+        let every = every.max(1);
+        let current = if now < self.epoch {
+            self.first.saturating_sub(1)
+        } else {
+            self.first + self.index(now, interval)
+        };
+        let next = (current / every + 1) * every;
+        self.epoch + interval.mul_f64(next.saturating_sub(self.first) as f64)
+    }
     /// The frame for the boundary at or before `now`. It is expected on screen
     /// one refresh later, once rendered.
     pub(crate) fn frame(&self, now: Instant, interval: Duration) -> Frame {
@@ -770,6 +790,36 @@ mod tests {
         assert_eq!(frame.interval, interval);
     }
 
+    /// A timer continuing the display link's refreshes, paced to every
+    /// second one, ticks on the refreshes the link would deliver (even ones)
+    /// even where its own grid starts on an odd one, and late wake-ups never
+    /// make it skip one.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_paced_timer_ticks_on_the_refreshes_the_link_delivers() {
+        let epoch = Instant::now();
+        let interval = Duration::from_millis(8);
+        let timer = FrameTimer::aligned(epoch, 101);
+        // From refresh 101, the next even one is 102, a refresh on.
+        assert_eq!(
+            timer.next_deadline_every(epoch, interval, 2),
+            epoch + interval
+        );
+        let late = epoch + interval + Duration::from_millis(7);
+        assert_eq!(
+            timer.next_deadline_every(late, interval, 2),
+            epoch + interval * 3
+        );
+        // Every fourth: 104, three refreshes after 101.
+        assert_eq!(
+            timer.next_deadline_every(epoch, interval, 4),
+            epoch + interval * 3
+        );
+        assert_eq!(
+            timer.next_deadline_every(epoch, interval, 1),
+            epoch + interval
+        );
+    }
     #[test]
     fn missing_or_bogus_refresh_rates_fall_back_to_60_hz() {
         assert_eq!(interval_for(None), DEFAULT_INTERVAL);

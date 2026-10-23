@@ -2555,10 +2555,15 @@ impl Host {
             if wanted {
                 if timed {
                     if self.frame_deadline.is_none() {
-                        // Whole refreshes apart, as the link spaces them.
-                        let every = rate.map_or(1., |rate| (refresh / rate - 1e-6).ceil().max(1.));
-                        let interval = self.frame_interval.mul_f64(every);
-                        self.frame_deadline = Some(self.frame_timer.next_deadline(now, interval));
+                        // On the refreshes the link delivers at this rate
+                        // (whole refreshes apart, on the same ones), so the
+                        // cadence holds as the link and the timer take turns.
+                        let every = rate.map_or(1, |rate| zgui::frame::divisor(refresh, rate));
+                        self.frame_deadline = Some(self.frame_timer.next_deadline_every(
+                            now,
+                            self.frame_interval,
+                            every,
+                        ));
                     }
                 } else {
                     link.set_preferred_rate(rate);
