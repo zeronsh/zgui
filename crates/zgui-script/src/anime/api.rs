@@ -80,12 +80,18 @@ fn rt(e: String) -> mlua::Error {
 /// them; elements in document order without repeats.
 pub(crate) fn targets(ctx: &Ctx, v: mlua::Value) -> Result<Vec<Target>, String> {
     let mut out: Vec<Target> = Vec::new();
-    collect(ctx, v, &mut out)?;
+    collect(ctx, v, &mut out, &mut Default::default())?;
     Ok(out)
 }
-fn collect(ctx: &Ctx, v: mlua::Value, out: &mut Vec<Target>) -> Result<(), String> {
+/// Appends `v`'s targets to `out`, each once (`seen` holds their addresses).
+fn collect(
+    ctx: &Ctx,
+    v: mlua::Value,
+    out: &mut Vec<Target>,
+    seen: &mut std::collections::HashSet<usize>,
+) -> Result<(), String> {
     let mut push = |t: Target| {
-        if !out.iter().any(|o| o.same(&t)) {
+        if seen.insert(t.addr()) {
             out.push(t);
         }
     };
@@ -112,7 +118,7 @@ fn collect(ctx: &Ctx, v: mlua::Value, out: &mut Vec<Target>) -> Result<(), Strin
         mlua::Value::Table(t) => {
             if t.raw_len() > 0 {
                 for item in t.sequence_values::<mlua::Value>() {
-                    collect(ctx, item.map_err(|e| e.to_string())?, out)?;
+                    collect(ctx, item.map_err(|e| e.to_string())?, out, seen)?;
                 }
             } else {
                 push(Target::Table(t));

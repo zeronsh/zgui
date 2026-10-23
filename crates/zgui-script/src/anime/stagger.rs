@@ -61,12 +61,23 @@ impl Stagger {
             cache: RefCell::default(),
         }
     }
-    fn distances(&self, total: usize) -> (Vec<f64>, f64) {
-        if let Some((n, values, max)) = &*self.cache.borrow()
-            && *n == total
+    /// Each target's distance and the largest, kept for `total`: every
+    /// target of an animation reads them, so they are lent, not copied.
+    fn distances(&self, total: usize) -> std::cell::Ref<'_, (usize, Vec<f64>, f64)> {
+        if self
+            .cache
+            .borrow()
+            .as_ref()
+            .is_none_or(|(n, ..)| *n != total)
         {
-            return (values.clone(), *max);
+            let (values, max) = self.compute(total);
+            *self.cache.borrow_mut() = Some((total, values, max));
         }
+        std::cell::Ref::map(self.cache.borrow(), |cache| {
+            cache.as_ref().expect("filled above")
+        })
+    }
+    fn compute(&self, total: usize) -> (Vec<f64>, f64) {
         let center = matches!(self.from, From::Center);
         let from_index = match self.from {
             From::Index(i) => i,
@@ -121,13 +132,14 @@ impl Stagger {
                 values.swap(i, (seed % (i as u64 + 1)) as usize);
             }
         }
-        *self.cache.borrow_mut() = Some((total, values.clone(), max));
         (values, max)
     }
     /// The value for target `index` of `total`, before unit conversion.
     pub fn resolve(&self, index: usize, total: usize, custom_index: Option<f64>) -> f64 {
         let total = self.total.unwrap_or(total).max(1);
-        let (values, max) = self.distances(total);
+        let distances = self.distances(total);
+        let (_, values, max) = &*distances;
+        let max = *max;
         let index = custom_index
             .map_or(index, |i| i.max(0.) as usize)
             .min(total - 1);
