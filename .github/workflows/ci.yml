@@ -189,3 +189,6 @@ jobs:
       - run: cargo test -p zgui -p zgui-desktop --lib --locked
       # Bundled script paths: caught a Windows separator bug.
       - run: cargo test -p zgui-script --test bundle --locked
+      # Direct3D 12 on WARP (no GPU on the runner): pixel tests of what the
+      # D3D shader compiler alone gets wrong (coarse derivatives, #38).
+      - run: cargo test -p zgui-gpu --test borders --test transforms --test rounded_clip --locked
