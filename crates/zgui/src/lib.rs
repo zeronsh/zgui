@@ -1,5 +1,6 @@
 //! Fine-grained reactive state and a retained, damage-tracked scene.
 //! The core has no platform dependencies and can be targeted by template compilers.
+#![warn(missing_docs)]
 pub mod collections;
 pub mod reactive;
 pub mod scene;
