@@ -372,6 +372,27 @@ fn memchr_count(byte: u8, bytes: &[u8]) -> usize {
     bytes.iter().filter(|&&b| b == byte).count()
 }
 
+/// An editor's text style as its text shows: `Start` is its right when the
+/// editor runs right to left. Its inner nodes lay out left to right (they
+/// are placed from this layout), so the scene doesn't resolve it for them.
+fn editor_font<'a>(
+    scene: &Scene,
+    node: NodeId,
+    font: &'a FontStyle,
+) -> std::borrow::Cow<'a, FontStyle> {
+    if font.align == crate::text_layout::TextAlign::Start
+        && scene.contains(node)
+        && scene.direction(node) == crate::scene::Direction::Rtl
+    {
+        std::borrow::Cow::Owned(FontStyle {
+            align: crate::text_layout::TextAlign::Right,
+            ..font.clone()
+        })
+    } else {
+        std::borrow::Cow::Borrowed(font)
+    }
+}
+
 fn editor_layout(
     storage: &Weak<UiStorage>,
     scene: &Scene,
@@ -381,6 +402,7 @@ fn editor_layout(
     width: Option<f32>,
     font: &FontStyle,
 ) -> Rc<dyn TextLayout> {
+    let font = &*editor_font(scene, node, font);
     let storage = storage.upgrade();
     let eligible = storage
         .as_ref()
@@ -2292,6 +2314,14 @@ impl Ui {
         // Line numbers (`set_line_numbers`): a clipped column beside the
         // viewport, which moves right to make room.
         let gutter = self.container(root, Layout::Overlay, fixed(0., 0.));
+        // The text, caret and selection are placed from the text's own
+        // layout, which already runs the way the text does (`editor_font`):
+        // the scene must not mirror them again.
+        {
+            let mut scene = self.scene.borrow_mut();
+            scene.set_direction(viewport, Some(crate::scene::Direction::Ltr));
+            scene.set_direction(gutter, Some(crate::scene::Direction::Ltr));
+        }
         let number_nodes: Rc<RefCell<Vec<NodeId>>> = Rc::default();
         let line_numbers = Rc::new(Cell::new(false));
         let draw_numbers = line_numbers.clone();
@@ -2487,6 +2517,7 @@ impl Ui {
                     font_size: size,
                 },
             );
+            let font = editor_font(&s, root, &font).into_owned();
             s.set_font(text, font.clone());
             s.set_kind(caret, NodeKind::Rect(color));
             let wrap_width = draw_wrap.get().then_some(inner_width.max(1.));
@@ -2531,7 +2562,22 @@ impl Ui {
                 (th - inner_height).max(0.),
             );
             draw_scroll_limit.set(limit);
-            scroll.0 = scroll.0.clamp(0., limit.0);
+            // Unwrapped text aligned right (right to left, by default) or
+            // centred lies that far into the field while it is narrower:
+            // as a scroll before its start, so the caret, selection and
+            // pointer, all placed from the layout, follow it.
+            let factor = match font.align {
+                _ if draw_wrap.get() => 0.,
+                crate::text_layout::TextAlign::Right => 1.,
+                crate::text_layout::TextAlign::Center => 0.5,
+                _ => 0.,
+            };
+            let lead = (inner_width - 1. - tw).max(0.) * factor;
+            scroll.0 = if lead > 0. {
+                -lead
+            } else {
+                scroll.0.clamp(0., limit.0)
+            };
             scroll.1 = if multiline {
                 scroll.1.clamp(0., limit.1)
             } else {
@@ -2539,8 +2585,18 @@ impl Ui {
                 (line_height - inner_height) / 2.
             };
             s.set_style(caret, fixed(1., line_height));
+            // Aligned, the text's box is its layout's width, which the text
+            // aligns in as the layout does; its placeholder, the field's.
+            let aligned_placeholder = factor > 0. && shown.is_some();
+            let unwrapped = if aligned_placeholder {
+                (inner_width - 1.).max(1.)
+            } else if factor > 0. {
+                tw + 0.01
+            } else {
+                tw.max(inner_width) + 2.
+            };
             let mut text_style = fixed(
-                wrap_width.unwrap_or(tw.max(inner_width) + 2.),
+                wrap_width.unwrap_or(unwrapped),
                 // A wrapped placeholder may take more lines than the text.
                 if shown.is_some() {
                     th.max(inner_height)
@@ -2553,7 +2609,7 @@ impl Ui {
             s.set_transform(
                 text,
                 Transform {
-                    x: -scroll.0,
+                    x: if aligned_placeholder { 0. } else { -scroll.0 },
                     y: -scroll.1,
                 },
             );
