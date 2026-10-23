@@ -212,6 +212,11 @@ jobs:
       # notifications) and its bundled script paths (caught a Windows
       # separator bug), in one run.
       - run: cargo test -p zgui -p zgui-desktop -p zgui-script --lib --test bundle --locked
+      # The vendored accesskit_windows' test of zgui's patch (UIA's
+      # HeadingLevel, vendor/accesskit_windows/ZGUI_PATCH.md), alone: its
+      # other tests move the foreground window. Built in the workspace's
+      # target, which shares what it can of the build above.
+      - run: cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target --locked heading
       # Direct3D 12 on WARP (no GPU on the runner): pixel tests of what the
       # D3D shader compiler alone gets wrong (coarse derivatives, #38).
       - run: cargo test -p zgui-gpu --test borders --test transforms --test rounded_clip --locked
