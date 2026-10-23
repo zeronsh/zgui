@@ -352,8 +352,17 @@ struct Click {
     time: Instant,
     count: u8,
 }
-#[derive(Default)]
-struct ClickTracker(Option<Click>);
+/// The last press, and how soon after it another counts as its second or
+/// third (the system's double-click time).
+struct ClickTracker(Option<Click>, Duration);
+/// Windows' and macOS's default double-click time, until the host gives the
+/// system's.
+const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+impl Default for ClickTracker {
+    fn default() -> Self {
+        Self(None, DOUBLE_CLICK)
+    }
+}
 impl ClickTracker {
     fn moved(&mut self, x: f32, y: f32) {
         if self
@@ -382,7 +391,7 @@ impl ClickTracker {
                     && old.button == button
                     && now
                         .checked_duration_since(old.time)
-                        .is_some_and(|elapsed| elapsed <= Duration::from_millis(500))
+                        .is_some_and(|elapsed| elapsed <= self.1)
                     && Self::near(old.position, position)
             })
             .map_or(1, |old| old.count % 3 + 1);
@@ -502,6 +511,14 @@ pub struct DispatchResult {
     pub focus_changed: bool,
 }
 impl InputDispatcher {
+    /// How soon after a press another on the same spot counts as a double
+    /// (then triple) click: the system's double-click time, which the
+    /// desktop host gives (macOS's and Windows' setting, GNOME's and KDE's);
+    /// 500 ms until it does. Held between 100 ms and 5 s.
+    pub fn set_double_click_time(&self, interval: Duration) {
+        self.state.borrow_mut().clicks.1 =
+            interval.clamp(Duration::from_millis(100), Duration::from_secs(5));
+    }
     pub fn new() -> Self {
         Self::default()
     }
@@ -1912,6 +1929,26 @@ mod tests {
         );
         tracker.moved(f32::NAN, 0.);
         assert!(tracker.0.is_none());
+    }
+    #[test]
+    fn a_longer_double_click_time_counts_a_slower_second_press() {
+        let (_, a, _) = setup();
+        let input = InputDispatcher::new();
+        let now = Instant::now();
+        let press = |at: u64| {
+            input.state.borrow_mut().clicks.press(
+                a,
+                PointerButton::Primary,
+                (0., 0.),
+                now + Duration::from_millis(at),
+            )
+        };
+        assert_eq!(press(0), 1);
+        assert_eq!(press(700), 1, "past the default 500 ms");
+        input.set_double_click_time(Duration::from_millis(900));
+        assert_eq!(press(1400), 2);
+        input.set_double_click_time(Duration::ZERO);
+        assert_eq!(input.state.borrow().clicks.1, Duration::from_millis(100));
     }
 
     #[test]

@@ -6,9 +6,10 @@
 //! settings), which scales the themes' font tokens, and KDE's wheel lines
 //! (`WheelScrollLines`, how far a wheel notch scrolls), GNOME's window
 //! buttons (`button-layout`, which an undecorated window's title bar draws),
-//! and the interface font (GNOME's `font-name`, KDE's `font`), which generic
-//! sans-serif text takes as GTK and Qt apps do. They
-//! are read at start, before the first window shows, and a thread follows
+//! the interface font (GNOME's `font-name`, KDE's `font`), which generic
+//! sans-serif text takes as GTK and Qt apps do, and the double-click time
+//! (GNOME's `double-click`, KDE's `DoubleClickInterval`). They are read at
+//! start, before the first window shows, and a thread follows
 //! `SettingChanged`, asleep until one arrives; the event loop then gives them
 //! to every window's themes.
 use dbus::{
@@ -29,6 +30,7 @@ const SETTINGS: &str = "org.freedesktop.portal.Settings";
 const APPEARANCE: &str = "org.freedesktop.appearance";
 const GNOME: &str = "org.gnome.desktop.interface";
 const GNOME_WM: &str = "org.gnome.desktop.wm.preferences";
+const GNOME_MOUSE: &str = "org.gnome.desktop.peripherals.mouse";
 /// kdeglobals' `[KDE]` group, as KDE's portal gives it.
 const KDE: &str = "org.kde.kdeglobals.KDE";
 /// kdeglobals' `[General]` group.
@@ -52,6 +54,9 @@ pub(crate) struct Appearance {
     pub wheel_lines: Option<u32>,
     /// Which window buttons go where (GNOME's `button-layout`).
     pub buttons: Option<crate::window_chrome::ButtonLayout>,
+    /// The double-click time in milliseconds (GNOME's `double-click`, KDE's
+    /// `DoubleClickInterval`).
+    pub double_click: Option<u32>,
 }
 
 static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
@@ -62,6 +67,7 @@ static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
     text_scale: None,
     wheel_lines: None,
     buttons: None,
+    double_click: None,
 });
 
 /// The settings as last read (the default until the portal answers).
@@ -152,6 +158,8 @@ fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
         (GNOME_WM, "button-layout"),
         (GNOME, "font-name"),
         (KDE_GENERAL, "font"),
+        (GNOME_MOUSE, "double-click"),
+        (KDE, "DoubleClickInterval"),
     ] {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -208,6 +216,13 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
                 .or_else(|| value.as_str()?.trim().parse().ok())
                 .and_then(|lines| u32::try_from(lines).ok())
                 .filter(|&lines| lines > 0)
+        }
+        (GNOME_MOUSE, "double-click") | (KDE, "DoubleClickInterval") => {
+            appearance.double_click = value
+                .as_i64()
+                .or_else(|| value.as_str()?.trim().parse().ok())
+                .and_then(|ms| u32::try_from(ms).ok())
+                .filter(|&ms| ms > 0)
         }
         (GNOME_WM, "button-layout") => {
             appearance.buttons = value
@@ -319,6 +334,10 @@ mod tests {
         assert_eq!(a.scheme, None, "no preference");
         apply(&mut a, APPEARANCE, "contrast", &1u32);
         assert!(a.contrast);
+        apply(&mut a, GNOME_MOUSE, "double-click", &700i32);
+        assert_eq!(a.double_click, Some(700));
+        apply(&mut a, KDE, "DoubleClickInterval", &"400".to_owned());
+        assert_eq!(a.double_click, Some(400));
         apply(
             &mut a,
             GNOME_WM,

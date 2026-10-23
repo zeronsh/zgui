@@ -57,6 +57,7 @@ SMOKES = [
     ("primary-selection", "python3 scripts/primary_selection_smoke.py {bin}/primary_selection --output {out}", False),
     ("portal-appearance", "python3 scripts/portal_appearance_smoke.py {bin}/primary_selection --output {out}", False),
     ("native-platform", "python3 scripts/native_platform_smoke.py {bin}/native_platform --output {out}", False),
+    ("double-click-time", "python3 scripts/double_click_time_smoke.py {bin}/primary_selection --output {out}", False),
     ("window-buttons", "python3 scripts/window_buttons_smoke.py {bin}/glass_counter --output {out}", False),
     ("desktop-font", "python3 scripts/desktop_font_smoke.py {bin}/gallery --output {out}", False),
     ("work-area", "python3 scripts/work_area_smoke.py {bin} --output {out}", False),

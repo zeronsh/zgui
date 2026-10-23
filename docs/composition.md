@@ -273,9 +273,12 @@ captured gestures when a host becomes inactive. The fallible advance method
 returns whether a tick ran. Idle editors schedule no interaction wakeups.
 
 The native host forwards pointer modifiers and tracks clicks per target and
-button within 500 ms and four logical pixels, cycling through counts 1, 2, 3,
-then 1. This is the framework's portable policy, not a reflection of OS-specific
-multi-click preferences. Movement outside that distance, leaving the target,
+button within the system's double-click time and four logical pixels, cycling
+through counts 1, 2, 3, then 1. The time is the person's setting, as native
+controls follow it: macOS's and Windows' mouse settings, GNOME's `double-click`
+and KDE's `DoubleClickInterval` through the settings portal, read again when
+the window is activated (`InputDispatcher::set_double_click_time`; 500 ms until
+a host sets it). Movement outside that distance, leaving the target,
 cancellation, deactivation, disabling or removal resets the chain. Event handlers
 can inspect `EventContext::pointer_modifiers()` and `click_count()`; counts apply
 to pointer-down events. Custom hosts use `Ui::dispatch_with_modifiers` (or its

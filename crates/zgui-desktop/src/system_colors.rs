@@ -348,11 +348,40 @@ pub(crate) fn sync(ui: &zgui::widgets::Ui) {
     tokens.extend(preference_tokens(preferences));
     ui.theme().set_system_tokens(tokens);
     ui.theme().set_system_preferences(preferences);
+    if let Some(interval) = double_click_time() {
+        ui.input.set_double_click_time(interval);
+    }
     #[cfg(windows)]
     ui.theme().set_system_text_scale(windows_text_scale());
     #[cfg(target_os = "linux")]
     ui.theme()
         .set_system_text_scale(crate::linux_appearance::current().text_scale.unwrap_or(1.));
+}
+
+/// The system's double-click time (macOS's and Windows' mouse settings,
+/// GNOME's and KDE's), which people who press slowly lengthen.
+fn double_click_time() -> Option<std::time::Duration> {
+    #[cfg(target_os = "macos")]
+    {
+        let seconds = objc2_app_kit::NSEvent::doubleClickInterval();
+        (seconds > 0.).then(|| std::time::Duration::from_secs_f64(seconds))
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: reads one system setting.
+        let ms = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() };
+        (ms > 0).then(|| std::time::Duration::from_millis(ms.into()))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux_appearance::current()
+            .double_click
+            .map(|ms| std::time::Duration::from_millis(ms.into()))
+    }
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+    {
+        None
+    }
 }
 
 /// Windows' "Text size" (Settings, Accessibility): 1 to 2.25, scaling text
