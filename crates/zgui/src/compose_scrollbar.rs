@@ -7,12 +7,100 @@ use crate::{
     theme::tok,
     widgets::Ui,
 };
+use std::{
+    cell::Cell,
+    rc::{Rc, Weak},
+    time::{Duration, Instant},
+};
 
 /// The thumb's thickness at rest and under the pointer (or dragged), and
 /// how far its rounded ends sit in from the track's.
 const THUMB: f32 = 6.;
 const THUMB_ACTIVE: f32 = 8.;
 const THUMB_INSET: f32 = 2.;
+
+/// How long an overlay scrollbar stays once its view stops scrolling (or
+/// the pointer leaves it), how long it takes to fade out, and the fade's
+/// step: a frame.
+const LINGER: Duration = Duration::from_millis(1000);
+const FADE: Duration = Duration::from_millis(200);
+const FADE_STEP: Duration = Duration::from_millis(16);
+
+/// An overlay scrollbar's showing (`Ui::set_overlay_scrollbars`).
+pub(crate) struct Fade {
+    /// 1 shown, 0 hidden.
+    alpha: Signal<f32>,
+    /// When it starts fading; `None` while it stays (held) or is hidden.
+    fade_at: Cell<Option<Instant>>,
+    /// Its next step: `fade_at`, then each frame of the fade.
+    next: Cell<Option<Instant>>,
+    /// In the document's list of fades.
+    listed: Cell<bool>,
+}
+impl Fade {
+    fn show(&self, now: Instant) {
+        self.alpha.set(1.);
+        self.linger(now);
+    }
+    /// Under the pointer or dragged: it stays.
+    fn hold(&self) {
+        self.alpha.set(1.);
+        self.fade_at.set(None);
+        self.next.set(None);
+    }
+    fn linger(&self, now: Instant) {
+        let at = now + LINGER;
+        self.fade_at.set(Some(at));
+        self.next.set(Some(at));
+    }
+    fn hide(&self) {
+        self.alpha.set(0.);
+        self.fade_at.set(None);
+        self.next.set(None);
+    }
+}
+
+/// When the next overlay scrollbar steps toward hidden. None shown, none.
+pub(crate) fn next_fade(ui: &Ui) -> Option<Instant> {
+    let fades = ui.scrollbar_fades().borrow();
+    if fades.is_empty() {
+        return None;
+    }
+    fades
+        .iter()
+        .filter_map(|fade| fade.upgrade()?.next.get())
+        .min()
+}
+
+/// Step the overlay scrollbars due by `now` toward hidden; whether any did.
+pub(crate) fn advance_fades(ui: &Ui, now: Instant) -> bool {
+    let fades: Vec<Rc<Fade>> = {
+        let mut list = ui.scrollbar_fades().borrow_mut();
+        if list.is_empty() {
+            return false;
+        }
+        list.retain(|fade| fade.strong_count() > 0);
+        list.iter().filter_map(Weak::upgrade).collect()
+    };
+    let mut stepped = false;
+    for fade in fades {
+        let (Some(next), Some(at)) = (fade.next.get(), fade.fade_at.get()) else {
+            continue;
+        };
+        if next > now {
+            continue;
+        }
+        let done = now.saturating_duration_since(at).as_secs_f32() / FADE.as_secs_f32();
+        if done >= 1. {
+            fade.hide();
+        } else {
+            fade.alpha.set(1. - done);
+            fade.next.set(Some(now + FADE_STEP));
+        }
+        stepped = true;
+    }
+    stepped
+}
 
 /// A rounded thumb of `color`, `thickness` across.
 fn thumb_kind(color: Color, thickness: f32) -> NodeKind {
@@ -184,11 +272,64 @@ pub(crate) fn mount(
             cx.stop_propagation();
         }
     });
+    // As an overlay scrollbar: shown as the user scrolls, then fading.
+    let overlay_mode = ui.overlay_scrollbars();
+    let fade = Rc::new(Fade {
+        alpha: ui.signal(1.),
+        fade_at: Cell::new(None),
+        next: Cell::new(None),
+        listed: Cell::new(false),
+    });
+    let (weak, shown, mode) = (ui.downgrade(), fade.clone(), overlay_mode.clone());
+    let (scrolled, held, focus) = (offset.clone(), active.clone(), focused.clone());
+    let mut last = None;
+    ui.bind(overlay, move || {
+        // Off, this reads only the mode.
+        if !mode.get() {
+            if last.take().is_some() {
+                shown.hold();
+            }
+            return;
+        }
+        let value = scrolled.get();
+        let (pointer, focused) = (held.get(), focus.get());
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        if !shown.listed.replace(true) {
+            ui.scrollbar_fades()
+                .borrow_mut()
+                .push(Rc::downgrade(&shown));
+        }
+        let now = Instant::now();
+        match last.replace(value) {
+            // Turned on: hidden until the user scrolls.
+            None => shown.hide(),
+            // Focused, it shows; under the pointer or dragged, it stays
+            // while it shows.
+            _ if focused => shown.hold(),
+            _ if pointer => {
+                if shown.alpha.with_untracked(|alpha| *alpha > 0.) {
+                    shown.hold();
+                }
+            }
+            // The user scrolled it, not the app.
+            Some(before) if before != value && ui.is_dispatching() => shown.show(now),
+            // Let go: it stays a moment, then fades.
+            _ if shown.fade_at.get().is_none() && shown.alpha.with_untracked(|a| *a > 0.) => {
+                shown.linger(now)
+            }
+            _ => {}
+        }
+    });
+    ui.retain(overlay, fade.clone());
     let weak = ui.downgrade();
     ui.bind(overlay, move || {
         let Some(mut ui) = weak.upgrade() else {
             return;
         };
+        let overlay_mode = overlay_mode.get();
+        let alpha = if overlay_mode { fade.alpha.get() } else { 1. };
         let (width, height) = size.get();
         let length = main((width, height));
         let total = extent.get();
@@ -219,7 +360,8 @@ pub(crate) fn mount(
             },
         );
         let thickness = if horizontal { height } else { width }.min(8.);
-        let track_size = if !visible {
+        // Hidden, the pointer reaches what is under it.
+        let track_size = if !visible || alpha <= 0. {
             (0., 0.)
         } else if horizontal {
             (length, thickness)
@@ -242,7 +384,7 @@ pub(crate) fn mount(
                 }
             },
         );
-        let thumb_length = if visible {
+        let thumb_length = if visible && alpha > 0. {
             ((length as f64 * length as f64 / total as f64)
                 .max(24.)
                 .min(length as f64)) as f32
@@ -253,16 +395,26 @@ pub(crate) fn mount(
         // rounded ends inset along it.
         let active = active.get();
         let across = (if active { THUMB_ACTIVE } else { THUMB }).min(thickness);
-        let along = (thumb_length - 2. * THUMB_INSET).max(across);
-        let drawn = if horizontal {
+        let along = if thumb_length > 0. {
+            (thumb_length - 2. * THUMB_INSET).max(across)
+        } else {
+            0.
+        };
+        let drawn = if along <= 0. {
+            (0., 0.)
+        } else if horizontal {
             (along, across)
         } else {
             (across, along)
         };
         scene.set_style(thumb, fixed(drawn.0, drawn.1));
+        let faded =
+            |Color(r, g, b, a): Color, alpha: f32| Color(r, g, b, (a as f32 * alpha).round() as u8);
+        // An overlay scrollbar's track shows under the pointer only.
+        let track_alpha = if overlay_mode && !active { 0. } else { alpha };
         scene.set_kind(
             background,
-            NodeKind::Rect(theme.color(tok::SCROLLBAR_TRACK)),
+            NodeKind::Rect(faded(theme.color(tok::SCROLLBAR_TRACK), track_alpha)),
         );
         let thumb_color = theme.color(tok::SCROLLBAR_THUMB);
         let color = if focused.get() {
@@ -274,7 +426,7 @@ pub(crate) fn mount(
         } else {
             thumb_color
         };
-        scene.set_kind(thumb, thumb_kind(color, across));
+        scene.set_kind(thumb, thumb_kind(faded(color, alpha), across));
         let value = offset.get().clamp(0., limit);
         let position = if limit > 0. {
             (value as f64 / limit as f64 * (length - thumb_length) as f64) as f32

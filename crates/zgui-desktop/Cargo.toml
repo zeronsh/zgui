@@ -43,7 +43,7 @@ windows = { version = "0.62", default-features = false, features = ["Win32_Graph
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.18.0", default-features = false }
 objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSTextInputContext", "NSColor", "NSGraphics", "NSEvent", "objc2-core-foundation", "objc2-quartz-core", "block2", "NSTextInputClient", "NSTrackingArea", "NSCursor", "NSPasteboard", "NSGraphicsContext", "NSScreen", "NSVisualEffectView", "NSColorSpace"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSTextInputContext", "NSColor", "NSGraphics", "NSEvent", "objc2-core-foundation", "objc2-quartz-core", "block2", "NSTextInputClient", "NSTrackingArea", "NSCursor", "NSPasteboard", "NSGraphicsContext", "NSScreen", "NSVisualEffectView", "NSColorSpace", "NSControl", "NSScroller"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSAppleEventManager", "NSAppleEventDescriptor", "objc2-core-services", "NSDictionary", "NSError", "NSURLRequest", "NSUUID", "NSKeyValueObserving", "NSValue", "NSData", "NSJSONSerialization", "NSGeometry", "objc2-core-foundation", "NSAttributedString", "NSRange", "NSURLResponse"] }
 zgui-ghostty-sys = { path = "../zgui-ghostty-sys", optional = true }
 libc = { version = "0.2", optional = true }

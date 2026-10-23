@@ -446,6 +446,12 @@ struct UiStorage {
     /// What the last primary press went to: the keyboard scrolls the scroll
     /// view around it (`scroll_keys`).
     last_pressed: Cell<Option<NodeId>>,
+    /// Scrollbars hide until their view scrolls (`Ui::set_overlay_scrollbars`).
+    overlay_scrollbars: Signal<bool>,
+    /// Overlay scrollbars shown, to fade once their view stops scrolling.
+    scrollbar_fades: RefCell<Vec<std::rc::Weak<crate::compose_scrollbar::Fade>>>,
+    /// Input is being dispatched: what scrolls now, the user scrolled.
+    dispatching: Cell<bool>,
 }
 /// A press in a window drag region (`View::window_drag`), for the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -570,6 +576,7 @@ impl Ui {
             mount_theme: RefCell::new(None),
             text_geometry_revision: runtime.signal(0),
             presented: runtime.signal(true),
+            overlay_scrollbars: runtime.signal(false),
             runtime,
             scene: Rc::new(RefCell::new(Scene::new(width, height))),
             input: InputDispatcher::new(),
@@ -594,6 +601,8 @@ impl Ui {
             primary_paste: Cell::new(None),
             selection: Default::default(),
             last_pressed: Cell::new(None),
+            scrollbar_fades: RefCell::new(Vec::new()),
+            dispatching: Cell::new(false),
         });
         Self::from_storage(storage)
     }
@@ -1273,6 +1282,26 @@ impl Ui {
     pub fn set_presented(&self, presented: bool) {
         self.storage.presented.set(presented);
     }
+    /// Draw scrollbars as macOS's overlay ones (and GTK's) are: hidden until
+    /// the user scrolls their view, then fading out a second after it stops,
+    /// unless the pointer is on one. Off (the default), a scrollbar shows
+    /// whenever its view has something to scroll. The desktop host follows
+    /// the system's setting (macOS's "Show scroll bars").
+    pub fn set_overlay_scrollbars(&self, overlay: bool) {
+        self.storage.overlay_scrollbars.set(overlay);
+    }
+    pub(crate) fn overlay_scrollbars(&self) -> Signal<bool> {
+        self.storage.overlay_scrollbars.clone()
+    }
+    /// Whether input is being dispatched, so a scroll now is the user's.
+    pub(crate) fn is_dispatching(&self) -> bool {
+        self.storage.dispatching.get()
+    }
+    pub(crate) fn scrollbar_fades(
+        &self,
+    ) -> &RefCell<Vec<std::rc::Weak<crate::compose_scrollbar::Fade>>> {
+        &self.storage.scrollbar_fades
+    }
     pub(crate) fn observe_presentation(&self) -> Signal<bool> {
         self.storage.presented.clone()
     }
@@ -1488,8 +1517,10 @@ impl Ui {
                 }
             ),
         );
+        self.storage.dispatching.set(true);
         let mut result = self.input.dispatch(&self.scene, event);
         self.after_dispatch(after, &mut result);
+        self.storage.dispatching.set(false);
         Ok(result)
     }
     /// Dispatch native-style pointer input with modifiers and click counting.
@@ -1521,10 +1552,12 @@ impl Ui {
                 }
             ),
         );
+        self.storage.dispatching.set(true);
         let mut result = self
             .input
             .dispatch_with_modifiers(&self.scene, event, modifiers);
         self.after_dispatch(after, &mut result);
+        self.storage.dispatching.set(false);
         Ok(result)
     }
     fn interaction_valid(&self, job: &EditorInteraction) -> bool {
@@ -1540,6 +1573,7 @@ impl Ui {
             self.input.next_key_deadline(),
             self.next_editor_interaction_deadline(),
             self.next_selection_deadline(),
+            crate::compose_scrollbar::next_fade(self),
         ]
         .into_iter()
         .flatten()
@@ -1577,6 +1611,13 @@ impl Ui {
         }
         // A selection drag held past a scroll viewport's edge.
         let keys = if self.advance_selection_scroll(now) {
+            self.try_prepare_frame()?;
+            true
+        } else {
+            keys
+        };
+        // Overlay scrollbars fading out.
+        let keys = if crate::compose_scrollbar::advance_fades(self, now) {
             self.try_prepare_frame()?;
             true
         } else {

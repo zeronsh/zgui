@@ -600,6 +600,20 @@ the theme hover color, the thumb uses the accent color, and keyboard focus chang
 the thumb to the theme text color. This opt-in property also passes through
 component roots; attaching it to another kind of view is a mount error.
 
+`Ui::set_overlay_scrollbars(true)` makes scrollbars behave like macOS's overlay ones
+(and GTK's, or a browser's on a trackpad Mac). A scrollbar is hidden at rest: it
+takes no space and no hits, so the pointer reaches the content under it, while
+assistive technology still has it. It shows when the user scrolls its view (wheel,
+keys, a drag). It stays a second after the scrolling stops, then fades out over
+200 ms. With the pointer on it, or the keyboard focus, it stays, and the track
+shows only under the pointer. Scrolling done by the app (`offset.set`,
+`follow_end`) does not show it, as a page's script scrolling does not. The fade is
+stepped through `Ui::next_interaction_deadline`, so an idle window schedules
+nothing. The desktop host follows macOS's "Show scroll bars" setting
+(`NSScroller.preferredScrollerStyle`) at startup and whenever the window comes to
+the front. Elsewhere, and by default, a scrollbar shows whenever its view has
+something to scroll.
+
 Dragging the thumb captures the pointer and preserves the initial grab position.
 Clicking elsewhere on the track pages by one viewport. Focused scrollbars support
 arrow keys (40 logical pixels), Home/End, PageUp/PageDown and accessible numeric

@@ -29,6 +29,7 @@ mod platform;
 mod portal_dialog;
 #[cfg(target_os = "linux")]
 mod portal_parent;
+mod scrollers;
 mod url;
 #[cfg(target_os = "linux")]
 mod wayland_data;
