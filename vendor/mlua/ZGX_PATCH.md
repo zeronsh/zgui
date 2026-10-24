@@ -69,3 +69,20 @@ debug and release builds.
 
 Both additions are public, self-contained API, written to be offered
 upstream.
+
+## A memory alarm
+
+`set_memory_alarm(state, at, alarm)` (Luau only, `memory.rs`): once the VM
+holds more than `at` bytes, its allocator calls `alarm` once; the alarm is
+then cleared until set again. zgx-script collects garbage near a VM's
+memory limit this way: the alarm sets Luau's interrupt (all it may do: it
+runs inside an allocation), and the interrupt collects at its next
+safepoint. Before, an interrupt hook ran at every loop back edge to check.
+
+The allocator compares an allocation against the least of the limit and
+the alarm's threshold (`check_at`), once, as it compared against the limit
+alone; past it, it tells which was reached. With the alarm as a second
+comparison of its own, `mount_bench` ran 0.35% more instructions.
+
+Checked: `the_interrupt_is_set_by_the_memory_alarm` (zgx-script), and the
+memory-limit tests listed above, in debug and release builds.

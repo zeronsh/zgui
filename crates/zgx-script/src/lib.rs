@@ -229,6 +229,11 @@ impl Deadline {
             budget: self.budget,
         }
     }
+    /// When its wall time passes its budget: it is exceeded from then on,
+    /// once its CPU time has too (the watchdog sets the interrupt then).
+    pub(crate) fn due(&self) -> Instant {
+        self.wall + self.budget
+    }
     pub(crate) fn exceeded(&self) -> bool {
         self.wall.elapsed() > self.budget && thread_cpu().saturating_sub(self.cpu) > self.budget
     }
@@ -303,7 +308,7 @@ fn thread_cpu() -> Duration {
 pub(crate) struct Vm {
     name: String,
     /// The time budget and memory watch (see `interrupt`).
-    _interrupt: interrupt::Installed,
+    interrupt: interrupt::Installed,
     /// Keeps the state alive: script values only hold weak references to it.
     pub(crate) lua: Lua,
     /// Where relative image and SVG paths resolve from.
@@ -336,8 +341,17 @@ impl Vm {
             Some(_) => Deadline::start(budget),
         };
         let outer = self.deadline.replace(Some(started));
+        // The watchdog hears of outermost calls alone: nested calls (and
+        // work off the clock) only move the budget's end later, and an
+        // interrupt set early just checks it sooner.
+        if outer.is_none() {
+            self.interrupt.publish(Some(started));
+        }
         let result = f();
         self.deadline.set(outer.map(|d| d.shifted(&started)));
+        if outer.is_none() {
+            self.interrupt.publish(None);
+        }
         result
     }
     /// Runs Rust work a script asked for (a state write and the interface
@@ -2014,7 +2028,7 @@ impl ScriptHost {
         let vm = Rc::new(Vm {
             name: name.clone(),
             lua: lua.clone(),
-            _interrupt: interrupt,
+            interrupt,
             base: script.dir(),
             deadline,
             budget: limits.call,

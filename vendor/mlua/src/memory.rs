@@ -15,6 +15,50 @@ pub(crate) struct MemoryState {
     // Indicates that the memory limit was reached on the last allocation.
     #[cfg(feature = "luau")]
     limit_reached: bool,
+    // zgx patch: an allocation taking `used_memory` past `alarm_at` (when
+    // above 0) calls `alarm` once (see `set_memory_alarm`).
+    #[cfg(feature = "luau")]
+    alarm_at: isize,
+    #[cfg(feature = "luau")]
+    alarm: Option<MemoryAlarm>,
+    // zgx patch: the least of the limit and the alarm's threshold (0: none),
+    // so an allocation under both is one comparison, as with the limit
+    // alone (see `allocator`).
+    check_at: isize,
+}
+
+/// zgx patch: what an allocation past a VM's alarm threshold calls (see
+/// [`set_memory_alarm`]): `call(data)`.
+#[cfg(feature = "luau")]
+#[derive(Clone, Copy)]
+pub struct MemoryAlarm {
+    /// Runs inside the allocation: it must not touch the VM (allocate,
+    /// collect or raise an error) or unwind.
+    pub call: unsafe fn(*const c_void),
+    pub data: *const c_void,
+}
+
+/// zgx patch: once the VM of `state` holds more than `at` bytes (0: never),
+/// its allocator calls `alarm`, once: the alarm is then cleared until set
+/// again. A host collects garbage near its memory limit this way without a
+/// check at every safepoint: the alarm (which must not touch the VM) sets
+/// the interrupt, and the interrupt collects.
+///
+/// # Safety
+///
+/// `state` is a live Luau state made by mlua (with its allocator), called
+/// on its thread while the VM is not allocating; `alarm.data` stays valid
+/// for `alarm.call` as long as the alarm is set.
+#[cfg(feature = "luau")]
+pub unsafe fn set_memory_alarm(state: *mut ffi::lua_State, at: usize, alarm: Option<MemoryAlarm>) {
+    let mem_state = &mut *MemoryState::get(state);
+    mem_state.alarm_at = if alarm.is_some() {
+        at.min(isize::MAX as usize) as isize
+    } else {
+        0
+    };
+    mem_state.alarm = alarm;
+    mem_state.update_check_at();
 }
 
 impl MemoryState {
@@ -51,7 +95,20 @@ impl MemoryState {
     pub(crate) fn set_memory_limit(&mut self, limit: usize) -> usize {
         let prev_limit = self.memory_limit;
         self.memory_limit = limit.min(isize::MAX as usize) as isize;
+        self.update_check_at();
         prev_limit as usize
+    }
+
+    // zgx patch: `check_at` again, after the limit or the alarm changed.
+    fn update_check_at(&mut self) {
+        #[cfg(feature = "luau")]
+        let alarm_at = self.alarm_at;
+        #[cfg(not(feature = "luau"))]
+        let alarm_at = 0;
+        self.check_at = match (self.memory_limit, alarm_at) {
+            (0, at) | (at, 0) => at,
+            (limit, at) => limit.min(at),
+        };
     }
 
     // This function is used primarily for calling `lua_pushcfunction` in lua5.1/jit/luau
@@ -117,14 +174,26 @@ unsafe extern "C" fn allocator(
     if !ptr.is_null() {
         mem_diff -= osize as isize;
     }
-    let mem_limit = mem_state.memory_limit;
     let new_used_memory = mem_state.used_memory + mem_diff;
-    if mem_diff > 0 && mem_limit > 0 && new_used_memory > mem_limit && !mem_state.ignore_limit {
-        #[cfg(feature = "luau")]
-        {
-            mem_state.limit_reached = true;
+    // zgx patch: one comparison for the limit and the alarm (`check_at`).
+    if mem_diff > 0 && mem_state.check_at > 0 && new_used_memory > mem_state.check_at {
+        let mem_limit = mem_state.memory_limit;
+        if mem_limit > 0 && new_used_memory > mem_limit && !mem_state.ignore_limit {
+            #[cfg(feature = "luau")]
+            {
+                mem_state.limit_reached = true;
+            }
+            return ptr::null_mut();
         }
-        return ptr::null_mut();
+        // Past the alarm's threshold: the alarm, once.
+        #[cfg(feature = "luau")]
+        if mem_state.alarm_at > 0 && new_used_memory > mem_state.alarm_at {
+            mem_state.alarm_at = 0;
+            mem_state.update_check_at();
+            if let Some(alarm) = mem_state.alarm {
+                (alarm.call)(alarm.data);
+            }
+        }
     }
     mem_state.used_memory += mem_diff;
 
