@@ -360,11 +360,18 @@ the submenus example's submenu open beside its flipped menu; on outputs
 scaled 2× and 1.5×, the menu's buffer is in the output's pixels, where the
 scene put it, and takes a click; under Weston, the menu sits the same on the content below winit's title bar.
 
+A popup taller (or wider) than the output has room for is cut to it by the
+compositor (the positioner lets it resize, after flipping and sliding), which
+says so in its configure. The host passes that size to the scene
+(`Ui::set_popup_limit`), which lays the panel out no bigger, a menu
+scrolling its items as it does in an X11 or macOS screen, and the popup
+shows anew at that size. The probe opens a menu of 60 items on a 960-point
+output, sees it cut to 960, scrolls it and chooses its last item.
+
 Not yet: the grab (`xdg_popup.grab`, which moves the keyboard to the popup,
 so keys must come through a `wl_keyboard` of zgui's own with winit's
-keymap); a popover's arrow pointing back at its trigger once the compositor
-flips it (the scene drew it on the side it chose); and a menu taller than the
-output.
+keymap); and a popover's arrow pointing back at its trigger once the
+compositor flips it (the scene drew it on the side it chose).
 
 ## Web views
 

@@ -3488,6 +3488,10 @@ impl Host {
                 self.context.ui.dismiss_popups();
                 Ok(())
             }
+            PopupInput::Limit { root, size } => {
+                self.context.ui.set_popup_limit(root, size);
+                Ok(())
+            }
             PopupInput::Screens => {
                 if let Some(window) = &self.window {
                     self.context

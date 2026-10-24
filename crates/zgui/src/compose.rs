@@ -2449,11 +2449,13 @@ fn mount_portal_panel(
     }
     defaults.merge(&view.styles);
     view.styles = defaults;
-    let has_max_width = view.styles.rare().max_width.is_some();
-    let has_max_height = view.styles.rare().max_height.is_some();
+    let set_max = (view.styles.rare().max_width, view.styles.rare().max_height);
+    let (has_max_width, has_max_height) = (set_max.0.is_some(), set_max.1.is_some());
     let viewport = ui.observe_bounds(ui.root());
-    // Anchored, it may reach past the window, to the screen's edges.
+    // Anchored, it may reach past the window, to the screen's edges, and be
+    // cut to the room there by the platform (`Ui::set_popup_limit`).
     let area = anchor.map(|anchor| (ui.popup_screens(), ui.observe_bounds(anchor)));
+    let limit = anchor.map(|_| (ui.popup_limits(), portal.position));
     let mut dynamic = view.reactive_style.take();
     view.reactive_style = Some(Box::new(move || {
         let mut styles = dynamic
@@ -2472,6 +2474,19 @@ fn mount_portal_panel(
         }
         if !has_max_height && styles.rare().max_height.is_none() {
             styles.rare_mut().max_height = Some((bounds.height - margin).max(0.));
+        }
+        if let Some((width, height)) = limit.as_ref().and_then(|(limits, root)| {
+            limits.with(|limits| {
+                limits
+                    .iter()
+                    .find(|(limited, _)| limited == root)
+                    .map(|(_, size)| *size)
+            })
+        }) {
+            let rare = styles.rare_mut();
+            let cut = |max: Option<f32>, to: f32| Some(max.map_or(to, |max| max.min(to)));
+            rare.max_width = cut(rare.max_width.or(set_max.0), width);
+            rare.max_height = cut(rare.max_height.or(set_max.1), height);
         }
         styles
     }));

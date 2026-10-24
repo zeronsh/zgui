@@ -116,3 +116,53 @@ fn dynamic_menu_shrinks_after_overflow_content_is_removed() {
     view.unmount();
     assert_eq!(ui.runtime.effect_count(), 0);
 }
+#[test]
+fn a_menu_the_platform_cut_to_its_room_is_laid_out_no_bigger_and_scrolls() {
+    let mut ui = Ui::new(300., 200.);
+    // As on Wayland: screens unbounded, the compositor the judge of the room.
+    ui.set_popup_screens(vec![zgui::scene::Rect::new(-1e5, -1e5, 2e5, 2e5)]);
+    let open = ui.signal(false);
+    let view = ui.mount(
+        menu("Long", open.clone(), button().size(60., 20.).child("Menu"))
+            .id("panel")
+            .w(160.)
+            .p(8.)
+            .children((0..60).map(|i| {
+                menu_item(format!("Item {i}"))
+                    .id(format!("item{i}"))
+                    .h(20.)
+                    .p(0.)
+            })),
+    );
+    ui.prepare_frame();
+    open.set(true);
+    ui.prepare_frame();
+    let root = *ui.scene.borrow().popups().first().expect("a popup root");
+    let panel = view.find("panel").unwrap();
+    let full = ui.scene.borrow().bounds(panel);
+    assert_eq!(full.height, 60. * 20. + 16.);
+    // The compositor gave it 300 points: laid out no taller, it scrolls.
+    ui.set_popup_limit(root, Some((full.width, 300.)));
+    ui.prepare_frame();
+    let cut = ui.scene.borrow().bounds(panel);
+    assert_eq!((cut.width, cut.height), (160., 300.));
+    assert_eq!(ui.scene.borrow().popup_bounds(root).unwrap().height, 300.);
+    key(&mut ui, Key::End);
+    let last = view.find("item59").unwrap();
+    assert_eq!(ui.input.focused(), Some(last));
+    let item = ui.scene.borrow().bounds(last);
+    assert!(item.y >= cut.y + 8. && item.y + item.height <= cut.y + cut.height - 8. + 0.01);
+    // Room to spare: its own height again.
+    ui.set_popup_limit(root, Some((full.width, 2000.)));
+    ui.prepare_frame();
+    assert_eq!(ui.scene.borrow().bounds(panel).height, full.height);
+    // Closed, it is no longer cut.
+    ui.set_popup_limit(root, None);
+    open.set(false);
+    ui.prepare_frame();
+    open.set(true);
+    ui.prepare_frame();
+    assert_eq!(ui.scene.borrow().bounds(panel).height, full.height);
+    view.unmount();
+    assert_eq!(ui.runtime.effect_count(), 0);
+}

@@ -13,7 +13,11 @@
 //! (`Scene::popup_anchor`): the compositor flips it to the trigger's other
 //! side at the output's edge, as GTK's menus, or slides it onto the output.
 //! The compositor's word on where it went is final, and input goes by where
-//! the scene drew it, so what is under the pointer is what shows there.
+//! the scene drew it, so what is under the pointer is what shows there. A
+//! popup taller (or wider) than the output has room for is cut to it by the
+//! compositor, which says so in its configure: the scene lays its panel out
+//! no bigger (`Ui::set_popup_limit`), a menu scrolling its items, and it
+//! shows anew at that size.
 //!
 //! The popup takes no grab: keys stay the window's, which drives menus as
 //! before, and a press on another app takes the window's focus, which
@@ -82,6 +86,8 @@ struct State {
     live: std::collections::HashSet<ObjectId>,
     /// Popups the compositor dismissed (`popup_done`).
     done: Vec<ObjectId>,
+    /// Each `xdg_popup`'s size as last configured.
+    sizes: HashMap<ObjectId, (i32, i32)>,
 }
 
 /// zgui's queue on winit's display.
@@ -179,6 +185,8 @@ struct Shown {
     viewport: Option<WpViewport>,
     surface: WlSurface,
     rect: Rect,
+    /// The size it asked for (its box's, in whole points).
+    size: (i32, i32),
     revision: Option<u64>,
     /// The popup it is a popup of (a submenu's menu), if not the window's.
     parent: Option<NodeId>,
@@ -204,6 +212,7 @@ impl Shown {
             client.state.over = None;
         }
         client.state.live.remove(&xdg.id());
+        client.state.sizes.remove(&popup.id());
         popup.destroy();
         xdg.destroy();
         if let Some(viewport) = viewport {
@@ -217,12 +226,16 @@ impl Shown {
 /// A window's popups on Wayland.
 pub(super) struct Popups {
     shown: Vec<(NodeId, Shown)>,
+    /// Popups the compositor cut to its room, and the size it gave them
+    /// (`Ui::set_popup_limit`), until they close.
+    limited: Vec<(NodeId, (i32, i32))>,
     send: Sink,
 }
 impl Popups {
     pub fn new(send: Sink) -> Self {
         Self {
             shown: Vec::new(),
+            limited: Vec::new(),
             send,
         }
     }
@@ -249,8 +262,20 @@ impl Popups {
             .filter_map(|root| scene.popup_bounds(*root).map(|bounds| (*root, bounds)))
             .collect();
         let shown = std::mem::take(&mut self.shown);
+        let limited = &mut self.limited;
         let send = self.send.clone();
         with_client(parent, |client| {
+            // Closed: no longer cut to the room it had.
+            limited.retain(|(root, _)| {
+                let open = wanted.iter().any(|(wanted, _)| wanted == root);
+                if !open {
+                    (send)(PopupInput::Limit {
+                        root: *root,
+                        size: None,
+                    });
+                }
+                open
+            });
             // Dismissed by the compositor: its host closes it.
             for done in client.state.done.drain(..) {
                 if shown.iter().any(|(_, popup)| popup.popup.id() == done) {
@@ -317,6 +342,24 @@ impl Popups {
                     }
                 };
                 let popup = &mut kept[index].1;
+                // Cut by the compositor to the room on its output: the scene
+                // lays it out no bigger, and it shows anew at that size.
+                if let Some(&(width, height)) = client.state.sizes.get(&popup.popup.id())
+                    && width > 0
+                    && height > 0
+                    && (width < popup.size.0 || height < popup.size.1)
+                    && !limited.contains(&(*root, (width, height)))
+                {
+                    limited.retain(|(limited, _)| limited != root);
+                    limited.push((*root, (width, height)));
+                    zgui_gpu::present_log::log(|| {
+                        format!("popup cut {root:?} to {width}x{height}")
+                    });
+                    (send)(PopupInput::Limit {
+                        root: *root,
+                        size: Some((width as f32, height as f32)),
+                    });
+                }
                 let revision = scene.layer_revision(*root);
                 if full || popup.revision != Some(revision) {
                     popup.revision = Some(revision);
@@ -371,7 +414,12 @@ fn position(
     rect: Rect,
     trigger: Option<Rect>,
 ) -> (Rect, Anchor, Gravity, (i32, i32), ConstraintAdjustment) {
-    let slide = ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY;
+    // Slid onto the output, and cut to it where it is bigger than the room
+    // there (the compositor flips, then slides, then cuts).
+    let slide = ConstraintAdjustment::SlideX
+        | ConstraintAdjustment::SlideY
+        | ConstraintAdjustment::ResizeX
+        | ConstraintAdjustment::ResizeY;
     let point = (
         Rect::new(rect.x.round(), rect.y.round(), 1., 1.),
         Anchor::TopLeft,
@@ -544,6 +592,7 @@ fn show(
         viewport,
         surface,
         rect,
+        size: (width, height),
         revision: None,
         parent: of.map(|(holder, ..)| holder),
     })
@@ -759,9 +808,12 @@ impl Dispatch<XdgPopup, ()> for State {
                 y,
                 width,
                 height,
-            } => zgui_gpu::present_log::log(|| {
-                format!("popup configured at {x},{y} {width}x{height}")
-            }),
+            } => {
+                zgui_gpu::present_log::log(|| {
+                    format!("popup configured at {x},{y} {width}x{height}")
+                });
+                state.sizes.insert(popup.id(), (width, height));
+            }
             xdg_popup::Event::PopupDone => state.done.push(popup.id()),
             _ => {}
         }
@@ -789,6 +841,8 @@ mod tests {
             (grown, Anchor::BottomLeft, Gravity::BottomRight, (0, 0))
         );
         assert!(below.4.contains(ConstraintAdjustment::FlipY));
+        // Too tall for the output, cut to it.
+        assert!(below.4.contains(ConstraintAdjustment::ResizeY));
         let above = position(Rect::new(16., 190., 200., 202.), Some(trigger));
         assert_eq!(
             (above.0, above.1, above.2, above.3),

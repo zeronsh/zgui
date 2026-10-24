@@ -47,7 +47,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         open.set(true);
                     }
                 });
-            let items = (1..=8).map(|n| {
+            // `POPUP_PROBE_ITEMS`: a menu taller than the screen, for
+            // `wayland_popups_smoke.py`.
+            let count = std::env::var("POPUP_PROBE_ITEMS")
+                .ok()
+                .and_then(|count| count.parse().ok())
+                .unwrap_or(8);
+            let items = (1..=count).map(|n| {
                 let chosen = chosen.clone();
                 menu_item(format!("Item {n}"))
                     .id(format!("item-{n}"))

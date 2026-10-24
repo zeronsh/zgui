@@ -15,6 +15,9 @@ Under a headless sway, driven with a virtual pointer (`wayland_pointer.py`):
   first item takes a click there;
 - the submenus example's submenu, a popup of its menu, opens beside that
   menu where the compositor flipped it;
+- a menu of 60 items, taller than the output, is cut to it by the
+  compositor, laid out at that height, and scrolled to its last item, which
+  takes a click;
 - on outputs scaled 2× and 1.5× (fractional, through the viewporter), the
   menu's buffer is its size in the output's pixels, it shows where the
   scene put it in those pixels, and its last item takes a click.
@@ -223,6 +226,35 @@ def main():
             checks["sway: chosen in the flipped menu"] = True
             stop(app)
 
+            # Taller than the output: cut to it by the compositor, the menu
+            # is laid out at that height and scrolls to its last item.
+            app, log = launch("sway-tall", [str(args.probe)], dict(env, POPUP_PROBE_ITEMS="60"))
+            until("the tall probe", lambda: "READY" in log.read_text())
+            content = until("its window", lambda: (lambda b: b if b and b[1] == 0 else None)(box(shot("tall"), CONTENT)))
+            click(*FILE)
+            until("the tall menu cut", lambda: "popup cut" in log.read_text())
+            until("it shown anew", lambda: log.read_text().count("popup configured") >= 2)
+            time.sleep(.3)
+            menu = box(shot("tall-open"), MENU)
+            cut = re.search(r"popup cut .* to (\d+)x(\d+)", log.read_text())
+            shown = re.findall(r"popup show .* height: ([\d.]+) ", log.read_text())
+            checks["sway: tall"] = {"menu": menu, "cut": cut.group(0), "shown heights": shown}
+            checks["sway: a menu taller than the output is cut to it"] = (
+                cut.groups() == ("200", str(OUTPUT[1])) and float(shown[-1]) == OUTPUT[1]
+                and menu == (content[0] + 16, 0, content[0] + 216, OUTPUT[1]))
+            pointer.move_to(menu[0] + 100, OUTPUT[1] // 2, *OUTPUT)
+            time.sleep(.2)
+            pointer.swipe(dy=60., frames=12)
+            time.sleep(.8)
+            shot("tall-scrolled")
+            # The last item, 5 points of padding above the menu's bottom.
+            click(menu[0] - content[0] + 100, menu[3] - content[1] - 5 - 12)
+            until("a choice", lambda: 'CHOSEN "Item' in log.read_text())
+            chosen = [line for line in log.read_text().splitlines() if line.startswith("OPEN")][-1]
+            checks["sway: tall menu's choice"] = chosen
+            checks["sway: its last item, scrolled to, takes a click"] = 'CHOSEN "Item 60"' in chosen
+            stop(app)
+
             # A submenu is a popup of its menu: near the output's bottom the
             # menu flips, and the submenu opens beside it there.
             sub_app, sub_log = launch("sway-submenus", [str(args.probe.with_name("submenus"))], env)
@@ -279,7 +311,8 @@ def main():
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
         print("PASS: Wayland popups: past the window on sway and Weston, chosen from, closed, flipped at the output's "
-              "edge, a submenu beside its flipped menu, and on outputs scaled 2x and 1.5x")
+              "edge, a submenu beside its flipped menu, a menu taller than the output cut to it and scrolled, "
+              "and on outputs scaled 2x and 1.5x")
     finally:
         for process in reversed(processes):
             stop(process)

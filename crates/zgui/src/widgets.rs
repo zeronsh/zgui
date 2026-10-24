@@ -848,6 +848,9 @@ struct UiStorage {
     presented: Signal<bool>,
     /// Where popups may show (`Ui::set_popup_screens`).
     popup_screens: Signal<Vec<Rect>>,
+    /// The sizes the platform cut popups to, by their roots
+    /// (`Ui::set_popup_limit`).
+    popup_limits: Signal<Vec<(NodeId, (f32, f32))>>,
     /// Open signals of anchored popups, by their popup roots
     /// (`Ui::dismiss_popups`).
     popups: RefCell<Vec<(NodeId, Signal<bool>)>>,
@@ -1059,6 +1062,7 @@ impl Ui {
             presented: runtime.signal(true),
             overlay_scrollbars: runtime.signal(false),
             popup_screens: runtime.signal(Vec::new()),
+            popup_limits: runtime.signal(Vec::new()),
             popups: RefCell::new(Vec::new()),
             popup_soon: RefCell::new(None),
             popup_soon_sent: Cell::new(false),
@@ -2011,6 +2015,29 @@ impl Ui {
     }
     pub(crate) fn popup_screens(&self) -> Signal<Vec<Rect>> {
         self.storage.popup_screens.clone()
+    }
+    /// The size (width, height, in points) the platform cut popup `root` to
+    /// where the screen has no room for it, or `None` once it has closed: a
+    /// Wayland compositor, which keeps a popup on its output, is the only
+    /// judge of where that is. The popup's panel is laid out no bigger, a
+    /// menu scrolling its items, as it does in a screen
+    /// (`Ui::set_popup_screens`).
+    pub fn set_popup_limit(&self, root: NodeId, size: Option<(f32, f32)>) {
+        let current = self.storage.popup_limits.with_untracked(|limits| {
+            limits
+                .iter()
+                .find(|(limited, _)| *limited == root)
+                .map(|(_, size)| *size)
+        });
+        if current != size {
+            self.storage.popup_limits.update(|limits| {
+                limits.retain(|(limited, _)| *limited != root);
+                limits.extend(size.map(|size| (root, size)));
+            });
+        }
+    }
+    pub(crate) fn popup_limits(&self) -> Signal<Vec<(NodeId, (f32, f32))>> {
+        self.storage.popup_limits.clone()
     }
     /// Call `soon` as the pointer reaches something that opens a popup (a
     /// popover's or menu's trigger, a view with a tooltip or context menu),

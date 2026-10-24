@@ -56,6 +56,14 @@ pub(crate) enum PopupInput {
     Left,
     /// A press elsewhere in the parent window (its title bar): popups close.
     Dismiss,
+    /// The platform cut popup `root` to `size` (points) where the screen
+    /// had no room for it, or it closed (`None`): `Ui::set_popup_limit`.
+    /// (Wayland's; elsewhere the scene knows the screens.)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Limit {
+        root: zgui::scene::NodeId,
+        size: Option<(f32, f32)>,
+    },
     /// The screens changed (a monitor, the taskbar), or popups can have no
     /// windows of their own after all: `popup_screens` again. (Windows'; AppKit
     /// and X11 popups follow screens as their windows move.)
