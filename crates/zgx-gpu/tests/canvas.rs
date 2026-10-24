@@ -235,3 +235,222 @@ fn simple_shapes_draw_as_quads_and_look_as_their_raster_does() {
         assert!(worst <= 64, "scale {scale}: worst {worst}");
     }
 }
+
+/// Strokes of straight lines running left to right (a sparkline's, a
+/// chart's) draw as polyline quads, no raster made, and look as their raster
+/// does: joins (miter, past its limit, bevel, round), caps, translucent
+/// strokes over themselves, one drawn right to left. One that turns back
+/// rasterizes.
+#[test]
+fn monotonic_polylines_draw_as_quads_and_look_as_their_raster_does() {
+    let line = |points: &[(f32, f32)]| {
+        let mut path = Path::builder();
+        path.move_to(points[0].0, points[0].1);
+        for &(x, y) in &points[1..] {
+            path.line_to(x, y);
+        }
+        path.build().unwrap()
+    };
+    let strokes = |raster: bool, back: bool| {
+        let mut canvas = Canvas::new();
+        canvas.fill(
+            Path::rectangle(Rect::new(0., 0., 160., 120.)),
+            Color(30, 30, 40, 255),
+        );
+        // A sparkline: sixty points across eighty, mitred.
+        let spark: Vec<(f32, f32)> = (0..60)
+            .map(|k| {
+                let t = k as f32;
+                (
+                    4.3 + t * 80. / 59.,
+                    22. + 9. * (t * 0.7).sin() + 4. * (t * 2.3).cos(),
+                )
+            })
+            .collect();
+        canvas.stroke(
+            line(&spark),
+            Color(63, 185, 80, 255),
+            Stroke {
+                width: 1.5,
+                ..Default::default()
+            },
+        );
+        // Sharp turns: a miter past its limit bevels.
+        canvas.stroke(
+            line(&[
+                (95., 40.),
+                (110., 8.),
+                (118., 40.),
+                (125., 12.5),
+                (150.5, 30.),
+            ]),
+            Color(229, 83, 75, 255),
+            Stroke {
+                width: 3.,
+                miter_limit: 2.,
+                ..Default::default()
+            },
+        );
+        // Translucent and round over itself, then bevelled with square caps,
+        // drawn right to left.
+        canvas.stroke(
+            line(&[(10., 90.), (30., 55.), (45., 100.), (70., 60.)]),
+            Color(255, 255, 255, 140),
+            Stroke {
+                width: 6.,
+                cap: LineCap::Round,
+                join: LineJoin::Round,
+                ..Default::default()
+            },
+        );
+        canvas.stroke(
+            line(&[(150., 110.), (120., 70.5), (100., 104.), (82.25, 66.)]),
+            Color(80, 160, 255, 200),
+            Stroke {
+                width: 4.,
+                cap: LineCap::Square,
+                join: LineJoin::Bevel,
+                ..Default::default()
+            },
+        );
+        if back {
+            canvas.stroke(
+                line(&[(10., 10.), (40., 20.), (20., 30.)]),
+                Color(255, 255, 255, 255),
+                Stroke::default(),
+            );
+        }
+        if raster {
+            canvas.fill(Path::builder().build().unwrap(), Color(0, 0, 0, 255));
+        }
+        canvas
+    };
+    for scale in [1., 2.] {
+        let render = |raster: bool, back: bool| {
+            let mut scene = Scene::new(170., 130.);
+            scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+            scene.append(
+                scene.root(),
+                NodeKind::Canvas(Arc::new(strokes(raster, back))),
+                Style {
+                    width: Some(160.),
+                    height: Some(120.),
+                    ..Default::default()
+                },
+            );
+            let mut gpu = GpuRenderer::new((170. * scale) as u32, (130. * scale) as u32).unwrap();
+            gpu.set_scale_factor(scale);
+            let report = scene.flush();
+            let stats = gpu.render(&scene, &report.damage).unwrap();
+            (stats, gpu.readback().unwrap())
+        };
+        let (quads, drawn) = render(false, false);
+        let (rasters, reference) = render(true, false);
+        assert_eq!(quads.canvas_rasterizations, 0, "drawn as quads");
+        assert_eq!(quads.canvas_quads, 5);
+        assert_eq!(rasters.canvas_rasterizations, 1);
+        assert_eq!(render(false, true).0.canvas_rasterizations, 1, "turns back");
+        let (mut off, mut worst, mut stroked) = (0, 0, 0);
+        for (a, b) in drawn.chunks(4).zip(reference.chunks(4)) {
+            let d = a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+            worst = worst.max(d);
+            stroked += usize::from(b != [30, 30, 40, 255] && b != [0, 0, 0, 255]);
+            if d > 6 {
+                off += 1;
+            }
+        }
+        // Lines are mostly edge: count pixels against those the strokes
+        // cover, which differ by their antialiasing alone. The most where
+        // the raster's area coverage sees two edges in a pixel (the narrow
+        // V inside a sharp turn, a bevel's corners) and the distance the
+        // nearest alone: measured 8% and 4% of them, 67 and 70 at worst.
+        assert!(
+            off * 10 < stroked,
+            "scale {scale}: {off} of {stroked} stroked pixels differ (worst {worst})"
+        );
+        assert!(
+            worst <= 80,
+            "scale {scale}: worst {worst} ({off} of {stroked})"
+        );
+    }
+}
+
+/// Sparklines scattered over a window, redrawn as their data ticks, draw
+/// through the stencil of their damage (`debug_stencil`) with their own
+/// pipeline: the same bytes as drawing their regions whole.
+#[test]
+fn polylines_through_a_stencil_match_drawing_their_regions() {
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let render = |stencil: bool| {
+        let mut gpu = GpuRenderer::new(960, 720).unwrap();
+        gpu.set_scale_factor(2.);
+        gpu.debug_stencil(stencil);
+        let mut ui = Ui::new(480., 360.);
+        let tick = ui.signal(0_usize);
+        // Close together, so the damage groups into regions around much
+        // more than it changes (where a frame takes the stencil).
+        let sparks = (0..54).map(|i| {
+            let tick = tick.clone();
+            let x = (i % 6) as f32 * 79.7 + 2.3;
+            let y = (i / 6) as f32 * 38.9 + 3.1;
+            div().absolute().ml(x).mt(y).w(76.).h(20.).child(
+                canvas(move |(w, _)| {
+                    // Every other sparkline ticks: damage scattered over the window.
+                    let t = tick.get();
+                    let t = if i % 2 == t % 2 {
+                        t
+                    } else {
+                        t.saturating_sub(1)
+                    };
+                    let mut path = Path::builder();
+                    for k in 0..30 {
+                        let x = k as f32 / 29. * w;
+                        let y = 10. + 8. * (((k + i * 3 + t * 5) as f32) * 0.6).sin();
+                        if k == 0 {
+                            path.move_to(x, y);
+                        } else {
+                            path.line_to(x, y);
+                        }
+                    }
+                    let mut drawing = Canvas::new();
+                    drawing.stroke(
+                        path.build().unwrap(),
+                        Color(63, 185, 80, 220),
+                        Stroke {
+                            width: 1.5,
+                            ..Default::default()
+                        },
+                    );
+                    drawing
+                })
+                .w(76.)
+                .h(20.),
+            )
+        });
+        ui.mount(overlay().w(480.).h(360.).bg(rgb(0x14161c)).children(sparks));
+        let mut frames = Vec::new();
+        for t in 0..4 {
+            tick.set(t);
+            ui.prepare_frame();
+            let damage = ui.scene.borrow_mut().flush().damage;
+            let stats = gpu.render(&ui.scene.borrow(), &damage).unwrap();
+            assert_eq!(stats.canvas_rasterizations, 0, "drawn as polylines");
+            frames.push(gpu.readback().unwrap());
+        }
+        (frames, gpu.debug_metal_frames(), gpu.debug_stamped_frames())
+    };
+    let (stenciled, metal, stamped) = render(true);
+    let (whole, _, unstamped) = render(false);
+    assert_eq!(unstamped, 0);
+    if metal > 0 {
+        assert!(stamped > 0, "drawn through the stencil");
+    }
+    for (frame, (through, plain)) in stenciled.iter().zip(&whole).enumerate() {
+        let differing = through
+            .chunks(4)
+            .zip(plain.chunks(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(differing, 0, "{differing} pixels differ in frame {frame}");
+    }
+}

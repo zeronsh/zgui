@@ -264,6 +264,9 @@ enum Shading {
     /// A shader fill (`FillShader`, by id): its pipeline, `shade` for
     /// whatever else the draw holds.
     Fill(u64),
+    /// A canvas's polyline strokes (polyline.wgsl): their own pipeline,
+    /// reading their points, never joined with another shading's quads.
+    Polyline,
 }
 fn shading(quad: &Quad, scale: f32) -> Shading {
     // A panel with square corners and no border only antialiases its edges:
@@ -307,6 +310,20 @@ struct QuadPipelines {
     full_clear: std::cell::OnceCell<wgpu::RenderPipeline>,
     basic: std::cell::OnceCell<wgpu::RenderPipeline>,
     basic_clear: std::cell::OnceCell<wgpu::RenderPipeline>,
+    /// The quad pipelines' group layouts (texture, viewport), for the
+    /// polyline layout.
+    texture_layout: wgpu::BindGroupLayout,
+    viewport_layout: wgpu::BindGroupLayout,
+    polylines: std::cell::OnceCell<Polylines>,
+}
+/// The polyline strokes' module (draw.wgsl and polyline.wgsl), its layout
+/// (the quads' groups, and their points as group 2) and its pipeline into
+/// the retained target: made when a frame first draws one.
+struct Polylines {
+    module: wgpu::ShaderModule,
+    points_layout: wgpu::BindGroupLayout,
+    layout: wgpu::PipelineLayout,
+    pipeline: wgpu::RenderPipeline,
 }
 impl QuadPipelines {
     /// The pipeline drawing quads of `shading`.
@@ -315,9 +332,48 @@ impl QuadPipelines {
             Shading::Full | Shading::Fill(_) => (&self.full, false, true),
             Shading::Basic => (&self.basic, true, true),
             Shading::Opaque => (&self.basic_clear, true, false),
+            Shading::Polyline => return &self.polylines().pipeline,
         };
         cell.get_or_init(|| {
             quad_pipeline(&self.device, &self.shader, &self.layout, blend, None, basic)
+        })
+    }
+    fn polylines(&self) -> &Polylines {
+        self.polylines.get_or_init(|| {
+            let device = &self.device;
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("polylines"),
+                source: wgpu::ShaderSource::Wgsl(polyline_source().into()),
+            });
+            let points_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("polyline points"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("polylines"),
+                bind_group_layouts: &[
+                    Some(&self.texture_layout),
+                    Some(&self.viewport_layout),
+                    Some(&points_layout),
+                ],
+                immediate_size: 0,
+            });
+            let pipeline = polyline_pipeline(device, &module, &layout, None, false);
+            Polylines {
+                module,
+                points_layout,
+                layout,
+                pipeline,
+            }
         })
     }
     /// The pipeline clearing a region to the background quad.
@@ -342,22 +398,36 @@ const SPLIT_PIXELS: f32 = 32_768.;
 /// `split`. The full shader's size (the registers it holds) slows every pixel
 /// it shades, on a GPU as on a software rasterizer: plain quads (backgrounds,
 /// glyphs, bars) draw with the basic one.
-fn push_draw(draws: &mut Vec<Draw>, quads: &[Quad], draw: Draw, split: bool, scale: f32) {
-    if !split
-        || draw.blur.is_some()
-        || draw.layer.is_some()
-        || matches!(draw.shading, Shading::Fill(_))
-        || draw.end <= draw.start
-    {
+/// A canvas's polyline strokes (when `polylines`) draw with their
+/// own pipeline: their runs are draws of their own however the rest is.
+fn push_draw(
+    draws: &mut Vec<Draw>,
+    quads: &[Quad],
+    draw: Draw,
+    split: bool,
+    polylines: bool,
+    scale: f32,
+) {
+    let split = split
+        && draw.blur.is_none()
+        && draw.layer.is_none()
+        && !matches!(draw.shading, Shading::Fill(_));
+    if !(split || polylines) || draw.end <= draw.start {
         draws.push(draw);
         return;
     }
+    // A polyline stroke's quad holds its point count in `mask.z`.
+    let kind_of = |quad: &Quad| match polylines && quad.mask[2] > 0. {
+        true => Shading::Polyline,
+        false if split => shading(quad, scale),
+        false => draw.shading,
+    };
     // Each run ends where the shading changes, so runs alternate shadings.
     let mut start = draw.start;
     while start < draw.end {
-        let kind = shading(&quads[start as usize], scale);
+        let kind = kind_of(&quads[start as usize]);
         let mut end = start + 1;
-        while end < draw.end && shading(&quads[end as usize], scale) == kind {
+        while end < draw.end && kind_of(&quads[end as usize]) == kind {
             end += 1;
         }
         // One run (the usual item): the draw's own bounds.
@@ -370,6 +440,8 @@ fn push_draw(draws: &mut Vec<Draw>, quads: &[Quad], draw: Draw, split: bool, sca
             end,
             bounds,
             shading: kind,
+            // A backdrop filter goes under the first run alone.
+            blur: draw.blur.clone().filter(|_| start == draw.start),
             ..draw.clone()
         });
         start = end;
@@ -724,6 +796,8 @@ struct Deferred {
     /// this frame and the last, so the target is likely to be repainted whole
     /// again before any of it is reused. Saves writing every pixel twice.
     direct: bool,
+    /// The polyline strokes' points (group 2), if it draws any.
+    points: Option<wgpu::BindGroup>,
 }
 /// A batch of backdrop filters' last step: each blur drawn back over the
 /// original pixels, one draw per filter and damaged output (see
@@ -1073,14 +1147,18 @@ struct PickedPipelines {
     clear: wgpu::RenderPipeline,
     basic: wgpu::RenderPipeline,
     opaque: wgpu::RenderPipeline,
+    /// Made when a frame first draws polylines (`picks`).
+    polyline: std::cell::OnceCell<wgpu::RenderPipeline>,
 }
 impl PickedPipelines {
-    fn picks(&self) -> Picks<'_> {
+    /// Its pipelines, the polyline one made first if `make` and `polylines`.
+    fn picks(&self, polylines: bool, make: impl FnOnce() -> wgpu::RenderPipeline) -> Picks<'_> {
         Picks {
             full: &self.full,
             clear: &self.clear,
             basic: &self.basic,
             opaque: &self.opaque,
+            polyline: polylines.then(|| self.polyline.get_or_init(make)),
         }
     }
 }
@@ -1092,6 +1170,8 @@ struct Picks<'p> {
     clear: &'p wgpu::RenderPipeline,
     basic: &'p wgpu::RenderPipeline,
     opaque: &'p wgpu::RenderPipeline,
+    /// For frames drawing polylines.
+    polyline: Option<&'p wgpu::RenderPipeline>,
 }
 impl<'p> Picks<'p> {
     fn get(&self, shading: Shading) -> &'p wgpu::RenderPipeline {
@@ -1099,6 +1179,7 @@ impl<'p> Picks<'p> {
             Shading::Full | Shading::Fill(_) => self.full,
             Shading::Basic => self.basic,
             Shading::Opaque => self.opaque,
+            Shading::Polyline => self.polyline.expect("made for a frame with polylines"),
         }
     }
 }
@@ -1136,7 +1217,7 @@ fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
         Shading::Opaque => Some(0),
         Shading::Basic => Some(1),
         Shading::Full => Some(2),
-        Shading::Fill(_) => None,
+        Shading::Fill(_) | Shading::Polyline => None,
     };
     Some(if cost(a)? >= cost(b)? { a } else { b })
 }
@@ -1470,6 +1551,9 @@ impl GpuContext {
             full_clear: Default::default(),
             basic: Default::default(),
             basic_clear: Default::default(),
+            texture_layout: texture_layout.clone(),
+            viewport_layout: viewport_layout.clone(),
+            polylines: Default::default(),
         };
         Self {
             inner: Rc::new(GpuContextInner {
@@ -1665,6 +1749,9 @@ pub struct GpuRenderer {
     vertices: wgpu::Buffer,
     vertex_capacity: usize,
     frame_quads: Vec<Quad>,
+    /// The points of the frame's polyline strokes (polyline.wgsl), kept for
+    /// their allocation.
+    frame_points: Vec<[f32; 2]>,
     /// The frame's draws, kept for their allocation.
     frame_draws: Vec<Draw>,
     /// How many quads and draws frames have used lately (`keep_room`).
@@ -2054,6 +2141,7 @@ impl GpuRenderer {
             vertices,
             vertex_capacity: 4096,
             frame_quads: Vec::new(),
+            frame_points: Vec::new(),
             frame_draws: Vec::new(),
             frame_peaks: (0, 0),
             visible_glyphs: Vec::new(),
@@ -2835,6 +2923,8 @@ impl GpuRenderer {
             border: [0.; 4],
             mask: NO_MASK,
         });
+        let mut points = std::mem::take(&mut self.frame_points);
+        points.clear();
         let mut draws = std::mem::take(&mut self.frame_draws);
         // The clip regions quads lie in (`Quad::mask`).
         let mut clips: Vec<Region> = Vec::new();
@@ -2965,6 +3055,8 @@ impl GpuRenderer {
             let mut canvas_image = None;
             // A canvas drawn as quads clips them to its box, as its raster is.
             let mut canvas_clip = None;
+            // And its polyline strokes, if any, drawn apart (`push_draw`).
+            let mut polylines = false;
             match item.kind {
                 NodeKind::Canvas(canvas) => {
                     if bounds.width <= 0. || bounds.height <= 0. {
@@ -2974,7 +3066,7 @@ impl GpuRenderer {
                     // drawn in quads, each would take them alone.
                     if item.effects.opacity >= 1.
                         && item.effects.edge_fade <= 0.
-                        && let Some(drawn) = canvas_quads(canvas, (bounds.x, bounds.y))
+                        && let Some(drawn) = canvas_quads(canvas, (bounds.x, bounds.y), &mut points)
                     {
                         if let Some(old) = self.node_images.remove(&item.id) {
                             self.images.remove(&old);
@@ -2986,6 +3078,10 @@ impl GpuRenderer {
                                     push_panel(&mut quads, quad, self.scale, self.split_shading)
                                 }
                                 CanvasQuad::Ring(quad) => quads.push(quad),
+                                CanvasQuad::Polyline(quad) => {
+                                    polylines = true;
+                                    quads.push(quad)
+                                }
                             }
                         }
                         canvas_clip = Some(bounds);
@@ -3908,7 +4004,8 @@ impl GpuRenderer {
                         None
                     },
                 };
-                push_draw(&mut draws, &quads, draw, self.split_shading, self.scale);
+                let split = self.split_shading;
+                push_draw(&mut draws, &quads, draw, split, polylines, self.scale);
             }
         }
         // Effect passes' quads ride in the frame's vertex buffer.
@@ -4059,6 +4156,8 @@ impl GpuRenderer {
                 }
             }
         }
+        // Polyline strokes read their points (group 2, or Metal's `POINTS`).
+        let polylines = draws.iter().any(|draw| draw.shading == Shading::Polyline);
         // Frames of quads (images the CPU wrote, layer composites, nothing
         // else recorded, any filters mixed by dual-source blending) skip
         // wgpu: see `metal_frame`. Layers repainted this frame were submitted
@@ -4083,7 +4182,13 @@ impl GpuRenderer {
                     .device
                     .features()
                     .contains(wgpu::Features::DUAL_SOURCE_BLENDING))
-            // Shader fills compiled for Metal too.
+            // Shader fills and polylines compiled for Metal too.
+            && (!polylines
+                || self
+                    .metal_frame
+                    .get_or_init(|| metal_frame::MetalFrame::new(&self.device, &self.queue).ok())
+                    .as_ref()
+                    .is_some_and(|frame| frame.polylines()))
             && draws.iter().all(|draw| match draw.shading {
                 Shading::Fill(id) => self.fill_shaders.get(&id).is_some_and(|shader| {
                     self.metal_frame
@@ -4110,6 +4215,7 @@ impl GpuRenderer {
             let effects = (&effect_jobs[..], effect_first);
             // Through a stencil: no filters or shader fills (no pipelines
             // of theirs take one).
+            // Polylines through one too, with their tested pipeline.
             let stamp = stamp.filter(|_| {
                 batches.is_empty()
                     && !draws
@@ -4119,11 +4225,17 @@ impl GpuRenderer {
                         .metal_frame
                         .get()
                         .and_then(Option::as_ref)
-                        .is_some_and(metal_frame::MetalFrame::stencils)
+                        .is_some_and(|frame| {
+                            frame.stencils() && (!polylines || frame.polylines_stenciled())
+                        })
             });
-            return Ok(self.render_direct(
-                quads, draws, &regions, &batches, catch_up, shown, effects, &clips, stamp, stats,
-            ));
+            let strokes = polylines.then_some(&points[..]);
+            let stats = self.render_direct(
+                quads, draws, &regions, &batches, catch_up, shown, effects, &clips, stamp, strokes,
+                stats,
+            );
+            self.frame_points = points;
+            return Ok(stats);
         }
         let mut encoder = self.device.create_command_encoder(&Default::default());
         // Glyphs rasterized while building this frame land before any pass
@@ -4170,6 +4282,8 @@ impl GpuRenderer {
         };
         // The clip regions too, bound with the viewport for this frame.
         let region_range = (!clips.is_empty()).then(|| record(bytemuck::cast_slice(&clips)));
+        // The polyline strokes' points too, bound as group 2 where drawn.
+        let points_range = polylines.then(|| record(bytemuck::cast_slice(&points)));
         let ranges: Vec<Option<[(u64, u64); 2]>> = plans
             .iter()
             .map(|plan| {
@@ -4231,6 +4345,21 @@ impl GpuRenderer {
             });
             self.viewport_bind = Some(self.viewport_group(&uniform, regions));
         }
+        let points_bind = points_range.map(|(offset, size)| {
+            let polylines = self.context.inner.quads.polylines();
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("polyline points"),
+                layout: &polylines.points_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &vertices,
+                        offset,
+                        size: wgpu::BufferSize::new(size),
+                    }),
+                }],
+            })
+        });
         self.encode_effects(
             &mut encoder,
             &vertices,
@@ -4288,6 +4417,7 @@ impl GpuRenderer {
                     disjoint: !has_blur,
                     first,
                     direct,
+                    points: points_bind.clone(),
                 });
                 break;
             }
@@ -4326,6 +4456,9 @@ impl GpuRenderer {
                 pass.set_vertex_buffer(0, vertices.slice(..));
                 pass.set_bind_group(0, &self.bind, &[]);
                 pass.set_bind_group(1, self.viewport_bind.as_ref(), &[]);
+                if let Some(points) = &points_bind {
+                    pass.set_bind_group(2, points, &[]);
+                }
                 let quads = &self.context.inner.quads;
                 for (index, (region, (x, y, w, h))) in regions.iter().enumerate() {
                     pass.set_scissor_rect(*x, *y, *w, *h);
@@ -4366,6 +4499,7 @@ impl GpuRenderer {
         keep_room(&mut quads, &mut self.frame_peaks.0);
         keep_room(&mut draws, &mut self.frame_peaks.1);
         self.frame_quads = quads;
+        self.frame_points = points;
         draws.clear();
         self.frame_draws = draws;
         Ok(stats)
@@ -4385,6 +4519,7 @@ impl GpuRenderer {
         (effect_jobs, effect_first): (&[effects::Job], u32),
         clips: &[Region],
         stamp: Option<&[Rect]>,
+        points: Option<&[[f32; 2]]>,
         mut stats: GpuStats,
     ) -> GpuStats {
         let _span = zgx::profile::span(zgx::profile::Phase::Encode);
@@ -4404,9 +4539,11 @@ impl GpuRenderer {
                 .as_mut()
                 .expect("checked by the caller")
                 .get_mut();
+            // Polyline strokes' points after the stamp, where drawn.
             let parts = [
                 bytemuck::cast_slice(&quads),
                 stamp.as_deref().map_or(&[][..], bytemuck::cast_slice),
+                points.map_or(&[][..], bytemuck::cast_slice),
             ];
             let (_, allocated) = mapped.write_parts(&parts);
             stats.vertex_buffer_allocations += usize::from(allocated);
@@ -4472,6 +4609,14 @@ impl GpuRenderer {
                 &vertices,
                 self.viewport_values,
                 bytemuck::cast_slice(clips),
+                // After the quads and the stamp (as written above).
+                points.map(|points| {
+                    let stamped = stamp.as_ref().map_or(0, |rects| size_of_val(&rects[..]));
+                    (
+                        quads.len() * size_of::<Quad>() + stamped,
+                        size_of_val(points),
+                    )
+                }),
                 &effect_passes,
                 stamp.is_some(),
             );
@@ -4714,6 +4859,10 @@ impl GpuRenderer {
                 clear: quads.clear(false),
                 basic: quads.get(Shading::Basic),
                 opaque: quads.get(Shading::Opaque),
+                polyline: deferred
+                    .points
+                    .is_some()
+                    .then(|| quads.get(Shading::Polyline)),
             };
             self.encode_damage(&mut pass, &deferred, picks, &mut stats);
         }
@@ -4730,6 +4879,18 @@ impl GpuRenderer {
             cache.submitted();
         }
     }
+    /// The polyline pipeline for single-pass presentation to `format`:
+    /// into the retained target too, or the drawable `alone`.
+    fn polyline_drawing(&self, format: wgpu::TextureFormat, alone: bool) -> wgpu::RenderPipeline {
+        let polylines = self.context.inner.quads.polylines();
+        polyline_pipeline(
+            &self.device,
+            &polylines.module,
+            &polylines.layout,
+            Some(format),
+            alone,
+        )
+    }
     /// Clear and redraw every damaged region of a deferred frame.
     fn encode_damage(
         &self,
@@ -4741,6 +4902,9 @@ impl GpuRenderer {
         pass.set_vertex_buffer(0, frame.vertices.slice(..));
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_bind_group(1, frame.viewport.as_ref(), &[]);
+        if let Some(points) = &frame.points {
+            pass.set_bind_group(2, points, &[]);
+        }
         let (clear, quads) = (picks.clear, picks.full);
         let pick = |shading| picks.get(shading);
         let first = |index: usize| frame.first.get(index).copied().unwrap_or(0);
@@ -4855,18 +5019,21 @@ impl GpuRenderer {
                     clear: both(false, false),
                     basic: both(true, true),
                     opaque: both(false, true),
+                    polyline: Default::default(),
                 },
                 direct: PickedPipelines {
                     full: direct(true, false),
                     clear: direct(false, false),
                     basic: direct(true, true),
                     opaque: direct(false, true),
+                    polyline: Default::default(),
                 },
             });
         }
         if !frame.regions.is_empty() {
             self.single_pass_frames += 1;
         }
+        let polylines = frame.points.is_some();
         let clear = wgpu::Operations {
             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
             store: wgpu::StoreOp::Store,
@@ -4898,9 +5065,13 @@ impl GpuRenderer {
                     ..Default::default()
                 });
                 let picks = if frame.direct {
-                    pipelines.direct.picks()
+                    pipelines
+                        .direct
+                        .picks(polylines, || self.polyline_drawing(format, true))
                 } else {
-                    pipelines.both.picks()
+                    pipelines
+                        .both
+                        .picks(polylines, || self.polyline_drawing(format, false))
                 };
                 self.encode_damage(&mut pass, frame, picks, &mut stats);
             }
@@ -4954,7 +5125,10 @@ impl GpuRenderer {
                 let (_, pipeline) = both.expect("created above");
                 Self::encode_vertical(&mut pass, pipeline, blur, &mut stats);
             }
-            self.encode_damage(&mut pass, frame, pipelines.both.picks(), &mut stats);
+            let picks = pipelines
+                .both
+                .picks(polylines, || self.polyline_drawing(format, false));
+            self.encode_damage(&mut pass, frame, picks, &mut stats);
             self.present_stats.draw_calls += stats.draw_calls + 1;
             self.present_stats.instances += stats.instances;
         }
@@ -6326,6 +6500,7 @@ impl GpuRenderer {
         self.blur_scratch = None;
         // A frame's quads and draws: the next frame makes them again.
         self.frame_quads = Vec::new();
+        self.frame_points = Vec::new();
         self.frame_draws = Vec::new();
         self.visible_glyphs = Vec::new();
         self.frame_peaks = (0, 0);
@@ -7088,14 +7263,100 @@ fn outline_quad(
         mask: NO_MASK,
     }
 }
-/// `style`'s border alone at `bounds`: a ring of its side widths (top,
-/// right, bottom, left) inside its rounded box (`draw.wgsl`'s ring mode,
-/// two widths a lane in 16ths of a pixel, up to 255 px).
-/// What a canvas draws as quads (`canvas_quads`): fills (pushed as panels)
-/// and rings, in order.
+/// What a canvas draws as quads (`canvas_quads`): fills (pushed as panels),
+/// rings and polyline strokes, in order.
 enum CanvasQuad {
     Fill(Quad),
     Ring(Quad),
+    Polyline(Quad),
+}
+/// How many segments a pixel of a polyline stroke may have in its reach
+/// (`zgx_polyline`'s loop): denser strokes rasterize.
+const POLYLINE_REACH_SEGMENTS: usize = 32;
+/// A polyline stroke's quad (polyline.wgsl), its points added to `points`:
+/// a subpath of straight lines whose x never decreases (or never
+/// increases: drawn the other way), as a sparkline's or a chart's, each
+/// pixel finding its segments by a search. `None` for anything else.
+fn polyline_quad(
+    subpath: &[zgx::canvas::Segment],
+    style: &zgx::canvas::Stroke,
+    color: Color,
+    origin: (f32, f32),
+    points: &mut Vec<[f32; 2]>,
+) -> Option<Quad> {
+    use zgx::canvas::{LineCap, LineJoin, Segment};
+    let mut line: Vec<[f32; 2]> = Vec::with_capacity(subpath.len());
+    for (k, segment) in subpath.iter().enumerate() {
+        let point = match (k, segment) {
+            (0, Segment::Move(p)) | (1.., Segment::Line(p)) => p,
+            _ => return None,
+        };
+        let point = [point.x + origin.0, point.y + origin.1];
+        if !point.iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        // A repeated point adds nothing to the outline but a join's corner.
+        if line.last() != Some(&point) {
+            line.push(point);
+        }
+    }
+    if line.len() < 2 {
+        return None;
+    }
+    if line.windows(2).all(|w| w[1][0] <= w[0][0]) {
+        line.reverse();
+    }
+    if !line.windows(2).all(|w| w[1][0] >= w[0][0]) {
+        return None;
+    }
+    let half = style.width / 2.;
+    let limit = match style.join {
+        LineJoin::Miter => style.miter_limit.max(1.),
+        _ => 1.,
+    };
+    // As far as its pixels lie from its points: a miter's tip, a square
+    // cap's corner, and the antialiased edge (as the shader reckons it).
+    let reach = half * limit.max(1.42) + 1.;
+    // Every pixel searches its reach: the points within any span of twice
+    // it, and one segment either side, are at most the loop's.
+    let mut end = 0;
+    for (k, point) in line.iter().enumerate() {
+        end = end.max(k);
+        while end < line.len() && line[end][0] < point[0] + 2. * reach + 1. {
+            end += 1;
+        }
+        if end - k + 1 > POLYLINE_REACH_SEGMENTS {
+            return None;
+        }
+    }
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for [x, y] in &line {
+        (x0, y0, x1, y1) = (x0.min(*x), y0.min(*y), x1.max(*x), y1.max(*y));
+    }
+    let bounds = Rect::new(x0, y0, x1 - x0, y1 - y0).expand(reach);
+    let first = points.len();
+    points.extend_from_slice(&line);
+    let cap = match style.cap {
+        LineCap::Butt => 0.,
+        LineCap::Square => 1.,
+        LineCap::Round => 2.,
+    };
+    let join = match style.join {
+        LineJoin::Miter => 0.,
+        LineJoin::Bevel => 1.,
+        LineJoin::Round => 2.,
+    };
+    let rect = [bounds.x, bounds.y, bounds.width, bounds.height];
+    Some(Quad {
+        rect,
+        uv: [0.; 4],
+        color: rgba(color, 1.),
+        fade: rect,
+        options: [0.; 4],
+        shape: [0.; 4],
+        border: [half, cap, join, limit],
+        mask: [0., first as f32 + 1., line.len() as f32, 0.],
+    })
 }
 /// A canvas at `origin` drawn as quads, when each of its commands is a solid
 /// fill or stroke of a simple shape (`Path::shape`) the quad shader draws
@@ -7104,8 +7365,24 @@ enum CanvasQuad {
 /// scaling what it draws costs its quads alone. `None` for anything else
 /// (curves, ellipses that aren't circles, gradients, patterns, dashes,
 /// clips), which rasterizes as before.
-fn canvas_quads(canvas: &zgx::canvas::Canvas, origin: (f32, f32)) -> Option<Vec<CanvasQuad>> {
-    use zgx::canvas::{Brush, Draw, LineCap, LineJoin, Shape};
+fn canvas_quads(
+    canvas: &zgx::canvas::Canvas,
+    origin: (f32, f32),
+    points: &mut Vec<[f32; 2]>,
+) -> Option<Vec<CanvasQuad>> {
+    let mark = points.len();
+    let quads = canvas_quads_of(canvas, origin, points);
+    if quads.is_none() {
+        points.truncate(mark);
+    }
+    quads
+}
+fn canvas_quads_of(
+    canvas: &zgx::canvas::Canvas,
+    origin: (f32, f32),
+    points: &mut Vec<[f32; 2]>,
+) -> Option<Vec<CanvasQuad>> {
+    use zgx::canvas::{Brush, Draw, LineCap, LineJoin, Segment, Shape};
     let mut out = Vec::with_capacity(canvas.commands().len());
     let at = |r: Rect| Rect::new(r.x + origin.0, r.y + origin.1, r.width, r.height);
     // A box given by a corner and a negative size, the other way round.
@@ -7162,7 +7439,23 @@ fn canvas_quads(canvas: &zgx::canvas::Canvas, origin: (f32, f32)) -> Option<Vec<
                 style,
             } if style.dash.is_empty() && style.width > 0. && style.width < 255. => {
                 let half = style.width / 2.;
-                match path.shape()? {
+                let Some(shape) = path.shape() else {
+                    // Each subpath a polyline stroke.
+                    let segments = path.segments();
+                    let mut start = 0;
+                    while start < segments.len() {
+                        let end = segments[start + 1..]
+                            .iter()
+                            .position(|s| matches!(s, Segment::Move(_)))
+                            .map_or(segments.len(), |at| start + 1 + at);
+                        let quad =
+                            polyline_quad(&segments[start..end], style, *color, origin, points)?;
+                        out.push(CanvasQuad::Polyline(quad));
+                        start = end;
+                    }
+                    continue;
+                };
+                match shape {
                     // A ring as wide as the line, half outside the outline.
                     shape @ (Shape::Rect { .. } | Shape::Ellipse { .. }) => {
                         let (rect, radius) = match shape {
@@ -7231,6 +7524,9 @@ fn canvas_quads(canvas: &zgx::canvas::Canvas, origin: (f32, f32)) -> Option<Vec<
     }
     Some(out)
 }
+/// `style`'s border alone at `bounds`: a ring of its side widths (top,
+/// right, bottom, left) inside its rounded box (`draw.wgsl`'s ring mode,
+/// two widths a lane in 16ths of a pixel, up to 255 px).
 fn ring_quad(style: &zgx::scene::QuadStyle, bounds: Rect, opacity: f32, edge_fade: f32) -> Quad {
     let sides = style.border_sides();
     let width = |value: f32| match value.is_finite() {
@@ -7434,6 +7730,68 @@ fn fill_pipeline(
                 blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+/// The polyline strokes' module: the quad shader (draw.wgsl), whose vertex
+/// stage and clip regions they share, and polyline.wgsl.
+fn polyline_source() -> String {
+    format!(
+        "{}\n{}",
+        include_str!("draw.wgsl"),
+        include_str!("polyline.wgsl")
+    )
+}
+/// The polyline strokes' pipeline: into the retained target, with
+/// `drawable` also into that in the same pass (`fs_polyline_both`), or into
+/// it `alone` (`Deferred::direct`).
+fn polyline_pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    drawable: Option<wgpu::TextureFormat>,
+    alone: bool,
+) -> wgpu::RenderPipeline {
+    let all = wgpu::vertex_attr_array![0=>Float32x4,1=>Float32x4,2=>Float32x4,3=>Float32x4,4=>Float32x4,5=>Float32x4,6=>Float32x4,7=>Float32x4];
+    let target = |format| {
+        Some(wgpu::ColorTargetState {
+            format,
+            blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })
+    };
+    let targets = match (drawable, alone) {
+        (Some(format), true) => vec![target(format)],
+        (Some(format), false) => vec![target(FORMAT), target(format)],
+        (None, _) => vec![target(FORMAT)],
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("polylines"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: 128,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &all,
+            }],
+        },
+        primitive: QUAD_STRIP,
+        depth_stencil: None,
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some(if targets.len() == 2 {
+                "fs_polyline_both"
+            } else {
+                "fs_polyline"
+            }),
+            compilation_options: Default::default(),
+            targets: &targets,
         }),
         multiview_mask: None,
         cache: None,

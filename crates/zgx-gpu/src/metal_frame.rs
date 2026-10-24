@@ -38,6 +38,9 @@ const VERTICES: usize = 1;
 /// from there).
 const REGIONS: usize = 2;
 const REGION_SIZES: usize = 3;
+/// Polyline strokes' points (polyline.wgsl), in the vertex buffer after the
+/// quads; their byte length follows the regions' in `REGION_SIZES`.
+const POINTS: usize = 4;
 
 pub(crate) struct MetalFrame {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
@@ -62,6 +65,9 @@ pub(crate) struct MetalFrame {
     /// The stencil, memoryless (tile memory alone, no allocation), at the
     /// size it was last made.
     stencil: std::cell::RefCell<Option<Texture>>,
+    /// Polyline strokes' library and pipelines, compiled with the first
+    /// (None: not here).
+    polyline: std::cell::OnceCell<Option<Polylines>>,
 }
 
 /// A frame whose regions hold much more than its damage draws through a
@@ -79,6 +85,14 @@ struct Stenciled {
     /// Writing 1 where the stamp draws; passing where it drew.
     stamping: DepthStencil,
     tested: DepthStencil,
+}
+
+/// Polyline strokes' pipelines (polyline.wgsl): into the target, and through
+/// a stencil (`Stenciled`), made with the first stenciled frame drawing them.
+struct Polylines {
+    library: Library,
+    plain: Pipeline,
+    stenciled: std::cell::OnceCell<Option<Pipeline>>,
 }
 
 /// effects.wgsl's passes: across into the scratch atlas, down into the
@@ -172,6 +186,7 @@ impl MetalFrame {
             copy,
             stenciled: std::cell::OnceCell::new(),
             stencil: Default::default(),
+            polyline: std::cell::OnceCell::new(),
         })
     }
 
@@ -247,6 +262,57 @@ impl MetalFrame {
             .expect("a memoryless stencil");
         *stencil = Some(texture.clone());
         texture
+    }
+
+    /// Whether polyline strokes can be drawn here: their pipeline, compiled
+    /// now from the same module as wgpu's (`crate::polyline_source`) if new.
+    pub(crate) fn polylines(&self) -> bool {
+        self.polyline_pipelines().is_some()
+    }
+
+    fn polyline_pipelines(&self) -> Option<&Polylines> {
+        self.polyline
+            .get_or_init(|| {
+                let library =
+                    Library::new(&self.device, &crate::polyline_source(), Kind::Quads).ok()?;
+                let format = MTLPixelFormat::BGRA8Unorm;
+                let plain = library
+                    .pipeline(&self.device, "vs", "fs_polyline", format, Blend::Over, None)
+                    .ok()?;
+                Some(Polylines {
+                    library,
+                    plain,
+                    stenciled: std::cell::OnceCell::new(),
+                })
+            })
+            .as_ref()
+    }
+
+    /// Whether polyline strokes can be drawn through a stencil (`Stenciled`):
+    /// their tested pipeline, compiled now if it is not yet.
+    pub(crate) fn polylines_stenciled(&self) -> bool {
+        self.polyline_stenciled().is_some()
+    }
+
+    fn polyline_stenciled(&self) -> Option<&Pipeline> {
+        let polylines = self.polyline_pipelines()?;
+        polylines
+            .stenciled
+            .get_or_init(|| {
+                let format = MTLPixelFormat::BGRA8Unorm;
+                polylines
+                    .library
+                    .pipeline(
+                        &self.device,
+                        "vs",
+                        "fs_polyline",
+                        format,
+                        Blend::Over,
+                        Some(Stencil::Tested),
+                    )
+                    .ok()
+            })
+            .as_ref()
     }
 
     /// Whether `shader`'s fill can be drawn here: its pipeline, compiled
@@ -340,13 +406,17 @@ impl MetalFrame {
 
     /// Open a frame drawing into `target`, its pixels kept (loaded), after
     /// `effects`' passes (`effects` checked first) drawing from `vertices`;
-    /// quads lie in `regions` (`crate::Region`s, as bytes).
+    /// quads lie in `regions` (`crate::Region`s, as bytes), and polyline
+    /// strokes' `points` (`polylines` checked first) at a byte offset and
+    /// length of `vertices`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn begin(
         &self,
         target: &ProtocolObject<dyn MTLTexture>,
         vertices: &ProtocolObject<dyn objc2_metal::MTLBuffer>,
         viewport: [f32; 4],
         regions: &[u8],
+        points: Option<(usize, usize)>,
         effects: &[EffectPass],
         stenciled: bool,
     ) -> Frame {
@@ -416,6 +486,7 @@ impl MetalFrame {
             },
             viewport,
             regions,
+            points,
         };
         frame.quad_state();
         frame
@@ -426,6 +497,11 @@ impl MetalFrame {
             Shading::Full => self.full.clone(),
             Shading::Basic => self.basic.clone(),
             Shading::Opaque => self.opaque.clone(),
+            Shading::Polyline => self
+                .polyline_pipelines()
+                .expect("checked by `polylines`")
+                .plain
+                .clone(),
             Shading::Fill(id) => self
                 .fills
                 .borrow()
@@ -487,6 +563,7 @@ pub(crate) struct Frame {
     vertices: Retained<ProtocolObject<dyn objc2_metal::MTLBuffer>>,
     viewport: [f32; 4],
     regions: Regions,
+    points: Option<(usize, usize)>,
 }
 
 /// A frame's clip regions, as Metal takes them.
@@ -522,10 +599,21 @@ impl Frame {
                     *len
                 }
             };
-            let sizes = [len as u32];
+            let sizes = [len as u32, self.points.map_or(0, |(_, len)| len as u32)];
+            let sizes = match self.points {
+                Some((offset, _)) => {
+                    self.encoder.setFragmentBuffer_offset_atIndex(
+                        Some(&self.vertices),
+                        offset,
+                        POINTS,
+                    );
+                    &sizes[..]
+                }
+                None => &sizes[..1],
+            };
             self.encoder.setFragmentBytes_length_atIndex(
-                std::ptr::NonNull::from(&sizes).cast(),
-                size_of_val(&sizes),
+                std::ptr::NonNull::from(sizes).cast(),
+                size_of_val(sizes),
                 REGION_SIZES,
             );
         }
@@ -671,6 +759,10 @@ impl Frame {
                     Bound::Quads(Shading::Opaque) => stenciled.opaque.clone(),
                     // (No shader fills are drawn through a stencil.)
                     Bound::Quads(Shading::Full | Shading::Fill(_)) => stenciled.full.clone(),
+                    Bound::Quads(Shading::Polyline) => frame
+                        .polyline_stenciled()
+                        .expect("checked by `polylines_stenciled`")
+                        .clone(),
                     Bound::FullClear => stenciled.full_clear.clone(),
                     Bound::CopyOffset => stenciled.copy_offset.clone(),
                 }
@@ -711,7 +803,7 @@ impl Frame {
         instances: std::ops::Range<u32>,
     ) {
         let bound = match (shading, clear) {
-            (Shading::Full | Shading::Fill(_), true) => Bound::FullClear,
+            (Shading::Full | Shading::Fill(_) | Shading::Polyline, true) => Bound::FullClear,
             (Shading::Basic | Shading::Opaque, true) => Bound::Quads(Shading::Opaque),
             (shading, false) => Bound::Quads(shading),
         };
@@ -869,6 +961,7 @@ impl Library {
                 },
             );
             resources.insert(binding(1, 1), buffer(REGIONS as u8));
+            resources.insert(binding(2, 0), buffer(POINTS as u8));
             resources.insert(
                 binding(0, 1),
                 naga::back::msl::BindTarget {
