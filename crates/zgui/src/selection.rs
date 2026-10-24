@@ -55,7 +55,7 @@ impl Hit {
             Unit::Character => (at, at),
             Unit::Word => {
                 let (start, end) = crate::widgets::editor_pointer_unit(
-                    &self.text,
+                    (0, std::borrow::Cow::Borrowed(&*self.text)),
                     self.layout.as_ref(),
                     self.position,
                     self.local.0,

@@ -1,6 +1,9 @@
 //! Platform-independent accessibility information attached to retained nodes.
 use crate::scene::{NodeId, Scene};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 /// What a node is to assistive technology (ARIA's `role`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,6 +283,10 @@ pub struct Semantics {
     buried_count: usize,
     revision: u64,
     instance: u64,
+    /// Long text fields' contents (`long_value`), shared with their editors
+    /// instead of copied into `value`: few nodes have one, so no node
+    /// carries room for it.
+    long: HashMap<NodeId, crate::text::Text>,
 }
 impl Default for Semantics {
     fn default() -> Self {
@@ -295,6 +302,7 @@ impl Default for Semantics {
             buried_count: 0,
             revision: 0,
             instance,
+            long: HashMap::new(),
         }
     }
 }
@@ -355,6 +363,7 @@ impl Semantics {
             self.buried = Vec::new();
         }
         self.nodes.remove(&id);
+        self.long.remove(&id);
         crate::shrink_sparse(&mut self.nodes);
     }
     /// Set `id`'s information; equal information changes nothing.
@@ -428,6 +437,7 @@ impl Semantics {
         if !value_changed && node.text_selection == Some(selection) && node.read_only == read_only {
             return;
         }
+        let value_changed = self.long.remove(&id).is_some() || value_changed;
         if value_changed {
             if let Some(stored) = &mut node.value {
                 value.clone_into(stored);
@@ -439,6 +449,39 @@ impl Semantics {
         node.read_only = read_only;
         self.revision = self.revision.wrapping_add(1);
         entry.revision = self.revision;
+    }
+    /// As `update_text_input` for a long text, shared rather than copied.
+    pub fn update_long_text_input(
+        &mut self,
+        id: NodeId,
+        text: &crate::text::Text,
+        selection: (usize, usize),
+        read_only: bool,
+    ) {
+        let Some(entry) = self.nodes.get_mut(&id) else {
+            return;
+        };
+        let node = &mut entry.node;
+        let same = self.long.get(&id).is_some_and(|held| held.ptr_eq(text));
+        if same && node.text_selection == Some(selection) && node.read_only == read_only {
+            return;
+        }
+        if !same {
+            self.long.insert(id, text.clone());
+            node.value = None;
+        }
+        node.text_selection = Some(selection);
+        node.read_only = read_only;
+        self.revision = self.revision.wrapping_add(1);
+        entry.revision = self.revision;
+    }
+    /// A long text field's contents, shared with its editor (a clone is a
+    /// pointer) instead of copied into its `value`, which is then `None`.
+    pub fn long_value(&self, id: NodeId) -> Option<&crate::text::Text> {
+        if self.buried(id) {
+            return None;
+        }
+        self.long.get(&id)
     }
     /// As `update_text_input` for text known unchanged (an editor's text at
     /// the same revision): its selection and read-only state.
@@ -497,6 +540,7 @@ impl Semantics {
             return self.forget(id);
         }
         if self.nodes.remove(&id).is_some() {
+            self.long.remove(&id);
             self.revision = self.revision.wrapping_add(1);
             crate::shrink_sparse(&mut self.nodes);
         }
@@ -505,6 +549,7 @@ impl Semantics {
     pub fn retain_mounted(&mut self, scene: &Scene) {
         let count = self.nodes.len();
         self.nodes.retain(|id, _| scene.contains(*id));
+        self.long.retain(|id, _| scene.contains(*id));
         if self.nodes.len() != count {
             self.revision = self.revision.wrapping_add(1);
         }

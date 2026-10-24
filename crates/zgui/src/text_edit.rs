@@ -1,7 +1,111 @@
 //! Unicode grapheme-aware text editing with bounded undo history and IME preedit.
 //! All offsets are UTF-8 bytes, clamped to extended grapheme boundaries.
-use std::{collections::VecDeque, ops::Range};
+use crate::text::{LONG, Text, TextValue as Buffer, TextValue};
+use std::{borrow::Cow, collections::VecDeque, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
+
+// What an editor holds its text in: a string while short (edited in place,
+// as fast as one is), chunks while long ([`Text`]): an edit is then its own
+// size, and the text shared with its binding, layout and semantics, not
+// copied for them.
+impl Buffer {
+    fn slice(&self, range: Range<usize>) -> Cow<'_, str> {
+        match self {
+            Buffer::Flat(text) => Cow::Borrowed(&text[range]),
+            Buffer::Long(text) => text.slice(range),
+        }
+    }
+    fn is_char_boundary(&self, at: usize) -> bool {
+        match self {
+            Buffer::Flat(text) => text.is_char_boundary(at),
+            Buffer::Long(text) => text.is_char_boundary(at),
+        }
+    }
+    fn replace_range(&mut self, range: Range<usize>, with: &str) {
+        match self {
+            Buffer::Flat(text) => {
+                text.replace_range(range, with);
+                if text.len() > LONG {
+                    *self = Buffer::Long(Text::new(text));
+                }
+            }
+            Buffer::Long(text) => {
+                text.replace_range(range, with);
+                if text.len() < LONG / 2 {
+                    *self = Buffer::Flat(text.to_cow().into_owned());
+                }
+            }
+        }
+    }
+    /// The text around byte `at` that segmentation needs: the line it is
+    /// on with its break, and where that starts (all of a short text).
+    fn around(&self, at: usize) -> (usize, Cow<'_, str>) {
+        match self {
+            Buffer::Flat(text) => (0, Cow::Borrowed(text)),
+            Buffer::Long(text) => {
+                let line = text.line_range(text.line_of(at));
+                let end = (line.end + 1).min(text.len());
+                (line.start, text.slice(line.start..end))
+            }
+        }
+    }
+    /// Where the line `at` is on starts, and where it ends (before its
+    /// break).
+    fn line_around(&self, at: usize) -> Range<usize> {
+        match self {
+            Buffer::Flat(text) => {
+                let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+                let end = text[at..].find('\n').map_or(text.len(), |i| at + i);
+                start..end
+            }
+            Buffer::Long(text) => text.line_range(text.line_of(at)),
+        }
+    }
+    /// The bytes it starts with in common with `other`, and then ends with
+    /// (after them): the chunks two long texts share skipped by pointer,
+    /// the rest compared a run at a time.
+    fn common(&self, other: &Buffer) -> (usize, usize) {
+        if let (Buffer::Long(ours), Buffer::Long(theirs)) = (self, other) {
+            let prefix = ours.common_prefix(theirs);
+            return (prefix, ours.common_suffix(theirs, prefix));
+        }
+        self.with_parts(|ours| other.with_parts(|theirs| crate::text::common(ours, theirs)))
+    }
+    /// `f` of its pieces: a short text's one on the stack, not in a list
+    /// made for it (an editor's binding compares on every change).
+    fn with_parts<R>(&self, f: impl FnOnce(&[&str]) -> R) -> R {
+        match self {
+            Buffer::Flat(text) => f(&[text]),
+            Buffer::Long(text) => f(&text.chunks().collect::<Vec<_>>()),
+        }
+    }
+}
+/// A text an editor is given to hold (`TextEditor::take`).
+#[derive(Clone, Copy)]
+enum Incoming<'a> {
+    Str(&'a str),
+    Value(&'a TextValue),
+}
+impl Incoming<'_> {
+    fn len(self) -> usize {
+        match self {
+            Incoming::Str(text) => text.len(),
+            Incoming::Value(text) => text.len(),
+        }
+    }
+    fn is_char_boundary(self, at: usize) -> bool {
+        match self {
+            Incoming::Str(text) => text.is_char_boundary(at),
+            Incoming::Value(text) => text.is_char_boundary(at),
+        }
+    }
+    fn slice(&self, range: Range<usize>) -> Cow<'_, str> {
+        match *self {
+            Incoming::Str(text) => Cow::Borrowed(&text[range]),
+            Incoming::Value(text) => text.slice(range),
+        }
+    }
+}
 /// A text selection, from `anchor` to `focus`; equal, it is a caret.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
@@ -48,7 +152,7 @@ struct Edit {
 /// A plain-text editing model: the text, its selection, IME preedit
 /// and a bounded undo history.
 pub struct TextEditor {
-    text: String,
+    text: Buffer,
     selection: Selection,
     preedit: Option<Preedit>,
     composition_cancel_revision: u64,
@@ -73,7 +177,15 @@ impl TextEditor {
     /// An editor holding `text`, with the caret at its end. Its history
     /// keeps 100 steps and 4 MiB of edited text (`set_history_limits`).
     pub fn new(text: impl Into<String>) -> Self {
-        let text = text.into();
+        Self::with_value(Buffer::from(text.into()))
+    }
+    /// An editor holding `text` (a long one shared, not copied), as `new`.
+    pub fn with_value(text: TextValue) -> Self {
+        // A short text in chunks goes back in a string, as an edit would.
+        let text = match text {
+            Buffer::Long(long) if long.len() < LONG / 2 => Buffer::Flat(long.to_cow().into_owned()),
+            text => text,
+        };
         let end = text.len();
         Self {
             text,
@@ -93,9 +205,40 @@ impl TextEditor {
             run: None,
         }
     }
-    /// The committed text, without any preedit.
-    pub fn text(&self) -> &str {
-        &self.text
+    /// The committed text, without any preedit: borrowed while short, a
+    /// copy of a long one (see `slice` and `long_text` for those).
+    pub fn text(&self) -> Cow<'_, str> {
+        self.text.to_cow()
+    }
+    /// The committed text's length in bytes.
+    pub fn len(&self) -> usize {
+        self.text.len()
+    }
+    /// Whether the committed text is empty.
+    pub fn is_empty(&self) -> bool {
+        self.text.len() == 0
+    }
+    /// Bytes `range` of the committed text.
+    pub fn slice(&self, range: Range<usize>) -> Cow<'_, str> {
+        self.text.slice(range)
+    }
+    /// The committed text that word and line selection around byte `at`
+    /// read: the line it is on with its break, and where that starts (all
+    /// of a short text).
+    pub fn around(&self, at: usize) -> (usize, Cow<'_, str>) {
+        self.text.around(at.min(self.text.len()))
+    }
+    /// The bytes of the line byte `at` is on, its break excluded.
+    pub fn line_around(&self, at: usize) -> Range<usize> {
+        self.text.line_around(at.min(self.text.len()))
+    }
+    /// A long committed text, in its chunks: share it (a clone is a pointer)
+    /// rather than copy it. `None` while it is short.
+    pub fn long_text(&self) -> Option<&Text> {
+        match &self.text {
+            Buffer::Long(text) => Some(text),
+            Buffer::Flat(_) => None,
+        }
     }
     /// Changes whenever the committed text does (it wraps): the same number
     /// is the same text, without comparing it (a long document's).
@@ -107,8 +250,8 @@ impl TextEditor {
         self.selection
     }
     /// The selected text.
-    pub fn selected_text(&self) -> &str {
-        &self.text[self.selection.range()]
+    pub fn selected_text(&self) -> Cow<'_, str> {
+        self.text.slice(self.selection.range())
     }
     /// What an input method is composing, if anything.
     pub fn preedit(&self) -> Option<&Preedit> {
@@ -149,15 +292,13 @@ impl TextEditor {
         while !self.text.is_char_boundary(offset) {
             offset -= 1;
         }
-        let mut cursor = unicode_segmentation::GraphemeCursor::new(offset, self.text.len(), true);
-        if cursor.is_boundary(&self.text, 0).unwrap_or(false) {
+        let (base, text) = self.text.around(offset);
+        let local = offset - base;
+        let mut cursor = unicode_segmentation::GraphemeCursor::new(local, text.len(), true);
+        if cursor.is_boundary(&text, 0).unwrap_or(false) {
             offset
         } else {
-            cursor
-                .prev_boundary(&self.text, 0)
-                .ok()
-                .flatten()
-                .unwrap_or(0)
+            base + cursor.prev_boundary(&text, 0).ok().flatten().unwrap_or(0)
         }
     }
     /// Select from `anchor` to `focus`, each moved back to a grapheme
@@ -185,14 +326,14 @@ impl TextEditor {
     /// `insert`, as an edit of `run`'s kind (`None`: a step of its own).
     fn replace(&mut self, value: &str, run: Option<Run>) -> bool {
         let range = self.selection.range();
-        if self.text[range.clone()] == *value {
+        if self.text.slice(range.clone()) == value {
             self.cancel_preedit();
             self.set_selection(range.start + value.len(), range.start + value.len());
             return false;
         }
         let joins = run.is_some() && self.run == run;
         let before = self.selection;
-        let deleted = self.text[range.clone()].to_owned();
+        let deleted = self.text.slice(range.clone()).into_owned();
         self.cancel_preedit();
         self.redo.clear();
         self.redo_bytes = 0;
@@ -203,16 +344,17 @@ impl TextEditor {
         let end = if desired == self.text.len() {
             desired
         } else {
+            let (base, text) = self.text.around(desired);
             let mut cursor =
-                unicode_segmentation::GraphemeCursor::new(desired, self.text.len(), true);
-            if cursor.is_boundary(&self.text, 0).unwrap_or(false) {
+                unicode_segmentation::GraphemeCursor::new(desired - base, text.len(), true);
+            if cursor.is_boundary(&text, 0).unwrap_or(false) {
                 desired
             } else {
                 cursor
-                    .next_boundary(&self.text, 0)
+                    .next_boundary(&text, 0)
                     .ok()
                     .flatten()
-                    .unwrap_or(self.text.len())
+                    .map_or(self.text.len(), |at| base + at)
             }
         };
         self.selection = Selection {
@@ -276,34 +418,38 @@ impl TextEditor {
     }
     /// Borrowed model ingress avoids allocating a second full document string.
     pub(crate) fn set_text_ref(&mut self, value: &str) -> bool {
-        if self.text == value {
+        self.take(Incoming::Str(value))
+    }
+    /// Replace the document with `value`, as `set_text` does; a long one is
+    /// shared, not copied (a binding holding it and the editor then hold
+    /// one text, and `value` reads it back in `O(1)`).
+    pub fn set_value(&mut self, value: &TextValue) -> bool {
+        if self.text.ptr_eq(value) {
             return false;
         }
-        // Appending/truncating a stream can use the optimized slice comparison
-        // instead of walking every unchanged byte through the general diff.
-        let mut prefix = if value.starts_with(&self.text) {
-            self.text.len()
-        } else if self.text.starts_with(value) {
-            value.len()
-        } else {
-            self.text
-                .bytes()
-                .zip(value.bytes())
-                .take_while(|(old, new)| old == new)
-                .count()
+        self.take(Incoming::Value(value))
+    }
+    /// Its committed text as a value to keep: a copy while short, the
+    /// long one shared.
+    pub fn value(&self) -> TextValue {
+        self.text.clone()
+    }
+    fn take(&mut self, value: Incoming<'_>) -> bool {
+        let (mut prefix, mut suffix) = match value {
+            Incoming::Str(text) => self
+                .text
+                .with_parts(|ours| crate::text::common(ours, &[text])),
+            Incoming::Value(text) => self.text.common(text),
         };
+        if self.text.len() == value.len() && prefix == value.len() {
+            return false;
+        }
+        // The changed span alone goes into history: the text both start
+        // with and end with is left as it is.
         while !self.text.is_char_boundary(prefix) || !value.is_char_boundary(prefix) {
             prefix -= 1;
         }
-        let remaining = (self.text.len() - prefix).min(value.len() - prefix);
-        let mut suffix = self
-            .text
-            .bytes()
-            .rev()
-            .zip(value.bytes().rev())
-            .take(remaining)
-            .take_while(|(old, new)| old == new)
-            .count();
+        suffix = suffix.min((self.text.len() - prefix).min(value.len() - prefix));
         while !self.text.is_char_boundary(self.text.len() - suffix)
             || !value.is_char_boundary(value.len() - suffix)
         {
@@ -313,12 +459,18 @@ impl TextEditor {
         let new_end = value.len() - suffix;
         self.run = None;
         let before = self.selection;
-        let deleted = self.text[prefix..old_end].to_owned();
-        let inserted = value[prefix..new_end].to_owned();
+        let deleted = self.text.slice(prefix..old_end).into_owned();
+        let inserted = value.slice(prefix..new_end).into_owned();
         self.cancel_preedit();
         self.redo.clear();
         self.redo_bytes = 0;
-        self.text.replace_range(prefix..old_end, &inserted);
+        match value {
+            // A long text is taken as it is, shared with whoever gave it.
+            Incoming::Value(TextValue::Long(text)) if text.len() >= LONG / 2 => {
+                self.text = TextValue::Long(text.clone());
+            }
+            _ => self.text.replace_range(prefix..old_end, &inserted),
+        }
         self.revision = self.revision.wrapping_add(1);
         self.selection = Selection {
             anchor: self.text.len(),
@@ -342,34 +494,59 @@ impl TextEditor {
     }
     fn previous(&self, word: bool) -> usize {
         let pos = self.selection.focus;
-        if word {
-            self.text[..pos]
-                .unicode_word_indices()
-                .map(|(i, _)| i)
-                .next_back()
-                .unwrap_or(0)
-        } else {
-            self.text[..pos]
-                .grapheme_indices(true)
-                .map(|(i, _)| i)
-                .next_back()
-                .unwrap_or(0)
+        let back = |text: &str| {
+            if word {
+                text.unicode_word_indices().map(|(i, _)| i).next_back()
+            } else {
+                text.grapheme_indices(true).map(|(i, _)| i).next_back()
+            }
+        };
+        match &self.text {
+            Buffer::Flat(text) => back(&text[..pos]).unwrap_or(0),
+            // A line at a time back from the caret, as far as a word is.
+            Buffer::Long(text) => {
+                let mut end = pos;
+                while end > 0 {
+                    let start = text.line_start(text.line_of(end - 1));
+                    if let Some(at) = back(&text.slice(start..end)) {
+                        return start + at;
+                    }
+                    end = start;
+                }
+                0
+            }
         }
     }
     fn next(&self, word: bool) -> usize {
         let pos = self.selection.focus;
-        if word {
-            self.text[pos..]
-                .unicode_word_indices()
-                .next()
-                .map(|(i, w)| pos + i + w.len())
-                .unwrap_or(self.text.len())
-        } else {
-            self.text[pos..]
-                .graphemes(true)
-                .next()
-                .map(|g| pos + g.len())
-                .unwrap_or(pos)
+        let len = self.text.len();
+        let on = |text: &str, at: usize| {
+            if word {
+                text.unicode_word_indices()
+                    .next()
+                    .map(|(i, w)| at + i + w.len())
+            } else {
+                text.graphemes(true).next().map(|g| at + g.len())
+            }
+        };
+        match &self.text {
+            Buffer::Flat(text) => on(&text[pos..], pos).unwrap_or(if word { len } else { pos }),
+            // A line at a time on from the caret, as far as a word is.
+            Buffer::Long(text) => {
+                let mut start = pos;
+                while start < len {
+                    let line = text.line_range(text.line_of(start));
+                    let end = (line.end + 1).min(len);
+                    if let Some(at) = on(&text.slice(start..end), start) {
+                        return at;
+                    }
+                    if !word {
+                        return pos;
+                    }
+                    start = end.max(start + 1);
+                }
+                if word { len } else { pos }
+            }
         }
     }
     fn move_to(&mut self, offset: usize, extend: bool) {
@@ -452,18 +629,13 @@ impl TextEditor {
     /// Move the caret to the start of its line, just after the line break
     /// before it. `extend` moves only the focus.
     pub fn move_home(&mut self, extend: bool) {
-        let pos = self.text[..self.selection.focus]
-            .rfind('\n')
-            .map_or(0, |i| i + 1);
+        let pos = self.text.line_around(self.selection.focus).start;
         self.move_to(pos, extend);
     }
     /// Move the caret to the end of its line, just before the next line
     /// break. `extend` moves only the focus.
     pub fn move_end(&mut self, extend: bool) {
-        let focus = self.selection.focus;
-        let pos = self.text[focus..]
-            .find('\n')
-            .map_or(self.text.len(), |i| focus + i);
+        let pos = self.text.line_around(self.selection.focus).end;
         self.move_to(pos, extend);
     }
     /// Move the caret to the start of the text. `extend` moves only the
@@ -537,7 +709,7 @@ impl TextEditor {
             return self.replace("", None);
         }
         let focus = self.selection.focus;
-        let start = self.text[..focus].rfind('\n').map_or(0, |i| i + 1);
+        let start = self.text.line_around(focus).start;
         // At a line's start, the line break before it.
         let start = if start == focus {
             self.previous(false)
@@ -557,9 +729,7 @@ impl TextEditor {
             return self.replace("", None);
         }
         let focus = self.selection.focus;
-        let end = self.text[focus..]
-            .find('\n')
-            .map_or(self.text.len(), |i| focus + i);
+        let end = self.text.line_around(focus).end;
         let end = if end == focus { self.next(false) } else { end };
         if end == focus {
             return false;
@@ -569,7 +739,7 @@ impl TextEditor {
     }
     /// Return selected text and remove it in one undoable operation. The host owns the OS clipboard.
     pub fn cut(&mut self) -> String {
-        let value = self.selected_text().to_owned();
+        let value = self.selected_text().into_owned();
         self.replace("", None);
         value
     }
@@ -668,6 +838,45 @@ mod tests {
         editor.set_selection(end, end);
         editor.insert(text);
     }
+    /// A long text, held in chunks, edits, undoes and finds what a new
+    /// value changed as a string does.
+    #[test]
+    fn a_long_text_in_chunks_edits_and_undoes_as_a_string_does() {
+        let original: String = (0..20_000).map(|i| format!("line {i}\n")).collect();
+        assert!(original.len() > LONG);
+        for (start, end, with) in [
+            (0, 0, "head "),
+            (70_000, 70_004, "a\nb"),
+            (original.len() - 3, original.len(), ""),
+            (10, original.len() - 10, "middle"),
+        ] {
+            let mut editor = TextEditor::new(original.clone());
+            assert!(editor.long_text().is_some());
+            let mut next = original.clone();
+            next.replace_range(start..end, with);
+            assert!(editor.set_text(next.clone()));
+            assert_eq!(editor.text(), next);
+            assert!(editor.undo());
+            assert_eq!(editor.text(), original);
+            assert!(editor.redo());
+            assert_eq!(editor.text(), next);
+            assert!(!editor.set_text(next.clone()));
+        }
+        // Typing, words and lines across chunk edges.
+        let mut editor = TextEditor::new(original.clone());
+        editor.set_selection(8190, 8190);
+        editor.insert("xy");
+        editor.move_home(false);
+        let line = editor.selection().focus;
+        assert!(line == 0 || editor.text().as_bytes()[line - 1] == b'\n');
+        assert_eq!(editor.line_around(line).start, line);
+        editor.move_end(false);
+        assert_eq!(editor.text().as_bytes()[editor.selection().focus], b'\n');
+        editor.move_right(true, false);
+        editor.move_left(true, false);
+        assert!(editor.selection().focus <= editor.len());
+    }
+
     #[test]
     fn large_document_keeps_only_edit_deltas() {
         let mut editor = TextEditor::new("x".repeat(1_000_000));

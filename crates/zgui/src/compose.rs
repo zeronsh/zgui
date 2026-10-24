@@ -276,7 +276,7 @@ enum Kind {
     },
     Editor {
         label: String,
-        value: Signal<String>,
+        value: crate::widgets::EditorValue,
         multiline: bool,
     },
     Component(Builder),
@@ -1601,18 +1601,29 @@ pub fn slider(
 /// A single-line editor bound bidirectionally to `value`.
 /// `label` is its accessible name; dimensions and typography use ordinary styles.
 pub fn text_input(label: impl Into<String>, value: Signal<String>) -> View {
-    View::new(Kind::Editor {
-        label: label.into(),
-        value,
-        multiline: false,
-    })
+    editor_view(label.into(), value.into(), false)
 }
 /// A multiline editor with selection, undo, clipboard and IME support.
 pub fn text_area(label: impl Into<String>, value: Signal<String>) -> View {
+    editor_view(label.into(), value.into(), true)
+}
+/// `text_input` bound to a [`TextValue`](crate::text::TextValue): a long text
+/// is shared with the editor (its layout and accessibility too), not copied,
+/// and an edit's new value shares every chunk the edit did not touch.
+pub fn text_input_value(label: impl Into<String>, value: Signal<crate::text::TextValue>) -> View {
+    editor_view(label.into(), value.into(), false)
+}
+/// `text_area` bound to a [`TextValue`](crate::text::TextValue), as
+/// `text_input_value`: for documents.
+pub fn text_area_value(label: impl Into<String>, value: Signal<crate::text::TextValue>) -> View {
+    editor_view(label.into(), value.into(), true)
+}
+/// An editor bound to either kind of value (as `text_input` or `text_area`).
+pub fn editor_view(label: String, value: crate::widgets::EditorValue, multiline: bool) -> View {
     View::new(Kind::Editor {
-        label: label.into(),
+        label,
         value,
-        multiline: true,
+        multiline,
     })
 }
 /// A component: `build` runs once, as it mounts, with a [`Context`] for its
@@ -5328,8 +5339,8 @@ pub mod prelude {
         Context, Slot, VariableHeights, View, button, checkbox, column, component, div, image,
         image_signal, keyed, measured_rows, measured_virtual_list, menu, menu_item, modal, overlay,
         popover, progress, provide, provide_with, row, scroll, scroll_x, scrollbar, slider,
-        submenu, switch, text, text_area, text_input, text_signal, variable_virtual_list,
-        virtual_list,
+        submenu, switch, text, text_area, text_area_value, text_input, text_input_value,
+        text_signal, variable_virtual_list, virtual_list,
     };
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
     pub use super::{SplitOptions, split};

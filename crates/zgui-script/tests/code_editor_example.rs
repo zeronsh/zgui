@@ -9,6 +9,7 @@ use zgui::{
     input::{InputEvent, Key, Modifiers},
     scene::{Color, NodeId, NodeKind},
     theme::{Themes, tok},
+    widgets::EditorValue,
 };
 use zgui_script::ScriptHost;
 
@@ -130,6 +131,28 @@ fn typing_moves_the_caret_the_status_bar_shows_and_undo_puts_it_back() {
             .iter()
             .any(|(text, _)| text.starts_with("    Ok(vec!["))
     );
+}
+
+/// The file's text is held once: the script's state, the editor's binding
+/// and the editor share it, through typing, and a script reading the state
+/// reads the edited text.
+#[test]
+fn the_file_is_shared_by_the_state_and_the_editor_as_it_is_typed_into() {
+    let mut h = code();
+    run(&mut h, "sample");
+    focus(&mut h);
+    let node = editor(&mut h);
+    let shared = |h: &Harness| {
+        let editor = h.ui.editor(node).unwrap();
+        let ours = editor.editor.borrow().value();
+        matches!(editor.value(), EditorValue::Text(v) if v.with_untracked(|v| v.ptr_eq(&ours)))
+    };
+    assert!(shared(&h), "the opened file goes to the editor as it is");
+    h.ui.dispatch(InputEvent::Text("// typed\n".into()));
+    h.settle();
+    h.frames(1);
+    assert!(shared(&h), "an edit's value is the editor's text");
+    assert_eq!(h.error(), None);
 }
 
 #[test]

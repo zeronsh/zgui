@@ -4,6 +4,7 @@ use crate::{
     reactive::{Effect, Runtime, Signal},
     scene::{Color, Insets, Layout, NodeId, NodeKind, Rect, Scene, Style, Transform},
     semantics::{Role, SemanticNode, Semantics},
+    text::{Text, TextValue},
     text_edit::TextEditor,
     text_layout::{FontStyle, TextAffinity, TextLayout, TextPosition},
     theme::{ColorToken, ThemeScope, Themes, tok},
@@ -27,6 +28,99 @@ struct Owned {
 }
 /// An editor's box size, style, shaper revision and content insets.
 type EditorGeometry = (Rect, Style, u64, Insets);
+/// What an editor is bound to: a string, or a [`TextValue`] (which holds a
+/// long document once, shared with the editor, and which an edit updates
+/// without copying it). Either converts from its signal.
+#[derive(Clone)]
+pub enum EditorValue {
+    /// A string, copied in and out.
+    String(Signal<String>),
+    /// A text value, a long one shared.
+    Text(Signal<TextValue>),
+}
+impl From<Signal<String>> for EditorValue {
+    fn from(value: Signal<String>) -> Self {
+        EditorValue::String(value)
+    }
+}
+impl From<Signal<TextValue>> for EditorValue {
+    fn from(value: Signal<TextValue>) -> Self {
+        EditorValue::Text(value)
+    }
+}
+impl EditorValue {
+    /// Its text (a copy).
+    pub fn get(&self) -> String {
+        match self {
+            EditorValue::String(value) => value.get(),
+            EditorValue::Text(value) => value.with(|v| v.to_cow().into_owned()),
+        }
+    }
+    /// Set its text.
+    pub fn set(&self, text: String) {
+        match self {
+            EditorValue::String(value) => {
+                value.set(text);
+            }
+            EditorValue::Text(value) => {
+                value.set(text.into());
+            }
+        }
+    }
+    /// Read it, tracked (an effect reading it runs again when it changes).
+    pub(crate) fn track(&self) {
+        match self {
+            EditorValue::String(value) => value.with(|_| ()),
+            EditorValue::Text(value) => value.with(|_| ()),
+        }
+    }
+    /// Its text, untracked, as a value (a long one shared).
+    fn value_untracked(&self) -> TextValue {
+        match self {
+            EditorValue::String(value) => TextValue::Flat(value.with_untracked(String::clone)),
+            EditorValue::Text(value) => value.with_untracked(TextValue::clone),
+        }
+    }
+    /// What `editor` holds now, after an edit (its borrow released before
+    /// the value's subscribers run: the editor's own binding is one).
+    fn write(&self, editor: &RefCell<TextEditor>) {
+        match self {
+            EditorValue::String(value) => {
+                let next = editor.borrow().text().into_owned();
+                value.set(next);
+            }
+            EditorValue::Text(value) => {
+                let next = editor.borrow().value();
+                value.set(next);
+            }
+        }
+    }
+    /// Its text (tracked) into `editor`, in canonical form: whether the
+    /// editor's changed, and the canonical text if it isn't the value's.
+    fn apply(&self, editor: &RefCell<TextEditor>, multiline: bool) -> (bool, Option<String>) {
+        let flat = |current: &str| {
+            let canonical = normalize_text(current, multiline);
+            let changed = editor.borrow_mut().set_text_ref(canonical.as_ref());
+            match canonical {
+                std::borrow::Cow::Owned(canonical) => (changed, Some(canonical)),
+                std::borrow::Cow::Borrowed(_) => (changed, None),
+            }
+        };
+        match self {
+            EditorValue::String(value) => value.with(|current| flat(current)),
+            EditorValue::Text(value) => value.with(|current| match current {
+                TextValue::Flat(current) => flat(current),
+                TextValue::Long(text) if !is_canonical(text, multiline) => flat(&text.to_cow()),
+                TextValue::Long(_) => (editor.borrow_mut().set_value(current), None),
+            }),
+        }
+    }
+}
+/// Whether a long text needs no `normalize_text`.
+fn is_canonical(text: &Text, multiline: bool) -> bool {
+    text.chunks()
+        .all(|chunk| !chunk.contains('\r') && (multiline || !chunk.contains('\n')))
+}
 /// A mounted text editor (a `text_input` or `text_area`): its editing
 /// model and the value it is bound to, for hosts, tests and commands.
 #[derive(Clone)]
@@ -39,8 +133,6 @@ pub struct EditorHandle {
     pub node: NodeId,
     /// The editing model: text, selection, undo and composition.
     pub editor: Rc<RefCell<TextEditor>>,
-    /// The value it is bound to; edits set it.
-    pub value: Signal<String>,
     refresh: Rc<dyn Fn()>,
     typography: Rc<RefCell<(Color, f32, FontStyle)>>,
     wrap: Rc<Cell<bool>>,
@@ -55,9 +147,10 @@ pub struct EditorHandle {
     position: Rc<Cell<TextPosition>>,
     hint: Rc<EditorHint>,
 }
-/// What an editor shows while it is empty, and whether focus selects all.
-#[derive(Default)]
+/// What an editor shows while it is empty, whether focus selects all, and
+/// the value it is bound to (here, once, for its handle and handlers).
 struct EditorHint {
+    value: EditorValue,
     /// The placeholder and its colour (`None`: the theme's `muted`).
     placeholder: RefCell<Option<(std::sync::Arc<str>, Option<Color>)>>,
     select_on_focus: Cell<bool>,
@@ -106,6 +199,19 @@ struct CodeHint {
     caret_told: Cell<Option<Caret>>,
 }
 impl EditorHint {
+    fn new(value: EditorValue) -> Self {
+        Self {
+            value,
+            placeholder: RefCell::default(),
+            select_on_focus: Cell::default(),
+            secure: Cell::default(),
+            misspelled: RefCell::default(),
+            clause: Cell::default(),
+            composition_layer: Cell::default(),
+            reveal: Cell::default(),
+            code: std::cell::OnceCell::default(),
+        }
+    }
     fn code(&self) -> Option<&CodeHint> {
         self.code.get().map(|code| &**code)
     }
@@ -143,6 +249,10 @@ pub struct Caret {
     pub focus: usize,
 }
 impl EditorHandle {
+    /// The value it is bound to; edits set it.
+    pub fn value(&self) -> &EditorValue {
+        &self.hint.value
+    }
     /// Where an input method's candidate window goes: under the clause it
     /// is converting (Japanese, Chinese), as a native field puts it, in the
     /// window's points; `None` while there is none (the caret, then).
@@ -207,7 +317,7 @@ impl EditorHandle {
         self.hint.misspelled.borrow().clone()
     }
     pub(crate) fn text(&self) -> String {
-        self.editor.borrow().text().to_owned()
+        self.editor.borrow().text().into_owned()
     }
     /// Select all the text.
     pub fn select_all(&self) {
@@ -408,7 +518,7 @@ impl EditorHandle {
         if self.hint.secure.get() {
             return String::new();
         }
-        self.editor.borrow().selected_text().to_owned()
+        self.editor.borrow().selected_text().into_owned()
     }
     /// Copy the selection and delete it when editable. Read-only cut is copy-only.
     pub fn cut(&self) -> String {
@@ -419,8 +529,7 @@ impl EditorHandle {
         let text = self.copy();
         if !text.is_empty() {
             self.editor.borrow_mut().insert("");
-            let next = self.editor.borrow().text().to_owned();
-            self.value.set(next);
+            self.hint.value.write(&self.editor);
             self.refresh();
         }
         text
@@ -435,8 +544,7 @@ impl EditorHandle {
         self.editor
             .borrow_mut()
             .insert(&normalize_text(text, self.multiline));
-        let next = self.editor.borrow().text().to_owned();
-        self.value.set(next);
+        self.hint.value.write(&self.editor);
         self.refresh();
     }
 }
@@ -576,7 +684,7 @@ fn line_runs(
 fn long_layout(
     lines: &Rc<crate::editor_lines::LineCache>,
     scene: &Scene,
-    text: &str,
+    text: impl FnOnce() -> Text,
     revision: Option<u64>,
     size: f32,
     width: Option<f32>,
@@ -591,6 +699,37 @@ fn long_layout(
         scene.text_shaper_revision(),
         || scene.line_shaper(size, font),
     )
+}
+/// `e`'s committed text laid out (`editor_layout`): a long one by its
+/// lines, from the chunks it shares, known by its revision (a pointer's
+/// move, a drag, a key, none of which copies it).
+#[allow(clippy::too_many_arguments)]
+fn committed_layout(
+    storage: &Weak<UiStorage>,
+    scene: &Scene,
+    node: NodeId,
+    e: &TextEditor,
+    size: f32,
+    width: Option<f32>,
+    font: &FontStyle,
+) -> Rc<dyn TextLayout> {
+    let lines = storage.upgrade().and_then(|s| {
+        let editors = s.editors.borrow();
+        let hint = &editors.get(&node)?.hint;
+        (e.long_text().is_some() || hint.highlighted()).then(|| hint.line_cache())
+    });
+    match lines {
+        Some(lines) => {
+            let font = editor_font(scene, node, font);
+            let text = || {
+                e.long_text()
+                    .cloned()
+                    .unwrap_or_else(|| Text::new(&e.text()))
+            };
+            long_layout(&lines, scene, text, Some(e.revision()), size, width, &font)
+        }
+        None => editor_layout(storage, scene, node, &e.text(), size, width, font),
+    }
 }
 fn editor_layout(
     storage: &Weak<UiStorage>,
@@ -608,7 +747,7 @@ fn editor_layout(
             .as_ref()
             .and_then(|s| s.editors.borrow().get(&node).map(|e| e.hint.line_cache()))
     {
-        return long_layout(&lines, scene, text, None, size, width, font);
+        return long_layout(&lines, scene, || Text::new(text), None, size, width, font);
     }
     let eligible = storage
         .as_ref()
@@ -2634,14 +2773,14 @@ impl Ui {
         width: f32,
         multiline: bool,
     ) -> EditorHandle {
-        self.build_text_input(parent, label.into(), value, width, multiline, false)
+        self.build_text_input(parent, label.into(), value.into(), width, multiline, false)
     }
     /// Undecorated editable control used by the declarative view layer.
     pub(crate) fn text_input_styled(
         &mut self,
         parent: NodeId,
         label: impl Into<String>,
-        value: Signal<String>,
+        value: EditorValue,
         multiline: bool,
     ) -> EditorHandle {
         self.build_text_input(parent, label.into(), value, 240., multiline, true)
@@ -2650,7 +2789,7 @@ impl Ui {
         &mut self,
         parent: NodeId,
         label: String,
-        value: Signal<String>,
+        value: EditorValue,
         width: f32,
         multiline: bool,
         styled: bool,
@@ -2665,7 +2804,7 @@ impl Ui {
         &mut self,
         parent: NodeId,
         label: String,
-        value: Signal<String>,
+        value: EditorValue,
         width: f32,
         multiline: bool,
         styled: bool,
@@ -2721,16 +2860,25 @@ impl Ui {
         let number_nodes: Rc<RefCell<Vec<NodeId>>> = Rc::default();
         let line_numbers = Rc::new(Cell::new(false));
         let draw_numbers = line_numbers.clone();
-        let mut initial = value.get();
-        if let std::borrow::Cow::Owned(canonical) = normalize_text(&initial, multiline) {
-            initial = canonical;
+        let mut initial = value.value_untracked();
+        let canonical = match &initial {
+            TextValue::Flat(text) => match normalize_text(text, multiline) {
+                std::borrow::Cow::Owned(canonical) => Some(canonical),
+                std::borrow::Cow::Borrowed(_) => None,
+            },
+            TextValue::Long(text) if !is_canonical(text, multiline) => {
+                Some(normalize_text(&text.to_cow(), multiline).into_owned())
+            }
+            TextValue::Long(_) => None,
+        };
+        if let Some(canonical) = canonical {
+            initial = canonical.into();
         }
         // A long text's lines show apart (`editor_lines`): its node, never
         // laid out with all of it, starts empty.
-        let shown = if crate::editor_lines::is_long(&initial) {
-            String::new()
-        } else {
-            initial.clone()
+        let shown = match &initial {
+            TextValue::Flat(text) if !crate::editor_lines::is_long(text) => text.clone(),
+            _ => String::new(),
         };
         let text = self.label(viewport, shown, fixed(width - 16., height - 12.));
         self.semantics.borrow_mut().remove(text);
@@ -2745,7 +2893,7 @@ impl Ui {
             0.,
             0.,
         );
-        let editor = Rc::new(RefCell::new(TextEditor::new(initial)));
+        let editor = Rc::new(RefCell::new(TextEditor::with_value(initial)));
         let focused = Rc::new(RefCell::new(false));
         // Blurred only because its window went to the back: still the focused field.
         let window_blurred = Rc::new(Cell::new(false));
@@ -2808,7 +2956,7 @@ impl Ui {
         let draw_read_only = read_only.clone();
         let gesture = Rc::new(EditorDrag::default());
         let draw_gesture = gesture.clone();
-        let hint = Rc::new(EditorHint::default());
+        let hint = Rc::new(EditorHint::new(value));
         hint.composition_layer.set(Some(preedit_layer));
         let draw_hint = hint.clone();
         // Its text's line count and its semantic value, by the revision of
@@ -2818,10 +2966,28 @@ impl Ui {
         let refresh: Rc<dyn Fn()> = Rc::new(move || {
             let e = edit.borrow();
             let selection = e.selection();
-            let mut display = std::borrow::Cow::Borrowed(e.text());
+            // What shows: the committed text with the composition in it. A
+            // long text's is its chunks, shared (a composition goes into a
+            // copy of them, its own chunks made again); a short one's, its
+            // string.
+            let display_text = e.long_text().map(|text| match e.preedit() {
+                Some(preedit) => {
+                    let mut text = text.clone();
+                    text.replace_range(selection.range(), &preedit.text);
+                    text
+                }
+                None => text.clone(),
+            });
+            let mut display = if display_text.is_some() {
+                std::borrow::Cow::Borrowed("")
+            } else {
+                e.text()
+            };
             let display_cursor = if let Some(preedit) = e.preedit() {
                 let r = selection.range();
-                display.to_mut().replace_range(r.clone(), &preedit.text);
+                if display_text.is_none() {
+                    display.to_mut().replace_range(r.clone(), &preedit.text);
+                }
                 r.start
                     + preedit
                         .cursor
@@ -2830,7 +2996,10 @@ impl Ui {
             } else {
                 selection.focus
             };
-            let display_cursor = display_cursor.min(display.len());
+            let display_len = display_text.as_ref().map_or(display.len(), Text::len);
+            let display_cursor = display_cursor.min(display_len);
+            // The text the long layout reads, made only if its revision is new.
+            let display_source = || display_text.clone().unwrap_or_else(|| Text::new(&display));
             let mut s = scene.borrow_mut();
             if !s.contains(root) {
                 return;
@@ -2863,7 +3032,9 @@ impl Ui {
             // least, so the text does not move at line 10), and a gap.
             let numbered = draw_numbers.get();
             // Long, or coloured a line at a time: laid out by its lines.
-            let long = crate::editor_lines::is_long(&display) || draw_hint.highlighted();
+            let long = display_text.is_some()
+                || crate::editor_lines::is_long(&display)
+                || draw_hint.highlighted();
             let (digits, digit) = if numbered {
                 // Unwrapped, a long text's layout (its width is not the
                 // gutter's to give) has them counted.
@@ -2874,7 +3045,7 @@ impl Ui {
                     long_layout(
                         &draw_hint.line_cache(),
                         &s,
-                        &display,
+                        display_source,
                         revision,
                         size,
                         None,
@@ -2890,7 +3061,9 @@ impl Ui {
                         count
                     }
                     _ => {
-                        let count = if long {
+                        let count = if let Some(text) = &display_text {
+                            text.line_count()
+                        } else if long {
                             display.match_indices('\n').count() + 1
                         } else {
                             memchr_count(b'\n', display.as_bytes()) + 1
@@ -2940,7 +3113,7 @@ impl Ui {
             // Empty, the text node shows the placeholder instead (laid out
             // as the empty text it stands for: it sizes nothing).
             let placeholder = draw_hint.placeholder.borrow();
-            let shown = placeholder.as_ref().filter(|_| display.is_empty());
+            let shown = placeholder.as_ref().filter(|_| display_len == 0);
             let (shown_text, shown_color) = match shown {
                 Some((hint, hint_color)) => (
                     hint.as_ref(),
@@ -2974,7 +3147,7 @@ impl Ui {
                 long_layout(
                     &draw_hint.line_cache(),
                     &s,
-                    &display,
+                    display_source,
                     revision,
                     size,
                     wrap_width,
@@ -3139,7 +3312,7 @@ impl Ui {
                         let colored = draw_hint
                             .line_cache()
                             .colors(lines, *i)
-                            .and_then(|colors| line_runs(line, &colors, color, size, &font));
+                            .and_then(|colors| line_runs(&line, &colors, color, size, &font));
                         match colored {
                             Some(rich) => {
                                 if !matches!(s.kind(*id), NodeKind::RichText { text } if **text == rich)
@@ -3157,7 +3330,7 @@ impl Ui {
                                     s.set_kind(
                                         *id,
                                         NodeKind::Text {
-                                            text: std::sync::Arc::from(line),
+                                            text: std::sync::Arc::from(&*line),
                                             color,
                                             font_size: size,
                                         },
@@ -3472,7 +3645,7 @@ impl Ui {
                 .misspelled
                 .borrow()
                 .iter()
-                .filter(|range| range.end <= e.text().len())
+                .filter(|range| range.end <= e.len())
                 .filter(|range| caret_at.is_none_or(|at| at < range.start || at > range.end))
                 .flat_map(|range| {
                     layout.selection_within(range.clone(), scroll.1, scroll.1 + inner_height)
@@ -3500,24 +3673,21 @@ impl Ui {
             if let Some(code) = draw_hint.code()
                 && code.on_caret.borrow().is_some()
             {
-                let text = e.text();
-                let focus = selection.focus.min(text.len());
+                let focus = selection.focus.min(e.len());
                 let (line, start) = match &long_lines {
                     Some(lines) if e.preedit().is_none() => {
                         let line = lines.line_of(focus);
                         (line, lines.line_range(line).start)
                     }
                     _ => {
-                        let before = &text[..focus];
-                        (
-                            before.match_indices('\n').count(),
-                            before.rfind('\n').map_or(0, |at| at + 1),
-                        )
+                        let start = e.line_around(focus).start;
+                        let before = e.slice(0..start);
+                        (before.match_indices('\n').count(), start)
                     }
                 };
                 code.caret_drawn.set(Some(Caret {
                     line: line + 1,
-                    column: text[start..focus].chars().count() + 1,
+                    column: e.slice(start..focus).chars().count() + 1,
                     anchor: selection.anchor,
                     focus,
                 }));
@@ -3532,12 +3702,21 @@ impl Ui {
                     draw_read_only.get(),
                 );
             } else {
-                semantics.update_text_input(
-                    root,
-                    e.text(),
-                    (selection.anchor, selection.focus),
-                    draw_read_only.get(),
-                );
+                match e.long_text() {
+                    // A long text shared, not copied.
+                    Some(text) => semantics.update_long_text_input(
+                        root,
+                        text,
+                        (selection.anchor, selection.focus),
+                        draw_read_only.get(),
+                    ),
+                    None => semantics.update_text_input(
+                        root,
+                        &e.text(),
+                        (selection.anchor, selection.focus),
+                        draw_read_only.get(),
+                    ),
+                }
                 draw_semantic_revision.set(Some(e.revision()));
             }
             semantics.set_placeholder(root, placeholder.as_ref().map(|(hint, _)| hint.as_ref()));
@@ -3578,7 +3757,6 @@ impl Ui {
             caret,
             node: root,
             editor: editor.clone(),
-            value: value.clone(),
             refresh: refresh.clone(),
             typography: typography.clone(),
             wrap: wrap.clone(),
@@ -3595,44 +3773,38 @@ impl Ui {
             .borrow_mut()
             .insert(root, handle.clone());
         let edit = editor.clone();
-        let v = value.clone();
+        let model = hint.clone();
         let draw = refresh.clone();
         let model_position = position.clone();
         let model_preferred_x = preferred_x.clone();
         let model_gesture = gesture.clone();
         let model_storage = Rc::downgrade(&self.storage);
         self.bind(root, move || {
-            // Canonical model text can be compared and applied in place without
-            // cloning the full document. Release the signal borrow before writeback.
-            let writeback = v.with(|current| {
-                let canonical = normalize_text(current, multiline);
-                let changed = edit.borrow_mut().set_text_ref(canonical.as_ref());
-                if changed {
-                    model_gesture.cancel();
-                    if let Some(storage) = model_storage.upgrade() {
-                        let remove = storage
-                            .interaction
-                            .borrow()
-                            .as_ref()
-                            .is_some_and(|p| p.job.owner == root);
-                        if remove {
-                            let old = storage.interaction.borrow_mut().take();
-                            drop(old);
-                        }
+            // Canonical model text is compared and applied in place, without
+            // cloning the full document; the signal's borrow is released
+            // before anything else runs.
+            let (changed, writeback) = model.value.apply(&edit, multiline);
+            if changed {
+                model_gesture.cancel();
+                if let Some(storage) = model_storage.upgrade() {
+                    let remove = storage
+                        .interaction
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|p| p.job.owner == root);
+                    if remove {
+                        let old = storage.interaction.borrow_mut().take();
+                        drop(old);
                     }
-                    model_preferred_x.set(None);
-                    model_position.set(TextPosition {
-                        byte_offset: edit.borrow().selection().focus,
-                        affinity: TextAffinity::After,
-                    });
                 }
-                match canonical {
-                    std::borrow::Cow::Owned(canonical) => Some(canonical),
-                    std::borrow::Cow::Borrowed(_) => None,
-                }
-            });
+                model_preferred_x.set(None);
+                model_position.set(TextPosition {
+                    byte_offset: edit.borrow().selection().focus,
+                    affinity: TextAffinity::After,
+                });
+            }
             if let Some(canonical) = writeback {
-                v.set(canonical);
+                model.value.set(canonical);
             }
             draw();
         });
@@ -3659,11 +3831,11 @@ impl Ui {
                 let offset = *scroll.borrow();
                 let (_, size, font) = typography.borrow().clone();
                 let mut edit = editor.borrow_mut();
-                let layout = editor_layout(
+                let layout = committed_layout(
                     &input_storage,
                     &s,
                     root,
-                    edit.text(),
+                    &edit,
                     size,
                     wrap.get().then_some(bounds.width.max(1.)),
                     &font,
@@ -3677,7 +3849,7 @@ impl Ui {
                     EditorPointerSelection::Character(anchor) => (anchor, hit),
                     EditorPointerSelection::Unit { edges, line } => {
                         let current = editor_pointer_unit(
-                            edit.text(),
+                            edit.around(hit.byte_offset),
                             layout.as_ref(),
                             hit,
                             x,
@@ -3959,8 +4131,7 @@ impl Ui {
                     let scroll = *scroll.borrow();
                     let (_, size, font) = typography.borrow().clone();
                     let mut edit = editor.borrow_mut();
-                    let layout = editor_layout(
-                        &input_storage, &s, root, edit.text(), size,
+                    let layout = committed_layout(&input_storage, &s, root, &edit, size,
                         wrap.get().then_some(bounds.width.max(1.)), &font,
                     );
                     let x = x - bounds.x + scroll.0;
@@ -3971,11 +4142,11 @@ impl Ui {
                     } else {
                         match cx.click_count() {
                             2 => {
-                                let edges = editor_pointer_unit(edit.text(), layout.as_ref(), hit, x, y, false, multiline);
+                                let edges = editor_pointer_unit(edit.around(hit.byte_offset), layout.as_ref(), hit, x, y, false, multiline);
                                 EditorPointerSelection::Unit { edges, line: false }
                             }
                             3 => {
-                                let edges = editor_pointer_unit(edit.text(), layout.as_ref(), hit, x, y, true, multiline);
+                                let edges = editor_pointer_unit(edit.around(hit.byte_offset), layout.as_ref(), hit, x, y, true, multiline);
                                 EditorPointerSelection::Unit { edges, line: true }
                             }
                             _ => EditorPointerSelection::Character(hit.byte_offset),
@@ -4003,8 +4174,7 @@ impl Ui {
                     let scroll = *scroll.borrow();
                     let (_, size, font) = typography.borrow().clone();
                     let mut edit = editor.borrow_mut();
-                    let layout = editor_layout(
-                        &input_storage, &s, root, edit.text(), size,
+                    let layout = committed_layout(&input_storage, &s, root, &edit, size,
                         wrap.get().then_some(bounds.width.max(1.)), &font,
                     );
                     let hit = layout.hit_position(x - bounds.x + scroll.0, y - bounds.y + scroll.1);
@@ -4037,8 +4207,7 @@ impl Ui {
                     let scroll = *scroll.borrow();
                     let (_, size, font) = typography.borrow().clone();
                     let mut edit = editor.borrow_mut();
-                    let layout = editor_layout(
-                        &input_storage, &s, root, edit.text(), size,
+                    let layout = committed_layout(&input_storage, &s, root, &edit, size,
                         wrap.get().then_some(bounds.width.max(1.)), &font,
                     );
                     let (lx, ly) = (x - bounds.x + scroll.0, y - bounds.y + scroll.1);
@@ -4046,8 +4215,7 @@ impl Ui {
                     let range = edit.selection().range();
                     if range.is_empty() || !range.contains(&hit.byte_offset) {
                         let (start, end) = if cfg!(target_os = "macos") {
-                            let (start, end) = editor_pointer_unit(
-                                edit.text(), &*layout, hit, lx, ly, false, multiline,
+                            let (start, end) = editor_pointer_unit(edit.around(hit.byte_offset), &*layout, hit, lx, ly, false, multiline,
                             );
                             let word = &edit.text()[start.byte_offset..end.byte_offset];
                             if word.chars().any(char::is_alphanumeric) {
@@ -4139,11 +4307,7 @@ impl Ui {
                     if let Some(end) = visual_edge {
                         let s = scene.borrow();
                         let (_, size, font) = typography.borrow().clone();
-                        let layout = editor_layout(
-                            &input_storage,
-                            &s,
-                            root,
-                            e.text(),
+                        let layout = committed_layout(&input_storage, &s, root, &e,
                             size,
                             Some(s.bounds(viewport).width.max(1.)),
                             &font,
@@ -4188,15 +4352,11 @@ impl Ui {
                             // Right-to-left text: the arrows go the way it
                             // shows (the macOS way), by its layout.
                             Key::ArrowLeft | Key::ArrowRight
-                                if crate::text_layout::has_rtl(e.text()) =>
+                                if crate::text_layout::has_rtl(&e.around(e.selection().focus).1) =>
                             {
                                 let s = scene.borrow();
                                 let (_, size, font) = typography.borrow().clone();
-                                let layout = editor_layout(
-                                    &input_storage,
-                                    &s,
-                                    root,
-                                    e.text(),
+                                let layout = committed_layout(&input_storage, &s, root, &e,
                                     size,
                                     Some(s.bounds(viewport).width.max(1.)),
                                     &font,
@@ -4228,11 +4388,7 @@ impl Ui {
                                 let direction = if matches!(key, Key::ArrowUp | Key::PageUp) { -1. } else { 1. };
                                 let (_, size, font) = typography.borrow().clone();
                                 let s = scene.borrow();
-                                let layout = editor_layout(
-                                    &input_storage,
-                                    &s,
-                                    root,
-                                    e.text(),
+                                let layout = committed_layout(&input_storage, &s, root, &e,
                                     size,
                                     wrap.get().then_some(s.bounds(viewport).width.max(1.)),
                                     &font,
@@ -4353,8 +4509,7 @@ impl Ui {
                     byte_offset: editor.borrow().selection().focus,
                     affinity: TextAffinity::After,
                 });
-                let next = editor.borrow().text().to_owned();
-                value.set(next);
+                tab_indent.value.write(&editor);
             }
             draw();
             arm();
@@ -4489,7 +4644,7 @@ enum EditorPointerSelection {
 }
 
 pub(crate) fn editor_pointer_unit(
-    text: &str,
+    around: (usize, std::borrow::Cow<'_, str>),
     layout: &dyn TextLayout,
     hit: TextPosition,
     x: f32,
@@ -4500,13 +4655,16 @@ pub(crate) fn editor_pointer_unit(
     if line && multiline {
         return layout.visual_line_range(hit);
     }
+    // The text around the hit (its line, in a long text) from where it
+    // starts in the whole.
+    let (base, text) = (around.0, &*around.1);
     let (start, end) = if line {
-        (0, text.len())
+        (base, base + text.len())
     } else {
         // A hit is the nearest caret, not necessarily the grapheme underneath
         // the pointer. Check the preceding cell, including RTL geometry, before
         // choosing a Unicode word-bound segment at that caret.
-        let offset = hit.byte_offset.min(text.len());
+        let offset = hit.byte_offset.saturating_sub(base).min(text.len());
         let previous = text
             .grapheme_indices(true)
             .take_while(|(i, _)| *i < offset)
@@ -4514,12 +4672,13 @@ pub(crate) fn editor_pointer_unit(
         let index = previous
             .filter(|(start, grapheme)| {
                 layout
-                    .selection(*start..start + grapheme.len())
+                    .selection(base + start..base + start + grapheme.len())
                     .iter()
                     .any(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
             })
             .map_or(offset, |(start, _)| start);
-        editor_word_segment(text, index)
+        let (start, end) = editor_word_segment(text, index);
+        (base + start, base + end)
     };
     (
         TextPosition {
@@ -5045,7 +5204,13 @@ mod editor_layout_cache_tests {
     #[test]
     fn cache_charges_named_font_key_and_bounds_display_text() {
         let mut ui = Ui::new(300., 200.);
-        let editor = ui.text_input(ui.root(), "Editor", ui.signal("short".into()), 100., true);
+        let editor = ui.text_input(
+            ui.root(),
+            "Editor",
+            ui.signal(String::from("short")),
+            100.,
+            true,
+        );
         ui.prepare_frame();
         ui.input.focus(&ui.scene, Some(editor.node));
         let storage = Rc::downgrade(&ui.storage);
@@ -5083,7 +5248,13 @@ mod editor_layout_cache_tests {
     #[test]
     fn external_editor_handle_does_not_retain_ui_layout_snapshot() {
         let mut ui = Ui::new(300., 200.);
-        let editor = ui.text_input(ui.root(), "Editor", ui.signal("short".into()), 100., true);
+        let editor = ui.text_input(
+            ui.root(),
+            "Editor",
+            ui.signal(String::from("short")),
+            100.,
+            true,
+        );
         ui.prepare_frame();
         ui.input.focus(&ui.scene, Some(editor.node));
         let layout = Rc::downgrade(&ui.storage.editor_layout.borrow().as_ref().unwrap().layout);

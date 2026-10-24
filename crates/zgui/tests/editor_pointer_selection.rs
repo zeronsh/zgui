@@ -116,7 +116,7 @@ fn double_click_selects_complete_unicode_graphemes_and_separator_segments() {
         click(&mut ui, x, 20., false);
         click(&mut ui, x, 20., false);
         assert_eq!(editor.copy(), expected, "{text}");
-        assert_eq!(editor.value.get(), text);
+        assert_eq!(editor.value().get(), text);
     }
 }
 
@@ -158,7 +158,7 @@ fn pointer_selection_is_read_only_safe_cancels_composition_and_preserves_history
     editor.set_read_only(true);
     click(&mut ui, 16., 20., false);
     assert_eq!(editor.copy(), "prefix");
-    assert_eq!(editor.value.get(), "prefix one two");
+    assert_eq!(editor.value().get(), "prefix one two");
     editor.set_read_only(false);
     assert!(editor.editor.borrow_mut().undo());
     assert_eq!(editor.editor.borrow().text(), "one two");

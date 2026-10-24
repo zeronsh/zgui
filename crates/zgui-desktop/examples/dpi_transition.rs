@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         bounds,
                         caret,
                         editor.editor.borrow().selection().focus,
-                        editor.value.get()
+                        editor.value().get()
                     );
                 });
             let viewport = cx.viewport.clone();

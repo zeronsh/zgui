@@ -989,7 +989,8 @@ impl UserData for ElementUd {
                 };
                 let (anchor, focus) = {
                     let text = editor.editor.borrow();
-                    let byte = |chars: i64| byte_offset(text.text(), chars.max(0) as usize);
+                    let whole = text.text();
+                    let byte = |chars: i64| byte_offset(&whole, chars.max(0) as usize);
                     (byte(anchor), byte(focus.unwrap_or(anchor)))
                 };
                 editor.set_selection(anchor, focus);
@@ -1003,7 +1004,7 @@ impl UserData for ElementUd {
             };
             let (anchor, focus) = editor.selection();
             let text = editor.editor.borrow();
-            let chars = |byte: usize| text.text()[..byte].chars().count();
+            let chars = |byte: usize| text.slice(0..byte).chars().count();
             Ok((Some(chars(anchor)), Some(chars(focus))))
         });
         // In bytes, as `string.find` counts them (a code editor's search):

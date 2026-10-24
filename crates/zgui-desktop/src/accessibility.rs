@@ -243,18 +243,22 @@ impl AccessibilityTree {
             let mut n = Node::new(semantic_role(semantic));
             // AccessKit Label content belongs in value; AT-SPI derives its
             // accessible name from value, rather than the control-label field.
+            // A long field's text, shared with its editor: in one string
+            // here, where the platform is given it.
+            let long_value = semantics.long_value(id).map(|text| text.to_cow());
+            let value = semantic.value.as_deref().or(long_value.as_deref());
             let text_value = if text {
                 // A heading is also named by its text, as a browser's is.
                 if semantic.role == Role::Heading {
                     n.set_label(semantic.label.clone());
                 }
-                Some(semantic.value.as_deref().unwrap_or(&semantic.label))
+                Some(value.unwrap_or(&semantic.label))
             } else if semantic.role == Role::Heading {
                 n.set_label(semantic.label.clone());
                 None
             } else {
                 n.set_label(semantic.label.clone());
-                semantic.value.as_deref()
+                value
             };
             if let Some(active) = semantic.active_descendant.filter(|a| visible.contains(a)) {
                 n.set_active_descendant(self.id(active));

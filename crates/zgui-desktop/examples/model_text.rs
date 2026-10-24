@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let caret = scene.bounds(editor.caret);
                             println!(
                                 "MODEL_TEXT {} model={:?} display={:?} retained={} caret_y={} caret_h={}",
-                                label, editor.value.get(), displayed(&scene, editor.node).unwrap_or_default(),
+                                label, editor.value().get(), displayed(&scene, editor.node).unwrap_or_default(),
                                 retained, caret.y, caret.height
                             );
                         }

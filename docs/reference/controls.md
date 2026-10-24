@@ -66,7 +66,7 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 
 Its element (`on_mount`, a [ref](state.md#refs)) selects text: `el:select_all()`, `el:set_selection(a, b)`, `local a, b = el:selection()`, in characters, or in bytes from 0 as `string.find` counts them, `el:set_selection_bytes(a, b)` and `el:selection_bytes()` (a selection set so scrolls into view, focused or not); `el:replace_selection(text)` types `text` over the selection, one step of undo ([events](events.md#elements)). Each sees the text a handler just set, and leaves its state holding what it changed.
 
-A long text (more than 64 KiB, or 2,000 lines), or one with `highlight`, is laid out by its lines: the lines in view are shaped and drawn, a line keeps its shape until it changes, and where each line starts is a few bytes a line, so a file of 100,000 lines opens in about 20 ms and a keystroke costs about a millisecond ([the code editor example](../../crates/zgui-script/examples/code_editor), `code_editor_bench`).
+A long text (more than 64 KiB, or 2,000 lines), or one with `highlight`, is laid out by its lines: the lines in view are shaped and drawn, a line keeps its shape until it changes, and where each line starts is a few bytes a line, so a file of 100,000 lines opens in about 20 ms and a keystroke costs about a millisecond ([the code editor example](../../crates/zgui-script/examples/code_editor), `code_editor_bench`). A string over 64 KiB in state is held in chunks of a few kilobytes: the state, the textarea bound to it, its layout and its accessibility value share one copy, and a keystroke's new value shares every chunk but the one it changed (a script reading the state still reads a string).
 
 ## checkbox
 

@@ -59,7 +59,7 @@ fn assert_stable(ui: &Ui, editor: &EditorHandle, calls: &Cell<usize>) {
 #[test]
 fn unchanged_refresh_selection_scroll_and_visual_navigation_reuse_shaping() {
     let (mut ui, editor, calls) = fixture();
-    let original = editor.value.get();
+    let original = editor.value().get();
     for _ in 0..5 {
         editor.refresh();
         ui.prepare_frame();
@@ -95,13 +95,13 @@ fn unchanged_refresh_selection_scroll_and_visual_navigation_reuse_shaping() {
         0,
         "visual-line navigation and caret refresh share retained geometry"
     );
-    assert_eq!(editor.value.get(), original);
+    assert_eq!(editor.value().get(), original);
 }
 
 #[test]
 fn text_font_pitch_wrap_and_allocated_width_invalidate_reused_geometry() {
     let (ui, editor, calls) = fixture();
-    editor.value.set("abcdefghijabcdefghij\nsecond".into());
+    editor.value().set("abcdefghijabcdefghij\nsecond".into());
     ui.prepare_frame();
     assert!(calls.replace(0) > 0, "external model change");
     assert_stable(&ui, &editor, &calls);
@@ -176,7 +176,7 @@ fn preedit_cursor_changes_reuse_geometry_but_composed_text_changes_invalidate() 
     let (mut ui, editor, calls) = fixture();
     editor.editor.borrow_mut().set_selection(0, 0);
     editor.refresh();
-    let original = editor.value.get();
+    let original = editor.value().get();
     ui.dispatch(InputEvent::ImePreedit {
         text: "你好".into(),
         cursor: Some((0, 0)),
@@ -206,7 +206,7 @@ fn preedit_cursor_changes_reuse_geometry_but_composed_text_changes_invalidate() 
         "preedit content changes displayed text"
     );
     assert_eq!(
-        editor.value.get(),
+        editor.value().get(),
         original,
         "preedit must not commit the model"
     );
@@ -217,7 +217,7 @@ fn preedit_cursor_changes_reuse_geometry_but_composed_text_changes_invalidate() 
     ui.prepare_frame();
     assert!(calls.replace(0) > 0);
     assert_stable(&ui, &editor, &calls);
-    assert_eq!(editor.value.get(), original);
+    assert_eq!(editor.value().get(), original);
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn focus_owner_reacquires_geometry_and_retained_handle_cannot_refresh_removed_ow
     assert!(ui.focused_editor().is_none());
     calls.set(0);
     editor.refresh();
-    editor.value.set("detached model".into());
+    editor.value().set("detached model".into());
     ui.prepare_frame();
     assert_eq!(
         calls.get(),

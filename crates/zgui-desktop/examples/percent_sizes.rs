@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         scene.bounds(*right),
                         scene.bounds(editor.caret),
                         editor.editor.borrow().selection().focus,
-                        editor.value.get(),
+                        editor.value().get(),
                     );
                 });
             let mounted = cx.render(

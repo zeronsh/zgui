@@ -3,8 +3,9 @@ use zgui::{
     input::{InputEvent, Key, Modifiers},
     scene::{NodeId, NodeKind},
     semantics::Role,
+    text::TextValue,
     text_layout::FontFamily,
-    widgets::Ui,
+    widgets::{EditorHandle, Ui},
 };
 
 fn descendants(ui: &Ui, root: NodeId) -> Vec<NodeId> {
@@ -58,7 +59,7 @@ fn bound_editors_preserve_roles_model_sync_ime_and_unmount() {
     assert!(ui.input.focus(&ui.scene, Some(notes)));
     ui.dispatch(InputEvent::Text("first\nsecond".into()));
     assert_eq!(multiline.get(), "first\nsecond");
-    let last_editor_value = editor.editor.borrow().text().to_owned();
+    let last_editor_value = editor.editor.borrow().text().into_owned();
     let old_nodes = descendants(&ui, mounted.node());
     mounted.unmount();
     assert!(ui.focused_editor().is_none());
@@ -70,6 +71,52 @@ fn bound_editors_preserve_roles_model_sync_ime_and_unmount() {
         last_editor_value,
         "unmount disposes model subscription"
     );
+}
+
+/// A long document bound as a `TextValue` is held once: the editor, its
+/// binding and its semantics share one text, an edit's new value is the
+/// editor's own (not a copy), and a document the binding is given is taken
+/// as it is, its change undoable.
+#[test]
+fn a_long_bound_document_is_shared_with_its_editor_not_copied() {
+    let mut ui = Ui::new(500., 400.);
+    let lines = |word: &str| -> String {
+        (0..10_000)
+            .map(|i| format!("{word} {i} of the document\n"))
+            .collect()
+    };
+    let document = lines("line");
+    let value = ui.signal(TextValue::from(document.as_str()));
+    assert!(value.with_untracked(|v| v.as_text().is_some()));
+    let mounted = ui.mount(
+        text_area_value("Document", value.clone())
+            .id("doc")
+            .size(300., 180.),
+    );
+    let doc = mounted.find("doc").unwrap();
+    let shared = |editor: &EditorHandle| {
+        let ours = editor.editor.borrow().value();
+        value.with_untracked(|v| v.ptr_eq(&ours))
+    };
+    assert!(ui.input.focus(&ui.scene, Some(doc)));
+    let editor = ui.focused_editor().unwrap();
+    assert!(shared(&editor), "mounting takes the bound text as it is");
+    editor.editor.borrow_mut().set_selection(0, 0);
+    ui.dispatch(InputEvent::Text("x".into()));
+    assert!(shared(&editor), "an edit's value is the editor's text");
+    assert_eq!(value.with_untracked(|v| v.len()), document.len() + 1);
+    assert!(value.with_untracked(|v| *v == *format!("x{document}")));
+    ui.prepare_frame();
+    let semantic = ui.semantics.borrow().long_value(doc).cloned();
+    let ours = editor.editor.borrow().long_text().cloned();
+    assert!(semantic.zip(ours).is_some_and(|(a, b)| a.ptr_eq(&b)));
+    // Another document, taken as given; undo goes back to the edited one.
+    let next = TextValue::from(lines("row").as_str());
+    value.set(next.clone());
+    assert!(shared(&editor) && value.with_untracked(|v| v.ptr_eq(&next)));
+    assert!(editor.editor.borrow_mut().undo());
+    assert_eq!(editor.editor.borrow().len(), document.len() + 1);
+    mounted.unmount();
 }
 
 #[test]

@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         caret.y,
                         selection.anchor,
                         selection.focus,
-                        editor.value.get()
+                        editor.value().get()
                     );
                 },
             ));

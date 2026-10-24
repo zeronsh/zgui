@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!(
                         "WRAP {} width={:.1} text_height={:.1} anchor={} focus={} caret_y={:.1} model={:?}",
                         sequence.get(), bounds.width, text_height,
-                        selection.anchor, selection.focus, caret.y, editor.value.get()
+                        selection.anchor, selection.focus, caret.y, editor.value().get()
                     );
                 });
 

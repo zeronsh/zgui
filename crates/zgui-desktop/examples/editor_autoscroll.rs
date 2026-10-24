@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let expected = if index==0 {&original} else {&horizontal_original};
                     println!("AUTOSCROLL editor={} anchor={} focus={} x={:.2} y={:.2} captured={} readonly={} unchanged={}",
                         index,selection.anchor,selection.focus,viewport.x-text_bounds.x,viewport.y-text_bounds.y,
-                        input.captured()==Some(editor.node),editor.is_read_only(),editor.value.get()==*expected);
+                        input.captured()==Some(editor.node),editor.is_read_only(),editor.value().get()==*expected);
                 }
             })
             .child(text("Drag beyond an edge; hold still to keep selecting").h(24.))

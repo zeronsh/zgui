@@ -118,7 +118,7 @@ fn horizontal_single_line_and_multiline_nowrap_reverse_and_stop_at_edges() {
     for single in [true, false] {
         let (mut ui, editor, _) = fixture(single, false);
         if !single {
-            editor.value.set("word tail ".repeat(100));
+            editor.value().set("word tail ".repeat(100));
             editor.editor.borrow_mut().set_selection(0, 0);
             editor.refresh();
             ui.prepare_frame();
@@ -151,7 +151,7 @@ fn horizontal_single_line_and_multiline_nowrap_reverse_and_stop_at_edges() {
         }
         assert_eq!(
             editor.editor.borrow().selection().focus,
-            editor.value.get().len()
+            editor.value().get().len()
         );
         assert!(
             ui.next_interaction_deadline().is_none(),
@@ -166,7 +166,7 @@ fn stalled_ticks_have_bounded_motion_and_read_only_selection_preserves_history()
     for delay in [Duration::from_millis(100), Duration::from_secs(60)] {
         let (mut ui, editor, _) = fixture(false, false);
         editor.paste("!");
-        let edited = editor.value.get();
+        let edited = editor.value().get();
         editor.set_read_only(true);
         down(&mut ui, 1);
         outside(&mut ui, 22., 100_000.);
@@ -183,7 +183,7 @@ fn stalled_ticks_have_bounded_motion_and_read_only_selection_preserves_history()
             "50ms at1200px/s covers at most three20px rows"
         );
         focuses.push(focus);
-        assert_eq!(editor.value.get(), edited);
+        assert_eq!(editor.value().get(), edited);
         up(&mut ui);
         editor.set_read_only(false);
         assert!(editor.editor.borrow_mut().undo());
@@ -268,7 +268,7 @@ fn resize_and_external_replacement_revalidate_retained_drag_geometry() {
     );
     outside(&mut ui, 22., 250.);
     assert!(ui.next_interaction_deadline().is_some());
-    editor.value.set("short".into());
+    editor.value().set("short".into());
     ui.prepare_frame();
     if let Some(next) = ui.next_interaction_deadline() {
         ui.advance_interactions(next).unwrap();
@@ -276,7 +276,7 @@ fn resize_and_external_replacement_revalidate_retained_drag_geometry() {
     assert!(ui.next_interaction_deadline().is_none());
     let selection = editor.editor.borrow().selection();
     assert!(selection.anchor <= 5 && selection.focus <= 5);
-    assert_eq!(editor.value.get(), "short");
+    assert_eq!(editor.value().get(), "short");
 }
 
 #[test]
@@ -295,12 +295,12 @@ fn prevented_moves_do_not_arm_and_equal_model_writes_keep_the_gesture() {
     cancel.set(false);
     outside(&mut ui, 22., 140.);
     let next = ui.next_interaction_deadline().unwrap();
-    editor.value.set(editor.value.get());
+    editor.value().set(editor.value().get());
     ui.prepare_frame();
     assert_eq!(ui.next_interaction_deadline(), Some(next));
     tick(&mut ui);
     assert!(ui.next_interaction_deadline().is_some());
-    editor.value.set(["different text"; 100].join("\n"));
+    editor.value().set(["different text"; 100].join("\n"));
     assert!(
         ui.next_interaction_deadline().is_none(),
         "changed model cancels original unit anchors"
@@ -316,7 +316,7 @@ fn prevented_moves_do_not_arm_and_equal_model_writes_keep_the_gesture() {
 #[test]
 fn held_boundary_rearms_after_resize_without_another_pointer_move() {
     let (mut ui, editor, _) = fixture(false, false);
-    editor.value.set(["word tail"; 6].join("\n"));
+    editor.value().set(["word tail"; 6].join("\n"));
     editor.editor.borrow_mut().set_selection(0, 0);
     editor.refresh();
     ui.prepare_frame();
@@ -392,7 +392,7 @@ fn reversing_stationary_unit_drag_uses_opposite_original_edge() {
 fn dormant_boundary_gesture_cannot_reclaim_transferred_capture_or_another_editor_deadline() {
     for new_editor in [false, true] {
         let (mut ui, old, _) = fixture(false, false);
-        old.value.set(["word tail"; 6].join("\n"));
+        old.value().set(["word tail"; 6].join("\n"));
         old.editor.borrow_mut().set_selection(0, 0);
         old.refresh();
         ui.prepare_frame();

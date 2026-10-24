@@ -11,6 +11,7 @@
 //! whole text's layout.
 use crate::{
     scene::Rect,
+    text::Text,
     text_layout::{TextAffinity, TextLayout, TextPosition},
 };
 use std::{
@@ -96,13 +97,15 @@ struct Colored {
     used: u64,
 }
 impl LineCache {
-    /// The layout of `text`, its last one if the text and shaping are the
-    /// same: known by the text's `revision` (`TextEditor::revision`), if it
-    /// is an editor's committed text, else by comparing it.
+    /// The layout of the text `text` makes, its last one if the text and
+    /// shaping are the same: known by the text's `revision`
+    /// (`TextEditor::revision`) if it is an editor's committed text, before
+    /// `text` is asked for, else by comparing them (a pointer, for a long
+    /// editor's shared text).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn layout(
         self: &Rc<Self>,
-        text: &str,
+        text: impl FnOnce() -> Text,
         text_revision: Option<u64>,
         size: f32,
         wrap: Option<f32>,
@@ -124,21 +127,23 @@ impl LineCache {
             *self.shaping.borrow_mut() = Some(shaping);
         }
         let previous = self.last.borrow().clone();
-        if let Some(last) = &previous {
-            let same = match (text_revision, self.last_revision.get()) {
-                (Some(now), Some(then)) => now == then,
-                _ => *last.text == *text,
-            };
-            if same {
-                self.last_revision.set(text_revision);
-                return last.clone();
-            }
+        if let (Some(last), Some(now)) = (&previous, text_revision)
+            && self.last_revision.get() == Some(now)
+        {
+            return last.clone();
+        }
+        let text = text();
+        if let Some(last) = &previous
+            && last.text == text
+        {
+            self.last_revision.set(text_revision);
+            return last.clone();
         }
         let layout = Rc::new(match &previous {
             // An edit: the old layout's lines, those it changed found again.
             Some(old) => {
-                let prefix = common_prefix(&old.text, text);
-                let suffix = common_suffix(&old.text[prefix..], &text[prefix..]);
+                let prefix = old.text.common_prefix(&text);
+                let suffix = old.text.common_suffix(&text, prefix);
                 let layout = LinesLayout::edited(old, text, prefix, suffix);
                 self.edited(Some((old, prefix, suffix)), &layout);
                 layout
@@ -237,7 +242,7 @@ impl LineCache {
             } else {
                 self.states.borrow()[known - 1]
             };
-            let (_, leaves) = self.highlight(&highlight, layout.line_text(known), before);
+            let (_, leaves) = self.highlight(&highlight, &layout.line_text(known), before);
             self.push_state(&mut self.states.borrow_mut(), leaves);
         }
         let before = if i == 0 {
@@ -245,7 +250,7 @@ impl LineCache {
         } else {
             self.states.borrow()[i - 1]
         };
-        let (colors, leaves) = self.highlight(&highlight, layout.line_text(i), before);
+        let (colors, leaves) = self.highlight(&highlight, &layout.line_text(i), before);
         let mut states = self.states.borrow_mut();
         if states.len() == i {
             self.push_state(&mut states, leaves);
@@ -312,42 +317,6 @@ impl LineCache {
     }
 }
 
-/// The bytes `a` and `b` start with in common.
-fn common_prefix(a: &str, b: &str) -> usize {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut at = 0;
-    // A chunk at a time (a memory compare), then the bytes of the first
-    // that differs.
-    const CHUNK: usize = 4096;
-    while at + CHUNK <= a.len().min(b.len()) && a[at..at + CHUNK] == b[at..at + CHUNK] {
-        at += CHUNK;
-    }
-    at + a[at..]
-        .iter()
-        .zip(&b[at..])
-        .take_while(|(x, y)| x == y)
-        .count()
-}
-
-/// The bytes `a` and `b` end with in common.
-fn common_suffix(a: &str, b: &str) -> usize {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let n = a.len().min(b.len());
-    let mut at = 0;
-    const CHUNK: usize = 4096;
-    while at + CHUNK <= n
-        && a[a.len() - at - CHUNK..a.len() - at] == b[b.len() - at - CHUNK..b.len() - at]
-    {
-        at += CHUNK;
-    }
-    at + a[..a.len() - at]
-        .iter()
-        .rev()
-        .zip(b[..b.len() - at].iter().rev())
-        .take_while(|(x, y)| x == y)
-        .count()
-}
-
 /// Heights a line at a time, and the sum of those above any line, both in
 /// `O(log n)` (a Fenwick tree).
 struct Heights {
@@ -406,9 +375,8 @@ impl Heights {
 
 /// A long text laid out by its lines (see the module).
 pub(crate) struct LinesLayout {
-    text: Rc<str>,
-    /// Where each line starts; a line ends before the next one's `\n`.
-    starts: Vec<usize>,
+    /// The text, shared with its editor (its lines, and where each starts).
+    text: Text,
     wrap: Option<f32>,
     /// A row's height, and an estimate of a byte's advance (for unwrapped
     /// width and wrapped heights before a line is shaped).
@@ -422,22 +390,12 @@ pub(crate) struct LinesLayout {
     cache: Rc<LineCache>,
 }
 impl LinesLayout {
-    fn new(text: &str, wrap: Option<f32>, shape: LineShaper, cache: Rc<LineCache>) -> Self {
-        let mut starts = Vec::with_capacity(text.len() / 32 + 1);
-        starts.push(0);
-        let mut longest = 0;
-        let mut last = 0;
-        for (at, _) in text.match_indices('\n') {
-            longest = longest.max(at - last);
-            last = at + 1;
-            starts.push(last);
-        }
-        longest = longest.max(text.len() - last);
+    fn new(text: Text, wrap: Option<f32>, shape: LineShaper, cache: Rc<LineCache>) -> Self {
+        let longest = text.longest_line();
         let sample = shape("0", None);
         let (advance, row) = sample.size();
         let mut layout = Self {
-            text: text.into(),
-            starts,
+            text,
             wrap,
             row: row.max(1.),
             advance: advance.max(0.),
@@ -449,13 +407,13 @@ impl LinesLayout {
         };
         if let Some(width) = wrap {
             let known = layout.cache.heights.borrow();
-            let each = (0..layout.starts.len())
+            let each = (0..layout.line_count())
                 .map(|i| {
                     let line = layout.line_text(i);
                     known
-                        .get(line)
+                        .get(&*line)
                         .copied()
-                        .unwrap_or_else(|| layout.estimate(line, width))
+                        .unwrap_or_else(|| layout.estimate(&line, width))
                 })
                 .collect();
             drop(known);
@@ -464,60 +422,41 @@ impl LinesLayout {
         layout
     }
     /// `old`'s layout of the text it became, `text`: the same as `text`'s
-    /// own, without looking for line breaks outside the edit. The text
-    /// starts with `prefix` bytes of `old`'s and ends with `suffix`.
-    fn edited(old: &LinesLayout, text: &str, prefix: usize, suffix: usize) -> Self {
+    /// own. The text starts with `prefix` bytes of `old`'s and ends with
+    /// `suffix`: the lines between are measured again, the rest kept.
+    fn edited(old: &LinesLayout, text: Text, prefix: usize, suffix: usize) -> Self {
         let (old_len, new_len) = (old.text.len(), text.len());
-        // Lines whose break is before the edit; those found in it; those
-        // after it, moved by what it added or took away.
-        let kept = old.starts.partition_point(|start| *start <= prefix);
-        let moved = old
-            .starts
-            .partition_point(|start| *start < old_len - suffix + 1);
-        let mut starts = Vec::with_capacity(old.starts.len() + 16);
-        starts.extend_from_slice(&old.starts[..kept]);
-        let end = new_len - suffix;
-        let mut longest = old.longest;
-        let mut last = starts[kept - 1];
-        for (at, _) in text[prefix..end].match_indices('\n') {
-            longest = longest.max(prefix + at - last);
-            last = prefix + at + 1;
-            starts.push(last);
-        }
-        let first_moved = starts.len();
-        starts.extend(
-            old.starts[moved..]
-                .iter()
-                .map(|start| start + new_len - old_len),
-        );
+        // Lines starting before the edit; those after it, moved.
+        let kept = old.text.line_of(prefix) + 1;
+        let moved = old.text.line_of(old_len - suffix) + 1;
+        let first_moved = text.line_of(new_len - suffix) + 1;
         let mut layout = Self {
-            text: text.into(),
-            starts,
+            text,
             wrap: old.wrap,
             row: old.row,
             advance: old.advance,
-            longest,
+            longest: old.longest,
             widest: Cell::new(old.widest.get()),
             heights: None,
             shape: old.shape.clone(),
             cache: old.cache.clone(),
         };
         // The edited lines' lengths count for the longest.
-        for i in kept.saturating_sub(1)..first_moved.min(layout.starts.len()) {
+        for i in kept - 1..first_moved.min(layout.line_count()) {
             layout.longest = layout.longest.max(layout.line_range(i).len());
         }
         if let (Some(width), Some(heights)) = (old.wrap, &old.heights) {
             let old_each = &heights.borrow().each;
             let known = layout.cache.heights.borrow();
-            let mut each = Vec::with_capacity(layout.starts.len());
-            each.extend_from_slice(&old_each[..kept.saturating_sub(1)]);
-            for i in kept.saturating_sub(1)..first_moved {
+            let mut each = Vec::with_capacity(layout.line_count());
+            each.extend_from_slice(&old_each[..kept - 1]);
+            for i in kept - 1..first_moved {
                 let line = layout.line_text(i);
                 each.push(
                     known
-                        .get(line)
+                        .get(&*line)
                         .copied()
-                        .unwrap_or_else(|| layout.estimate(line, width)),
+                        .unwrap_or_else(|| layout.estimate(&line, width)),
                 );
             }
             each.extend_from_slice(&old_each[moved..]);
@@ -536,25 +475,19 @@ impl LinesLayout {
     }
     /// How many lines it has.
     pub(crate) fn line_count(&self) -> usize {
-        self.starts.len()
+        self.text.line_count()
     }
     /// Line `i`'s bytes in the text, its line break excluded.
     pub(crate) fn line_range(&self, i: usize) -> Range<usize> {
-        let end = match self.starts.get(i + 1) {
-            Some(next) => next - 1,
-            None => self.text.len(),
-        };
-        self.starts[i]..end
+        self.text.line_range(i)
     }
-    pub(crate) fn line_text(&self, i: usize) -> &str {
-        &self.text[self.line_range(i)]
+    pub(crate) fn line_text(&self, i: usize) -> std::borrow::Cow<'_, str> {
+        self.text.line(i)
     }
     /// The line holding byte `offset` (a line's end, before its break, is
     /// its own; the offset after the break, the next line's).
     pub(crate) fn line_of(&self, offset: usize) -> usize {
-        self.starts
-            .partition_point(|start| *start <= offset)
-            .saturating_sub(1)
+        self.text.line_of(offset)
     }
     /// Where line `i` starts down the layout.
     pub(crate) fn top(&self, i: usize) -> f32 {
@@ -575,7 +508,7 @@ impl LinesLayout {
         let y = y.max(0.);
         match &self.heights {
             Some(heights) => heights.borrow().line_at(y as f64),
-            None => ((y / self.row) as usize).min(self.starts.len() - 1),
+            None => ((y / self.row) as usize).min(self.line_count() - 1),
         }
     }
     /// The lines that show between `top` and `bottom`, shaped: their
@@ -585,16 +518,16 @@ impl LinesLayout {
         let mut end = first;
         // Shaping a wrapped line corrects its height, which moves those
         // below: each is placed after the one above it is shaped.
-        while end < self.starts.len() && self.top(end) < bottom {
+        while end < self.line_count() && self.top(end) < bottom {
             self.line(end);
             end += 1;
         }
-        first..end.max(first + 1).min(self.starts.len())
+        first..end.max(first + 1).min(self.line_count())
     }
     /// Line `i`, shaped.
     pub(crate) fn line(&self, i: usize) -> Rc<dyn TextLayout> {
         let text = self.line_text(i);
-        let layout = self.cache.line(text, &self.shape, self.wrap);
+        let layout = self.cache.line(&text, &self.shape, self.wrap);
         let (width, height) = layout.size();
         if width > self.widest.get() {
             self.widest.set(width);
@@ -603,7 +536,10 @@ impl LinesLayout {
             let height = height.max(self.row);
             if heights.borrow().each[i] != height {
                 heights.borrow_mut().set(i, height);
-                self.cache.heights.borrow_mut().insert(text.into(), height);
+                self.cache
+                    .heights
+                    .borrow_mut()
+                    .insert((*text).into(), height);
             }
         }
         layout
@@ -655,7 +591,7 @@ impl TextLayout for LinesLayout {
     fn size(&self) -> (f32, f32) {
         let height = match &self.heights {
             Some(heights) => heights.borrow().total() as f32,
-            None => self.starts.len() as f32 * self.row,
+            None => self.line_count() as f32 * self.row,
         };
         let width = match self.wrap {
             Some(width) => width,
@@ -674,7 +610,7 @@ impl TextLayout for LinesLayout {
         TextPosition {
             byte_offset: range.start + local.byte_offset.min(range.len()),
             // Its line's end is before its break, which a caret sits after.
-            affinity: if local.byte_offset >= range.len() && i + 1 < self.starts.len() {
+            affinity: if local.byte_offset >= range.len() && i + 1 < self.line_count() {
                 TextAffinity::After
             } else {
                 local.affinity
@@ -710,7 +646,7 @@ mod tests {
     }
     fn lines(text: &str, wrap: Option<f32>) -> Rc<LinesLayout> {
         Rc::new(LineCache::default()).layout(
-            text,
+            || Text::new(text),
             None,
             14.,
             wrap,
@@ -788,14 +724,37 @@ mod tests {
         for wrap in [None, Some(60.)] {
             let cache = Rc::new(LineCache::default());
             let mut current = text.clone();
-            cache.layout(&current, None, 14., wrap, &FontStyle::default(), 0, shaper);
+            cache.layout(
+                || Text::new(&current),
+                None,
+                14.,
+                wrap,
+                &FontStyle::default(),
+                0,
+                shaper,
+            );
             for (start, end, insert) in edits {
                 let (start, end) = (start.min(current.len()), end.min(current.len()));
                 current.replace_range(start.min(end)..end, insert);
-                let layout =
-                    cache.layout(&current, None, 14., wrap, &FontStyle::default(), 0, shaper);
+                let layout = cache.layout(
+                    || Text::new(&current),
+                    None,
+                    14.,
+                    wrap,
+                    &FontStyle::default(),
+                    0,
+                    shaper,
+                );
                 let fresh = lines(&current, wrap);
-                assert_eq!(layout.starts, fresh.starts, "{current:?} {wrap:?}");
+                assert_eq!(
+                    (0..layout.line_count())
+                        .map(|i| layout.line_range(i))
+                        .collect::<Vec<_>>(),
+                    (0..fresh.line_count())
+                        .map(|i| fresh.line_range(i))
+                        .collect::<Vec<_>>(),
+                    "{current:?} {wrap:?}"
+                );
                 assert_eq!(layout.size().1, fresh.size().1, "{current:?} {wrap:?}");
                 assert!(layout.longest >= fresh.longest);
             }
@@ -815,7 +774,15 @@ mod tests {
         });
         let text: String = (0..100_000).map(|i| format!("line {i}\n")).collect();
         let cache = Rc::new(LineCache::default());
-        let layout = cache.layout(&text, None, 14., None, &FontStyle::default(), 0, || shape);
+        let layout = cache.layout(
+            || Text::new(&text),
+            None,
+            14.,
+            None,
+            &FontStyle::default(),
+            0,
+            || shape,
+        );
         let shown = layout.lines_between(50_000. * layout.row, 50_000. * layout.row + 600.);
         assert_eq!(shown.start, 50_000);
         assert!(shown.len() < 40, "{shown:?}");
@@ -823,6 +790,5 @@ mod tests {
         assert_eq!(caret.y, 99_999. * layout.row);
         // The sample row, the lines shown and the caret's.
         assert!(shaped.get() < 45, "{}", shaped.get());
-        assert!(layout.starts.capacity() * std::mem::size_of::<usize>() < 100_001 * 16);
     }
 }

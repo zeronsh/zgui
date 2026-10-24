@@ -23,6 +23,7 @@ use zgui::{
     reactive::Signal,
     scene::{Align, Color},
     svg::SvgData,
+    text::TextValue,
 };
 
 /// Decoded images and SVGs by source, kept across reloads.
@@ -691,6 +692,7 @@ fn quick(item: &Value) -> Quick {
         Value::Bool(b) => Quick::Bool(*b),
         Value::Num(n) => Quick::Num(if *n == 0. { 0 } else { n.to_bits() }),
         Value::Str(s) => Quick::Str(s.clone()),
+        Value::Text(t) => Quick::Str(t.to_cow().into()),
         Value::List(l) => Quick::At(Rc::as_ptr(l).cast::<()>() as usize),
         Value::Map(m) => Quick::At(Rc::as_ptr(m).cast::<()>() as usize),
         Value::Element(e) => Quick::At(Rc::as_ptr(&e.0).cast::<()>() as usize),
@@ -1138,14 +1140,24 @@ fn kind_view(
             spellcheck,
             code,
         } => {
-            let (value, controlled) = match value {
+            let (value, controlled): (zgui::widgets::EditorValue, _) = match value {
+                // A long document is shared with the editor, never copied
+                // on its way in or out.
                 crate::node::InputValue::State(value) => (
                     bridge(
                         need(&mut cx),
                         value,
-                        |v| v.to_string(),
-                        |s| Value::Str(s.into()),
-                    ),
+                        |v| match v {
+                            Value::Text(t) => TextValue::Long(t.clone()),
+                            Value::Str(s) => TextValue::from(&**s),
+                            v => TextValue::Flat(v.to_string()),
+                        },
+                        |t| match t {
+                            TextValue::Flat(s) => Value::Str(s.into()),
+                            TextValue::Long(t) => Value::Text(t),
+                        },
+                    )
+                    .into(),
                     None,
                 ),
                 crate::node::InputValue::Shown {
@@ -1161,14 +1173,10 @@ fn kind_view(
                         vm,
                         low,
                     );
-                    (text, Some(control))
+                    (text.into(), Some(control))
                 }
             };
-            let mut view = if *multiline {
-                text_area(label.clone(), value)
-            } else {
-                text_input(label.clone(), value)
-            };
+            let mut view = zgui::compose::editor_view(label.clone(), value, *multiline);
             if let Some(text) = placeholder {
                 let (text, vm) = (resolve_owned(text), vm.clone());
                 view = view.placeholder_when(move || match resolve(&text, Ty::Str, None, &vm) {

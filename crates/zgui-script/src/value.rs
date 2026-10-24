@@ -26,6 +26,9 @@ pub enum Value {
     Num(f64),
     /// A string.
     Str(Rc<str>),
+    /// A long string (over 64 KiB, as a document is), in chunks: shared
+    /// with an editor bound to it and its edits, and a string to scripts.
+    Text(zgui::text::Text),
     /// A table used as a list (keys 1 to n).
     List(Rc<[Value]>),
     /// A table with string keys, sorted by key so equal tables compare equal.
@@ -69,6 +72,8 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Num(a), Value::Num(b)) => a == b,
             (Value::Str(a), Value::Str(b)) => Rc::ptr_eq(a, b) || a == b,
+            (Value::Text(a), Value::Text(b)) => a == b,
+            (Value::Str(s), Value::Text(t)) | (Value::Text(t), Value::Str(s)) => *t == **s,
             (Value::List(a), Value::List(b)) => Rc::ptr_eq(a, b) || a[..] == b[..],
             (Value::Map(a), Value::Map(b)) => {
                 Rc::ptr_eq(a, b)
@@ -118,6 +123,7 @@ impl Value {
                 Value::Num(n) => serde_json::Number::from_f64(*n)
                     .map_or(serde_json::Value::Null, serde_json::Value::Number),
                 Value::Str(s) => serde_json::Value::String(s.to_string()),
+                Value::Text(t) => serde_json::Value::String(t.to_string()),
                 Value::List(items) => serde_json::Value::Array(items.iter().map(convert).collect()),
                 Value::Map(entries) => serde_json::Value::Object(
                     entries
@@ -136,6 +142,7 @@ impl Value {
     pub(crate) fn weight(&self) -> usize {
         match self {
             Value::Str(s) => 16 + s.len(),
+            Value::Text(t) => 16 + t.len(),
             Value::List(items) => 16 + items.iter().map(|v| SLOT + v.weight()).sum::<usize>(),
             Value::Map(fields) => {
                 16 + fields
@@ -165,6 +172,7 @@ impl Value {
                 (Value::List(a), Value::List(b)) => Rc::ptr_eq(a, b),
                 (Value::Map(a), Value::Map(b)) => Rc::ptr_eq(a, b),
                 (Value::Str(a), Value::Str(b)) => Rc::ptr_eq(a, b),
+                (Value::Text(a), Value::Text(b)) => a.ptr_eq(b),
                 (a, b) => a == b,
             }
         }
@@ -455,7 +463,7 @@ impl Value {
             Value::Nil => "nil",
             Value::Bool(_) => "a boolean",
             Value::Num(_) => "a number",
-            Value::Str(_) => "a string",
+            Value::Str(_) | Value::Text(_) => "a string",
             Value::List(_) => "a list",
             Value::Map(_) => "a table",
             Value::Element(_) => "an element",
@@ -470,6 +478,7 @@ impl std::fmt::Display for Value {
             Value::Num(n) if n.fract() == 0. && n.abs() < 1e15 => write!(f, "{}", *n as i64),
             Value::Num(n) => write!(f, "{n}"),
             Value::Str(s) => f.write_str(s),
+            Value::Text(t) => write!(f, "{t}"),
             Value::List(items) => {
                 for (index, item) in items.iter().enumerate() {
                     if index > 0 {
@@ -566,6 +575,8 @@ fn convert_in(value: mlua::Value, old: Option<&Value>, depth: u32) -> mlua::Resu
         mlua::Value::Number(n) => Value::Num(n),
         mlua::Value::String(s) => match old {
             Some(Value::Str(o)) if *s.as_bytes() == *o.as_bytes() => Value::Str(o.clone()),
+            Some(Value::Text(o)) if same_text(o, &s.as_bytes()) => Value::Text(o.clone()),
+            _ if s.as_bytes().len() > zgui::text::LONG => long_string(&s.as_bytes()),
             _ => Value::Str(s.to_string_lossy().into()),
         },
         mlua::Value::Table(t) => match t
@@ -657,6 +668,8 @@ fn raw_table(t: &Table, old: Option<&Value>) -> Option<mlua::Result<Value>> {
                     let bytes = std::slice::from_raw_parts(data.cast::<u8>(), n);
                     match old {
                         Some(Value::Str(o)) if o.as_bytes() == bytes => Value::Str(o.clone()),
+                        Some(Value::Text(o)) if same_text(o, bytes) => Value::Text(o.clone()),
+                        _ if bytes.len() > zgui::text::LONG => long_string(bytes),
                         _ => Value::Str(string(cx, data as usize, bytes)),
                     }
                 }
@@ -915,6 +928,12 @@ pub(crate) fn to_lua(value: &Value, lua: &Lua, frozen: bool) -> mlua::Result<mlu
         Value::Bool(b) => Ok(mlua::Value::Boolean(*b)),
         Value::Num(n) => Ok(mlua::Value::Number(*n)),
         Value::Str(s) => lua.create_string(&**s).map(mlua::Value::String),
+        // Its chunks straight into the string, not joined first.
+        // SAFETY: `push_text` leaves one string, `exec_raw`'s result.
+        Value::Text(t) => unsafe {
+            lua.exec_raw::<mlua::LuaString>((), |state| push_text(state, t))
+                .map(mlua::Value::String)
+        },
         Value::List(items) => {
             count_items(items.len());
             if items.len() >= 64 && items.iter().all(is_plain) {
@@ -946,6 +965,52 @@ pub(crate) fn to_lua(value: &Value, lua: &Lua, frozen: bool) -> mlua::Result<mlu
             .create_userdata(crate::element::ElementUd(e.0.clone()))
             .map(mlua::Value::UserData),
     }
+}
+/// Push `text` as a string, its chunks copied straight in.
+///
+/// # Safety
+/// `state` is a Luau state with room on its stack; a memory error raises a
+/// Luau error, which unwinds these frames (holding nothing to drop) to the
+/// caller's protected call. The buffer stays where it is made until the
+/// string is.
+unsafe fn push_text(state: *mut mlua::ffi::lua_State, text: &zgui::text::Text) {
+    use mlua::ffi;
+    let mut buffer = std::mem::MaybeUninit::<ffi::luaL_Strbuf>::uninit();
+    let buffer = buffer.as_mut_ptr();
+    // SAFETY: as this function's: a buffer the text's size (its storage
+    // held on the stack), filled, then made the string in its place.
+    unsafe {
+        ffi::luaL_buffinitsize(state, buffer, text.len());
+        for chunk in text.chunks() {
+            ffi::luaL_addlstring(buffer, chunk.as_ptr().cast(), chunk.len());
+        }
+        ffi::luaL_pushresult(buffer);
+    }
+}
+thread_local! {
+    /// The last long string a script set, while state holds it.
+    static RECENT_TEXT: RefCell<zgui::text::WeakText> = RefCell::default();
+}
+/// A long string from a script, in chunks: an editor bound to it shares it.
+/// The same text set again (a file kept as the editor's and as last saved)
+/// is the same `Text`, and the edits of one share the other's chunks.
+fn long_string(bytes: &[u8]) -> Value {
+    let string = String::from_utf8_lossy(bytes);
+    RECENT_TEXT.with_borrow_mut(|recent| {
+        if let Some(text) = recent.upgrade()
+            && text.len() == string.len()
+            && text == *string
+        {
+            return Value::Text(text);
+        }
+        let text = zgui::text::Text::new(&string);
+        *recent = text.downgrade();
+        Value::Text(text)
+    })
+}
+/// Whether a script's string is `text` (kept, then: not copied again).
+fn same_text(text: &zgui::text::Text, bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes).is_ok_and(|s| *text == *s)
 }
 fn is_plain(value: &Value) -> bool {
     matches!(value, Value::Num(_) | Value::Bool(_) | Value::Str(_))
@@ -1272,6 +1337,7 @@ fn raw_shared(lua: &Lua, value: &Value) -> mlua::Result<Table> {
                 Value::Str(s) => {
                     ffi::lua_pushlstring(state, s.as_ptr().cast(), s.len());
                 }
+                Value::Text(t) => push_text(state, t),
                 Value::List(_) | Value::Map(_) => {
                     let id = identity(value) as *mut c_void;
                     ffi::lua_pushlightuserdata(state, id);
@@ -2034,6 +2100,26 @@ mod tests {
         for (i, row) in back.list().iter().enumerate() {
             assert_eq!(ptr(row), ptr(&rows[2 * i + 1]), "row {i}");
         }
+    }
+
+    /// A long string from a script is held in chunks; the same one set
+    /// again (as another state) is the same text, and it reads back whole.
+    #[test]
+    fn a_long_string_set_twice_is_one_shared_text() {
+        let lua = Lua::new();
+        let long: String = (0..10_000).map(|i| format!("line {i}\n")).collect();
+        let set = |text: &str| {
+            convert(mlua::Value::String(lua.create_string(text).unwrap()), None).unwrap()
+        };
+        let (first, second) = (set(&long), set(&long));
+        let (Value::Text(a), Value::Text(b)) = (&first, &second) else {
+            panic!("a long string is a text");
+        };
+        assert!(a.ptr_eq(b));
+        assert!(first == Value::Str(long.as_str().into()));
+        let back = to_lua(&first, &lua, true).unwrap();
+        assert!(*back.as_string().unwrap().as_bytes() == *long.as_bytes());
+        assert!(matches!(set("short"), Value::Str(_)));
     }
 
     #[test]

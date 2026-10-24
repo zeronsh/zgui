@@ -1369,6 +1369,7 @@ pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
         (Ty::Color, Value::Str(s)) if s.eq_ignore_ascii_case("currentcolor") => Lit::Str(s.clone()),
         (Ty::Color, v) => Lit::Color(color_of(v)?),
         (Ty::Str, Value::Str(s)) => Lit::Str(s.clone()),
+        (Ty::Str, Value::Text(t)) => Lit::Str(t.to_cow().into()),
         (Ty::Pair, Value::List(items)) if items.len() == 2 => {
             Lit::Pair(items[0].as_f64()? as f32, items[1].as_f64()? as f32)
         }

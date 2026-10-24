@@ -17,9 +17,9 @@ pub(crate) fn mount(
 ) {
     // The text last checked, and its misspellings (`None` while off).
     let checked: Rc<RefCell<Option<Checked>>> = Rc::default();
-    let value = editor.value.clone();
+    let value = editor.value().clone();
     ui.bind(editor.node, move || {
-        value.with(|_| ());
+        value.track();
         if !on() {
             // Off: no marks, and a fresh check when on again.
             if checked.borrow_mut().take().is_some() {
