@@ -30,6 +30,7 @@ composition = ["windows/Win32_Graphics_DirectComposition"]
 vulkan = ["wgpu/vulkan"]
 
 [dependencies]
+smallvec = "1.16"
 zgui = { path = "../zgui", version = "0.1.0" }
 # wgpu's defaults less WebGPU (the browser's), and Vulkan and GL, which only
 # Linux and its kind always build (below).

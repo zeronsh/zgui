@@ -3336,13 +3336,9 @@ impl GpuRenderer {
                                 item.font,
                                 Some(bounds.width),
                             );
-                            let starts = laid.line_starts();
-                            let glyphs = glyphs_of(
-                                laid.runs(Some(bounds.height)),
-                                &starts,
-                                None,
-                                self.scale,
-                            );
+                            // Plain text has one run: no line starts to find it by.
+                            let glyphs =
+                                glyphs_of(laid.runs(Some(bounds.height)), &[], None, self.scale);
                             let underlines = item.font.underline.map_or_else(Vec::new, |line| {
                                 text::plain_underlines(
                                     laid.runs(Some(bounds.height)),
@@ -3516,6 +3512,9 @@ impl GpuRenderer {
                     // sign) turns into two rows at half strength.
                     let snap = |value: f32| (value * self.scale).round() / self.scale;
                     let (x, y) = (snap(bounds.x), snap(bounds.y));
+                    // Plain text's one colour, worked out once for its glyphs.
+                    let plain_color = rgba(color, item.effects.opacity);
+                    quads.reserve(shaped.quads.len());
                     for cached in &shaped.quads {
                         let mut quad = *cached;
                         quad.rect[0] += x;
@@ -3540,7 +3539,7 @@ impl GpuRenderer {
                                 cached.color[3] * item.effects.opacity,
                             ]
                         } else {
-                            rgba(color, item.effects.opacity)
+                            plain_color
                         };
                         quad.fade = fade;
                         quad.options[0] = item.effects.edge_fade;

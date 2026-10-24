@@ -1503,8 +1503,11 @@ impl ShapeLine {
         }
 
         // Adjust for tabs
+        // zgui patch: only in a line that has one (most have none, and the
+        // check sliced and compared every glyph's text).
         let mut x = 0.0;
-        for span in &mut spans {
+        let tabs = line.as_bytes().contains(&b'\t');
+        for span in spans.iter_mut().filter(|_| tabs) {
             for word in &mut span.words {
                 for glyph in &mut word.glyphs {
                     if line.get(glyph.start..glyph.end) == Some("\t") {

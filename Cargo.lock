@@ -4550,6 +4550,7 @@ dependencies = [
  "pollster",
  "resvg",
  "rustc-hash 2.1.3",
+ "smallvec",
  "tiny-skia",
  "unicode-segmentation",
  "wgpu",

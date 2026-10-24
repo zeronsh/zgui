@@ -87,3 +87,9 @@ words made that reachable, and `check/` caught it on a mixed line; with the
 direction in the key, how long a word is kept cannot change what is drawn. This is
 an upstream bug (0.19.0's `ShapeRunKey` has no direction), worth fixing
 there; the one-field change is all it needs.
+
+## Tab stops only in lines with tabs
+
+`ShapeLine::build` sliced every glyph's text to see whether it was a tab
+before laying out tab stops. It now looks only in a line that has a tab
+(one byte search); `check/` finds every layout identical.

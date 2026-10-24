@@ -123,6 +123,15 @@ impl Key {
         font.weight.hash(hasher);
         font.italic.hash(hasher);
     }
+    /// Plain text's key: one run over all of it, as `Key::of` makes for
+    /// that text as rich text.
+    fn plain(text: &Arc<str>, font_size: f32, font: &FontStyle, caret_row: bool) -> Self {
+        Self {
+            text: text.clone(),
+            spans: vec![(0..text.len(), font.clone(), font_size, 0.)],
+            caret_row,
+        }
+    }
     /// `hash` of plain text's key (`plain`, with its caret row), without
     /// building it.
     fn plain_hash(text: &str, font_size: f32, font: &FontStyle) -> u64 {
@@ -157,11 +166,12 @@ struct Word {
 struct Compact {
     words: Vec<Word>,
     glyphs: Vec<f32>,
-    /// Every line's spans, as ranges of `words`.
-    spans: Vec<Range<u32>>,
+    /// Every line's spans, as ranges of `words` (inline for the usual one:
+    /// a compact is made for every new text).
+    spans: smallvec::SmallVec<[Range<u32>; 1]>,
     /// Per line: its spans, as a range of `spans`, and the height it takes
     /// when empty.
-    lines: Vec<(Range<u32>, Option<f32>)>,
+    lines: smallvec::SmallVec<[(Range<u32>, Option<f32>); 1]>,
 }
 impl Compact {
     /// The measurements of shaped `lines`, or None where arithmetic over them
@@ -189,8 +199,8 @@ impl Compact {
         let mut compact = Self {
             words: Vec::with_capacity(words),
             glyphs: Vec::with_capacity(glyphs),
-            spans: Vec::with_capacity(spans),
-            lines: Vec::with_capacity(lines.len()),
+            spans: smallvec::SmallVec::with_capacity(spans),
+            lines: smallvec::SmallVec::with_capacity(lines.len()),
         };
         for line in lines {
             let shape = line.shape_opt()?;
@@ -348,6 +358,8 @@ impl Visual {
     }
 }
 
+/// A size and the width it was measured at.
+type SizeAt = (Option<f32>, (f32, f32));
 struct Entry {
     key: Key,
     /// Shaped lines; None once evicted.
@@ -357,7 +369,8 @@ struct Entry {
     metrics: Metrics,
     /// The width `lines` are laid out at, if any.
     laid: Option<Option<f32>>,
-    sizes: Vec<(Option<f32>, (f32, f32))>,
+    /// Inline: an entry is made for every new text, and keeps `SIZES`.
+    sizes: smallvec::SmallVec<[SizeAt; SIZES]>,
     used: u64,
 }
 impl Entry {
@@ -412,15 +425,24 @@ impl Entry {
     }
 }
 
-/// Plain text as one run, laid out as rich text is.
-fn plain(text: &Arc<str>, font_size: f32, font: &FontStyle) -> RichText {
-    let run = zgui::rich_text::TextRun {
-        range: 0..text.len(),
-        font: font.clone(),
-        font_size,
-        ..Default::default()
-    };
-    RichText::new(text.clone(), vec![run]).expect("one valid run")
+/// What a text is prepared from: rich text, or plain text as one run
+/// (laid out as rich text is, without building one to look it up or shape).
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    Rich(&'a RichText),
+    Plain {
+        text: &'a Arc<str>,
+        font_size: f32,
+        font: &'a FontStyle,
+    },
+}
+impl Source<'_> {
+    fn text(&self) -> &str {
+        match self {
+            Source::Rich(rich) => rich.text(),
+            Source::Plain { text, .. } => text,
+        }
+    }
 }
 
 /// What a caller needs of an entry.
@@ -496,7 +518,7 @@ impl TextCache {
         if !Self::handles(rich) {
             return crate::text::ShapedText::with_runs(fonts, rich, width).size();
         }
-        let hash = self.entry(fonts, rich, false, Need::Measure);
+        let hash = self.entry(fonts, Source::Rich(rich), false, Need::Measure);
         self.sized(fonts, hash, width)
     }
     /// As `measure`, for text that is not drawn (the estimated heights of
@@ -512,7 +534,7 @@ impl TextCache {
         if !Self::handles(rich) {
             return crate::text::ShapedText::with_runs(fonts, rich, width).size();
         }
-        let hash = self.entry(fonts, rich, false, Need::Detached);
+        let hash = self.entry(fonts, Source::Rich(rich), false, Need::Detached);
         self.sized(fonts, hash, width)
     }
     /// `rich` laid out at `width`. Only for texts `handles` accepts.
@@ -522,7 +544,7 @@ impl TextCache {
         rich: &RichText,
         width: Option<f32>,
     ) -> Laid<'_> {
-        let hash = self.entry(fonts, rich, false, Need::Layout);
+        let hash = self.entry(fonts, Source::Rich(rich), false, Need::Layout);
         self.laid_out(fonts, hash, width)
     }
     /// Whether plain text goes through the cache: nonempty, at a valid size.
@@ -579,7 +601,12 @@ impl TextCache {
             self.hits += 1;
             return hash;
         }
-        self.entry(fonts, &plain(text, font_size, font), true, need)
+        let source = Source::Plain {
+            text,
+            font_size,
+            font,
+        };
+        self.entry(fonts, source, true, need)
     }
     fn sized(&mut self, fonts: &mut FontSystem, hash: u64, width: Option<f32>) -> (f32, f32) {
         let size = self.update(hash, |entry| entry.size(fonts, width));
@@ -646,12 +673,19 @@ impl TextCache {
     fn entry(
         &mut self,
         fonts: &mut FontSystem,
-        rich: &RichText,
+        source: Source<'_>,
         caret_row: bool,
         need: Need,
     ) -> u64 {
         self.clock += 1;
-        let key = Key::of(rich, caret_row);
+        let key = match source {
+            Source::Rich(rich) => Key::of(rich, caret_row),
+            Source::Plain {
+                text,
+                font_size,
+                font,
+            } => Key::plain(text, font_size, font, caret_row),
+        };
         let hash = key.hash();
         let cached = self.entries.get_mut(&hash).filter(|entry| entry.key == key);
         if let Some(entry) = &cached
@@ -664,7 +698,7 @@ impl TextCache {
         }
         let known = cached.is_some();
         self.shaped += 1;
-        let (lines, metrics) = self.shape(fonts, rich, caret_row);
+        let (lines, metrics) = self.shape(fonts, source, caret_row);
         if known {
             // Evicted lines, shaped again for drawing; measurements stay.
             let entry = self.entries.get_mut(&hash).expect("cached");
@@ -688,7 +722,7 @@ impl TextCache {
                 lines: (!detached).then_some(lines),
                 metrics,
                 laid: None,
-                sizes: Vec::new(),
+                sizes: smallvec::SmallVec::new(),
                 used: self.clock,
             };
             self.shaped_bytes += entry.shaped_bytes();
@@ -717,63 +751,87 @@ impl TextCache {
     fn shape(
         &mut self,
         fonts: &mut FontSystem,
-        rich: &RichText,
+        source: Source<'_>,
         caret_row: bool,
     ) -> (Vec<BufferLine>, Metrics) {
         // `ShapedText::with_runs` adds an unshaped row for an editor's caret
         // after a final line break, which its size leaves out: so is it here.
         // `ShapedText::with_font` shapes it, so plain text keeps it.
-        let recycled = self.spare_for(rich.text());
-        let mut buffer = match rich.runs() {
+        let text = source.text();
+        let recycled = self.spare_for(text);
+        // The font and size of its last run, for plain text its one.
+        let (mut buffer, last) = match source {
             // Plain text without per-span attributes, which cosmic-text looks
             // up for every word: shaped as `ShapedText::with_font` shapes it.
-            [run] if caret_row => crate::text::plain_buffer_unshaped(
-                fonts,
-                rich.text(),
-                run.font_size,
-                &run.font,
-                recycled,
+            Source::Plain {
+                text,
+                font_size,
+                font,
+            } if caret_row => (
+                crate::text::plain_buffer_unshaped(fonts, text, font_size, font, recycled),
+                Some((font, font_size)),
             ),
-            _ => crate::text::rich_buffer_unshaped(fonts, rich, false, recycled),
+            Source::Rich(rich) => match rich.runs() {
+                [run] if caret_row => (
+                    crate::text::plain_buffer_unshaped(
+                        fonts,
+                        rich.text(),
+                        run.font_size,
+                        &run.font,
+                        recycled,
+                    ),
+                    Some((&run.font, run.font_size)),
+                ),
+                runs => (
+                    crate::text::rich_buffer_unshaped(fonts, rich, false, recycled),
+                    runs.last().map(|run| (&run.font, run.font_size)),
+                ),
+            },
+            Source::Plain { .. } => unreachable!("plain text keeps its caret row"),
         };
         if caret_row
-            && rich.text().ends_with(['\r', '\n'])
+            && text.ends_with(['\r', '\n'])
             && crate::text::ends_open(&buffer)
-            && let Some(run) = rich.runs().last()
+            && let Some((font, font_size)) = last
         {
-            let size = run.font_size.max(1.);
+            let size = font_size.max(1.);
             let mut line = BufferLine::new(
                 "",
                 cosmic_text::LineEnding::None,
-                cosmic_text::AttrsList::new(&crate::text::attrs(&run.font, size)),
+                cosmic_text::AttrsList::new(&crate::text::attrs(font, size)),
                 cosmic_text::Shaping::Advanced,
             );
-            line.set_align(crate::text::alignment(&run.font));
+            line.set_align(crate::text::alignment(font));
             buffer.lines.push(line);
         }
         let metrics = buffer.metrics();
         let mut lines = std::mem::take(&mut buffer.lines);
-        let donor = self
-            .recent
-            .iter()
-            .filter_map(|recent| Some((*recent, self.entries.get(recent)?)))
-            .filter(|(_, entry)| entry.metrics == metrics)
-            .filter_map(|(hash, entry)| {
-                let shared = entry
-                    .lines
-                    .as_ref()?
+        // A one-line text could only take a line equal to all of it, which
+        // the lookup before shaping would have found.
+        let donor = (lines.len() > 1)
+            .then(|| {
+                self.recent
                     .iter()
-                    .zip(&lines)
-                    .take_while(|(old, new)| {
-                        old.text() == new.text()
-                            && old.ending() == new.ending()
-                            && old.attrs_list() == new.attrs_list()
-                            && old.align() == new.align()
+                    .filter_map(|recent| Some((*recent, self.entries.get(recent)?)))
+                    .filter(|(_, entry)| entry.metrics == metrics)
+                    .filter_map(|(hash, entry)| {
+                        let shared = entry
+                            .lines
+                            .as_ref()?
+                            .iter()
+                            .zip(&lines)
+                            .take_while(|(old, new)| {
+                                old.text() == new.text()
+                                    && old.ending() == new.ending()
+                                    && old.attrs_list() == new.attrs_list()
+                                    && old.align() == new.align()
+                            })
+                            .count();
+                        (shared > 0).then_some((shared, hash))
                     })
-                    .count();
-                (shared > 0).then_some((shared, hash))
+                    .max_by_key(|(shared, _)| *shared)
             })
-            .max_by_key(|(shared, _)| *shared);
+            .flatten();
         if let Some((shared, hash)) = donor {
             let entry = self.remove(hash);
             let old = entry.lines.expect("donor lines");
@@ -785,20 +843,22 @@ impl TextCache {
         }
         // A text this one extends is a stream's previous state: it goes too.
         // Short texts (labels, where "1" and "12" can both show) stay.
-        let text = rich.text();
-        let extended: Vec<u64> = self
-            .recent
-            .iter()
-            .copied()
-            .filter(|recent| {
-                self.entries.get(recent).is_some_and(|entry| {
-                    entry.metrics == metrics
-                        && entry.key.text.len() >= SUPERSEDED
-                        && entry.key.text.len() < text.len()
-                        && text.starts_with(&*entry.key.text)
+        let extended: Vec<u64> = if text.len() <= SUPERSEDED {
+            Vec::new()
+        } else {
+            self.recent
+                .iter()
+                .copied()
+                .filter(|recent| {
+                    self.entries.get(recent).is_some_and(|entry| {
+                        entry.metrics == metrics
+                            && entry.key.text.len() >= SUPERSEDED
+                            && entry.key.text.len() < text.len()
+                            && text.starts_with(&*entry.key.text)
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        };
         for hash in extended {
             let entry = self.remove(hash);
             self.recycle(entry.lines);
@@ -912,6 +972,16 @@ mod tests {
         RichText::new(text, runs).unwrap()
     }
 
+    /// Plain text as one run, laid out as rich text is.
+    fn plain(text: &Arc<str>, font_size: f32, font: &FontStyle) -> RichText {
+        let run = zgui::rich_text::TextRun {
+            range: 0..text.len(),
+            font: font.clone(),
+            font_size,
+            ..Default::default()
+        };
+        RichText::new(text.clone(), vec![run]).expect("one valid run")
+    }
     #[test]
     fn plain_text_is_found_by_the_key_its_rich_text_makes() {
         let font = FontStyle {
@@ -922,6 +992,7 @@ mod tests {
         for text in ["hello", "two words", "a\nb", "héllo wörld"] {
             let text: Arc<str> = text.into();
             let key = Key::of(&plain(&text, 13., &font), true);
+            assert!(Key::plain(&text, 13., &font, true) == key, "{text:?}");
             assert_eq!(Key::plain_hash(&text, 13., &font), key.hash(), "{text:?}");
             assert!(key.is_plain(&text, 13., &font));
             assert!(!key.is_plain(&text, 14., &font));
