@@ -3719,6 +3719,21 @@ impl Ui {
                 }
                 draw_semantic_revision.set(Some(e.revision()));
             }
+            // What assistive technology reads of a long text: the lines in
+            // view and a page each side, or a page around the caret when it
+            // is scrolled out of view (`SemanticNode::long_lines`).
+            if let (Some(text), Some(lines)) = (e.long_text(), &long_lines) {
+                let caret = lines.line_of(selection.focus.min(e.len()));
+                let page = shown_lines.len().max(20);
+                let around = if shown_lines.contains(&caret) {
+                    shown_lines.clone()
+                } else {
+                    caret..caret + 1
+                };
+                let window =
+                    around.start.saturating_sub(page)..(around.end + page).min(text.line_count());
+                semantics.update_long_lines(root, window);
+            }
             semantics.set_placeholder(root, placeholder.as_ref().map(|(hint, _)| hint.as_ref()));
         });
         // Geometry refresh may make an existing stationary drag scrollable.

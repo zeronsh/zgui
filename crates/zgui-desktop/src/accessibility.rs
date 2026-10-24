@@ -20,6 +20,19 @@ pub struct AccessibilityTree {
     /// Labels projected as blocks of a selectable region's text: their runs
     /// end with a break.
     blocks: HashSet<NodeId>,
+    /// Long fields' runs, by line: the lines in their window (`long_lines`).
+    long_runs: HashMap<NodeId, HashMap<usize, LineRuns>>,
+}
+/// A line of a long field, as text runs: kept while its text is, so an edit
+/// sends the runs of the lines it changed, and a scroll those it shows.
+struct LineRuns {
+    /// The line, with its break.
+    text: String,
+    /// Where it starts in the field's text, as its runs' positions say.
+    start: usize,
+    ids: Vec<AccessibleId>,
+    /// Each run's characters' offsets, from the line's start.
+    offsets: Vec<Vec<usize>>,
 }
 impl AccessibilityTree {
     /// An empty tree: the first update is a complete snapshot.
@@ -74,6 +87,85 @@ impl AccessibilityTree {
             ))
         };
         Some((end(&selection.anchor)?, end(&selection.focus)?))
+    }
+    /// A long field's runs, for `lines` of its `text`: a line's runs kept
+    /// while its text is (moved, if it moved), made for the lines that
+    /// changed or came into the window, and the rest let go.
+    fn long_runs(
+        &mut self,
+        owner: NodeId,
+        text: &zgui::text::Text,
+        lines: std::ops::Range<usize>,
+        nodes: &mut Vec<(AccessibleId, Node)>,
+    ) {
+        let mut was = self.long_runs.remove(&owner).unwrap_or_default();
+        let mut kept = HashMap::with_capacity(lines.len());
+        let mut ids = Vec::new();
+        let count = text.line_count();
+        for line in lines.start.min(count)..lines.end.min(count) {
+            let range = text.line_range(line);
+            let end = if line + 1 < count {
+                range.end + 1
+            } else {
+                range.end
+            };
+            let value = text.slice(range.start..end);
+            let mut entry = match was.remove(&line) {
+                Some(entry)
+                    if entry.text == *value
+                        && entry.ids.iter().all(|id| self.cache.contains_key(id)) =>
+                {
+                    entry
+                }
+                old => {
+                    // A grapheme too long for AccessKit: the line has no runs.
+                    let Some(runs) = text_run_data(&value, false) else {
+                        continue;
+                    };
+                    let mut run_ids = old.map(|old| old.ids).unwrap_or_default();
+                    run_ids.truncate(runs.len());
+                    while run_ids.len() < runs.len() {
+                        self.next += 1;
+                        run_ids.push(AccessibleId(self.next));
+                    }
+                    for (index, run) in runs.iter().enumerate() {
+                        let mut node = Node::new(accesskit::Role::TextRun);
+                        node.set_value(run.value.clone());
+                        node.set_character_lengths(run.lengths.clone());
+                        node.set_word_starts(run.words.clone());
+                        // A line's runs (cut at 255 characters) are one line.
+                        if index > 0 {
+                            node.set_previous_on_line(run_ids[index - 1]);
+                        }
+                        if index + 1 < runs.len() {
+                            node.set_next_on_line(run_ids[index + 1]);
+                        }
+                        nodes.push((run_ids[index], node));
+                    }
+                    LineRuns {
+                        text: value.into_owned(),
+                        start: usize::MAX,
+                        ids: run_ids,
+                        offsets: runs.into_iter().map(|run| run.offsets).collect(),
+                    }
+                }
+            };
+            if entry.start != range.start {
+                entry.start = range.start;
+                for (id, offsets) in entry.ids.iter().zip(&entry.offsets) {
+                    let at = offsets.iter().map(|offset| offset + range.start).collect();
+                    self.text_positions.insert(*id, (owner, at));
+                }
+            }
+            ids.extend_from_slice(&entry.ids);
+            kept.insert(line, entry);
+        }
+        self.long_runs.insert(owner, kept);
+        if ids.is_empty() {
+            self.text_runs.remove(&owner);
+        } else {
+            self.text_runs.insert(owner, ids);
+        }
     }
     /// The native position of UTF-8 offset `byte` into label `owner`'s runs.
     fn text_position(&self, owner: NodeId, byte: usize) -> Option<accesskit::TextPosition> {
@@ -172,6 +264,7 @@ impl AccessibilityTree {
         }
         self.text_runs.retain(|owner, _| visible.contains(owner));
         self.blocks.retain(|owner| visible.contains(owner));
+        self.long_runs.retain(|owner, _| visible.contains(owner));
         let mut nodes = Vec::with_capacity(ordered.len() + 1);
         // Selectable regions projected now, and their selections: set once
         // their labels' runs are.
@@ -243,10 +336,9 @@ impl AccessibilityTree {
             let mut n = Node::new(semantic_role(semantic));
             // AccessKit Label content belongs in value; AT-SPI derives its
             // accessible name from value, rather than the control-label field.
-            // A long field's text, shared with its editor: in one string
-            // here, where the platform is given it.
-            let long_value = semantics.long_value(id).map(|text| text.to_cow());
-            let value = semantic.value.as_deref().or(long_value.as_deref());
+            // A long field has none: its text is its runs, a page of it.
+            let value = semantic.value.as_deref();
+            let long = semantics.long_value(id).zip(semantics.long_lines(id));
             let text_value = if text {
                 // A heading is also named by its text, as a browser's is.
                 if semantic.role == Role::Heading {
@@ -463,7 +555,10 @@ impl AccessibilityTree {
                             self.cache.contains_key(run) && self.text_positions.contains_key(run)
                         })
                     });
-                if !reusable {
+                if let Some((long, lines)) = &long {
+                    self.blocks.remove(&id);
+                    self.long_runs(id, long, lines.clone(), &mut nodes);
+                } else if !reusable {
                     if block {
                         self.blocks.insert(id);
                     } else {
@@ -970,6 +1065,115 @@ mod editor_text_tests {
         view.unmount();
         adapter.update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "Test", 1.);
         assert!(adapter.resolve_selection(&selection).is_none());
+    }
+
+    /// A long document reads as a page of its lines around the view, a run
+    /// a line, with no value copied whole: an edit sends its line's runs
+    /// alone (the lines after it only move), the caret far away brings its
+    /// own page, and selections map to the document's offsets.
+    #[test]
+    fn a_long_document_reads_as_runs_for_a_page_of_its_lines() {
+        struct Changes;
+        impl accesskit_consumer::TreeChangeHandler for Changes {
+            fn node_added(&mut self, _: &accesskit_consumer::Node) {}
+            fn node_updated(&mut self, _: &accesskit_consumer::Node, _: &accesskit_consumer::Node) {
+            }
+            fn focus_moved(
+                &mut self,
+                _: Option<&accesskit_consumer::Node>,
+                _: Option<&accesskit_consumer::Node>,
+            ) {
+            }
+            fn node_removed(&mut self, _: &accesskit_consumer::Node) {}
+        }
+        let mut ui = Ui::new(400., 300.);
+        let lines: Vec<String> = (0..20_000).map(|i| format!("line {i}")).collect();
+        let value = ui.signal(zgui::text::TextValue::from(lines.join("\n").as_str()));
+        let view = ui.mount(text_area_value("Document", value.clone()).size(300., 200.));
+        ui.prepare_frame();
+        ui.input.focus(&ui.scene, Some(view.node()));
+        let editor = ui.focused_editor().unwrap();
+        editor.editor.borrow_mut().set_selection(0, 0);
+        editor.refresh();
+        ui.prepare_frame();
+        let mut adapter = AccessibilityTree::new();
+        let update = |adapter: &mut AccessibilityTree| {
+            adapter.update(
+                &ui.scene.borrow(),
+                &ui.semantics.borrow(),
+                Some(view.node()),
+                "Test",
+                1.,
+            )
+        };
+        let runs = |update: &TreeUpdate| {
+            update
+                .nodes
+                .iter()
+                .filter(|(_, n)| n.role() == accesskit::Role::TextRun)
+                .count()
+        };
+        let first = update(&mut adapter);
+        let mut tree = accesskit_consumer::Tree::new(first, true);
+        let page = tree.state().focus().unwrap().document_range().text();
+        assert!(page.starts_with("line 0\nline 1\n"), "{page}");
+        let shown = page.lines().count();
+        assert!((20..400).contains(&shown), "a page of lines, not {shown}");
+        assert!(tree.state().focus().unwrap().data().value().is_none());
+        // Typed into line 3: its run goes again, and the editor's selection.
+        let start: usize = lines[..3].iter().map(|l| l.len() + 1).sum();
+        editor
+            .editor
+            .borrow_mut()
+            .set_selection(start + 4, start + 4);
+        editor.paste("X");
+        ui.prepare_frame();
+        let edited = update(&mut adapter);
+        assert_eq!(runs(&edited), 1, "only the edited line's run is sent");
+        let selection = *edited
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == edited.focus)
+            .unwrap()
+            .1
+            .text_selection()
+            .unwrap();
+        tree.update_and_process_changes(edited, &mut Changes);
+        let page = tree.state().focus().unwrap().document_range().text();
+        assert!(
+            page.starts_with("line 0\nline 1\nline 2\nlineX 3\nline 4\n"),
+            "{page}"
+        );
+        let caret = start + 5;
+        assert_eq!(
+            adapter.resolve_selection(&selection),
+            Some((view.node(), caret, caret))
+        );
+        // The caret ten thousand lines on: the page around it.
+        let far: usize = lines[..10_000].iter().map(|l| l.len() + 1).sum::<usize>() + 1;
+        editor.editor.borrow_mut().set_selection(far, far);
+        editor.refresh();
+        ui.prepare_frame();
+        let moved = update(&mut adapter);
+        let selection = *moved
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == moved.focus)
+            .unwrap()
+            .1
+            .text_selection()
+            .unwrap();
+        tree.update_and_process_changes(moved, &mut Changes);
+        let page = tree.state().focus().unwrap().document_range().text();
+        assert!(
+            page.contains("\nline 10000\n") && !page.contains("lineX 3"),
+            "{page}"
+        );
+        assert_eq!(
+            adapter.resolve_selection(&selection),
+            Some((view.node(), far, far))
+        );
+        assert!(update(&mut adapter).nodes.is_empty(), "idle sends nothing");
     }
 
     #[test]

@@ -286,7 +286,8 @@ pub struct Semantics {
     /// Long text fields' contents (`long_value`), shared with their editors
     /// instead of copied into `value`: few nodes have one, so no node
     /// carries room for it.
-    long: HashMap<NodeId, crate::text::Text>,
+    /// With the lines of each assistive technology is given (`long_lines`).
+    long: HashMap<NodeId, (crate::text::Text, std::ops::Range<usize>)>,
 }
 impl Default for Semantics {
     fn default() -> Self {
@@ -462,12 +463,16 @@ impl Semantics {
             return;
         };
         let node = &mut entry.node;
-        let same = self.long.get(&id).is_some_and(|held| held.ptr_eq(text));
+        let same = self
+            .long
+            .get(&id)
+            .is_some_and(|(held, _)| held.ptr_eq(text));
         if same && node.text_selection == Some(selection) && node.read_only == read_only {
             return;
         }
         if !same {
-            self.long.insert(id, text.clone());
+            let lines = self.long.remove(&id).map_or(0..0, |(_, lines)| lines);
+            self.long.insert(id, (text.clone(), lines));
             node.value = None;
         }
         node.text_selection = Some(selection);
@@ -481,7 +486,30 @@ impl Semantics {
         if self.buried(id) {
             return None;
         }
-        self.long.get(&id)
+        self.long.get(&id).map(|(text, _)| text)
+    }
+    /// The lines of a long text field assistive technology is given: the
+    /// lines in view and a page around them (or around the caret, scrolled
+    /// out of view), as a browser's editors give a page of a long document.
+    pub fn long_lines(&self, id: NodeId) -> Option<std::ops::Range<usize>> {
+        if self.buried(id) {
+            return None;
+        }
+        self.long.get(&id).map(|(_, lines)| lines.clone())
+    }
+    /// The lines of a long text field assistive technology is given
+    /// (`long_lines`): as the view scrolls, its text unchanged.
+    pub fn update_long_lines(&mut self, id: NodeId, lines: std::ops::Range<usize>) {
+        let (Some(entry), Some((_, held))) = (self.nodes.get_mut(&id), self.long.get_mut(&id))
+        else {
+            return;
+        };
+        if *held == lines {
+            return;
+        }
+        *held = lines;
+        self.revision = self.revision.wrapping_add(1);
+        entry.revision = self.revision;
     }
     /// As `update_text_input` for text known unchanged (an editor's text at
     /// the same revision): its selection and read-only state.
