@@ -1,5 +1,6 @@
 //! What the heavy dashboard (see zgx_workload::heavy) costs the GPU a
-//! frame, offscreen at a Retina scale: each frame waited for, its Metal GPU
+//! frame, or with `ZGX_MODE=animate` the animation workload (see
+//! zgx_workload::animation), offscreen at a Retina scale: each frame waited for, its Metal GPU
 //! time read back (macOS), with the frame's damaged pixels, draws and
 //! instances. A hash of the frame's pixels every 100 ticks tells whether a
 //! change draws exactly the same thing.
@@ -15,10 +16,15 @@
 use std::hash::{Hash, Hasher};
 use zgx::widgets::Ui;
 use zgx_gpu::GpuRenderer;
-use zgx_workload::{Mode, heavy::*};
+use zgx_workload::{Mode, heavy};
 
+#[path = "support/animation_view.rs"]
+mod animation_view;
 #[path = "support/heavy_view.rs"]
 mod view;
+
+/// What a tick changes in the scene.
+type Advance = Box<dyn FnMut(&Ui, usize)>;
 
 fn env<T: std::str::FromStr>(name: &str, default: T) -> T {
     std::env::var(name)
@@ -32,29 +38,37 @@ fn main() {
     let pace: f64 = env("PACE", 0.);
     let started = std::time::Instant::now();
     let scale: f32 = env("SCALE", 2.);
-    let mut work = Heavy::from_env();
-    let mode = work.mode;
-    let mut ui = Ui::new(WIDTH, HEIGHT);
+    let animate = zgx::env::var("ZGX_MODE").as_deref() == Ok("animate");
+    let (width, height) = if animate {
+        (960., 720.)
+    } else {
+        (heavy::WIDTH, heavy::HEIGHT)
+    };
+    let mut ui = Ui::new(width, height);
     let mut gpu = GpuRenderer::new(
-        (WIDTH * scale).round() as u32,
-        (HEIGHT * scale).round() as u32,
+        (width * scale).round() as u32,
+        (height * scale).round() as u32,
     )
     .expect("GPU");
     gpu.set_scale_factor(scale);
     gpu.install_text(&mut ui.scene.borrow_mut());
-    let live = ui.signal(0_u64);
-    let scroll = ui.signal(0_f32);
-    let log = ui.signal(work.visible_log());
-    ui.mount(view::dashboard(live.clone(), scroll.clone(), log.clone()));
-    let mut times = Vec::new();
-    let (mut damaged, mut draws, mut instances, mut passes) = (0_u64, 0_usize, 0_usize, 0_usize);
-    // The scene's own damage: its exact union (on a grid of logical
-    // points) and how many rectangles.
-    let (mut raw, mut rects) = (0_u64, 0_usize);
-    let mut grid = vec![false; (WIDTH * HEIGHT) as usize];
-    let mut pixels = std::collections::hash_map::DefaultHasher::new();
-    for tick in 0..ticks {
-        if tick > 0 {
+    // Each tick's change: the dashboard's data, or the animation's clock a
+    // 120 Hz refresh on (as `animation_headless`).
+    let (name, mut advance): (String, Advance) = if animate {
+        let clock = ui.signal(0_f32);
+        ui.mount(animation_view::animation(clock.clone()));
+        let advance = move |_: &Ui, tick: usize| {
+            clock.set(tick as f32 / 120.);
+        };
+        ("Animate".into(), Box::new(advance))
+    } else {
+        let mut work = heavy::Heavy::from_env();
+        let mode = work.mode;
+        let live = ui.signal(0_u64);
+        let scroll = ui.signal(0_f32);
+        let log = ui.signal(work.visible_log());
+        ui.mount(view::dashboard(live.clone(), scroll.clone(), log.clone()));
+        let advance = move |ui: &Ui, _: usize| {
             work.tick();
             ui.runtime.batch(|| {
                 if matches!(mode, Mode::Stream | Mode::Both) {
@@ -65,6 +79,19 @@ fn main() {
                     scroll.set(work.scroll);
                 }
             });
+        };
+        (format!("{mode:?}"), Box::new(advance))
+    };
+    let mut times = Vec::new();
+    let (mut damaged, mut draws, mut instances, mut passes) = (0_u64, 0_usize, 0_usize, 0_usize);
+    // The scene's own damage: its exact union (on a grid of logical
+    // points) and how many rectangles.
+    let (mut raw, mut rects) = (0_u64, 0_usize);
+    let mut grid = vec![false; (width * height) as usize];
+    let mut pixels = std::collections::hash_map::DefaultHasher::new();
+    for tick in 0..ticks {
+        if tick > 0 {
+            advance(&ui, tick);
         }
         if pace > 0. {
             let due = started + std::time::Duration::from_secs_f64(tick as f64 / pace);
@@ -89,10 +116,10 @@ fn main() {
             grid.fill(false);
             for d in &report.damage {
                 let (x0, y0) = (d.x.max(0.) as usize, d.y.max(0.) as usize);
-                let x1 = ((d.x + d.width).ceil() as usize).min(WIDTH as usize);
-                let y1 = ((d.y + d.height).ceil() as usize).min(HEIGHT as usize);
+                let x1 = ((d.x + d.width).ceil() as usize).min(width as usize);
+                let y1 = ((d.y + d.height).ceil() as usize).min(height as usize);
                 for y in y0..y1 {
-                    grid[y * WIDTH as usize + x0..y * WIDTH as usize + x1.max(x0)].fill(true);
+                    grid[y * width as usize + x0..y * width as usize + x1.max(x0)].fill(true);
                 }
             }
             raw += grid.iter().filter(|c| **c).count() as u64 * (scale * scale) as u64;
@@ -113,7 +140,7 @@ fn main() {
     };
     let mean = times.iter().map(|t| t.as_secs_f64()).sum::<f64>() / times.len().max(1) as f64 * 1e3;
     println!(
-        "{mode:?}: GPU {:.3} ms p10, {:.3} median, {:.3} p90, {mean:.3} mean ({} frames timed); damaged {:.2} Mpx, \
+        "{name}: GPU {:.3} ms p10, {:.3} median, {:.3} p90, {mean:.3} mean ({} frames timed); damaged {:.2} Mpx, \
          {:.1} draws, {:.0} instances, {:.2} passes a frame; scene damage {:.2} Mpx in {:.1} rects; pixels {:016x}",
         at(0.1),
         at(0.5),
