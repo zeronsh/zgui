@@ -393,13 +393,20 @@ mod macos {
     }
     impl Material {
         /// For popup root `root`: its panel (what the root holds) is a box
-        /// with a translucent fill.
-        fn of(scene: &Scene, semantics: &Semantics, root: NodeId) -> Option<Self> {
-            let panel = *scene.children(root).first()?;
+        /// with a translucent fill. A drag preview (`preview`) is its own
+        /// panel, and has the material only if it blurs what is behind it
+        /// (`backdrop_blur`): in a window of its own it has nothing of the
+        /// app's to blur, so AppKit's material blurs what is behind instead.
+        fn of(scene: &Scene, semantics: &Semantics, root: NodeId, preview: bool) -> Option<Self> {
+            let panel = if preview {
+                root
+            } else {
+                *scene.children(root).first()?
+            };
             let (NodeKind::Quad(quad) | NodeKind::Panel { quad, .. }) = scene.kind(panel) else {
                 return None;
             };
-            if quad.fill.3 == 255 {
+            if quad.fill.3 == 255 || (preview && scene.effects(panel).blur_radius <= 0.) {
                 return None;
             }
             let menu = semantics
@@ -723,6 +730,8 @@ mod macos {
             }
             self.window.setAlphaValue(1.);
             self.window.setIgnoresMouseEvents(false);
+            // A menu's or a popover's rim, should a preview have had it off.
+            self.window.setHasShadow(true);
             if let Some(renderer) = &mut self.renderer {
                 renderer.trim();
             }
@@ -1276,7 +1285,7 @@ mod macos {
                     None => rect,
                 };
                 let moved = panel.rect != Some(frame);
-                let material = Material::of(scene, semantics, root)
+                let material = Material::of(scene, semantics, root, preview.is_some())
                     .map(|material| material.moved(frame.x - rect.x, frame.y - rect.y));
                 let drawn = panel
                     .renderer
@@ -1305,8 +1314,10 @@ mod macos {
                     CATransaction::flush();
                     if panel.preview.is_some() {
                         // Over every window, the pointer passing through it,
-                        // as AppKit's drag images.
+                        // and with no shadow (on macOS 26 a dark rim round
+                        // what it shows), as AppKit's drag images.
                         panel.window.setIgnoresMouseEvents(true);
+                        panel.window.setHasShadow(false);
                         panel.window.setLevel(DRAGGING_LEVEL);
                         let number = panel.window.windowNumber();
                         PREVIEWS.with(|previews| previews.borrow_mut().push(number));
@@ -1432,6 +1443,50 @@ mod macos {
                     .borrow_mut()
                     .retain(|(_, send)| !Rc::ptr_eq(send, &self.send));
             });
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Material;
+        use objc2_app_kit::NSVisualEffectMaterial;
+        use zgui::{compose::prelude::*, widgets::Ui};
+
+        /// `view` mounted alone: the material its root would show behind it.
+        fn material(view: View, preview: bool) -> Option<Material> {
+            let mut ui = Ui::new(400., 300.);
+            let handle = ui.mount(view);
+            ui.prepare_frame();
+            let scene = ui.scene.borrow();
+            Material::of(&scene, &ui.semantics.borrow(), handle.node(), preview)
+        }
+        fn chip() -> View {
+            row()
+                .w(120.)
+                .h(28.)
+                .rounded(8.)
+                .bg(rgba(0xffffff10))
+                .child(text("Tab"))
+        }
+
+        #[test]
+        fn a_drag_preview_that_blurs_behind_it_gets_appkits_material() {
+            let blurred = material(chip().blur(24.), true).expect("a material");
+            assert!(blurred.material == NSVisualEffectMaterial::Popover);
+            assert_eq!(blurred.radius, 8.);
+            assert_eq!((blurred.rect.width, blurred.rect.height), (120., 28.));
+            // No backdrop blur: nothing behind it blurs.
+            assert!(material(chip(), true).is_none());
+            // Opaque: nothing shows behind it.
+            assert!(material(chip().blur(24.).bg(rgb(0x202020)), true).is_none());
+        }
+
+        #[test]
+        fn a_popups_panel_is_what_its_root_holds() {
+            // A popover's root holds its panel; the root itself is no panel.
+            let root = div().child(chip());
+            assert!(material(root, false).is_some());
+            assert!(material(chip().blur(24.), false).is_none());
         }
     }
 }
