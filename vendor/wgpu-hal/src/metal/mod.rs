@@ -521,7 +521,13 @@ impl fmt::Debug for PresentHandoff {
         f.debug_struct("PresentHandoff").finish_non_exhaustive()
     }
 }
+// SAFETY: its only non-thread-safe part is the drawable, held behind the
+// mutex: moved in by `present` (the queue's thread) and out by `scheduled`
+// (Metal's handler thread), and used there only to retain, release and
+// `present` it, which Metal allows from any thread (as `presentDrawable:`
+// does from its own handler, and as `SurfaceTexture`'s `Send` assumes).
 unsafe impl Send for PresentHandoff {}
+// SAFETY: as for `Send`: shared, it is touched only through the mutex.
 unsafe impl Sync for PresentHandoff {}
 impl PresentHandoff {
     fn scheduled(&self) {
@@ -645,6 +651,10 @@ impl crate::Queue for Queue {
                 if let Some(last) = last {
                     let handoff = Arc::clone(&handoff);
                     let block = block2::RcBlock::new(move |_cmd_buf| handoff.scheduled());
+                    // SAFETY: `last` is not committed yet (the loop below
+                    // commits it), as the handler requires. Metal copies the
+                    // block, so it outlives `block`; it runs once, on Metal's
+                    // thread, touching only the `Send + Sync` handoff.
                     unsafe { last.addScheduledHandler(block2::RcBlock::as_ptr(&block)) };
                 }
             }

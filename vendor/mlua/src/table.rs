@@ -946,6 +946,15 @@ impl Table {
     ) -> Result<()> {
         let lua = self.0.lua.lock();
         let state = lua.state();
+        // SAFETY: the table, then each pair `lua_rawiter` pushes above it,
+        // in the 5 slots reserved (`StackGuard` restores the stack, on an
+        // error too). The walk is raw: no metamethod runs, and nothing it
+        // calls raises an error. The callback runs between steps; any mlua
+        // call it makes leaves the stack as it found it (and the state, which
+        // a nested callback sets and restores), so the table is at -1 again
+        // after the pair is popped. If it writes the table meanwhile,
+        // `lua_rawiter` bounds its position by the table's current size,
+        // so at worst a pair is missed or seen twice.
         unsafe {
             let _sg = StackGuard::new(state);
             check_stack(state, 5)?;
@@ -954,7 +963,8 @@ impl Table {
             let mut index = ffi::lua_rawiter(state, -1, 0);
             while index >= 0 {
                 // The pair as absolute indices: the callback may use the
-                // stack above them.
+                // stack above them. They hold it until the callback returns,
+                // which its `StackValue`s cannot outlive.
                 let top = ffi::lua_gettop(state);
                 f(StackValue::new(&lua, top - 1), StackValue::new(&lua, top))?;
                 ffi::lua_settop(state, top - 2);
@@ -1608,52 +1618,81 @@ impl<V: FromLua> Iterator for TableSequence<'_, V> {
 /// A key or value on the Lua stack, borrowed for one call of
 /// [`Table::for_each_borrowed`]'s callback.
 ///
+/// Its methods are for that callback, not for a callback nested in it (a
+/// scoped function it calls Lua with): there the value's stack slot is not
+/// at hand, and `to_pointer`, `to_value` and `get` would read another
+/// (soundly, but the wrong value). `type_name` and `as_bytes` were read
+/// with the pair.
+///
 /// zgui patch: not in upstream mlua (see `vendor/mlua/ZGUI_PATCH.md`).
 #[cfg(feature = "luau")]
 #[cfg_attr(docsrs, doc(cfg(feature = "luau")))]
 pub struct StackValue<'a> {
     lua: &'a RawLua,
     index: c_int,
+    /// The value's type and, for a string, its bytes, read when the pair is
+    /// pushed. `as_bytes` must not read them from `index` later: called from
+    /// a callback nested in this one (a scoped function this one calls Lua
+    /// with), `index` names a slot of that callback's frame, whose string
+    /// could be collected while the borrow lasts.
+    kind: c_int,
+    bytes: Option<(*const u8, usize)>,
 }
 
 #[cfg(feature = "luau")]
 impl<'a> StackValue<'a> {
-    fn new(lua: &'a RawLua, index: c_int) -> Self {
-        StackValue { lua, index }
+    /// # Safety
+    ///
+    /// `index` is an absolute index of the current frame of `lua`'s state,
+    /// holding the value until the borrow `'a` ends.
+    unsafe fn new(lua: &'a RawLua, index: c_int) -> Self {
+        let state = lua.state();
+        // SAFETY: `index` is a valid index (the caller's promise). Reading a
+        // type converts nothing, and a string's bytes are read only once its
+        // type is checked (`lua_tolstring` of a number would convert it in
+        // place). Luau never moves a string, and the slot keeps it alive for
+        // `'a`. Neither call allocates or raises an error.
+        unsafe {
+            let kind = ffi::lua_type(state, index);
+            let bytes = (kind == ffi::LUA_TSTRING).then(|| {
+                let mut len = 0;
+                let data = ffi::lua_tolstring(state, index, &mut len);
+                (data as *const u8, len)
+            });
+            StackValue {
+                lua,
+                index,
+                kind,
+                bytes,
+            }
+        }
     }
 
     /// The value's type name, as [`Value::type_name`].
     pub fn type_name(&self) -> &'static str {
-        unsafe {
-            match ffi::lua_type(self.lua.state(), self.index) {
-                ffi::LUA_TNIL => "nil",
-                ffi::LUA_TBOOLEAN => "boolean",
-                ffi::LUA_TLIGHTUSERDATA => "lightuserdata",
-                ffi::LUA_TNUMBER => "number",
-                ffi::LUA_TSTRING => "string",
-                ffi::LUA_TTABLE => "table",
-                ffi::LUA_TFUNCTION => "function",
-                ffi::LUA_TUSERDATA => "userdata",
-                ffi::LUA_TTHREAD => "thread",
-                ffi::LUA_TVECTOR => "vector",
-                ffi::LUA_TBUFFER => "buffer",
-                _ => "other",
-            }
+        match self.kind {
+            ffi::LUA_TNIL => "nil",
+            ffi::LUA_TBOOLEAN => "boolean",
+            ffi::LUA_TLIGHTUSERDATA => "lightuserdata",
+            ffi::LUA_TNUMBER => "number",
+            ffi::LUA_TSTRING => "string",
+            ffi::LUA_TTABLE => "table",
+            ffi::LUA_TFUNCTION => "function",
+            ffi::LUA_TUSERDATA => "userdata",
+            ffi::LUA_TTHREAD => "thread",
+            ffi::LUA_TVECTOR => "vector",
+            ffi::LUA_TBUFFER => "buffer",
+            _ => "other",
         }
     }
 
     /// A string's bytes, borrowed (no coercion: `None` for numbers).
     pub fn as_bytes(&self) -> Option<&'a [u8]> {
-        unsafe {
-            let state = self.lua.state();
-            if ffi::lua_type(state, self.index) != ffi::LUA_TSTRING {
-                return None;
-            }
-            let mut len = 0;
-            let data = ffi::lua_tolstring(state, self.index, &mut len);
-            // The string stays on the stack, and so alive, for the borrow.
-            Some(std::slice::from_raw_parts(data as *const u8, len))
-        }
+        let (data, len) = self.bytes?;
+        // SAFETY: the string's `len` bytes at `data`, read by `new`. Its slot
+        // in `for_each_borrowed`'s frame keeps it alive and unmoved for `'a`,
+        // which ends before the slot is popped.
+        Some(unsafe { std::slice::from_raw_parts(data, len) })
     }
 
     /// As [`StackValue::as_bytes`], when the bytes are UTF-8.
@@ -1666,17 +1705,23 @@ impl<'a> StackValue<'a> {
     ///
     /// [`LuaString::to_pointer`]: crate::LuaString::to_pointer
     pub fn to_pointer(&self) -> *const c_void {
+        // SAFETY: reads the slot at `index`: in the callback's own frame the
+        // value (see the type's note for nested calls). No allocation.
         unsafe { ffi::lua_topointer(self.lua.state(), self.index) }
     }
 
     /// The value, owned (a reference for strings, tables, functions and
     /// userdata, as any [`Value`]).
     pub fn to_value(&self) -> Result<Value> {
+        // SAFETY: as `to_pointer`; the value is referenced, so owned (one
+        // slot of the callback's room above the pair, `check_stack(5)`).
         unsafe { self.lua.try_stack_value(self.index, None) }
     }
 
     /// The value converted to `V`, as [`FromLua`] converts it.
     pub fn get<V: FromLua>(&self) -> Result<V> {
+        // SAFETY: as `to_value`: `FromLua::from_stack` type-checks the slot
+        // and gives an owned `V` (`UserDataRef` holds the userdata's data).
         unsafe { V::from_stack(self.index, self.lua) }
     }
 }

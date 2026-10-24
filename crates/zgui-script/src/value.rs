@@ -577,9 +577,16 @@ fn raw_table(t: &Table, old: Option<&Value>) -> Option<mlua::Result<Value>> {
     }
     const TABLE: c_int = 1;
     const IDS: c_int = 2;
-    /// SAFETY (for both): `state`'s stack holds the table at `idx`, the
-    /// cache's `ids` (or nil) at 2, and room for three slots a level. Raw
-    /// reads raise no Luau error.
+    /// # Safety
+    ///
+    /// (For both.) `state` is inside a C call (`exec_raw`'s) whose stack
+    /// holds the value at absolute index `idx` (a table, for `read_table`),
+    /// the cache's `ids` (or nil) at 2, and room for three slots a level
+    /// below `depth` (`RAW_DEPTH`). Only raw reads and type checks are made:
+    /// no metamethod or script runs, nothing allocates (so the collector
+    /// does not run, and every string read stays where it is, held by the
+    /// table on the stack, while `cx.strings` keys it by address), and no
+    /// Luau error is raised. Each push is popped before returning.
     unsafe fn read(
         state: *mut ffi::lua_State,
         idx: c_int,
@@ -587,6 +594,8 @@ fn raw_table(t: &Table, old: Option<&Value>) -> Option<mlua::Result<Value>> {
         depth: u32,
         cx: &mut Cx,
     ) -> Result<Value, Unread> {
+        // SAFETY: as this function's; a string is read without conversion
+        // (its type checked), its bytes valid while the table holds it.
         unsafe {
             Ok(match ffi::lua_type(state, idx) {
                 ffi::LUA_TNIL => Value::Nil,
@@ -629,6 +638,10 @@ fn raw_table(t: &Table, old: Option<&Value>) -> Option<mlua::Result<Value>> {
         if depth >= RAW_DEPTH {
             return Err(Unread::General);
         }
+        // SAFETY: as `read`'s. The walk (`lua_rawiter`) pushes a key and a
+        // value, popped after each is read; nothing writes the table
+        // meanwhile. Only a string key is read as one (`lua_tolstring` of a
+        // number would convert it in place).
         unsafe {
             // A table a script was given (read-only, filed): its value.
             if ffi::lua_getreadonly(state, idx) != 0 && ffi::lua_type(state, IDS) == ffi::LUA_TTABLE
@@ -733,8 +746,11 @@ fn raw_table(t: &Table, old: Option<&Value>) -> Option<mlua::Result<Value>> {
         strings: HashMap::new(),
     };
     let mut out = Err(Unread::General);
-    // SAFETY: `exec_raw` pushes the table and `ids` (or nil) at 1 and 2,
-    // as `read_table` needs; it raises no error.
+    // SAFETY: `exec_raw` runs the closure as a C function inside a protected
+    // call, the table and `ids` (or nil) its arguments at 1 and 2, with
+    // `LUA_MINSTACK` (20) slots: `read_table` needs 3 a level, 5 levels at
+    // most. `cx.held` is borrowed throughout; nothing in the walk runs
+    // code that could write it.
     unsafe {
         lua.exec_raw::<()>((t, ids), |state| {
             out = read_table(state, TABLE, old, 0, &mut cx);
@@ -887,10 +903,12 @@ fn plain_table(lua: &Lua, items: &[Value]) -> mlua::Result<Table> {
     use mlua::ffi;
     let n = std::ffi::c_int::try_from(items.len())
         .map_err(|_| mlua::Error::runtime("a list too long for a table"))?;
-    // SAFETY: makes a table and fills its array part, leaving the table on
-    // the stack as `exec_raw`'s result. An allocation failing raises a
-    // Luau error out of this frame, which holds nothing to drop (`items`
-    // is borrowed).
+    // SAFETY: makes a table and fills its array part, one value on the stack
+    // above it at a time, leaving the table as `exec_raw`'s result. An
+    // allocation failing (the memory limit) raises a Luau error, which
+    // unwinds this closure (holding nothing to drop: `items` is borrowed)
+    // to `exec_raw`'s protected call, an `Err`. The collector may run as
+    // strings are made; the table is on the stack, and so kept.
     unsafe {
         lua.exec_raw::<Table>((), |state| {
             ffi::lua_createtable(state, n, 0);
@@ -1139,12 +1157,19 @@ fn raw_shared(lua: &Lua, value: &Value) -> mlua::Result<Table> {
     /// Push `value`'s script value (`tables` and `ids`, the cache's, at
     /// stack indices 1 and 2).
     ///
-    /// SAFETY: `state` is a Luau state with the two cache tables at 1 and
-    /// 2. An allocation failing raises a Luau error out of this frame,
-    /// which holds nothing to drop (`made` is the caller's).
+    /// # Safety
+    ///
+    /// `state` is inside a C call (`exec_raw`'s) with the two cache tables
+    /// at 1 and 2. Each level asks for the 4 slots it uses
+    /// (`luaL_checkstack`). An allocation failing (the memory limit) raises
+    /// a Luau error, which unwinds these frames (holding nothing to drop:
+    /// `made` is the caller's) to the protected call. The collector may run
+    /// as tables and strings are made: each is on the stack until it is
+    /// filed or set into its parent. Raw sets only, so no script runs.
     unsafe fn push<'a>(state: *mut ffi::lua_State, value: &'a Value, made: &mut Made<'a>) {
         const TABLES: c_int = 1;
         const IDS: c_int = 2;
+        // SAFETY: as this function's.
         unsafe {
             match value {
                 Value::Nil | Value::Element(_) => ffi::lua_pushnil(state),
@@ -1183,6 +1208,12 @@ fn raw_shared(lua: &Lua, value: &Value) -> mlua::Result<Table> {
                         _ => {}
                     }
                     ffi::lua_setreadonly(state, -1, 1);
+                    // Held before it is filed: `tables[id]` must never
+                    // outlive the value whose address `id` is, or a new
+                    // value at that address would be given this table. A
+                    // filing that fails part way (an allocation over the
+                    // limit) leaves it held, which a sweep lets go of.
+                    made.filed.push(value);
                     // Filed: tables[id] = it, ids[it] = id.
                     ffi::lua_pushlightuserdata(state, id);
                     ffi::lua_pushvalue(state, -2);
@@ -1190,7 +1221,6 @@ fn raw_shared(lua: &Lua, value: &Value) -> mlua::Result<Table> {
                     ffi::lua_pushvalue(state, -1);
                     ffi::lua_pushlightuserdata(state, id);
                     ffi::lua_rawset(state, IDS);
-                    made.filed.push(value);
                 }
             }
         }
@@ -1236,13 +1266,15 @@ fn file_weighed(lua: &Lua, value: &Value, table: &Table, added: usize) -> mlua::
         return Ok(());
     };
     let id = identity(value);
-    let tables = cache.tables.clone();
-    tables.raw_set(id_key(id), table)?;
-    let ids = cache.ids.clone();
-    ids.raw_set(table, id_key(id))?;
+    // Held before it is filed, as in `raw_shared`: a filing that fails
+    // part way (an allocation over the limit) must not leave `tables[id]`
+    // without the value that keeps `id`'s address from being reused.
     cache.held.borrow_mut().insert(id, (value.clone(), added));
     cache.weight.set(cache.weight.get() + added);
+    let (tables, ids) = (cache.tables.clone(), cache.ids.clone());
     drop(cache);
+    tables.raw_set(id_key(id), table)?;
+    ids.raw_set(table, id_key(id))?;
     sweep(lua)
 }
 /// Sweep as the cache doubles in weight: amortized, each conversion pays a

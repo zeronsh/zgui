@@ -94,6 +94,9 @@ pub fn enumerate_adapters_by(
 
     for cur_index in 0.. {
         profiling::scope!("IDXGIFactory1::EnumAdapters1");
+        // SAFETY: COM calls on a live factory (`IDXGIFactory6` for the
+        // preference), which return an owned adapter or an error (past the
+        // last adapter, `DXGI_ERROR_NOT_FOUND`), as `EnumAdapters1` upstream.
         let adapter1: windows::core::Result<Dxgi::IDXGIAdapter1> = match (&factory, preference) {
             (DxgiFactory::Factory6(factory), Some(preference)) => unsafe {
                 factory.EnumAdapterByGpuPreference(cur_index, preference)

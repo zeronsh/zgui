@@ -205,6 +205,10 @@ fn thread_cpu() -> Duration {
         low: u32,
         high: u32,
     }
+    // SAFETY: as `processthreadsapi.h` declares them: `GetCurrentThread`
+    // returns a pseudo handle (never closed), and `GetThreadTimes` takes a
+    // thread handle and four `FILETIME` out-pointers, `FileTime` being its
+    // layout (two `DWORD`s, low first), and returns a `BOOL`.
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GetCurrentThread() -> *mut std::ffi::c_void;

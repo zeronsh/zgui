@@ -100,12 +100,18 @@ pub struct Styles {
 impl Clone for Styles {
     #[inline]
     fn clone(&self) -> Self {
-        // SAFETY: `copy` is a bitwise copy of `self`, its owning fields
-        // aliasing `self`'s. Each of those is overwritten with its own clone
-        // through `ptr::write`, which drops nothing (the aliases are not
-        // owned); the rest are `Copy`. `ManuallyDrop` keeps a panicking clone
-        // from dropping the aliases. The field list is checked below.
+        // SAFETY: `self` is a valid, aligned `Styles`, so reading it bitwise
+        // gives a valid value: `copy`, whose five owning fields alias
+        // `self`'s. They are all `Arc`s or enums of `Arc`s (no `Box`, whose
+        // uniqueness an alias would break), and `ManuallyDrop` keeps `copy`
+        // from dropping them, so `self` keeps sole ownership of its own.
         let mut copy = std::mem::ManuallyDrop::new(unsafe { std::ptr::read(self) });
+        // SAFETY: each aliasing field is overwritten with its own clone;
+        // `ptr::write` drops nothing, so `self`'s are not released. Every
+        // other field is `Copy` (`styles_clone_covers_every_owning_field`
+        // fails to compile otherwise), so `copy` then owns exactly what it
+        // holds. A clone that panicked would leave `copy` undropped, leaking
+        // the clones made so far but freeing nothing of `self`'s.
         unsafe {
             std::ptr::write(&mut copy.layout_options, self.layout_options.clone());
             std::ptr::write(&mut copy.font_family, self.font_family.clone());
@@ -2085,6 +2091,48 @@ pub const fn rgba(value: u32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// `Clone for Styles` copies bitwise and then clones the owning fields:
+    /// each clone holds its own reference, and dropping either side releases
+    /// only its own (`cargo +nightly miri test -p zgui --lib style::` checks
+    /// the aliasing too).
+    #[test]
+    fn a_clone_owns_its_shared_fields() {
+        use std::sync::Arc;
+        let options = Arc::new(crate::layout::LayoutOptions::default());
+        let rare = Arc::new(RareStyles::default());
+        let tokens = Arc::new(crate::theme::Bindings::default());
+        let stops: Arc<[crate::canvas::GradientStop]> = Arc::from([]);
+        let family: Arc<str> = Arc::from("Inter");
+        let original = Styles {
+            layout_options: Some(options.clone()),
+            font_family: Some(crate::text_layout::FontFamily::Named(family.clone())),
+            paint_background: Some(Some(crate::decoration::Background::Linear {
+                angle: 1.,
+                stops: stops.clone(),
+            })),
+            rare: Some(rare.clone()),
+            tokens: Some(tokens.clone()),
+            width: Some(12.),
+            ..Styles::default()
+        };
+        let copy = original.clone();
+        assert_eq!(copy, original);
+        let counts = || {
+            [
+                Arc::strong_count(&options),
+                Arc::strong_count(&rare),
+                Arc::strong_count(&tokens),
+                Arc::strong_count(&stops),
+                Arc::strong_count(&family),
+            ]
+        };
+        assert_eq!(counts(), [3; 5]);
+        drop(original);
+        assert_eq!(counts(), [2; 5]);
+        assert_eq!(copy.width, Some(12.));
+        drop(copy);
+        assert_eq!(counts(), [1; 5]);
+    }
     #[test]
     fn percentage_patches_normalize_invalid_values_and_replace_pixel_axes() {
         let patch = Styles::new().size(80., 30.).w_percent(50.).h_full();

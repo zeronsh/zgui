@@ -4059,3 +4059,35 @@ fn retain(env: &Env, resource: Box<dyn Any>) {
         None => env.retained.borrow_mut().push(resource),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// A walk's borrowed key and value (`for_each_borrowed`, as `fill_from`
+    /// reads properties) read the same from a callback nested in the walk's,
+    /// whose stack frame holds other values at the pair's indices.
+    #[test]
+    fn borrowed_pairs_read_the_same_from_nested_callbacks() {
+        let lua = mlua::Lua::new();
+        let table: mlua::Table = lua.load(r#"return { name = "outer" }"#).eval().unwrap();
+        let call: mlua::Function = lua
+            .load("return function(f) return f('a', 'b', 'c', 'd') end")
+            .eval()
+            .unwrap();
+        let mut seen = 0;
+        table
+            .for_each_borrowed(|key, value| {
+                lua.scope(|scope| {
+                    let nested = scope.create_function_mut(|_, _: mlua::MultiValue| {
+                        assert_eq!(key.as_bytes(), Some(&b"name"[..]));
+                        assert_eq!(value.as_str(), Some("outer"));
+                        assert_eq!(value.type_name(), "string");
+                        seen += 1;
+                        Ok(())
+                    })?;
+                    call.call::<()>(nested)
+                })
+            })
+            .unwrap();
+        assert_eq!(seen, 1);
+    }
+}

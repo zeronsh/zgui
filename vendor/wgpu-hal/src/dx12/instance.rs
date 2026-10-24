@@ -211,6 +211,8 @@ impl super::Instance {
             auxil::dxgi::factory::enumerate_adapters_by(self.factory.clone(), Some(preference))
                 .into_iter()
                 .partition(|raw| {
+                    // SAFETY: a COM call on a live adapter, returning its
+                    // description by value.
                     unsafe { raw.GetDesc1() }.is_ok_and(|desc| {
                         !Dxgi::DXGI_ADAPTER_FLAG(desc.Flags as i32)
                             .contains(Dxgi::DXGI_ADAPTER_FLAG_SOFTWARE)

@@ -4,8 +4,18 @@
 //! mlua's own interrupt hook (`Lua::set_interrupt`) guards each call as a
 //! callback: 109 instructions an iteration of every script loop, more than
 //! the loop itself. This one is a plain C hook counting in the Lua thread
-//! (38), doing its work at one call in 64 as the closure did. It is the
-//! crate's unsafe uses of Luau's C API, with `data::sort_by_keys`.
+//! (38), doing its work at one call in 64 as the closure did. It is one of
+//! the crate's unsafe uses of Luau's C API, with `data::sort_by_keys` and
+//! `value`'s table conversions.
+//!
+//! How a Luau error leaves Rust frames, which all of them rely on: Luau is
+//! built as C++ with exceptions (`luau0-src` leaves `LUA_USE_LONGJMP`
+//! unset), and mlua declares its C API `extern "C-unwind"`, so an error
+//! (`lua_error`, a failed allocation) is a C++ exception that unwinds
+//! through Rust frames running their drops, to the `lua_pcall` that every
+//! script call and `Lua::exec_raw` closure runs inside. A Rust panic must
+//! not reach Luau's frames: it would unwind past `lua_pcall` without
+//! restoring the VM's call state.
 use crate::Deadline;
 use mlua::{Lua, ffi};
 use std::{
@@ -57,8 +67,10 @@ pub(crate) fn install(lua: &Lua, deadline: Rc<Cell<Option<Deadline>>>, limit: us
     });
     let main = Cell::new(0usize);
     // SAFETY: `exec_raw` hands the closure the VM's state, valid while it
-    // runs. `lua_mainthread` and `lua_callbacks` only read and write the
-    // VM's own global state; setting `interrupt` is how Luau takes a hook.
+    // runs. `lua_mainthread` and `lua_callbacks` only read the VM's global
+    // state, and `lua_callbacks` points into it, live as long as the VM;
+    // setting `interrupt` is how Luau takes a hook (mlua clears it when the
+    // VM closes). Nothing here raises an error.
     let _ = unsafe {
         lua.exec_raw::<()>((), |state| {
             let main_thread = ffi::lua_mainthread(state);
@@ -87,9 +99,14 @@ enum Verdict {
 /// The hook Luau calls. The common case is a counter, kept apart from the
 /// check so it saves no registers.
 ///
-/// SAFETY (for Luau): it never unwinds a Rust panic, and it raises an error
-/// only from a VM safepoint (`gc < 0`), inside the protected call every
-/// script runs in, with nothing left to drop in this frame.
+/// # Safety
+///
+/// Only Luau calls it, with the running thread's `state`. For Luau's sake
+/// it never panics (see the module), and it raises an error only from a VM
+/// safepoint (`gc < 0`: a loop back edge, a call or a return, where the VM
+/// has saved its frame, `VM_PROTECT`), never from the collector's calls.
+/// Script code runs only inside mlua's protected calls, so the error
+/// always has a `lua_pcall` (or `lua_resume`) to unwind to.
 unsafe extern "C-unwind" fn interrupt(state: *mut ffi::lua_State, gc: c_int) {
     // A call from the collector itself: not a point to raise an error at
     // (mlua's hook ignored these too).
@@ -98,9 +115,12 @@ unsafe extern "C-unwind" fn interrupt(state: *mut ffi::lua_State, gc: c_int) {
     }
     // Interrupts since the last check, counted in the running Lua thread's
     // own word (`lua_getthreaddata`, which nothing else uses): cheaper than
-    // a thread local, and a loop always counts on its own thread.
-    // SAFETY: reads and writes the running thread's data word.
-    let ticks = unsafe { ffi::lua_getthreaddata(state) } as usize + 1;
+    // a thread local, and a loop always counts on its own thread. A new
+    // thread's word starts at null (Luau's `preinit_state`).
+    // SAFETY: reads and writes the running thread's data word, a plain
+    // field of `state`: no allocation, no error. The word is never
+    // dereferenced, so any value is fine (it wraps rather than panics).
+    let ticks = (unsafe { ffi::lua_getthreaddata(state) } as usize).wrapping_add(1);
     unsafe { ffi::lua_setthreaddata(state, ticks as *mut c_void) };
     if ticks.is_multiple_of(64) {
         // SAFETY: as for this hook.
@@ -110,7 +130,9 @@ unsafe extern "C-unwind" fn interrupt(state: *mut ffi::lua_State, gc: c_int) {
 
 /// One interrupt in 64: check, and raise the error when out of time.
 ///
-/// SAFETY: as for `interrupt`.
+/// # Safety
+///
+/// As for `interrupt`, from which alone it is called (`gc < 0`).
 #[cold]
 #[inline(never)]
 unsafe extern "C-unwind" fn every_64th(state: *mut ffi::lua_State) {
@@ -122,9 +144,12 @@ unsafe extern "C-unwind" fn every_64th(state: *mut ffi::lua_State) {
         // than looping until a check lands inside the `pcall` again.
         // SAFETY: as above.
         unsafe { ffi::lua_setthreaddata(state, 63 as *mut c_void) };
-        // SAFETY: pushes a string and raises it as the error; Luau unwinds
-        // to the protected call around the script (`lua_error` does not
-        // return). Nothing in this frame needs dropping.
+        // SAFETY: pushes a string and raises it as the error. Luau's push
+        // makes room for the slot itself (`ensure_stack`), and whatever it
+        // writes over is abandoned by the error. `lua_error` does not
+        // return: it unwinds (a C++ exception) through this frame and
+        // `interrupt`'s, which hold nothing to drop, to the protected call
+        // around the script.
         unsafe {
             ffi::lua_pushstring(state, c"script exceeded its time budget".as_ptr());
             ffi::lua_error(state);
@@ -132,24 +157,38 @@ unsafe extern "C-unwind" fn every_64th(state: *mut ffi::lua_State) {
     }
 }
 
-/// The check at one interrupt in 64: memory, then the clock.
+/// The check at one interrupt in 64: memory, then the clock. It must not
+/// panic (see the module): its thread local is read with `try_with` (a VM
+/// can run while the thread's locals are being destroyed) and borrowed only
+/// here and in `install` and `Installed::drop`, none of which runs a script.
 ///
-/// SAFETY: `state` is the running thread of a VM Luau is executing.
+/// # Safety
+///
+/// `state` is the running thread of a VM Luau is executing, at a safepoint.
 unsafe fn check(state: *mut ffi::lua_State) -> Verdict {
     // SAFETY: reads the thread's VM's main thread.
     let main = unsafe { ffi::lua_mainthread(state) } as usize;
-    let watch = WATCHES.with(|w| {
-        w.borrow()
-            .iter()
-            .find(|(m, _)| *m == main)
-            .and_then(|(_, watch)| watch.upgrade())
-    });
+    let watch = WATCHES
+        .try_with(|w| {
+            w.borrow()
+                .iter()
+                .find(|(m, _)| *m == main)
+                .and_then(|(_, watch)| watch.upgrade())
+        })
+        .ok()
+        .flatten();
     let Some(watch) = watch else {
         return Verdict::Continue;
     };
     if watch.limit > 0 {
-        // SAFETY: the counts and a full collection from a safepoint, as the
-        // allocator's own collection steps run at.
+        // SAFETY: the counts read the VM's totals. The full collection runs
+        // at a safepoint, where the VM has saved its frame and keeps the
+        // thread's top above every live register, as it does for the
+        // collection steps its own instructions take. Neither raises an
+        // error (a collection only frees and shrinks). The collector may run
+        // userdata destructors (Rust drops), as any allocation's step may;
+        // no borrow of `WATCHES` is held meanwhile, so one dropping an
+        // `Installed` is fine.
         let used = |state| unsafe {
             ffi::lua_gc(state, ffi::LUA_GCCOUNT, 0) as usize * 1024
                 + ffi::lua_gc(state, ffi::LUA_GCCOUNTB, 0) as usize

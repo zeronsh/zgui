@@ -65,17 +65,23 @@ end
 /// Reads and writes go through Luau's C API: through mlua, each read costs
 /// more than the whole Luau loop that made the keys (34 ms for 100,000).
 ///
-/// SAFETY: `state` is a Luau state whose stack holds two tables at 1 and 2.
-/// Nothing here raises a Luau error (which would skip this frame's drops):
-/// raw reads, type checks, and raw writes to slots that hold a value
-/// already (no new key, so no allocation) of a table checked writable.
+/// # Safety
+///
+/// `state` is a Luau state inside a C call (`exec_raw`'s, which leaves
+/// `LUA_MINSTACK` slots; this uses two at once) whose stack holds two
+/// tables at 1 and 2. Nothing here
+/// raises a Luau error, so the error is the caller's to report: raw reads,
+/// type checks, and raw writes to slots that hold a value already (no new
+/// key, so no allocation and no collection) of a table checked writable.
+/// No metamethod or other script code runs.
 unsafe fn sort_by_keys(state: *mut ffi::lua_State, descending: bool) -> Result<(), String> {
     let (list, keys) = (1, 2);
-    // SAFETY: reads of the two tables (`lua_objlen` takes no metamethod).
+    // SAFETY: reads of the list at 1 (`lua_objlen` takes no metamethod).
     let n = unsafe { ffi::lua_objlen(state, list) };
     if n > c_int::MAX as usize {
         return Err("ui.sort: the list is too long".into());
     }
+    // SAFETY: as above.
     if unsafe { ffi::lua_getreadonly(state, list) } != 0 {
         return Err(
             "ui.sort sorts a list in place: this one is read-only (state's values \
@@ -92,8 +98,11 @@ unsafe fn sort_by_keys(state: *mut ffi::lua_State, descending: bool) -> Result<(
             return Err(format!("ui.sort: the list has a hole at {i}"));
         }
         // SAFETY: pushes `keys[i]`, reads it, and pops it. A string's bytes
-        // stay valid after the pop: `keys` holds the string, and nothing
-        // here runs the collector.
+        // stay valid after the pop, for as long as `sorted` borrows them:
+        // `keys` (on the stack) holds the string, and nothing here runs
+        // the collector (which in any case neither moves objects nor frees
+        // reachable ones). `lua_tolstring` of a string converts nothing.
+        // `lua_typename` gives a static name.
         let key = unsafe {
             let kind = ffi::lua_rawgeti_(state, keys, i);
             let key = match kind {
@@ -343,8 +352,9 @@ pub(crate) fn install(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     let sort_by_keys =
         lua.create_function(|lua, (list, keys, descending): (Table, Table, bool)| {
             let mut result = Ok(());
-            // SAFETY: the stack holds `list` and `keys` at 1 and 2 (`exec_raw`
-            // pushes them), as `sort_by_keys` needs; it raises no error.
+            // SAFETY: `exec_raw` runs the closure as a C function inside a
+            // protected call, its arguments `list` and `keys` at 1 and 2, as
+            // `sort_by_keys` needs (mlua checked both are tables).
             unsafe {
                 lua.exec_raw::<()>((list, keys), |state| {
                     result = sort_by_keys(state, descending);

@@ -39,6 +39,8 @@ fn instructions() -> u64 {
 /// Counts the allocations made (`realloc` counts as one).
 struct Counting;
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+// SAFETY: every call goes to `System` unchanged (its contract the caller's);
+// the counter is an atomic, which allocates nothing.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Relaxed);

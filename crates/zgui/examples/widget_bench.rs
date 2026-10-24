@@ -17,6 +17,8 @@ use zgui::{
 struct Counting;
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+// SAFETY: every call goes to `System` unchanged (its contract the caller's);
+// the counters are atomics, which allocate nothing.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         LIVE.fetch_add(layout.size(), Relaxed);

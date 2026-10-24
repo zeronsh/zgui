@@ -29,6 +29,10 @@ about a third was mlua's handling of values rather than zgui's work:
    `as_str`), its identity (`to_pointer`), its type, and the value owned
    only when asked (`to_value`, `get::<V>()`; `get::<UserDataRef<T>>()`
    borrows userdata without a reference, as `from_stack` always has).
+   The type and a string's bytes are read as the pair is pushed: a
+   scoped function the callback calls Lua with runs in another stack
+   frame, where the pair's index names another slot, and bytes borrowed
+   from that slot could be collected while the borrow lasts.
 2. **`Lua::create_userdata_relaxed`** (`src/state.rs`, `src/state/raw.rs`):
    as `create_userdata`, with the memory limit set aside for the one
    allocation (`MemoryState::relax_limit_with`, as mlua allocates its own

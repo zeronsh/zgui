@@ -1133,6 +1133,10 @@ impl RawLua {
 
     /// `make_userdata`, allocated with the memory limit set aside instead of
     /// in a protected call (`Lua::create_userdata_relaxed`). zgui patch.
+    ///
+    /// # Safety
+    ///
+    /// As `make_userdata`: `self` is locked and its state current.
     pub(crate) unsafe fn make_userdata_relaxed<T>(&self, data: UserDataStorage<T>) -> Result<AnyUserData>
     where
         T: UserData + 'static,
@@ -1163,6 +1167,14 @@ impl RawLua {
         if relaxed {
             // Unprotected, as the limit is ignored: only the system running
             // out of memory can fail it, and that aborts.
+            // SAFETY: with the limit ignored, `lua_newuserdatadtor` raises
+            // none of its errors: the allocator aborts rather than return
+            // null, the stack has the slot (`check_stack` above), and no
+            // `T` comes near Luau's 2 GiB object size. Its collection step
+            // runs userdata destructors (Rust drops, which do not unwind)
+            // and the interrupt with `gc >= 0`, at which no hook mlua or
+            // zgui sets raises an error. `relax_limit_with` sets the flag
+            // back on return, which this always reaches.
             let mut pushed = Ok(ptr::null_mut());
             MemoryState::relax_limit_with(state, || pushed = push_userdata(state, data, false));
             pushed?;

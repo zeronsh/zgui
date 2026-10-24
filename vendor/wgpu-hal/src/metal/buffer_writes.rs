@@ -51,6 +51,7 @@ impl BufferWrites {
             let descriptor = MTLRenderPipelineDescriptor::new();
             descriptor.setVertexFunction(Some(&function));
             descriptor.setRasterizationEnabled(false);
+            // SAFETY: attachment 0 is below Metal's eight colour attachments.
             let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
             color.setPixelFormat(MTLPixelFormat::R8Unorm);
             color.setWriteMask(MTLColorWriteMask::empty());
@@ -58,6 +59,7 @@ impl BufferWrites {
                 .newRenderPipelineStateWithDescriptor_error(&descriptor)
                 .ok()
         };
+        // SAFETY: a 1x1 descriptor in a renderable format, no mipmaps.
         let target = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 MTLPixelFormat::R8Unorm,
@@ -85,6 +87,7 @@ impl BufferWrites {
         size: u64,
     ) {
         let descriptor = MTLRenderPassDescriptor::new();
+        // SAFETY: as in `new`.
         let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
         color.setTexture(Some(&self.target));
         color.setLoadAction(MTLLoadAction::DontCare);
@@ -93,6 +96,13 @@ impl BufferWrites {
             .renderCommandEncoderWithDescriptor(&descriptor)
             .unwrap();
         encoder.setLabel(Some(&NSString::from_str("zgui buffer write")));
+        // SAFETY: vertex `i` writes word `i` of `dst` from its offset (and
+        // reads word `i` of `src`), for `i < size / 4`: inside both buffers,
+        // as wgpu-core checks `clear_buffer` and `copy_buffer_to_buffer`
+        // ranges against their sizes before the HAL sees them, and 4-byte
+        // aligned (`write_buffer_words` checks). The buffers are distinct
+        // for a copy (the caller checks), and Metal tracks hazards between
+        // this pass and the work around it.
         unsafe {
             encoder.setVertexBuffer_offset_atIndex(Some(dst.0), dst.1 as usize, 0);
             if let Some((src, offset)) = src {

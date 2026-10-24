@@ -1644,7 +1644,11 @@ impl GpuRenderer {
     ///
     /// # Safety
     ///
-    /// `display` and `window` stay valid while the renderer lives.
+    /// `display` and `window` are live objects a surface can be made on (a
+    /// `wl_display` and a `wl_surface` of it, say), and stay so until the
+    /// renderer is dropped: it makes its surface from them again whenever
+    /// the surface is lost (`wgpu::SurfaceTargetUnsafe::RawHandle`'s
+    /// requirements, for each surface).
     pub unsafe fn for_raw_surface(
         display: wgpu::rwh::RawDisplayHandle,
         window: wgpu::rwh::RawWindowHandle,
@@ -1654,7 +1658,8 @@ impl GpuRenderer {
         context: &GpuContext,
     ) -> Result<Self, GpuError> {
         // SAFETY: the caller keeps the handles valid while the renderer,
-        // and so the surface, lives.
+        // and so the surface, lives. The instance was made without a display
+        // handle, so `display` need not match one.
         let surface = unsafe {
             context
                 .inner

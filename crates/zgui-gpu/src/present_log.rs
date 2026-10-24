@@ -14,10 +14,12 @@ pub(crate) fn enabled() -> bool {
 pub fn now_ns() -> u64 {
     #[cfg(target_os = "macos")]
     {
+        // SAFETY: as `<time.h>` declares it (`clockid_t` is a 32-bit enum).
         unsafe extern "C" {
             fn clock_gettime_nsec_np(clock: u32) -> u64;
         }
-        // CLOCK_UPTIME_RAW.
+        // SAFETY: takes a clock id and returns its time, 0 for an unknown
+        // clock; 8 is CLOCK_UPTIME_RAW.
         unsafe { clock_gettime_nsec_np(8) }
     }
     #[cfg(windows)]
