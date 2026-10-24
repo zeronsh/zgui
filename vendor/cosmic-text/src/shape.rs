@@ -569,7 +569,7 @@ fn no_font() {
     static SAID: std::sync::Once = std::sync::Once::new();
     SAID.call_once(|| {
         eprintln!(
-            "zgui: no font to draw text with (none is installed, or fontconfig finds none): \
+            "zgx: no font to draw text with (none is installed, or fontconfig finds none): \
              install one, such as DejaVu Sans (fonts-dejavu-core)"
         );
     });
