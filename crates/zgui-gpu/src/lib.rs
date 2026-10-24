@@ -1609,6 +1609,9 @@ pub struct GpuRenderer {
     present_stats: GpuStats,
     /// Quads use the shader their features need (see `push_draw`).
     split_shading: bool,
+    /// A text partly in its clip makes quads for its visible lines alone
+    /// (`debug_cull_glyphs`).
+    cull_glyphs: bool,
     bind: wgpu::BindGroup,
     blit: Option<wgpu::RenderPipeline>,
     blit_bind: Option<wgpu::BindGroup>,
@@ -1640,6 +1643,9 @@ pub struct GpuRenderer {
     frame_quads: Vec<Quad>,
     /// The frame's draws, kept for their allocation.
     frame_draws: Vec<Draw>,
+    /// The quads of the lines of a text partly in its clip, made each frame
+    /// (see `render_flat`), kept for their allocation.
+    visible_glyphs: Vec<Quad>,
     background: Color,
     /// Image textures: each bound for the quads, its size in bytes, and,
     /// where the CPU wrote its texels, the texture (see `render_direct`).
@@ -1970,6 +1976,7 @@ impl GpuRenderer {
             target,
             view,
             split_shading,
+            cull_glyphs: true,
             bind,
             blit,
             blit_bind,
@@ -2019,6 +2026,7 @@ impl GpuRenderer {
             vertex_capacity: 4096,
             frame_quads: Vec::new(),
             frame_draws: Vec::new(),
+            visible_glyphs: Vec::new(),
             background: Color(0, 0, 0, 0),
             images: FxHashMap::default(),
             #[cfg(target_os = "macos")]
@@ -3539,7 +3547,30 @@ impl GpuRenderer {
                     }
                     let mut shaped = self.shapes.remove(&item.id).unwrap();
                     self.shaped_bytes -= shaped.bytes();
-                    if shaped.atlas_epoch != self.atlas_epoch {
+                    let snap = |value: f32| (value * self.scale).round() / self.scale;
+                    let (x, y) = (snap(bounds.x), snap(bounds.y));
+                    // Partly outside its clip (a long document scrolled in a
+                    // view): its lines that reach the clip, as quads made this
+                    // frame (`visible_glyphs`), rather than every glyph's.
+                    // (Its box against its clip and the viewport, not their
+                    // intersection with it: an edge worked out again can be
+                    // a rounding off the box's.)
+                    let holds = |outer: Rect| {
+                        outer.x <= bounds.x
+                            && outer.y <= bounds.y
+                            && outer.x + outer.width >= bounds.x + bounds.width
+                            && outer.y + outer.height >= bounds.y + bounds.height
+                    };
+                    let partial = self.cull_glyphs
+                        && !(holds(viewport) && item.clip.is_none_or(holds))
+                        && self.visible_lines(
+                            &shaped,
+                            clip.y - y,
+                            clip.height,
+                            font_size,
+                            &mut stats,
+                        )?;
+                    if !partial && shaped.atlas_epoch != self.atlas_epoch {
                         shaped.quads.clear();
                         shaped.quads.extend(
                             shaped
@@ -3612,12 +3643,12 @@ impl GpuRenderer {
                     // atlas bitmap drawn a fraction off is sampled between
                     // its texels, and a hinted one-pixel stroke (a minus
                     // sign) turns into two rows at half strength.
-                    let snap = |value: f32| (value * self.scale).round() / self.scale;
-                    let (x, y) = (snap(bounds.x), snap(bounds.y));
                     // Plain text's one colour, worked out once for its glyphs.
                     let plain_color = rgba(color, item.effects.opacity);
-                    quads.reserve(shaped.quads.len());
-                    for cached in &shaped.quads {
+                    let visible = std::mem::take(&mut self.visible_glyphs);
+                    let source = if partial { &visible } else { &shaped.quads };
+                    quads.reserve(source.len());
+                    for cached in source {
                         let mut quad = *cached;
                         quad.rect[0] += x;
                         quad.rect[1] += y;
@@ -3647,6 +3678,7 @@ impl GpuRenderer {
                         quad.options[0] = item.effects.edge_fade;
                         quads.push(quad);
                     }
+                    self.visible_glyphs = visible;
                     shaped.last_used = self.frame;
                     let bytes = shaped.bytes();
                     if bytes <= SHAPE_BUDGET {
@@ -5344,6 +5376,72 @@ impl GpuRenderer {
         self.cursor = (0, 0, 0);
         self.atlas_epoch = self.atlas_epoch.wrapping_add(1);
     }
+    /// Make `visible_glyphs` the quads of `shaped`'s lines that can reach
+    /// the band `top` to `top + height` (from its origin, logical points),
+    /// if that leaves out most of its glyphs; whether it did. Out of line:
+    /// what the per-glyph loops of `render_flat` hold stays small.
+    #[inline(never)]
+    fn visible_lines(
+        &mut self,
+        shaped: &Shaped,
+        top: f32,
+        height: f32,
+        font_size: f32,
+        stats: &mut GpuStats,
+    ) -> Result<bool, GpuError> {
+        // Lines are laid out downward: glyph baselines (device pixels from
+        // its top) never decrease. Glyphs reach past their line by less
+        // than `reach`.
+        let largest = shaped.rich.as_ref().map_or(font_size, |rich| {
+            rich.runs()
+                .iter()
+                .map(|run| run.font_size)
+                .fold(font_size, f32::max)
+        });
+        let reach = 3. * largest;
+        let (top, bottom) = (top - reach, top + height + reach);
+        let glyphs = &shaped.glyphs;
+        let first = glyphs.partition_point(|g| g.y < top * self.scale);
+        let end = glyphs
+            .partition_point(|g| g.y <= bottom * self.scale)
+            .max(first);
+        // Worth it when it leaves out most of its glyphs: a label cut by an
+        // edge copies its kept quads, as before.
+        if (end - first) * 2 >= glyphs.len() {
+            return Ok(false);
+        }
+        let mut visible = std::mem::take(&mut self.visible_glyphs);
+        visible.clear();
+        let lines = |quad: &Quad| quad.rect[1] + quad.rect[3] >= top && quad.rect[1] <= bottom;
+        let decorations = |background: bool| {
+            shaped
+                .decorations
+                .iter()
+                .filter(move |d| d.background == background)
+                .map(rich_decoration_quad)
+                .filter(lines)
+        };
+        visible.extend(decorations(true));
+        for glyph in &glyphs[first..end] {
+            // As `glyph`, through another lookup: `glyph` keeps its one caller.
+            let size = f32::from_bits(glyph.key.font_size_bits);
+            if !size.is_finite() || size > MAX_ATLAS as f32 {
+                return Err(GpuError(
+                    "glyph font size exceeds atlas raster limit".into(),
+                ));
+            }
+            let entry = match self.entries.get_mut(&glyph.key) {
+                Some(entry) => *entry,
+                None => self.raster_glyph(glyph.key, stats)?,
+            };
+            if let Some(entry) = entry {
+                visible.push(glyph_quad(glyph, entry, self.scale, self.atlas_size));
+            }
+        }
+        visible.extend(decorations(false));
+        self.visible_glyphs = visible;
+        Ok(true)
+    }
     fn glyph(
         &mut self,
         key: CacheKey,
@@ -5358,6 +5456,16 @@ impl GpuRenderer {
         if let Some(entry) = self.entries.get(&key) {
             return Ok(*entry);
         }
+        self.raster_glyph(key, stats)
+    }
+    /// `glyph`'s miss: rasterize `key` into the atlas. Out of line, and
+    /// `glyph`, the per-glyph lookup, has one caller: inlined there.
+    #[inline(never)]
+    fn raster_glyph(
+        &mut self,
+        key: CacheKey,
+        stats: &mut GpuStats,
+    ) -> Result<Option<AtlasEntry>, GpuError> {
         if self.entries.len() >= 8192 {
             return Err(GpuError(
                 "glyph metadata exceeds 8192 entries in one frame".into(),
@@ -6112,6 +6220,11 @@ impl GpuRenderer {
     pub fn debug_split_shading(&mut self, split: bool) {
         self.split_shading = split;
     }
+    /// Test hook: make quads for the lines of a text partly in its clip
+    /// alone (the default), or for all of them.
+    pub fn debug_cull_glyphs(&mut self, cull: bool) {
+        self.cull_glyphs = cull;
+    }
     /// Test hook: treat an offscreen `Bgra8Unorm` texture as the drawable, so
     /// single-pass presentation runs without a window.
     pub fn debug_enable_single_pass(&mut self) {
@@ -6424,6 +6537,32 @@ fn texture(device: &wgpu::Device, width: u32, height: u32, label: &str) -> wgpu:
             | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     })
+}
+/// A glyph's quad from its atlas entry, from its text's origin. Inlined
+/// into the loops building a text's quads: called, its return copied each
+/// glyph's quad again.
+#[inline(always)]
+fn glyph_quad(glyph: &Glyph, a: AtlasEntry, scale: f32, atlas_size: u32) -> Quad {
+    Quad {
+        rect: [
+            (glyph.x + a.left as f32) / scale,
+            (glyph.y - a.top as f32) / scale,
+            a.width as f32 / scale,
+            a.height as f32 / scale,
+        ],
+        uv: [
+            a.x as f32 / atlas_size as f32,
+            a.y as f32 / atlas_size as f32,
+            a.width as f32 / atlas_size as f32,
+            a.height as f32 / atlas_size as f32,
+        ],
+        color: glyph.color.map_or([0.; 4], |c| rgba(c, 1.)),
+        fade: [0.; 4],
+        options: [0., 1., 0., 0.],
+        shape: [0.; 4],
+        border: [0.; 4],
+        mask: NO_MASK,
+    }
 }
 fn rich_decoration_quad(d: &text::RichDecoration) -> Quad {
     let rect = [d.bounds.x, d.bounds.y, d.bounds.width, d.bounds.height];

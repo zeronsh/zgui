@@ -5419,3 +5419,49 @@ fn text_lands_on_whole_device_pixels() {
     assert!(on == draw(10.3, 10.3), "0.3 off draws as on the pixel");
     assert!(draw(11., 11.) == draw(10.7, 10.7), "0.7 off as on the next");
 }
+
+/// A long text scrolled in a clipping view makes quads for the lines that
+/// reach the clip alone: the same pixels as making every line's, with far
+/// fewer quads, and a document of 100,000 lines draws within the frame's
+/// geometry budget.
+#[test]
+fn a_long_text_draws_only_the_lines_in_its_clip() {
+    let _gpu_fixture = gpu_fixture();
+    use zgui::{compose::prelude::*, widgets::Ui};
+    let render = |lines: usize, cull: bool| {
+        let mut gpu = GpuRenderer::new(400, 300).unwrap();
+        gpu.set_scale_factor(2.);
+        gpu.debug_cull_glyphs(cull);
+        let mut ui = Ui::new(200., 150.);
+        gpu.install_text(&mut ui.scene.borrow_mut());
+        let text: String = (0..lines)
+            .map(|i| format!("line {i} of the document\n"))
+            .collect();
+        ui.mount(
+            overlay().w(180.).h(120.).overflow_hidden().child(
+                zgui::compose::text(text)
+                    .text_size(12.)
+                    .line_height(15.)
+                    .text_color(Color(255, 255, 255, 255))
+                    .w(180.)
+                    .h(lines as f32 * 15.)
+                    // A line across the clip's top edge: no quad culled whole.
+                    .translate(0., -12_007.),
+            ),
+        );
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        let stats = gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        (gpu.readback().unwrap(), stats.instances)
+    };
+    let (culled, few) = render(2_000, true);
+    let (whole, all) = render(2_000, false);
+    assert!(culled == whole, "culled lines change pixels");
+    assert!(
+        culled.iter().any(|byte| *byte > 200),
+        "the visible lines draw"
+    );
+    assert!(few * 20 < all, "{few} quads culled, {all} whole");
+    let (_, huge) = render(100_000, true);
+    assert!(huge < 2_000, "{huge} quads for a 100,000-line document");
+}
