@@ -683,12 +683,15 @@ fn raster_step(magnification: f32, current: Option<i32>) -> i32 {
 fn step_scale(step: i32) -> f32 {
     std::f32::consts::SQRT_2.powi(step)
 }
+/// A backdrop filter's bounds, effects and corner radii (`Draw::blur`).
+type Backdrop = (Rect, zgui::scene::Effects, [f32; 4]);
 #[derive(Clone)]
 struct Draw {
     /// How its quads are drawn; set by `push_draw`.
     shading: Shading,
-    /// A backdrop filter: its bounds, effects and corner radii.
-    blur: Option<(Rect, zgui::scene::Effects, [f32; 4])>,
+    /// A backdrop filter: its bounds, effects and corner radii. Boxed: few
+    /// draws have one, and a frame copies every draw a few times.
+    blur: Option<Box<Backdrop>>,
     start: u32,
     end: u32,
     clip: Rect,
@@ -2927,11 +2930,13 @@ impl GpuRenderer {
                     // Effect layers sample the effect atlas, and batch.
                     image: effect.map(|_| effects::EFFECT_ATLAS),
                     layer: effect.is_none().then_some(item.id),
-                    blur: (item.effects.blur_radius > 0.).then_some((
-                        item.bounds,
-                        item.effects,
-                        blur_corners(item.kind, item.bounds),
-                    )),
+                    blur: (item.effects.blur_radius > 0.).then(|| {
+                        Box::new((
+                            item.bounds,
+                            item.effects,
+                            blur_corners(item.kind, item.bounds),
+                        ))
+                    }),
                 });
                 continue;
             }
@@ -3792,11 +3797,9 @@ impl GpuRenderer {
                 let draw = Draw {
                     shading: fill_shading.unwrap_or(Shading::Full),
                     layer: None,
-                    blur: (item.effects.blur_radius > 0.).then_some((
-                        bounds,
-                        item.effects,
-                        blur_corners(item.kind, item.bounds),
-                    )),
+                    blur: (item.effects.blur_radius > 0.).then(|| {
+                        Box::new((bounds, item.effects, blur_corners(item.kind, item.bounds)))
+                    }),
                     start,
                     end: quads.len() as u32,
                     clip: draw_clip,
@@ -3870,7 +3873,7 @@ impl GpuRenderer {
         // must not force every unrelated quad into its own render pass.
         let has_damaged_blur = has_blur
             && draws.iter().any(|draw| {
-                draw.blur.is_some_and(|(bounds, _, _)| {
+                draw.blur.as_deref().is_some_and(|&(bounds, _, _)| {
                     damage.iter().any(|region| {
                         region
                             .intersection(draw.clip)
@@ -3882,7 +3885,7 @@ impl GpuRenderer {
             });
         // The part of a filter's output inside `region`, if it reaches it.
         let filtered = |draw: &Draw, region: &Rect| {
-            let (bounds, _, _) = draw.blur?;
+            let &(bounds, _, _) = draw.blur.as_deref()?;
             region.intersection(draw.clip)?.intersection(bounds)
         };
         // A filter samples everything painted before it, so the filters a
@@ -3903,6 +3906,7 @@ impl GpuRenderer {
             let reaches = |draw: &Draw, area: Rect| {
                 let blur = draw
                     .blur
+                    .as_deref()
                     .and_then(|(bounds, _, _)| bounds.intersection(draw.clip));
                 [draw.bounds.intersection(draw.clip), blur]
                     .into_iter()
@@ -3917,7 +3921,7 @@ impl GpuRenderer {
                 {
                     continue;
                 }
-                let Some((bounds, effects, _)) = draw.blur else {
+                let Some(&(bounds, effects, _)) = draw.blur.as_deref() else {
                     continue;
                 };
                 let area = bounds.intersection(draw.clip);
@@ -3931,7 +3935,7 @@ impl GpuRenderer {
                             !reaches(before, area)
                                 || filters.contains(&k)
                                     && quads.is_none_or(|quads| quads.intersection(area).is_none())
-                                    && before.blur.is_some_and(|(under, beneath, _)| {
+                                    && before.blur.as_deref().is_some_and(|&(under, beneath, _)| {
                                         2. * peak_blur(under, &beneath, area) <= effects.blur_radius
                                     })
                         })
@@ -6446,7 +6450,7 @@ fn batch_filters(draws: &[Draw], regions: &[(Rect, Scissor)], members: &[usize])
         .iter()
         .map(|&i| {
             let draw = &draws[i];
-            let (bounds, effects, corners) = draw.blur.expect("batched filter");
+            let &(bounds, effects, corners) = draw.blur.as_deref().expect("batched filter");
             Filter {
                 bounds,
                 clip: draw.clip,
