@@ -4,9 +4,10 @@
 //! or unread. Counts instructions retired per tick (macOS) and times them.
 //! Run: cargo run --release -p zgx-script --example list_state_bench
 //! (`N` sets the message count, `TICKS` the ticks.) With `APP` set it runs
-//! the example apps' interactions instead (`support/apps.rs`), undrawn:
-//! CI's instruction gate counts them here, with no binary of their own to
-//! link.
+//! the example apps' interactions instead (`support/apps.rs`), undrawn
+//! but for their canvases' CPU work (`HeadlessCanvases`: found as shapes,
+//! or rasterized): CI's instruction gate counts them here, with no binary
+//! of their own to link.
 #[path = "support/apps.rs"]
 mod apps;
 #[path = "support/bench_limits.rs"]
@@ -92,9 +93,19 @@ return ui.column { w = 800, h = 600,
 }
 "##;
 
+/// The apps' canvases painted as a renderer's CPU would, at twice the
+/// points (as `apps_bench` draws), nothing else drawn.
+#[derive(Default)]
+struct Canvases(zgx_gpu::canvas::HeadlessCanvases);
+impl apps::Drawing for Canvases {
+    fn draw(&mut self, scene: &zgx::scene::Scene, damage: &[zgx::scene::Rect]) {
+        self.0.paint(scene, damage, 2.);
+    }
+}
+
 fn main() {
     if std::env::var_os("APP").is_some() {
-        apps::run(&|_, _| None);
+        apps::run(&|_, _| Some(Box::new(Canvases::default()) as Box<dyn apps::Drawing>));
         return;
     }
     let n: usize = std::env::var("N")

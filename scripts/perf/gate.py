@@ -16,6 +16,8 @@ the script benches take for budgets long enough for cachegrind. Linux
 (CI's `perf` job). Nothing renders: under valgrind a software rasterizer's
 instructions would swamp zgx's, so heavy, lab and animate run with
 RENDER=0 (update, layout and damage, text measured as a renderer would).
+The app scenes count their canvases' CPU work too (`HeadlessCanvases`):
+found as shapes the GPU draws, or rasterized where they cannot be.
 """
 import argparse
 import os
@@ -46,7 +48,8 @@ SCENES = [
     ('style', 'zgx', 'style_bench', {}),
     ('widgets', 'zgx', 'widget_bench', {}),
     # The example apps' common interactions (`support/apps.rs`), small and
-    # undrawn, run by list_state_bench (no binary of their own to link): the
+    # undrawn but for their canvases' CPU work, run by list_state_bench (no
+    # binary of their own to link): the
     # same paths at a sixth of the work (`suite.py` runs `apps_bench` full
     # size).
     ('app-mail', 'zgx-script', 'list_state_bench', {'APP': 'mail', 'REPS': '2'}),

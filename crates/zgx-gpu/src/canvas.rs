@@ -240,6 +240,54 @@ fn path(path: &Path) -> Option<sk::Path> {
     }
     builder.finish()
 }
+/// A renderer's canvas work on the CPU, with no GPU: for benches that count
+/// instructions and draw nothing (the CPU gate), so a canvas that stops
+/// drawing as shapes shows there. Each canvas a frame damages is found as
+/// the quads and polyline strokes `GpuRenderer` draws, or rasterized (from
+/// the cache while unchanged) where it cannot be.
+#[derive(Default)]
+pub struct HeadlessCanvases {
+    cache: CanvasCache,
+    points: Vec<[f32; 2]>,
+}
+impl HeadlessCanvases {
+    /// The canvases of `scene` within `damage` at `scale`, as a renderer
+    /// would draw them: how many drew as shapes, and how many rasterized.
+    pub fn paint(
+        &mut self,
+        scene: &Scene,
+        damage: &[zgx::scene::Rect],
+        scale: f32,
+    ) -> (usize, usize) {
+        let mut counts = (0, 0);
+        for item in scene.layer_items_within(None, Some(damage)) {
+            let (NodeKind::Canvas(canvas), bounds) = (item.kind, item.bounds) else {
+                continue;
+            };
+            if bounds.width <= 0. || bounds.height <= 0. {
+                continue;
+            }
+            self.points.clear();
+            if item.effects.opacity >= 1.
+                && item.effects.edge_fade <= 0.
+                && let Some(quads) =
+                    crate::canvas_quads(canvas, (bounds.x, bounds.y), &mut self.points)
+            {
+                std::hint::black_box((quads, &self.points));
+                self.cache.forget(item.id);
+                counts.0 += 1;
+            } else if self
+                .cache
+                .get(item.id, canvas, bounds.width, bounds.height, scale)
+                .is_ok()
+            {
+                counts.1 += 1;
+            }
+        }
+        self.cache.retain(scene);
+        counts
+    }
+}
 /// Rasterize `canvas` at `width` by `height` logical points and `scale`
 /// into an image.
 pub fn rasterize(

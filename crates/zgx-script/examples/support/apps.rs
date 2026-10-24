@@ -6,7 +6,8 @@
 //! and instructions retired (macOS) per interaction and, with
 //! `ZGX_PROFILE=1`, where they went. `apps_bench` runs them drawn on a GPU
 //! with text shaped; CI's instruction gate runs them inside
-//! `list_state_bench` (no new binary to link), undrawn and small.
+//! `list_state_bench` (no new binary to link), small and undrawn but for
+//! their canvases' CPU work.
 //!
 //! `APP=mail` (`dashboard`, `sketch`, `code`) runs one app; `REPS` sets the
 //! interactions measured (20); `ROWS` the dashboard's rows (100,000),
@@ -56,8 +57,8 @@ fn instructions() -> u64 {
 }
 
 /// What draws an app's frames and shapes its text: a GPU offscreen
-/// (`apps_bench`), or nothing (the gate's run, its text laid out by the
-/// fallback layout, as the other script benches' is).
+/// (`apps_bench`), or its canvases' CPU work alone (the gate's run, its
+/// text laid out by the fallback layout, as the other script benches' is).
 pub trait Drawing {
     /// Draw `damage` of `scene`'s frame.
     fn draw(&mut self, scene: &zgx::scene::Scene, damage: &[Rect]);
