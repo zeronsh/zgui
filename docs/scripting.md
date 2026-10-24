@@ -29,13 +29,13 @@ Examples: `hot_reload` (an app and two plugins), `frame_profiler` (a profiler wi
 
 ## Types
 
-`crates/zgui-script/types/zgui.d.luau` types the `ui` and `anime` globals for [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp): editors complete property names, events and API calls, and report misspelled ones (`bgg`, `durtion`, `on_clik`, `state:sett`) before the script runs. In VS Code, list the file under `luau-lsp.types.definitionFiles`, turn on Luau's new type solver, which the types need, and raise how much of a type it walks at once (`ui`, every element's options in one table, is past the default; `zgui check` sets the same):
+`crates/zgui-script/types/zgui.d.luau` types the `ui` and `anime` globals for [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp): editors complete property names, events and API calls, and report misspelled ones (`bgg`, `durtion`, `on_clik`, `state:sett`) before the script runs. In VS Code, list the file under `luau-lsp.types.definitionFiles` and turn on Luau's new type solver, which the types need:
 
 ```json
 {
     "luau-lsp.platform.type": "standard",
     "luau-lsp.types.definitionFiles": ["crates/zgui-script/types/zgui.d.luau"],
-    "luau-lsp.fflags.override": { "LuauSolverV2": "true", "LuauTarjanChildLimit": "100000" }
+    "luau-lsp.fflags.override": { "LuauSolverV2": "true" }
 }
 ```
 

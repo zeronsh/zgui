@@ -7,12 +7,7 @@
       "settings": {
         "roblox": { "enabled": false },
         // zgui's types need Luau's new type solver; Roblox's flags do not apply.
-        // `ui` is past the solver's default limit of a type's parts.
-        "fflags": {
-          "enable_new_solver": true,
-          "sync": false,
-          "override": { "LuauTarjanChildLimit": "100000" }
-        },
+        "fflags": { "enable_new_solver": true, "sync": false },
         "definitions": ["crates/zgui-script/types/zgui.d.luau"],
         "luau-lsp": {
           "platform": { "type": "standard" },

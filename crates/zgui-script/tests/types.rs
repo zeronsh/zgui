@@ -6,7 +6,11 @@
 //! The definitions are written in `types/zgui.d.luau.in`, where element
 //! props are `Merge<Props, { … }>`; luau-lsp gives up on that many type
 //! function calls ("code is too complex"), so `zgui.d.luau` has them written
-//! out. `ZGUI_BLESS=1 cargo test -p zgui-script --test tooling types::` writes it.
+//! out. Each of `Props`' properties has its type named once (`Props_bg`),
+//! and every element's options name it: written out in each, they made
+//! `ui` some 16,000 types for luau-lsp to walk, past the 10,000 it walks
+//! by default; named, about 200. `ZGUI_BLESS=1 cargo test -p zgui-script
+//! --test tooling types::` writes it.
 
 const SOURCE: &str = include_str!("../types/zgui.d.luau.in");
 const DEFS: &str = include_str!("../types/zgui.d.luau");
@@ -165,6 +169,48 @@ fn resolve(expr: &str, bodies: &std::collections::HashMap<String, Vec<Entry>>) -
     }
     panic!("cannot expand `{expr}`: a table type defined above, Merge, or {{ … }}")
 }
+/// The tables whose properties' types are named once, for the many element
+/// options holding them all.
+const NAMED: &[&str] = &["Props"];
+/// `name`'s properties with their types named (`name_key`), and those
+/// names' definitions. Indexers and read-only properties stay as they are.
+fn with_named_types(name: &str, table: &[Entry]) -> (Vec<Entry>, String) {
+    let mut aliases = String::new();
+    let entries = table
+        .iter()
+        .map(|entry| {
+            let lines: Vec<&str> = entry.text.lines().collect();
+            let at = lines
+                .iter()
+                .position(|l| !l.trim_start().starts_with("--"))
+                .expect("a property line");
+            let property = lines[at..].join("\n");
+            let key = &entry.key;
+            let Some(ty) = property
+                .trim_start()
+                .strip_prefix(&format!("{key}: "))
+                .filter(|_| !key.starts_with('['))
+            else {
+                return entry.clone();
+            };
+            let alias = format!("{name}_{key}");
+            aliases.push_str(&format!(
+                "export type {alias} = {}\n",
+                ty.trim_end().trim_end_matches(',')
+            ));
+            let mut text = lines[..at].join("\n");
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&format!("\t{key}: {alias},"));
+            Entry {
+                key: key.clone(),
+                text,
+            }
+        })
+        .collect();
+    (entries, aliases)
+}
 /// The definitions with every `export type X = Merge<…>` written out as the
 /// table it makes.
 fn expand(source: &str) -> String {
@@ -192,13 +238,18 @@ fn expand(source: &str) -> String {
                         d += depth(code_of(lines[i]), true);
                     }
                 }
-                let merged = resolve(&statement, &bodies);
+                let mut merged = resolve(&statement, &bodies);
+                let mut aliases = String::new();
+                if NAMED.contains(&name) {
+                    (merged, aliases) = with_named_types(name, &merged);
+                }
                 out.push_str(&format!("export type {name} = {{\n"));
                 for entry in &merged {
                     out.push_str(&entry.text);
                     out.push('\n');
                 }
                 out.push_str("}\n");
+                out.push_str(&aliases);
                 bodies.insert(name.to_owned(), merged);
             }
             Some((name, "{")) => {
@@ -207,10 +258,22 @@ fn expand(source: &str) -> String {
                     i += 1;
                 }
                 let body = lines[start + 1..i].join("\n");
-                bodies.insert(name.to_owned(), entries(&body));
-                for l in &lines[start..=i] {
-                    out.push_str(l);
-                    out.push('\n');
+                if NAMED.contains(&name) {
+                    let (table, aliases) = with_named_types(name, &entries(&body));
+                    out.push_str(&format!("export type {name} = {{\n"));
+                    for entry in &table {
+                        out.push_str(&entry.text);
+                        out.push('\n');
+                    }
+                    out.push_str("}\n");
+                    out.push_str(&aliases);
+                    bodies.insert(name.to_owned(), table);
+                } else {
+                    bodies.insert(name.to_owned(), entries(&body));
+                    for l in &lines[start..=i] {
+                        out.push_str(l);
+                        out.push('\n');
+                    }
                 }
             }
             // A one-line record (`{ x: number }`, not `{ number }`).
@@ -254,6 +317,37 @@ fn definitions_are_written_out_from_their_source() {
         "types/zgui.d.luau is not what zgui.d.luau.in makes: run \
          `ZGUI_BLESS=1 cargo test -p zgui-script --test tooling types::`"
     );
+}
+
+#[test]
+fn element_options_name_their_shared_types() {
+    // Each of `Props`' types is written once and named; an element's
+    // options written out with them inline would make `ui` too large a type
+    // for luau-lsp's default limits again ("code is too complex").
+    let named: Vec<(&str, &str)> = DEFS
+        .lines()
+        .filter_map(|l| l.strip_prefix("export type Props_"))
+        .filter_map(|l| l.split_once(" = "))
+        .collect();
+    assert!(named.len() > 150, "Props' types are named: {}", named.len());
+    for ty in ["Props", "ContainerProps"].iter().chain(ELEMENT_PROPS) {
+        let body = table(ty);
+        // What the element says itself (an option of its own, as a menu
+        // item's `checked`), in the source.
+        let own = SOURCE
+            .find(&format!("export type {ty} = "))
+            .map(|from| &SOURCE[from..from + SOURCE[from..].find("\n}").unwrap_or(0)])
+            .unwrap_or("");
+        for (key, written) in &named {
+            if own.contains(&format!("\t{key}: ")) {
+                continue;
+            }
+            assert!(
+                !body.contains(&format!("\t{key}: {written},")),
+                "{ty} writes `{key}`'s type out: name it `Props_{key}`"
+            );
+        }
+    }
 }
 
 // Drift: what the engine reads, the definitions type ----------------------

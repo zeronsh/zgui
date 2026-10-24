@@ -15,11 +15,6 @@ use std::{
 /// The `ui` and `anime` globals' types, as shipped with this crate.
 pub const DEFINITIONS: &str = include_str!("../types/zgui.d.luau");
 
-/// How many parts of a type luau-lsp's solver walks at once (Luau's
-/// `LuauTarjanChildLimit`, 10,000 by default): `ui`, every element's
-/// options in one table, takes about 16,000; editors set it too
-/// (docs/scripting.md#types).
-pub const TARJAN_CHILD_LIMIT: u32 = 100_000;
 /// How to get luau-lsp, shown when it is missing.
 pub const INSTALL: &str = "luau-lsp is not installed. Download it from \
 https://github.com/JohnnyMorganz/luau-lsp/releases and put `luau-lsp` on your PATH \
@@ -214,9 +209,6 @@ pub fn check(paths: &[PathBuf], options: &Options) -> Result<Report, CheckError>
         .arg("analyze")
         .arg("--platform=standard")
         .arg("--flag:LuauSolverV2=true")
-        // `ui` is one table of every element's options, past the default
-        // limit (10,000) of a type's parts the solver walks at once.
-        .arg(format!("--flag:LuauTarjanChildLimit={TARJAN_CHILD_LIMIT}"))
         .arg(format!("--definitions={}", definitions.display()))
         .arg("--formatter=gnu");
     if options.strict {
