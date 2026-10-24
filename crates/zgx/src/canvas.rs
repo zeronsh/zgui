@@ -33,10 +33,38 @@ pub enum Segment {
     /// Close the subpath with a line back to its start.
     Close,
 }
+/// A path known as a simple shape (made by its constructor, or a builder
+/// given nothing else): a renderer may draw it as that shape, without
+/// rasterizing its segments, which stay what it is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Shape {
+    /// A rectangle, its corners rounded by `radius` (0: square; at most
+    /// half its shorter side).
+    Rect {
+        /// The rectangle.
+        rect: Rect,
+        /// Its corners' radius.
+        radius: f32,
+    },
+    /// The ellipse inscribed in `rect` (a circle when it is square).
+    Ellipse {
+        /// Its bounds.
+        rect: Rect,
+    },
+    /// A straight line from `from` to `to`.
+    Line {
+        /// Where it starts.
+        from: Point,
+        /// Where it ends.
+        to: Point,
+    },
+}
+
 /// An immutable vector path, cheap to clone. Its coordinates are finite.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Path {
     segments: Arc<[Segment]>,
+    shape: Option<Shape>,
 }
 impl Path {
     /// Start building a path.
@@ -47,15 +75,34 @@ impl Path {
     pub fn segments(&self) -> &[Segment] {
         &self.segments
     }
+    /// The simple shape it is, if it was made as one.
+    pub fn shape(&self) -> Option<Shape> {
+        self.shape
+    }
     /// The outline of `rect`.
     pub fn rectangle(rect: Rect) -> Self {
+        Self::rounded_rect(rect, 0.).expect("finite rectangle")
+    }
+    /// The outline of `rect` with corners rounded by `radius` (at most half
+    /// its shorter side), or an error unless both are finite.
+    pub fn rounded_rect(rect: Rect, radius: f32) -> Result<Self, &'static str> {
         let mut path = Self::builder();
-        path.move_to(rect.x, rect.y)
-            .line_to(rect.x + rect.width, rect.y)
-            .line_to(rect.x + rect.width, rect.y + rect.height)
-            .line_to(rect.x, rect.y + rect.height)
-            .close();
-        path.build().expect("finite rectangle")
+        path.rounded_rect(rect, radius);
+        path.build()
+    }
+    /// The ellipse inscribed in `rect`, or an error unless it is finite.
+    pub fn ellipse(rect: Rect) -> Result<Self, &'static str> {
+        let mut path = Self::builder();
+        path.ellipse(rect);
+        path.build()
+    }
+    /// A straight line from `from` to `to`, or an error unless they are
+    /// finite.
+    pub fn line(from: Point, to: Point) -> Result<Self, &'static str> {
+        let mut path = Self::builder();
+        path.move_to(from.x, from.y).line_to(to.x, to.y);
+        path.shape = Some(Shape::Line { from, to });
+        path.build()
     }
 }
 /// Builds a [`Path`] segment by segment; [`PathBuilder::build`] checks it.
@@ -63,37 +110,122 @@ impl Path {
 pub struct PathBuilder {
     segments: Vec<Segment>,
     transform: Affine,
+    /// The simple shape the path is, while it is nothing else.
+    shape: Option<Shape>,
 }
 impl PathBuilder {
+    /// A segment added: the path is no longer just its shape.
+    fn push(&mut self, segment: Segment) -> &mut Self {
+        self.segments.push(segment);
+        self.shape = None;
+        self
+    }
     /// Start a new subpath at `x`, `y`.
     pub fn move_to(&mut self, x: f32, y: f32) -> &mut Self {
-        self.segments.push(Segment::Move(Point::new(x, y)));
-        self
+        self.push(Segment::Move(Point::new(x, y)))
     }
     /// A straight line to `x`, `y`.
     pub fn line_to(&mut self, x: f32, y: f32) -> &mut Self {
-        self.segments.push(Segment::Line(Point::new(x, y)));
-        self
+        self.push(Segment::Line(Point::new(x, y)))
     }
     /// A quadratic curve through `cx`, `cy` to `x`, `y`.
     pub fn quadratic_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) -> &mut Self {
-        self.segments
-            .push(Segment::Quadratic(Point::new(cx, cy), Point::new(x, y)));
-        self
+        self.push(Segment::Quadratic(Point::new(cx, cy), Point::new(x, y)))
     }
     /// A cubic curve through `c1` and `c2` to `end`.
     pub fn cubic_to(&mut self, c1: Point, c2: Point, end: Point) -> &mut Self {
-        self.segments.push(Segment::Cubic(c1, c2, end));
-        self
+        self.push(Segment::Cubic(c1, c2, end))
     }
     /// Add `path`'s segments.
     pub fn append(&mut self, path: &Path) -> &mut Self {
+        let first = self.segments.is_empty();
         self.segments.extend_from_slice(path.segments());
+        self.shape = if first { path.shape() } else { None };
         self
     }
     /// Close the subpath.
     pub fn close(&mut self) -> &mut Self {
-        self.segments.push(Segment::Close);
+        self.push(Segment::Close)
+    }
+    /// A rectangle's outline with corners rounded by `radius` (at most half
+    /// its shorter side), as a closed subpath: on an empty builder, the path
+    /// is that shape (`Path::shape`).
+    pub fn rounded_rect(&mut self, rect: Rect, radius: f32) -> &mut Self {
+        let first = self.segments.is_empty();
+        let radius = radius
+            .max(0.)
+            .min(rect.width.abs() / 2.)
+            .min(rect.height.abs() / 2.);
+        let (x, y, w, h) = (rect.x, rect.y, rect.width, rect.height);
+        if radius > 0. {
+            use std::f32::consts::{FRAC_PI_2, PI};
+            self.move_to(x + radius, y).line_to(x + w - radius, y);
+            self.arc(
+                Point::new(x + w - radius, y + radius),
+                radius,
+                -FRAC_PI_2,
+                FRAC_PI_2,
+            );
+            self.line_to(x + w, y + h - radius);
+            self.arc(
+                Point::new(x + w - radius, y + h - radius),
+                radius,
+                0.,
+                FRAC_PI_2,
+            );
+            self.line_to(x + radius, y + h);
+            self.arc(
+                Point::new(x + radius, y + h - radius),
+                radius,
+                FRAC_PI_2,
+                FRAC_PI_2,
+            );
+            self.line_to(x, y + radius);
+            self.arc(Point::new(x + radius, y + radius), radius, PI, FRAC_PI_2);
+        } else {
+            self.move_to(x, y)
+                .line_to(x + w, y)
+                .line_to(x + w, y + h)
+                .line_to(x, y + h);
+        }
+        self.close();
+        if first {
+            self.shape = Some(Shape::Rect { rect, radius });
+        }
+        self
+    }
+    /// The ellipse inscribed in `rect`, as a closed subpath of four cubic
+    /// arcs: on an empty builder, the path is that shape.
+    pub fn ellipse(&mut self, rect: Rect) -> &mut Self {
+        let first = self.segments.is_empty();
+        let k = 0.552_284_8;
+        let (rx, ry) = (rect.width / 2., rect.height / 2.);
+        let (cx, cy) = (rect.x + rx, rect.y + ry);
+        self.move_to(cx + rx, cy);
+        self.cubic_to(
+            Point::new(cx + rx, cy + ry * k),
+            Point::new(cx + rx * k, cy + ry),
+            Point::new(cx, cy + ry),
+        );
+        self.cubic_to(
+            Point::new(cx - rx * k, cy + ry),
+            Point::new(cx - rx, cy + ry * k),
+            Point::new(cx - rx, cy),
+        );
+        self.cubic_to(
+            Point::new(cx - rx, cy - ry * k),
+            Point::new(cx - rx * k, cy - ry),
+            Point::new(cx, cy - ry),
+        );
+        self.cubic_to(
+            Point::new(cx + rx * k, cy - ry),
+            Point::new(cx + rx, cy - ry * k),
+            Point::new(cx + rx, cy),
+        );
+        self.close();
+        if first {
+            self.shape = Some(Shape::Ellipse { rect });
+        }
         self
     }
     /// Append a circular arc, connecting to its start with a line. Angles are
@@ -149,6 +281,8 @@ impl PathBuilder {
             return Err("path exceeds 65536 segments");
         }
         let transform = self.transform;
+        // Moved or scaled, a shape is that shape no longer: its points are.
+        let shape = self.shape.filter(|_| transform == Affine::IDENTITY);
         let point = |p: Point| -> Result<Point, &'static str> {
             let (x, y) = transform.point(p.x, p.y);
             if x.is_finite() && y.is_finite() {
@@ -172,6 +306,7 @@ impl PathBuilder {
             .collect::<Result<Vec<_>, &'static str>>()?;
         Ok(Path {
             segments: segments.into(),
+            shape,
         })
     }
 }

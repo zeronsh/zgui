@@ -618,6 +618,11 @@ declare extern type Path with
 	-- Angles in degrees, clockwise from +x.
 	function arc(self, cx: number, cy: number, r: number, start: number, sweep: number): Path
 	function close(self): Path
+	-- A rectangle (corners rounded by `r`) or the ellipse in a box, as a
+	-- closed subpath. A path that is just one of them (or a circle, or a
+	-- line from `canvas:line`) is drawn as that shape, not rasterized.
+	function rect(self, x: number, y: number, w: number, h: number, r: number?): Path
+	function ellipse(self, x: number, y: number, w: number, h: number): Path
 end
 export type Paint = Color | Brush
 export type LineCap = "butt" | "round" | "square"

@@ -86,6 +86,26 @@ impl UserData for PathUd {
                 Ok(this)
             },
         );
+        // A rectangle (corners rounded by `r`) or an ellipse in a box, as a
+        // closed subpath: a path that is just one is drawn as that shape.
+        methods.add_function(
+            "rect",
+            |_, (this, x, y, w, h, r): (mlua::AnyUserData, f32, f32, f32, f32, Option<f32>)| {
+                this.borrow::<PathUd>()?.with(|b| {
+                    b.rounded_rect(zgx::scene::Rect::new(x, y, w, h), r.unwrap_or(0.));
+                })?;
+                Ok(this)
+            },
+        );
+        methods.add_function(
+            "ellipse",
+            |_, (this, x, y, w, h): (mlua::AnyUserData, f32, f32, f32, f32)| {
+                this.borrow::<PathUd>()?.with(|b| {
+                    b.ellipse(zgx::scene::Rect::new(x, y, w, h));
+                })?;
+                Ok(this)
+            },
+        );
         methods.add_function("close", |_, this: mlua::AnyUserData| {
             this.borrow::<PathUd>()?.with(|b| {
                 b.close();
@@ -173,29 +193,9 @@ fn stroke(width: Option<f32>, options: Option<Table>) -> mlua::Result<Stroke> {
     }
     Ok(style)
 }
+/// A rounded rectangle, a shape renderers draw without rasterizing it.
 fn rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> mlua::Result<Path> {
-    let r = r.max(0.).min(w / 2.).min(h / 2.);
-    let mut b = Path::builder();
-    if r <= 0. {
-        b.move_to(x, y)
-            .line_to(x + w, y)
-            .line_to(x + w, y + h)
-            .line_to(x, y + h)
-            .close();
-    } else {
-        use std::f32::consts::FRAC_PI_2;
-        b.move_to(x + r, y)
-            .line_to(x + w - r, y)
-            .arc(Point::new(x + w - r, y + r), r, -FRAC_PI_2, FRAC_PI_2)
-            .line_to(x + w, y + h - r)
-            .arc(Point::new(x + w - r, y + h - r), r, 0., FRAC_PI_2)
-            .line_to(x + r, y + h)
-            .arc(Point::new(x + r, y + h - r), r, FRAC_PI_2, FRAC_PI_2)
-            .line_to(x, y + r)
-            .arc(Point::new(x + r, y + r), r, std::f32::consts::PI, FRAC_PI_2)
-            .close();
-    }
-    b.build().map_err(mlua::Error::runtime)
+    Path::rounded_rect(zgx::scene::Rect::new(x, y, w, h), r).map_err(mlua::Error::runtime)
 }
 fn path_arg(v: &mlua::AnyUserData) -> mlua::Result<Path> {
     v.borrow::<PathUd>()?.path()
@@ -214,11 +214,10 @@ impl UserData for Recorder {
         methods.add_method(
             "circle",
             |_, c, (cx, cy, r, paint): (f32, f32, f32, mlua::Value)| {
-                let mut b = Path::builder();
-                b.arc(Point::new(cx, cy), r, 0., std::f32::consts::TAU)
-                    .close();
-                c.0.borrow_mut()
-                    .fill(b.build().map_err(mlua::Error::runtime)?, brush(&paint)?);
+                let r = r.max(0.);
+                let circle = Path::ellipse(zgx::scene::Rect::new(cx - r, cy - r, 2. * r, 2. * r))
+                    .map_err(mlua::Error::runtime)?;
+                c.0.borrow_mut().fill(circle, brush(&paint)?);
                 Ok(())
             },
         );
@@ -235,10 +234,9 @@ impl UserData for Recorder {
                 Option<f32>,
                 Option<Table>,
             )| {
-                let mut b = Path::builder();
-                b.move_to(x1, y1).line_to(x2, y2);
                 c.0.borrow_mut().stroke(
-                    b.build().map_err(mlua::Error::runtime)?,
+                    Path::line(Point::new(x1, y1), Point::new(x2, y2))
+                        .map_err(mlua::Error::runtime)?,
                     brush(&paint)?,
                     stroke(width, options)?,
                 );

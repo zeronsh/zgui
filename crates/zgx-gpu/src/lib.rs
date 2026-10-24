@@ -94,6 +94,8 @@ pub struct GpuStats {
     pub native_surface_conversions: usize,
     /// Canvases and decorations rasterized.
     pub canvas_rasterizations: usize,
+    /// Quads canvases drew instead of a raster (`canvas_quads`).
+    pub canvas_quads: usize,
     /// SVGs rasterized.
     pub svg_rasterizations: usize,
     /// Times the instance geometry was rebuilt.
@@ -2946,29 +2948,53 @@ impl GpuRenderer {
             let bounds = item.bounds;
             let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
             let mut canvas_image = None;
+            // A canvas drawn as quads clips them to its box, as its raster is.
+            let mut canvas_clip = None;
             match item.kind {
                 NodeKind::Canvas(canvas) => {
                     if bounds.width <= 0. || bounds.height <= 0. {
                         continue;
                     }
-                    let before = self.canvases.rasterizations();
-                    let (width, height, scale) = (bounds.width, bounds.height, self.scale);
-                    let id = self.canvas_texture(item.id, &mut stats, |cache| {
-                        cache.get(item.id, canvas, width, height, scale)
-                    })?;
-                    stats.canvas_rasterizations +=
-                        (self.canvases.rasterizations() - before) as usize;
-                    canvas_image = Some(id);
-                    quads.push(Quad {
-                        rect: fade,
-                        uv: [0., 0., 1., 1.],
-                        color: [1., 1., 1., item.effects.opacity],
-                        fade,
-                        options: [item.effects.edge_fade, 2., 0., 0.],
-                        shape: [0.; 4],
-                        border: [0.; 4],
-                        mask: NO_MASK,
-                    });
+                    // Its own opacity and edge fade apply to it as a whole:
+                    // drawn in quads, each would take them alone.
+                    if item.effects.opacity >= 1.
+                        && item.effects.edge_fade <= 0.
+                        && let Some(drawn) = canvas_quads(canvas, (bounds.x, bounds.y))
+                    {
+                        if let Some(old) = self.node_images.remove(&item.id) {
+                            self.images.remove(&old);
+                        }
+                        self.canvases.forget(item.id);
+                        for quad in drawn {
+                            match quad {
+                                CanvasQuad::Fill(quad) => {
+                                    push_panel(&mut quads, quad, self.scale, self.split_shading)
+                                }
+                                CanvasQuad::Ring(quad) => quads.push(quad),
+                            }
+                        }
+                        canvas_clip = Some(bounds);
+                        stats.canvas_quads += quads.len() - start as usize;
+                    } else {
+                        let before = self.canvases.rasterizations();
+                        let (width, height, scale) = (bounds.width, bounds.height, self.scale);
+                        let id = self.canvas_texture(item.id, &mut stats, |cache| {
+                            cache.get(item.id, canvas, width, height, scale)
+                        })?;
+                        stats.canvas_rasterizations +=
+                            (self.canvases.rasterizations() - before) as usize;
+                        canvas_image = Some(id);
+                        quads.push(Quad {
+                            rect: fade,
+                            uv: [0., 0., 1., 1.],
+                            color: [1., 1., 1., item.effects.opacity],
+                            fade,
+                            options: [item.effects.edge_fade, 2., 0., 0.],
+                            shape: [0.; 4],
+                            border: [0.; 4],
+                            mask: NO_MASK,
+                        });
+                    }
                 }
                 NodeKind::Rect(color) => quads.push(Quad {
                     rect: fade,
@@ -3747,6 +3773,15 @@ impl GpuRenderer {
                 }
                 NodeKind::Container(_) => {}
             }
+            // A canvas drawn as quads: clipped to its box.
+            let clip = match canvas_clip.map(|canvas: Rect| clip.intersection(canvas)) {
+                None => clip,
+                Some(Some(inside)) => inside,
+                Some(None) => {
+                    quads.truncate(start as usize);
+                    continue;
+                }
+            };
             // Inside rounded clips or a `fade_edges` container: cut and faded
             // in the shader.
             let region = region_index(&mut clips, Region::of(&item));
@@ -6938,6 +6973,146 @@ fn outline_quad(
 /// `style`'s border alone at `bounds`: a ring of its side widths (top,
 /// right, bottom, left) inside its rounded box (`draw.wgsl`'s ring mode,
 /// two widths a lane in 16ths of a pixel, up to 255 px).
+/// What a canvas draws as quads (`canvas_quads`): fills (pushed as panels)
+/// and rings, in order.
+enum CanvasQuad {
+    Fill(Quad),
+    Ring(Quad),
+}
+/// A canvas at `origin` drawn as quads, when each of its commands is a solid
+/// fill or stroke of a simple shape (`Path::shape`) the quad shader draws
+/// as a rasterizer would: a rectangle, its corners rounded or not, a circle,
+/// a line along an axis. No raster is made or uploaded, and moving or
+/// scaling what it draws costs its quads alone. `None` for anything else
+/// (curves, ellipses that aren't circles, gradients, patterns, dashes,
+/// clips), which rasterizes as before.
+fn canvas_quads(canvas: &zgx::canvas::Canvas, origin: (f32, f32)) -> Option<Vec<CanvasQuad>> {
+    use zgx::canvas::{Brush, Draw, LineCap, LineJoin, Shape};
+    let mut out = Vec::with_capacity(canvas.commands().len());
+    let at = |r: Rect| Rect::new(r.x + origin.0, r.y + origin.1, r.width, r.height);
+    // A box given by a corner and a negative size, the other way round.
+    let positive = |r: Rect| {
+        Rect::new(
+            r.x.min(r.x + r.width),
+            r.y.min(r.y + r.height),
+            r.width.abs(),
+            r.height.abs(),
+        )
+    };
+    // Its pixels reach past its box by its antialiased edge: a quad shades
+    // the pixels whose centres it covers, and a shape starting a quarter of
+    // a pixel in would lose the quarter-covered pixel before it.
+    let reach = |r: Rect| {
+        let r = r.expand(1.);
+        [r.x, r.y, r.width, r.height]
+    };
+    // A filled box with corners rounded by `radius`: the panel fill.
+    let fill = |r: Rect, radius: f32, color: Color| {
+        CanvasQuad::Fill(Quad {
+            rect: reach(r),
+            uv: [0.; 4],
+            color: rgba(color, 1.),
+            fade: [r.x, r.y, r.width, r.height],
+            options: [0., 0., 0., 1.],
+            shape: [0., 0., 0., 1.],
+            border: [radius; 4],
+            mask: NO_MASK,
+        })
+    };
+    for command in canvas.commands() {
+        match command {
+            Draw::Fill {
+                path,
+                brush: Brush::Solid(color),
+                ..
+            } => match path.shape()? {
+                Shape::Rect { rect, radius } => {
+                    let rect = positive(rect);
+                    out.push(fill(at(rect), radius, *color));
+                }
+                Shape::Ellipse { rect } if rect.width == rect.height => {
+                    let rect = positive(rect);
+                    out.push(fill(at(rect), rect.width / 2., *color));
+                }
+                Shape::Ellipse { .. } => return None,
+                // A line has no inside.
+                Shape::Line { .. } => {}
+            },
+            Draw::Stroke {
+                path,
+                brush: Brush::Solid(color),
+                style,
+            } if style.dash.is_empty() && style.width > 0. && style.width < 255. => {
+                let half = style.width / 2.;
+                match path.shape()? {
+                    // A ring as wide as the line, half outside the outline.
+                    shape @ (Shape::Rect { .. } | Shape::Ellipse { .. }) => {
+                        let (rect, radius) = match shape {
+                            Shape::Rect { rect, radius } => (positive(rect), radius),
+                            Shape::Ellipse { rect } if rect.width == rect.height => {
+                                (positive(rect), rect.width.abs() / 2.)
+                            }
+                            _ => return None,
+                        };
+                        // Square corners join as the stroke asks: a miter
+                        // (within its limit) stays square, a round join
+                        // rounds by half the width, a bevel cuts them.
+                        let outer = match (radius > 0., style.join) {
+                            (true, _) => radius + half,
+                            (false, LineJoin::Round) => half,
+                            (false, LineJoin::Miter)
+                                if style.miter_limit >= std::f32::consts::SQRT_2 =>
+                            {
+                                0.
+                            }
+                            (false, _) => return None,
+                        };
+                        let box_ = at(rect).expand(half);
+                        let side = (style.width * 16.).round();
+                        let fade = [box_.x, box_.y, box_.width, box_.height];
+                        out.push(CanvasQuad::Ring(Quad {
+                            rect: reach(box_),
+                            uv: [0.; 4],
+                            color: rgba(*color, 1.),
+                            fade,
+                            options: [0., 0., 0., 1.],
+                            shape: [side + 4096. * side, -1., side + 4096. * side, 1.],
+                            border: [outer; 4],
+                            mask: NO_MASK,
+                        }));
+                    }
+                    // Along an axis, a line is a box as wide as it is, its
+                    // ends as its caps say.
+                    Shape::Line { from, to } if from.x == to.x || from.y == to.y => {
+                        let reach = match style.cap {
+                            LineCap::Butt => 0.,
+                            LineCap::Square | LineCap::Round => half,
+                        };
+                        let (x0, x1) = (from.x.min(to.x), from.x.max(to.x));
+                        let (y0, y1) = (from.y.min(to.y), from.y.max(to.y));
+                        let rect = if from.y == to.y {
+                            Rect::new(x0 - reach, y0 - half, x1 - x0 + 2. * reach, style.width)
+                        } else {
+                            Rect::new(x0 - half, y0 - reach, style.width, y1 - y0 + 2. * reach)
+                        };
+                        if rect.width <= 0. || rect.height <= 0. {
+                            continue;
+                        }
+                        let radius = if style.cap == LineCap::Round {
+                            half
+                        } else {
+                            0.
+                        };
+                        out.push(fill(at(rect), radius, *color));
+                    }
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
+}
 fn ring_quad(style: &zgx::scene::QuadStyle, bounds: Rect, opacity: f32, edge_fade: f32) -> Quad {
     let sides = style.border_sides();
     let width = |value: f32| match value.is_finite() {
