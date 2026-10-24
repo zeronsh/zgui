@@ -923,6 +923,12 @@ impl EventProcessor {
             None => return,
         };
 
+        // zgui patch: the user's input, against focus stealing.
+        if state == ElementState::Pressed {
+            wt.xconn.set_user_time(xev.time as xproto::Timestamp);
+            self.with_window(window, |w| w.set_user_time(xev.time as xproto::Timestamp));
+        }
+
         let window_id = mkwid(window);
         let device_id = mkdid(util::VIRTUAL_CORE_KEYBOARD);
 
@@ -1070,6 +1076,14 @@ impl EventProcessor {
 
         // Set the timestamp.
         wt.xconn.set_timestamp(event.time as xproto::Timestamp);
+
+        // zgui patch: the user's input, against focus stealing.
+        if state == ElementState::Pressed {
+            wt.xconn.set_user_time(event.time as xproto::Timestamp);
+            self.with_window(event.event as xproto::Window, |w| {
+                w.set_user_time(event.time as xproto::Timestamp)
+            });
+        }
 
         // Deliver multi-touch events instead of emulated mouse events.
         if (event.flags & xinput2::XIPointerEmulated) != 0 {

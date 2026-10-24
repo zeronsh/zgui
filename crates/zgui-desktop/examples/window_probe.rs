@@ -82,9 +82,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         // On X11 a window cascades from one the window manager shows.
+        // `WINDOW_PROBE_SECOND_MS` waits longer, for a probe to act first.
         #[cfg(target_os = "linux")]
         cx.tasks.spawn(async move {
-            zgui::timer::sleep(std::time::Duration::from_millis(1000)).await;
+            let wait = std::env::var("WINDOW_PROBE_SECOND_MS")
+                .ok()
+                .and_then(|ms| ms.parse().ok())
+                .unwrap_or(1000);
+            zgui::timer::sleep(std::time::Duration::from_millis(wait)).await;
             open_second();
         });
         #[cfg(not(target_os = "linux"))]

@@ -203,6 +203,17 @@ frames. `resize_sync_smoke.py` resizes window_probe's window with Openbox's
 Alt and right button drag: the counter, at 0 before, reaches Openbox's last
 request, with a frame drawn for each step.
 
+## Focus stealing on X11
+
+Each window carries the time of the user's last key or button press in the
+app (`_NET_WM_USER_TIME`, as GTK sets it): a press sets it on its window,
+and a window opened later carries it from the moment it maps. Window
+managers weigh it against focus stealing, each by its own policy: Mutter
+and KWin compare it with the focused window's, Openbox keeps the focus
+where the user worked within the last half second. Before any press a
+window carries none, so an app's first window is focused as it launches.
+`user_time_smoke.py` checks the times.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a

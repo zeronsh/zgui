@@ -51,6 +51,8 @@ atom_manager! {
     // zgui patch: frames drawn for a window manager's resize.
     _NET_WM_SYNC_REQUEST,
     _NET_WM_SYNC_REQUEST_COUNTER,
+    // zgui patch: the last user input, against focus stealing.
+    _NET_WM_USER_TIME,
     _NET_WM_STATE,
     _NET_WM_STATE_ABOVE,
     _NET_WM_STATE_BELOW,

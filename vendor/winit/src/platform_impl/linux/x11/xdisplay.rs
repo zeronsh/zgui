@@ -43,6 +43,10 @@ pub struct XConnection {
     /// The last timestamp received by this connection.
     timestamp: AtomicU32,
 
+    /// zgui patch: the last key or button press's timestamp
+    /// (`_NET_WM_USER_TIME`).
+    user_time: AtomicU32,
+
     /// List of monitor handles.
     pub monitor_handles: Mutex<Option<Vec<MonitorHandle>>>,
 
@@ -133,6 +137,7 @@ impl XConnection {
             atoms: Box::new(atoms),
             default_screen,
             timestamp: AtomicU32::new(0),
+            user_time: AtomicU32::new(0),
             latest_error: Mutex::new(None),
             monitor_handles: Mutex::new(None),
             database: RwLock::new(database),
@@ -226,6 +231,21 @@ impl XConnection {
     #[inline]
     pub fn timestamp(&self) -> u32 {
         self.timestamp.load(Ordering::Relaxed)
+    }
+
+    /// zgui patch: the last key or button press's timestamp, 0 before one.
+    #[inline]
+    pub fn user_time(&self) -> u32 {
+        self.user_time.load(Ordering::Relaxed)
+    }
+
+    /// zgui patch: a key or button was pressed at `timestamp`.
+    #[inline]
+    pub fn set_user_time(&self, timestamp: u32) {
+        let last = self.user_time.load(Ordering::Relaxed);
+        if last == 0 || (timestamp as i32).wrapping_sub(last as i32) > 0 {
+            self.user_time.store(timestamp, Ordering::Relaxed);
+        }
     }
 
     /// Set the last witnessed timestamp.

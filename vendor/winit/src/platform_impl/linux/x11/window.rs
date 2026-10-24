@@ -481,6 +481,12 @@ impl UnownedWindow {
                 leap!(window.set_icon_inner(icon.inner)).ignore_error();
             }
 
+            // zgui patch: the last user input before this window (EWMH's
+            // `_NET_WM_USER_TIME`, as GTK sets it): window managers focus a
+            // window opened after it rather than one the app opens later on
+            // its own, while the user works in another. None before any.
+            window.set_user_time(xconn.user_time());
+
             // zgui patch: a counter the window manager waits on as it resizes the
             // window, so each frame is drawn at the size it gave
             // (`_NET_WM_SYNC_REQUEST`, as GTK and Chromium do).
@@ -1887,6 +1893,25 @@ impl UnownedWindow {
         .ok()?
         .ignore_error();
         Some(counter)
+    }
+
+    // zgui patch: `_NET_WM_USER_TIME`, the window's last user input (none
+    // for 0).
+    pub(crate) fn set_user_time(&self, time: u32) {
+        use x11rb::wrapper::ConnectionExt as _;
+        if time == 0 {
+            return;
+        }
+        let atoms = self.xconn.atoms();
+        if let Ok(cookie) = self.xconn.xcb_connection().change_property32(
+            xproto::PropMode::REPLACE,
+            self.xwindow,
+            atoms[_NET_WM_USER_TIME],
+            xproto::AtomEnum::CARDINAL,
+            &[time],
+        ) {
+            cookie.ignore_error();
+        }
     }
 
     // zgui patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER`.

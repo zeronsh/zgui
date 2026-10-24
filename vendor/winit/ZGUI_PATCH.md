@@ -41,3 +41,15 @@ next resize, for the window to say it drew the last.
    `Window::pre_present_notify`, which zgui calls as it presents a frame,
    or at once when the configure that follows brings no new size (no frame
    follows it).
+
+## X11: `_NET_WM_USER_TIME`
+
+Window managers weigh a new window against focus stealing by the time of
+the user's last input in its app (EWMH's `_NET_WM_USER_TIME`), which GTK
+sets on its windows: one the app opens on its own, long after the user
+turned to another app, need not take the focus. winit set none.
+
+5. The connection keeps the last key or button press's time (`xdisplay.rs`,
+   from `event_processor.rs`), and each press sets it on its window.
+6. A new window carries it before it maps (`window.rs`); before any press,
+   none, so an app's first window is focused as it launches.
