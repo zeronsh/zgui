@@ -400,15 +400,17 @@ fn apply_mask(
 }
 /// The inputs of the last full application besides paint: the dynamic
 /// styles without their paint properties, the interaction and disabled
-/// state, the inherited typography if it was read, the intrinsic size and
-/// layout target. A run that matches them changes paint alone.
+/// state, the inherited typography's version if it was read, the intrinsic
+/// size and layout target. A run that matches them changes paint alone.
 struct Settled {
     dynamic: Option<Styles>,
     paint: Option<([bool; 11], u8)>,
     state: Interaction,
     disabled: bool,
-    parent: Option<Typography>,
-    /// The inherited typography's version when `parent` was read.
+    /// Whether the inherited typography was read, at `parent_version`. Its
+    /// version changes only with its value, so the version alone tells: a
+    /// copy of it made every memo a size class bigger (1,400 bytes).
+    parent: bool,
     parent_version: u64,
     intrinsic: Option<(f32, f32)>,
     content: Option<NodeId>,
@@ -799,10 +801,9 @@ pub(crate) fn mount_style_with_intrinsic(
                 opaque == ui.theme().system_preferences().reduced_transparency
             }) && paint.map(|p| p.set()) == last.paint
                 && (same || resized)
-                && last.parent.as_ref().is_none_or(|parent| {
+                && (!last.parent || {
                     inherited.track_read();
                     inherited.version() == last.parent_version
-                        || inherited.with_untracked(|now| now == parent)
                 })
                 && intrinsic.as_ref().map(|size| size.get()) == last.intrinsic
                 && layout_target.as_ref().and_then(|target| target.get()) == last.content
@@ -895,10 +896,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 // bound one (only patches with tokens need looking at).
                 let mut text_color = None;
                 if is_text || output.is_some() {
-                    let parent_color = match &last.parent {
-                        Some(parent) => parent.color,
-                        None => inherited.with_untracked(|parent| parent.color),
-                    };
+                    let parent_color = inherited.with_untracked(|parent| parent.color);
                     let color = match paint_color {
                         None => parent_color,
                         Some(value) if !bound => Themed::Value(value),
@@ -1009,7 +1007,7 @@ pub(crate) fn mount_style_with_intrinsic(
         // Nothing of its own (the usual dynamic style: sizes, colours): the
         // parent's typography, as it is.
         let current = if !resolved.sets_typography() {
-            parent.clone()
+            parent
         } else {
             let size = match (
                 resolved.text_size,
@@ -1075,7 +1073,6 @@ pub(crate) fn mount_style_with_intrinsic(
                 },
             }
         };
-        let tracked_parent = tracks_parent.then_some(parent);
         // Compare before cloning: unchanged typography notifies nothing.
         if let Some(output) = &output
             && output.with_untracked(|old| *old != current)
@@ -1094,7 +1091,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 paint,
                 state,
                 disabled: is_disabled,
-                parent: tracked_parent,
+                parent: tracks_parent,
                 parent_version,
                 intrinsic: intrinsic_size,
                 content: content_layout,
