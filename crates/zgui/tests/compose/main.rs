@@ -8,6 +8,8 @@ mod composition_checkbox;
 mod composition_combobox;
 #[path = "../composition_controls.rs"]
 mod composition_controls;
+#[path = "../composition_grid.rs"]
+mod composition_grid;
 #[path = "../composition_initial_failure.rs"]
 mod composition_initial_failure;
 #[path = "../composition_progress.rs"]

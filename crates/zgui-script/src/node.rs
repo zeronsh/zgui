@@ -479,6 +479,7 @@ impl Node {
                 | Kind::Stepper { .. }
                 | Kind::Tabs { .. }
                 | Kind::Tree { .. }
+                | Kind::DataGrid { .. }
                 | Kind::Select { .. }
                 | Kind::Combobox { .. }
                 | Kind::CommandPalette { .. }
@@ -525,6 +526,7 @@ impl Node {
             Kind::Separator { .. } => "separator",
             Kind::Tabs { .. } => "tabs",
             Kind::Tree { .. } => "tree",
+            Kind::DataGrid { .. } => "data_grid",
             Kind::Combobox { .. } => "combobox",
             Kind::CommandPalette { .. } => "command_palette",
             Kind::Select { .. } => "select",
@@ -783,6 +785,17 @@ pub(crate) enum Kind {
         open: Signal<Value>,
         value: Signal<Value>,
         on_open: Option<Function>,
+        on_activate: Option<Function>,
+    },
+    /// `ui.data_grid { columns, rows = state, sort?, value?, … }`.
+    DataGrid {
+        label: String,
+        /// A state (resizing and moving write it), or the columns as given.
+        columns: Result<Signal<Value>, Value>,
+        rows: Signal<Value>,
+        sort: Option<Signal<Value>>,
+        value: Option<Signal<Value>>,
+        on_edit: Option<Function>,
         on_activate: Option<Function>,
     },
     /// `ui.separator { vertical? }`: a line between groups.
@@ -1929,6 +1942,9 @@ const WIDGET_FIELDS: &[&str] = &[
     "on_run",
     "on_open",
     "on_activate",
+    "columns",
+    "sort",
+    "on_edit",
 ];
 
 /// Sets the handler `key` names, or gives `value` back if it names none.
@@ -3170,6 +3186,36 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             // Not the `items` alignment style: the tree's.
             table.raw_remove("items")?;
+            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
+        })?,
+    )?;
+    ui.set(
+        "data_grid",
+        lua.create_function(|lua, table: Table| {
+            let optional_state = |key: &str| -> mlua::Result<Option<Signal<Value>>> {
+                match table.get::<mlua::Value>(key)? {
+                    mlua::Value::Nil => Ok(None),
+                    v => expect_state(&v, &format!("ui.data_grid's `{key}`")).map(Some),
+                }
+            };
+            let columns = match table.get::<mlua::Value>("columns")? {
+                v @ mlua::Value::Table(_) => Err(crate::value::convert(v, None)?),
+                mlua::Value::Nil => {
+                    return Err(mlua::Error::runtime("ui.data_grid needs `columns`"));
+                }
+                v => Ok(expect_state(&v, "ui.data_grid's `columns`")?),
+            };
+            let kind = Kind::DataGrid {
+                label: label(&table)?,
+                columns,
+                rows: expect_state(&table.get("rows")?, "ui.data_grid's `rows`")?,
+                sort: optional_state("sort")?,
+                value: optional_state("value")?,
+                on_edit: table.get("on_edit")?,
+                on_activate: table.get("on_activate")?,
+            };
+            // Not the `rows` grid style: the grid's.
+            table.raw_remove("rows")?;
             node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
         })?,
     )?;

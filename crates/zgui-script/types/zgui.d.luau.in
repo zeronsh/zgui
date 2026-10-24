@@ -1547,6 +1547,37 @@ export type TreeProps = Merge<Props, {
 	on_activate: ((id: string) -> ...unknown)?,
 	label: string?,
 }>
+-- A column of `ui.data_grid`: its cells show each row's field `id`.
+export type GridColumn = {
+	id: string,
+	title: string?,
+	width: number?,
+	min_width: number?,
+	sortable: boolean?,
+	editable: boolean?,
+	align: ("start" | "end")?,
+}
+export type GridSort = { column: string, descending: boolean? }
+-- A data grid (WAI-ARIA's grid): one Tab stop keeping focus; the arrows,
+-- Home, End and Page keys move; Enter, F2 or typing edits, Enter keeps and
+-- Escape drops; Up from the first row reaches the header, where Enter
+-- sorts. A header's click sorts, its drag moves the column, its edge's drag
+-- resizes it. Virtual rows.
+export type DataGridProps = Merge<Props, {
+	-- A state is written as columns are resized and moved.
+	columns: { GridColumn } | State<{ GridColumn }> | State<{ any }>,
+	-- The records shown, sorted as `sort` says.
+	rows: State<{ any }>,
+	-- The sort, both ways: nil shows `rows` as they are.
+	sort: (State<GridSort?> | State<any>)?,
+	-- The current cell, both ways: its row an index into `rows`.
+	value: (State<{ row: number, column: string }?> | State<any>)?,
+	-- An edit kept (else it is written into the row).
+	on_edit: ((row: number, column: string, text: string) -> ...unknown)?,
+	-- Enter on a cell that doesn't edit, or a double click.
+	on_activate: ((row: number) -> ...unknown)?,
+	label: string?,
+}>
 export type ComboItem = string | { label: string, value: any?, detail: string? }
 -- A field with suggestions listed under it as it is typed in (WAI-ARIA's
 -- combobox): Down and Up move, Enter chooses, Escape closes or clears; a
@@ -1856,6 +1887,7 @@ declare ui: {
 	segmented: (props: SegmentedProps) -> Node,
 	tabs: (props: TabsProps) -> Node,
 	tree: (props: TreeProps) -> Node,
+	data_grid: (props: DataGridProps) -> Node,
 	combobox: (props: ComboboxProps) -> Node,
 	command_palette: (props: CommandPaletteProps) -> Node,
 	select: (props: SelectProps) -> Node,

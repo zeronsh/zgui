@@ -7173,6 +7173,315 @@ export type TreeProps = {
 	on_activate: ((id: string) -> ...unknown)?,
 	label: string?,
 }
+-- A column of `ui.data_grid`: its cells show each row's field `id`.
+export type GridColumn = {
+	id: string,
+	title: string?,
+	width: number?,
+	min_width: number?,
+	sortable: boolean?,
+	editable: boolean?,
+	align: ("start" | "end")?,
+}
+export type GridSort = { column: string, descending: boolean? }
+-- A data grid (WAI-ARIA's grid): one Tab stop keeping focus; the arrows,
+-- Home, End and Page keys move; Enter, F2 or typing edits, Enter keeps and
+-- Escape drops; Up from the first row reaches the header, where Enter
+-- sorts. A header's click sorts, its drag moves the column, its edge's drag
+-- resizes it. Virtual rows.
+export type DataGridProps = {
+	-- Size and position.
+	w: Reactive<Length>?,
+	h: Reactive<Length>?,
+	size: Reactive<Pair>?,
+	min_w: Reactive<Length>?,
+	max_w: Reactive<Length>?,
+	min_h: Reactive<Length>?,
+	max_h: Reactive<Length>?,
+	w_full: Reactive<boolean>?,
+	h_full: Reactive<boolean>?,
+	aspect: Reactive<number>?,
+	absolute: Reactive<boolean>?,
+	relative: Reactive<boolean>?,
+	top: Reactive<Length>?,
+	left: Reactive<Length>?,
+	inset_start: Reactive<Length>?,
+	inset_end: Reactive<Length>?,
+	right: Reactive<Length>?,
+	bottom: Reactive<Length>?,
+	-- Spacing.
+	p: Reactive<Length>?,
+	px: Reactive<Length>?,
+	py: Reactive<Length>?,
+	pt: Reactive<Length>?,
+	pr: Reactive<Length>?,
+	pb: Reactive<Length>?,
+	pl: Reactive<Length>?,
+	ps: Reactive<Length>?,
+	pe: Reactive<Length>?,
+	m: Reactive<Length>?,
+	mx: Reactive<Length>?,
+	my: Reactive<Length>?,
+	mt: Reactive<Length>?,
+	mr: Reactive<Length>?,
+	mb: Reactive<Length>?,
+	ml: Reactive<Length>?,
+	ms: Reactive<Length>?,
+	me: Reactive<Length>?,
+	gap: Reactive<Num>?,
+	gap_x: Reactive<Length>?,
+	gap_y: Reactive<Length>?,
+	-- Flex and grid.
+	direction: Reactive<Direction>?,
+	dir: Reactive<"ltr" | "rtl">?,
+	grow: Reactive<number>?,
+	shrink: Reactive<number>?,
+	basis: Reactive<Length>?,
+	flex_wrap: Reactive<boolean>?,
+	wrap_reverse: Reactive<boolean>?,
+	items: Reactive<Align>?,
+	justify: Reactive<Justify>?,
+	self: Reactive<Align>?,
+	content: Reactive<AlignContent>?,
+	grid: Reactive<boolean>?,
+	cols: Reactive<number>?,
+	col_start: Reactive<number>?,
+	row_start: Reactive<number>?,
+	col_span: Reactive<number>?,
+	row_span: Reactive<number>?,
+	col_span_full: Reactive<boolean>?,
+	row_span_full: Reactive<boolean>?,
+	overflow: Reactive<Overflow>?,
+	overflow_x: Reactive<Overflow>?,
+	overflow_y: Reactive<Overflow>?,
+	hidden: Reactive<boolean>?,
+	invisible: Reactive<boolean>?,
+	-- Paint.
+	bg: Reactive<Color>?,
+	gradient: Reactive<Gradient>?,
+	color: Reactive<Color>?,
+	bg_image: Reactive<string>?,
+	bg_fit: Reactive<Fit>?,
+	rounded: Reactive<Num>?,
+	corners: Reactive<Corners>?,
+	rounded_tl: Reactive<number>?,
+	rounded_tr: Reactive<number>?,
+	rounded_br: Reactive<number>?,
+	rounded_bl: Reactive<number>?,
+	border: Reactive<Num>?,
+	border_sides: Reactive<Sides>?,
+	border_color: Reactive<Color>?,
+	border_over: Reactive<boolean>?,
+	-- A function may return nil: a solid border.
+	border_dash: Reactive<Pair?>?,
+	outline: Reactive<Num>?,
+	outline_color: Reactive<Color>?,
+	outline_offset: Reactive<Num>?,
+	shadow: Reactive<Shadow>?,
+	inset_shadow: Reactive<Shadow>?,
+	opacity: Reactive<Num>?,
+	brightness: Reactive<number>?,
+	contrast: Reactive<number>?,
+	saturate: Reactive<number>?,
+	blur: Reactive<number>?,
+	backdrop_blur: Reactive<Num>?,
+	fade: Reactive<Pair>?,
+	fade_x: Reactive<Pair>?,
+	fade_sides: Reactive<Sides>?,
+	fade_overflow: Reactive<boolean>?,
+	snap: Reactive<boolean>?,
+	clip_inset: Reactive<Sides>?,
+	layer: Reactive<boolean>?,
+	fit: Reactive<Fit>?,
+	tint: Reactive<Color>?,
+	cursor: Reactive<Cursor>?,
+	-- Text.
+	text_size: Reactive<Num>?,
+	weight: Reactive<Num>?,
+	bold: Reactive<boolean>?,
+	italic: Reactive<boolean>?,
+	align: Reactive<TextAlign>?,
+	font: Reactive<Font>?,
+	wrap: Reactive<boolean>?,
+	truncate: Reactive<boolean>?,
+	lines: Reactive<number>?,
+	line_height: Reactive<Num>?,
+	letter_spacing: Reactive<Num>?,
+	-- Tabular figures: every digit the same width.
+	tabular: Reactive<boolean>?,
+	-- Underlined text (inherited, as CSS's `text-decoration`), and how far
+	-- below the baseline the line sits.
+	underline: Reactive<boolean>?,
+	underline_offset: Reactive<Num>?,
+	-- Transforms: after layout, about `origin` (fractions of the node).
+	x: Reactive<number>?,
+	y: Reactive<number>?,
+	scale: Reactive<number>?,
+	scale_x: Reactive<number>?,
+	scale_y: Reactive<number>?,
+	rotate: Reactive<number>?,
+	skew: Reactive<number>?,
+	skew_x: Reactive<number>?,
+	skew_y: Reactive<number>?,
+	origin: Reactive<Pair>?,
+	-- The subtree's theme: a theme's name (`"zgui-light"`), or tokens to
+	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
+	theme: Reactive<ThemeSpec>?,
+	-- Identity, for selectors, refs and animations.
+	id: string?,
+	-- Space-separated class names.
+	class: string?,
+	-- Styles chosen from a `ui.variants` definition: `button { tone =
+	-- "ghost" }`, or the recipe itself for its defaults. The element's own
+	-- properties win over them.
+	variants: (Variants | ((choice: any) -> Variants))?,
+	ref: (Ref | { Ref })?,
+	focusable: boolean?,
+	-- What assistive technology takes it for (ARIA's `role`), instead of
+	-- what it is: a clickable row as an "option", a row of buttons as a
+	-- "toolbar". It keeps what it does.
+	role: AriaRole?,
+	-- A section title of this level, 1 to 6 (`h1`…`h6`): screen readers
+	-- list headings and move between them.
+	heading: number?,
+	-- Whether this option, tab or item is the chosen one (`aria-selected`).
+	selected: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Whether a switch, checkbox or radio of the app's own is on
+	-- (`aria-checked`), and whether what a control opens shows
+	-- (`aria-expanded`): a custom disclosure's.
+	checked: (boolean | Readable<boolean> | (() -> boolean))?,
+	expanded: (boolean | Readable<boolean> | (() -> boolean))?,
+	-- Announce changes to the text in it (`aria-live`): a count, a "Sent"
+	-- note, a message arriving.
+	live: ("polite" | "assertive" | "off")?,
+	-- Read after its name, as a hint (`aria-description`).
+	description: string?,
+	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
+	-- decoration, or what is said elsewhere.
+	aria_hidden: boolean?,
+	-- One Tab stop for the focusable things inside; the arrows along this
+	-- axis (and Home, End) move among them, as ARIA's composite widgets
+	-- behave. `role = "listbox"` is vertical, "toolbar" and "tablist"
+	-- horizontal, without asking.
+	focus_group: ("vertical" | "horizontal" | "both")?,
+	-- A press on it (or on what inside takes no input) moves the window; a
+	-- double click zooms it. Buttons and inputs inside keep their clicks.
+	-- CSS pointer-events: "none" (or false) lets the pointer through to what
+	-- is under the node (presses, hover, the wheel, drops, a native view);
+	-- descendants with handlers still take it. A state or function follows.
+	pointer_events: (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?,
+	window_drag: boolean?,
+	-- The pointer selects the text in it and everything it holds, as on a
+	-- web page (CSS `user-select: text`): drag, double/triple press, Shift,
+	-- ⌘A / Ctrl+A, ⌘C / Ctrl+C. `false` keeps a part out. Off unless set.
+	selectable: boolean?,
+	-- A selectable node's highlight and selected-text colours (CSS
+	-- `::selection`), over the theme's `$selection` and `$selection.text`
+	-- tokens; a state or function follows.
+	selection_color: Reactive<Color>?,
+	selected_text_color: Reactive<Color>?,
+	-- Shown over it while the pointer rests on it (after 300 ms; at once
+	-- within a second of another): text in the theme's look, or a node of
+	-- the app's own. Above it, centred, unless `tooltip_placement` says.
+	tooltip: (string | Node)?,
+	tooltip_placement: Placement?,
+	-- A hover card the pointer can move into and click in: it stays while
+	-- the pointer is over the node or the card.
+	tooltip_interactive: boolean?,
+	-- Milliseconds the pointer rests before it shows (300; once one
+	-- shows, the next shows at once). Keyboard focus shows it too.
+	tooltip_delay: number?,
+	-- A condition (true disables), or the styles it shows while disabled.
+	disabled: (boolean | Readable<boolean> | (() -> boolean) | Styles)?,
+	hover: Styles?,
+	active: Styles?,
+	focus: Styles?,
+	-- Size animation ("height", "width", "size"; `true` is "height") or
+	-- position animation ("position"). A `layout_id` node mounting as
+	-- another with the same id unmounts (or while it is mounted) moves and
+	-- scales from that one's box.
+	layout: ("height" | "width" | "size" | "position" | boolean)?,
+	layout_id: string?,
+	layout_ease: Easing?,
+	-- Milliseconds.
+	layout_duration: number?,
+	layout_enter: boolean?,
+	layout_clip: boolean?,
+	-- The content shows through the bitmap's alpha: `mask = bitmap`, or
+	-- `{ bitmap, w = …, h = …, x = …, y = …, sweep = … }`.
+	mask: (Bitmap | MaskOptions)?,
+	bg_shader: Shader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	shader_params: { read [number]: Color | { number } }?,
+	-- Events.
+	on_click: (ClickHandler | Handler | Action)?,
+	-- Primary pointer down and up.
+	on_press: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_release: (((e: PointerEvent) -> ...unknown) | Action)?,
+	on_hover: (((inside: boolean) -> ...unknown) | Action)?,
+	on_pointer_move: (((e: PointerEvent) -> ...unknown) | Action)?,
+	-- Return true to consume the key.
+	on_key: (((e: KeyEvent) -> ...boolean?) | Action)?,
+	on_key_up: (((key: string) -> ...unknown) | Action)?,
+	on_focus: (Handler | Action)?,
+	on_blur: (Handler | Action)?,
+	-- Return true to take the gesture from the scroll views around it.
+	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
+	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	on_mount: ((element: Element) -> ...unknown)?,
+	-- When layout gives it a new size, and at its first layout.
+	on_resize: ((size: Size, element: Element) -> ...unknown)?,
+	-- When any of it comes into view or all of it leaves (inside every
+	-- clip and scroll viewport above it), and at its first layout: for
+	-- building what only matters on screen.
+	on_visible: ((visible: boolean, element: Element) -> ...unknown)?,
+	-- Drag and drop within the window. Payloads are what `on_drag`
+	-- returns: the script's own plain values, so they are `any` here.
+	-- A source: `on_drag` returns the payload once the pointer moves 4
+	-- points; `drag_preview` builds what follows the pointer.
+	on_drag: (() -> any)?,
+	drag_preview: ((payload: any) -> Node)?,
+	on_drag_end: ((payload: any, accepted: boolean) -> ...unknown)?,
+	-- What the drag carries to other apps as it leaves the window (macOS):
+	-- Finder takes files, Mail text, a browser links.
+	drag_export: ((payload: any) -> DragExport?)?,
+	-- Released outside every window of the app (macOS): a tab torn off its
+	-- window. `grab_x`/`grab_y` are where the source was held.
+	on_drag_outside: ((payload: any, e: { x: number, y: number, grab_x: number, grab_y: number }) -> ...unknown)?,
+	-- The drag moves its window instead, with no preview (macOS): a
+	-- window's only tab. Dropped on another window's destination it drops
+	-- there; elsewhere the window stays where it was let go.
+	drag_moves_window: ((payload: any) -> boolean)?,
+	-- A destination: `drop_when` filters payloads (default: all).
+	drop_when: ((payload: any) -> unknown)?,
+	on_drag_over: ((payload: any, e: DragPoint) -> ...unknown)?,
+	on_drag_leave: ((payload: any) -> ...unknown)?,
+	on_drop: ((payload: any, e: DragPoint) -> ...unknown)?,
+	-- A secondary click (control-click on macOS) shows the returned
+	-- `menu_item`s, `submenu`s and separators as a menu at the pointer;
+	-- returning nil (or nothing) shows none.
+	context_menu: ((e: PointerEvent) -> ...{ Node }?)?,
+	-- The context menu panel's look: bg, rounded, p, gap, backdrop_blur,
+	-- border, shadow, w, …
+	context_menu_style: Styles?,
+	-- Open the context menu under the node, from its left edge (a tab's),
+	-- rather than at the pointer.
+	context_menu_below: boolean?,
+	[number]: never,
+	-- A state is written as columns are resized and moved.
+	columns: { GridColumn } | State<{ GridColumn }> | State<{ any }>,
+	-- The records shown, sorted as `sort` says.
+	rows: State<{ any }>,
+	-- The sort, both ways: nil shows `rows` as they are.
+	sort: (State<GridSort?> | State<any>)?,
+	-- The current cell, both ways: its row an index into `rows`.
+	value: (State<{ row: number, column: string }?> | State<any>)?,
+	-- An edit kept (else it is written into the row).
+	on_edit: ((row: number, column: string, text: string) -> ...unknown)?,
+	-- Enter on a cell that doesn't edit, or a double click.
+	on_activate: ((row: number) -> ...unknown)?,
+	label: string?,
+}
 export type ComboItem = string | { label: string, value: any?, detail: string? }
 -- A field with suggestions listed under it as it is typed in (WAI-ARIA's
 -- combobox): Down and Up move, Enter chooses, Escape closes or clears; a
@@ -11681,6 +11990,7 @@ declare ui: {
 	segmented: (props: SegmentedProps) -> Node,
 	tabs: (props: TabsProps) -> Node,
 	tree: (props: TreeProps) -> Node,
+	data_grid: (props: DataGridProps) -> Node,
 	combobox: (props: ComboboxProps) -> Node,
 	command_palette: (props: CommandPaletteProps) -> Node,
 	select: (props: SelectProps) -> Node,

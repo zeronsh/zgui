@@ -11,7 +11,7 @@ const APP: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/catalog/app.lua
 fn catalog() -> Harness {
     let h = Harness::new(|runtime| ScriptHost::new(runtime, APP));
     // Tall enough for every section without scrolling.
-    h.ui.scene.borrow_mut().resize(980., 2600.);
+    h.ui.scene.borrow_mut().resize(980., 3000.);
     h.frames(2);
     h
 }

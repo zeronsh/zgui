@@ -381,6 +381,7 @@ const ELEMENT_PROPS: &[&str] = &[
     "SelectProps",
     "ComboboxProps",
     "TreeProps",
+    "DataGridProps",
     "CommandPaletteProps",
     "ListProps",
     "ModalProps",

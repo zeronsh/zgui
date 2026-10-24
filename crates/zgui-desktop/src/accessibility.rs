@@ -387,6 +387,29 @@ impl AccessibilityTree {
             if let Some(size) = semantic.size_of_set {
                 n.set_size_of_set(size);
             }
+            if let Some(table) = &semantic.table {
+                if let Some(row) = table.row {
+                    n.set_row_index(row);
+                }
+                if let Some(column) = table.column {
+                    n.set_column_index(column);
+                }
+                if let Some(rows) = table.rows {
+                    n.set_row_count(rows);
+                }
+                if let Some(columns) = table.columns {
+                    n.set_column_count(columns);
+                }
+                match table.sort {
+                    Some(zgui::semantics::SortOrder::Ascending) => {
+                        n.set_sort_direction(accesskit::SortDirection::Ascending)
+                    }
+                    Some(zgui::semantics::SortOrder::Descending) => {
+                        n.set_sort_direction(accesskit::SortDirection::Descending)
+                    }
+                    None => {}
+                }
+            }
             if semantic.role == Role::ScrollView && semantic.size_of_set.is_some() {
                 n.add_action(Action::Focus);
             }

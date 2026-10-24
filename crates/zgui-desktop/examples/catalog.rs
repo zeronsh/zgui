@@ -278,6 +278,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     |_| {},
                 ))],
             );
+            let grid_section = section(
+                "Data grid",
+                "Arrows move; Enter, F2 or typing edits, Escape drops; Up from the first row reaches the header, where Enter sorts, ⌘⇧ arrows move a column and Alt arrows resize it. Drag a header to move its column, its edge to resize it.",
+                vec![component(|cx| {
+                    let runtime = cx.runtime();
+                    let products = runtime.signal(
+                        (0..10_000)
+                            .map(|i| {
+                                (
+                                    format!("SKU-{i:05}"),
+                                    format!("Product {i}"),
+                                    ((i * 37) % 1000) as f64 / 10.,
+                                    (i * 13) % 250,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                    let columns = runtime.signal(vec![
+                        GridColumn::new("sku", "SKU", 110.),
+                        GridColumn::new("name", "Name", 200.).sortable().editable(),
+                        GridColumn::new("price", "Price", 90.).sortable().align_end(),
+                        GridColumn::new("stock", "Stock", 80.).sortable().align_end(),
+                    ]);
+                    let sort = runtime.signal(None::<GridSort>);
+                    // The app sorts: the rows' order as the header asks.
+                    let order = runtime.signal(Rc::new(Vec::<usize>::new()));
+                    {
+                        let (products, sort, order) = (products.clone(), sort.clone(), order.clone());
+                        cx.retain(runtime.effect(move || {
+                            let by = sort.get();
+                            let next = products.with(|p| {
+                                let mut index: Vec<usize> = (0..p.len()).collect();
+                                if let Some(by) = &by {
+                                    index.sort_by(|&a, &b| {
+                                        let o = match by.column.as_str() {
+                                            "price" => p[a].2.total_cmp(&p[b].2),
+                                            "stock" => p[a].3.cmp(&p[b].3),
+                                            _ => p[a].1.cmp(&p[b].1),
+                                        };
+                                        if by.descending { o.reverse() } else { o }
+                                    });
+                                }
+                                index
+                            });
+                            order.set(Rc::new(next));
+                        }));
+                    }
+                    let row_of = |order: &zgui::reactive::Signal<Rc<Vec<usize>>>, r: usize| {
+                        order.with(|o| o.get(r).copied().unwrap_or(r))
+                    };
+                    let (count, shown, shown_order) = (products.clone(), products.clone(), order.clone());
+                    let (edited, edit_order) = (products.clone(), order.clone());
+                    let toaster = Toaster::of(&runtime);
+                    let source = GridSource::new(
+                        move || count.with(Vec::len),
+                        move |r, column| {
+                            let i = row_of(&shown_order, r);
+                            shown.with(|p| match column {
+                                "sku" => p[i].0.clone(),
+                                "name" => p[i].1.clone(),
+                                "price" => format!("{:.2}", p[i].2),
+                                _ => p[i].3.to_string(),
+                            })
+                        },
+                    )
+                    .on_edit(move |r, _, text| {
+                        let i = edit_order.with_untracked(|o| o.get(r).copied().unwrap_or(r));
+                        edited.update(|p| p[i].1 = text);
+                    })
+                    .on_activate(move |r| {
+                        toaster.show(Toast::new(format!("Opened row {}", r + 1)));
+                    });
+                    column().w(560.).h(260.).child(data_grid(
+                        "Products",
+                        columns,
+                        sort,
+                        runtime.signal(None),
+                        source,
+                    ))
+                })],
+            );
             let sections: Vec<(String, Rc<dyn Fn() -> View>)> = vec![
                 ("Shipping".into(), Rc::new(|| text("Ships in two days."))),
                 ("Payment".into(), Rc::new(|| text("Cards and transfers."))),
@@ -318,6 +399,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .child(choosing)
                                 .child(searching)
                                 .child(tree_section)
+                                .child(grid_section)
                                 .child(overlays)
                                 .child(containers),
                         ),

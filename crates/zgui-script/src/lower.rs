@@ -1189,6 +1189,258 @@ fn kind_view(
                 }
             })
         }
+        Kind::DataGrid {
+            label,
+            columns,
+            rows,
+            sort,
+            value,
+            on_edit,
+            on_activate,
+        } => {
+            use crate::value::PathKey;
+            use zgui::compose::{GridCell, GridColumn, GridSort, GridSource};
+            let cx = need(&mut cx);
+            // A column: `{ id, title?, width?, min_width?, sortable?,
+            // editable?, align? }`.
+            fn column_of(v: &Value) -> Option<GridColumn> {
+                let id = v.field("id")?.to_string();
+                let title = v
+                    .field("title")
+                    .map_or_else(|| id.clone(), Value::to_string);
+                let width = v.field("width").and_then(Value::as_f64).unwrap_or(120.);
+                let mut column = GridColumn::new(id, title, width as f32);
+                if let Some(min) = v.field("min_width").and_then(Value::as_f64) {
+                    column.min_width = min as f32;
+                }
+                column.sortable = v.field("sortable").is_some_and(Value::truthy);
+                column.editable = v.field("editable").is_some_and(Value::truthy);
+                column.align_end = v.field("align").is_some_and(|a| a.to_string() == "end");
+                Some(column)
+            }
+            fn columns_of(v: &Value) -> Vec<GridColumn> {
+                v.list().iter().filter_map(column_of).collect()
+            }
+            fn sort_of(v: &Value) -> Option<GridSort> {
+                Some(GridSort {
+                    column: v.field("column")?.to_string(),
+                    descending: v.field("descending").is_some_and(Value::truthy),
+                })
+            }
+            fn sort_value(sort: Option<GridSort>) -> Value {
+                let Some(sort) = sort else {
+                    return Value::Nil;
+                };
+                Value::Nil
+                    .set_path(
+                        &[PathKey::Key("column".into())],
+                        Value::Str(sort.column.as_str().into()),
+                    )
+                    .and_then(|v| {
+                        v.set_path(
+                            &[PathKey::Key("descending".into())],
+                            Value::Bool(sort.descending),
+                        )
+                    })
+                    .unwrap_or(Value::Nil)
+            }
+            // Numbers by value, text without case, then the rest; nil last.
+            fn compare(a: Option<&Value>, b: Option<&Value>) -> std::cmp::Ordering {
+                let rank = |v: Option<&Value>| match v {
+                    Some(Value::Num(_) | Value::Bool(_)) => 0,
+                    Some(Value::Str(_)) => 1,
+                    None | Some(Value::Nil) => 3,
+                    _ => 2,
+                };
+                match (a, b) {
+                    (Some(Value::Num(x)), Some(Value::Num(y))) => x.total_cmp(y),
+                    (Some(Value::Bool(x)), Some(Value::Bool(y))) => x.cmp(y),
+                    (Some(Value::Str(x)), Some(Value::Str(y))) => x
+                        .chars()
+                        .flat_map(char::to_lowercase)
+                        .cmp(y.chars().flat_map(char::to_lowercase))
+                        .then_with(|| x.cmp(y)),
+                    _ => rank(a).cmp(&rank(b)),
+                }
+            }
+            let columns_state = match columns {
+                Ok(state) => state.clone(),
+                Err(given) => cx.state(given.clone()),
+            };
+            // Written back in their new order and widths, all else as the
+            // app had it.
+            let written = columns_state.clone();
+            let columns = bridge_with(
+                cx,
+                &columns_state,
+                columns_of,
+                move |next: Vec<GridColumn>| {
+                    written.with_untracked(|old| {
+                        let items: Vec<Value> = next
+                            .iter()
+                            .filter_map(|c| {
+                                let item = old.list().iter().find(|o| {
+                                    o.field("id").map(Value::to_string).as_deref() == Some(&*c.id)
+                                })?;
+                                item.set_path(
+                                    &[PathKey::Key("width".into())],
+                                    Value::Num(c.width as f64),
+                                )
+                                .ok()
+                            })
+                            .collect();
+                        Value::List(items.into())
+                    })
+                },
+            );
+            let sort = match sort {
+                Some(state) => bridge(cx, state, sort_of, sort_value),
+                None => cx.state(None),
+            };
+            // The rows as they show: `rows` sorted, by their indices (none:
+            // as they are).
+            let order: Signal<Option<Rc<Vec<usize>>>> = cx.state(None);
+            {
+                let (rows, sort, order) = (rows.clone(), sort.clone(), order.clone());
+                cx.retain(cx.runtime().effect(move || {
+                    let next = sort.get().map(|by| {
+                        rows.with(|v| {
+                            let list = v.list();
+                            let mut index: Vec<usize> = (0..list.len()).collect();
+                            index.sort_by(|&a, &b| {
+                                let (a, b) = (list[a].field(&by.column), list[b].field(&by.column));
+                                if by.descending {
+                                    compare(b, a)
+                                } else {
+                                    compare(a, b)
+                                }
+                            });
+                            Rc::new(index)
+                        })
+                    });
+                    order.set(next);
+                }));
+            }
+            // A row shown's index in `rows`, from 0.
+            let original = {
+                let order = order.clone();
+                move |r: usize| {
+                    order.with_untracked(|o| {
+                        o.as_ref().map_or(r, |o| o.get(r).copied().unwrap_or(r))
+                    })
+                }
+            };
+            let (count, cells, cell_order) = (rows.clone(), rows.clone(), order.clone());
+            let mut source = GridSource::new(
+                move || count.with(|v| v.list().len()),
+                move |r, column| {
+                    let i = cell_order
+                        .with(|o| o.as_ref().map_or(r, |o| o.get(r).copied().unwrap_or(r)));
+                    cells.with(|v| {
+                        v.list()
+                            .get(i)
+                            .and_then(|row| row.field(column))
+                            .map(Value::to_string)
+                            .unwrap_or_default()
+                    })
+                },
+            );
+            {
+                // Told to `on_edit`, or written into the row: a number stays
+                // one if the text is one.
+                let (rows, vm, on_edit, at) =
+                    (rows.clone(), vm.clone(), on_edit.clone(), original.clone());
+                source = source.on_edit(move |r, column, text| {
+                    let i = at(r);
+                    if let Some(f) = &on_edit {
+                        if let Err(error) = vm.call::<()>(f, (i + 1, column.to_owned(), text)) {
+                            vm.report(error);
+                        }
+                        return;
+                    }
+                    let path = [PathKey::Index(i + 1), PathKey::Key(column.into())];
+                    let old = rows.with_untracked(|v| v.at(&path).cloned());
+                    let leaf = match old {
+                        Some(Value::Num(_)) if text.trim().is_empty() => Value::Nil,
+                        Some(Value::Num(_)) => text
+                            .trim()
+                            .parse::<f64>()
+                            .map_or_else(|_| Value::Str(text.as_str().into()), Value::Num),
+                        Some(Value::Bool(_)) if text == "true" || text == "false" => {
+                            Value::Bool(text == "true")
+                        }
+                        _ => Value::Str(text.as_str().into()),
+                    };
+                    match rows.with_untracked(|v| v.set_path(&path, leaf)) {
+                        Ok(next) => {
+                            rows.set(next);
+                        }
+                        Err(error) => vm.report(mlua::Error::runtime(error)),
+                    }
+                });
+            }
+            if let Some(f) = on_activate.clone() {
+                let (vm, at) = (vm.clone(), original.clone());
+                source = source.on_activate(move |r| {
+                    if let Err(error) = vm.call::<()>(&f, at(r) + 1) {
+                        vm.report(error);
+                    }
+                });
+            }
+            // The current cell, its row an index into `rows` from 1. That
+            // state is the truth: as the rows' order changes, the cell
+            // follows its record (as a sorted list keeps its selection).
+            let state = match value {
+                Some(state) => state.clone(),
+                None => cx.state(Value::Nil),
+            };
+            fn cell_of(v: &Value, order: &Option<Rc<Vec<usize>>>) -> Option<GridCell> {
+                let row = v.field("row").and_then(Value::as_f64)? as usize;
+                let column = v.field("column")?.to_string();
+                let r = match order {
+                    Some(o) => o.iter().position(|&i| i + 1 == row),
+                    None => row.checked_sub(1),
+                }?;
+                Some(GridCell::new(r, column))
+            }
+            fn value_of(cell: &Option<GridCell>, order: &Option<Rc<Vec<usize>>>) -> Value {
+                let Some(cell) = cell else {
+                    return Value::Nil;
+                };
+                let i = order
+                    .as_ref()
+                    .map_or(cell.row, |o| o.get(cell.row).copied().unwrap_or(cell.row));
+                Value::Nil
+                    .set_path(&[PathKey::Key("row".into())], Value::Num((i + 1) as f64))
+                    .and_then(|v| {
+                        v.set_path(
+                            &[PathKey::Key("column".into())],
+                            Value::Str(cell.column.as_str().into()),
+                        )
+                    })
+                    .unwrap_or(Value::Nil)
+            }
+            let current: Signal<Option<GridCell>> =
+                cx.state(state.with_untracked(|v| order.with_untracked(|o| cell_of(v, o))));
+            {
+                let (state, order, current) = (state.clone(), order.clone(), current.clone());
+                cx.retain(cx.runtime().effect(move || {
+                    let o = order.get();
+                    current.set(state.with(|v| cell_of(v, &o)));
+                }));
+            }
+            {
+                let (state, order, current) = (state.clone(), order.clone(), current.clone());
+                let mut first = true;
+                cx.retain(cx.runtime().effect(move || {
+                    let cell = current.get();
+                    if !std::mem::take(&mut first) {
+                        state.set(order.with_untracked(|o| value_of(&cell, o)));
+                    }
+                }));
+            }
+            data_grid(label.clone(), columns, sort, current, source)
+        }
         Kind::Combobox {
             label,
             text: text_state,

@@ -1,4 +1,4 @@
-# Containers: column, row, div, overlay, grid, split, tabs, tree, disclosure, accordion, separator
+# Containers: column, row, div, overlay, grid, split, tabs, tree, data_grid, disclosure, accordion, separator
 
 Boxes that lay out their children. Each takes one table: string keys are [properties](properties.md) and [events](events.md), array entries are children.
 
@@ -11,6 +11,7 @@ ui.grid(props: ContainerProps?) -> Node
 ui.split(props: SplitProps) -> Node
 ui.tabs(props: TabsProps) -> Node
 ui.tree(props: TreeProps) -> Node
+ui.data_grid(props: DataGridProps) -> Node
 ui.disclosure(props: DisclosureProps) -> Node
 ui.accordion(props: AccordionProps) -> Node
 ui.section(props: SectionProps) -> Node
@@ -134,6 +135,49 @@ return ui.column {
 | `on_open` | `(id: string) -> ()` | none | an item opened: load its children now |
 | `on_activate` | `(id: string) -> ()` | none | Enter or a double click |
 | `label` | `string` | `""` | its accessible name |
+
+## data_grid
+
+Records in rows under a header of columns, as WAI-ARIA's grid and a spreadsheet's table. The grid is one Tab stop and keeps focus; its current cell is its active descendant, which assistive technology reads with its row and column (the grid's size counts the rows not built). The arrows move (mirrored right to left), Home and End go to the row's ends and, with ⌘ or Ctrl, the grid's; Page Up and Down go a page. Enter or F2 edits an editable cell, as typing over it does; Enter keeps the edit and moves down, Escape drops it, and Delete clears the cell. Enter on a cell that doesn't edit activates its row, as a double click does. Up from the first row reaches the header: Enter or Space sorts its column (ascending, descending, then as given), ⌘⇧ (Ctrl+Shift) with an arrow moves it, Alt with an arrow narrows or widens it. With the pointer, a header's click sorts, a drag moves its column, and its edge's drag resizes it (a double click there puts the width back). The rows are virtual: a grid of a hundred thousand builds only what shows.
+
+```lua
+local people = ui.state("people", {
+	{ name = "Ada", age = 36 },
+	{ name = "Grace", age = 85 },
+	{ name = "Linus", age = 21 },
+})
+local columns = ui.state("columns", {
+	{ id = "name", title = "Name", width = 160, sortable = true, editable = true },
+	{ id = "age", title = "Age", width = 80, sortable = true, editable = true, align = "end" },
+} :: { GridColumn })
+local sort = ui.state("sort", nil :: GridSort?)
+return ui.column {
+	h = 240,
+	ui.data_grid {
+		label = "People",
+		columns = columns,
+		rows = people,
+		sort = sort,
+		on_activate = function(row: number)
+			ui.toast { title = people:get()[row].name }
+		end,
+	},
+}
+```
+
+Each cell shows its row's field named by the column's `id`. The grid sorts `rows` itself (numbers by value, text without case); `row` in `value`, `on_edit` and `on_activate` is the record's index in `rows`, whatever the sort.
+
+| Option | Type | Default | |
+| --- | --- | --- | --- |
+| `columns` | `{ GridColumn }` or a state of them | required | `{ id, title?, width?, min_width?, sortable?, editable?, align? }` each; `width` 120 unless set, `align = "end"` for numbers. A state is written as columns are resized and moved, the app's other fields kept |
+| `rows` | `State<{ any }>` | required | the records |
+| `sort` | `State<GridSort?>` | none | `{ column, descending? }`, both ways; nil shows `rows` as they are |
+| `value` | `State<{ row: number, column: string }?>` | none | the current cell, both ways |
+| `on_edit` | `(row: number, column: string, text: string) -> ()` | none | an edit kept; without it the text is written into the record, a number staying a number |
+| `on_activate` | `(row: number) -> ()` | none | Enter on a cell that doesn't edit, or a double click |
+| `label` | `string` | `""` | its accessible name |
+
+In Rust, `data_grid(label, columns, sort, current, GridSource::new(rows, cell).on_edit(…).on_activate(…))`: `cell(row, column)` gives each cell's text, and the app gives its rows in the order `sort` asks.
 
 ## disclosure, accordion, separator
 

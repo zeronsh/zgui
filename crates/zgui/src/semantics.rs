@@ -107,6 +107,30 @@ pub enum Live {
     /// Announced at once, interrupting the reader.
     Assertive,
 }
+/// Which way a column header sorts its column (`aria-sort`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortOrder {
+    /// Smallest (first) first.
+    Ascending,
+    /// Largest (last) first.
+    Descending,
+}
+/// A grid's size, or a row's, cell's or column header's place in it, from
+/// 0, counting what is virtual (not built) too (`aria-rowcount`,
+/// `aria-rowindex` and the rest).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TablePlace {
+    /// A row's, cell's or header's row.
+    pub row: Option<usize>,
+    /// A cell's or header's column.
+    pub column: Option<usize>,
+    /// A grid's rows, its header's included.
+    pub rows: Option<usize>,
+    /// A grid's columns.
+    pub columns: Option<usize>,
+    /// A column header's sort.
+    pub sort: Option<SortOrder>,
+}
 /// The single scrolling axis supported by a semantic scroll view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollAxis {
@@ -192,6 +216,8 @@ pub struct SemanticNode {
     /// The option a combobox's field has highlighted, while focus stays in
     /// the field (`aria-activedescendant`).
     pub active_descendant: Option<NodeId>,
+    /// Its place in a grid, or a grid's size (boxed: only grids have one).
+    pub table: Option<Box<TablePlace>>,
 }
 impl SemanticNode {
     /// A node of `role` named `label`, everything else unset.
@@ -226,6 +252,7 @@ impl SemanticNode {
             radio: false,
             shortcut: None,
             active_descendant: None,
+            table: None,
         }
     }
 }

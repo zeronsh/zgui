@@ -363,6 +363,49 @@ local tree_section = section(
 	}
 )
 
+local function make_orders()
+	local out = {}
+	for i = 1, 2000 do
+		out[i] = {
+			id = `#{1000 + i}`,
+			customer = `Customer {i % 97}`,
+			total = (i * 37) % 1000 / 10,
+			status = if i % 3 == 0 then "Shipped" else "Pending",
+		}
+	end
+	return out
+end
+local orders = ui.state("orders", make_orders())
+local order_columns = ui.state(
+	"order_columns",
+	{
+		{ id = "id", title = "Order", width = 90 },
+		{ id = "customer", title = "Customer", width = 180, sortable = true, editable = true },
+		{ id = "total", title = "Total", width = 90, sortable = true, editable = true, align = "end" },
+		{ id = "status", title = "Status", width = 110, sortable = true },
+	} :: { GridColumn }
+)
+local order_sort = ui.state("order_sort", nil :: GridSort?)
+
+local grid_section = section(
+	"Data grid",
+	"Arrows move; Enter, F2 or typing edits, Escape drops; Up from the first row reaches the header, where Enter sorts, ⌘⇧ arrows move a column and Alt arrows resize it. Drag a header to move its column, its edge to resize it.",
+	ui.column {
+		w = 520,
+		h = 260,
+		ui.data_grid {
+			id = "orders",
+			label = "Orders",
+			columns = order_columns,
+			rows = orders,
+			sort = order_sort,
+			on_activate = function(row: number)
+				ui.toast { title = `Opened order {orders:get()[row].id}` }
+			end,
+		},
+	}
+)
+
 local containers = section(
 	"Disclosure and accordion",
 	"Enter or Space toggles a section; an accordion keeps one open.",
@@ -407,6 +450,7 @@ return ui.column {
 			choosing,
 			searching_section,
 			tree_section,
+			grid_section,
 			overlays,
 			containers,
 		},

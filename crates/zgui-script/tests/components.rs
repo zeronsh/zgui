@@ -434,3 +434,116 @@ fn a_tree_opens_loads_lazily_and_activates() {
         "loaded as it opened: {labels:?}"
     );
 }
+
+#[test]
+fn a_data_grid_sorts_edits_into_its_rows_and_writes_its_columns() {
+    let mut h = Harness::inline(
+        r#"local people = ui.state("people", {
+            { name = "Ada", age = 36 },
+            { name = "Grace", age = 85 },
+            { name = "Linus", age = 21 },
+        })
+        local columns = ui.state("columns", {
+            { id = "name", title = "Name", width = 140, sortable = true, editable = true },
+            { id = "age", title = "Age", width = 80, sortable = true, editable = true, align = "end" },
+        })
+        local sort = ui.state("sort", nil :: { column: string, descending: boolean? }?)
+        local current = ui.state("current", nil :: { row: number, column: string }?)
+        local opened = ui.state("opened", 0)
+        return ui.column {
+            h = 300,
+            ui.data_grid {
+                label = "People",
+                columns = columns,
+                rows = people,
+                sort = sort,
+                value = current,
+                on_activate = function(row) opened:set(row) end,
+            },
+            ui.text { id = "first", function() return people:get()[1].name end },
+            ui.text { id = "age", function() return tostring(people:get()[3].age) end },
+            ui.text { id = "width", function() return tostring(columns:get()[2].width) end },
+            ui.text { id = "sort", function()
+                local s = sort:get()
+                return if s then s.column .. (if s.descending then " down" else " up") else "none"
+            end },
+            ui.text { id = "current", function()
+                local c = current:get()
+                return if c then c.column .. " " .. c.row else "none"
+            end },
+        }"#,
+    );
+    h.frames(2);
+    assert_eq!(h.error(), None);
+    let grid = with_role(&mut h, Role::Grid)[0];
+    h.ui.input.focus(&h.ui.scene, Some(grid));
+    h.frames(1);
+    assert_eq!(h.text("current"), "name 1");
+    // The header: Age ascending, so Linus (21) shows first.
+    h.key(Key::ArrowUp);
+    h.key(Key::ArrowRight);
+    h.key(Key::Enter);
+    assert_eq!(h.text("sort"), "age up");
+    let first_row = |h: &mut Harness| {
+        let rows = with_role(h, Role::Row);
+        let cells: Vec<NodeId> = {
+            let scene = h.ui.scene.borrow();
+            let semantics = h.ui.semantics.borrow();
+            let mut out = Vec::new();
+            let mut pending = vec![rows[1]];
+            while let Some(n) = pending.pop() {
+                if semantics.get(n).is_some_and(|s| s.role == Role::Cell) {
+                    out.push(n);
+                }
+                pending.extend(scene.children(n).iter().rev().copied());
+            }
+            out
+        };
+        let scene = h.ui.scene.borrow();
+        cells
+            .iter()
+            .map(|c| {
+                let mut stack = vec![*c];
+                let mut text = String::new();
+                while let Some(n) = stack.pop() {
+                    if let zgui::scene::NodeKind::Text { text: t, .. } = scene.kind(n) {
+                        text.push_str(t);
+                    }
+                    stack.extend(scene.children(n).iter().rev());
+                }
+                text
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(first_row(&mut h), ["Linus", "21"]);
+    // The current cell followed its record, Ada's (now shown second): Down
+    // into the rows lands there; Up, on Linus's age, row 3 of `rows`.
+    h.key(Key::ArrowDown);
+    assert_eq!(h.text("current"), "age 1");
+    h.key(Key::ArrowUp);
+    assert_eq!(h.text("current"), "age 3");
+    // Typing over it edits; the number written is a number.
+    h.key(Key::Character("4".into()));
+    h.ui.dispatch(zgui::input::InputEvent::Text("4".into()));
+    h.ui.dispatch(zgui::input::InputEvent::Text("2".into()));
+    h.key(Key::Enter);
+    assert_eq!(h.text("age"), "42");
+    assert_eq!(
+        first_row(&mut h),
+        ["Ada", "36"],
+        "sorted again: 42 is now last"
+    );
+    // Alt+Right on the header widens Age, written into the columns.
+    h.key(Key::ArrowUp);
+    h.key(Key::ArrowUp);
+    h.key(Key::ArrowUp);
+    h.key_with(
+        Key::ArrowRight,
+        Modifiers {
+            alt: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(h.text("width"), "96");
+    assert_eq!(h.error(), None);
+}
