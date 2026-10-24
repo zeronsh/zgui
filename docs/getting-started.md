@@ -192,6 +192,15 @@ lto = "fat"
 codegen-units = 1
 ```
 
+Profile-guided optimization is a further, optional step: build the app instrumented, run what it does, and build it again with what the run recorded. On zgui's headless scenes it saves 2–19% of the instructions (the heavy dashboard 12%, Luau animation 19%), in scenes it was not trained on as much as in those it was. The profile fits the source it was recorded from, so record again after changes. Inside this repository, `python3 scripts/perf/pgo.py -p zgui-run --bin zgui-run` does all three builds, training on zgui's headless scenes and on any command you give it (`'{bin} …'`), and writes `target/dist-pgo/zgui-run`. For an app of your own (`rustup component add llvm-tools` first):
+
+```sh
+RUSTFLAGS="-Cprofile-generate=/tmp/pgo" cargo build --profile dist
+./target/dist/my-app            # use it as people do, then quit
+"$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-profdata merge -o /tmp/app.profdata /tmp/pgo
+RUSTFLAGS="-Cprofile-use=/tmp/app.profdata" cargo build --profile dist
+```
+
 Release binaries keep their symbol table, so backtraces and crash reports name functions. Stripping it saves about another 1.4 MB, and is your choice to make: add `strip = "symbols"` to `[profile.dist]` and keep the symbols apart, in a dSYM, to read crash reports with. On macOS that is `split-debuginfo = "packed"` with `debug = "line-tables-only"` in the profile; Cargo writes `<binary>.dSYM` beside the binary. Keep it with each release you ship, so crash reports from it can be symbolicated (`atos`, or Xcode's Organizer).
 
 To ship it on Windows (an icon, a manifest, one instance per user, an installer), see [shipping on Windows](windows.md#shipping-a-zgui-app-on-windows); on macOS, bundle the binary in an `.app` with an `Info.plist` (the terminal example's `scripts/zterm-app.sh` does).

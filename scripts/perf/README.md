@@ -61,6 +61,14 @@ samples inside one function to source lines and inlined helpers (build with
 `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`). `frames.py` lists stack
 frame sizes, which finds functions paying for large values on the stack.
 
+## Profile-guided builds
+
+`python3 scripts/perf/pgo.py -p PACKAGE --bin NAME [TRAINING COMMAND ...]`
+builds a `dist` binary trained on zgui's headless scenes (and the commands,
+`{bin}` being the instrumented binary) into `target/dist-pgo/`.
+`docs/getting-started.md` has the recipe for an app outside the repository.
+The published comparison builds neither zgui nor GPUI this way.
+
 ## The real window path, quickly
 
 ```sh
