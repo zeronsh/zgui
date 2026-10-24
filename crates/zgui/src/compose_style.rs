@@ -690,7 +690,12 @@ pub(crate) fn mount_style_with_intrinsic(
             .iter()
             .any(|v| v.as_deref().is_some_and(Styles::has_tokens))
         || defaults.iter().any(Option::is_some);
-    let lazy = defaults.iter().any(Option::is_some);
+    // Kept boxed, and only by a node with one: most have none, and inline
+    // the three made every style effect a size class bigger.
+    let defaults = defaults
+        .iter()
+        .any(Option::is_some)
+        .then(|| Box::new(defaults));
     let mut theme = theme
         .filter(|_| needs_theme)
         .map(|scope| crate::theme::StyleTheme::new(scope, &base, &variants));
@@ -736,7 +741,7 @@ pub(crate) fn mount_style_with_intrinsic(
             !is_disabled && state.focus && state.focus_visible,
             is_disabled,
         ];
-        if lazy {
+        if let Some(defaults) = &defaults {
             for (i, default) in defaults.iter().enumerate() {
                 if in_effect[i]
                     && variants[i].is_none()
