@@ -87,6 +87,15 @@ def main():
     subprocess.run(['git', 'worktree', 'add', '--detach', str(base), args.base], cwd=ROOT, check=True,
                    capture_output=True)
     build(base, target, WORK / 'gate-bin-base')
+    # Cargo names a path crate's artifacts the same from either checkout,
+    # and judges them fresh by modification time: this checkout's files,
+    # older than what the base just built, would be taken for built. Newer
+    # now, they are compiled again (the registry's crates stay shared).
+    tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=ROOT, capture_output=True, check=True).stdout
+    for path in filter(None, tracked.split(b'\0')):
+        file = ROOT / path.decode()
+        if file.is_file():
+            os.utime(file)
     build(ROOT, target, WORK / 'gate-bin-head')
     rows, failed = [], []
     for name, _, example, env in SCENES:
