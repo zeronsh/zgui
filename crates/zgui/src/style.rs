@@ -34,164 +34,194 @@ pub enum ObjectFit {
     ScaleDown,
 }
 
-/// A set of style properties, each unset until a builder sets it: a
-/// view's own, or a reusable patch merged over one ([`Styled::style`]).
-#[derive(Debug, Default, PartialEq)]
-pub struct Styles {
-    pub(crate) layout_options: Option<std::sync::Arc<crate::layout::LayoutOptions>>,
-    pub(crate) object_fit: Option<ObjectFit>,
-    pub(crate) layout: Option<Layout>,
-    pub(crate) absolute: Option<bool>,
-    pub(crate) width: Option<f32>,
-    pub(crate) height: Option<f32>,
-    pub(crate) width_percent: Option<f32>,
-    pub(crate) height_percent: Option<f32>,
-    pub(crate) padding: Option<Insets>,
-    pub(crate) margin: Option<Insets>,
-    pub(crate) gap: Option<f32>,
-    pub(crate) clip: Option<bool>,
-    pub(crate) flex_grow: Option<f32>,
-    pub(crate) flex_shrink: Option<f32>,
-    pub(crate) align: Option<Align>,
-    pub(crate) justify: Option<Justify>,
-    pub(crate) text_wrap: Option<bool>,
-    pub(crate) background: Option<Color>,
-    pub(crate) cursor: Option<crate::cursor::Cursor>,
-    pub(crate) text_color: Option<Color>,
-    pub(crate) text_size: Option<f32>,
-    pub(crate) line_height: Option<crate::text_layout::LineHeight>,
-    pub(crate) font_family: Option<crate::text_layout::FontFamily>,
-    pub(crate) text_align: Option<crate::text_layout::TextAlign>,
-    pub(crate) font_weight: Option<u16>,
-    pub(crate) italic: Option<bool>,
-    pub(crate) radius: Option<f32>,
-    pub(crate) border_width: Option<f32>,
-    pub(crate) border_color: Option<Color>,
-    pub(crate) opacity: Option<f32>,
-    pub(crate) blur: Option<f32>,
-    pub(crate) edge_fade: Option<f32>,
-    pub(crate) filter_blur: Option<f32>,
+/// Defines the fields a [`Styles`] holds (`StylesFields`), each one's bit
+/// in `Styles::set` (`bit`), and what visits only the fields of given bits:
+/// one list, so no field can be left out of any.
+macro_rules! styles {
+    ($( $(#[$doc:meta])* $field:ident: $ty:ty = $bit:ident; )*) => {
+        /// The properties a [`Styles`] holds, read through it (`Deref`);
+        /// written through `Styles::fields_mut`, which marks them set.
+        #[doc(hidden)]
+        #[derive(Debug, Default, PartialEq)]
+        pub struct StylesFields {
+            $( $(#[$doc])* pub(crate) $field: $ty, )*
+        }
+        /// Each field's bit in `Styles::set`.
+        #[allow(dead_code)]
+        pub(crate) mod bit {
+            styles!(@bits 0u32; $($bit)*);
+            /// Each field's bit's index.
+            pub(crate) mod index {
+                styles!(@index 0u32; $($bit)*);
+            }
+        }
+        impl StylesFields {
+            /// The bits of the fields that differ from their defaults.
+            fn mask(&self) -> u64 {
+                let mut mask = 0;
+                $( if self.$field != <$ty>::default() { mask |= bit::$bit; } )*
+                mask
+            }
+            /// Whether the fields of `bits` are equal in both.
+            fn eq_in(&self, other: &Self, mut bits: u64) -> bool {
+                while bits != 0 {
+                    let low = bits & bits.wrapping_neg();
+                    bits ^= low;
+                    if !self.eq_field(other, low) {
+                        return false;
+                    }
+                }
+                true
+            }
+            /// Whether the field of bit `field` is equal in both. Out of
+            /// line: inlined into `eq_in`'s loop, every field's comparison
+            /// was hoisted out of it, and all of them made each time.
+            #[inline(never)]
+            fn eq_field(&self, other: &Self, field: u64) -> bool {
+                match field.trailing_zeros() {
+                    $( bit::index::$bit => self.$field == other.$field, )*
+                    _ => true,
+                }
+            }
+        }
+    };
+    (@bits $n:expr; $first:ident $($rest:ident)*) => {
+        pub(crate) const $first: u64 = 1 << ($n);
+        styles!(@bits $n + 1; $($rest)*);
+    };
+    (@bits $n:expr;) => {};
+    (@index $n:expr; $first:ident $($rest:ident)*) => {
+        pub(crate) const $first: u32 = $n;
+        styles!(@index $n + 1; $($rest)*);
+    };
+    (@index $n:expr;) => {};
+}
+styles! {
+    layout_options: Option<std::sync::Arc<crate::layout::LayoutOptions>> = LAYOUT_OPTIONS;
+    object_fit: Option<ObjectFit> = OBJECT_FIT;
+    layout: Option<Layout> = LAYOUT;
+    absolute: Option<bool> = ABSOLUTE;
+    width: Option<f32> = WIDTH;
+    height: Option<f32> = HEIGHT;
+    width_percent: Option<f32> = WIDTH_PERCENT;
+    height_percent: Option<f32> = HEIGHT_PERCENT;
+    padding: Option<Insets> = PADDING;
+    margin: Option<Insets> = MARGIN;
+    gap: Option<f32> = GAP;
+    clip: Option<bool> = CLIP;
+    flex_grow: Option<f32> = FLEX_GROW;
+    flex_shrink: Option<f32> = FLEX_SHRINK;
+    align: Option<Align> = ALIGN;
+    justify: Option<Justify> = JUSTIFY;
+    text_wrap: Option<bool> = TEXT_WRAP;
+    background: Option<Color> = BACKGROUND;
+    cursor: Option<crate::cursor::Cursor> = CURSOR;
+    text_color: Option<Color> = TEXT_COLOR;
+    text_size: Option<f32> = TEXT_SIZE;
+    line_height: Option<crate::text_layout::LineHeight> = LINE_HEIGHT;
+    font_family: Option<crate::text_layout::FontFamily> = FONT_FAMILY;
+    text_align: Option<crate::text_layout::TextAlign> = TEXT_ALIGN;
+    font_weight: Option<u16> = FONT_WEIGHT;
+    italic: Option<bool> = ITALIC;
+    radius: Option<f32> = RADIUS;
+    border_width: Option<f32> = BORDER_WIDTH;
+    border_color: Option<Color> = BORDER_COLOR;
+    opacity: Option<f32> = OPACITY;
+    blur: Option<f32> = BLUR;
+    edge_fade: Option<f32> = EDGE_FADE;
+    filter_blur: Option<f32> = FILTER_BLUR;
     /// Colour filters (`Styled::brightness` and the rest).
-    pub(crate) brightness: Option<f32>,
-    pub(crate) contrast: Option<f32>,
-    pub(crate) saturate: Option<f32>,
+    brightness: Option<f32> = BRIGHTNESS;
+    contrast: Option<f32> = CONTRAST;
+    saturate: Option<f32> = SATURATE;
     /// Where `RareStyles::mask` lies over the node: animated every frame.
-    pub(crate) mask_offset: Option<(f32, f32)>,
+    mask_offset: Option<(f32, f32)> = MASK_OFFSET;
     /// `Styled::clip_inset`: animated every frame.
-    pub(crate) clip_inset: Option<crate::scene::ClipInset>,
-    pub(crate) transform: Option<Transform>,
-    pub(crate) local_transform: TransformPatch,
-    pub(crate) isolated: Option<bool>,
-    pub(crate) padding_sides: u8,
-    pub(crate) margin_sides: u8,
+    clip_inset: Option<crate::scene::ClipInset> = CLIP_INSET;
+    transform: Option<Transform> = TRANSFORM;
+    local_transform: TransformPatch = LOCAL_TRANSFORM;
+    isolated: Option<bool> = ISOLATED;
+    padding_sides: u8 = PADDING_SIDES;
+    margin_sides: u8 = MARGIN_SIDES;
     /// Set (to none) by `bg`, `rounded` and `border`, so on most nodes.
-    pub(crate) paint_background: Option<Option<crate::decoration::Background>>,
-    pub(crate) corners: Option<Option<crate::decoration::Corners>>,
-    pub(crate) border_edges: Option<Option<Insets>>,
+    paint_background: Option<Option<crate::decoration::Background>> = PAINT_BACKGROUND;
+    corners: Option<Option<crate::decoration::Corners>> = CORNERS;
+    border_edges: Option<Option<Insets>> = BORDER_EDGES;
     /// Properties few views set (see `RareStyles`).
-    pub(crate) rare: Option<std::sync::Arc<RareStyles>>,
+    rare: Option<std::sync::Arc<RareStyles>> = RARE;
     /// Properties set by theme tokens (`.bg(tok::SURFACE_RAISED)`), resolved
     /// when the node is styled; see `crate::theme`.
-    pub(crate) tokens: Option<std::sync::Arc<crate::theme::Bindings>>,
+    tokens: Option<std::sync::Arc<crate::theme::Bindings>> = TOKENS;
 }
-/// Whether `self` and `other` are equal but for their box fields (width,
-/// height, their percentages and margins: what a growing bar changes),
-/// in one pass. Every field is named, so a new one cannot be left out.
+/// A set of style properties, each unset until a builder sets it: a
+/// view's own, or a reusable patch merged over one ([`Styled::style`]).
+///
+/// Its fields are read through it and written through `fields_mut`, which
+/// marks them in `set`: comparing, the commonest thing done with styles
+/// (a style effect's every re-run), visits only the fields set in either.
+#[derive(Default)]
+pub struct Styles {
+    fields: StylesFields,
+    /// A bit (`bit`) for each field that may differ from its default: a
+    /// field whose bit is clear is its default.
+    set: u64,
+}
+impl std::ops::Deref for Styles {
+    type Target = StylesFields;
+    #[inline]
+    fn deref(&self) -> &StylesFields {
+        &self.fields
+    }
+}
+impl std::fmt::Debug for Styles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.fields.fmt(f)
+    }
+}
+impl PartialEq for Styles {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.fields.eq_in(&other.fields, self.set | other.set)
+    }
+}
+impl From<StylesFields> for Styles {
+    fn from(fields: StylesFields) -> Self {
+        Self {
+            set: fields.mask(),
+            fields,
+        }
+    }
+}
 impl Styles {
+    /// The fields to write, those of `bits` (`bit`) marked set: a field
+    /// written must have its bit here.
+    #[inline]
+    pub(crate) fn fields_mut(&mut self, bits: u64) -> &mut StylesFields {
+        self.set |= bits;
+        &mut self.fields
+    }
+    /// The fields to take, those of `bits` marked unset: the caller leaves
+    /// each of them at its default (`take`n out).
+    #[inline]
+    pub(crate) fn fields_taken(&mut self, bits: u64) -> &mut StylesFields {
+        self.set &= !bits;
+        &mut self.fields
+    }
+    /// The fields that may be set (see `set`).
+    #[inline]
+    pub(crate) fn set_bits(&self) -> u64 {
+        self.set
+    }
+}
+impl Styles {
+    /// Whether `self` and `other` are equal but for their box fields (width,
+    /// height, their percentages and margins: what a growing bar changes),
+    /// comparing only fields set in either.
     pub(crate) fn eq_except_sizes(&self, other: &Self) -> bool {
-        let Styles {
-            layout_options,
-            object_fit,
-            layout,
-            absolute,
-            width: _,
-            height: _,
-            width_percent: _,
-            height_percent: _,
-            padding,
-            margin: _,
-            gap,
-            clip,
-            flex_grow,
-            flex_shrink,
-            align,
-            justify,
-            text_wrap,
-            background,
-            cursor,
-            text_color,
-            text_size,
-            line_height,
-            font_family,
-            text_align,
-            font_weight,
-            italic,
-            radius,
-            border_width,
-            border_color,
-            opacity,
-            blur,
-            edge_fade,
-            filter_blur,
-            brightness,
-            contrast,
-            saturate,
-            mask_offset,
-            clip_inset,
-            transform,
-            local_transform,
-            isolated,
-            padding_sides,
-            margin_sides,
-            paint_background,
-            corners,
-            border_edges,
-            rare,
-            tokens,
-        } = self;
-        *layout_options == other.layout_options
-            && *object_fit == other.object_fit
-            && *layout == other.layout
-            && *absolute == other.absolute
-            && *padding == other.padding
-            && *gap == other.gap
-            && *clip == other.clip
-            && *flex_grow == other.flex_grow
-            && *flex_shrink == other.flex_shrink
-            && *align == other.align
-            && *justify == other.justify
-            && *text_wrap == other.text_wrap
-            && *background == other.background
-            && *cursor == other.cursor
-            && *text_color == other.text_color
-            && *text_size == other.text_size
-            && *line_height == other.line_height
-            && *font_family == other.font_family
-            && *text_align == other.text_align
-            && *font_weight == other.font_weight
-            && *italic == other.italic
-            && *radius == other.radius
-            && *border_width == other.border_width
-            && *border_color == other.border_color
-            && *opacity == other.opacity
-            && *blur == other.blur
-            && *edge_fade == other.edge_fade
-            && *filter_blur == other.filter_blur
-            && *brightness == other.brightness
-            && *contrast == other.contrast
-            && *saturate == other.saturate
-            && *mask_offset == other.mask_offset
-            && *clip_inset == other.clip_inset
-            && *transform == other.transform
-            && *local_transform == other.local_transform
-            && *isolated == other.isolated
-            && *padding_sides == other.padding_sides
-            && *margin_sides == other.margin_sides
-            && *paint_background == other.paint_background
-            && *corners == other.corners
-            && *border_edges == other.border_edges
-            && *rare == other.rare
-            && *tokens == other.tokens
+        let sizes =
+            bit::WIDTH | bit::HEIGHT | bit::WIDTH_PERCENT | bit::HEIGHT_PERCENT | bit::MARGIN;
+        self.fields
+            .eq_in(&other.fields, (self.set | other.set) & !sizes)
     }
 }
 /// As derived, but copying the plain fields as one block: a derived clone
@@ -213,11 +243,12 @@ impl Clone for Styles {
         // holds. A clone that panicked would leave `copy` undropped, leaking
         // the clones made so far but freeing nothing of `self`'s.
         unsafe {
-            std::ptr::write(&mut copy.layout_options, self.layout_options.clone());
-            std::ptr::write(&mut copy.font_family, self.font_family.clone());
-            std::ptr::write(&mut copy.paint_background, self.paint_background.clone());
-            std::ptr::write(&mut copy.rare, self.rare.clone());
-            std::ptr::write(&mut copy.tokens, self.tokens.clone());
+            let (copy, own) = (&mut copy.fields, &self.fields);
+            std::ptr::write(&mut copy.layout_options, own.layout_options.clone());
+            std::ptr::write(&mut copy.font_family, own.font_family.clone());
+            std::ptr::write(&mut copy.paint_background, own.paint_background.clone());
+            std::ptr::write(&mut copy.rare, own.rare.clone());
+            std::ptr::write(&mut copy.tokens, own.tokens.clone());
         }
         std::mem::ManuallyDrop::into_inner(copy)
     }
@@ -226,8 +257,8 @@ impl Clone for Styles {
 /// without `Clone for Styles` cloning it: every other field is copied here
 /// with `..*styles`, which only `Copy` fields allow.
 #[allow(dead_code)]
-fn styles_clone_covers_every_owning_field(styles: &Styles) -> Styles {
-    Styles {
+fn styles_clone_covers_every_owning_field(styles: &StylesFields) -> StylesFields {
+    StylesFields {
         layout_options: None,
         font_family: None,
         paint_background: None,
@@ -446,7 +477,11 @@ impl Styles {
         self.rare.as_deref().unwrap_or(&NO_RARE)
     }
     pub(crate) fn rare_mut(&mut self) -> &mut RareStyles {
-        std::sync::Arc::make_mut(self.rare.get_or_insert_with(Default::default))
+        std::sync::Arc::make_mut(
+            self.fields_mut(bit::RARE)
+                .rare
+                .get_or_insert_with(Default::default),
+        )
     }
     /// Whether any typography field (what text inherits) is set.
     pub(crate) fn sets_typography(&self) -> bool {
@@ -467,10 +502,14 @@ impl Styles {
             || self.rare().underline_offset.is_some()
     }
     pub(crate) fn layout_options_mut(&mut self) -> &mut crate::layout::LayoutOptions {
-        std::sync::Arc::make_mut(self.layout_options.get_or_insert_with(Default::default))
+        std::sync::Arc::make_mut(
+            self.fields_mut(bit::LAYOUT_OPTIONS)
+                .layout_options
+                .get_or_insert_with(Default::default),
+        )
     }
     fn clear_layout_spacing(&mut self, margin: bool, mask: u8) {
-        let Some(options) = &mut self.layout_options else {
+        let Some(options) = &mut self.fields_mut(bit::LAYOUT_OPTIONS).layout_options else {
             return;
         };
         let options = std::sync::Arc::make_mut(options);
@@ -492,7 +531,7 @@ impl Styles {
             edges.left = None;
         }
         if options.is_empty() {
-            self.layout_options = None;
+            self.fields_mut(bit::LAYOUT_OPTIONS).layout_options = None;
         }
     }
     /// No properties set.
@@ -505,6 +544,10 @@ impl Styles {
     }
     /// Overlay explicitly supplied properties, preserving all others.
     pub fn merge(&mut self, other: &Self) {
+        // Nothing set: nothing to overlay.
+        if other.set == 0 {
+            return;
+        }
         if self.tokens.is_some() || other.tokens.is_some() {
             crate::theme::merge(self, other);
         }
@@ -528,7 +571,7 @@ impl Styles {
                 },
             );
         }
-        if let Some(options) = &mut self.layout_options
+        if let Some(options) = &mut self.fields_mut(bit::LAYOUT_OPTIONS).layout_options
             && (other.gap.is_some()
                 || other.clip.is_some()
                 || other.rare().min_width.is_some()
@@ -567,138 +610,141 @@ impl Styles {
                 let mut merged = **current;
                 merged.merge(**options);
                 if merged != **current {
-                    self.layout_options = Some(std::sync::Arc::new(merged));
+                    self.fields_mut(bit::LAYOUT_OPTIONS).layout_options =
+                        Some(std::sync::Arc::new(merged));
                 }
             } else {
-                self.layout_options = Some(options.clone());
+                self.fields_mut(bit::LAYOUT_OPTIONS).layout_options = Some(options.clone());
             }
         }
         if let Some(rare) = &other.rare {
-            match &mut self.rare {
+            match &mut self.fields_mut(bit::RARE).rare {
                 Some(own) => std::sync::Arc::make_mut(own).merge(rare),
-                None => self.rare = Some(rare.clone()),
+                None => self.fields_mut(bit::RARE).rare = Some(rare.clone()),
             }
         }
         if other.paint_background.is_some() {
-            self.paint_background = other.paint_background.clone();
+            self.fields_mut(bit::PAINT_BACKGROUND).paint_background =
+                other.paint_background.clone();
         }
         if other.corners.is_some() {
-            self.corners = other.corners;
+            self.fields_mut(bit::CORNERS).corners = other.corners;
         }
         if other.border_edges.is_some() {
-            self.border_edges = other.border_edges;
+            self.fields_mut(bit::BORDER_EDGES).border_edges = other.border_edges;
         }
         if other.object_fit.is_some() {
-            self.object_fit = other.object_fit;
+            self.fields_mut(bit::OBJECT_FIT).object_fit = other.object_fit;
         }
         if other.absolute.is_some() {
-            self.absolute = other.absolute;
+            self.fields_mut(bit::ABSOLUTE).absolute = other.absolute;
         }
         if other.layout.is_some() {
-            self.layout = other.layout;
+            self.fields_mut(bit::LAYOUT).layout = other.layout;
         }
         if other.width.is_some() || other.width_percent.is_some() {
-            self.width = other.width;
-            self.width_percent = other.width_percent;
+            self.fields_mut(bit::WIDTH).width = other.width;
+            self.fields_mut(bit::WIDTH_PERCENT).width_percent = other.width_percent;
         }
         if other.height.is_some() || other.height_percent.is_some() {
-            self.height = other.height;
-            self.height_percent = other.height_percent;
+            self.fields_mut(bit::HEIGHT).height = other.height;
+            self.fields_mut(bit::HEIGHT_PERCENT).height_percent = other.height_percent;
         }
         if other.gap.is_some() {
-            self.gap = other.gap;
+            self.fields_mut(bit::GAP).gap = other.gap;
         }
         if other.clip.is_some() {
-            self.clip = other.clip;
+            self.fields_mut(bit::CLIP).clip = other.clip;
         }
         if other.flex_grow.is_some() {
-            self.flex_grow = other.flex_grow;
+            self.fields_mut(bit::FLEX_GROW).flex_grow = other.flex_grow;
         }
         if other.flex_shrink.is_some() {
-            self.flex_shrink = other.flex_shrink;
+            self.fields_mut(bit::FLEX_SHRINK).flex_shrink = other.flex_shrink;
         }
         if other.align.is_some() {
-            self.align = other.align;
+            self.fields_mut(bit::ALIGN).align = other.align;
         }
         if other.justify.is_some() {
-            self.justify = other.justify;
+            self.fields_mut(bit::JUSTIFY).justify = other.justify;
         }
         if other.text_wrap.is_some() {
-            self.text_wrap = other.text_wrap;
+            self.fields_mut(bit::TEXT_WRAP).text_wrap = other.text_wrap;
         }
         if other.cursor.is_some() {
-            self.cursor = other.cursor;
+            self.fields_mut(bit::CURSOR).cursor = other.cursor;
         }
         if other.background.is_some() {
-            self.background = other.background;
+            self.fields_mut(bit::BACKGROUND).background = other.background;
         }
         if other.text_color.is_some() {
-            self.text_color = other.text_color;
+            self.fields_mut(bit::TEXT_COLOR).text_color = other.text_color;
         }
         if other.text_align.is_some() {
-            self.text_align = other.text_align;
+            self.fields_mut(bit::TEXT_ALIGN).text_align = other.text_align;
         }
         if other.font_family.is_some() {
-            self.font_family = other.font_family.clone();
+            self.fields_mut(bit::FONT_FAMILY).font_family = other.font_family.clone();
         }
         if other.font_weight.is_some() {
-            self.font_weight = other.font_weight;
+            self.fields_mut(bit::FONT_WEIGHT).font_weight = other.font_weight;
         }
         if other.italic.is_some() {
-            self.italic = other.italic;
+            self.fields_mut(bit::ITALIC).italic = other.italic;
         }
         if other.text_size.is_some() {
-            self.text_size = other.text_size;
+            self.fields_mut(bit::TEXT_SIZE).text_size = other.text_size;
         }
         if other.line_height.is_some() {
-            self.line_height = other.line_height;
+            self.fields_mut(bit::LINE_HEIGHT).line_height = other.line_height;
         }
         if other.radius.is_some() {
-            self.radius = other.radius;
+            self.fields_mut(bit::RADIUS).radius = other.radius;
         }
         if other.border_width.is_some() {
-            self.border_width = other.border_width;
+            self.fields_mut(bit::BORDER_WIDTH).border_width = other.border_width;
         }
         if other.border_color.is_some() {
-            self.border_color = other.border_color;
+            self.fields_mut(bit::BORDER_COLOR).border_color = other.border_color;
         }
         if other.opacity.is_some() {
-            self.opacity = other.opacity;
+            self.fields_mut(bit::OPACITY).opacity = other.opacity;
         }
         if other.blur.is_some() {
-            self.blur = other.blur;
+            self.fields_mut(bit::BLUR).blur = other.blur;
         }
         if other.edge_fade.is_some() {
-            self.edge_fade = other.edge_fade;
+            self.fields_mut(bit::EDGE_FADE).edge_fade = other.edge_fade;
         }
         if other.filter_blur.is_some() {
-            self.filter_blur = other.filter_blur;
+            self.fields_mut(bit::FILTER_BLUR).filter_blur = other.filter_blur;
         }
         if other.brightness.is_some() {
-            self.brightness = other.brightness;
+            self.fields_mut(bit::BRIGHTNESS).brightness = other.brightness;
         }
         if other.contrast.is_some() {
-            self.contrast = other.contrast;
+            self.fields_mut(bit::CONTRAST).contrast = other.contrast;
         }
         if other.saturate.is_some() {
-            self.saturate = other.saturate;
+            self.fields_mut(bit::SATURATE).saturate = other.saturate;
         }
         if other.mask_offset.is_some() {
-            self.mask_offset = other.mask_offset;
+            self.fields_mut(bit::MASK_OFFSET).mask_offset = other.mask_offset;
         }
         if other.clip_inset.is_some() {
-            self.clip_inset = other.clip_inset;
+            self.fields_mut(bit::CLIP_INSET).clip_inset = other.clip_inset;
         }
         if other.transform.is_some() {
-            self.transform = other.transform;
+            self.fields_mut(bit::TRANSFORM).transform = other.transform;
         }
-        self.local_transform = self.local_transform.over(other.local_transform);
+        let local_transform = self.local_transform.over(other.local_transform);
+        self.fields_mut(bit::LOCAL_TRANSFORM).local_transform = local_transform;
         if other.isolated.is_some() {
-            self.isolated = other.isolated;
+            self.fields_mut(bit::ISOLATED).isolated = other.isolated;
         }
         if let Some(value) = other.padding {
             if self.padding.is_some() && self.padding_sides == 0 {
-                self.padding_sides = 15;
+                self.fields_mut(bit::PADDING_SIDES).padding_sides = 15;
             }
             let mask = if other.padding_sides == 0 {
                 15
@@ -706,23 +752,31 @@ impl Styles {
                 other.padding_sides
             };
             merge_insets(
-                self.padding.get_or_insert_with(Insets::default),
+                self.fields_mut(bit::PADDING)
+                    .padding
+                    .get_or_insert_with(Insets::default),
                 value,
                 mask,
             );
-            self.padding_sides |= mask;
+            self.fields_mut(bit::PADDING_SIDES).padding_sides |= mask;
         }
         if let Some(value) = other.margin {
             if self.margin.is_some() && self.margin_sides == 0 {
-                self.margin_sides = 15;
+                self.fields_mut(bit::MARGIN_SIDES).margin_sides = 15;
             }
             let mask = if other.margin_sides == 0 {
                 15
             } else {
                 other.margin_sides
             };
-            merge_insets(self.margin.get_or_insert_with(Insets::default), value, mask);
-            self.margin_sides |= mask;
+            merge_insets(
+                self.fields_mut(bit::MARGIN)
+                    .margin
+                    .get_or_insert_with(Insets::default),
+                value,
+                mask,
+            );
+            self.fields_mut(bit::MARGIN_SIDES).margin_sides |= mask;
         }
     }
 }
@@ -834,14 +888,14 @@ pub trait Styled: Sized {
     /// Lay the children out in a row, last first (`flex-direction:
     /// row-reverse`).
     fn flex_row_reverse(mut self) -> Self {
-        self.styles_mut().layout = Some(Layout::Row);
+        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Row);
         self.styles_mut().layout_options_mut().reverse = Some(true);
         self
     }
     /// Lay the children out in a column, last first (`flex-direction:
     /// column-reverse`).
     fn flex_col_reverse(mut self) -> Self {
-        self.styles_mut().layout = Some(Layout::Column);
+        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Column);
         self.styles_mut().layout_options_mut().reverse = Some(true);
         self
     }
@@ -1120,14 +1174,14 @@ pub trait Styled: Sized {
     /// not contribute to their parent's intrinsic size or flex space, and
     /// still paint in their parent's place, under its clip.
     fn absolute(mut self) -> Self {
-        self.styles_mut().absolute = Some(true);
+        self.styles_mut().fields_mut(bit::ABSOLUTE).absolute = Some(true);
         self
     }
     /// Make the view the containing block of its `absolute` descendants
     /// (CSS `position: relative`), and keep it in normal flow (undoing
     /// `absolute`). It changes nothing about its own layout.
     fn relative(mut self) -> Self {
-        self.styles_mut().absolute = Some(false);
+        self.styles_mut().fields_mut(bit::ABSOLUTE).absolute = Some(false);
         self.styles_mut().rare_mut().relative = Some(true);
         self
     }
@@ -1159,7 +1213,7 @@ pub trait Styled: Sized {
     }
     /// Set centered image fitting within its padded content box. Not inherited.
     fn object_fit(mut self, fit: ObjectFit) -> Self {
-        self.styles_mut().object_fit = Some(fit);
+        self.styles_mut().fields_mut(bit::OBJECT_FIT).object_fit = Some(fit);
         self
     }
     /// Fit the image inside its box, keeping its aspect ratio
@@ -1175,23 +1229,29 @@ pub trait Styled: Sized {
     /// The width in points, or a theme token; replaces `w_percent`.
     fn w(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Width);
-        self.styles_mut().width = Some(value);
-        self.styles_mut().width_percent = None;
+        self.styles_mut().fields_mut(bit::WIDTH).width = Some(value);
+        self.styles_mut()
+            .fields_mut(bit::WIDTH_PERCENT)
+            .width_percent = None;
         self
     }
     /// The height in points, or a theme token; replaces `h_percent`.
     fn h(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Height);
-        self.styles_mut().height = Some(value);
-        self.styles_mut().height_percent = None;
+        self.styles_mut().fields_mut(bit::HEIGHT).height = Some(value);
+        self.styles_mut()
+            .fields_mut(bit::HEIGHT_PERCENT)
+            .height_percent = None;
         self
     }
     /// Width as a percentage of the parent's definite content width; 100 fills it.
     /// Indefinite parent widths use intrinsic sizing. Flex allocation and min/max
     /// constraints still apply. Negative and non-finite values normalize to zero.
     fn w_percent(mut self, percent: f32) -> Self {
-        self.styles_mut().width = None;
-        self.styles_mut().width_percent = Some(if percent.is_finite() {
+        self.styles_mut().fields_mut(bit::WIDTH).width = None;
+        self.styles_mut()
+            .fields_mut(bit::WIDTH_PERCENT)
+            .width_percent = Some(if percent.is_finite() {
             percent.max(0.) / 100.
         } else {
             0.
@@ -1201,8 +1261,10 @@ pub trait Styled: Sized {
     /// Height as a percentage of the parent's definite content height.
     /// Uses the same normalization and intrinsic fallback as `w_percent`.
     fn h_percent(mut self, percent: f32) -> Self {
-        self.styles_mut().height = None;
-        self.styles_mut().height_percent = Some(if percent.is_finite() {
+        self.styles_mut().fields_mut(bit::HEIGHT).height = None;
+        self.styles_mut()
+            .fields_mut(bit::HEIGHT_PERCENT)
+            .height_percent = Some(if percent.is_finite() {
             percent.max(0.) / 100.
         } else {
             0.
@@ -1221,7 +1283,11 @@ pub trait Styled: Sized {
     /// `min_w_percent`. `min_w(0.)` lets a flex child shrink below its
     /// content.
     fn min_w(mut self, value: f32) -> Self {
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             std::sync::Arc::make_mut(options).min_width = None;
         }
         self.styles_mut().rare_mut().min_width = Some(value);
@@ -1230,7 +1296,11 @@ pub trait Styled: Sized {
     /// The largest width in points (CSS `max-width`); replaces
     /// `max_w_percent`.
     fn max_w(mut self, value: f32) -> Self {
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             std::sync::Arc::make_mut(options).max_width = None;
         }
         self.styles_mut().rare_mut().max_width = Some(value);
@@ -1239,7 +1309,11 @@ pub trait Styled: Sized {
     /// The smallest height in points (CSS `min-height`); replaces
     /// `min_h_percent`.
     fn min_h(mut self, value: f32) -> Self {
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             std::sync::Arc::make_mut(options).min_height = None;
         }
         self.styles_mut().rare_mut().min_height = Some(value);
@@ -1248,7 +1322,11 @@ pub trait Styled: Sized {
     /// The largest height in points (CSS `max-height`); replaces
     /// `max_h_percent`.
     fn max_h(mut self, value: f32) -> Self {
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             std::sync::Arc::make_mut(options).max_height = None;
         }
         self.styles_mut().rare_mut().max_height = Some(value);
@@ -1258,32 +1336,37 @@ pub trait Styled: Sized {
     /// replaces `gap_x` and `gap_y`.
     fn gap(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Gap);
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             let options = std::sync::Arc::make_mut(options);
             options.gap_x = None;
             options.gap_y = None;
         }
-        self.styles_mut().gap = Some(value);
+        self.styles_mut().fields_mut(bit::GAP).gap = Some(value);
         self
     }
     /// How much of its parent's free space this child takes, in proportion
     /// to its siblings' (CSS `flex-grow`).
     fn flex_grow(mut self, value: f32) -> Self {
-        self.styles_mut().flex_grow = Some(value);
+        self.styles_mut().fields_mut(bit::FLEX_GROW).flex_grow = Some(value);
         self
     }
     /// How much this child gives up when its parent is short of space, in
     /// proportion to its siblings' (CSS `flex-shrink`; 1 unless set). It
     /// shrinks no smaller than its content unless `min_w`/`min_h` allow.
     fn flex_shrink(mut self, value: f32) -> Self {
-        self.styles_mut().flex_shrink = Some(value);
+        self.styles_mut().fields_mut(bit::FLEX_SHRINK).flex_shrink = Some(value);
         self
     }
     /// Fill the background with `brush` (a colour, or a gradient between two
     /// points) instead of the `bg` colour.
     fn bg_fill(mut self, brush: crate::canvas::Brush) -> Self {
-        self.styles_mut().paint_background =
-            Some(Some(crate::decoration::Background::Brush(brush)));
+        self.styles_mut()
+            .fields_mut(bit::PAINT_BACKGROUND)
+            .paint_background = Some(Some(crate::decoration::Background::Brush(brush)));
         self
     }
     /// Fill the background with a linear gradient through `stops`, at `angle`
@@ -1293,7 +1376,9 @@ pub trait Styled: Sized {
         angle: f32,
         stops: impl Into<std::sync::Arc<[crate::canvas::GradientStop]>>,
     ) -> Self {
-        self.styles_mut().paint_background = Some(Some(crate::decoration::Background::Linear {
+        self.styles_mut()
+            .fields_mut(bit::PAINT_BACKGROUND)
+            .paint_background = Some(Some(crate::decoration::Background::Linear {
             angle,
             stops: stops.into(),
         }));
@@ -1307,8 +1392,9 @@ pub trait Styled: Sized {
         image: std::sync::Arc<crate::image::ImageData>,
         fit: crate::style::ObjectFit,
     ) -> Self {
-        self.styles_mut().paint_background =
-            Some(Some(crate::decoration::Background::Image { image, fit }));
+        self.styles_mut()
+            .fields_mut(bit::PAINT_BACKGROUND)
+            .paint_background = Some(Some(crate::decoration::Background::Image { image, fit }));
         self
     }
     /// Fill the view with a shader (see `crate::decoration::FillShader`):
@@ -1316,8 +1402,9 @@ pub trait Styled: Sized {
     /// colour, cut to its rounded corners, under its border and children.
     /// Set after `bg`, which clears it.
     fn bg_shader(mut self, shader: std::sync::Arc<crate::decoration::FillShader>) -> Self {
-        self.styles_mut().paint_background =
-            Some(Some(crate::decoration::Background::Shader(shader)));
+        self.styles_mut()
+            .fields_mut(bit::PAINT_BACKGROUND)
+            .paint_background = Some(Some(crate::decoration::Background::Shader(shader)));
         self
     }
     /// The uniforms its `bg_shader` draws with: time and user parameters.
@@ -1329,12 +1416,12 @@ pub trait Styled: Sized {
     }
     /// Round each corner by its own radius; replaces `rounded`.
     fn rounded_corners(mut self, corners: crate::decoration::Corners) -> Self {
-        self.styles_mut().corners = Some(Some(corners));
+        self.styles_mut().fields_mut(bit::CORNERS).corners = Some(Some(corners));
         self
     }
     /// A border with its own width on each side; replaces `border`.
     fn border_edges(mut self, widths: Insets) -> Self {
-        self.styles_mut().border_edges = Some(Some(widths));
+        self.styles_mut().fields_mut(bit::BORDER_EDGES).border_edges = Some(Some(widths));
         self
     }
     /// Paint the border over the view's content, as an inset stroke (a CSS
@@ -1411,21 +1498,23 @@ pub trait Styled: Sized {
     }
     /// The pointer's shape over the view.
     fn cursor(mut self, cursor: crate::cursor::Cursor) -> Self {
-        self.styles_mut().cursor = Some(cursor);
+        self.styles_mut().fields_mut(bit::CURSOR).cursor = Some(cursor);
         self
     }
     /// The background colour, or a theme token; clears `bg_fill`,
     /// `bg_gradient`, `bg_image` and `bg_shader`.
     fn bg(mut self, value: impl Into<crate::theme::Themed<Color>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Background);
-        self.styles_mut().background = Some(value);
-        self.styles_mut().paint_background = Some(None);
+        self.styles_mut().fields_mut(bit::BACKGROUND).background = Some(value);
+        self.styles_mut()
+            .fields_mut(bit::PAINT_BACKGROUND)
+            .paint_background = Some(None);
         self
     }
     /// The text colour, or a theme token. Inherited.
     fn text_color(mut self, value: impl Into<crate::theme::Themed<Color>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::TextColor);
-        self.styles_mut().text_color = Some(value);
+        self.styles_mut().fields_mut(bit::TEXT_COLOR).text_color = Some(value);
         self
     }
     /// Ordered explicit font families tried before platform fallback.
@@ -1455,7 +1544,7 @@ pub trait Styled: Sized {
     /// How lines of text align in their box: at the line's start, left,
     /// centred or right. Inherited.
     fn text_align(mut self, alignment: crate::text_layout::TextAlign) -> Self {
-        self.styles_mut().text_align = Some(alignment);
+        self.styles_mut().fields_mut(bit::TEXT_ALIGN).text_align = Some(alignment);
         self
     }
     /// Override inherited OpenType features; an empty set restores font defaults.
@@ -1469,14 +1558,14 @@ pub trait Styled: Sized {
         family: impl Into<crate::theme::Themed<crate::text_layout::FontFamily>>,
     ) -> Self {
         value_or_token!(self, family, crate::theme::Field::FontFamily);
-        self.styles_mut().font_family = Some(family);
+        self.styles_mut().fields_mut(bit::FONT_FAMILY).font_family = Some(family);
         self
     }
     /// The font weight, from 1 to 1000 (400 regular, 700 bold), or a theme
     /// token. Inherited.
     fn font_weight(mut self, weight: impl Into<crate::theme::Themed<u16>>) -> Self {
         value_or_token!(self, weight, crate::theme::Field::FontWeight);
-        self.styles_mut().font_weight = Some(weight.clamp(1, 1000));
+        self.styles_mut().fields_mut(bit::FONT_WEIGHT).font_weight = Some(weight.clamp(1, 1000));
         self
     }
     /// Bold text (weight 700).
@@ -1485,25 +1574,27 @@ pub trait Styled: Sized {
     }
     /// Italic text, or upright. Inherited.
     fn italic(mut self, italic: bool) -> Self {
-        self.styles_mut().italic = Some(italic);
+        self.styles_mut().fields_mut(bit::ITALIC).italic = Some(italic);
         self
     }
     /// The font size in points, or a theme token. Inherited.
     fn text_size(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::TextSize);
-        self.styles_mut().text_size = Some(value);
+        self.styles_mut().fields_mut(bit::TEXT_SIZE).text_size = Some(value);
         self
     }
     /// Set inherited line spacing in logical pixels. Invalid/non-positive values
     /// use normal spacing; positive values smaller than the font size are allowed.
     fn line_height(mut self, pixels: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, pixels, crate::theme::Field::LineHeight);
-        self.styles_mut().line_height = Some(crate::text_layout::LineHeight::px(pixels));
+        self.styles_mut().fields_mut(bit::LINE_HEIGHT).line_height =
+            Some(crate::text_layout::LineHeight::px(pixels));
         self
     }
     /// Reset inherited line spacing to the normal metric for each text size.
     fn line_height_normal(mut self) -> Self {
-        self.styles_mut().line_height = Some(crate::text_layout::LineHeight::NORMAL);
+        self.styles_mut().fields_mut(bit::LINE_HEIGHT).line_height =
+            Some(crate::text_layout::LineHeight::NORMAL);
         self
     }
     /// Inherited extra glyph advance in logical pixels. Zero resets inherited tracking.
@@ -1532,29 +1623,29 @@ pub trait Styled: Sized {
     /// replaces `rounded_corners`.
     fn rounded(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Radius);
-        self.styles_mut().radius = Some(value);
-        self.styles_mut().corners = Some(None);
+        self.styles_mut().fields_mut(bit::RADIUS).radius = Some(value);
+        self.styles_mut().fields_mut(bit::CORNERS).corners = Some(None);
         self
     }
     /// A border this wide on every side, in points or a theme token;
     /// replaces `border_edges`.
     fn border(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::BorderWidth);
-        self.styles_mut().border_width = Some(value);
-        self.styles_mut().border_edges = Some(None);
+        self.styles_mut().fields_mut(bit::BORDER_WIDTH).border_width = Some(value);
+        self.styles_mut().fields_mut(bit::BORDER_EDGES).border_edges = Some(None);
         self
     }
     /// The border's colour, or a theme token.
     fn border_color(mut self, value: impl Into<crate::theme::Themed<Color>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::BorderColor);
-        self.styles_mut().border_color = Some(value);
+        self.styles_mut().fields_mut(bit::BORDER_COLOR).border_color = Some(value);
         self
     }
     /// The view's opacity, 0 to 1, or a theme token. The subtree composites
     /// item by item unless `isolated`.
     fn opacity(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Opacity);
-        self.styles_mut().opacity = Some(value);
+        self.styles_mut().fields_mut(bit::OPACITY).opacity = Some(value);
         self
     }
     /// Backdrop blur (CSS `backdrop-filter: blur()`): what lies behind the
@@ -1563,7 +1654,7 @@ pub trait Styled: Sized {
     /// node's content itself, see `filter_blur`.
     fn blur(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Blur);
-        self.styles_mut().blur = Some(value);
+        self.styles_mut().fields_mut(bit::BLUR).blur = Some(value);
         self
     }
     /// Content blur (CSS `filter: blur()`): the node and its subtree blur by
@@ -1572,7 +1663,7 @@ pub trait Styled: Sized {
     /// sigma (a fade in from blurred text) only composites it again. Unlike
     /// `blur`, what lies behind is untouched.
     fn filter_blur(mut self, value: f32) -> Self {
-        self.styles_mut().filter_blur = Some(value);
+        self.styles_mut().fields_mut(bit::FILTER_BLUR).filter_blur = Some(value);
         self
     }
     /// CSS `filter: brightness()`: the view and its subtree, as a group,
@@ -1580,18 +1671,18 @@ pub trait Styled: Sized {
     /// a button brightens on hover. Applied as the GPU writes each colour:
     /// no layer, and animating it repaints only the view's area.
     fn brightness(mut self, value: f32) -> Self {
-        self.styles_mut().brightness = Some(value);
+        self.styles_mut().fields_mut(bit::BRIGHTNESS).brightness = Some(value);
         self
     }
     /// CSS `filter: contrast()`: colours pushed from (or, below 1, towards)
     /// mid grey.
     fn contrast(mut self, value: f32) -> Self {
-        self.styles_mut().contrast = Some(value);
+        self.styles_mut().fields_mut(bit::CONTRAST).contrast = Some(value);
         self
     }
     /// CSS `filter: saturate()`: 0 is greyscale, past 1 more vivid.
     fn saturate(mut self, value: f32) -> Self {
-        self.styles_mut().saturate = Some(value);
+        self.styles_mut().fields_mut(bit::SATURATE).saturate = Some(value);
         self
     }
     /// Show the node's content through `image`'s alpha (CSS `mask-image`,
@@ -1609,7 +1700,8 @@ pub trait Styled: Sized {
     /// again without layout. With `overflow_hidden` and rounded corners,
     /// the inset box is rounded alike.
     fn clip_inset(mut self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
-        self.styles_mut().clip_inset = Some(crate::scene::ClipInset::px(top, right, bottom, left));
+        self.styles_mut().fields_mut(bit::CLIP_INSET).clip_inset =
+            Some(crate::scene::ClipInset::px(top, right, bottom, left));
         self
     }
     /// `clip_inset` in percent of the view's own size (top and bottom of its
@@ -1617,7 +1709,7 @@ pub trait Styled: Sized {
     /// `clip_inset_percent(0., 0., 100., 0.)` closes it to its top edge.
     fn clip_inset_percent(mut self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
         use crate::layout::Length::Percent;
-        self.styles_mut().clip_inset = Some(crate::scene::ClipInset {
+        self.styles_mut().fields_mut(bit::CLIP_INSET).clip_inset = Some(crate::scene::ClipInset {
             top: Percent(top / 100.),
             right: Percent(right / 100.),
             bottom: Percent(bottom / 100.),
@@ -1627,30 +1719,30 @@ pub trait Styled: Sized {
     }
     /// `clip_inset` with each side's length (pixels or percent) as given.
     fn clip_inset_lengths(mut self, inset: crate::scene::ClipInset) -> Self {
-        self.styles_mut().clip_inset = Some(inset);
+        self.styles_mut().fields_mut(bit::CLIP_INSET).clip_inset = Some(inset);
         self
     }
     /// Where `mask`'s image lies, from the node's laid-out origin.
     fn mask_offset(mut self, x: f32, y: f32) -> Self {
-        self.styles_mut().mask_offset = Some((x, y));
+        self.styles_mut().fields_mut(bit::MASK_OFFSET).mask_offset = Some((x, y));
         self
     }
     /// Fade the view's top and bottom edges out over `value` points.
     fn edge_fade(mut self, value: f32) -> Self {
-        self.styles_mut().edge_fade = Some(value);
+        self.styles_mut().fields_mut(bit::EDGE_FADE).edge_fade = Some(value);
         self
     }
     /// Render the subtree as a group into a cached layer, then composite it
     /// once: `isolated(true).opacity(0.5)` fades overlapping children
     /// together.
     fn isolated(mut self, value: bool) -> Self {
-        self.styles_mut().isolated = Some(value);
+        self.styles_mut().fields_mut(bit::ISOLATED).isolated = Some(value);
         self
     }
     /// Wrap text at the content width (true), or keep each line whole.
     /// Inherited.
     fn text_wrap(mut self, value: bool) -> Self {
-        self.styles_mut().text_wrap = Some(value);
+        self.styles_mut().fields_mut(bit::TEXT_WRAP).text_wrap = Some(value);
         self
     }
     /// `w(width).h(height)`.
@@ -1662,14 +1754,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Padding(15));
         let style = self.styles_mut();
         if style.padding.is_some() && style.padding_sides == 0 {
-            style.padding_sides = 15;
+            style.fields_mut(bit::PADDING_SIDES).padding_sides = 15;
         }
         merge_insets(
-            style.padding.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::PADDING)
+                .padding
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             15,
         );
-        style.padding_sides |= 15;
+        style.fields_mut(bit::PADDING_SIDES).padding_sides |= 15;
         style.clear_layout_spacing(false, 15);
         self
     }
@@ -1678,14 +1773,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Padding(10));
         let style = self.styles_mut();
         if style.padding.is_some() && style.padding_sides == 0 {
-            style.padding_sides = 15;
+            style.fields_mut(bit::PADDING_SIDES).padding_sides = 15;
         }
         merge_insets(
-            style.padding.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::PADDING)
+                .padding
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             10,
         );
-        style.padding_sides |= 10;
+        style.fields_mut(bit::PADDING_SIDES).padding_sides |= 10;
         style.clear_layout_spacing(false, 10);
         self
     }
@@ -1694,14 +1792,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Padding(5));
         let style = self.styles_mut();
         if style.padding.is_some() && style.padding_sides == 0 {
-            style.padding_sides = 15;
+            style.fields_mut(bit::PADDING_SIDES).padding_sides = 15;
         }
         merge_insets(
-            style.padding.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::PADDING)
+                .padding
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             5,
         );
-        style.padding_sides |= 5;
+        style.fields_mut(bit::PADDING_SIDES).padding_sides |= 5;
         style.clear_layout_spacing(false, 5);
         self
     }
@@ -1710,14 +1811,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Padding(1));
         let style = self.styles_mut();
         if style.padding.is_some() && style.padding_sides == 0 {
-            style.padding_sides = 15;
+            style.fields_mut(bit::PADDING_SIDES).padding_sides = 15;
         }
         merge_insets(
-            style.padding.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::PADDING)
+                .padding
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             1,
         );
-        style.padding_sides |= 1;
+        style.fields_mut(bit::PADDING_SIDES).padding_sides |= 1;
         style.clear_layout_spacing(false, 1);
         self
     }
@@ -1726,14 +1830,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Padding(2));
         let style = self.styles_mut();
         if style.padding.is_some() && style.padding_sides == 0 {
-            style.padding_sides = 15;
+            style.fields_mut(bit::PADDING_SIDES).padding_sides = 15;
         }
         merge_insets(
-            style.padding.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::PADDING)
+                .padding
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             2,
         );
-        style.padding_sides |= 2;
+        style.fields_mut(bit::PADDING_SIDES).padding_sides |= 2;
         style.clear_layout_spacing(false, 2);
         self
     }
@@ -1742,14 +1849,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Padding(4));
         let style = self.styles_mut();
         if style.padding.is_some() && style.padding_sides == 0 {
-            style.padding_sides = 15;
+            style.fields_mut(bit::PADDING_SIDES).padding_sides = 15;
         }
         merge_insets(
-            style.padding.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::PADDING)
+                .padding
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             4,
         );
-        style.padding_sides |= 4;
+        style.fields_mut(bit::PADDING_SIDES).padding_sides |= 4;
         style.clear_layout_spacing(false, 4);
         self
     }
@@ -1758,14 +1868,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Padding(8));
         let style = self.styles_mut();
         if style.padding.is_some() && style.padding_sides == 0 {
-            style.padding_sides = 15;
+            style.fields_mut(bit::PADDING_SIDES).padding_sides = 15;
         }
         merge_insets(
-            style.padding.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::PADDING)
+                .padding
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             8,
         );
-        style.padding_sides |= 8;
+        style.fields_mut(bit::PADDING_SIDES).padding_sides |= 8;
         style.clear_layout_spacing(false, 8);
         self
     }
@@ -1774,14 +1887,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Margin(15));
         let style = self.styles_mut();
         if style.margin.is_some() && style.margin_sides == 0 {
-            style.margin_sides = 15;
+            style.fields_mut(bit::MARGIN_SIDES).margin_sides = 15;
         }
         merge_insets(
-            style.margin.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::MARGIN)
+                .margin
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             15,
         );
-        style.margin_sides |= 15;
+        style.fields_mut(bit::MARGIN_SIDES).margin_sides |= 15;
         style.clear_layout_spacing(true, 15);
         self
     }
@@ -1790,14 +1906,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Margin(10));
         let style = self.styles_mut();
         if style.margin.is_some() && style.margin_sides == 0 {
-            style.margin_sides = 15;
+            style.fields_mut(bit::MARGIN_SIDES).margin_sides = 15;
         }
         merge_insets(
-            style.margin.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::MARGIN)
+                .margin
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             10,
         );
-        style.margin_sides |= 10;
+        style.fields_mut(bit::MARGIN_SIDES).margin_sides |= 10;
         style.clear_layout_spacing(true, 10);
         self
     }
@@ -1806,14 +1925,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Margin(5));
         let style = self.styles_mut();
         if style.margin.is_some() && style.margin_sides == 0 {
-            style.margin_sides = 15;
+            style.fields_mut(bit::MARGIN_SIDES).margin_sides = 15;
         }
         merge_insets(
-            style.margin.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::MARGIN)
+                .margin
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             5,
         );
-        style.margin_sides |= 5;
+        style.fields_mut(bit::MARGIN_SIDES).margin_sides |= 5;
         style.clear_layout_spacing(true, 5);
         self
     }
@@ -1822,14 +1944,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Margin(1));
         let style = self.styles_mut();
         if style.margin.is_some() && style.margin_sides == 0 {
-            style.margin_sides = 15;
+            style.fields_mut(bit::MARGIN_SIDES).margin_sides = 15;
         }
         merge_insets(
-            style.margin.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::MARGIN)
+                .margin
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             1,
         );
-        style.margin_sides |= 1;
+        style.fields_mut(bit::MARGIN_SIDES).margin_sides |= 1;
         style.clear_layout_spacing(true, 1);
         self
     }
@@ -1838,14 +1963,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Margin(2));
         let style = self.styles_mut();
         if style.margin.is_some() && style.margin_sides == 0 {
-            style.margin_sides = 15;
+            style.fields_mut(bit::MARGIN_SIDES).margin_sides = 15;
         }
         merge_insets(
-            style.margin.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::MARGIN)
+                .margin
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             2,
         );
-        style.margin_sides |= 2;
+        style.fields_mut(bit::MARGIN_SIDES).margin_sides |= 2;
         style.clear_layout_spacing(true, 2);
         self
     }
@@ -1854,14 +1982,17 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Margin(4));
         let style = self.styles_mut();
         if style.margin.is_some() && style.margin_sides == 0 {
-            style.margin_sides = 15;
+            style.fields_mut(bit::MARGIN_SIDES).margin_sides = 15;
         }
         merge_insets(
-            style.margin.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::MARGIN)
+                .margin
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             4,
         );
-        style.margin_sides |= 4;
+        style.fields_mut(bit::MARGIN_SIDES).margin_sides |= 4;
         style.clear_layout_spacing(true, 4);
         self
     }
@@ -1870,101 +2001,112 @@ pub trait Styled: Sized {
         value_or_token!(self, value, crate::theme::Field::Margin(8));
         let style = self.styles_mut();
         if style.margin.is_some() && style.margin_sides == 0 {
-            style.margin_sides = 15;
+            style.fields_mut(bit::MARGIN_SIDES).margin_sides = 15;
         }
         merge_insets(
-            style.margin.get_or_insert_with(Insets::default),
+            style
+                .fields_mut(bit::MARGIN)
+                .margin
+                .get_or_insert_with(Insets::default),
             Insets::all(value),
             8,
         );
-        style.margin_sides |= 8;
+        style.fields_mut(bit::MARGIN_SIDES).margin_sides |= 8;
         style.clear_layout_spacing(true, 8);
         self
     }
     /// Lay the children out in a row, first first.
     fn flex_row(mut self) -> Self {
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             std::sync::Arc::make_mut(options).reverse = None;
         }
-        self.styles_mut().layout = Some(Layout::Row);
+        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Row);
         self
     }
     /// Lay the children out in a column, first first.
     fn flex_col(mut self) -> Self {
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             std::sync::Arc::make_mut(options).reverse = None;
         }
-        self.styles_mut().layout = Some(Layout::Column);
+        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Column);
         self
     }
     /// Stack the children in one area (see [`crate::compose::overlay`]).
     fn overlay(mut self) -> Self {
-        self.styles_mut().layout = Some(Layout::Overlay);
+        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Overlay);
         self
     }
     /// Align the children at the start across the axis (CSS `align-items:
     /// flex-start`).
     fn items_start(mut self) -> Self {
-        self.styles_mut().align = Some(Align::Start);
+        self.styles_mut().fields_mut(bit::ALIGN).align = Some(Align::Start);
         self
     }
     /// Centre the children across the axis.
     fn items_center(mut self) -> Self {
-        self.styles_mut().align = Some(Align::Center);
+        self.styles_mut().fields_mut(bit::ALIGN).align = Some(Align::Center);
         self
     }
     /// Align a row's children by their first lines' baselines.
     fn items_baseline(mut self) -> Self {
-        self.styles_mut().align = Some(Align::Baseline);
+        self.styles_mut().fields_mut(bit::ALIGN).align = Some(Align::Baseline);
         self
     }
     /// Align the children at the end across the axis.
     fn items_end(mut self) -> Self {
-        self.styles_mut().align = Some(Align::End);
+        self.styles_mut().fields_mut(bit::ALIGN).align = Some(Align::End);
         self
     }
     /// Stretch the children across the axis, unless they size themselves on
     /// it (a column's default).
     fn items_stretch(mut self) -> Self {
-        self.styles_mut().align = Some(Align::Stretch);
+        self.styles_mut().fields_mut(bit::ALIGN).align = Some(Align::Stretch);
         self
     }
     /// Pack the children at the start of the axis.
     fn justify_start(mut self) -> Self {
-        self.styles_mut().justify = Some(Justify::Start);
+        self.styles_mut().fields_mut(bit::JUSTIFY).justify = Some(Justify::Start);
         self
     }
     /// Centre the children along the axis.
     fn justify_center(mut self) -> Self {
-        self.styles_mut().justify = Some(Justify::Center);
+        self.styles_mut().fields_mut(bit::JUSTIFY).justify = Some(Justify::Center);
         self
     }
     /// Pack the children at the end of the axis.
     fn justify_end(mut self) -> Self {
-        self.styles_mut().justify = Some(Justify::End);
+        self.styles_mut().fields_mut(bit::JUSTIFY).justify = Some(Justify::End);
         self
     }
     /// Spread the free space between the children, none at the ends.
     fn justify_between(mut self) -> Self {
-        self.styles_mut().justify = Some(Justify::SpaceBetween);
+        self.styles_mut().fields_mut(bit::JUSTIFY).justify = Some(Justify::SpaceBetween);
         self
     }
     /// Spread the free space evenly between the children and the ends.
     fn justify_evenly(mut self) -> Self {
-        self.styles_mut().justify = Some(Justify::SpaceEvenly);
+        self.styles_mut().fields_mut(bit::JUSTIFY).justify = Some(Justify::SpaceEvenly);
         self
     }
     /// Spread the free space around each child: half as much at the ends as
     /// between.
     fn justify_around(mut self) -> Self {
-        self.styles_mut().justify = Some(Justify::SpaceAround);
+        self.styles_mut().fields_mut(bit::JUSTIFY).justify = Some(Justify::SpaceAround);
         self
     }
     /// An overlay's children fill its height (its default, with
     /// `items_stretch` across). Along a row or column, the same as
     /// `justify_start`.
     fn justify_stretch(mut self) -> Self {
-        self.styles_mut().justify = Some(Justify::Stretch);
+        self.styles_mut().fields_mut(bit::JUSTIFY).justify = Some(Justify::Stretch);
         self
     }
     /// Fade content out over `top` and `bottom` bands at the edges of this
@@ -2057,8 +2199,12 @@ pub trait Styled: Sized {
     /// Clip the subtree to the view's box, and to its rounded corners (CSS
     /// `overflow: hidden`).
     fn overflow_hidden(mut self) -> Self {
-        self.styles_mut().clip = Some(true);
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        self.styles_mut().fields_mut(bit::CLIP).clip = Some(true);
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             let options = std::sync::Arc::make_mut(options);
             options.clip_x = None;
             options.clip_y = None;
@@ -2067,8 +2213,12 @@ pub trait Styled: Sized {
     }
     /// Let the subtree paint past the view's box (the default).
     fn overflow_visible(mut self) -> Self {
-        self.styles_mut().clip = Some(false);
-        if let Some(options) = &mut self.styles_mut().layout_options {
+        self.styles_mut().fields_mut(bit::CLIP).clip = Some(false);
+        if let Some(options) = &mut self
+            .styles_mut()
+            .fields_mut(bit::LAYOUT_OPTIONS)
+            .layout_options
+        {
             let options = std::sync::Arc::make_mut(options);
             options.clip_x = None;
             options.clip_y = None;
@@ -2124,7 +2274,7 @@ pub trait Styled: Sized {
     /// Move the view by `x`, `y` points after layout, without moving its
     /// siblings: a compositor-only change.
     fn translate(mut self, x: f32, y: f32) -> Self {
-        self.styles_mut().transform = Some(Transform { x, y });
+        self.styles_mut().fields_mut(bit::TRANSFORM).transform = Some(Transform { x, y });
         self
     }
     /// Scale uniformly about the transform origin, after layout: the
@@ -2136,21 +2286,30 @@ pub trait Styled: Sized {
     /// Scale by `x` across and `y` down about the transform origin, as
     /// `scale`.
     fn scale_xy(mut self, x: f32, y: f32) -> Self {
-        let patch = &mut self.styles_mut().local_transform;
+        let patch = &mut self
+            .styles_mut()
+            .fields_mut(bit::LOCAL_TRANSFORM)
+            .local_transform;
         patch.values.scale = (x, y);
         patch.set |= TransformPatch::SCALE;
         self
     }
     /// Rotate clockwise by `radians` about the transform origin, as `scale`.
     fn rotate(mut self, radians: f32) -> Self {
-        let patch = &mut self.styles_mut().local_transform;
+        let patch = &mut self
+            .styles_mut()
+            .fields_mut(bit::LOCAL_TRANSFORM)
+            .local_transform;
         patch.values.rotate = radians;
         patch.set |= TransformPatch::ROTATE;
         self
     }
     /// Skew by angles in radians, as CSS `skew(x, y)`.
     fn skew(mut self, x: f32, y: f32) -> Self {
-        let patch = &mut self.styles_mut().local_transform;
+        let patch = &mut self
+            .styles_mut()
+            .fields_mut(bit::LOCAL_TRANSFORM)
+            .local_transform;
         patch.values.skew = (x, y);
         patch.set |= TransformPatch::SKEW;
         self
@@ -2158,7 +2317,10 @@ pub trait Styled: Sized {
     /// The pivot of `scale`, `rotate` and `skew`, as fractions of the
     /// view's own size: (0.5, 0.5), its centre, by default.
     fn transform_origin(mut self, x: f32, y: f32) -> Self {
-        let patch = &mut self.styles_mut().local_transform;
+        let patch = &mut self
+            .styles_mut()
+            .fields_mut(bit::LOCAL_TRANSFORM)
+            .local_transform;
         patch.values.origin = (x, y);
         patch.set |= TransformPatch::ORIGIN;
         self
@@ -2191,6 +2353,72 @@ pub const fn rgba(value: u32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Comparing only the fields set in either (`Styles::set`) agrees with
+    /// comparing every field, however the styles were made: by builders,
+    /// merged, from fields, with paint taken out, or set and set back.
+    #[test]
+    fn styles_compare_as_all_their_fields_do() {
+        use crate::layout::LayoutOptions;
+        let mut cases = vec![
+            Styles::new(),
+            Styles::new().mt(3.).h(10.),
+            Styles::new().mt(3.).h(11.),
+            Styles::new().p(4.).bg(rgb(0x112233)).rounded(2.),
+            Styles::new().opacity(0.5).text_color(rgb(0xffffff)),
+            Styles::new().opacity(0.5),
+            Styles::new().translate(1., 2.).scale(2.),
+            Styles::new().w(10.).w_percent(50.),
+            Styles::new().min_w(3.).font_weight(700),
+            Styles::new()
+                .gap(2.)
+                .layout_options(LayoutOptions::default()),
+            Styles::from(StylesFields {
+                height: Some(10.),
+                margin: Some(Insets {
+                    top: 3.,
+                    ..Insets::default()
+                }),
+                margin_sides: 1,
+                ..StylesFields::default()
+            }),
+        ];
+        let mut merged = Styles::new().p(1.).bg(rgb(0x445566));
+        merged.merge(&Styles::new().opacity(0.25).mt(2.));
+        cases.push(merged);
+        // Paint set, then taken out: as if never set.
+        let mut taken = Styles::new().opacity(0.5).mt(3.).h(10.);
+        let fields = taken.fields_taken(bit::OPACITY);
+        fields.opacity = None;
+        cases.push(taken);
+        // Set, then set back: its bit stays, its value is the default's.
+        let mut back = Styles::new().gap(2.);
+        back.fields_mut(bit::GAP).gap = None;
+        cases.push(back);
+        for a in &cases {
+            for b in &cases {
+                assert_eq!(a == b, **a == **b, "{a:?} against {b:?}");
+                let sizes = |s: &StylesFields| {
+                    let mut s = StylesFields {
+                        rare: s.rare.clone(),
+                        tokens: s.tokens.clone(),
+                        layout_options: s.layout_options.clone(),
+                        font_family: s.font_family.clone(),
+                        paint_background: s.paint_background.clone(),
+                        ..*s
+                    };
+                    (
+                        s.width,
+                        s.height,
+                        s.width_percent,
+                        s.height_percent,
+                        s.margin,
+                    ) = (None, None, None, None, None);
+                    s
+                };
+                assert_eq!(a.eq_except_sizes(b), sizes(a) == sizes(b));
+            }
+        }
+    }
     /// `Clone for Styles` copies bitwise and then clones the owning fields:
     /// each clone holds its own reference, and dropping either side releases
     /// only its own (`cargo +nightly miri test -p zgui --lib style::` checks
@@ -2203,7 +2431,7 @@ mod tests {
         let tokens = Arc::new(crate::theme::Bindings::default());
         let stops: Arc<[crate::canvas::GradientStop]> = Arc::from([]);
         let family: Arc<str> = Arc::from("Inter");
-        let original = Styles {
+        let original = Styles::from(StylesFields {
             layout_options: Some(options.clone()),
             font_family: Some(crate::text_layout::FontFamily::Named(family.clone())),
             paint_background: Some(Some(crate::decoration::Background::Linear {
@@ -2213,8 +2441,8 @@ mod tests {
             rare: Some(rare.clone()),
             tokens: Some(tokens.clone()),
             width: Some(12.),
-            ..Styles::default()
-        };
+            ..StylesFields::default()
+        });
         let copy = original.clone();
         assert_eq!(copy, original);
         let counts = || {

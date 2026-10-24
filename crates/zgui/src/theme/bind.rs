@@ -144,7 +144,7 @@ pub(crate) struct Mix {
 
 /// Drop the bindings `field` (and its sides) replaces.
 pub(crate) fn unbind(styles: &mut Styles, field: Field) {
-    let Some(bindings) = &mut styles.tokens else {
+    let Some(bindings) = &mut styles.fields_mut(crate::style::bit::TOKENS).tokens else {
         return;
     };
     let sides = field.sides();
@@ -158,7 +158,7 @@ pub(crate) fn unbind(styles: &mut Styles, field: Field) {
         left != 0
     });
     if bindings.0.is_empty() {
-        styles.tokens = None;
+        styles.fields_mut(crate::style::bit::TOKENS).tokens = None;
     }
 }
 /// Bind `field` to `token`, writing a placeholder until it resolves.
@@ -177,6 +177,7 @@ pub(crate) fn bind_mix(
 ) {
     bind_in(styles, field, from);
     if let Some((_, _, mix)) = styles
+        .fields_mut(crate::style::bit::TOKENS)
         .tokens
         .as_mut()
         .and_then(|b| Arc::make_mut(b).0.last_mut())
@@ -238,9 +239,14 @@ pub(crate) fn rebound<S: Styled>(mut style: S, field: Field, token: Option<Token
 pub(crate) fn rebind(styles: &mut Styles, field: Field, token: Option<TokenId>) {
     unbind(styles, field);
     if let Some(token) = token {
-        Arc::make_mut(styles.tokens.get_or_insert_with(Default::default))
-            .0
-            .push((field, token, None));
+        Arc::make_mut(
+            styles
+                .fields_mut(crate::style::bit::TOKENS)
+                .tokens
+                .get_or_insert_with(Default::default),
+        )
+        .0
+        .push((field, token, None));
     }
 }
 /// Write `value` into `field` through its setter (which drops any binding
@@ -367,13 +373,13 @@ fn value(scope: &ThemeScope, token: TokenId, mix: Option<Mix>) -> TokenValue {
 /// Resolve `styles`' bindings from `scope`, subscribing the running effect
 /// to each token read.
 pub(crate) fn resolve(styles: &mut Styles, scope: &ThemeScope) {
-    let Some(bindings) = styles.tokens.take() else {
+    let Some(bindings) = styles.fields_mut(crate::style::bit::TOKENS).tokens.take() else {
         return;
     };
     for (field, token, mix) in &bindings.0 {
         apply(styles, *field, &value(scope, *token, *mix));
     }
-    styles.tokens = Some(bindings);
+    styles.fields_mut(crate::style::bit::TOKENS).tokens = Some(bindings);
 }
 /// Which sides of padding or margin (or, for other fields, whether) `styles`
 /// sets `field`.
@@ -427,8 +433,8 @@ pub(crate) fn merge(target: &mut Styles, other: &Styles) {
         }
     }
     if let Some(theirs) = &other.tokens {
-        match &mut target.tokens {
-            None => target.tokens = Some(theirs.clone()),
+        match &mut target.fields_mut(crate::style::bit::TOKENS).tokens {
+            None => target.fields_mut(crate::style::bit::TOKENS).tokens = Some(theirs.clone()),
             Some(ours) => Arc::make_mut(ours).0.extend(theirs.0.iter().copied()),
         }
     }
@@ -493,7 +499,7 @@ impl StyleTheme {
     /// Resolve `patch` if the scope changed since it last was; otherwise
     /// only read its tokens, to keep the subscriptions.
     fn visit(&mut self, slot: usize, patch: &mut Styles) -> bool {
-        let Some(bindings) = patch.tokens.take() else {
+        let Some(bindings) = patch.fields_mut(crate::style::bit::TOKENS).tokens.take() else {
             return false;
         };
         let stale = self.fresh & (1 << slot) == 0;
@@ -512,7 +518,7 @@ impl StyleTheme {
             }
         }
         self.fresh |= 1 << slot;
-        patch.tokens = Some(bindings);
+        patch.fields_mut(crate::style::bit::TOKENS).tokens = Some(bindings);
         stale
     }
     /// Resolve a dynamic style's tokens, if it has any.

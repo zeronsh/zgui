@@ -185,7 +185,9 @@ impl TextSpan {
     }
     /// The font size in points; a size that isn't finite and positive is 16.
     pub fn text_size(mut self, size: f32) -> Self {
-        self.styles.text_size = Some(if size.is_finite() && size > 0. {
+        self.styles
+            .fields_mut(crate::style::bit::TEXT_SIZE)
+            .text_size = Some(if size.is_finite() && size > 0. {
             size
         } else {
             16.
@@ -204,17 +206,21 @@ impl TextSpan {
     }
     /// The span's font family.
     pub fn font_family(mut self, family: impl Into<FontFamily>) -> Self {
-        self.styles.font_family = Some(family.into());
+        self.styles
+            .fields_mut(crate::style::bit::FONT_FAMILY)
+            .font_family = Some(family.into());
         self
     }
     /// The span's font weight, from 1 to 1000 (400 regular, 700 bold).
     pub fn font_weight(mut self, weight: u16) -> Self {
-        self.styles.font_weight = Some(weight.clamp(1, 1000));
+        self.styles
+            .fields_mut(crate::style::bit::FONT_WEIGHT)
+            .font_weight = Some(weight.clamp(1, 1000));
         self
     }
     /// Italic, or upright.
     pub fn italic(mut self, italic: bool) -> Self {
-        self.styles.italic = Some(italic);
+        self.styles.fields_mut(crate::style::bit::ITALIC).italic = Some(italic);
         self
     }
     /// A bold span (weight 700).
@@ -223,12 +229,16 @@ impl TextSpan {
     }
     /// The font's own line height.
     pub fn line_height_normal(mut self) -> Self {
-        self.styles.line_height = Some(LineHeight::NORMAL);
+        self.styles
+            .fields_mut(crate::style::bit::LINE_HEIGHT)
+            .line_height = Some(LineHeight::NORMAL);
         self
     }
     /// A line height of `px` points.
     pub fn line_height(mut self, px: f32) -> Self {
-        self.styles.line_height = Some(LineHeight::px(px));
+        self.styles
+            .fields_mut(crate::style::bit::LINE_HEIGHT)
+            .line_height = Some(LineHeight::px(px));
         self
     }
     /// `px` points added between characters.

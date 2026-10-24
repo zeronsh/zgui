@@ -3552,7 +3552,7 @@ fn open_element(
                 if let Some(value) = features {
                     font.features = value;
                 }
-                if let Some(value) = span.styles.font_family {
+                if let Some(value) = span.styles.font_family.clone() {
                     font.family = value;
                 }
                 if let Some(value) = span.styles.font_weight {

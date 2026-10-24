@@ -241,7 +241,7 @@ type AppliedInputs = (Styles, Typography, Option<(f32, f32)>, Option<NodeId>);
 /// Paint properties an animation changes every frame: `Styles`' opacity,
 /// blurs, edge fade, mask offset, translation, local transform and text
 /// colour.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 struct Paint {
     opacity: Option<f32>,
     blur: Option<f32>,
@@ -257,8 +257,30 @@ struct Paint {
     text_color: Option<crate::scene::Color>,
 }
 impl Paint {
-    /// Take `styles`' paint properties out, leaving them unset.
+    /// The bits (`crate::style::bit`) of the properties paint holds.
+    const BITS: u64 = {
+        use crate::style::bit;
+        bit::OPACITY
+            | bit::BLUR
+            | bit::EDGE_FADE
+            | bit::FILTER_BLUR
+            | bit::BRIGHTNESS
+            | bit::CONTRAST
+            | bit::SATURATE
+            | bit::MASK_OFFSET
+            | bit::CLIP_INSET
+            | bit::TRANSFORM
+            | bit::LOCAL_TRANSFORM
+            | bit::TEXT_COLOR
+    };
+    /// Take `styles`' paint properties out, leaving them unset. None set
+    /// (`Styles::set_bits`): none to take.
     fn take(styles: &mut Styles) -> Self {
+        if styles.set_bits() & Self::BITS == 0 {
+            return Self::default();
+        }
+        // Each of `BITS` taken below, left unset.
+        let styles = styles.fields_taken(Self::BITS);
         Self {
             opacity: styles.opacity.take(),
             blur: styles.blur.take(),
@@ -275,6 +297,11 @@ impl Paint {
         }
     }
     fn put(self, styles: &mut Styles) {
+        // Nothing to write over nothing.
+        if styles.set_bits() & Self::BITS == 0 && self == Self::default() {
+            return;
+        }
+        let styles = styles.fields_mut(Self::BITS);
         styles.opacity = self.opacity;
         styles.blur = self.blur;
         styles.edge_fade = self.edge_fade;
@@ -323,6 +350,9 @@ impl Paint {
         }
     }
     fn of(styles: &Styles) -> Self {
+        if styles.set_bits() & Self::BITS == 0 {
+            return Self::default();
+        }
         Self {
             opacity: styles.opacity,
             blur: styles.blur,
@@ -431,12 +461,16 @@ fn sizes(styles: &Styles) -> Sizes {
     )
 }
 fn set_sizes(styles: &mut Styles, sizes: Sizes) {
+    use crate::style::bit;
+    let fields = styles.fields_mut(
+        bit::WIDTH | bit::WIDTH_PERCENT | bit::HEIGHT | bit::HEIGHT_PERCENT | bit::MARGIN,
+    );
     (
-        styles.width,
-        styles.width_percent,
-        styles.height,
-        styles.height_percent,
-        styles.margin,
+        fields.width,
+        fields.width_percent,
+        fields.height,
+        fields.height_percent,
+        fields.margin,
     ) = sizes;
 }
 /// `style` with `next`'s box fields, as `apply_resolved` sets them.
@@ -783,14 +817,17 @@ pub(crate) fn mount_style_with_intrinsic(
                         (&produced, &mut last.dynamic, shown.as_mut())
                 {
                     // As `Styles::merge` lays them over the base.
+                    use crate::style::bit;
                     let next = &mut applied.0;
                     if now.width.is_some() || now.width_percent.is_some() {
-                        next.width = now.width;
-                        next.width_percent = now.width_percent;
+                        let fields = next.fields_mut(bit::WIDTH | bit::WIDTH_PERCENT);
+                        fields.width = now.width;
+                        fields.width_percent = now.width_percent;
                     }
                     if now.height.is_some() || now.height_percent.is_some() {
-                        next.height = now.height;
-                        next.height_percent = now.height_percent;
+                        let fields = next.fields_mut(bit::HEIGHT | bit::HEIGHT_PERCENT);
+                        fields.height = now.height;
+                        fields.height_percent = now.height_percent;
                     }
                     if let Some(margin) = now.margin {
                         let mask = if now.margin_sides == 0 {
@@ -799,7 +836,9 @@ pub(crate) fn mount_style_with_intrinsic(
                             now.margin_sides
                         };
                         crate::style::merge_insets(
-                            next.margin.get_or_insert_with(Default::default),
+                            next.fields_mut(bit::MARGIN)
+                                .margin
+                                .get_or_insert_with(Default::default),
                             margin,
                             mask,
                         );
@@ -1105,12 +1144,19 @@ pub(crate) fn mount_style_with_intrinsic(
                 previous.0.margin,
             );
             let next = &inputs.0;
+            let fields = previous.0.fields_mut(
+                crate::style::bit::WIDTH
+                    | crate::style::bit::WIDTH_PERCENT
+                    | crate::style::bit::HEIGHT
+                    | crate::style::bit::HEIGHT_PERCENT
+                    | crate::style::bit::MARGIN,
+            );
             (
-                previous.0.width,
-                previous.0.width_percent,
-                previous.0.height,
-                previous.0.height_percent,
-                previous.0.margin,
+                fields.width,
+                fields.width_percent,
+                fields.height,
+                fields.height_percent,
+                fields.margin,
             ) = (
                 next.width,
                 next.width_percent,
@@ -1132,18 +1178,19 @@ pub(crate) fn mount_style_with_intrinsic(
                 previous.0.local_transform,
             );
             let next = &inputs.0;
+            let fields = previous.0.fields_mut(Paint::BITS);
             (
-                previous.0.opacity,
-                previous.0.blur,
-                previous.0.edge_fade,
-                previous.0.filter_blur,
-                previous.0.brightness,
-                previous.0.contrast,
-                previous.0.saturate,
-                previous.0.mask_offset,
-                previous.0.clip_inset,
-                previous.0.transform,
-                previous.0.local_transform,
+                fields.opacity,
+                fields.blur,
+                fields.edge_fade,
+                fields.filter_blur,
+                fields.brightness,
+                fields.contrast,
+                fields.saturate,
+                fields.mask_offset,
+                fields.clip_inset,
+                fields.transform,
+                fields.local_transform,
             ) = (
                 next.opacity,
                 next.blur,
@@ -1202,25 +1249,33 @@ pub(crate) fn mount_style_with_intrinsic(
                 scene.set_local_transform(node, next.local_transform.resolve(originals.local));
                 return;
             }
+            let fields = previous.0.fields_mut(
+                crate::style::bit::WIDTH
+                    | crate::style::bit::WIDTH_PERCENT
+                    | crate::style::bit::HEIGHT
+                    | crate::style::bit::HEIGHT_PERCENT
+                    | crate::style::bit::MARGIN,
+            );
             (
-                previous.0.width,
-                previous.0.width_percent,
-                previous.0.height,
-                previous.0.height_percent,
-                previous.0.margin,
+                fields.width,
+                fields.width_percent,
+                fields.height,
+                fields.height_percent,
+                fields.margin,
             ) = sizes;
+            let fields = previous.0.fields_mut(Paint::BITS);
             (
-                previous.0.opacity,
-                previous.0.blur,
-                previous.0.edge_fade,
-                previous.0.filter_blur,
-                previous.0.brightness,
-                previous.0.contrast,
-                previous.0.saturate,
-                previous.0.mask_offset,
-                previous.0.clip_inset,
-                previous.0.transform,
-                previous.0.local_transform,
+                fields.opacity,
+                fields.blur,
+                fields.edge_fade,
+                fields.filter_blur,
+                fields.brightness,
+                fields.contrast,
+                fields.saturate,
+                fields.mask_offset,
+                fields.clip_inset,
+                fields.transform,
+                fields.local_transform,
             ) = before;
         }
         let mut first: Option<AppliedInputs> = None;
@@ -1278,12 +1333,14 @@ fn opaque_glass(ui: &Ui, mut resolved: Styles, kind: &NodeKind) -> (Styles, Opti
         NodeKind::Panel { quad, .. } => quad.fill,
         _ => Color(0, 0, 0, 0),
     });
-    resolved.background = Some(if fill.3 == 0 {
+    let background = Some(if fill.3 == 0 {
         ui.theme().root().color(tok::SURFACE_RAISED)
     } else {
         Color(fill.0, fill.1, fill.2, 255)
     });
-    resolved.blur = Some(0.);
+    let fields = resolved.fields_mut(crate::style::bit::BACKGROUND | crate::style::bit::BLUR);
+    fields.background = background;
+    fields.blur = Some(0.);
     (resolved, Some(true))
 }
 #[allow(clippy::too_many_arguments)]
@@ -1561,10 +1618,10 @@ mod tests {
     use crate::scene::{Layout, Style};
     use crate::style::Styled;
     fn color(value: u8) -> Styles {
-        Styles {
+        Styles::from(crate::style::StylesFields {
             background: Some(Color(value, 0, 0, 255)),
             ..Default::default()
-        }
+        })
     }
     fn fill(ui: &Ui, node: NodeId) -> Color {
         match ui.scene.borrow().kind(node) {
@@ -1677,11 +1734,11 @@ mod tests {
         let stable = mount_style(
             &mut ui,
             explicit,
-            Styles {
+            Styles::from(crate::style::StylesFields {
                 text_color: Some(Color(12, 34, 56, 255)),
                 text_size: Some(20.),
                 ..Default::default()
-            },
+            }),
             parent.clone(),
             None,
             Variants::default(),
@@ -1770,12 +1827,12 @@ mod tests {
             parent.clone(),
             Some(Box::new(move || {
                 if read.get() {
-                    Styles {
+                    Styles::from(crate::style::StylesFields {
                         background: Some(Color(9, 0, 0, 255)),
                         text_size: Some(40.),
                         opacity: Some(0.5),
                         ..Default::default()
-                    }
+                    })
                 } else {
                     Styles::default()
                 }
