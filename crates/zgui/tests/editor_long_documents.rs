@@ -78,12 +78,29 @@ fn a_long_document_shows_and_numbers_the_lines_in_view() {
     ui.prepare_frame();
     let texts = shown(&ui, editor.node);
     assert!(texts.iter().any(|t| t == "line 5000"), "{texts:?}");
-    assert!(
-        texts
-            .iter()
-            .any(|t| t.trim_start_matches('\u{2007}') == "5001"),
-        "{texts:?}"
-    );
+    assert!(texts.iter().any(|t| t == "5001"), "{texts:?}");
+    // Its number is right-aligned in the gutter by the text's alignment, not
+    // padded with figure spaces (a font without them wrapped numbers away).
+    {
+        let scene = ui.scene.borrow();
+        let mut pending = vec![editor.node];
+        let mut number = None;
+        while let Some(id) = pending.pop() {
+            if matches!(scene.kind(id), NodeKind::Text { text, .. } if &**text == "5001") {
+                number = Some(id);
+            }
+            pending.extend(scene.children(id).iter().copied());
+        }
+        let align = scene.font(number.expect("line 5001's number")).align;
+        // (The end of a left-to-right gutter, resolved: its right.)
+        assert!(
+            matches!(
+                align,
+                zgui::text_layout::TextAlign::End | zgui::text_layout::TextAlign::Right
+            ),
+            "{align:?}"
+        );
+    }
     // Its 200 points show ten lines, numbered: not ten thousand.
     assert!(texts.len() < 40, "{}", texts.len());
     assert!(!texts.iter().any(|t| t == "line 0"));

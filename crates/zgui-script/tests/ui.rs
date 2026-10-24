@@ -2214,13 +2214,9 @@ return ui.textarea {{ id = "code", value = text, line_numbers = true, w = 300, h
     let numbers: Vec<String> = h
         .texts()
         .into_iter()
-        .filter(|t| t.trim_start_matches('\u{2007}').parse::<u32>().is_ok())
+        .filter(|t| t.parse::<u32>().is_ok())
         .collect();
-    assert_eq!(
-        numbers.first().map(String::as_str),
-        Some("\u{2007}\u{2007}\u{2007}1"),
-        "padded to 2000's width"
-    );
+    assert_eq!(numbers.first().map(String::as_str), Some("1"));
     assert!(
         (5..40).contains(&numbers.len()),
         "only the lines in view: {}",

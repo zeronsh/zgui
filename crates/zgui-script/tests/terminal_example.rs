@@ -1225,7 +1225,7 @@ fn the_editor_plugin_opens_edits_and_saves_a_picked_file() {
     let texts = app.h.texts();
     assert!(texts.iter().any(|t| t == "Rust"), "{texts:?}");
     assert!(
-        texts.iter().any(|t| t == "\u{2007}1"),
+        texts.iter().any(|t| t == "1"),
         "its lines are numbered: {texts:?}"
     );
     // Typed into, it is edited; ⌘S (Ctrl+S off macOS) saves it.

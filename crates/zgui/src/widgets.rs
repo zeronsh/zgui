@@ -3562,13 +3562,15 @@ impl Ui {
                 theme.color_untracked(tok::TEXT_TERTIARY),
                 theme.color_untracked(tok::TEXT_SECONDARY),
             );
+            // Right-aligned in their column (padding them with figure spaces
+            // took a font that has them: one without, a fallback's wider
+            // spaces, wrapped them out of sight).
+            let number_font = crate::text_layout::FontStyle {
+                align: crate::text_layout::TextAlign::End,
+                ..font.clone()
+            };
             for (id, (line, y)) in numbers.iter().zip(shown) {
-                // Right-aligned by figure spaces, a digit wide in any font.
                 let label = line.to_string();
-                let label: String =
-                    std::iter::repeat_n('\u{2007}', digits - label.len().min(digits))
-                        .chain(label.chars())
-                        .collect();
                 let color = if line == current { bright } else { dim };
                 let unchanged = matches!(
                     s.kind(*id),
@@ -3584,7 +3586,7 @@ impl Ui {
                             font_size: size,
                         },
                     );
-                    s.set_font(*id, font.clone());
+                    s.set_font(*id, number_font.clone());
                 }
                 s.set_style(*id, fixed(digit * digits as f32 + 1., line_height));
                 s.set_transform(*id, Transform { x: GUTTER_INSET, y });
