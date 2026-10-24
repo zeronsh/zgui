@@ -122,7 +122,9 @@ mod spelling {
         let mut found = Vec::new();
         let mut from = 0;
         while from < length {
-            // SAFETY: no word count is asked for (a null pointer).
+            // SAFETY: a start inside the string (`from < length`), no
+            // language (the checker's own), and no word count asked for (a
+            // null pointer, which the method allows).
             let range = unsafe {
                 checker.checkSpellingOfString_startingAt_language_wrap_inSpellDocumentWithTag_wordCount(
                     &string,

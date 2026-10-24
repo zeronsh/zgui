@@ -95,8 +95,11 @@ impl MappedRing {
         {
             let mut at = 0;
             for part in parts {
-                // SAFETY: The slot is ready: no submission still reads it, and
-                // its memory holds `capacity` bytes, at least `len`.
+                // SAFETY: `contents` is the shared buffer's memory, alive with
+                // `slot.metal`, `capacity` bytes, at least `len`, so every part
+                // fits from `at`; Rust holds no other reference into it. The
+                // slot is ready: no submission still reads it (`submitted`,
+                // or `completed` after a direct frame was waited for).
                 unsafe {
                     std::ptr::copy_nonoverlapping(
                         part.as_ptr(),
@@ -144,7 +147,8 @@ impl MappedRing {
     #[cfg(target_os = "macos")]
     fn slot(&self, capacity: u64) -> Slot {
         use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
-        // SAFETY: The HAL guard only borrows this live device for the call.
+        // SAFETY: The raw device only makes a buffer; nothing destroys it, and
+        // the guard is dropped before wgpu is called again.
         let hal = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }.expect("a Metal device");
         let raw = hal
             .raw_device()
@@ -157,8 +161,9 @@ impl MappedRing {
         drop(hal);
         let contents = raw.contents().cast::<u8>();
         let metal = raw.clone();
-        // SAFETY: Metal made this buffer on this device, `capacity` bytes long;
-        // wgpu takes ownership of it and keeps it alive with the slot.
+        // SAFETY: Metal made this buffer on this device, `capacity` bytes long
+        // (never zero: at least `MIN_BYTES`), usable as any buffer. wgpu takes
+        // it as initialized: only bytes `write` filled are drawn from.
         let buffer = unsafe {
             let raw = wgpu::hal::metal::Device::buffer_from_raw(raw, capacity);
             self.device.create_buffer_from_hal::<wgpu::hal::api::Metal>(
@@ -299,7 +304,8 @@ pub(crate) fn shared_texture(
         MTLDevice, MTLPixelFormat, MTLStorageMode, MTLTextureDescriptor, MTLTextureType,
         MTLTextureUsage,
     };
-    // SAFETY: The HAL guard only borrows this live device for the call.
+    // SAFETY: The raw device only makes a texture; nothing destroys it, and
+    // the guard is dropped before wgpu is called again.
     let hal = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }.expect("a Metal device");
     // SAFETY: A plain 2D texture descriptor of this size.
     let descriptor = unsafe {
@@ -317,8 +323,10 @@ pub(crate) fn shared_texture(
         .newTextureWithDescriptor(&descriptor)
         .expect("a shared texture");
     drop(hal);
-    // SAFETY: Metal made this texture on this device, in `FORMAT`, this size;
-    // wgpu takes ownership of it.
+    // SAFETY: Metal made this texture on this device, in `FORMAT`, this size,
+    // one mip level and layer, readable by shaders as the descriptor says;
+    // wgpu takes ownership of it. It takes it as initialized too: texels not
+    // yet written are only ever read as pixels.
     unsafe {
         let raw = wgpu::hal::metal::Device::texture_from_raw(
             metal,
@@ -363,11 +371,17 @@ pub(crate) fn write_texels(
     rgba: &mut [u8],
 ) {
     use objc2_metal::{MTLOrigin, MTLRegion, MTLSize, MTLTexture};
-    debug_assert_eq!(rgba.len(), (width * height * 4) as usize);
+    // Metal copies on the CPU, unchecked: these keep it in both buffers.
+    assert_eq!(rgba.len() as u64, u64::from(width) * u64::from(height) * 4);
+    assert!(
+        u64::from(x) + u64::from(width) <= u64::from(texture.width())
+            && u64::from(y) + u64::from(height) <= u64::from(texture.height()),
+        "texels within the texture"
+    );
     for pixel in rgba.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
-    // SAFETY: The HAL guard only borrows this live texture for the call.
+    // SAFETY: The raw texture is only written through; nothing destroys it.
     let hal = unsafe { texture.as_hal::<wgpu::hal::api::Metal>() }.expect("a Metal texture");
     let region = MTLRegion {
         origin: MTLOrigin {
@@ -381,8 +395,10 @@ pub(crate) fn write_texels(
             depth: 1,
         },
     };
-    // SAFETY: A shared texture's region within its bounds, from `rgba`
-    // holding `height` rows of `width * 4` bytes.
+    // SAFETY: A region within a shared texture's bounds (asserted above), of
+    // a BGRA8 texture, from `rgba` holding `height` rows of `width * 4`
+    // bytes (asserted); the caller writes only cells no submitted frame
+    // samples.
     unsafe {
         hal.raw_handle()
             .replaceRegion_mipmapLevel_withBytes_bytesPerRow(

@@ -1955,7 +1955,7 @@ impl GpuRenderer {
         #[cfg(target_os = "macos")]
         {
             use objc2_metal::MTLDevice;
-            // SAFETY: The HAL guard only borrows this live wgpu device.
+            // SAFETY: The raw device is only queried; nothing destroys it.
             let metal = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }?;
             Some(metal.raw_device().currentAllocatedSize() as u64)
         }
@@ -4172,7 +4172,8 @@ impl GpuRenderer {
             // taken (wgpu's lock is not reentrant).
             let raw = |texture: &wgpu::Texture| {
                 use objc2::Message;
-                // SAFETY: The HAL guard only borrows this live texture.
+                // SAFETY: The raw texture is retained for a command buffer (which
+                // retains it too), never destroyed; the guard is dropped at once.
                 unsafe { texture.as_hal::<wgpu::hal::api::Metal>() }
                     .expect("a Metal texture")
                     .raw_handle()
@@ -5651,7 +5652,7 @@ impl GpuRenderer {
         }
         if present.layer.is_none() {
             let surface = self.surface.as_ref().expect("a window surface");
-            // SAFETY: The HAL guard only borrows this live surface for the call.
+            // SAFETY: Only the surface's layer is used; nothing destroys it.
             let hal = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }
                 .ok_or_else(|| GpuError("not a Metal surface".into()))?;
             present.layer = Some(layer_present::Layer::attach(&hal.render_layer().lock()));
@@ -5749,6 +5750,9 @@ impl GpuRenderer {
     #[cfg(target_os = "macos")]
     pub fn shown_pixels(&self) -> Option<(u32, u32, Vec<u8>)> {
         use std::ffi::c_void;
+        // SAFETY: IOSurface's declarations (IOSurface.framework, linked by
+        // objc2-io-surface): `IOSurfaceLockOptions` and the seed are `u32`,
+        // `kern_return_t` is `i32`.
         unsafe extern "C" {
             fn IOSurfaceLock(surface: *const c_void, options: u32, seed: *mut u32) -> i32;
             fn IOSurfaceUnlock(surface: *const c_void, options: u32, seed: *mut u32) -> i32;
@@ -5765,7 +5769,9 @@ impl GpuRenderer {
             .cast::<c_void>()
             .cast_const();
         // SAFETY: a live surface of the renderer's, locked read-only (1)
-        // while its rows are copied.
+        // while its rows are copied: `height` rows `stride` bytes apart, each
+        // at least `width * 4` bytes (a BGRA surface). The GPU finished it
+        // (direct frames are waited for before they are shown; wgpu's above).
         unsafe {
             if IOSurfaceLock(surface, 1, std::ptr::null_mut()) != 0 {
                 return None;
@@ -5963,7 +5969,7 @@ impl GpuRenderer {
         let Some(surface) = &self.surface else {
             return;
         };
-        // SAFETY: The HAL guard only borrows this live surface for the call.
+        // SAFETY: Only the surface's layer is used; nothing destroys it.
         let Some(hal) = (unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }) else {
             return;
         };
@@ -5999,7 +6005,7 @@ impl GpuRenderer {
         let Some(surface) = &self.surface else {
             return;
         };
-        // SAFETY: The HAL guard only borrows this live surface for the call.
+        // SAFETY: Only the surface's layer is used; nothing destroys it.
         let Some(hal) = (unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }) else {
             return;
         };
@@ -6015,7 +6021,7 @@ impl GpuRenderer {
         let Some(surface) = &self.surface else {
             return;
         };
-        // SAFETY: The HAL guard only borrows this live surface for the call.
+        // SAFETY: Only the surface's layer is used; nothing destroys it.
         let Some(hal) = (unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }) else {
             return;
         };

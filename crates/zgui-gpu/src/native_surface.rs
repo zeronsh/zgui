@@ -35,12 +35,13 @@ pub(crate) struct SurfaceCache {
 }
 impl SurfaceCache {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, GpuError> {
-        // SAFETY: The HAL guard only borrows this live wgpu device; CoreVideo
-        // retains the Metal device internally before the guard is released.
+        // SAFETY: The raw device is only handed to CoreVideo, which retains
+        // it; nothing destroys it.
         let metal = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }
             .ok_or_else(|| GpuError("CoreVideo surfaces require a Metal device".into()))?;
         let mut pointer = std::ptr::null_mut();
-        // SAFETY: No untyped attributes; output points to an initialized local.
+        // SAFETY: No attribute dictionaries (their values are untyped); the
+        // output points to a writable local.
         let status = unsafe {
             CVMetalTextureCache::create(
                 None,
@@ -57,7 +58,7 @@ impl SurfaceCache {
         }
         let pointer = NonNull::new(pointer)
             .ok_or_else(|| GpuError("CoreVideo returned no texture cache".into()))?;
-        // SAFETY: Successful Create transfers a +1 CoreFoundation reference.
+        // SAFETY: A successful Create returns a +1 reference, adopted here.
         let cache = unsafe { CFRetained::from_raw(pointer) };
         Ok(Self {
             cache,
@@ -306,8 +307,9 @@ impl SurfaceCache {
         wgpu_format: wgpu::TextureFormat,
     ) -> Result<(wgpu::Texture, CFRetained<CVMetalTexture>), GpuError> {
         let mut pointer = std::ptr::null_mut();
-        // SAFETY: Valid immutable buffer, exact verified plane dimensions and
-        // format; output is a writable local and attributes use CoreVideo defaults.
+        // SAFETY: A live pixel buffer, this plane's own dimensions (the
+        // buffer's, or NV12's checked in `import`) and a format of its
+        // pixels; no attribute dictionary, and the output is a writable local.
         let status = unsafe {
             CVMetalTextureCache::create_texture_from_image(
                 None,
@@ -328,7 +330,7 @@ impl SurfaceCache {
         }
         let pointer =
             NonNull::new(pointer).ok_or_else(|| GpuError("CoreVideo returned no plane".into()))?;
-        // SAFETY: Successful Create transfers a +1 reference.
+        // SAFETY: A successful Create returns a +1 reference, adopted here.
         let retained = unsafe { CFRetained::from_raw(pointer) };
         let metal = CVMetalTextureGetTexture(&retained)
             .ok_or_else(|| GpuError("CoreVideo plane has no Metal texture".into()))?;
@@ -349,6 +351,11 @@ impl SurfaceCache {
                 },
             )
         };
+        // SAFETY: The texture is of this device (the cache was made on its
+        // raw device), as the descriptor says: CoreVideo's textures are
+        // shader-readable. `NativeSurface::from_pixel_buffer`'s caller
+        // promised its pixels written and left alone; the entry keeps the
+        // CoreVideo wrapper and the frame until submitted reads complete.
         let texture = unsafe {
             self.device
                 .create_texture_from_hal::<wgpu::hal::api::Metal>(

@@ -80,11 +80,13 @@ impl Buffer {
         };
         let values: [&CFType; 4] = [&w, &h, &bytes, &format];
         let properties = CFDictionary::from_slices(&keys, &values);
-        // SAFETY: The dictionary holds IOSurface creation properties.
+        // SAFETY: The dictionary holds IOSurface creation properties, each a
+        // CFNumber as IOSurface documents for these keys.
         let surface = unsafe { IOSurfaceRef::new(properties.as_opaque()) }
             .ok_or_else(|| GpuError("IOSurface creation failed".into()))?;
         // sRGB, as a `CAMetalLayer` without a colour space shows its drawables:
         // untagged layer contents would be taken as the display's space.
+        // SAFETY: CoreGraphics' constant CFString, read only.
         if let Some(list) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
             .and_then(|space| CGColorSpace::property_list(&space))
         {
@@ -92,7 +94,8 @@ impl Buffer {
             // property list form, as it documents.
             unsafe { surface.set_value(kIOSurfaceColorSpace, &list) };
         }
-        // SAFETY: The HAL guard only borrows this live device for the call.
+        // SAFETY: The raw device only makes a texture; nothing destroys it, and
+        // the guard is dropped before wgpu is called again.
         let hal = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }
             .ok_or_else(|| GpuError("not a Metal device".into()))?;
         // SAFETY: A plain 2D texture descriptor for a surface of this size.
@@ -112,7 +115,7 @@ impl Buffer {
             .ok_or_else(|| GpuError("Metal texture over an IOSurface failed".into()))?;
         drop(hal);
         // SAFETY: Metal made this texture on this device with this format and
-        // size; the surface backing it lives as long as the buffer.
+        // size, one mip level and layer; it retains the IOSurface backing it.
         let raw = unsafe {
             wgpu::hal::metal::Device::texture_from_raw(
                 metal.clone(),
@@ -127,6 +130,10 @@ impl Buffer {
                 },
             )
         };
+        // SAFETY: Made from this device's raw device, as the descriptor says
+        // (copies need no Metal usage flag). wgpu takes it as initialized:
+        // its first frame copies in the whole shown one or repaints it all
+        // (`begin_layer_frame`), and its memory is only ever read as pixels.
         let texture = unsafe {
             device.create_texture_from_hal::<wgpu::hal::api::Metal>(
                 raw,
@@ -181,6 +188,10 @@ struct CMSampleTimingInfo {
     presentation: CMTime,
     decode: CMTime,
 }
+// SAFETY (these four blocks): each declaration matches its framework
+// header: CF/CM/CV object references as untyped pointers, `Boolean` as
+// `u8`, `CVAttachmentMode` as `u32`, OSStatus and CVReturn as `i32`, and
+// `CMTime` and `CMSampleTimingInfo` laid out as above.
 #[link(name = "CoreMedia", kind = "framework")]
 unsafe extern "C" {
     static kCMTimeInvalid: CMTime;
@@ -235,7 +246,12 @@ impl Sample {
     fn new(surface: &IOSurfaceRef) -> Result<Self, GpuError> {
         let failed = |what: &str| GpuError(format!("{what} failed for a presented surface"));
         // SAFETY: CoreVideo and CoreMedia calls on objects made here, each
-        // checked; the created ones are released with the sample (or below).
+        // checked for failure before use; the pixel buffer retains the
+        // surface. The created ones (+1) are released with `this`, on every
+        // early return too, or (`format`) below. The attachments array is
+        // borrowed (Get rule) and holds one mutable dictionary, as the sample
+        // holds one image; the attachment keys and values are the
+        // frameworks' constant CFStrings and CFBoolean.
         unsafe {
             let mut pixels = null();
             if CVPixelBufferCreateWithIOSurface(
@@ -368,7 +384,10 @@ struct Uncover {
 impl Uncover {
     fn schedule(self: Box<Self>) {
         // SAFETY: The main queue runs `run` once with the box, which it
-        // takes back.
+        // takes back. The box is not `Send` (its `Rc`s are shared with the
+        // `Layer`): sound because a `Layer`, itself not `Send`, exists only
+        // on the main thread (`Layer::attach` asserts it), so the main queue
+        // runs `run` on the thread that made it.
         unsafe {
             dispatch_after_f(
                 dispatch_time(0, 8_000_000),
@@ -399,8 +418,8 @@ impl Uncover {
         };
         if shown || this.tries > 60 {
             crate::present_log::log(|| format!("uncover tries={} confirmed={shown}", this.tries));
-            // SAFETY: No contents is valid.
             transaction(|| {
+                // SAFETY: No contents (nil) is a layer's valid contents.
                 unsafe { this.plain.setContents(None) };
                 this.video.setOpacity(1.);
             });
@@ -420,7 +439,9 @@ struct Sampler {
 }
 impl Sampler {
     fn schedule(self: Box<Self>) {
-        // SAFETY: The main queue runs `run` once with the box, which it takes back.
+        // SAFETY: The main queue runs `run` once with the box, which it takes
+        // back; scheduled from `Layer::attach`, on the main thread, so the
+        // box (not `Send`) stays on it.
         unsafe {
             dispatch_after_f(
                 dispatch_time(0, 4_000_000),
@@ -443,6 +464,7 @@ impl Sampler {
 }
 fn describe(host: &CALayer) -> String {
     let one = |layer: &CALayer| {
+        // SAFETY: `contents` returns a nullable object (`id`), retained here.
         let contents: Option<Retained<AnyObject>> = unsafe { msg_send![layer, contents] };
         format!(
             "{}(op={:.3} hidden={} contents={})",
@@ -462,6 +484,8 @@ fn describe(host: &CALayer) -> String {
         ancestor = layer.superlayer();
         depth += 1;
     }
+    // SAFETY: The layer's live sublayer array, not changed while it is read
+    // here (on the main thread, nothing else running).
     if let Some(subs) = unsafe { host.sublayers() } {
         for sub in subs.iter() {
             out += " ";
@@ -470,6 +494,8 @@ fn describe(host: &CALayer) -> String {
     }
     out
 }
+// SAFETY: libdispatch's declarations: the main queue's object (only its
+// address is taken), `dispatch_time_t` as `u64`, and a plain C work function.
 #[link(name = "System", kind = "dylib")]
 unsafe extern "C" {
     static _dispatch_main_q: c_void;
@@ -627,6 +653,12 @@ impl Video {
 }
 impl Layer {
     pub fn attach(host: &CALayer) -> Self {
+        // `Uncover` and `Sampler` share this layer's `Rc`s with work on the
+        // main queue: the layer (not `Send`) must live on the main thread.
+        assert!(
+            objc2::MainThreadMarker::new().is_some(),
+            "layer presentation runs on the main thread"
+        );
         let plain = CALayer::new();
         fill(&plain, host, false);
         transaction(|| host.addSublayer(&plain));
@@ -687,9 +719,11 @@ impl Layer {
             self.video = Some(Video::new(&self.host, opaque, hidden));
         }
         let Some(video) = &self.video else {
-            // SAFETY: An IOSurface is a layer's valid contents.
             let surface = &*buffer.surface as *const IOSurfaceRef as *const AnyObject;
             crate::present_log::log(|| format!("plain-set surface={}", buffer.surface.id()));
+            // SAFETY: `surface` points to the buffer's live IOSurface, an
+            // object (bridged to `IOSurface`) and a layer's valid contents,
+            // which the layer retains.
             transaction(|| unsafe { self.plain.setContents(Some(&*surface)) });
             self.plain_shows.set(true);
             return;
@@ -724,12 +758,13 @@ impl Layer {
             crate::present_log::log(|| "video-drop (plain takes over)".into());
             self.generation.set(self.generation.get() + 1);
         }
-        // SAFETY: An IOSurface is a layer's valid contents.
         let surface = &*buffer.surface as *const IOSurfaceRef as *const AnyObject;
         crate::present_log::log(|| {
             format!("plain-set surface={} (show_plain)", buffer.surface.id())
         });
         transaction(|| {
+            // SAFETY: As in `show`: the buffer's live IOSurface, a layer's
+            // valid contents.
             unsafe { self.plain.setContents(Some(&*surface)) };
             if let Some(video) = &video {
                 video.layer.removeFromSuperlayer();

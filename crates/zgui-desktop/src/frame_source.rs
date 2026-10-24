@@ -151,6 +151,8 @@ mod display_link {
         flags: u64,
         reserved: u64,
     }
+    // CoreVideo's CVTimeStamp is 80 bytes (CVSMPTETime 24).
+    const _: () = assert!(size_of::<CvTimeStamp>() == 80 && size_of::<SmpteTime>() == 24);
     type CvDisplayLink = c_void;
     type OutputCallback = extern "C" fn(
         *mut CvDisplayLink,
@@ -160,6 +162,9 @@ mod display_link {
         *mut u64,
         *mut c_void,
     ) -> i32;
+    // SAFETY: CoreVideo's declarations (CVDisplayLink.h): CGDirectDisplayID
+    // is u32, CVReturn i32, CVOptionFlags u64, and the output callback's
+    // signature is `OutputCallback`'s.
     #[link(name = "CoreVideo", kind = "framework")]
     unsafe extern "C" {
         fn CVDisplayLinkCreateWithCGDisplay(display: u32, link: *mut *mut CvDisplayLink) -> i32;
@@ -177,6 +182,8 @@ mod display_link {
         numer: u32,
         denom: u32,
     }
+    // SAFETY: libSystem's declarations (mach/mach_time.h): the clock is a
+    // u64, the timebase two u32s, kern_return_t i32.
     unsafe extern "C" {
         fn mach_absolute_time() -> u64;
         fn mach_timebase_info(info: *mut Timebase) -> i32;
@@ -296,7 +303,8 @@ mod display_link {
         };
         if let Some((link, start)) = change {
             let link = link as *mut CvDisplayLink;
-            // SAFETY: the link is immortal and valid.
+            // SAFETY: a link `ensure_link` created and never releases; its
+            // callback reads only the registry (see the module comment).
             unsafe {
                 if start {
                     CVDisplayLinkStart(link);
@@ -316,11 +324,13 @@ mod display_link {
             return true;
         }
         let mut link: *mut CvDisplayLink = std::ptr::null_mut();
-        // SAFETY: CoreVideo writes a new link on success.
+        // SAFETY: CoreVideo writes a new link to the local on success.
         if unsafe { CVDisplayLinkCreateWithCGDisplay(display, &mut link) } != 0 || link.is_null() {
             return false;
         }
-        // SAFETY: the context is the display id, never dereferenced.
+        // SAFETY: the link was just made; `output` never unwinds (an extern
+        // "C" panic aborts) and takes its context as the display id, never
+        // dereferenced.
         unsafe { CVDisplayLinkSetOutputCallback(link, output, display as usize as *mut c_void) };
         let mut guard = registry();
         let registry = guard.get_or_insert_with(Registry::default);
@@ -354,8 +364,11 @@ mod display_link {
             let RawWindowHandle::AppKit(handle) = window.window_handle().ok()?.as_raw() else {
                 return None;
             };
-            // SAFETY: winit keeps this NSView alive while the window exists;
-            // retaining it keeps it valid for the link's lifetime.
+            // SAFETY: winit keeps this NSView alive while the window exists
+            // (borrowed here); retaining it keeps it valid for the link's
+            // lifetime. winit hands out an AppKit handle only on the main
+            // thread, and `Self` is not `Send` (it holds the view), so the
+            // view is only used there.
             let view: Retained<AnyObject> =
                 unsafe { Retained::retain(handle.ns_view.as_ptr().cast())? };
             let display = display_of(&view)?;
@@ -487,7 +500,9 @@ mod display_link {
     /// The `CGDirectDisplayID` of the screen showing `view`'s window.
     fn display_of(view: &AnyObject) -> Option<u32> {
         // SAFETY: NSView -window, NSWindow -screen, NSScreen
-        // -deviceDescription and NSNumber -unsignedIntValue on the main thread.
+        // -deviceDescription (each an object or nil, retained here),
+        // NSDictionary -objectForKey: and NSNumber -unsignedIntValue (a
+        // `unsigned int`), on the main thread (`DisplayLink`'s view).
         unsafe {
             let window: Option<Retained<AnyObject>> = msg_send![view, window];
             let screen: Option<Retained<AnyObject>> = msg_send![&*window?, screen];

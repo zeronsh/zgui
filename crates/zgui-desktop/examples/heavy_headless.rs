@@ -19,16 +19,22 @@ mod view;
 /// Counts the allocations made (`realloc` counts as one).
 struct Counting;
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+// SAFETY: every call goes to `System` with the caller's own arguments (so
+// `GlobalAlloc`'s contract passes through unchanged); counting allocates
+// nothing.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Relaxed);
+        // SAFETY: the caller's layout, as `alloc` requires.
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: `ptr` came from `System` (every allocation here does).
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Relaxed);
+        // SAFETY: as `dealloc`, with the caller's new size.
         unsafe { System.realloc(ptr, layout, size) }
     }
 }

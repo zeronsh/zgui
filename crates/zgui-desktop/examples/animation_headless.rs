@@ -26,6 +26,8 @@ fn cpu_time() -> Duration {
         system: Timeval,
         rest: [i64; 14],
     }
+    // SAFETY: POSIX's `getrusage`; `Rusage` is `struct rusage` on 64-bit
+    // Darwin and Linux (two 16-byte timevals, fourteen longs: 144 bytes).
     unsafe extern "C" {
         fn getrusage(who: i32, usage: *mut Rusage) -> i32;
     }

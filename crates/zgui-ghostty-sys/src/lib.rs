@@ -9,4 +9,10 @@
     clippy::pedantic
 )]
 
+// SAFETY: the `unsafe extern` blocks are bindgen's from `ghostty.h` at
+// `build.rs`'s commit: each function's name, arity and return match the
+// header, and every struct's size, alignment and field offsets are checked
+// at compile time below. Regenerate them with the commit. What each call
+// requires (live handles, the main thread, string lifetimes) is the
+// caller's, per Ghostty's embedding API.
 include!("bindings.rs");

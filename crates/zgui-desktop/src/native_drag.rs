@@ -201,6 +201,10 @@ mod macos {
     pub(crate) struct SourceState {
         send: Box<dyn Fn(NativeDrag)>,
     }
+    // SAFETY: an NSObject subclass, main-thread only (AppKit runs drags
+    // there), with nothing to clean up beyond its ivars; its methods have
+    // `NSDraggingSource`'s signatures (NSDragOperation and
+    // NSDraggingContext are NSUInteger and NSInteger, as objc2 declares).
     define_class!(
         #[unsafe(super(NSObject))]
         #[thread_kind = MainThreadOnly]
@@ -242,7 +246,12 @@ mod macos {
                     y,
                     accepted: operation != NSDragOperation::None,
                 });
-                SOURCE.with(|source| source.borrow_mut().take());
+                // Released once the event is done, not now: `SOURCE` may
+                // hold the last reference to `self`, which is borrowed until
+                // this method returns.
+                if let Some(source) = SOURCE.with(|source| source.borrow_mut().take()) {
+                    let _ = Retained::autorelease_ptr(source);
+                }
             }
         }
     );
@@ -277,9 +286,15 @@ mod macos {
     /// `image`'s pixels as an image of its size in points.
     fn ns_image(image: &DragImage) -> Option<Retained<NSImage>> {
         let (width, height) = (image.width as isize, image.height as isize);
-        // SAFETY: a bitmap allocating its own planes (null), 8-bit RGBA,
-        // premultiplied, rows of `width * 4` bytes; filled below.
-        let rep: Retained<NSBitmapImageRep> = unsafe {
+        // The bitmap holds exactly these pixels: no more are copied into it.
+        if image.bgra.len() != image.width as usize * image.height as usize * 4 {
+            return None;
+        }
+        // SAFETY: `initWithBitmapDataPlanes:…` with its declared types (a
+        // null planes pointer: the bitmap allocates its own), 8-bit RGBA,
+        // premultiplied, rows of `width * 4` bytes; nil (a size it refuses)
+        // is checked. Filled below.
+        let rep: Option<Retained<NSBitmapImageRep>> = unsafe {
             let planes: *mut *mut u8 = std::ptr::null_mut();
             msg_send![
                 NSBitmapImageRep::alloc(),
@@ -295,11 +310,14 @@ mod macos {
                 bitsPerPixel: 32isize
             ]
         };
+        let rep = rep?;
         let data = rep.bitmapData();
-        if data.is_null() {
+        if data.is_null() || rep.bytesPerRow() != width * 4 {
             return None;
         }
-        // SAFETY: the bitmap holds `width * height * 4` bytes.
+        // SAFETY: the bitmap's own buffer of `height` rows of `width * 4`
+        // bytes, which is `bgra`'s length (checked above); nothing else
+        // reads or writes it until `rep` is handed on below.
         let pixels = unsafe { std::slice::from_raw_parts_mut(data, image.bgra.len()) };
         let (pixels, _) = pixels.as_chunks_mut::<4>();
         let (bgra, _) = image.bgra.as_chunks::<4>();
@@ -334,7 +352,8 @@ mod macos {
         let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
             return false;
         };
-        // SAFETY: winit's content view, alive while its window is.
+        // SAFETY: winit's content view, alive while its window is (borrowed
+        // here); this is the main thread (`mtm`).
         let Some(view) = (unsafe { Retained::<NSView>::retain(handle.ns_view.as_ptr().cast()) })
         else {
             return false;
@@ -375,7 +394,8 @@ mod macos {
                     NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), &writer);
                 // The image once, on the first item.
                 let contents = contents.as_deref().filter(|_| index == 0);
-                // SAFETY: the contents are an NSImage (or none).
+                // SAFETY: `contents` is `id` in Objective-C: an NSImage (or
+                // none) is one the item can show.
                 unsafe {
                     item.setDraggingFrame_contents(frame, contents.map(|image| &**image as _))
                 };
@@ -388,7 +408,7 @@ mod macos {
         let source = DragSource::alloc(mtm).set_ivars(SourceState {
             send: Box::new(send),
         });
-        // SAFETY: NSObject's initializer.
+        // SAFETY: NSObject's `init`, on a fresh allocation with its ivars set.
         let source: Retained<DragSource> = unsafe { msg_send![super(source), init] };
         let session = view.beginDraggingSessionWithItems_event_source(
             &NSArray::from_retained_slice(&dragging),
@@ -399,8 +419,32 @@ mod macos {
         // the preview there, rather than AppKit to where the session began
         // (the window's edge).
         session.setAnimatesToStartingPositionsOnCancelOrFail(false);
+        // Kept until the session ends: whether AppKit retains its source is
+        // undocumented. A window hands off no drag while one is under way
+        // (`Handoff`), and AppKit runs one at a time, so none is replaced.
         SOURCE.with(|current| *current.borrow_mut() = Some(source));
         true
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{DragImage, ns_image};
+
+        /// A drag image's pixels are copied into a bitmap of its size: more
+        /// (or fewer) than its size holds make no image.
+        #[test]
+        fn a_drag_image_whose_pixels_miss_its_size_makes_no_image() {
+            let image = |bgra: Vec<u8>| DragImage {
+                width: 2,
+                height: 3,
+                bgra,
+                scale: 1.,
+                grab: (0., 0.),
+            };
+            assert!(ns_image(&image(vec![255; 2 * 3 * 4])).is_some());
+            assert!(ns_image(&image(vec![255; 2 * 3 * 4 + 4])).is_none());
+            assert!(ns_image(&image(vec![255; 4])).is_none());
+        }
     }
 }
 

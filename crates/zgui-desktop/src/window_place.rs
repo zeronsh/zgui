@@ -78,7 +78,8 @@ pub(crate) fn place(
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
         return Placed::default();
     };
-    // SAFETY: winit's content view, alive while its window is.
+    // SAFETY: winit's content view, alive while its window is (borrowed
+    // here); winit hands out an AppKit handle only on the main thread.
     let Some(view) = (unsafe { Retained::<NSView>::retain(handle.ns_view.as_ptr().cast()) }) else {
         return Placed::default();
     };
@@ -192,7 +193,8 @@ fn ns_window(
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
         return None;
     };
-    // SAFETY: winit's content view, alive while its window is.
+    // SAFETY: winit's content view, alive while its window is (borrowed
+    // here); winit hands out an AppKit handle only on the main thread.
     let view = unsafe { Retained::<NSView>::retain(handle.ns_view.as_ptr().cast()) }?;
     view.window()
 }

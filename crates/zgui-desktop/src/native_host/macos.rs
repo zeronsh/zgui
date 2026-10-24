@@ -136,6 +136,9 @@ fn watch_pointer() {
         },
     );
     // The monitor lives as long as the app.
+    // SAFETY: the handler returns the event it was given (valid, or AppKit
+    // would not have passed it); its only caller, `Surfaces::new`, checked
+    // it runs on the main thread, where AppKit calls the handler.
     let monitor = unsafe {
         objc2_app_kit::NSEvent::addLocalMonitorForEventsMatchingMask_handler(
             objc2_app_kit::NSEventMask::MouseMoved,
@@ -318,6 +321,11 @@ pub(crate) struct CutState {
     role: Role,
     router: Option<Rc<Router>>,
 }
+// SAFETY (this and the two classes below): NSView subclasses, main-thread
+// only as NSView is, with no Drop needing more than the ivars' own; each
+// method's signature is AppKit's (`-(BOOL)isFlipped`,
+// `-(NSView *)hitTest:(NSPoint)`, returned unretained, and
+// `-(CALayer *)makeBackingLayer`, returned as `method_id` retains it).
 define_class!(
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
@@ -345,6 +353,8 @@ define_class!(
             if !through {
                 return std::ptr::null_mut();
             }
+            // SAFETY: NSView's `hitTest:`, returning an unretained view (or
+            // nil) the window's hierarchy keeps alive, handed on as such.
             let hit: *mut NSView = unsafe { msg_send![super(self), hitTest: point] };
             // The cut itself is no target: only what it holds.
             if std::ptr::eq(hit, self as *const Self as *const NSView) {
@@ -373,6 +383,11 @@ define_class!(
         #[unsafe(method_id(makeBackingLayer))]
         fn make_backing_layer(&self) -> Retained<CALayer> {
             // Samples the composited layer tree live (pages included).
+            // SAFETY: CABackdropLayer is a private CALayer subclass (`class!`
+            // panics if it is gone); `+layer` returns it autoreleased, which
+            // `Retained` retains. Its (unpublished) setters take BOOL and
+            // CGFloat (f64); a release without one raises an Objective-C
+            // exception, which aborts rather than continuing.
             unsafe {
                 let layer: Retained<CALayer> = msg_send![objc2::class!(CABackdropLayer), layer];
                 let _: () = msg_send![&*layer, setAllowsGroupBlending: true];
@@ -473,6 +488,7 @@ fn rounded_path(size: (f32, f32), radii: [f32; 4], top_down: bool) -> CFRetained
     let [tl, tr, br, bl] = radii.map(|radius| radius.max(0.) as CGFloat);
     let (top, bottom) = if top_down { (0., height) } else { (height, 0.) };
     let null = std::ptr::null();
+    // SAFETY: a null transform is CGPath's documented "none".
     unsafe {
         CGMutablePath::move_to_point(Some(&path), null, tl, top);
         CGMutablePath::add_arc_to_point(Some(&path), null, width, top, width, bottom, tr);
@@ -488,6 +504,8 @@ fn black() -> CFRetained<CGColor> {
 }
 /// Changes to `layer` never animate implicitly.
 fn no_actions(layer: &CALayer) {
+    // SAFETY: `setActions:` takes an NSDictionary of NSString keys to
+    // CAAction objects; NSNull is the documented "no action" value.
     unsafe {
         let null = objc2_foundation::NSNull::null();
         let keys = [
@@ -529,6 +547,8 @@ impl Cut {
         role: Role,
         router: Option<Rc<Router>>,
     ) -> Self {
+        // SAFETY: NSView's designated initializer, on a fresh allocation
+        // with its ivars set.
         let view: Retained<CutView> = unsafe {
             let object = mtm.alloc::<CutView>().set_ivars(CutState {
                 node: Cell::new(node),
@@ -564,6 +584,7 @@ impl Cut {
         }
         self.shape = Some(key);
         let Some(shape) = shape else {
+            // SAFETY: removing a mask has no precondition.
             unsafe { layer.setMask(None) };
             self.mask = None;
             return;
@@ -586,6 +607,8 @@ impl Cut {
                 mask
             };
             no_actions(&mask);
+            // SAFETY: a mask must have no superlayer: this one was just
+            // made, and masks only this layer.
             unsafe { layer.setMask(Some(&mask)) };
             self.mask = Some(mask);
         }
@@ -663,7 +686,8 @@ fn ns_window(window: &winit::window::Window) -> Option<Retained<objc2_app_kit::N
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
         return None;
     };
-    // SAFETY: winit's content view, alive while its window is.
+    // SAFETY: winit's content view, alive while its window is (borrowed
+    // here); winit hands out an AppKit handle only on the main thread.
     let view = unsafe { Retained::<NSView>::retain(handle.ns_view.as_ptr().cast()) }?;
     view.window()
 }
@@ -706,8 +730,12 @@ pub fn set_cursor(window: &winit::window::Window, cursor: winit::window::CursorI
     // help, zoom, diagonal-resize and busy cursors. The arrow if one is gone.
     fn private(selector: objc2::runtime::Sel) -> Retained<NSCursor> {
         let class = NSCursor::class();
+        // SAFETY: NSObject's `+respondsToSelector:`, returning BOOL.
         let responds: bool = unsafe { msg_send![class, respondsToSelector: selector] };
         let cursor: Option<Retained<NSCursor>> = if responds {
+            // SAFETY: each selector named below is a class method taking
+            // nothing and returning an autoreleased NSCursor (as winit uses
+            // them), which `Retained` retains.
             unsafe { msg_send![class, performSelector: selector] }
         } else {
             None
@@ -768,6 +796,7 @@ impl Surfaces {
         no_actions(&overlay_host);
         overlay_host.setHidden(true);
         overlay_root.addSublayer(&overlay_host);
+        // SAFETY: NSView's designated initializer on a fresh allocation.
         let overlay_view: Retained<OverlayView> = unsafe {
             let view: Retained<OverlayView> =
                 msg_send![mtm.alloc::<OverlayView>(), initWithFrame: parent.bounds()];
@@ -843,6 +872,8 @@ impl Surfaces {
                 // leaves them taller than it, the plane's paint stretched and
                 // shifted.
                 let bounds = self.overlay_host.bounds();
+                // SAFETY: the layer's live sublayer list, which setting
+                // frames does not change while it is walked.
                 if let Some(layers) = unsafe { self.overlay_host.sublayers() } {
                     for layer in layers.iter() {
                         layer.setFrame(bounds);
@@ -916,6 +947,8 @@ impl Surfaces {
             let inner: Retained<NSView> =
                 Retained::into_super(clip.cuts.last().unwrap().view.clone());
             let held = |view: &NSView| {
+                // SAFETY: a superview clears its subviews' back pointer as it
+                // lets them go, so one still set is alive (main thread).
                 unsafe { view.superview() }.is_some_and(|parent| std::ptr::eq(&*parent, &*inner))
             };
             let same = match (&clip.content, &view) {
@@ -1126,6 +1159,8 @@ impl Surfaces {
         }
         while self.backdrops.len() < placements.len() {
             let cuts = self.cuts(BACKDROP_CUTS, bounds, None, Role::Passive, Role::Passive);
+            // SAFETY: NSView's designated initializer, on a fresh
+            // allocation with its ivars set.
             let view: Retained<BackdropView> = unsafe {
                 let object = self.mtm.alloc::<BackdropView>().set_ivars(BackdropState {
                     radius: Cell::new(-1.),
@@ -1188,6 +1223,11 @@ impl Surfaces {
             if backdrop.view.ivars().radius.replace(radius) != radius {
                 // Filters are copied into the render tree: a changed value
                 // takes a new filter.
+                // SAFETY: CAFilter is Core Animation's private filter class
+                // (`class!` panics if it is gone): `+filterWithType:` returns
+                // one autoreleased, which `Retained` retains, and it takes
+                // its inputs by key-value coding. `setFilters:` takes an
+                // NSArray of them.
                 unsafe {
                     let filter: Retained<NSObject> = msg_send![
                         objc2::class!(CAFilter),
@@ -1204,6 +1244,7 @@ impl Surfaces {
             // Its own corners: its layer's radius, or a shape when uneven.
             let radii = placement.radii;
             if radii.iter().all(|r| (r - radii[0]).abs() < 0.01) {
+                // SAFETY: removing a mask has no precondition.
                 unsafe { layer.setMask(None) };
                 backdrop.own = None;
                 layer.setCornerRadius(radii[0] as CGFloat);
@@ -1223,6 +1264,8 @@ impl Surfaces {
                     radii,
                     down,
                 )));
+                // SAFETY: a mask must have no superlayer: this one is only
+                // ever this layer's mask (set again, it is unchanged).
                 unsafe { layer.setMask(Some(mask)) };
             }
             backdrop.placed = Some(placement.clone());
@@ -1398,6 +1441,10 @@ impl NativeDiagnostics {
                 .iter()
                 .map(|(cuts, view)| {
                     let layer = view.layer();
+                    // SAFETY: CALayer's `filters` (an NSArray), its first
+                    // CAFilter and that filter's `inputRadius` (an
+                    // NSNumber, set in `apply_backdrops`): each unretained,
+                    // used at once while the layer holds it, nil checked.
                     let blur = layer.as_ref().and_then(|layer| unsafe {
                         let filters: *mut AnyObject = msg_send![&**layer, filters];
                         let filter: *mut AnyObject = msg_send![filters.as_ref()?, firstObject];
@@ -1458,6 +1505,8 @@ impl NativeDiagnostics {
             let parent = shared.parent.as_ref().unwrap();
             // hitTest: takes the point in the receiver's superview's space.
             let point = NSPoint::new(x as f64, y as f64);
+            // SAFETY: a superview clears its subviews' back pointer as it
+            // lets them go, so one still set is alive (main thread).
             let point = match unsafe { parent.superview() } {
                 Some(superview) => parent.convertPoint_toView(point, Some(&superview)),
                 None => point,
@@ -1561,6 +1610,7 @@ impl NativeDiagnostics {
                 layer.isHidden(),
                 layer.isGeometryFlipped(),
             ));
+            // SAFETY: the layer's live sublayer list, only read while walked.
             if let Some(sublayers) = unsafe { layer.sublayers() } {
                 for sublayer in sublayers.iter().take(24) {
                     describe(&sublayer, depth + 1, out);

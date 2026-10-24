@@ -101,6 +101,9 @@ pub fn ensure_daemon() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     // Its own session: no controlling terminal to hang it up with.
+    // SAFETY: the closure runs in the forked child before exec, where only
+    // async-signal-safe calls are allowed: `setsid` is one, and nothing
+    // allocates.
     unsafe {
         command.pre_exec(|| {
             libc::setsid();
@@ -279,6 +282,7 @@ fn attached_session(pid: u32) -> Option<String> {
 fn children(pid: libc::pid_t) -> Vec<libc::pid_t> {
     let mut pids = vec![0 as libc::pid_t; 16];
     let bytes = (pids.len() * size_of::<libc::pid_t>()) as libc::c_int;
+    // SAFETY: the buffer holds `bytes` writable bytes.
     let filled = unsafe { libc::proc_listchildpids(pid, pids.as_mut_ptr().cast(), bytes) };
     // A count of pids on macOS (the man page says bytes; the kernel returns
     // entries).
@@ -381,6 +385,7 @@ pub fn attach(id: &str, cwd: &str) -> ! {
     let restore = raw_mode();
     let exit = move |code: i32| -> ! {
         if let Some(termios) = &restore {
+            // SAFETY: a termios `tcgetattr` filled, read for the call.
             unsafe { libc::tcsetattr(0, libc::TCSANOW, termios) };
         }
         std::process::exit(code)
@@ -390,6 +395,7 @@ pub fn attach(id: &str, cwd: &str) -> ! {
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
+            // SAFETY: reads at most `buf.len()` bytes into `buf`.
             let n = unsafe { libc::read(0, buf.as_mut_ptr().cast(), buf.len()) };
             if n <= 0 || write_frame(&mut input, INPUT, &buf[..n as usize]).is_err() {
                 // The terminal went: detach (the session runs on).
@@ -404,19 +410,28 @@ pub fn attach(id: &str, cwd: &str) -> ! {
     extern "C" fn on_winch(_: libc::c_int) {
         let fd = WAKE.load(Ordering::Relaxed);
         if fd >= 0 {
+            // SAFETY: one byte from a live array; `write` (and the atomic
+            // load) are async-signal-safe.
             unsafe { libc::write(fd, [0u8].as_ptr().cast(), 1) };
         }
     }
     let mut pipe = [-1; 2];
+    // SAFETY: `pipe` writes two descriptors into the array.
     if unsafe { libc::pipe(pipe.as_mut_ptr()) } == 0 {
+        // SAFETY: the pipe's write end, just made (open for the process's
+        // life).
         unsafe { libc::fcntl(pipe[1], libc::F_SETFL, libc::O_NONBLOCK) };
         WAKE.store(pipe[1], Ordering::Relaxed);
+        // SAFETY: `on_winch` is an `extern "C" fn(c_int)` doing only
+        // async-signal-safe work.
         unsafe { libc::signal(libc::SIGWINCH, on_winch as *const () as libc::sighandler_t) };
     }
     let mut sizes = stream.try_clone().expect("socket");
     thread::spawn(move || {
         let mut last = (cols, rows);
         let mut wakes = [0u8; 64];
+        // SAFETY: reads at most `wakes.len()` bytes into `wakes`, from the
+        // pipe's read end (open for the process's life).
         while unsafe { libc::read(pipe[0], wakes.as_mut_ptr().cast(), wakes.len()) } > 0 {
             let size = tty_size();
             if size != last {
@@ -455,7 +470,9 @@ pub fn attach(id: &str, cwd: &str) -> ! {
 }
 
 fn tty_size() -> (u16, u16) {
+    // SAFETY: `winsize` is four integers: all zeroes is a valid one.
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    // SAFETY: TIOCGWINSZ fills a `winsize`.
     if unsafe { libc::ioctl(0, libc::TIOCGWINSZ, &mut size) } == 0 && size.ws_col > 0 {
         (size.ws_col, size.ws_row)
     } else {
@@ -463,6 +480,8 @@ fn tty_size() -> (u16, u16) {
     }
 }
 fn raw_mode() -> Option<libc::termios> {
+    // SAFETY: `termios` is integers and arrays of them (all zeroes is valid);
+    // `tcgetattr` fills it and the others read or rewrite it in place.
     unsafe {
         let mut termios: libc::termios = std::mem::zeroed();
         if libc::tcgetattr(0, &mut termios) != 0 {
@@ -591,6 +610,9 @@ impl Session {
         if self.finished.fetch_add(1, Ordering::AcqRel) == 1 {
             let mut live = self.live();
             live.closed = true;
+            // SAFETY: the terminal's descriptor, ours: closed once (by the
+            // second thread to finish), under the lock its other users check
+            // `closed` under; the reader, which does not, is done.
             unsafe { libc::close(self.master) };
         }
     }
@@ -663,6 +685,7 @@ pub fn daemon() -> ! {
     let Ok(listener) = UnixListener::bind(&path) else {
         std::process::exit(1);
     };
+    // SAFETY: ignoring a signal installs no handler.
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
     let server: Shared = Arc::new(Mutex::new(Server {
         empty_since: Some(Instant::now()),
@@ -712,6 +735,7 @@ pub fn daemon() -> ! {
 fn fronts_queue() -> Option<RawFd> {
     static QUEUE: std::sync::OnceLock<Option<RawFd>> = std::sync::OnceLock::new();
     *QUEUE.get_or_init(|| {
+        // SAFETY: takes nothing; the queue lives as long as the process.
         let queue = unsafe { libc::kqueue() };
         (queue >= 0).then_some(queue)
     })
@@ -728,6 +752,8 @@ fn watch_process(pid: libc::pid_t, shell: libc::pid_t) {
         data: 0,
         udata: shell as usize as *mut libc::c_void,
     };
+    // SAFETY: one change read from a local, no events asked for; `udata` is
+    // a pid, never dereferenced.
     unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
 }
 /// Check the session of shell `shell` in `ms` milliseconds.
@@ -741,11 +767,14 @@ fn check_front_in(queue: RawFd, shell: libc::pid_t, ms: isize) {
         data: ms,
         udata: shell as usize as *mut libc::c_void,
     };
+    // SAFETY: as `watch_process`'s.
     unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
 }
 fn watch_fronts(queue: RawFd, server: Shared) {
+    // SAFETY: `kevent` is integers and a pointer: all zeroes is valid.
     let mut events: [libc::kevent; 16] = unsafe { std::mem::zeroed() };
     loop {
+        // SAFETY: no changes; fills at most `events.len()` events.
         let n = unsafe {
             libc::kevent(
                 queue,
@@ -795,6 +824,7 @@ fn check_front(server: &Shared, shell: libc::pid_t) {
     if live.closed {
         return;
     }
+    // SAFETY: the terminal's descriptor, open (`closed` checked under the lock).
     let group = unsafe { libc::tcgetpgrp(session.master) };
     let pid = if group > 0 { group } else { shell };
     let front = (group, process_name(pid));
@@ -887,6 +917,8 @@ fn snapshot(server: &Shared) -> String {
         if live.closed {
             continue;
         }
+        // SAFETY: the terminal's descriptor, open (`closed` checked under the
+        // lock).
         let group = unsafe { libc::tcgetpgrp(session.master) };
         live.front_changed(&session, group);
         let recorder = live.screen.callbacks_mut();
@@ -982,10 +1014,16 @@ fn serve(mut stream: UnixStream, server: Shared) {
         INFO => {
             let reply = match session(&server, &id) {
                 Some(session) => {
-                    let front = unsafe { libc::tcgetpgrp(session.master) };
+                    let mut live = session.live();
+                    // SAFETY: the terminal's descriptor, read only while open
+                    // (`closed` checked under the lock `finish` closes it under).
+                    let front = if live.closed {
+                        -1
+                    } else {
+                        unsafe { libc::tcgetpgrp(session.master) }
+                    };
                     let pid = if front > 0 { front } else { session.child };
                     let status = {
-                        let mut live = session.live();
                         let records = &mut live.screen.callbacks_mut().status;
                         records.foreground(front, unix_ms());
                         records.status()
@@ -1047,9 +1085,14 @@ fn end(server: &Shared, which: impl Fn(&str) -> bool) {
     for (id, session) in &server.sessions {
         if which(id) {
             let child = session.child;
+            // SAFETY: signals the shell's process group (it leads one, made by
+            // `forkpty`); no memory is involved.
             unsafe { libc::killpg(child, libc::SIGHUP) };
             thread::spawn(move || {
                 thread::sleep(Duration::from_secs(2));
+                // SAFETY: as above. Were the shell reaped and its group id
+                // reused meanwhile, this would signal another group: pids are
+                // handed out in sequence, so not within 2 seconds.
                 unsafe { libc::killpg(child, libc::SIGKILL) };
             });
         }
@@ -1136,6 +1179,8 @@ fn resize(session: &Session, live: &mut Live, cols: u16, rows: u16) {
         ws_ypixel: 0,
     };
     if !live.closed {
+        // SAFETY: the terminal's descriptor, open (`closed` checked under the
+        // lock); TIOCSWINSZ reads a `winsize`.
         unsafe { libc::ioctl(session.master, libc::TIOCSWINSZ, &size) };
     }
 }
@@ -1186,6 +1231,9 @@ fn replay(screen: &mut vt100::Parser<Recorder>) -> Vec<u8> {
 fn read_session(session: Arc<Session>) {
     let mut buf = vec![0u8; 65536];
     loop {
+        // SAFETY: the terminal's descriptor, open until this reader finishes
+        // (`finish` closes it only after both threads); at most `buf.len()`
+        // bytes into `buf`.
         let n = unsafe { libc::read(session.master, buf.as_mut_ptr().cast(), buf.len()) };
         if n <= 0 {
             break;
@@ -1194,6 +1242,7 @@ fn read_session(session: Arc<Session>) {
         let mut live = session.live();
         {
             let recorder = live.screen.callbacks_mut();
+            // SAFETY: as the read above.
             recorder.group = unsafe { libc::tcgetpgrp(session.master) };
             recorder.now_ms = unix_ms();
         }
@@ -1221,6 +1270,7 @@ fn read_session(session: Arc<Session>) {
 /// exit code, after the shell's last output.
 fn wait_session(server: Shared, id: String, session: Arc<Session>) {
     let mut status = 0;
+    // SAFETY: waits for the session's own child, writing its status.
     while unsafe { libc::waitpid(session.child, &mut status, 0) } < 0
         && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
     {}
@@ -1264,6 +1314,8 @@ fn wait_session(server: Shared, id: String, session: Arc<Session>) {
 
 fn write_all(fd: RawFd, mut bytes: &[u8]) {
     while !bytes.is_empty() {
+        // SAFETY: writes at most `bytes.len()` bytes from `bytes`; callers
+        // pass the terminal's descriptor while it is open.
         let n = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
         if n <= 0 {
             return;
@@ -1326,6 +1378,8 @@ fn spawn(hello: &serde_json::Value, cols: u16, rows: u16) -> Option<Session> {
         ws_ypixel: 0,
     };
     let mut master: libc::c_int = -1;
+    // SAFETY: writes the terminal's descriptor into `master`; no name or
+    // termios asked for, and `size` is only read.
     let child = unsafe {
         libc::forkpty(
             &mut master,
@@ -1339,6 +1393,9 @@ fn spawn(hello: &serde_json::Value, cols: u16, rows: u16) -> Option<Session> {
     }
     if child == 0 {
         // The child: only async-signal-safe calls until exec.
+        // SAFETY: every string and array was made before the fork and is
+        // NUL-terminated (`argv` and `envp` end in null); `chdir`, `execve`
+        // and `_exit` are async-signal-safe and allocate nothing.
         unsafe {
             libc::chdir(cwd.as_ptr());
             libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr());
@@ -1369,6 +1426,8 @@ fn process_name(pid: libc::pid_t) -> String {
         .and_then(|args| args.into_iter().next())
         .or_else(|| {
             let mut buffer = [0u8; 256];
+            // SAFETY: the buffer is writable for its full length, and the
+            // length returned is within it.
             let len =
                 unsafe { libc::proc_name(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
             (len > 0).then(|| String::from_utf8_lossy(&buffer[..len as usize]).into_owned())
@@ -1385,6 +1444,8 @@ fn process_name(pid: libc::pid_t) -> String {
 fn arguments(pid: libc::pid_t) -> Option<Vec<String>> {
     let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
     let mut size: libc::size_t = 0;
+    // SAFETY: a three-name MIB; first a size query (null buffer), then a
+    // buffer of that size, which `size` bounds the kernel's write to.
     unsafe {
         if libc::sysctl(
             mib.as_mut_ptr(),

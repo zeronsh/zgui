@@ -150,6 +150,11 @@ mod platform {
     struct State {
         handler: Handler,
     }
+    // SAFETY: an NSObject subclass, main-thread only (AppleEvents are
+    // dispatched on the main thread), with nothing to clean up beyond its
+    // ivars; each method has the AppleEvent handler signature
+    // `-(void)handle:(NSAppleEventDescriptor *)event
+    // withReplyEvent:(NSAppleEventDescriptor *)reply`.
     define_class!(
         #[unsafe(super(NSObject))]
         #[thread_kind = MainThreadOnly]
@@ -216,7 +221,7 @@ mod platform {
             // Winit owns its NSApplicationDelegate and downcasts that object
             // during event delivery. Subscribe to AppleEvents without replacing it.
             let handler = EventHandler::alloc(mtm).set_ivars(State { handler });
-            // SAFETY: NSObject initializer on our allocated main-thread class.
+            // SAFETY: NSObject's `init`, on a fresh allocation with its ivars set.
             let handler: Retained<EventHandler> = unsafe { msg_send![super(handler), init] };
             let manager = NSAppleEventManager::sharedAppleEventManager();
             let service = Self {
@@ -235,8 +240,10 @@ mod platform {
                 (CORE, OPEN_DOCUMENTS, sel!(handleDocuments:withReplyEvent:)),
                 (CORE, REOPEN, sel!(handleReopen:withReplyEvent:)),
             ] {
-                // SAFETY: Selectors have Apple's two-descriptor handler signature;
-                // this service retains the receiver until unregistered.
+                // SAFETY: each selector is one of `EventHandler`'s, with the
+                // two-descriptor handler signature. The manager keeps the
+                // handler unretained: this service owns it and removes these
+                // routes in `Drop`, before the handler goes.
                 unsafe {
                     self.manager
                         .setEventHandler_andSelector_forEventClass_andEventID(

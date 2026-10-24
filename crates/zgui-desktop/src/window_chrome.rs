@@ -1611,7 +1611,8 @@ mod mac {
         let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
             return None;
         };
-        // SAFETY: winit's view, alive while its window is; the main thread.
+        // SAFETY: winit's view, alive while its window is (borrowed here);
+        // winit hands out an AppKit handle only on the main thread.
         let view = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
         view.window()
     }
@@ -1634,6 +1635,9 @@ mod mac {
                 content_under_titlebar(&window);
                 // NSWindowCloseButton, MiniaturizeButton, ZoomButton.
                 for button in [0_usize, 1, 2] {
+                    // SAFETY: `-standardWindowButton:(NSWindowButton)` takes
+                    // an NSUInteger and returns an unretained button (or
+                    // nil) the window keeps; `setHidden:` takes a BOOL.
                     unsafe {
                         let button: *mut AnyObject =
                             msg_send![&*window, standardWindowButton: button];
@@ -1656,6 +1660,7 @@ mod mac {
         window.setTitlebarAppearsTransparent(true);
         window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         // NSTitlebarSeparatorStyleNone
+        // SAFETY: the setter takes an NSTitlebarSeparatorStyle (NSInteger).
         unsafe {
             let _: () = msg_send![window, setTitlebarSeparatorStyle: 1_isize];
         }
@@ -1667,6 +1672,10 @@ mod mac {
         let Some(class) = AnyClass::get(c"NSToolbar") else {
             return;
         };
+        // SAFETY: NSToolbar's `alloc` and `initWithIdentifier:` (the
+        // allocation passed on to init, which returns it owned); the BOOL
+        // and NSWindowToolbarStyle (NSInteger) setters; the window retains
+        // its toolbar.
         unsafe {
             let id = NSString::from_str("zgui.titlebar.inset");
             let toolbar: Retained<AnyObject> =
@@ -1697,6 +1706,12 @@ mod mac {
         let Some(class) = AnyClass::get(c"NSToolbarView") else {
             return;
         };
+        // SAFETY: `nothing` has `hitTest:`'s C signature (self, _cmd, an
+        // NSPoint by value, returning an object), which the type encoding
+        // states; the runtime calls an `Imp` through that signature, so the
+        // transmute only erases the type of a function pointer. It returns
+        // nil, a valid `hitTest:` answer. `class_replaceMethod` is
+        // thread-safe and keeps nothing of ours but the function.
         unsafe {
             let imp: objc2::runtime::Imp = std::mem::transmute(
                 nothing as extern "C-unwind" fn(*mut AnyObject, Sel, NSPoint) -> *mut AnyObject,
@@ -1714,6 +1729,10 @@ mod mac {
     /// style.
     pub(super) fn radius(window: &NSWindow) -> f64 {
         if window.class().responds_to(sel!(_cornerRadius)) {
+            // SAFETY: an unpublished getter, sent only where it exists, that
+            // takes nothing; that it returns a CGFloat is AppKit's private
+            // declaration (and other apps' use of it), not something
+            // checked here.
             unsafe { msg_send![window, _cornerRadius] }
         } else {
             10.
@@ -1723,6 +1742,9 @@ mod mac {
     pub(crate) struct GlassState {
         plain: bool,
     }
+    // SAFETY: an NSVisualEffectView subclass, main-thread only as views are,
+    // with nothing to clean up beyond its ivars; `updateLayer` has AppKit's
+    // signature (`-(void)updateLayer`).
     define_class!(
         /// A behind-window effect view that, plain, strips the layers AppKit
         /// builds for it each time it builds them (gpui's `BlurredView`).
@@ -1734,10 +1756,12 @@ mod mac {
         impl GlassView {
             #[unsafe(method(updateLayer))]
             fn update_layer(&self) {
+                // SAFETY: the superclass's own `updateLayer`.
                 let _: () = unsafe { msg_send![super(self), updateLayer] };
                 if self.ivars().plain
                     && let Some(layer) = self.layer()
                 {
+                    // SAFETY: the view's own CALayer, on the main thread.
                     unsafe { strip_layer(&layer) };
                 }
             }
@@ -1751,10 +1775,14 @@ mod mac {
         let Some(content) = window.contentView() else {
             return;
         };
+        // SAFETY: the window's frame view, which the window keeps while it
+        // holds its content view.
         let Some(frame) = (unsafe { content.superview() }) else {
             return;
         };
         let mtm = window.mtm();
+        // SAFETY: NSView's designated initializer, on a fresh allocation
+        // with its ivars set.
         let effect: Retained<GlassView> = unsafe {
             let object = mtm
                 .alloc::<GlassView>()
@@ -1772,12 +1800,15 @@ mod mac {
         effect.setWantsLayer(true);
         if let Some(layer) = effect.layer() {
             layer.setCornerRadius(radius(window));
+            // SAFETY: `setCornerCurve:` takes a CALayerCornerCurve, an
+            // NSString ("continuous" is `kCACornerCurveContinuous`'s value).
             unsafe {
                 let continuous = NSString::from_str("continuous");
                 let _: () = msg_send![&*layer, setCornerCurve: &*continuous];
             }
             layer.setMasksToBounds(true);
             if glass.plain {
+                // SAFETY: the view's own CALayer, on the main thread.
                 unsafe { strip_layer(&layer) };
             }
         }
@@ -1818,6 +1849,8 @@ mod mac {
         let mut controls: Option<Rect> = None;
         // NSWindowCloseButton, MiniaturizeButton, ZoomButton.
         for button in [0_usize, 1, 2] {
+            // SAFETY: `-standardWindowButton:` takes an NSUInteger and
+            // returns an NSButton (a view) or nil, retained here.
             let button: Option<Retained<NSView>> =
                 unsafe { msg_send![&*window, standardWindowButton: button] };
             let Some(button) = button.filter(|b| !b.isHidden()) else {
@@ -1859,7 +1892,20 @@ mod mac {
 
     /// No desktop tint (`CAChameleonLayer` hidden), a 60-point gaussian and
     /// no saturation boost, through the effect's layer tree.
+    ///
+    /// # Safety
+    ///
+    /// `layer` is a `CALayer` that no other thread uses meanwhile (the
+    /// messages below are CALayer's).
     unsafe fn strip_layer(layer: &AnyObject) {
+        // SAFETY: CALayer's messages with their declared types:
+        // `setBackgroundColor:` a CGColorRef (null: none), `className` an
+        // autoreleased NSString, `filters` and `sublayers` unretained
+        // NSArrays (or nil) the layer holds while this runs, read by
+        // `count` (NSUInteger) and `objectAtIndex:`, each object unretained
+        // but held by its array. `arrayWithObjects:count:` reads `count`
+        // pointers from `kept`, all live (held by `filters`), and returns
+        // an autoreleased array it retains them in. Sublayers are CALayers.
         unsafe {
             // A CGColorRef, not an object: objc2 checks the type in debug.
             let none: *const objc2_core_graphics::CGColor = std::ptr::null();
@@ -1917,6 +1963,9 @@ mod mac {
         let Some(window) = ns_window(window) else {
             return;
         };
+        // SAFETY: NSUserDefaults' `standardUserDefaults` (unretained, the
+        // process keeps it), `stringForKey:` (an unretained NSString or nil,
+        // read at once) and `boolForKey:` (BOOL).
         let action = unsafe {
             let defaults: *mut AnyObject =
                 msg_send![objc2::class!(NSUserDefaults), standardUserDefaults];
@@ -1954,6 +2003,7 @@ mod mac {
         fn a_plain_glass_strips_layers_with_well_typed_messages() {
             let (layer, sublayer) = (CALayer::new(), CALayer::new());
             layer.addSublayer(&sublayer);
+            // SAFETY: a CALayer only this thread has.
             unsafe { super::strip_layer(&layer) };
             assert!(layer.backgroundColor().is_none());
         }

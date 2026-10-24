@@ -531,6 +531,7 @@ fn local_offset(ms: i64) -> i64 {
         gmtoff: c_long,
         zone: *const c_char,
     }
+    // SAFETY: POSIX's `localtime_r` (time_t is i64 on 64-bit unix).
     unsafe extern "C" {
         fn localtime_r(time: *const i64, out: *mut Tm) -> *mut Tm;
     }

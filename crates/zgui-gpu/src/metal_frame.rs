@@ -99,11 +99,16 @@ pub(crate) struct BlurRecords<'a> {
 
 impl MetalFrame {
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, GpuError> {
-        // SAFETY: The HAL guards only borrow the live device and queue.
+        // SAFETY: The raw device is retained, never destroyed; the guard is
+        // dropped at once.
         let hal = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }
             .ok_or_else(|| GpuError("not a Metal device".into()))?;
         let raw = hal.raw_device().clone();
         drop(hal);
+        // SAFETY: The raw queue is retained, never destroyed. Command buffers
+        // committed to it (`Frame::commit`) retain what they reference
+        // (`commandBuffer`, not the unretained kind), so a wgpu resource
+        // dropped meanwhile stays alive for them.
         let hal_queue = unsafe { queue.as_hal::<wgpu::hal::api::Metal>() }
             .ok_or_else(|| GpuError("not a Metal queue".into()))?;
         let queue = {
@@ -243,7 +248,8 @@ impl MetalFrame {
             });
             // SAFETY: The frame's live vertex buffer, live textures for both
             // of effects.wgsl's slots, and four-vertex strips of instances
-            // the buffer holds.
+            // the buffer holds (`metal_effect_passes` numbers them from the
+            // effect quads written after the frame's own).
             unsafe {
                 encoder.setVertexBuffer_offset_atIndex(Some(vertices), 0, VERTICES);
                 for draw in &effect.draws {
@@ -266,7 +272,8 @@ impl MetalFrame {
             0 => Regions::Inline(vec![0; size_of::<crate::Region>()]),
             len if len <= 4096 => Regions::Inline(regions.to_vec()),
             len => Regions::Buffer(
-                // SAFETY: `len` bytes of `regions`, copied by Metal.
+                // SAFETY: `len` bytes of `regions`, read by Metal during the
+                // call (it copies them into the new buffer).
                 unsafe {
                     self.device.newBufferWithBytes_length_options(
                         std::ptr::NonNull::from(regions).cast(),
@@ -496,7 +503,9 @@ impl Frame {
     }
     /// A full-target triangle as instance `index` (blur.wgsl's `vs`).
     fn triangle(&mut self, index: u32) {
-        // SAFETY: Three vertices made from their indices, no buffers.
+        // SAFETY: Three vertices made from their indices, no buffers; the
+        // instance indexes the batch's records bound by `records` (callers
+        // pass a slot's or draw's index in that batch).
         unsafe {
             self.encoder
                 .drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
@@ -561,7 +570,8 @@ impl Frame {
         self.draw(instances);
     }
     fn draw(&mut self, instances: std::ops::Range<u32>) {
-        // SAFETY: Four-vertex strips over instances the vertex buffer holds.
+        // SAFETY: Four-vertex strips over instances the vertex buffer holds:
+        // `render_direct` draws ranges of the quads it wrote to it.
         unsafe {
             self.encoder
                 .drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(

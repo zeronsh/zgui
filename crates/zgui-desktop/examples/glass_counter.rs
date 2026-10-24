@@ -205,6 +205,8 @@ fn run_fixture(cx: &mut zgui_desktop::WindowContext) {
                     && ns.titleVisibility() == NSWindowTitleVisibility::Hidden,
                 format!("{:?}", ns.styleMask()),
             );
+            // SAFETY: NSWindow's `toolbar` (an unretained NSToolbar or nil,
+            // only compared with null) and `toolbarStyle` (an NSInteger).
             let (toolbar, toolbar_style): (*mut AnyObject, isize) =
                 unsafe { (msg_send![&*ns, toolbar], msg_send![&*ns, toolbarStyle]) };
             check(
@@ -220,6 +222,8 @@ fn run_fixture(cx: &mut zgui_desktop::WindowContext) {
                 format!("{size:?}"),
             );
             let corner: f64 = if ns.class().responds_to(sel!(_cornerRadius)) {
+                // SAFETY: an unpublished getter taking nothing, sent only where
+                // it exists; a CGFloat as zgui's window chrome reads it.
                 unsafe { msg_send![&*ns, _cornerRadius] }
             } else {
                 10.
@@ -229,6 +233,8 @@ fn run_fixture(cx: &mut zgui_desktop::WindowContext) {
                 radius.get() == corner && corner > 0.,
                 format!("{} vs {corner}", radius.get()),
             );
+            // SAFETY: the window's frame view, which the window keeps while it
+            // holds its content view.
             let frame = unsafe { content.superview() }.expect("a frame view");
             let subviews = frame.subviews();
             let glass = subviews
@@ -246,6 +252,8 @@ fn run_fixture(cx: &mut zgui_desktop::WindowContext) {
             );
             if let Some(index) = glass {
                 let view = subviews.objectAtIndex(index);
+                // SAFETY: NSVisualEffectView's getters (it is zgui's glass view),
+                // each an NSInteger enum.
                 let (material, blending, state): (isize, isize, isize) = unsafe {
                     (
                         msg_send![&*view, material],
@@ -258,6 +266,9 @@ fn run_fixture(cx: &mut zgui_desktop::WindowContext) {
                     (material, blending, state) == (13, 0, 1),
                     format!("{material} {blending} {state}"),
                 );
+                // SAFETY: NSView's `layer`, unretained (the view keeps it) and
+                // nil-checked; CALayer's `cornerRadius` (CGFloat) and
+                // `masksToBounds` (BOOL).
                 let layer: *mut AnyObject = unsafe { msg_send![&*view, layer] };
                 let rounded = unsafe { layer.as_ref() }.map(|layer| unsafe {
                     let r: f64 = msg_send![layer, cornerRadius];
@@ -275,9 +286,11 @@ fn run_fixture(cx: &mut zgui_desktop::WindowContext) {
                 ["close", "minimize", "zoom"]
                     .iter()
                     .enumerate()
+                    // SAFETY: `-standardWindowButton:` takes an NSWindowButton
+                    // (NSUInteger) and returns an unretained button or nil,
+                    // which the window keeps; `isHidden` returns BOOL.
                     .all(|(i, _)| unsafe {
-                        let button: *mut AnyObject =
-                            msg_send![&*ns, standardWindowButton: i as isize];
+                        let button: *mut AnyObject = msg_send![&*ns, standardWindowButton: i];
                         button.as_ref().is_some_and(|b| !msg_send![b, isHidden])
                     }),
                 String::new(),

@@ -547,7 +547,9 @@ pub(crate) fn show_context_menu(
         return Err(AppMenuError("not an AppKit window".into()));
     };
     let position = muda::dpi::Position::Logical(muda::dpi::LogicalPosition::new(x, y));
-    // SAFETY: winit's content view, alive while its window is.
+    // SAFETY: muda wants a live NSView on the main thread: winit's content
+    // view, alive while its window is (borrowed for this call, menu loop
+    // included); winit hands out an AppKit handle only on the main thread.
     unsafe { menu.show_context_menu_for_nsview(handle.ns_view.as_ptr(), Some(position)) };
     Ok(())
 }
@@ -773,6 +775,8 @@ mod edit_keys {
             event.as_ptr()
         });
         // The monitor lives as long as the app.
+        // SAFETY: the handler returns the event it was given or null (taken),
+        // both allowed.
         let monitor = unsafe {
             NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &block)
         };

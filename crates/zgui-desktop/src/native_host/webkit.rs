@@ -37,6 +37,7 @@ use zgui::web_view::{
     WebViewEvent,
 };
 
+// SAFETY: declares nothing; it only links WebKit, whose classes objc2-web-kit names.
 #[link(name = "WebKit", kind = "framework")]
 unsafe extern "C" {}
 
@@ -56,6 +57,9 @@ fn history(
     Vec<zgui::web_view::HistoryItem>,
     Vec<zgui::web_view::HistoryItem>,
 ) {
+    // SAFETY (the three below): WebKit getters on the main thread (a
+    // `WKWebView` is main-thread only); `itemAtIndex:` returns nil past
+    // either end, and each result is retained.
     let list = unsafe { view.backForwardList() };
     let walk = |step: isize| {
         (1..)
@@ -90,6 +94,15 @@ pub(crate) struct ObserverState {
     new_windows: bool,
 }
 
+// SAFETY: an NSObject subclass, main-thread only (WebKit calls its delegates
+// and KVO observers there), with nothing to clean up beyond its ivars. Each
+// method's signature is the Objective-C one: KVO's
+// `observeValueForKeyPath:ofObject:change:context:`, the navigation
+// delegate's (the decision handler a `void (^)(WKNavigationActionPolicy)`
+// block, called once), the UI delegate's `createWebView…` returning an
+// autoreleased web view or nil (`method_id`), and the script message
+// handler's. WebKit holds it unretained as a delegate and an observer;
+// `MacWebView` keeps it alive and unregisters it in its `Drop`.
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -111,6 +124,8 @@ define_class!(
     unsafe impl WKNavigationDelegate for Observer {
         #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
         fn policy(&self, _view: &WKWebView, action: &WKNavigationAction, decision: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy)>) {
+            // SAFETY: getters of the action WebKit passes for this call (main
+            // thread), each result retained or nil-checked.
             let request = unsafe {
                 NavigationRequest {
                     url: action.request().URL().and_then(|url| url.absoluteString()).map(|url| url.to_string()).unwrap_or_default(),
@@ -179,6 +194,7 @@ define_class!(
         #[unsafe(method_id(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
         fn create_window(&self, _view: &WKWebView, _configuration: &WKWebViewConfiguration, action: &WKNavigationAction, _features: &WKWindowFeatures) -> Option<Retained<WKWebView>> {
             if self.ivars().new_windows {
+                // SAFETY: getters of the action WebKit passes for this call.
                 let url = unsafe { action.request().URL() }
                     .and_then(|url| url.absoluteString())
                     .map(|url| url.to_string())
@@ -191,12 +207,16 @@ define_class!(
     unsafe impl WKScriptMessageHandler for Observer {
         #[unsafe(method(userContentController:didReceiveScriptMessage:))]
         fn message(&self, _controller: &WKUserContentController, message: &WKScriptMessage) {
+            // SAFETY: getters of the message WebKit passes for this call
+            // (main thread); the body is any of the JavaScript-bridged
+            // Foundation objects, which `json` reads as `AnyObject`.
             let body = unsafe { message.body() };
             let body = match body.downcast_ref::<NSString>() {
                 Some(text) => text.to_string(),
                 None => json(Some(&body)),
             };
             // Who sent it: any page, any frame, can.
+            // SAFETY: as above: getters on the message, each result retained.
             let (origin, main_frame) = unsafe {
                 let frame = message.frameInfo();
                 let origin = frame.securityOrigin();
@@ -225,6 +245,10 @@ pub(crate) struct SchemeState {
     serve: Rc<dyn Fn(SchemeRequest, SchemeResponder)>,
 }
 
+// SAFETY: an NSObject subclass, main-thread only (WebKit calls scheme
+// handlers on the main thread), with nothing to clean up beyond its ivars;
+// its methods have `WKURLSchemeHandler`'s signatures. The configuration
+// retains it; `MacWebView` keeps it too.
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -235,6 +259,7 @@ define_class!(
     unsafe impl WKURLSchemeHandler for SchemeServer {
         #[unsafe(method(webView:startURLSchemeTask:))]
         fn start(&self, _view: &WKWebView, task: &ProtocolObject<dyn WKURLSchemeTask>) {
+            // SAFETY: the task's request, retained; a getter with no precondition.
             let request = unsafe { task.request() };
             let request = {
                 SchemeRequest {
@@ -307,6 +332,7 @@ impl SchemeServer {
             web_view: web.id(),
             serve: handler.serve.clone(),
         });
+        // SAFETY: NSObject's `init`, on a fresh allocation with its ivars set.
         unsafe { msg_send![super(object), init] }
     }
 }
@@ -316,6 +342,10 @@ fn finish_scheme_task(id: u64, response: Option<SchemeResponse>) {
     let Some(task) = SCHEME_TASKS.with(|tasks| tasks.borrow_mut().remove(&id)) else {
         return;
     };
+    // SAFETY: on the main thread (the main queue runs this), as WebKit
+    // requires. A task is answered once, and only while WebKit still wants
+    // it: it leaves `SCHEME_TASKS` here or when WebKit stops it, and a
+    // stopped task is never answered (WebKit raises on either misuse).
     unsafe {
         let Some(url) = task.request().URL() else {
             // Nothing to answer for: fail it rather than leave it waiting.
@@ -374,6 +404,7 @@ impl Observer {
             view: RefCell::new(Weak::default()),
             new_windows: web.options().new_windows,
         });
+        // SAFETY: NSObject's `init`, on a fresh allocation with its ivars set.
         unsafe { msg_send![super(object), init] }
     }
     fn post(&self, delivery: impl FnOnce(&WebView) + 'static) {
@@ -395,6 +426,7 @@ impl Observer {
             return;
         };
         let url = url_of(&view);
+        // SAFETY: plain WKWebView getters on the main thread.
         let (title, loading, progress, back, forward) = unsafe {
             (
                 view.title()
@@ -468,6 +500,7 @@ impl Observer {
 }
 
 fn url_of(view: &WKWebView) -> String {
+    // SAFETY: a plain getter on the main thread, nil-checked.
     unsafe { view.URL() }
         .and_then(|url| url.absoluteString())
         .map(|url| url.to_string())
@@ -483,6 +516,8 @@ fn json(value: Option<&AnyObject>) -> String {
         return quote(&text.to_string());
     }
     if value.class().name().to_bytes() == b"__NSCFBoolean" {
+        // SAFETY: an NSNumber (Foundation's boolean class), whose
+        // `boolValue` returns BOOL.
         let on: bool = unsafe { msg_send![value, boolValue] };
         return if on { "true" } else { "false" }.into();
     }
@@ -492,6 +527,12 @@ fn json(value: Option<&AnyObject>) -> String {
     if value.class().name().to_bytes() == b"NSNull" {
         return "null".into();
     }
+    // SAFETY: NSJSONSerialization's class methods with their declared types
+    // (`dataWithJSONObject:` only after `isValidJSONObject:` said yes, as it
+    // requires; options an NSUInteger, a null error out-pointer). The NSData
+    // it returns is autoreleased, alive for this call: its `bytes` and
+    // `length` describe one buffer, read before returning. `description`
+    // returns an autoreleased NSString, which `Retained` retains.
     unsafe {
         let class = objc2::class!(NSJSONSerialization);
         let valid: bool = msg_send![class, isValidJSONObject: value];
@@ -538,12 +579,15 @@ thread_local! {
 fn data_store(profile: &WebProfile, mtm: MainThreadMarker) -> Retained<WKWebsiteDataStore> {
     // Each ephemeral view gets a store of its own.
     if *profile == WebProfile::Ephemeral {
+        // SAFETY: a class factory with no precondition (main thread, by `mtm`).
         return unsafe { WKWebsiteDataStore::nonPersistentDataStore(mtm) };
     }
     STORES.with(|stores| {
         stores
             .borrow_mut()
             .entry(profile.clone())
+            // SAFETY: class factories on the main thread (`mtm`);
+            // `dataStoreForIdentifier:` (macOS 14) only where it exists.
             .or_insert_with(|| unsafe {
                 match profile {
                     WebProfile::Named(name) if named_stores_supported() => {
@@ -571,6 +615,7 @@ fn data_store(profile: &WebProfile, mtm: MainThreadMarker) -> Retained<WKWebsite
 }
 /// Persistent stores of their own need macOS 14.
 fn named_stores_supported() -> bool {
+    // SAFETY: NSObject's `+respondsToSelector:`, returning BOOL.
     unsafe {
         msg_send![objc2::class!(WKWebsiteDataStore), respondsToSelector: sel!(dataStoreForIdentifier:)]
     }
@@ -617,6 +662,7 @@ impl MacWebView {
             .iter()
             .filter(|handler| {
                 let scheme = handler.scheme.as_str();
+                // SAFETY: a class query with no precondition (main thread).
                 let usable = zgui::web_view::is_app_scheme(scheme)
                     && !unsafe { WKWebView::handlesURLScheme(&NSString::from_str(scheme), mtm) }
                     && taken.insert(scheme.to_owned());
@@ -632,6 +678,10 @@ impl MacWebView {
             .iter()
             .map(|handler| SchemeServer::new(web, handler, mtm))
             .collect();
+        // SAFETY: configuring a fresh configuration on the main thread. Each
+        // scheme is one WebKit does not serve, given once (WebKit raises
+        // otherwise); the configuration retains its scheme handlers and the
+        // content controller its message handler (removed in `Drop`).
         let view = unsafe {
             let configuration = WKWebViewConfiguration::new(mtm);
             configuration.setWebsiteDataStore(&data_store(&options.profile, mtm));
@@ -668,6 +718,12 @@ impl MacWebView {
             WKWebView::initWithFrame_configuration(mtm.alloc(), NSRect::ZERO, &configuration)
         };
         *observer.ivars().view.borrow_mut() = Weak::from_retained(&view);
+        // SAFETY: the delegates and KVO registrations hold `observer`
+        // unretained: `Self` keeps it, and `Drop` unregisters it before it
+        // goes (a null KVO context is allowed). `setInspectable:` (BOOL) is
+        // sent only where it exists; `drawsBackground` is WKWebView's
+        // key-value coded setting, and `setUnderPageBackgroundColor:` takes
+        // an NSColor (macOS 12; older WebKit raises an exception, not UB).
         unsafe {
             view.setNavigationDelegate(Some(ProtocolObject::from_ref(&*observer)));
             view.setUIDelegate(Some(ProtocolObject::from_ref(&*observer)));
@@ -712,6 +768,7 @@ impl MacWebView {
     /// The colour WebKit shows beyond the page (and under tiles not drawn
     /// yet, while it catches up with a new size).
     pub fn under_page_color(&self) -> Retained<NSColor> {
+        // SAFETY: a null-resettable getter (never nil) on the main thread.
         unsafe { self.view.underPageBackgroundColor() }
     }
     fn has_focus(&self) -> bool {
@@ -740,6 +797,8 @@ impl MacWebView {
             });
             return;
         };
+        // SAFETY: WKWebView's loading methods on the main thread, with URLs
+        // made just above.
         unsafe {
             if parsed.isFileURL() {
                 let directory = parsed
@@ -756,6 +815,12 @@ impl MacWebView {
 }
 impl WebViewBackend for MacWebView {
     fn run(&self, command: WebViewCommand) {
+        // SAFETY: WKWebView's methods on the main thread (zgui runs commands
+        // there). The script completion is a `void (^)(id, NSError *)`
+        // block, as WebKit calls it, on the main thread. The unpublished
+        // `_inspector` (an object, nil-checked, whose `show` takes nothing)
+        // and `setPageZoom:` (CGFloat, `zoom` is f64) are sent only where
+        // the view responds to them.
         unsafe {
             match command {
                 WebViewCommand::LoadUrl(url) => {
@@ -862,6 +927,9 @@ impl WebViewBackend for MacWebView {
 }
 impl Drop for MacWebView {
     fn drop(&mut self) {
+        // SAFETY: undoes `new`'s registrations (each key observed there,
+        // the delegates, the message handler) while `observer` is still
+        // alive, so WebKit keeps no unretained pointer to it; main thread.
         unsafe {
             if self.has_focus()
                 && let Some(window) = self.view.window()

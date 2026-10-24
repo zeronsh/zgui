@@ -402,6 +402,8 @@ mod usage {
         numer: u32,
         denom: u32,
     }
+    // SAFETY: libproc's and Mach's declarations (libproc.h, mach_time.h);
+    // `RusageInfoV2` is `rusage_info_v2` field for field.
     unsafe extern "C" {
         fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut RusageInfoV2) -> i32;
         fn proc_listallpids(buffer: *mut i32, size: i32) -> i32;
@@ -432,7 +434,8 @@ mod usage {
     /// The executable's file name (proc_name truncates at 32 bytes).
     pub fn name(pid: i32) -> String {
         let mut buffer = [0_u8; 4096];
-        // SAFETY: the buffer is writable for its full length.
+        // SAFETY: the buffer is writable for its full length (4096 bytes,
+        // PROC_PIDPATHINFO_MAXSIZE); the length returned is within it.
         let len = unsafe { proc_pidpath(pid, buffer.as_mut_ptr(), buffer.len() as u32) };
         if len > 0 {
             let path = String::from_utf8_lossy(&buffer[..len as usize]);
@@ -482,6 +485,10 @@ mod usage {
         ffi::{CStr, c_char, c_void},
     };
     type CfType = *const c_void;
+    // SAFETY: IOKit's and CoreFoundation's declarations (IOKitLib.h,
+    // CFString.h, CFArray.h, CFDictionary.h, CFNumber.h): io_object_t and
+    // mach ports are u32, kern_return_t i32, CFIndex isize, CFTypeID usize,
+    // CFStringEncoding u32, Boolean a byte that is 0 or 1.
     #[link(name = "IOKit", kind = "framework")]
     unsafe extern "C" {
         fn IOServiceMatching(name: *const c_char) -> *mut c_void;
@@ -603,13 +610,20 @@ mod usage {
         }
     }
 
-    fn is(object: CfType, type_id: usize) -> bool {
-        // SAFETY: a valid CF object.
+    /// # Safety
+    ///
+    /// `object` is null or a live CF object.
+    unsafe fn is(object: CfType, type_id: usize) -> bool {
+        // SAFETY: non-null, so a live CF object (the caller's promise).
         !object.is_null() && unsafe { CFGetTypeID(object) } == type_id
     }
 
-    fn number(object: CfType) -> Option<i64> {
-        // SAFETY: type checked before reading.
+    /// # Safety
+    ///
+    /// As `is`'s.
+    unsafe fn number(object: CfType) -> Option<i64> {
+        // SAFETY: the caller's object, read as a CFNumber only once it is
+        // one, into an i64 (kCFNumberSInt64Type).
         unsafe {
             if !is(object, CFNumberGetTypeID()) {
                 return None;
@@ -619,8 +633,13 @@ mod usage {
         }
     }
 
-    fn string(object: CfType) -> Option<String> {
-        // SAFETY: type checked; the buffer is writable for its length.
+    /// # Safety
+    ///
+    /// As `is`'s.
+    unsafe fn string(object: CfType) -> Option<String> {
+        // SAFETY: the caller's object, read as a CFString only once it is
+        // one; CoreFoundation writes at most the buffer's length, NUL
+        // included, and only a `true` (it fit) is read back.
         unsafe {
             if !is(object, CFStringGetTypeID()) {
                 return None;
@@ -656,8 +675,9 @@ mod usage {
         );
         let mut times = HashMap::new();
         let mut read = |entry: u32| {
+            // SAFETY: a property is a live CF object while held.
             let Some(pid) = Property::of(entry, &creator_key)
-                .and_then(|creator| string(creator.0))
+                .and_then(|creator| unsafe { string(creator.0) })
                 .and_then(|creator| creator_pid(&creator))
             else {
                 return;
@@ -665,7 +685,9 @@ mod usage {
             let Some(usage) = Property::of(entry, &usage_key) else {
                 return;
             };
-            // SAFETY: type checked; indices are within the count.
+            // SAFETY: `usage` (live while held) is read as an array only once
+            // it is one, at indices within its count; its items and their
+            // values are Get-rule references it keeps alive meanwhile.
             let total: u64 = unsafe {
                 if !is(usage.0, CFArrayGetTypeID()) {
                     return;
@@ -697,10 +719,12 @@ mod usage {
                 return;
             }
             if let Some(stats) = Property::of(entry, &stats_key)
-                && is(stats.0, unsafe { CFDictionaryGetTypeID() })
+                // SAFETY: `stats` is a live CF object while held.
+                && unsafe { is(stats.0, CFDictionaryGetTypeID()) }
             {
-                // SAFETY: a dictionary, checked above.
-                found = number(unsafe { CFDictionaryGetValue(stats.0, utilization_key.0) })
+                // SAFETY: a dictionary, checked above; the value it holds is a
+                // Get-rule reference, live while `stats` is.
+                found = unsafe { number(CFDictionaryGetValue(stats.0, utilization_key.0)) }
                     .map(|percent| percent as f32);
             }
         });

@@ -285,7 +285,7 @@ fn dismiss_owned_sheets(parent: &Window) {
     }
     autoreleasepool(|_| {
         // SAFETY: The winit Window and borrowed handle keep this NSView alive;
-        // all AppKit access occurs on the main thread.
+        // winit hands out an AppKit handle only on the main thread.
         let view = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
         if let Some(owner) = view.window() {
             dismiss(&owner);

@@ -94,6 +94,10 @@ confirm-close-surface = false
 struct DispatchQueue {
     _private: [u8; 0],
 }
+// SAFETY: libdispatch's and libSystem's declarations (<dispatch/queue.h>,
+// <dispatch/time.h>, <pthread.h>): `dispatch_function_t` is
+// `void (*)(void *)`, `dispatch_time_t` a `uint64_t`, and the main queue the
+// object `dispatch_get_main_queue()` returns the address of.
 unsafe extern "C" {
     static _dispatch_main_q: DispatchQueue;
     fn dispatch_async_f(
@@ -115,25 +119,37 @@ fn main_queue() -> *const DispatchQueue {
 }
 /// Run `work` on the main thread: now if this is it, else on the main queue.
 fn on_main(work: impl FnOnce() + Send + 'static) {
+    // SAFETY: takes no arguments; only reads which thread this is.
     if unsafe { pthread_main_np() } != 0 {
         work();
         return;
     }
     let boxed: Box<Box<dyn FnOnce() + Send>> = Box::new(Box::new(work));
     extern "C" fn run(context: *mut c_void) {
+        // SAFETY: `context` is the `Box::into_raw` below, which dispatch
+        // hands to this function exactly once.
         let work = unsafe { Box::from_raw(context as *mut Box<dyn FnOnce() + Send>) };
         work();
     }
+    // SAFETY: the main queue lives for the process; `run` takes back the
+    // box it is given. The closure is `Send`, so running it on the main
+    // thread is sound.
     unsafe { dispatch_async_f(main_queue(), Box::into_raw(boxed) as *mut c_void, run) };
 }
-/// Run `work` on the main queue after `seconds`.
-fn after(seconds: f64, work: impl FnOnce() + 'static) {
-    // Main-queue only, so the closure never crosses threads.
+/// Run `work` on the main queue after `seconds`. The marker proves the
+/// caller is on the main thread: `work` is not `Send`, so it must be made
+/// on the thread it runs on.
+fn after(_mtm: MainThreadMarker, seconds: f64, work: impl FnOnce() + 'static) {
     let boxed: Box<Box<dyn FnOnce()>> = Box::new(Box::new(work));
     extern "C" fn run(context: *mut c_void) {
+        // SAFETY: `context` is the `Box::into_raw` below, which dispatch
+        // hands to this function exactly once.
         let work = unsafe { Box::from_raw(context as *mut Box<dyn FnOnce()>) };
         work();
     }
+    // SAFETY: the main queue lives for the process; `run` takes back the
+    // box it is given, on the main thread, where (`_mtm`) the closure was
+    // made.
     unsafe {
         let when = dispatch_time(0, (seconds * 1e9) as i64);
         dispatch_after_f(when, main_queue(), Box::into_raw(boxed) as *mut c_void, run);
@@ -159,12 +175,26 @@ fn app() -> Option<g::ghostty_app_t> {
 
 impl App {
     fn new() -> Option<Self> {
+        // SAFETY: on the main thread, as Ghostty's app must be (`app()`'s
+        // callers are the main-queue tick and `MacTerminal::new`, which has
+        // a `MainThreadMarker`), once (`APP`'s cell). `ghostty_init` gets no
+        // arguments (argc 0).
+        // `config` is checked non-null before use and every string passed
+        // is a NUL-terminated `CString` alive for its call; the diagnostics'
+        // messages are NUL-terminated strings the config owns, copied before
+        // it goes. The callbacks match `ghostty_runtime_config_s`'s types and
+        // never dereference their userdata. `ghostty_app_new` copies the
+        // config (embedded.zig `App.init` clones it), so this one is freed.
         unsafe {
             if g::ghostty_init(0, std::ptr::null_mut()) != g::GHOSTTY_SUCCESS as i32 {
                 eprintln!("zgui: ghostty_init failed");
                 return None;
             }
             let config = g::ghostty_config_new();
+            if config.is_null() {
+                eprintln!("zgui: ghostty_config_new failed");
+                return None;
+            }
             g::ghostty_config_load_default_files(config);
             g::ghostty_config_load_recursive_files(config);
             let path =
@@ -194,12 +224,13 @@ impl App {
                 close_surface_cb: Some(close_surface),
             };
             let app = g::ghostty_app_new(&runtime, config);
+            // The app keeps its own copy.
+            g::ghostty_config_free(config);
             if app.is_null() {
                 eprintln!("zgui: ghostty_app_new failed");
                 return None;
             }
             g::ghostty_app_set_focus(app, true);
-            // The config is the app's now (Ghostty keeps it until the app goes).
             Some(Self { app })
         }
     }
@@ -212,9 +243,14 @@ extern "C" fn wakeup(_userdata: *mut c_void) {
     extern "C" fn tick(_context: *mut c_void) {
         TICK_PENDING.store(false, Ordering::Release);
         if let Some(app) = app() {
+            // SAFETY: on the main queue, as ticks must be; the app is never
+            // freed.
             unsafe { g::ghostty_app_tick(app) };
         }
     }
+    // SAFETY: the main queue lives for the process; `tick` ignores its
+    // (null) context. Ghostty wakes from any thread: nothing crosses but
+    // the call.
     unsafe { dispatch_async_f(main_queue(), std::ptr::null_mut(), tick) };
 }
 
@@ -234,10 +270,17 @@ fn deliver(surface: usize, change: impl FnOnce(&Terminal) + Send + 'static) {
         });
     });
 }
-fn string(ptr: *const c_char) -> String {
+/// A copy of a C string Ghostty passes a callback.
+///
+/// # Safety
+///
+/// `ptr` is null or a NUL-terminated string alive for the call (Ghostty's
+/// are `[*:0]const u8`, valid until the callback returns).
+unsafe fn string(ptr: *const c_char) -> String {
     if ptr.is_null() {
         String::new()
     } else {
+        // SAFETY: non-null, so NUL-terminated and alive (the contract).
         unsafe { CStr::from_ptr(ptr) }
             .to_string_lossy()
             .into_owned()
@@ -249,14 +292,21 @@ extern "C" fn action(
     target: g::ghostty_target_s,
     action: g::ghostty_action_s,
 ) -> bool {
+    // Each union read below is the member its tag names (ghostty.h's
+    // `ghostty_action_u`); the members are plain C data (enums are integers
+    // in the bindings), and their strings are Ghostty's, alive for the call.
+    // The surface is only an address here: what runs later looks it up in
+    // `SURFACES` before using it, as it may be freed by then.
     if target.tag != g::GHOSTTY_TARGET_SURFACE {
         return false;
     }
+    // SAFETY: a surface target's member is `surface`.
     let surface = unsafe { target.target.surface } as usize;
     let payload = action.action;
     match action.tag {
         g::GHOSTTY_ACTION_SET_TITLE => {
-            let title = string(unsafe { payload.set_title.title });
+            // SAFETY: SET_TITLE's member; a NUL-terminated title.
+            let title = unsafe { string(payload.set_title.title) };
             deliver(surface, move |term| {
                 term.update_state(|state| state.title = title.clone());
                 term.emit(TerminalEvent::TitleChanged { title });
@@ -264,7 +314,8 @@ extern "C" fn action(
             true
         }
         g::GHOSTTY_ACTION_PWD => {
-            let pwd = string(unsafe { payload.pwd.pwd });
+            // SAFETY: PWD's member; a NUL-terminated path.
+            let pwd = unsafe { string(payload.pwd.pwd) };
             deliver(surface, move |term| {
                 term.update_state(|state| state.pwd = pwd.clone());
                 term.emit(TerminalEvent::PwdChanged { pwd });
@@ -282,6 +333,7 @@ extern "C" fn action(
             true
         }
         g::GHOSTTY_ACTION_MOUSE_SHAPE => {
+            // SAFETY: MOUSE_SHAPE's member, an integer.
             let shape = unsafe { payload.mouse_shape };
             on_main(move || {
                 if let Some(view) = view_of(surface) {
@@ -291,11 +343,13 @@ extern "C" fn action(
             true
         }
         g::GHOSTTY_ACTION_MOUSE_VISIBILITY => {
+            // SAFETY: MOUSE_VISIBILITY's member, an integer.
             let hidden = unsafe { payload.mouse_visibility } == g::GHOSTTY_MOUSE_HIDDEN;
             on_main(move || NSCursor::setHiddenUntilMouseMoves(hidden));
             true
         }
         g::GHOSTTY_ACTION_PROGRESS_REPORT => {
+            // SAFETY: PROGRESS_REPORT's member, plain integers.
             let report = unsafe { payload.progress_report };
             let progress = match report.state {
                 g::GHOSTTY_PROGRESS_STATE_REMOVE => None,
@@ -313,6 +367,7 @@ extern "C" fn action(
             true
         }
         g::GHOSTTY_ACTION_COMMAND_FINISHED => {
+            // SAFETY: COMMAND_FINISHED's member, plain integers.
             let finished = unsafe { payload.command_finished };
             let exit_code = (finished.exit_code >= 0).then_some(finished.exit_code as i32);
             let duration_ms = finished.duration / 1_000_000;
@@ -326,14 +381,19 @@ extern "C" fn action(
             true
         }
         g::GHOSTTY_ACTION_DESKTOP_NOTIFICATION => {
-            let note = unsafe { payload.desktop_notification };
-            let (title, body) = (string(note.title), string(note.body));
+            // SAFETY: DESKTOP_NOTIFICATION's member: two NUL-terminated
+            // strings.
+            let (title, body) = unsafe {
+                let note = payload.desktop_notification;
+                (string(note.title), string(note.body))
+            };
             deliver(surface, move |term| {
                 term.emit(TerminalEvent::Notification { title, body });
             });
             true
         }
         g::GHOSTTY_ACTION_SHOW_CHILD_EXITED => {
+            // SAFETY: SHOW_CHILD_EXITED's member, plain integers.
             let code = unsafe { payload.child_exited }.exit_code as i32;
             deliver(surface, move |term| {
                 term.update_state(|state| state.exited = Some(code));
@@ -343,10 +403,13 @@ extern "C" fn action(
             false
         }
         g::GHOSTTY_ACTION_OPEN_URL => {
+            // SAFETY: OPEN_URL's member.
             let open = unsafe { payload.open_url };
             if open.url.is_null() {
                 return false;
             }
+            // SAFETY: Ghostty's `[]const u8` URL as pointer and length,
+            // alive for the call; copied before it returns.
             let bytes = unsafe { std::slice::from_raw_parts(open.url as *const u8, open.len) };
             let url = String::from_utf8_lossy(bytes).into_owned();
             on_main(move || {
@@ -358,6 +421,7 @@ extern "C" fn action(
             // Ghostty asks for a frame drawn now (resizes, mostly).
             on_main(move || {
                 if view_of(surface).is_some() {
+                    // SAFETY: still in `SURFACES`, so not freed; main thread.
                     unsafe { g::ghostty_surface_draw(surface as g::ghostty_surface_t) };
                 }
             });
@@ -412,12 +476,18 @@ extern "C" fn read_clipboard(
         return false;
     }
     let pasteboard = NSPasteboard::generalPasteboard();
+    // SAFETY: reads AppKit's constant type name, an immutable static.
     let Some(text) = (unsafe { pasteboard.stringForType(NSPasteboardTypeString) }) else {
         return false;
     };
     let Ok(text) = CString::new(text.to_string()) else {
         return false;
     };
+    // SAFETY: found in `SURFACES`, so the surface is live (and this is the
+    // main thread, whose `SURFACES` it is). `state` is the request Ghostty
+    // just started, completed once; `text` is NUL-terminated and outlives
+    // the call (Ghostty copies it, or passes it straight to
+    // `confirm_read_clipboard`, which copies it).
     unsafe { g::ghostty_surface_complete_clipboard_request(surface, text.as_ptr(), state, false) };
     true
 }
@@ -431,12 +501,13 @@ extern "C" fn confirm_read_clipboard(
     let Some(view) = view_from_userdata(userdata) else {
         return;
     };
-    let text = string(text);
+    // SAFETY: Ghostty's NUL-terminated text, alive for the call.
+    let text = unsafe { string(text) };
     let state = state as usize;
     // Asked from inside Ghostty: answer after it returns.
-    after(0., move || {
-        let surface = view.ivars().surface.get();
-        if surface.is_null() {
+    let mtm = view.mtm();
+    after(mtm, 0., move || {
+        if view.ivars().surface.get().is_null() {
             return;
         }
         let (title, detail) = match request {
@@ -461,6 +532,16 @@ extern "C" fn confirm_read_clipboard(
             .show()
             == rfd::MessageDialogResult::Custom("Allow".into());
         let reply = CString::new(if allowed { text } else { String::new() }).unwrap_or_default();
+        // Read after the dialog: its modal loop runs the main queue, where
+        // the terminal may have closed and freed its surface meanwhile.
+        let surface = view.ivars().surface.get();
+        if surface.is_null() {
+            return;
+        }
+        // SAFETY: the view's surface is non-null, so not yet freed (`free`
+        // nulls it first); main thread. `state` is the request Ghostty
+        // kept for confirmation, completed only here, once; `reply` is
+        // NUL-terminated and outlives the call.
         unsafe {
             g::ghostty_surface_complete_clipboard_request(
                 surface,
@@ -482,11 +563,13 @@ extern "C" fn write_clipboard(
     if content.is_null() || len == 0 {
         return;
     }
+    // SAFETY: Ghostty's array of `len` contents, alive for the call; each
+    // one's mime and data are NUL-terminated strings, copied here.
     let items = unsafe { std::slice::from_raw_parts(content, len) };
     let Some(text) = items
         .iter()
-        .find(|item| string(item.mime) == "text/plain")
-        .map(|item| string(item.data))
+        .find(|item| unsafe { string(item.mime) } == "text/plain")
+        .map(|item| unsafe { string(item.data) })
     else {
         return;
     };
@@ -508,6 +591,7 @@ extern "C" fn write_clipboard(
         }
         let pasteboard = NSPasteboard::generalPasteboard();
         pasteboard.clearContents();
+        // SAFETY: reads AppKit's constant type name, an immutable static.
         unsafe { pasteboard.setString_forType(&NSString::from_str(&text), NSPasteboardTypeString) };
     });
 }
@@ -525,12 +609,12 @@ fn polled(view: &TerminalView) -> bool {
 }
 /// Recheck the polled surfaces' foreground processes twice a second, while
 /// there are any.
-fn poll_processes() {
+fn poll_processes(mtm: MainThreadMarker) {
     if POLLING.replace(true) {
         return;
     }
-    fn tick() {
-        after(0.5, || {
+    fn tick(mtm: MainThreadMarker) {
+        after(mtm, 0.5, move || {
             let surfaces: Vec<Retained<TerminalView>> =
                 SURFACES.with(|surfaces| surfaces.borrow().values().cloned().collect());
             let mut any = false;
@@ -539,13 +623,13 @@ fn poll_processes() {
                 refresh_process(view.ivars().surface.get() as usize);
             }
             if any {
-                tick();
+                tick(mtm);
             } else {
                 POLLING.set(false);
             }
         });
     }
-    tick();
+    tick(mtm);
 }
 /// Every surface asks again what is in front of it (the app's word that it
 /// may have changed). From any thread.
@@ -560,6 +644,7 @@ pub(crate) fn processes_changed() {
 }
 fn refresh_process(surface: usize) {
     let Some(view) = view_of(surface) else { return };
+    // SAFETY: still in `SURFACES`, so not freed; main thread.
     let pid = unsafe { g::ghostty_surface_foreground_pid(surface as g::ghostty_surface_t) };
     // Seen through (an attach client to a session server): what is behind
     // it changes while the client stays in front, so ask every time.
@@ -570,7 +655,7 @@ fn refresh_process(surface: usize) {
     };
     view.ivars().resolved.set(resolved.is_some());
     if polled(&view) {
-        poll_processes();
+        poll_processes(view.mtm());
     }
     let (process, pid, status) = match resolved {
         Some(front) => {
@@ -618,6 +703,8 @@ fn process_name(pid: i32) -> String {
     argv0(pid)
         .or_else(|| {
             let mut buffer = [0u8; 256];
+            // SAFETY: writes at most `buffer.len()` bytes into `buffer`,
+            // returning how many.
             let len = unsafe {
                 libc::proc_name(pid, buffer.as_mut_ptr() as *mut c_void, buffer.len() as u32)
             };
@@ -633,6 +720,10 @@ fn process_name(pid: i32) -> String {
 fn argv0(pid: i32) -> Option<String> {
     let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
     let mut size: libc::size_t = 0;
+    // SAFETY: `mib` holds the 3 names passed; the first call (no buffer)
+    // only writes the size needed into `size`, the second writes at most
+    // `size` bytes into a buffer that long and updates `size` to what it
+    // wrote. No new value is set (null, 0).
     unsafe {
         if libc::sysctl(
             mib.as_mut_ptr(),
@@ -823,6 +914,13 @@ pub(crate) struct ViewState {
 /// (`dragged_size`).
 const RESIZE_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
 
+// SAFETY: NSView's superclass chain is NSResponder, NSObject, and NSView is
+// main-thread only. Each method's selector and Rust signature match
+// AppKit's declaration (NSView, NSResponder, NSDraggingDestination,
+// NSTextInputClient): `BOOL` as `bool`, `NSDragOperation` as `NSUInteger`,
+// object arguments AppKit never passes nil as references, and `method_id`
+// returns as `Retained` (objc2 hands the caller the reference the method
+// convention says).
 define_class!(
     #[unsafe(super(NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -837,6 +935,7 @@ define_class!(
         }
         #[unsafe(method(becomeFirstResponder))]
         fn become_first_responder(&self) -> bool {
+            // SAFETY: NSResponder's `- (BOOL)becomeFirstResponder`.
             let ok: bool = unsafe { msg_send![super(self), becomeFirstResponder] };
             if ok {
                 self.focus_changed(true);
@@ -845,6 +944,7 @@ define_class!(
         }
         #[unsafe(method(resignFirstResponder))]
         fn resign_first_responder(&self) -> bool {
+            // SAFETY: NSResponder's `- (BOOL)resignFirstResponder`.
             let ok: bool = unsafe { msg_send![super(self), resignFirstResponder] };
             if ok {
                 self.focus_changed(false);
@@ -860,11 +960,13 @@ define_class!(
         }
         #[unsafe(method(viewDidChangeBackingProperties))]
         fn did_change_backing(&self) {
+            // SAFETY: NSView's `- (void)viewDidChangeBackingProperties`.
             let _: () = unsafe { msg_send![super(self), viewDidChangeBackingProperties] };
             self.scale_changed();
         }
         #[unsafe(method(viewDidMoveToWindow))]
         fn did_move_to_window(&self) {
+            // SAFETY: NSView's `- (void)viewDidMoveToWindow`.
             let _: () = unsafe { msg_send![super(self), viewDidMoveToWindow] };
             self.scale_changed();
             self.screen_changed();
@@ -877,17 +979,22 @@ define_class!(
         }
         #[unsafe(method(viewDidMoveToSuperview))]
         fn did_move_to_superview(&self) {
+            // SAFETY: NSView's `- (void)viewDidMoveToSuperview`.
             let _: () = unsafe { msg_send![super(self), viewDidMoveToSuperview] };
             self.sync_focus();
         }
         #[unsafe(method(viewDidHide))]
         fn did_hide(&self) {
+            // SAFETY: NSView's `- (void)viewDidHide`.
             let _: () = unsafe { msg_send![super(self), viewDidHide] };
+            // SAFETY: `with_surface` passes a live surface; main thread.
             self.with_surface(|surface| unsafe { g::ghostty_surface_set_occlusion(surface, false) });
         }
         #[unsafe(method(viewDidUnhide))]
         fn did_unhide(&self) {
+            // SAFETY: NSView's `- (void)viewDidUnhide`.
             let _: () = unsafe { msg_send![super(self), viewDidUnhide] };
+            // SAFETY: `with_surface` passes a live surface; main thread.
             self.with_surface(|surface| unsafe { g::ghostty_surface_set_occlusion(surface, true) });
         }
         #[unsafe(method(updateTrackingAreas))]
@@ -895,6 +1002,9 @@ define_class!(
             if let Some(old) = self.ivars().tracking.borrow_mut().take() {
                 self.removeTrackingArea(&old);
             }
+            // SAFETY: the area does not retain its owner; the owner is this
+            // view, which holds the area (and AppKit drops it with the view),
+            // so the owner outlives it.
             let area = unsafe {
                 NSTrackingArea::initWithRect_options_owner_userInfo(
                     NSTrackingArea::alloc(),
@@ -909,6 +1019,7 @@ define_class!(
             };
             self.addTrackingArea(&area);
             *self.ivars().tracking.borrow_mut() = Some(area);
+            // SAFETY: NSView's `- (void)updateTrackingAreas`.
             let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
         }
         // No cursor rects: they would win over zgui's cursor where zgui
@@ -923,6 +1034,7 @@ define_class!(
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
             self.button(event, g::GHOSTTY_MOUSE_RELEASE, g::GHOSTTY_MOUSE_LEFT);
+            // SAFETY: `with_surface` passes a live surface; main thread.
             self.with_surface(|surface| unsafe { g::ghostty_surface_mouse_pressure(surface, 0, 0.) });
         }
         #[unsafe(method(rightMouseDown:))]
@@ -975,6 +1087,7 @@ define_class!(
             self.report_pointer(None);
             self.ivars().pointer_here.set(false);
             let flags = mods(event.modifierFlags());
+            // SAFETY: `with_surface` passes a live surface; main thread.
             self.with_surface(|surface| unsafe { g::ghostty_surface_mouse_pos(surface, -1., -1., flags) });
         }
         #[unsafe(method(scrollWheel:))]
@@ -1002,11 +1115,13 @@ define_class!(
                 g::GHOSTTY_MOUSE_MOMENTUM_NONE
             };
             let scroll_mods = (precise as i32) | ((momentum as i32) << 1);
+            // SAFETY: `with_surface` passes a live surface; main thread.
             self.with_surface(|surface| unsafe { g::ghostty_surface_mouse_scroll(surface, x, y, scroll_mods) });
         }
         #[unsafe(method(pressureChangeWithEvent:))]
         fn pressure_change(&self, event: &NSEvent) {
             let (stage, pressure) = (event.stage(), event.pressure());
+            // SAFETY: `with_surface` passes a live surface; main thread.
             self.with_surface(|surface| unsafe {
                 g::ghostty_surface_mouse_pressure(surface, stage as u32, pressure as f64)
             });
@@ -1049,8 +1164,11 @@ define_class!(
         }
     }
 
+    // SAFETY: an NSObject subclass, so it conforms to NSObjectProtocol.
     unsafe impl NSObjectProtocol for TerminalView {}
 
+    // SAFETY: it implements NSTextInputClient's required methods, with the
+    // protocol's signatures (a debug build checks them).
     unsafe impl NSTextInputClient for TerminalView {
         #[unsafe(method(hasMarkedText))]
         fn has_marked_text(&self) -> bool {
@@ -1071,6 +1189,9 @@ define_class!(
             if surface.is_null() {
                 return NSRange::new(NSNotFound as NSUInteger, 0);
             }
+            // SAFETY: non-null, so live (`free` nulls it first); main thread.
+            // `ghostty_text_s` is plain C data, valid zeroed; filled when the
+            // read succeeds, and only then freed, once.
             unsafe {
                 let mut text: g::ghostty_text_s = std::mem::zeroed();
                 if !g::ghostty_surface_read_selection(surface, &mut text) {
@@ -1146,11 +1267,15 @@ const DRAG_COPY: NSUInteger = 1;
 /// the shell, or the text; several joined by spaces. `None` for anything
 /// else.
 fn dropped_text(sender: &AnyObject) -> Option<String> {
+    // SAFETY: `sender` is AppKit's NSDraggingInfo, whose
+    // `- (NSPasteboard *)draggingPasteboard` returns a non-null pasteboard.
     let pasteboard: Retained<NSPasteboard> = unsafe { msg_send![sender, draggingPasteboard] };
     let items = pasteboard.pasteboardItems()?;
     let texts: Vec<String> = items
         .iter()
         .filter_map(|item| {
+            // SAFETY: AppKit's constant type names (here and below),
+            // immutable statics.
             if let Some(url) = item.stringForType(unsafe { NSPasteboardTypeFileURL }) {
                 // The Finder's are file references (`file:///.file/id=…`).
                 let url: Option<Retained<NSURL>> = NSURL::URLWithString(&url);
@@ -1226,26 +1351,32 @@ impl TerminalView {
         });
         // A non-zero first size: Ghostty sizes its first frame from it.
         let frame = NSRect::new(NSPoint::new(0., 0.), NSSize::new(800., 600.));
+        // SAFETY: NSView's designated `- (instancetype)initWithFrame:(NSRect)`
+        // on a fresh allocation of this class, its ivars set.
         let view: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame] };
         // It takes dropped files and text (`performDragOperation:`).
+        // SAFETY: reads AppKit's constant type names, immutable statics.
         let types = unsafe { [NSPasteboardTypeFileURL, NSPasteboardTypeString] };
         view.registerForDraggedTypes(&NSArray::from_slice(&types));
         view
     }
     /// Paste what is dropped on it; whether it took it.
     fn drop_text(&self, sender: &AnyObject) -> bool {
-        let (Some(text), Some(surface)) =
-            (dropped_text(sender), self.with_surface(|surface| surface))
-        else {
+        let Some(text) = dropped_text(sender) else {
             return false;
         };
+        if self.ivars().surface.get().is_null() {
+            return false;
+        }
         // What is dropped on a pane is for it: it takes the keyboard.
         if let Some(window) = self.window() {
             window.makeFirstResponder(Some(self));
         }
-        let len = text.len();
-        let text = CString::new(text).unwrap_or_default();
-        unsafe { g::ghostty_surface_text(surface, text.as_ptr(), len) };
+        // SAFETY: `with_surface` passes a live surface; main thread. Ghostty
+        // reads `len` bytes of `text` (no NUL needed), alive for the call.
+        self.with_surface(|surface| unsafe {
+            g::ghostty_surface_text(surface, text.as_ptr().cast(), text.len())
+        });
         true
     }
     /// Re-dispatch a command key equivalent passed on once (see
@@ -1265,6 +1396,10 @@ impl TerminalView {
         if surface.is_null() || range.length == 0 {
             return None;
         }
+        // SAFETY: non-null, so live (`free` nulls it first); main thread.
+        // `ghostty_text_s` is plain C data, valid zeroed; filled when the
+        // read succeeds, its text (null or NUL-terminated) copied before it
+        // is freed, once.
         unsafe {
             let mut text: g::ghostty_text_s = std::mem::zeroed();
             if !g::ghostty_surface_read_selection(surface, &mut text) {
@@ -1275,6 +1410,9 @@ impl TerminalView {
             Some(selected)
         }
     }
+    /// Run `work` with the view's surface, if it has one. The surface is live
+    /// while `work` runs: `MacTerminal::free` nulls it before freeing it, and
+    /// both run on the main thread (this view is main-thread only).
     fn with_surface<R>(&self, work: impl FnOnce(g::ghostty_surface_t) -> R) -> Option<R> {
         let surface = self.ivars().surface.get();
         (!surface.is_null()).then(|| work(surface))
@@ -1297,6 +1435,7 @@ impl TerminalView {
         if self.ivars().focused.replace(focused) == focused {
             return;
         }
+        // SAFETY: `with_surface` passes a live surface; main thread.
         self.with_surface(|surface| unsafe { g::ghostty_surface_set_focus(surface, focused) });
         let term = self.ivars().term.clone();
         zgui::native_view::post(move || {
@@ -1326,9 +1465,11 @@ impl TerminalView {
             && !self.dragged_size()
         {
             let view = self.retain();
-            after((RESIZE_EVERY - (now - at)).as_secs_f64(), move || {
-                view.take_size()
-            });
+            after(
+                self.mtm(),
+                (RESIZE_EVERY - (now - at)).as_secs_f64(),
+                move || view.take_size(),
+            );
             return;
         }
         self.ivars().wanted.set(None);
@@ -1337,6 +1478,8 @@ impl TerminalView {
         }
         self.ivars().resized_at.set(Some(now));
         let size = NSSize::new(width, height);
+        // SAFETY: NSView's `- (void)setFrameSize:(NSSize)`, on the main thread
+        // (`self` is main-thread only).
         let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
         self.size_changed();
     }
@@ -1357,6 +1500,7 @@ impl TerminalView {
             (size.width * scale).round().max(1.) as u32,
             (size.height * scale).round().max(1.) as u32,
         );
+        // SAFETY: `with_surface` passes a live surface; main thread.
         let Some(grid) = self.with_surface(|surface| unsafe {
             g::ghostty_surface_set_size(surface, width, height);
             g::ghostty_surface_size(surface)
@@ -1379,6 +1523,7 @@ impl TerminalView {
             let _transaction = super::macos::Transaction::begin();
             layer.setContentsScale(scale);
         }
+        // SAFETY: `with_surface` passes a live surface; main thread.
         self.with_surface(|surface| unsafe {
             g::ghostty_surface_set_content_scale(surface, scale, scale)
         });
@@ -1394,7 +1539,10 @@ impl TerminalView {
         let Some(number) = description.objectForKey(&key) else {
             return;
         };
+        // SAFETY: AppKit documents NSScreenNumber as an NSNumber, whose
+        // `- (unsigned int)unsignedIntValue` this is.
         let id: u32 = unsafe { msg_send![&*number, unsignedIntValue] };
+        // SAFETY: `with_surface` passes a live surface; main thread.
         self.with_surface(|surface| unsafe { g::ghostty_surface_set_display_id(surface, id) });
     }
     // The resize cursors' replacements need macOS 15.
@@ -1439,6 +1587,8 @@ impl TerminalView {
         let Some(content) = self.window().and_then(|window| window.contentView()) else {
             return false;
         };
+        // SAFETY: a getter on the main thread; the superview comes back
+        // retained.
         let Some(frame) = (unsafe { content.superview() }) else {
             return false;
         };
@@ -1472,6 +1622,7 @@ impl TerminalView {
         button: g::ghostty_input_mouse_button_e,
     ) -> bool {
         let flags = mods(event.modifierFlags());
+        // SAFETY: `with_surface` passes a live surface; main thread.
         self.with_surface(|surface| unsafe {
             g::ghostty_surface_mouse_button(surface, state, button, flags)
         })
@@ -1481,6 +1632,7 @@ impl TerminalView {
         let point = self.convertPoint_fromView(event.locationInWindow(), None);
         let height = self.frame().size.height;
         let flags = mods(event.modifierFlags());
+        // SAFETY: `with_surface` passes a live surface; main thread.
         self.with_surface(|surface| unsafe {
             g::ghostty_surface_mouse_pos(surface, point.x, height - point.y, flags)
         });
@@ -1504,6 +1656,7 @@ impl TerminalView {
             return;
         }
         // Option-as-alt and the like: the modifiers text translation uses.
+        // SAFETY: non-null, so live (`free` nulls it first); main thread.
         let translated = flags_of(unsafe {
             g::ghostty_surface_key_translation_mods(surface, mods(event.modifierFlags()))
         });
@@ -1617,6 +1770,9 @@ impl TerminalView {
         key.composing = composing;
         // Ghostty encodes control characters itself (keeping the physical
         // key for protocols like the Kitty keyboard protocol).
+        // SAFETY: for both calls, non-null so live (`free` nulls it first);
+        // main thread. `key.text` is null or a NUL-terminated `CString`
+        // alive past the call (Ghostty reads it during the call only).
         match text.filter(|text| !text.is_empty() && !text.starts_with(|c: char| (c as u32) < 0x20))
         {
             Some(text) => {
@@ -1643,6 +1799,8 @@ impl TerminalView {
             unshifted_codepoint: 0,
             composing: false,
         };
+        // SAFETY: non-null, so live (`free` nulls it first); main thread.
+        // `key.text` is a NUL-terminated `CString` alive past the call.
         unsafe { g::ghostty_surface_key(surface, key) };
     }
     fn sync_preedit(&self, clear_if_needed: bool) {
@@ -1651,12 +1809,15 @@ impl TerminalView {
             return;
         }
         let marked = self.ivars().marked.borrow().clone();
+        // SAFETY: for both calls, non-null so live (`free` nulls it first);
+        // main thread. Ghostty reads `len` bytes from the pointer (none to
+        // clear), which is never null: Zig's `[*]const u8` may not be.
         if !marked.is_empty() {
             let text = CString::new(marked).unwrap_or_default();
             let len = text.as_bytes().len();
             unsafe { g::ghostty_surface_preedit(surface, text.as_ptr(), len) };
         } else if clear_if_needed {
-            unsafe { g::ghostty_surface_preedit(surface, std::ptr::null(), 0) };
+            unsafe { g::ghostty_surface_preedit(surface, c"".as_ptr(), 0) };
         }
     }
     fn handle_flags_changed(&self, event: &NSEvent) {
@@ -1704,6 +1865,9 @@ impl TerminalView {
         let chars = CString::new(chars).unwrap_or_default();
         key.text = chars.as_ptr();
         let mut flags: g::ghostty_binding_flags_e = 0;
+        // SAFETY: non-null, so live (`free` nulls it first); main thread.
+        // `key.text` is a NUL-terminated `CString` alive past the call;
+        // `flags` is a writable local.
         if unsafe { g::ghostty_surface_key_is_binding(surface, key, &mut flags) } {
             self.handle_key_down(event);
             return true;
@@ -1775,6 +1939,8 @@ impl TerminalView {
             return NSRect::new(frame.origin, NSSize::new(0., 0.));
         }
         let (mut x, mut y, mut width, mut height) = (0., 0., 0., 0.);
+        // SAFETY: non-null, so live (`free` nulls it first); main thread.
+        // It writes one `f64` through each pointer, all writable locals.
         unsafe { g::ghostty_surface_ime_point(surface, &mut x, &mut y, &mut width, &mut height) };
         if range.length == 0 && width > 0. {
             x += width * (range.location + range.length) as f64;
@@ -1868,6 +2034,13 @@ impl MacTerminal {
                 value: value.as_ptr(),
             })
             .collect();
+        // SAFETY: main thread; `app` is live (never freed). The config's
+        // strings and `env_vars` (pointing into `env`) outlive the call, and
+        // Ghostty copies what it keeps (its own app passes them scoped to
+        // the call, too). `nsview` is the view the surface renders into:
+        // `MacTerminal` keeps it alive until after `ghostty_surface_free`.
+        // `userdata` is only compared as an address by the callbacks, never
+        // dereferenced.
         let surface = unsafe {
             let mut config = g::ghostty_surface_config_new();
             config.platform_tag = g::GHOSTTY_PLATFORM_MACOS;
@@ -1892,6 +2065,7 @@ impl MacTerminal {
         }
         view.ivars().surface.set(surface);
         SURFACES.with(|surfaces| surfaces.borrow_mut().insert(surface as usize, view.clone()));
+        // SAFETY: just made, live; main thread.
         unsafe { g::ghostty_surface_set_focus(surface, false) };
         refresh_process(surface as usize);
         view.scale_changed();
@@ -1907,6 +2081,10 @@ impl MacTerminal {
         }
         SURFACES.with(|surfaces| surfaces.borrow_mut().remove(&(surface as usize)));
         self.view.removeFromSuperview();
+        // SAFETY: Ghostty's surface, freed once: the view's pointer is null
+        // and the address out of `SURFACES` first, so nothing reaches it
+        // after (callbacks queued for it find nothing). The view it renders
+        // into is still alive (`self.view`). Main thread.
         unsafe { g::ghostty_surface_free(surface) };
     }
 }
@@ -1941,11 +2119,13 @@ impl TerminalBackend for MacTerminal {
                 self.view.committed_text(g::GHOSTTY_ACTION_PRESS, &text);
             }
             TerminalCommand::Paste(text) if !surface.is_null() => {
-                let len = text.len();
-                let text = CString::new(text).unwrap_or_default();
-                unsafe { g::ghostty_surface_text(surface, text.as_ptr(), len) };
+                // SAFETY: non-null, so live (`free` nulls it first); main
+                // thread. Ghostty reads `len` bytes of `text` (no NUL
+                // needed), alive for the call.
+                unsafe { g::ghostty_surface_text(surface, text.as_ptr().cast(), text.len()) };
             }
             TerminalCommand::Binding(action) if !surface.is_null() => {
+                // SAFETY: as above; Ghostty parses `len` bytes of `action`.
                 unsafe {
                     g::ghostty_surface_binding_action(
                         surface,
@@ -1963,6 +2143,8 @@ impl TerminalBackend for MacTerminal {
         if surface.is_null() {
             return false;
         }
+        // SAFETY: for both calls, non-null so live (`free` nulls it first);
+        // main thread (the backend is the main thread's `Rc`).
         let pid = unsafe { g::ghostty_surface_foreground_pid(surface) };
         if pid != 0
             && let Some(front) = crate::terminal_process::resolve(pid as u32)

@@ -362,7 +362,8 @@ mod macos {
     }
     /// The standard defaults (a method send: no NSUserDefaults binding).
     fn defaults() -> Retained<objc2::runtime::AnyObject> {
-        // SAFETY: NSUserDefaults' class method.
+        // SAFETY: `+standardUserDefaults` takes nothing and returns the shared
+        // defaults unretained, which `Retained` retains.
         unsafe { objc2::msg_send![objc2::class!(NSUserDefaults), standardUserDefaults] }
     }
     const RESTORED: &str = "NSWindow Frame zgui window_probe restored";
@@ -370,7 +371,8 @@ mod macos {
     /// than its options' 420 by 200.
     pub fn save_frame() {
         for key in [RESTORED, STANDARD, HIDDEN] {
-            // SAFETY: NSUserDefaults' string setter.
+            // SAFETY: `-setObject:forKey:` takes an object (a string here)
+            // and an NSString key, both alive for the call.
             unsafe {
                 let _: () = objc2::msg_send![
                     &*defaults(),
@@ -395,7 +397,7 @@ mod macos {
             }
         }
         for key in [STANDARD, HIDDEN] {
-            // SAFETY: as `save_frame`.
+            // SAFETY: `-removeObjectForKey:` takes an NSString key.
             unsafe {
                 let _: () = objc2::msg_send![
                     &*defaults(),
@@ -411,7 +413,7 @@ mod macos {
             );
             restored.close();
         }
-        // SAFETY: as `save_frame`; the probe leaves no default behind.
+        // SAFETY: as above; the probe leaves no default behind.
         unsafe {
             let _: () = objc2::msg_send![
                 &*defaults(),
@@ -438,7 +440,8 @@ mod macos {
         let _ = second;
         first.setFrameOrigin(NSPoint::new(a.origin.x + 40., a.origin.y - 40.));
         sleep(300).await;
-        // SAFETY: NSUserDefaults' class method and string getter.
+        // SAFETY: as `defaults`, and `-stringForKey:` returns an unretained
+        // NSString or nil, which `Option<Retained>` retains.
         let saved: Option<Retained<NSString>> = unsafe {
             let defaults: Retained<objc2::runtime::AnyObject> =
                 objc2::msg_send![objc2::class!(NSUserDefaults), standardUserDefaults];

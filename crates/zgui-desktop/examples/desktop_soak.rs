@@ -22,6 +22,9 @@ struct Process {
 }
 #[cfg(target_os = "macos")]
 fn process() -> Process {
+    // SAFETY: libproc's and Mach's declarations (libproc.h, mach/mach_port.h,
+    // mach/vm_map.h): pids are i32, ports and counts u32, kern_return_t i32,
+    // vm addresses and sizes usize.
     unsafe extern "C" {
         fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut std::ffi::c_void) -> i32;
         fn proc_pidinfo(
@@ -52,11 +55,14 @@ fn process() -> Process {
         sizes: [u64; 6],
         counts: [i32; 12],
     }
+    // SAFETY: takes nothing and cannot fail.
     let pid = unsafe { getpid() };
     let mut usage = Rusage {
         uuid: [0; 16],
         fields: [0; 10],
     };
+    // SAFETY: flavor 0 (RUSAGE_INFO_V0) fills a `rusage_info_v0`: a 16-byte
+    // uuid then ten u64s (`phys_footprint` the eighth), `Rusage`'s layout.
     let footprint = unsafe {
         if proc_pid_rusage(pid, 0, (&mut usage as *mut Rusage).cast()) == 0 {
             usage.fields[7]
@@ -69,6 +75,8 @@ fn process() -> Process {
         counts: [0; 12],
     };
     let size = std::mem::size_of::<TaskInfo>() as i32;
+    // SAFETY: fills at most `size` bytes of `info`, `proc_taskinfo`'s
+    // layout (six u64s, twelve i32s); read only when all were written.
     let threads = unsafe {
         // PROC_PIDTASKINFO; `pti_threadnum` is the tenth count.
         if proc_pidinfo(pid, 4, 0, (&mut info as *mut TaskInfo).cast(), size) == size {
@@ -77,6 +85,9 @@ fn process() -> Process {
             0
         }
     };
+    // SAFETY: on success the kernel hands this task two arrays of `count`
+    // and `types_count` u32s, ours to deallocate (once, here); read only
+    // through their counts.
     let ports = unsafe {
         let (mut names, mut types) = (std::ptr::null_mut(), std::ptr::null_mut());
         let (mut count, mut types_count) = (0u32, 0u32);

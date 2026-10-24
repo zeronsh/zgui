@@ -148,6 +148,8 @@ mod macos {
     use std::time::Duration;
     use zgui_gpu::present_log::now_ns;
 
+    // SAFETY: libsystem_kernel's unpublished `thread_selfcounts(int kind,
+    // void *buf, size_t size)`, as xnu's tests declare it.
     unsafe extern "C" {
         fn thread_selfcounts(kind: i32, buffer: *mut u64, size: usize) -> i32;
     }
@@ -156,7 +158,8 @@ mod macos {
     /// costs the app, apart from the system's threads in the process.
     fn instructions() -> u64 {
         let mut counts = [0u64; 2];
-        // SAFETY: kind 1 fills instructions then cycles.
+        // SAFETY: kind 1 (THSC_CPI) fills two u64s, instructions then
+        // cycles: the 16 bytes `counts` has.
         unsafe { thread_selfcounts(1, counts.as_mut_ptr(), 16) };
         counts[0]
     }
@@ -276,11 +279,14 @@ mod macos {
             width: f64,
             height: f64,
         }
+        // SAFETY: libSystem's `dlsym` (dlfcn.h).
         unsafe extern "C" {
             fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
         }
-        // SAFETY: the window server's own calls, looked up by name, on a
-        // window of this process.
+        // SAFETY: symbols looked up by name, transmuted only when found, to
+        // the window server's private signatures as other apps declare them
+        // (`CGSGetWindowBounds(CGSConnectionID, CGWindowID, CGRect *)`, not
+        // checked against a header); `rect` outlives the call.
         let bounds = unsafe {
             let default = -2isize as *mut c_void;
             let connection = dlsym(default, c"CGSMainConnectionID".as_ptr());

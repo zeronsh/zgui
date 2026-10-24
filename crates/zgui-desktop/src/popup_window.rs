@@ -206,6 +206,10 @@ mod macos {
         send: RefCell<Option<Sink>>,
         parent: RefCell<Option<Retained<NSWindow>>>,
     }
+    // SAFETY: an NSView subclass, main-thread only as views are, with nothing
+    // to clean up beyond its ivars; each method has NSView's or NSResponder's
+    // signature (`-(BOOL)isFlipped`, `-(BOOL)acceptsFirstMouse:(nullable
+    // NSEvent *)`, and `-(void)…:(NSEvent *)` for the mouse events).
     define_class!(
         #[unsafe(super(NSView))]
         #[thread_kind = MainThreadOnly]
@@ -507,7 +511,8 @@ mod macos {
                 NSBackingStoreType::Buffered,
                 false,
             );
-            // SAFETY: plain property setters on a window of ours.
+            // SAFETY: turns release-on-close off, as `Retained` owning the
+            // window requires (closing would otherwise release it twice).
             unsafe { window.setReleasedWhenClosed(false) };
             window.setOpaque(false);
             window.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -536,7 +541,8 @@ mod macos {
             effect.setWantsLayer(true);
             effect.setHidden(true);
             if let Some(layer) = effect.layer() {
-                // SAFETY: CALayer's own property, a string constant.
+                // SAFETY: `setCornerCurve:` takes a CALayerCornerCurve, an
+                // NSString ("continuous" is `kCACornerCurveContinuous`'s).
                 unsafe {
                     let continuous = NSString::from_str("continuous");
                     let _: () = msg_send![&*layer, setCornerCurve: &*continuous];
@@ -546,13 +552,16 @@ mod macos {
             content.addSubview(&effect);
             let view: Retained<PopupView> = {
                 let view = mtm.alloc::<PopupView>().set_ivars(Target::default());
-                // SAFETY: NSView's designated initializer.
+                // SAFETY: NSView's designated initializer, on a fresh
+                // allocation with its ivars set.
                 unsafe { msg_send![super(view), initWithFrame: frame] }
             };
             // Layer-hosting: our layer, set before it wants one.
             view.setLayer(Some(&host));
             view.setWantsLayer(true);
-            // SAFETY: a tracking area owned by the view it reports to.
+            // SAFETY: the area keeps its owner unretained: the owner is the
+            // view the area is added to, which keeps the area, so the owner
+            // outlives the area's use; no user info.
             let area = unsafe {
                 NSTrackingArea::initWithRect_options_owner_userInfo(
                     mtm.alloc::<NSTrackingArea>(),
@@ -663,6 +672,8 @@ mod macos {
             // plane's `show_overlay`).
             let bounds = self.view.bounds();
             self.host.setFrame(bounds);
+            // SAFETY: the layer's live sublayer list, which setting frames
+            // does not change while it is walked.
             if let Some(layers) = unsafe { self.host.sublayers() } {
                 for layer in layers.iter() {
                     layer.setFrame(bounds);
@@ -730,7 +741,7 @@ mod macos {
             return;
         }
         let block = block2::RcBlock::new(|event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
-            // SAFETY: AppKit passes a live event.
+            // SAFETY: AppKit passes a live event for the handler's duration.
             let event_ref = unsafe { event.as_ref() };
             let Some(mtm) = MainThreadMarker::new() else {
                 return event.as_ptr();
@@ -824,8 +835,10 @@ mod macos {
         });
         FADING.with(|fading| fading.borrow_mut().push((id, panel)));
         let changes = block2::RcBlock::new(move |context: *mut AnyObject| {
-            // SAFETY: AppKit's animation context, and a window's animator
-            // proxy, which animates its alpha.
+            // SAFETY: AppKit's NSAnimationContext (`setDuration:` takes an
+            // NSTimeInterval, f64), and the window's animator proxy, which
+            // forwards NSWindow's messages (its alpha animates); `animator`
+            // returns it autoreleased, which `Retained` retains.
             unsafe {
                 let _: () = msg_send![context, setDuration: FADE_OUT];
                 let animator: Retained<NSWindow> = msg_send![&*window, animator];
@@ -842,8 +855,9 @@ mod macos {
                 release(panel);
             }
         });
-        // SAFETY: the class method taking a changes block and a completion
-        // block, both copied by AppKit.
+        // SAFETY: `+runAnimationGroup:completionHandler:` takes a
+        // `void (^)(NSAnimationContext *)` and a `void (^)(void)` block,
+        // both copied by AppKit; it calls them on the main thread.
         unsafe {
             let _: () = msg_send![
                 objc2::class!(NSAnimationContext),
@@ -868,8 +882,10 @@ mod macos {
         });
         FADING.with(|fading| fading.borrow_mut().push((id, panel)));
         let changes = block2::RcBlock::new(move |context: *mut AnyObject| {
-            // SAFETY: AppKit's animation context, and a window's animator
-            // proxy, which animates its frame.
+            // SAFETY: as `fade_out`'s, and `+functionWithName:` takes a
+            // CAMediaTimingFunctionName (an NSString; "easeOut" is
+            // `kCAMediaTimingFunctionEaseOut`'s) and returns the function
+            // autoreleased, which `Retained` retains.
             unsafe {
                 let _: () = msg_send![context, setDuration: 0.2f64];
                 let ease: Retained<AnyObject> = msg_send![
@@ -914,6 +930,7 @@ mod macos {
             use std::ffi::{c_char, c_void};
             type Connection = unsafe extern "C" fn() -> i32;
             type Move = unsafe extern "C" fn(i32, u32, *const NSPoint) -> i32;
+            // SAFETY: libSystem's `dlsym` (dlfcn.h).
             unsafe extern "C" {
                 fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
             }
@@ -922,8 +939,13 @@ mod macos {
                     // `RTLD_DEFAULT`: every image loaded (AppKit loads
                     // the window server's).
                     let default = -2isize as *mut c_void;
-                    // SAFETY: symbols looked up by name, transmuted to
-                    // their C signatures only when found.
+                    // SAFETY: names given as C strings; each symbol is
+                    // transmuted to a function pointer only when found. The
+                    // signatures are the window server's private ones
+                    // (`CGSConnectionID CGSMainConnectionID(void)`,
+                    // `CGError CGSMoveWindow(CGSConnectionID, CGWindowID,
+                    // const CGPoint *)`) as other apps declare them: no
+                    // header states them, so they are not checked here.
                     unsafe {
                         let connection = dlsym(default, c"CGSMainConnectionID".as_ptr());
                         let moved = dlsym(default, c"CGSMoveWindow".as_ptr());
@@ -937,7 +959,9 @@ mod macos {
                 };
             }
             if let Some((connection, moved)) = MOVE.with(|found| *found) {
-                // SAFETY: the window server's own call, on a window of ours.
+                // SAFETY: with the signatures above: the main connection, a
+                // window of ours (a window number fits a CGWindowID) and a
+                // point that outlives the call.
                 return unsafe { moved(connection(), window.windowNumber() as u32, &origin) } == 0;
             }
         }
@@ -996,7 +1020,8 @@ mod macos {
         let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
             return None;
         };
-        // SAFETY: winit's content view, alive while its window is.
+        // SAFETY: winit's content view, alive while its window is (borrowed
+        // here); winit hands out an AppKit handle only on the main thread.
         let view = unsafe { Retained::<NSView>::retain(handle.ns_view.as_ptr().cast()) }?;
         Some((view.window()?, view))
     }
@@ -1271,7 +1296,9 @@ mod macos {
                         PREVIEWS.with(|previews| previews.borrow_mut().push(number));
                         *ivars.parent.borrow_mut() = None;
                     } else {
-                        // SAFETY: both are live windows of this process.
+                        // SAFETY: both are live windows of this process, and
+                        // the panel is no ancestor of its parent (a panel
+                        // has no children); `hide` takes it off again.
                         unsafe {
                             parent
                                 .addChildWindow_ordered(&panel.window, NSWindowOrderingMode::Above)

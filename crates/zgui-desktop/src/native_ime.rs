@@ -25,8 +25,8 @@ pub(crate) fn discard_native_composition(window: &winit::window::Window) {
             return;
         };
         autoreleasepool(|_| {
-            // SAFETY: The borrowed winit Window/handle keep the NSView alive and
-            // all input-context access occurs on the AppKit main thread.
+            // SAFETY: The borrowed winit Window/handle keep the NSView alive;
+            // winit hands out an AppKit handle only on the main thread.
             let view = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
             if let Some(context) = view.inputContext() {
                 context.discardMarkedText();

@@ -9,7 +9,7 @@ use zgui::{
 use zgui_gpu::GpuRenderer;
 fn frame(nv12: bool) -> Rc<NativeSurface> {
     let empty = CFDictionary::<CFType, CFType>::empty();
-    // SAFETY: CoreVideo exported constant is an immutable CFString.
+    // SAFETY: reads two CoreVideo constants, immutable CFStrings it exports.
     let attributes = CFDictionary::<CFString, CFType>::from_slices(
         &[unsafe { kCVPixelBufferIOSurfacePropertiesKey }, unsafe {
             kCVPixelBufferMetalCompatibilityKey
@@ -17,7 +17,8 @@ fn frame(nv12: bool) -> Rc<NativeSurface> {
         &[empty.as_ref(), CFBoolean::new(true).as_ref()],
     );
     let mut pointer = std::ptr::null_mut();
-    // SAFETY: Correct dictionary key/value types and initialized output pointer.
+    // SAFETY: attribute keys and values of the types CoreVideo documents (a
+    // dictionary, a boolean), and an out-pointer to a local it writes.
     assert_eq!(
         unsafe {
             CVPixelBufferCreate(
@@ -35,9 +36,15 @@ fn frame(nv12: bool) -> Rc<NativeSurface> {
         },
         0
     );
-    // SAFETY: Successful Create transfers a +1 reference.
+    // SAFETY: a successful Create returns a non-null +1 reference, which
+    // `CFRetained` takes over.
     let buffer = unsafe { CFRetained::from_raw(NonNull::new(pointer).unwrap()) };
-    // SAFETY: Exclusive initialization precedes exposing the immutable frame.
+    // SAFETY: the base address is used only while locked: each NV12 plane's
+    // `rows * stride` bytes, or the 4x4 BGRA rows `stride` bytes apart, are
+    // within the buffer. Unlocked, its pixels are written (CPU writes,
+    // finished) and nothing changes them again, premultiplied (opaque) BGRA
+    // or full-range NV12, IOSurface-backed and Metal-compatible as
+    // `from_pixel_buffer` requires.
     unsafe {
         assert_eq!(
             CVPixelBufferLockBaseAddress(&buffer, CVPixelBufferLockFlags::empty()),

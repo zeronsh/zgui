@@ -5343,6 +5343,11 @@ fn content_never_moves_window() {
         return;
     };
     // Added once; later calls find it there and change nothing.
+    // SAFETY: `no` has `-(BOOL)mouseDownCanMoveWindow`'s C signature (self,
+    // _cmd, returning BOOL as `Bool`), which `BOOL_GETTER` states; the runtime
+    // calls an `Imp` through that signature, so the transmute only erases
+    // the type of a function pointer. `class_addMethod` is thread-safe and
+    // keeps nothing of ours but the function.
     unsafe {
         let imp: objc2::runtime::Imp =
             std::mem::transmute(no as extern "C-unwind" fn(*mut AnyObject, Sel) -> Bool);
@@ -5350,10 +5355,18 @@ fn content_never_moves_window() {
             class as *const AnyClass as *mut AnyClass,
             objc2::sel!(mouseDownCanMoveWindow),
             imp,
-            c"c@:".as_ptr(),
+            BOOL_GETTER.as_ptr(),
         );
     }
 }
+/// The type encoding of a method taking nothing and returning BOOL, which is
+/// `bool` on Apple silicon and `signed char` on Intel.
+#[cfg(target_os = "macos")]
+const BOOL_GETTER: &std::ffi::CStr = if cfg!(target_arch = "aarch64") {
+    c"B@:"
+} else {
+    c"c@:"
+};
 
 /// Window drags from the mouse-down that started them. `drag_window` is a
 /// command, run after the press was handled, and AppKit's window drag needs
@@ -5382,6 +5395,7 @@ mod mouse_down {
             event.as_ptr()
         });
         // The monitor lives as long as the app.
+        // SAFETY: the handler returns the event it was given, a valid one.
         let monitor = unsafe {
             NSEvent::addLocalMonitorForEventsMatchingMask_handler(
                 NSEventMask::LeftMouseDown,
@@ -5409,7 +5423,8 @@ mod mouse_down {
         let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
             return false;
         };
-        // SAFETY: the borrowed winit window keeps its view alive; main thread.
+        // SAFETY: the borrowed winit window keeps its view alive; winit
+        // hands out an AppKit handle only on the main thread.
         let view = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
         let Some(ns_window) = view.window() else {
             return false;
@@ -5974,12 +5989,23 @@ mod tests {
             host.addSublayer(&sublayer);
         }
         super::remove_sublayers(&host, metal);
+        // SAFETY: the layer's sublayer list, only read while walked.
         let left: Vec<_> = unsafe { host.sublayers() }
             .unwrap()
             .iter()
             .map(|layer| layer.class() == CALayer::class())
             .collect();
         assert_eq!(left, [true]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_added_bool_method_states_bools_own_encoding() {
+        use objc2::{encode::Encode, runtime::Bool};
+        assert_eq!(
+            super::BOOL_GETTER.to_str().unwrap(),
+            format!("{}@:", Bool::ENCODING)
+        );
     }
 
     #[test]
