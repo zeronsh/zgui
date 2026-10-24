@@ -24,7 +24,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             frame_autosave: Some("zgui window_probe".into()),
             ..options("Saved")
         };
-        return Application::new().window(saved).run(|cx| {
+        let mut app = Application::new().window(saved);
+        // `WINDOW_PROBE_DESKTOP_ID`: the app's desktop file ID, its windows'
+        // class and its icon's name.
+        if let Ok(id) = std::env::var("WINDOW_PROBE_DESKTOP_ID") {
+            app = app.desktop_id(id);
+        }
+        return app.run(|cx| {
             cx.render(div().p(20.).child(text("Saved")));
             // Its size once shown: on Wayland nothing outside the app can
             // read it.

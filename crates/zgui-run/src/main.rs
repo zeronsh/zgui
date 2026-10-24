@@ -7,7 +7,8 @@ const USAGE: &str = "usage: zgui-run <app.luau-or-dir>
 Opens the script (a file, or a directory's app.luau) in a window and
 reloads it as its files change. A zgui.json beside it sets the window
 (title, width, height, min_width, min_height, titlebar: standard, inset or
-hidden, glass) and app_id, where ui.persist keeps its data. Its ui.command
+hidden, glass) and app_id, where ui.persist keeps its data and, on Linux,
+the desktop file ID its windows carry (app_id.desktop). Its ui.command
 entries are the menu bar.";
 
 fn main() -> ExitCode {

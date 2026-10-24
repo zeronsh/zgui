@@ -183,17 +183,24 @@ loads no EGL. `gl_fallback_smoke.py` draws the gallery both ways.
 
 ## Window icons
 
+A window's Wayland app_id and X11 class are its app's desktop file ID:
+what docks and task switchers match to `id.desktop` for its name and icon,
+and how they group its windows. It is `Application::desktop_id`, else the
+application id (`Application::application_id`), else the executable's
+name. zgui-run gives each script its `zgui.json`'s `app_id`, so two script
+apps are two apps, not one "zgui-run".
+
 On X11 a window carries its app's icon (`_NET_WM_ICON`, which taskbars,
-docks and window switchers show), from the icon theme by the app's
-application id (`Application::application_id`) or else its executable's
-name, as GTK takes a window's default icon from the program's name: the
+docks and window switchers show), from the icon theme by that desktop file
+ID, as GTK takes a window's default icon from the program's name: the
 hicolor theme under `$XDG_DATA_HOME` and `$XDG_DATA_DIRS`, a 64 pixel PNG
 first, then other sizes, then the scalable SVG drawn at 64, then `pixmaps`.
 It is looked up and decoded once. Desktops that match windows to an
 installed desktop file by its class show that file's icon anyway; this one
 shows for an app run with none installed, and where a panel reads the
 window's own. On Wayland the compositor takes the desktop file's icon, and
-a window has none of its own. `window_icon_smoke.py` checks it.
+a window has none of its own. `window_icon_smoke.py` checks the class and
+icon, by the executable's name and by a desktop file ID.
 
 ## Resizing on X11
 

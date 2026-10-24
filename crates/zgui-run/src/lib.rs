@@ -227,38 +227,43 @@ pub fn run(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         glass: config.glass.then(zgui_desktop::Glass::default),
         ..Default::default()
     };
-    Application::new().window(options).run(move |cx| {
-        let host = ScriptHost::new(&cx.ui.runtime, script.clone()).app_id(&config.app_id);
-        // `ui.window.titlebar_area`: where the title bar leaves the script room.
-        host.window_chrome(
-            cx.window_info.titlebar_area.clone(),
-            cx.window_info.controls.clone(),
-        );
-        let _ = host.reload();
-        cx.tasks.spawn(host.watch(Duration::from_millis(250)));
-        // The script's commands are the menu bar; their keys work wherever
-        // focus is.
-        let commands = host.commands();
-        let windows = cx.windows.clone();
-        let menus_follow = cx.ui.runtime.effect(move || {
-            if let Err(error) = windows.set_menus(menus(&commands.get())) {
-                eprintln!("zgui run: menus: {error}");
-            }
-        });
-        // The script's windows (`ui.window`): each open while its state is.
-        let windows_follow = follow_windows(&host, cx);
-        let run = host.clone();
-        cx.on_menu_action(move |action| {
-            run.run_command(&action.0);
-        });
-        let saving = host.clone();
-        let keep = std::cell::RefCell::new(Some((menus_follow, windows_follow)));
-        cx.on_closed(move || {
-            saving.save();
-            drop(keep.borrow_mut().take());
-        });
-        cx.render(host.view());
-    })?;
+    // Its own app on the Linux desktop, not every script one "zgui-run": its
+    // windows' Wayland app_id and X11 class, matched to `app_id.desktop`.
+    Application::new()
+        .window(options)
+        .desktop_id(config.app_id.clone())
+        .run(move |cx| {
+            let host = ScriptHost::new(&cx.ui.runtime, script.clone()).app_id(&config.app_id);
+            // `ui.window.titlebar_area`: where the title bar leaves the script room.
+            host.window_chrome(
+                cx.window_info.titlebar_area.clone(),
+                cx.window_info.controls.clone(),
+            );
+            let _ = host.reload();
+            cx.tasks.spawn(host.watch(Duration::from_millis(250)));
+            // The script's commands are the menu bar; their keys work wherever
+            // focus is.
+            let commands = host.commands();
+            let windows = cx.windows.clone();
+            let menus_follow = cx.ui.runtime.effect(move || {
+                if let Err(error) = windows.set_menus(menus(&commands.get())) {
+                    eprintln!("zgui run: menus: {error}");
+                }
+            });
+            // The script's windows (`ui.window`): each open while its state is.
+            let windows_follow = follow_windows(&host, cx);
+            let run = host.clone();
+            cx.on_menu_action(move |action| {
+                run.run_command(&action.0);
+            });
+            let saving = host.clone();
+            let keep = std::cell::RefCell::new(Some((menus_follow, windows_follow)));
+            cx.on_closed(move || {
+                saving.save();
+                drop(keep.borrow_mut().take());
+            });
+            cx.render(host.view());
+        })?;
     Ok(())
 }
 

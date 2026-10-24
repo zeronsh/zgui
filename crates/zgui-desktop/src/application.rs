@@ -414,8 +414,9 @@ struct WindowRequest {
 pub struct WindowFactory {
     #[cfg(target_os = "linux")]
     file_routes: crate::wayland_data::Routes,
-    /// The application's id (`Application::application_id`): its windows'
-    /// Wayland app_id and X11 class, what docks match to its desktop file.
+    /// The application's desktop file ID (`Application::desktop_id`, else
+    /// its `application_id`): its windows' Wayland app_id and X11 class,
+    /// what docks match to its desktop file.
     #[cfg(target_os = "linux")]
     application_id: Option<Rc<str>>,
     /// The launcher's token (XDG activation on Wayland, startup
@@ -645,6 +646,9 @@ pub struct Application {
     options: WindowOptions,
     menus: Vec<crate::AppMenu>,
     application_id: Option<String>,
+    // Read on Linux only.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    desktop_id: Option<String>,
     application_event: Option<ApplicationEventHandler>,
     quit_on_last_window_close: bool,
 }
@@ -660,6 +664,7 @@ impl Application {
             options: WindowOptions::default(),
             menus: Vec::new(),
             application_id: None,
+            desktop_id: None,
             application_event: None,
             quit_on_last_window_close: true,
         }
@@ -694,6 +699,18 @@ impl Application {
         crate::native_events::validate_id(&id)?;
         self.application_id = Some(id);
         Ok(self)
+    }
+    /// The app's desktop file ID on Linux (`id.desktop` names its desktop
+    /// file): its windows' Wayland app_id and X11 class, which docks and
+    /// task switchers match to that file for its name and icon, and on X11
+    /// its icon's name in the icon theme. Without it, the
+    /// [application id](Application::application_id), else the executable's
+    /// name. Unlike the application id it registers nothing on D-Bus, and
+    /// needs no reverse-DNS form: an app run by a shared executable (a
+    /// script host) is told apart by it. Elsewhere it does nothing.
+    pub fn desktop_id(mut self, id: impl Into<String>) -> Self {
+        self.desktop_id = Some(id.into());
+        self
     }
     /// Call `handler` for each URL or reopen request the system delivers
     /// (requires [`Application::application_id`]).
@@ -747,7 +764,11 @@ impl Application {
             #[cfg(target_os = "linux")]
             file_routes: Default::default(),
             #[cfg(target_os = "linux")]
-            application_id: self.application_id.as_deref().map(Rc::from),
+            application_id: self
+                .desktop_id
+                .as_deref()
+                .or(self.application_id.as_deref())
+                .map(Rc::from),
             #[cfg(target_os = "linux")]
             activation: Rc::default(),
             menus: Rc::new(RefCell::new(self.menus)),
