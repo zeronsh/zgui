@@ -1,0 +1,77 @@
+# Fuzz targets for what zgui reads from outside: markdown, JSON, theme files,
+# images, SVG and GIF. Not part of the workspace (it needs nightly and
+# cargo-fuzz) and not run by CI; see README.md here.
+[package]
+name = "zgui-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+zgui = { path = "../crates/zgui" }
+zgui-gpu = { path = "../crates/zgui-gpu" }
+zgui-script = { path = "../crates/zgui-script", default-features = false, features = ["svg", "png", "jpeg", "gif"] }
+
+# Its own workspace: the fuzz build's sanitizer flags stay out of the main one.
+[workspace]
+
+[profile.release]
+debug = "line-tables-only"
+
+# The workspace's patches (see ../Cargo.toml for why each is patched).
+[patch.crates-io]
+wgpu-hal = { path = "../vendor/wgpu-hal" }
+cosmic-text = { path = "../vendor/cosmic-text" }
+taffy = { path = "../vendor/taffy" }
+accesskit_macos = { path = "../vendor/accesskit_macos" }
+accesskit_atspi_common = { path = "../vendor/accesskit_atspi_common" }
+accesskit_unix = { path = "../vendor/accesskit_unix" }
+accesskit_windows = { path = "../vendor/accesskit_windows" }
+winit = { path = "../vendor/winit" }
+mlua = { path = "../vendor/mlua" }
+
+[[bin]]
+name = "markdown"
+path = "fuzz_targets/markdown.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_value"
+path = "fuzz_targets/json_value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "theme"
+path = "fuzz_targets/theme.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "image"
+path = "fuzz_targets/image.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "svg"
+path = "fuzz_targets/svg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gif"
+path = "fuzz_targets/gif.rs"
+test = false
+doc = false
+bench = false

@@ -31,6 +31,7 @@ pub(crate) fn parse(text: &str) -> Result<Json, String> {
     let mut parser = Parser {
         text: text.as_bytes(),
         at: 0,
+        depth: 0,
     };
     let value = parser.value()?;
     parser.space()?;
@@ -40,9 +41,15 @@ pub(crate) fn parse(text: &str) -> Result<Json, String> {
     Ok(value)
 }
 
+/// How deeply arrays and objects nest at most, as serde_json's limit: a
+/// theme nests a few levels, and a file nesting thousands would overflow
+/// the stack reading it.
+const DEPTH: u32 = 128;
+
 struct Parser<'a> {
     text: &'a [u8],
     at: usize,
+    depth: u32,
 }
 impl Parser<'_> {
     fn error(&self, what: &str) -> String {
@@ -91,6 +98,16 @@ impl Parser<'_> {
         }
     }
     fn value(&mut self) -> Result<Json, String> {
+        if self.depth == DEPTH {
+            return Err(self.error("nested too deeply"));
+        }
+        self.depth += 1;
+        let value = self.nested();
+        self.depth -= 1;
+        value
+    }
+    /// A value, inside `depth` arrays and objects.
+    fn nested(&mut self) -> Result<Json, String> {
         self.space()?;
         match self.peek() {
             Some(b'{') => {
@@ -263,5 +280,13 @@ mod tests {
         let error = parse("{\n  \"a\": ,\n}").unwrap_err();
         assert!(error.starts_with("2:8"), "{error}");
         assert_eq!(quote("a\"b"), r#""a\"b""#);
+    }
+    #[test]
+    fn deep_nesting_is_an_error_not_a_stack_overflow() {
+        let nested = |n| format!("{}{}", "[".repeat(n), "]".repeat(n));
+        assert!(parse(&nested(DEPTH as usize)).is_ok());
+        let error = parse(&nested(DEPTH as usize + 1)).unwrap_err();
+        assert!(error.ends_with("nested too deeply"), "{error}");
+        assert!(parse(&"{\"a\":".repeat(100_000)).is_err());
     }
 }
