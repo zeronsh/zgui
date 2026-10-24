@@ -3,14 +3,16 @@
 //! reporting CPU and allocations per tick by phase, damage and renderer
 //! memory.
 //! Run: ZGUI_MODE=both TICKS=900 cargo run --release -p zgui-desktop --example heavy_headless
-//! (`SCALE` sets the device scale, 2 by default.)
+//! (`SCALE` sets the device scale, 2 by default. `RENDER=0` lays out and
+//! finds damage with no renderer: the engine's work alone, as CI's
+//! instruction gate counts it.)
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicU64, Ordering::Relaxed},
     time::{Duration, Instant},
 };
 use zgui::widgets::Ui;
-use zgui_gpu::GpuRenderer;
+use zgui_gpu::{GpuRenderer, TextServices};
 use zgui_workload::{Mode, heavy::*};
 
 #[path = "support/heavy_view.rs"]
@@ -53,13 +55,16 @@ fn main() {
     let scale: f32 = env("SCALE", 2.);
     let mut work = Heavy::from_env();
     let mode = work.mode;
+    let mut ui = Ui::new(WIDTH, HEIGHT);
+    if env("RENDER", 1) == 0 {
+        return without_rendering(ui, work, ticks);
+    }
     let mut gpu = GpuRenderer::new(
         (WIDTH * scale).round() as u32,
         (HEIGHT * scale).round() as u32,
     )
     .expect("GPU");
     gpu.set_scale_factor(scale);
-    let mut ui = Ui::new(WIDTH, HEIGHT);
     gpu.install_text(&mut ui.scene.borrow_mut());
     let live = ui.signal(0_u64);
     let scroll = ui.signal(0_f32);
@@ -143,5 +148,44 @@ fn main() {
         allocations[0] as f64 / measured,
         allocations[1] as f64 / measured,
         allocations[2] as f64 / measured,
+    );
+}
+/// The ticks' updates, layout and damage, with text measured as a renderer
+/// would and nothing drawn.
+fn without_rendering(mut ui: Ui, mut work: Heavy, ticks: usize) {
+    let mode = work.mode;
+    let text = TextServices::new();
+    text.install(&mut ui.scene.borrow_mut());
+    let live = ui.signal(0_u64);
+    let scroll = ui.signal(0_f32);
+    let log = ui.signal(work.visible_log());
+    ui.mount(view::dashboard(live.clone(), scroll.clone(), log.clone()));
+    let (mut rects, mut nodes) = (0_usize, 0_usize);
+    let started = Instant::now();
+    for tick in 0..ticks {
+        if tick > 0 {
+            work.tick();
+            ui.runtime.batch(|| {
+                if matches!(mode, Mode::Stream | Mode::Both) {
+                    live.set(work.live);
+                    log.set(work.visible_log());
+                }
+                if matches!(mode, Mode::Scroll | Mode::Both) {
+                    scroll.set(work.scroll);
+                }
+            });
+        }
+        ui.prepare_frame();
+        let report = ui.scene.borrow_mut().flush();
+        rects += report.damage.len();
+        nodes += report.layout_nodes;
+        zgui::profile::frame();
+    }
+    let per = ticks.max(1) as f64;
+    println!(
+        "{mode:?} without rendering: {:.3} ms/tick, layout nodes {:.0}/tick, damage rects {:.1}/tick",
+        started.elapsed().as_secs_f64() * 1e3 / per,
+        nodes as f64 / per,
+        rects as f64 / per,
     );
 }

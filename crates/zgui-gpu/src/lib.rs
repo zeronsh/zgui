@@ -2005,62 +2005,7 @@ impl GpuRenderer {
     /// drawing break lines identically. Call `Ui::refresh_text_geometry`
     /// afterwards for a scene with mounted text.
     pub fn install_text(&self, scene: &mut Scene) {
-        let fonts = self.text_system();
-        scene.set_text_measurer(move |text: &str, size: f32, max: Option<f32>| {
-            let _span = zgui::profile::nested(zgui::profile::Phase::Text);
-            crate::measure_text(&mut fonts.borrow_mut(), text, size, max)
-        });
-        let fonts = self.text_system();
-        scene.set_font_text_shaper(
-            move |text: &str,
-                  size: f32,
-                  width: Option<f32>,
-                  font: &zgui::text_layout::FontStyle|
-                  -> Box<dyn zgui::text_layout::TextLayout> {
-                let _span = zgui::profile::nested(zgui::profile::Phase::Text);
-                Box::new(crate::text::ShapedText::with_font(
-                    &mut fonts.borrow_mut(),
-                    text,
-                    size,
-                    width,
-                    font,
-                ))
-            },
-        );
-        let fonts = self.text_system();
-        scene.set_rich_text_shaper(move |rich, width| {
-            let _span = zgui::profile::nested(zgui::profile::Phase::Text);
-            Box::new(crate::text::ShapedText::with_runs(
-                &mut fonts.borrow_mut(),
-                rich,
-                width,
-            ))
-        });
-        // Prepared text: shaped once, then measured at any width by line
-        // breaking alone; the renderer draws from the same lines.
-        let (fonts, cache) = (self.text_system(), self.text_cache());
-        scene.set_rich_text_measurer(move |rich, width| {
-            let _span = zgui::profile::nested(zgui::profile::Phase::Text);
-            cache
-                .borrow_mut()
-                .measure(&mut fonts.borrow_mut(), rich, width)
-        });
-        // Plain text nodes, from the same prepared text.
-        let (fonts, cache) = (self.text_system(), self.text_cache());
-        scene.set_font_text_measurer(move |text, size, width, font| {
-            let _span = zgui::profile::nested(zgui::profile::Phase::Text);
-            cache
-                .borrow_mut()
-                .measure_plain(&mut fonts.borrow_mut(), text, size, font, width)
-        });
-        // Apps measuring what they have not mounted keep no glyphs for it.
-        let (fonts, cache) = (self.text_system(), self.text_cache());
-        scene.set_detached_rich_text_measurer(move |rich, width| {
-            let _span = zgui::profile::nested(zgui::profile::Phase::Text);
-            cache
-                .borrow_mut()
-                .measure_detached(&mut fonts.borrow_mut(), rich, width)
-        });
+        install_text(scene, &self.text_system(), &self.text_cache());
     }
     /// Physical pixels per logical point (at least 0.1; 1 if not finite).
     pub fn set_scale_factor(&mut self, scale: f32) {
@@ -7214,6 +7159,95 @@ fn merge_damage(damage: &[Rect], viewport: Rect, scale: f32) -> Vec<Rect> {
         regions.push(r);
     }
     regions
+}
+
+/// Text shaping and measurement without a GPU: what a renderer installs on
+/// a scene (`GpuRenderer::install_text`), for laying out what is never drawn
+/// (measuring a scene's update, layout and damage work on its own).
+pub struct TextServices {
+    fonts: Rc<RefCell<FontSystem>>,
+    cache: Rc<RefCell<prepared::TextCache>>,
+}
+impl Default for TextServices {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl TextServices {
+    /// The system's fonts (from the font cache) and an empty text cache.
+    pub fn new() -> Self {
+        Self {
+            fonts: Rc::new(RefCell::new(font_cache::system_fonts())),
+            cache: Default::default(),
+        }
+    }
+    /// Shape and measure `scene`'s text with these, as a renderer would.
+    pub fn install(&self, scene: &mut Scene) {
+        install_text(scene, &self.fonts, &self.cache);
+    }
+}
+/// Install text services sharing `shared_fonts` and `shared_cache` on `scene`.
+fn install_text(
+    scene: &mut Scene,
+    shared_fonts: &Rc<RefCell<FontSystem>>,
+    shared_cache: &Rc<RefCell<prepared::TextCache>>,
+) {
+    let fonts = shared_fonts.clone();
+    scene.set_text_measurer(move |text: &str, size: f32, max: Option<f32>| {
+        let _span = zgui::profile::nested(zgui::profile::Phase::Text);
+        crate::measure_text(&mut fonts.borrow_mut(), text, size, max)
+    });
+    let fonts = shared_fonts.clone();
+    scene.set_font_text_shaper(
+        move |text: &str,
+              size: f32,
+              width: Option<f32>,
+              font: &zgui::text_layout::FontStyle|
+              -> Box<dyn zgui::text_layout::TextLayout> {
+            let _span = zgui::profile::nested(zgui::profile::Phase::Text);
+            Box::new(crate::text::ShapedText::with_font(
+                &mut fonts.borrow_mut(),
+                text,
+                size,
+                width,
+                font,
+            ))
+        },
+    );
+    let fonts = shared_fonts.clone();
+    scene.set_rich_text_shaper(move |rich, width| {
+        let _span = zgui::profile::nested(zgui::profile::Phase::Text);
+        Box::new(crate::text::ShapedText::with_runs(
+            &mut fonts.borrow_mut(),
+            rich,
+            width,
+        ))
+    });
+    // Prepared text: shaped once, then measured at any width by line
+    // breaking alone; the renderer draws from the same lines.
+    let (fonts, cache) = (shared_fonts.clone(), shared_cache.clone());
+    scene.set_rich_text_measurer(move |rich, width| {
+        let _span = zgui::profile::nested(zgui::profile::Phase::Text);
+        cache
+            .borrow_mut()
+            .measure(&mut fonts.borrow_mut(), rich, width)
+    });
+    // Plain text nodes, from the same prepared text.
+    let (fonts, cache) = (shared_fonts.clone(), shared_cache.clone());
+    scene.set_font_text_measurer(move |text, size, width, font| {
+        let _span = zgui::profile::nested(zgui::profile::Phase::Text);
+        cache
+            .borrow_mut()
+            .measure_plain(&mut fonts.borrow_mut(), text, size, font, width)
+    });
+    // Apps measuring what they have not mounted keep no glyphs for it.
+    let (fonts, cache) = (shared_fonts.clone(), shared_cache.clone());
+    scene.set_detached_rich_text_measurer(move |rich, width| {
+        let _span = zgui::profile::nested(zgui::profile::Phase::Text);
+        cache
+            .borrow_mut()
+            .measure_detached(&mut fonts.borrow_mut(), rich, width)
+    });
 }
 
 pub mod assets;

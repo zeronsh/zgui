@@ -123,10 +123,19 @@ fn main() {
         .and_then(|t| t.parse().ok())
         .unwrap_or(900);
     let scale = 1.;
-    let mut gpu = GpuRenderer::new(WIDTH as u32, HEIGHT as u32).expect("GPU");
-    gpu.set_scale_factor(scale);
     let mut ui = Ui::new(WIDTH, HEIGHT);
-    gpu.install_text(&mut ui.scene.borrow_mut());
+    // `RENDER=0`: layout and damage alone, text measured as a renderer
+    // would (CI's instruction gate).
+    let text = zgui_gpu::TextServices::new();
+    let mut gpu = (std::env::var("RENDER").as_deref() != Ok("0")).then(|| {
+        let mut gpu = GpuRenderer::new(WIDTH as u32, HEIGHT as u32).expect("GPU");
+        gpu.set_scale_factor(scale);
+        gpu
+    });
+    match &gpu {
+        Some(gpu) => gpu.install_text(&mut ui.scene.borrow_mut()),
+        None => text.install(&mut ui.scene.borrow_mut()),
+    }
     let mut work = Workload::from_env();
     work.mode = mode;
     let stream = ui.signal(work.visible_text());
@@ -148,6 +157,13 @@ fn main() {
         ui.prepare_frame();
         let report = ui.scene.borrow_mut().flush();
         let laid = Instant::now();
+        let Some(gpu) = &mut gpu else {
+            zgui::profile::frame();
+            if tick >= 60 {
+                layout += laid - started;
+            }
+            continue;
+        };
         let stats = gpu.render(&ui.scene.borrow(), &report.damage).unwrap();
         // Frames a window would present; readback only settles the GPU.
         if tick % 60 == 0 {
@@ -161,6 +177,13 @@ fn main() {
         }
     }
     let measured = (ticks - 60).max(1) as f64;
+    let Some(gpu) = gpu else {
+        println!(
+            "{mode:?} without rendering: layout {:.3} ms per tick",
+            layout.as_secs_f64() * 1e3 / measured
+        );
+        return;
+    };
     let caches = gpu.debug_cache_stats();
     let mb = |bytes: usize| bytes as f64 / 1048576.;
     println!(

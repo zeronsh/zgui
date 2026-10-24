@@ -82,10 +82,20 @@ fn main() {
         .unwrap_or(2400);
     let scale = 2.;
     let (width, height) = (960., 720.);
-    let mut gpu = GpuRenderer::new((width * scale) as u32, (height * scale) as u32).expect("GPU");
-    gpu.set_scale_factor(scale);
     let mut ui = Ui::new(width, height);
-    gpu.install_text(&mut ui.scene.borrow_mut());
+    // `RENDER=0`: the update and flush alone, text measured as a renderer
+    // would (CI's instruction gate).
+    let text = zgui_gpu::TextServices::new();
+    let mut gpu = (std::env::var("RENDER").as_deref() != Ok("0")).then(|| {
+        let mut gpu =
+            GpuRenderer::new((width * scale) as u32, (height * scale) as u32).expect("GPU");
+        gpu.set_scale_factor(scale);
+        gpu
+    });
+    match &gpu {
+        Some(gpu) => gpu.install_text(&mut ui.scene.borrow_mut()),
+        None => text.install(&mut ui.scene.borrow_mut()),
+    }
     let clock = ui.signal(0_f32);
     ui.mount(view::animation(clock.clone()));
     let (mut update, mut layout, mut render) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
@@ -101,10 +111,14 @@ fn main() {
         ui.prepare_frame();
         let report = ui.scene.borrow_mut().flush();
         let laid = Instant::now();
-        gpu.render(&ui.scene.borrow(), &report.damage).unwrap();
-        // A window presents every frame; readback only settles the GPU.
-        if frame % 120 == 0 {
-            gpu.readback().unwrap();
+        if let Some(gpu) = &mut gpu {
+            gpu.render(&ui.scene.borrow(), &report.damage).unwrap();
+            // A window presents every frame; readback only settles the GPU.
+            if frame % 120 == 0 {
+                gpu.readback().unwrap();
+            }
+        } else {
+            zgui::profile::frame();
         }
         let done = Instant::now();
         if frame >= warmup {
