@@ -126,6 +126,41 @@ fn keyed_reorder_keeps_local_state_and_builds_only_new_keys() {
     assert!(handle.find("row-3").is_none());
 }
 
+/// Keys read again unchanged (a list whose rows changed in place) leave
+/// the children as they are; a child removed from elsewhere is built again.
+#[test]
+fn keyed_children_stay_when_their_keys_do() {
+    let mut ui = Ui::new(400., 200.);
+    let tick = ui.signal(0);
+    let builds = Rc::new(Cell::new(0));
+    let handle = ui.mount(keyed(
+        {
+            let tick = tick.clone();
+            move || {
+                tick.get();
+                vec![1, 2, 3]
+            }
+        },
+        {
+            let builds = builds.clone();
+            move |key, _| {
+                builds.set(builds.get() + 1);
+                text(key.to_string()).id(format!("row-{key}"))
+            }
+        },
+    ));
+    let rows = ui.scene.borrow().children(handle.node()).to_vec();
+    tick.set(1);
+    assert_eq!(builds.get(), 3);
+    assert_eq!(ui.scene.borrow().children(handle.node()), &rows[..]);
+    ui.remove(rows[1]);
+    tick.set(2);
+    assert_eq!(builds.get(), 4);
+    let now = ui.scene.borrow().children(handle.node()).to_vec();
+    assert_eq!((now.len(), now[0], now[2]), (3, rows[0], rows[2]));
+    assert_ne!(now[1], rows[1]);
+}
+
 #[test]
 fn conditional_replacement_disposes_resources_bindings_and_dependencies() {
     let mut ui = Ui::new(300., 200.);

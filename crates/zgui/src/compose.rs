@@ -1677,8 +1677,21 @@ pub fn keyed<K: Eq + std::hash::Hash + Clone + 'static>(
         let weak = ui.downgrade();
         let runtime = ui.runtime.clone();
         let mut entries: HashMap<K, NodeId> = HashMap::new();
+        // The last pass's keys and their children, in order.
+        let mut last: (Vec<K>, Vec<NodeId>) = (Vec::new(), Vec::new());
         ui.bind(root, move || {
             let keys = keys();
+            // The same keys in the same order, every child still mounted (a
+            // list whose rows changed in place): nothing to add, remove or
+            // move, and no key hashed to find out.
+            if keys == last.0
+                && let Some(ui) = weak.upgrade()
+            {
+                let scene = ui.scene.borrow();
+                if !scene.contains(root) || last.1.iter().all(|node| scene.contains(*node)) {
+                    return;
+                }
+            }
             let unique: std::collections::HashSet<_> = keys.iter().collect();
             assert_eq!(unique.len(), keys.len(), "duplicate component child key");
             let Some(mut ui) = weak.upgrade() else {
@@ -1687,7 +1700,7 @@ pub fn keyed<K: Eq + std::hash::Hash + Clone + 'static>(
             if !ui.scene.borrow().contains(root) {
                 return;
             }
-            runtime.untracked(|| {
+            let order = runtime.untracked(|| {
                 let mut transaction = MountTransaction::new(&ui, root);
                 // Stage every new child before changing the committed registry
                 // or removing old children. The mount guard disposes staged
@@ -1718,7 +1731,9 @@ pub fn keyed<K: Eq + std::hash::Hash + Clone + 'static>(
                 let order: Vec<_> = keys.iter().map(|key| entries[key]).collect();
                 assert!(ui.scene.borrow_mut().reorder_children(root, &order));
                 transaction.commit();
+                order
             });
+            last = (keys, order);
         });
     })))
 }
