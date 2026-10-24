@@ -1,6 +1,8 @@
 //! Checks the zgui patch to cosmic-text (see ../ZGUI_PATCH.md) against
 //! upstream 0.19.0. `cargo run --release` lays out thousands of random lines
-//! with both at several widths and wrap modes and requires identical glyphs;
+//! with both at several widths and wrap modes and requires identical glyphs,
+//! upstream shaping every run afresh (no word cache: the patched one, kept
+//! however long, must not change what is drawn);
 //! `cargo run --release -- bench` times shaping a streaming transcript, as
 //! zgui's lab workload does, with each.
 //!
@@ -38,7 +40,7 @@ macro_rules! layout {
 /// Shaping time for a transcript growing by a token a tick, its last seven
 /// 105-byte lines reshaped every tick.
 macro_rules! bench {
-    ($ct:ident, $ticks:expr) => {{
+    ($ct:ident, $ticks:expr $(, $cache:ident)?) => {{
         use $ct::*;
         const TOKEN: &str = "The quick brown fox streams a token. ";
         let mut fonts = FontSystem::new();
@@ -61,7 +63,7 @@ macro_rules! bench {
                 line.shape(&mut fonts, 8);
             }
             shaping += started.elapsed();
-            fonts.shape_run_cache.trim(2);
+            $(fonts.$cache.trim(2);)?
         }
         shaping.as_secs_f64() * 1e6 / $ticks as f64
     }};
@@ -78,12 +80,16 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("bench") {
         // `bench patched`: only the patch, long enough to profile.
         if std::env::args().nth(2).as_deref() == Some("patched") {
-            println!("shaping per tick: patched {:.2} µs", bench!(patched, 400_000));
+            println!(
+                "shaping per tick: patched {:.2} µs",
+                bench!(patched, 400_000, shape_run_cache)
+            );
             return;
         }
         for _ in 0..3 {
-            let (upstream, patched) = (bench!(upstream, 50_000), bench!(patched, 50_000));
-            println!("shaping per tick: upstream {upstream:.2} µs, patched {patched:.2} µs");
+            let upstream = bench!(upstream, 50_000);
+            let patched = bench!(patched, 50_000, shape_run_cache);
+            println!("shaping per tick: upstream (no word cache) {upstream:.2} µs, patched {patched:.2} µs");
         }
         return;
     }
@@ -132,7 +138,6 @@ fn main() {
             }
         }
         if i % 4 == 3 {
-            up.shape_run_cache.trim(1);
             pa.shape_run_cache.trim(1);
         }
     }

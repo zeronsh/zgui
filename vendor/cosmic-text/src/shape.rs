@@ -476,6 +476,7 @@ fn shape_run_cached(
         }
         None => ShapeRunKey::new(line[run_range.clone()].to_string(), AttrsOwned::new(&defaults)),
     };
+    key.rtl = span_rtl;
     for (attrs_range, attrs) in attrs_list.spans.overlapping(&run_range) {
         if attrs == &key.default_attrs {
             // Skip if attrs matches default attrs

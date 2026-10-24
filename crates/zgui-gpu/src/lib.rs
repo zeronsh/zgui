@@ -149,9 +149,6 @@ pub struct DebugCacheStats {
 const SHAPE_BUDGET: usize = 8 * 1024 * 1024;
 /// Shaping frames a cached word survives without being used.
 const SHAPE_RUN_AGES: u64 = 2;
-/// Shaping calls after which the word cache starts a fresh table (see
-/// `render`).
-const SHAPE_RESET: u64 = 512;
 const VERTEX_BUDGET: usize = 32 * 1024 * 1024;
 /// Image textures a renderer holds at once, each with its own bind group (a
 /// view in Direct3D 12's fixed-size heap; see `GpuContext::create`).
@@ -1510,10 +1507,6 @@ pub struct GpuRenderer {
     present_stats: GpuStats,
     /// Quads use the shader their features need (see `push_draw`).
     split_shading: bool,
-    /// Texts shaped since the word cache last started over, and the
-    /// prepared text cache's count when last read.
-    shaped_since_reset: u64,
-    cache_shaped: u64,
     bind: wgpu::BindGroup,
     blit: Option<wgpu::RenderPipeline>,
     blit_bind: Option<wgpu::BindGroup>,
@@ -1875,8 +1868,6 @@ impl GpuRenderer {
             target,
             view,
             split_shading,
-            shaped_since_reset: 0,
-            cache_shaped: 0,
             bind,
             blit,
             blit_bind,
@@ -2118,22 +2109,11 @@ impl GpuRenderer {
         };
         if stats.shaped_nodes > 0 {
             // Words shaped by measurement or this frame are reused by the next
-            // shaping frame (streaming text repeats nearly all of them); older
-            // ones are dropped so the cache stays the size of visible text.
-            // Trimming keeps the table at its peak size; after much shaping
-            // (a transcript's history, measured or drawn), start a new one.
-            let shaped = self.text_cache.borrow().shaped;
-            self.shaped_since_reset +=
-                shaped.saturating_sub(self.cache_shaped) + stats.shaped_nodes as u64;
-            self.cache_shaped = shaped;
-            let mut fonts = self.fonts.borrow_mut();
-            if self.shaped_since_reset > SHAPE_RESET {
-                fonts.shape_run_cache = Default::default();
-                self.shaped_since_reset = 0;
-            } else {
-                fonts.shape_run_cache.trim(SHAPE_RUN_AGES);
-            }
-            drop(fonts);
+            // shaping frames (streaming text repeats nearly all of them, and a
+            // changing value most of its words); ones unused a few shaping
+            // frames go, and the table shrinks after a burst, so the cache
+            // stays the size of visible text (see `ShapeRunCache::trim`).
+            self.fonts.borrow_mut().shape_run_cache.trim(SHAPE_RUN_AGES);
             // Prepared text likewise: what is drawn, and a little of the rest.
             let mut cache = self.text_cache.borrow_mut();
             if cache.needs_trim() {

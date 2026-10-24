@@ -33,7 +33,9 @@ line, which allocates its per-byte tables.
 `check/` lays out 4,000 random lines (ASCII with every control and
 separator, a quarter mixed with accents, CJK, Hebrew, Arabic, emoji and bidi
 controls) at four widths and wrap modes with this crate and with upstream,
-and requires identical glyphs, positions, levels and lines:
+and requires identical glyphs, positions, levels and lines to upstream
+shaping every run afresh (without its word cache, so the patched cache is
+checked never to change what is drawn):
 
     cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml
     cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml -- bench
@@ -65,3 +67,23 @@ say, bold or monospace. The axis range is now read once per face and kept
 (`src/font/system.rs`, "zgui patch"). `FontSystem::new_with_db`,
 `weight_axis` and `set_weight_axis` let zgui-gpu load the system's faces and
 their axes from a cache instead of opening their files (`font_cache.rs`).
+
+## The word cache sweeps every eighth shaping frame
+
+`ShapeRunCache::trim` visited every cached word on every call, and zgui
+calls it on each frame that shapes text: a dashboard changing a few values
+a frame swept a table of thousands each time, and zgui dropped the whole
+table every 512 texts shaped to bound its size, after which every word was
+shaped again. The sweep now runs every `TRIM_PERIOD` (8) ages, a word
+lives `keep_ages` to `keep_ages + 8` ages unused, and a table left more
+than four times larger than what it holds is shrunk, so zgui no longer
+drops it (`len` and `is_empty` report its size). zgui-gpu's
+`tests/word_cache.rs` checks it stays the size of what is shown.
+
+A run's key now holds its direction (`ShapeRunKey::rtl`): upstream keyed a
+word by its text and attributes alone, so a word shaped right to left (in
+a bidi line) could be served for the same text left to right. Kept longer,
+words made that reachable, and `check/` caught it on a mixed line; with the
+direction in the key, how long a word is kept cannot change what is drawn. This is
+an upstream bug (0.19.0's `ShapeRunKey` has no direction), worth fixing
+there; the one-field change is all it needs.

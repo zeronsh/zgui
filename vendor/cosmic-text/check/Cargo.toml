@@ -6,7 +6,9 @@ publish = false
 description = "Checks the zgui cosmic-text patch against upstream: identical layouts, and shaping time"
 
 [dependencies]
-upstream = { package = "cosmic-text", version = "=0.19.0", features = ["shape-run-cache"] }
+# Upstream shapes every run afresh: the patched word cache must not change
+# what is drawn, however long it keeps a word.
+upstream = { package = "cosmic-text", version = "=0.19.0" }
 patched = { package = "cosmic-text", path = "..", features = ["shape-run-cache"] }
 
 [workspace]

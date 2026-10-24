@@ -15,6 +15,10 @@ pub struct ShapeRunKey {
     /// cost more than the text.
     pub default_attrs_hash: u64,
     pub attrs_spans: Vec<(Range<usize>, AttrsOwned)>,
+    /// zgui patch: shaped right to left. The same text shapes differently
+    /// in each direction; without it in the key, a word kept from one
+    /// direction was served for the other.
+    pub rtl: bool,
 }
 
 impl ShapeRunKey {
@@ -25,6 +29,7 @@ impl ShapeRunKey {
             default_attrs_hash: 0,
             default_attrs,
             attrs_spans: Vec::new(),
+            rtl: false,
         };
         key.default_attrs_hash = Self::hash_attrs(&key.default_attrs);
         key
@@ -45,8 +50,12 @@ impl core::hash::Hash for ShapeRunKey {
         self.text.hash(state);
         self.default_attrs_hash.hash(state);
         self.attrs_spans.hash(state);
+        self.rtl.hash(state);
     }
 }
+
+/// Ages between sweeps of the cache (see `ShapeRunCache::trim`).
+const TRIM_PERIOD: u64 = 8;
 
 /// A helper structure for caching shape runs.
 #[derive(Clone, Default)]
@@ -64,17 +73,41 @@ impl ShapeRunCache {
         })
     }
 
+    /// zgui patch: how many runs it holds.
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// zgui patch: whether it holds none.
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+
     /// Insert cache item with current age
     pub fn insert(&mut self, key: ShapeRunKey, glyphs: Vec<ShapeGlyph>) {
         self.cache.insert(key, (self.age, glyphs));
     }
 
     /// Remove anything in the cache with an age older than `keep_ages`
+    ///
+    /// zgui patch: the sweep visits every word, and a frame that shapes a
+    /// few changed values called this each time over a table of thousands;
+    /// it runs every `TRIM_PERIOD` ages instead, so a word lives between
+    /// `keep_ages` and `keep_ages + TRIM_PERIOD` ages unused. A table left
+    /// far larger than what it holds (after a burst of shaping) is shrunk,
+    /// where callers dropped it whole before.
     pub fn trim(&mut self, keep_ages: u64) {
-        self.cache
-            .retain(|_key, (age, _glyphs)| *age + keep_ages >= self.age);
         // Increase age
         self.age += 1;
+        if self.age % TRIM_PERIOD != 0 {
+            return;
+        }
+        let age = self.age;
+        self.cache
+            .retain(|_key, (used, _glyphs)| *used + keep_ages + TRIM_PERIOD >= age);
+        if self.cache.capacity() > 4 * self.cache.len() + 64 {
+            self.cache.shrink_to_fit();
+        }
     }
 }
 
