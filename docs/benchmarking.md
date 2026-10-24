@@ -41,6 +41,27 @@ of all scenes, five runs each, showed every scene within its spread. Time
 Profiler helpers and their use are in `scripts/perf/README.md`. The
 windowed comparison below stays the evidence for time, GPU and memory.
 
+## The macOS comparison, quick and full
+
+`python3 scripts/run_macos_comparison.py --scene heavy --quick` measures zgui
+against GPUI Fast in about ten minutes: two repeats of each active mode, idle
+once, frame pacing captured during the sampling trials. Use it to check a
+change on the real window path; its window-server numbers read high for
+every framework (the capture costs the window server), and the site
+builders refuse it. The full run (no `--quick`: three repeats, idle once,
+pacing apart, QuickGUI with `--quickgui`) is for publishing.
+
+Both start with a preflight (`scripts/perf/preflight.py`): they wait while
+anything heavy runs (compilers and linkers of any agent, VMs, Instruments,
+Spotlight indexing, Time Machine, software updates) or the rest of the
+machine uses more than 75% of a core (agents' resident engines idle near
+50%), logging what they find, and they hide
+Zeron's windows for the run. `audit.json` records what the preflight found
+and the machine's state: displays (count, resolution, refresh), a live
+wallpaper, power mode, macOS build and uptime, beside the desktop-alone
+baseline each repeat measures. Those explain a shift between days in the
+desktop's own cost.
+
 ## Validation environment
 
 On this development machine native windows were smoke-tested using Xvfb `:98` with Openbox and Mesa llvmpipe (LLVM 21.1.8, Mesa 26.0.8). GPUI required a window manager to present rather than a black mapped window. QuickGUI startup encountered an unresponsive desktop portal on the inherited D-Bus session; the isolated smoke runs used `DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent`, `DISPLAY=:98`, and removed `WAYLAND_DISPLAY`. These are environment-specific test workarounds, not recommended desktop settings. This software Vulkan environment is unsuitable for claims about native GPU performance.

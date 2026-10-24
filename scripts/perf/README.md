@@ -61,6 +61,17 @@ samples inside one function to source lines and inlined helpers (build with
 `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`). `frames.py` lists stack
 frame sizes, which finds functions paying for large values on the stack.
 
+## The real window path, quickly
+
+```sh
+python3 scripts/perf/preflight.py           # is the machine quiet? what runs?
+python3 scripts/perf/preflight.py --state   # displays, wallpaper, power mode, build, uptime
+python3 scripts/run_macos_comparison.py --scene heavy --quick   # ~10 min, zgui vs GPUI Fast
+```
+
+The comparison waits for the preflight, hides Zeron, and records both in
+its audit; see `docs/benchmarking.md`.
+
 ## The window server
 
 `scripts/windowserver_pair.py` and `scripts/windowserver_alternate.py`

@@ -33,7 +33,9 @@ for directory in a.results:
     groups = [g for g in summary['groups'] if g['framework'] in NAMES]
     frameworks = [f for f in NAMES if any(g['framework'] == f for g in groups)]
     modes = list(dict.fromkeys(g['mode'] for g in groups))
-    assert all(g['repeats'] == 3 for g in groups)
+    assert not audit['protocol'].get('quick'), f'{directory} is a quick run, not for publishing'
+    idle = audit['protocol'].get('idle_repeats', 3)
+    assert all(g['repeats'] == (idle if g['mode'] == 'idle' else 3) for g in groups)
     scenes.append({
         'scene': audit['scene'],
         'frameworks': frameworks,

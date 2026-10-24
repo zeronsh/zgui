@@ -39,14 +39,29 @@ captures, for every framework.
 (run `sudo -v` first in the same terminal; without cached credentials the
 columns stay empty).
 
+`--quick` is for iterating, not publishing: zgui and GPUI Fast only, two
+repeats, idle once, and pacing captured during the sampling trials instead
+of apart (capturing costs the window server work: its numbers then read
+high for every framework). About 10 minutes for heavy. The full run measures
+idle once too, and QuickGUI only with `--quickgui`.
+
+Before measuring, a preflight waits until nothing heavy runs (compilers of
+any agent, VMs, Instruments, indexing, backups, updates) and the rest of the
+machine uses under 75% of a core (scripts/perf/preflight.py;
+`--preflight-threshold`, `--no-preflight`), and Zeron's windows are hidden for the run (`--hide`). The machine's
+state (displays and refresh rates, a live wallpaper, power mode, macOS
+build, uptime) and what the preflight found go into audit.json.
+
 Windows open on screen: keep the Mac awake and the windows uncovered (a
 covered window may stop presenting), and keep the rest of the desktop still.
 Writes docs/results/latest-macos[-<scene>]-<date>-<commit>.
 """
-import argparse, csv, datetime, hashlib, json, os, plistlib, re, signal, statistics, subprocess, time
+import argparse, csv, datetime, hashlib, json, os, plistlib, re, signal, statistics, subprocess, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts/perf'))
+import preflight  # noqa: E402
 REQUESTED, WARMUP, SAMPLED, INTERVAL = 20, 5, 15, 0.05
 PACING_SECONDS, PACING_REPEATS = 8, 8
 MODES = ['idle', 'stream', 'scroll', 'both']
@@ -100,10 +115,10 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw).stdout.strip()
 
 
-def build(scene):
+def build(scene, frameworks):
     example = SCENES[scene]['binaries']['zgui'].name
     run(['cargo', 'build', '--profile', 'dist', '--locked', '-p', 'zgui-desktop', '--example', example], cwd=ROOT)
-    for name in list(SCENES[scene]['binaries'])[1:]:
+    for name in [f for f in frameworks if f != 'zgui']:
         run(['cargo', 'build', '--profile', 'dist', '--locked'], cwd=ROOT / 'comparisons' / name)
     run(['swiftc', '-O', str(ROOT / 'scripts/macsample.swift'), '-o', str(SAMPLER), '-lIOReport'])
     run(['swiftc', '-O', str(ROOT / 'scripts/framepace.swift'), '-o', str(PACER)])
@@ -113,6 +128,7 @@ def environment():
     sysctl = lambda key: run(['sysctl', '-n', key])
     power = run(['pmset', '-g', 'batt']).splitlines()[0]
     return {
+        **preflight.state(),
         'machine': sysctl('hw.model'),
         'chip': sysctl('machdep.cpu.brand_string'),
         'cores': int(sysctl('hw.ncpu')),
@@ -157,14 +173,30 @@ def power_of(process):
     return {'package_mw': mean('combined_power'), 'cpu_mw': mean('cpu_power'), 'gpu_mw': mean('gpu_power')}
 
 
-def trial(scene, framework, mode, repeat, out, power):
+def trial(scene, framework, mode, repeat, out, power, paced=None):
+    """One timed trial; with `paced` (a list), its frames' pacing too, appended there."""
     log = out / f'{framework}.{mode}.{repeat}.log'
     if framework == 'desktop':
         process = subprocess.Popen(['/bin/sleep', str(REQUESTED)])
     else:
         process = launch(SCENES[scene]['binaries'][framework], mode, REQUESTED, log)
     meter = powermetrics() if power else None
+    pacer = None
+    if paced is not None and framework != 'desktop' and mode != 'idle':
+        # As long as a pacing trial's capture: one running to the app's own
+        # end loses its stream as the window closes.
+        pacer = subprocess.Popen([str(PACER), str(process.pid), str(WARMUP - 0.5), str(PACING_SECONDS)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     sample = json.loads(run([str(SAMPLER), str(process.pid), str(WARMUP - 0.5), str(SAMPLED), str(INTERVAL)]))
+    if pacer is not None:
+        output, _ = pacer.communicate()
+        try:
+            pace = {'framework': framework, 'mode': mode, 'repeat': repeat, **json.loads(output)}
+        except json.JSONDecodeError:
+            pace = {'framework': framework, 'mode': mode, 'repeat': repeat, 'error': output[-500:]}
+        (out / f'{framework}.{mode}.{repeat}.pacing.json').write_text(json.dumps(pace, indent=1) + '\n')
+        if 'error' not in pace:
+            paced.append(pace)
     exit_code, terminated = finish(process, REQUESTED)
     text = log.read_text() if log.exists() else ''
     ticks = re.search(r'"ticks":(\d+)|workload_ticks=(\d+)|animation_frames=(\d+)', text)
@@ -228,26 +260,65 @@ def main():
     parser.add_argument('--skip-build', action='store_true')
     parser.add_argument('--scene', choices=sorted(SCENES), default='lab')
     parser.add_argument('--powermetrics', action='store_true')
+    parser.add_argument('--quick', action='store_true', help='zgui and GPUI Fast, 2 repeats, pacing in the trials')
+    parser.add_argument('--frameworks', help='comma-separated, from the scene\'s')
+    parser.add_argument('--repeats', type=int, help='repeats of each active mode (3; --quick 2)')
+    parser.add_argument('--quickgui', action='store_true', help='QuickGUI too (lab)')
+    parser.add_argument('--no-preflight', action='store_true')
+    parser.add_argument('--preflight-threshold', type=float, default=75.,
+                        help='percent of a core the rest of the machine may use')
+    parser.add_argument('--hide', default='Zeron', help='an app to hide during the run (empty: none)')
     args = parser.parse_args()
     frameworks, modes = list(SCENES[args.scene]['binaries']), SCENES[args.scene]['modes']
+    if not args.quickgui:
+        frameworks = [f for f in frameworks if f != 'quickgui']
+    if args.quick:
+        frameworks = [f for f in frameworks if f in ('zgui', 'gpui-fast')]
+    if args.frameworks:
+        frameworks = [f for f in args.frameworks.split(',') if f in SCENES[args.scene]['binaries']]
+    repeats = args.repeats or (2 if args.quick else 3)
     if not args.skip_build:
-        build(args.scene)
+        build(args.scene, frameworks)
     commit = run(['git', 'rev-parse', 'HEAD'], cwd=ROOT)
+    found = None if args.no_preflight else preflight.wait_until_quiet(
+        log=lambda line: print(line, flush=True), threshold=args.preflight_threshold)
+    hidden = hide(args.hide) if args.hide else False
+    try:
+        measure(args, frameworks, modes, repeats, commit, found)
+    finally:
+        if hidden:
+            show(args.hide)
+
+
+def hide(app):
+    """Hide `app`'s windows if it runs; whether it was hidden."""
+    script = f'tell application "System Events" to if exists process "{app}" then set visible of process "{app}" to false'
+    return subprocess.run(['osascript', '-e', script], capture_output=True).returncode == 0
+
+
+def show(app):
+    script = f'tell application "System Events" to if exists process "{app}" then set visible of process "{app}" to true'
+    subprocess.run(['osascript', '-e', script], capture_output=True)
+
+
+def measure(args, frameworks, modes, repeats, commit, found):
     started = datetime.datetime.now(datetime.timezone.utc)
     scene = '' if args.scene == 'lab' else f'-{args.scene}'
-    out = ROOT / 'docs/results' / f'latest-macos{scene}-{started:%Y-%m-%d}-{commit[:7]}'
+    out = ROOT / 'docs/results' / f'latest-macos{scene}{"-quick" if args.quick else ""}-{started:%Y-%m-%d}-{commit[:7]}'
     out.mkdir(parents=True, exist_ok=True)
     rows, paced = [], []
-    for repeat in range(3):
-        order = frameworks[repeat:] + frameworks[:repeat]
-        for framework, mode in [('desktop', 'baseline')] + [(f, m) for m in modes for f in order]:
-            row = trial(args.scene, framework, mode, repeat, out, args.powermetrics)
+    for repeat in range(repeats):
+        order = frameworks[repeat % len(frameworks):] + frameworks[:repeat % len(frameworks)]
+        # Idle once: its cells move least between repeats.
+        chosen = [m for m in modes if m != 'idle' or repeat == 0]
+        for framework, mode in [('desktop', 'baseline')] + [(f, m) for m in chosen for f in order]:
+            row = trial(args.scene, framework, mode, repeat, out, args.powermetrics, paced if args.quick else None)
             print(f"{framework:8} {mode:8} {repeat}: cpu {row['cpu_percent_one_core']:6.2f}% {row['cpu_watts'] * 1000:6.0f} mW "
                   f"gpu {row['gpu_percent']:5.2f}% {row['gpu_mcycles_per_second']:5.1f} Mcyc/s server cpu {row['windowserver_cpu_percent']:5.1f}% gpu {row['windowserver_gpu_percent']:5.1f}% "
                   f"footprint {row['mean_footprint_bytes'] / 2**20:6.1f} MiB ticks {row['workload_ticks']}", flush=True)
             rows.append(row)
             time.sleep(2)
-    for repeat in range(PACING_REPEATS):
+    for repeat in range(0 if args.quick else PACING_REPEATS):
         order = frameworks[repeat % len(frameworks):] + frameworks[:repeat % len(frameworks)]
         for mode in [m for m in modes if m != 'idle']:
             for framework in order:
@@ -272,7 +343,7 @@ def main():
                  and all(r['workload_ticks'] == 0 for r in apps if r['mode'] == 'idle'))
     accepted = gated and all(r['exit_code'] == 0 or r['terminated_after_report'] for r in apps)
     binaries = {name: {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'bytes': path.stat().st_size}
-                for name, path in SCENES[args.scene]['binaries'].items()}
+                for name, path in SCENES[args.scene]['binaries'].items() if name in frameworks}
     audit = {'accepted': accepted, 'trials': len(rows), 'samples': sum(r['samples'] for r in rows),
              'pacing_trials': len(paced),
              ('reported_fps' if args.scene == 'animate' else 'active_ticks_per_requested_second'):
@@ -283,10 +354,13 @@ def main():
              'source_dirty': bool(run(['git', 'status', '--porcelain', '--', *SOURCES], cwd=ROOT)),
              'source_diff_sha256': source_diff_sha256(),
              'started_utc': started.isoformat(), 'finished_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-             'environment': environment(), 'binaries': binaries,
+             'environment': environment(), 'preflight': found, 'binaries': binaries,
              'protocol': {'requested_seconds': REQUESTED, 'warmup_seconds': WARMUP, 'sampled_seconds': SAMPLED,
-                          'interval_seconds': INTERVAL, 'repeats': 3, 'frameworks': frameworks, 'modes': modes,
-                          'pacing_seconds': PACING_SECONDS, 'pacing_repeats': PACING_REPEATS,
+                          'interval_seconds': INTERVAL, 'repeats': repeats, 'idle_repeats': 1,
+                          'quick': args.quick, 'frameworks': frameworks, 'modes': modes,
+                          'pacing_seconds': PACING_SECONDS,
+                          'pacing_repeats': repeats if args.quick else PACING_REPEATS,
+                          'pacing_during_trials': args.quick,
                           'acceptance_updates_per_second': [58, 61]}}
     (out / 'audit.json').write_text(json.dumps(audit, indent=1) + '\n')
     print(('ACCEPTED' if accepted else 'REJECTED'), out)

@@ -15,22 +15,26 @@ assert scene in ('lab', 'heavy')
 # Newer runs add GPUI Fast (shown on the compare page) and the desktop
 # baseline; this site shows the original frameworks.
 frameworks = [f for f in audit['protocol'].get('frameworks', ['zgui', 'gpui', 'quickgui']) if f in ('zgui', 'gpui', 'quickgui')]
-assert frameworks == (['zgui', 'gpui'] if scene == 'heavy' else ['zgui', 'gpui', 'quickgui'])
+# QuickGUI is optional in lab (`--quickgui`) and absent from heavy.
+assert frameworks[:2] == ['zgui', 'gpui'] and (scene == 'lab' or frameworks == ['zgui', 'gpui'])
 modes = ['idle', 'stream', 'scroll', 'both']
 assert audit['protocol']['requested_seconds'] == 20 and audit['protocol']['repeats'] == 3
+assert not audit['protocol'].get('quick'), 'quick runs are for iterating, not publishing'
+# Runs since October 2026 measure idle once.
+repeats = {m: audit['protocol'].get('idle_repeats', 3) if m == 'idle' else 3 for m in modes}
 summary = json.loads((r / 'summary.json').read_text())
 summary['groups'] = [g for g in summary['groups'] if g['framework'] in frameworks]
 trials = [t for t in csv.DictReader((r / 'current.csv').open()) if t['framework'] in frameworks]
 assert audit['accepted'], 'only accepted runs are published'
-assert len(trials) == len(frameworks) * 12 <= audit['trials']
+assert len(trials) == len(frameworks) * sum(repeats.values()) <= audit['trials']
 assert len(summary['groups']) == len(frameworks) * 4
 assert {(g['framework'], g['mode']) for g in summary['groups']} == {(f, m) for f in frameworks for m in modes}
-assert {(t['framework'], t['mode'], int(t['repeat'])) for t in trials} == {(f, m, n) for f in frameworks for m in modes for n in range(3)}
+assert {(t['framework'], t['mode'], int(t['repeat'])) for t in trials} == {(f, m, n) for f in frameworks for m in modes for n in range(repeats[m])}
 assert all(int(t['exit_code']) == 0 or t['terminated_after_report'].lower() == 'true' for t in trials)
 # Recompute every published aggregate from the trials.
 for group in summary['groups']:
     rows = [t for t in trials if (t['framework'], t['mode']) == (group['framework'], group['mode'])]
-    assert group['repeats'] == 3
+    assert group['repeats'] == repeats[group['mode']]
     for key in ['cpu_percent_one_core', 'mean_footprint_bytes', 'peak_footprint_bytes', 'mean_rss_bytes', 'peak_rss_bytes', 'workload_ticks', 'wall_seconds']:
         values = [float(t[key]) for t in rows]
         assert all(math.isfinite(v) and v >= 0 for v in values)
