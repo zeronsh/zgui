@@ -339,7 +339,14 @@ fn shape_run(
         attrs.optical,
     );
 
-    let font = font_iter.next().expect("no default font found");
+    // zgui patch: no font at all (none installed, or none fontconfig
+    // finds): the run shapes to nothing, rather than panicking each frame.
+    let Some(font) = font_iter.next() else {
+        drop(font_iter);
+        font_system.shape_buffer.scripts = scripts;
+        no_font();
+        return;
+    };
 
     // zgui: masked text (a password) is a bullet for each character, each
     // keeping its character's bytes, so carets and selections are unchanged.
@@ -557,6 +564,17 @@ fn shape_run_cached(
 }
 
 #[cfg(feature = "swash")]
+/// zgui patch: says once a process why its text does not show.
+fn no_font() {
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| {
+        eprintln!(
+            "zgui: no font to draw text with (none is installed, or fontconfig finds none): \
+             install one, such as DejaVu Sans (fonts-dejavu-core)"
+        );
+    });
+}
+
 fn shape_skip(
     font_system: &mut FontSystem,
     glyphs: &mut Vec<ShapeGlyph>,
@@ -579,7 +597,11 @@ fn shape_skip(
         attrs.optical,
     );
 
-    let font = font_iter.next().expect("no default font found");
+    // zgui patch: no font at all shapes to nothing (as `shape_run`).
+    let Some(font) = font_iter.next() else {
+        no_font();
+        return;
+    };
     let glyph_start = glyphs.len();
 
     shape_skip_glyphs(glyphs, &font, line, attrs_list, start_run, end_run);

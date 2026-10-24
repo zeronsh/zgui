@@ -123,3 +123,14 @@ lookup: ASCII is all Common or Latin, which the lookup skipped anyway.
 `ShapeLine::reorder` returned a new list of ranges for every visual line
 laid out, the usual all-left-to-right line included. It now fills a list
 kept in the `ShapeBuffer`. `check/` finds every layout identical.
+
+## No font at all shapes to nothing
+
+With no font installed, or none fontconfig finds (a minimal system, a
+container), `shape_run` and `shape_skip` panicked (`no default font found`)
+for every run of text, every frame: zgui contained the panics, and its window
+drew nothing at all. A run with no font now shapes to no glyphs, so
+everything but the text draws, and the first such run says once on stderr
+why the text does not show. `font_cache`'s
+`text_shapes_to_nothing_with_no_font_installed` and the Linux `no-fonts`
+probe check it.

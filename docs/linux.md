@@ -184,6 +184,12 @@ an app did not start ("Failed to create surface for any enabled backend").
 The GL instance is made only once Vulkan finds no driver, so a Vulkan system
 loads no EGL. `gl_fallback_smoke.py` draws the gallery both ways.
 
+Where no font is installed, or none fontconfig finds (a minimal system, a
+container), text shapes to nothing and everything else draws; the first text
+says once on stderr why it does not show. Before, shaping panicked every
+frame and the window drew nothing. `no_fonts_smoke.py` runs the gallery
+with a fontconfig that lists only an empty directory.
+
 ## Window icons
 
 A window's Wayland app_id and X11 class are its app's desktop file ID:

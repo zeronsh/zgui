@@ -399,6 +399,22 @@ impl<'a> Reader<'a> {
 mod tests {
     use super::*;
 
+    /// With no font installed, text shapes to nothing, plain or not, rather
+    /// than panicking (which left a window drawing nothing at all).
+    #[test]
+    fn text_shapes_to_nothing_with_no_font_installed() {
+        use cosmic_text::{Attrs, Buffer, Metrics, Shaping};
+        let mut fonts = FontSystem::new_with_locale_and_db("en-US".into(), fontdb::Database::new());
+        for shaping in [Shaping::Basic, Shaping::Advanced] {
+            let mut buffer = Buffer::new_empty(Metrics::new(14., 20.));
+            buffer.set_text("Hello, wörld\nمرحبا", &Attrs::new(), shaping, None);
+            buffer.shape_until_scroll(&mut fonts, false);
+            let runs: Vec<_> = buffer.layout_runs().collect();
+            assert!(!runs.is_empty());
+            assert!(runs.iter().all(|run| run.glyphs.is_empty()));
+        }
+    }
+
     /// The desktop's face stands for sans-serif when it is installed, and
     /// is passed over when not.
     #[cfg(not(windows))]
