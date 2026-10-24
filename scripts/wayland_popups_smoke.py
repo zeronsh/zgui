@@ -14,7 +14,10 @@ Under a headless sway, driven with a virtual pointer (`wayland_pointer.py`):
   compositor's doing: the positioner is anchored on the trigger), and its
   first item takes a click there;
 - the submenus example's submenu, a popup of its menu, opens beside that
-  menu where the compositor flipped it.
+  menu where the compositor flipped it;
+- on outputs scaled 2× and 1.5× (fractional, through the viewporter), the
+  menu's buffer is its size in the output's pixels, it shows where the
+  scene put it in those pixels, and its last item takes a click.
 
 Under a headless Weston, whose windows winit decorates itself (the window
 geometry starts at its title bar, above the content), the menu opened by the
@@ -41,10 +44,11 @@ CONTENT = (16, 20, 28)
 MENU = (35, 46, 64)
 # The submenus example's menu and its submenu.
 SUBMENU_PARENT, SUBMENU = (0x36, 0x51, 0x6e), (0x4a, 0x37, 0x68)
-# popup_probe's menu, in its window's points: the File button's centre, and
-# the menu's top-left as the scene places it.
+# popup_probe's menu, in its window's points: the File button's centre, the
+# menu's top-left as the scene places it, and its size.
 FILE = (16 + 60, 396 + 14)
 PLACED = (16, 428)
+MENU_SIZE = (200, 202)
 
 
 def box(image, colour):
@@ -59,7 +63,7 @@ def main():
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    processes, checks = [], {}
+    processes, checks, base = [], {}, {}
 
     def launch(name, command, env, **options):
         log = args.output / (name + ".log")
@@ -89,10 +93,69 @@ def main():
         checks[name] = {"content": content, "menu": menu}
         return (menu[0] - content[0], menu[1] - content[1]) == PLACED and menu[1] < content[3] < menu[3]
 
+    def scaled(scale):
+        """popup_probe's menu on a headless sway output scaled `scale`."""
+        name = f"sway {scale}x"
+        output = (round(OUTPUT[0] * scale), round(OUTPUT[1] * scale))
+        px = lambda points: round(points * scale)
+        env = dict(base, WLR_BACKENDS="headless", WLR_RENDERER="pixman", WLR_LIBINPUT_NO_DEVICES="1")
+        runtime = pathlib.Path(base["XDG_RUNTIME_DIR"], f"scaled-{scale}")
+        runtime.mkdir(mode=0o700)
+        env["XDG_RUNTIME_DIR"] = str(runtime)
+        config = runtime / "sway.conf"
+        config.write_text("output * mode %dx%d scale %g\ndefault_border none\n"
+                          "for_window [app_id=\".*\"] floating enable, move position 0 0\n" % (*output, scale))
+        sway, _ = launch(f"sway-{scale}x", ["sway", "--unsupported-gpu", "-c", str(config)], env)
+        sockets = lambda: [p for p in runtime.glob("wayland-*") if p.suffix != ".lock"]
+        display = until(f"{name}'s socket", sockets, 10)[0].name
+        env["WAYLAND_DISPLAY"] = display
+        app, log = launch(f"sway-{scale}x-app", [str(args.probe)], env)
+        until(f"the probe on {name}", lambda: "READY" in log.read_text())
+
+        def shot(stage):
+            path = args.output / f"{scale}x-{stage}.png"
+            subprocess.run(["grim", str(path)], env=env, check=True)
+            return Image.open(path).convert("RGB")
+
+        content = until(f"the window on {name}", lambda: box(shot("start"), CONTENT))
+        pointer = VirtualPointer(str(runtime), display)
+
+        def click(x, y):
+            pointer.move_to(x, y, *output)
+            time.sleep(.2)
+            pointer.click()
+
+        click(content[0] + px(FILE[0]), content[1] + px(FILE[1]))
+        until(f"the menu on {name}", lambda: "popup configured" in log.read_text())
+        time.sleep(.3)
+        image = shot("open")
+        shown = re.search(r"popup show .* buffer (\d+)x(\d+) scale ([\d.]+)", log.read_text())
+        buffer = (int(shown.group(1)), int(shown.group(2))) if shown else None
+        below = content[1] + px(FILE[1] + 15)
+        menu = box(image.crop((0, below, image.width, image.height)), MENU)
+        assert menu, f"{name}: no menu drawn"
+        menu = (menu[0], menu[1] + below, menu[2], menu[3] + below)
+        expected = (px(PLACED[0]), px(PLACED[1]), px(MENU_SIZE[0]), px(MENU_SIZE[1]))
+        measured = (menu[0] - content[0], menu[1] - content[1], menu[2] - menu[0], menu[3] - menu[1])
+        checks[name] = {"content": content, "menu": menu, "expected": expected, "buffer": buffer}
+        # Drawn in the output's pixels: one buffer pixel to each.
+        checks[f"{name}: buffer in the output's pixels"] = (
+            buffer == (px(MENU_SIZE[0]), px(MENU_SIZE[1])) and float(shown.group(3)) == scale)
+        # Within a pixel: a fractional scale rounds the box's edges.
+        checks[f"{name}: where the scene put it, its size"] = all(
+            abs(a - b) <= 1 for a, b in zip(measured, expected))
+        # Its last item, below the window.
+        click(menu[0] + px(100), menu[3] - px(17))
+        until(f"the choice on {name}", lambda: 'CHOSEN "Item 8"' in log.read_text())
+        checks[f"{name}: chosen outside the window"] = True
+        pointer.close()
+        stop(app)
+        stop(sway)
+
     try:
         with tempfile.TemporaryDirectory(prefix="zgui-popups-") as private:
             os.chmod(private, 0o700)
-            base = dict(os.environ, XDG_RUNTIME_DIR=private, ZGUI_PRESENT_LOG="1")
+            base.update(os.environ, XDG_RUNTIME_DIR=private, ZGUI_PRESENT_LOG="1")
             for key in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
                 base.pop(key, None)
 
@@ -188,6 +251,10 @@ def main():
             stop(app)
             stop(sway)
 
+            # Scaled outputs: the same layout in points, in more pixels.
+            for scale in (2, 1.5):
+                scaled(scale)
+
             # Weston: winit's title bar above the content.
             env = dict(base, WAYLAND_DISPLAY="zgui-popups")
             weston, _ = launch("weston", ["weston", "--backend=headless", "--renderer=pixman", "--width=%d" % OUTPUT[0],
@@ -212,7 +279,7 @@ def main():
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
         print("PASS: Wayland popups: past the window on sway and Weston, chosen from, closed, flipped at the output's "
-              "edge, and a submenu beside its flipped menu")
+              "edge, a submenu beside its flipped menu, and on outputs scaled 2x and 1.5x")
     finally:
         for process in reversed(processes):
             stop(process)

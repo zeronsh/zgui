@@ -504,7 +504,12 @@ fn show(
     let window = RawWindowHandle::Wayland(WaylandWindowHandle::new(std::ptr::NonNull::new(
         surface.id().as_ptr().cast(),
     )?));
-    zgui_gpu::present_log::log(|| format!("popup show {root:?} at {rect:?}"));
+    zgui_gpu::present_log::log(|| {
+        format!(
+            "popup show {root:?} at {rect:?} buffer {}x{} scale {scale}",
+            physical.0, physical.1
+        )
+    });
     // SAFETY: the display outlives the popup: a `Shown` goes with its
     // window's host, before the event loop closes the display
     // (`WindowManager::exiting`). Its `wl_surface` is destroyed only after

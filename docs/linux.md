@@ -356,8 +356,9 @@ moved with the pointer needs the compositor's configure each move).
 the window's edge where the scene put it, chooses its last item below the
 window, closes it with a press in the window, and, the window moved near the
 output's bottom, sees it flip above its trigger and take a click there, and
-the submenus example's submenu open beside its flipped menu; under
-Weston, the menu sits the same on the content below winit's title bar.
+the submenus example's submenu open beside its flipped menu; on outputs
+scaled 2× and 1.5×, the menu's buffer is in the output's pixels, where the
+scene put it, and takes a click; under Weston, the menu sits the same on the content below winit's title bar.
 
 Not yet: the grab (`xdg_popup.grab`, which moves the keyboard to the popup,
 so keys must come through a `wl_keyboard` of zgui's own with winit's
