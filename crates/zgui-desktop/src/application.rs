@@ -430,6 +430,10 @@ pub struct WindowFactory {
     alive: Rc<Cell<bool>>,
     clipboard: Rc<RefCell<Option<crate::clipboard::Clipboard>>>,
     gpu_contexts: Rc<RefCell<Vec<GpuContext>>>,
+    /// macOS: the first GPU context, made on a thread of its own while
+    /// AppKit makes the first window (`make_renderer` takes it).
+    #[cfg(target_os = "macos")]
+    early_gpu: Rc<RefCell<Option<zgui_gpu::PendingGpuContext>>>,
     proxy: EventLoopProxy<Event>,
     /// What every window's `Ui` runs on: one runtime, so state one window
     /// shows the others follow (`Ui::with_runtime`).
@@ -731,6 +735,14 @@ impl Application {
     /// return once the application quits.
     pub fn run(self, build: impl FnOnce(&mut WindowContext)) -> Result<(), Box<dyn Error>> {
         zgui::profile::mark("run");
+        // The GPU device, its pipelines and the fonts are made beside
+        // AppKit's launch and first window, which hold the main thread
+        // meanwhile. Metal's adapter draws to any window, so it needs none
+        // to be found. Windows and Linux make it with the first window, as
+        // they choose an adapter by its surface (and Linux's GL needs its
+        // display).
+        #[cfg(target_os = "macos")]
+        let early_gpu = zgui_gpu::GpuContext::prepare_in_background();
         let event_loop = EventLoop::<Event>::with_user_event().build()?;
         zgui::profile::mark("event loop");
         let proxy = event_loop.create_proxy();
@@ -779,6 +791,8 @@ impl Application {
             alive: Rc::new(Cell::new(true)),
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
+            #[cfg(target_os = "macos")]
+            early_gpu: Rc::new(RefCell::new(Some(early_gpu))),
             proxy: proxy.clone(),
             runtime: zgui::reactive::Runtime::new(),
         };
@@ -2040,6 +2054,18 @@ impl Host {
     /// adapter suits the window, else on one of its own, which the app's
     /// fonts are installed in and other windows may share.
     fn make_renderer(&mut self, window: &Arc<Window>) -> Result<GpuRenderer, Box<dyn Error>> {
+        // The context made while the window was (`Application::run`): the
+        // first shared one. Failing, a context is made for the window as
+        // without it, so errors come as they always did.
+        #[cfg(target_os = "macos")]
+        let early = self.context.windows.early_gpu.borrow_mut().take();
+        #[cfg(target_os = "macos")]
+        if let Some(Ok(context)) = early.map(zgui_gpu::PendingGpuContext::join) {
+            for font in self.context.windows.fonts.iter() {
+                font.install(&mut context.text_system().borrow_mut());
+            }
+            self.context.windows.gpu_contexts.borrow_mut().push(context);
+        }
         let contexts = self.context.windows.gpu_contexts.borrow().clone();
         for context in contexts {
             match self.native.renderer_for(window.clone(), Some(&context)) {
@@ -5754,6 +5780,8 @@ mod tests {
                 .unwrap(),
             ))),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
+            #[cfg(target_os = "macos")]
+            early_gpu: Rc::default(),
             proxy: event_loop.create_proxy(),
             runtime: zgui::reactive::Runtime::new(),
         };
@@ -5894,6 +5922,8 @@ mod tests {
             alive: Rc::new(Cell::new(true)),
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
+            #[cfg(target_os = "macos")]
+            early_gpu: Rc::default(),
             proxy: event_loop.create_proxy(),
             runtime: zgui::reactive::Runtime::new(),
         };
@@ -5954,6 +5984,8 @@ mod tests {
             alive: Rc::new(Cell::new(true)),
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
+            #[cfg(target_os = "macos")]
+            early_gpu: Rc::default(),
             proxy: event_loop.create_proxy(),
             runtime: zgui::reactive::Runtime::new(),
         };

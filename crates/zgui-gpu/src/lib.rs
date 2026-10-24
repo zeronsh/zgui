@@ -1152,6 +1152,36 @@ fn preferred_dx12_adapter(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
     // SAFETY: the adapter was exposed from this instance's own hal instance.
     Some(unsafe { instance.create_adapter_from_hal(exposed) })
 }
+/// What a `GpuContext` holds that another thread can make (`GpuContext::prepare`).
+struct Prepared {
+    lost: Arc<std::sync::Mutex<Option<String>>>,
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    info: wgpu::AdapterInfo,
+    fonts: FontSystem,
+    texture_layout: wgpu::BindGroupLayout,
+    viewport_layout: wgpu::BindGroupLayout,
+    quad_shader: wgpu::ShaderModule,
+    quad_layout: wgpu::PipelineLayout,
+    mapped_uploads: bool,
+}
+/// A `GpuContext` being made on another thread (`GpuContext::prepare_in_background`).
+pub struct PendingGpuContext(Option<std::thread::JoinHandle<Result<Prepared, GpuError>>>);
+impl PendingGpuContext {
+    /// The context, once made: waits for it if it is not done yet. Errors
+    /// as `GpuContext::new` does (no thread to make it on: a `GpuError` too).
+    pub fn join(self) -> Result<GpuContext, GpuError> {
+        let handle = self
+            .0
+            .ok_or_else(|| GpuError("no thread to make the GPU context on".into()))?;
+        let prepared = handle
+            .join()
+            .map_err(|_| GpuError("making the GPU context panicked".into()))??;
+        Ok(GpuContext::finish(prepared))
+    }
+}
 /// Shared native GPU device, pipelines, and font database. Clone this cheaply for
 /// additional windows; render targets/atlases remain owned by each renderer.
 #[derive(Clone)]
@@ -1186,6 +1216,23 @@ impl GpuContext {
         Self::create(None)
     }
     fn create(window: Option<Arc<winit::window::Window>>) -> Result<Self, GpuError> {
+        Ok(Self::finish(Self::prepare(window)?))
+    }
+    /// Start making a context on another thread (the device, its pipelines
+    /// and the system fonts take a few milliseconds), to take with
+    /// `PendingGpuContext::join` once a window needs it. Found without a
+    /// window: a host that knows any adapter can draw to its windows (macOS)
+    /// starts this while its windows are still being made.
+    pub fn prepare_in_background() -> PendingGpuContext {
+        PendingGpuContext(
+            std::thread::Builder::new()
+                .name("zgui GPU setup".into())
+                .spawn(|| Self::prepare(None))
+                .ok(),
+        )
+    }
+    /// What a context is made of that can be made on any thread.
+    fn prepare(window: Option<Arc<winit::window::Window>>) -> Result<Prepared, GpuError> {
         // Avoid initializing secondary graphics stacks merely to enumerate
         // adapters. On Linux this can create an unused EGL driver and worker
         // pool even when Vulkan is selected; macOS uses Metal. Windows uses
@@ -1346,6 +1393,40 @@ impl GpuContext {
         }
         let (texture_layout, viewport_layout, quad_shader, quad_layout) =
             create_quad_pipelines(&device);
+        zgui::profile::mark("GPU device and pipelines");
+        let fonts = font_cache::system_fonts();
+        zgui::profile::mark("system fonts");
+        Ok(Prepared {
+            lost,
+            instance,
+            adapter,
+            device,
+            queue,
+            info,
+            fonts,
+            texture_layout,
+            viewport_layout,
+            quad_shader,
+            quad_layout,
+            mapped_uploads,
+        })
+    }
+    /// The context of what `prepare` made, on the thread that uses it.
+    fn finish(prepared: Prepared) -> Self {
+        let Prepared {
+            lost,
+            instance,
+            adapter,
+            device,
+            queue,
+            info,
+            fonts,
+            texture_layout,
+            viewport_layout,
+            quad_shader,
+            quad_layout,
+            mapped_uploads,
+        } = prepared;
         let quads = QuadPipelines {
             device: device.clone(),
             shader: quad_shader.clone(),
@@ -1355,10 +1436,7 @@ impl GpuContext {
             basic: Default::default(),
             basic_clear: Default::default(),
         };
-        zgui::profile::mark("GPU device and pipelines");
-        let fonts = Rc::new(RefCell::new(font_cache::system_fonts()));
-        zgui::profile::mark("system fonts");
-        Ok(Self {
+        Self {
             inner: Rc::new(GpuContextInner {
                 lost,
                 instance,
@@ -1366,7 +1444,7 @@ impl GpuContext {
                 device,
                 queue,
                 info,
-                fonts,
+                fonts: Rc::new(RefCell::new(fonts)),
                 text_cache: Default::default(),
                 quads,
                 texture_layout,
@@ -1375,7 +1453,7 @@ impl GpuContext {
                 quad_layout,
                 mapped_uploads,
             }),
-        })
+        }
     }
     /// Why its device was lost, once it is: every renderer on it then
     /// fails with `GpuError::is_device_lost`, and a new context is needed.

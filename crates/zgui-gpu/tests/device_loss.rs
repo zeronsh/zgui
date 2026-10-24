@@ -43,3 +43,31 @@ fn a_lost_device_fails_frames_and_a_new_context_draws() {
     let pixels = gpu.readback().unwrap();
     assert_eq!(&pixels[..4], &[255, 0, 0, 255]);
 }
+
+/// A context made on another thread (`prepare_in_background`) draws as one
+/// made on this thread does, and fails as it would where there is no GPU.
+#[test]
+fn a_context_made_in_the_background_draws_like_one_made_here() {
+    let pending = GpuContext::prepare_in_background();
+    let here = GpuContext::new();
+    let background = pending.join();
+    assert_eq!(
+        here.is_ok(),
+        background.is_ok(),
+        "both find a GPU, or neither"
+    );
+    let (Ok(here), Ok(background)) = (here, background) else {
+        eprintln!("no GPU here");
+        return;
+    };
+    let mut scene = scene();
+    scene.flush();
+    let full = [Rect::new(0., 0., 64., 64.)];
+    let mut pixels = Vec::new();
+    for context in [&here, &background] {
+        let mut gpu = GpuRenderer::new_with_context(64, 64, context).unwrap();
+        gpu.render(&scene, &full).unwrap();
+        pixels.push(gpu.readback().unwrap());
+    }
+    assert_eq!(pixels[0], pixels[1]);
+}
