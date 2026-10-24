@@ -102,6 +102,10 @@ pub struct AppConfig {
     pub glass: bool,
     /// Where `ui.persist` keeps its data (the app's data directory).
     pub app_id: String,
+    /// A reverse-DNS application ID (`"dev.zgui.code"`): the system then
+    /// hands the app the files and URLs it opens with it (`ui.on_open`),
+    /// and on Windows a second launch's go to the first.
+    pub application_id: Option<String>,
 }
 impl AppConfig {
     /// The config for the script at `script`: its directory's `zgui.json`,
@@ -121,6 +125,7 @@ impl AppConfig {
             titlebar: zgui_desktop::Titlebar::Standard,
             glass: false,
             app_id: name,
+            application_id: None,
         };
         let path = dir.join("zgui.json");
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -160,6 +165,7 @@ impl AppConfig {
                 "titlebar",
                 "glass",
                 "app_id",
+                "application_id",
             ]
             .contains(&key.as_str())
             {
@@ -195,6 +201,7 @@ impl AppConfig {
         if let Some(id) = string("app_id")? {
             config.app_id = id;
         }
+        config.application_id = string("application_id")?;
         Ok(config)
     }
 }
@@ -213,6 +220,38 @@ pub fn script_path(path: &Path) -> PathBuf {
 /// commands as the menu bar, hot reload as its files change, and
 /// `ui.persist` saved as it quits.
 pub fn run(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    run_with(path, Vec::new())
+}
+
+/// The local path a `file://` URL names (`None` for another URL).
+fn file_path(url: &str) -> Option<PathBuf> {
+    let rest = url.strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    let mut bytes = Vec::with_capacity(rest.len());
+    let mut input = rest.bytes();
+    while let Some(b) = input.next() {
+        if b == b'%' {
+            let hex = |c: u8| (c as char).to_digit(16);
+            let (a, b) = (hex(input.next()?)?, hex(input.next()?)?);
+            bytes.push((a * 16 + b) as u8);
+        } else {
+            bytes.push(b);
+        }
+    }
+    let path = String::from_utf8(bytes).ok()?;
+    // `file:///C:/a.txt` on Windows.
+    let path = match path.as_bytes() {
+        [b'/', drive, b':', ..] if cfg!(windows) && drive.is_ascii_alphabetic() => &path[1..],
+        _ => &path,
+    };
+    Some(PathBuf::from(path))
+}
+
+/// As [`run`], with `args` after the script: the script's `ui.args`, and
+/// those that name files opened with it (its `ui.on_open`), as a file
+/// opened with an app is.
+pub fn run_with(path: &Path, args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    use std::{cell::RefCell, rc::Rc};
     let script = script_path(path);
     if !script.is_file() {
         return Err(format!("{}: no such script", script.display()).into());
@@ -227,43 +266,80 @@ pub fn run(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         glass: config.glass.then(zgui_desktop::Glass::default),
         ..Default::default()
     };
+    let launched: Vec<PathBuf> = args
+        .iter()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .map(|path| path.canonicalize().unwrap_or(path))
+        .collect();
+    // What the system opens goes to the host once there is one (before,
+    // it waits).
+    type Opened = (Vec<PathBuf>, Vec<String>);
+    let host_slot: Rc<RefCell<Option<ScriptHost>>> = Rc::default();
+    let early: Rc<RefCell<Vec<Opened>>> = Rc::default();
     // Its own app on the Linux desktop, not every script one "zgui-run": its
     // windows' Wayland app_id and X11 class, matched to `app_id.desktop`.
-    Application::new()
+    let mut app = Application::new()
         .window(options)
-        .desktop_id(config.app_id.clone())
-        .run(move |cx| {
-            let host = ScriptHost::new(&cx.ui.runtime, script.clone()).app_id(&config.app_id);
-            // `ui.window.titlebar_area`: where the title bar leaves the script room.
-            host.window_chrome(
-                cx.window_info.titlebar_area.clone(),
-                cx.window_info.controls.clone(),
-            );
-            let _ = host.reload();
-            cx.tasks.spawn(host.watch(Duration::from_millis(250)));
-            // The script's commands are the menu bar; their keys work wherever
-            // focus is.
-            let commands = host.commands();
-            let windows = cx.windows.clone();
-            let menus_follow = cx.ui.runtime.effect(move || {
-                if let Err(error) = windows.set_menus(menus(&commands.get())) {
-                    eprintln!("zgui run: menus: {error}");
+        .desktop_id(config.app_id.clone());
+    if let Some(id) = &config.application_id {
+        let (slot, early) = (host_slot.clone(), early.clone());
+        app = app
+            .application_id(id.clone())?
+            .on_application_event(move |event, _| {
+                let zgui_desktop::ApplicationEvent::OpenUrls(urls) = event else {
+                    return;
+                };
+                let (files, urls): (Vec<_>, Vec<_>) =
+                    urls.into_iter().partition(|url| file_path(url).is_some());
+                let files = files.iter().filter_map(|url| file_path(url)).collect();
+                match &*slot.borrow() {
+                    Some(host) => host.open(files, urls),
+                    None => early.borrow_mut().push((files, urls)),
                 }
             });
-            // The script's windows (`ui.window`): each open while its state is.
-            let windows_follow = follow_windows(&host, cx);
-            let run = host.clone();
-            cx.on_menu_action(move |action| {
-                run.run_command(&action.0);
-            });
-            let saving = host.clone();
-            let keep = std::cell::RefCell::new(Some((menus_follow, windows_follow)));
-            cx.on_closed(move || {
-                saving.save();
-                drop(keep.borrow_mut().take());
-            });
-            cx.render(host.view());
-        })?;
+    }
+    app.run(move |cx| {
+        let host = ScriptHost::new(&cx.ui.runtime, script.clone())
+            .app_id(&config.app_id)
+            .args(args.clone());
+        // The launch's files, and what the system opened meanwhile:
+        // they wait for the script's `ui.on_open`.
+        host.open(launched.clone(), Vec::new());
+        for (files, urls) in early.borrow_mut().drain(..) {
+            host.open(files, urls);
+        }
+        *host_slot.borrow_mut() = Some(host.clone());
+        // `ui.window.titlebar_area`: where the title bar leaves the script room.
+        host.window_chrome(
+            cx.window_info.titlebar_area.clone(),
+            cx.window_info.controls.clone(),
+        );
+        let _ = host.reload();
+        cx.tasks.spawn(host.watch(Duration::from_millis(250)));
+        // The script's commands are the menu bar; their keys work wherever
+        // focus is.
+        let commands = host.commands();
+        let windows = cx.windows.clone();
+        let menus_follow = cx.ui.runtime.effect(move || {
+            if let Err(error) = windows.set_menus(menus(&commands.get())) {
+                eprintln!("zgui run: menus: {error}");
+            }
+        });
+        // The script's windows (`ui.window`): each open while its state is.
+        let windows_follow = follow_windows(&host, cx);
+        let run = host.clone();
+        cx.on_menu_action(move |action| {
+            run.run_command(&action.0);
+        });
+        let saving = host.clone();
+        let keep = std::cell::RefCell::new(Some((menus_follow, windows_follow)));
+        cx.on_closed(move || {
+            saving.save();
+            drop(keep.borrow_mut().take());
+        });
+        cx.render(host.view());
+    })?;
     Ok(())
 }
 
@@ -351,6 +427,33 @@ mod tests {
         assert_eq!(new.modifiers.meta, cfg!(target_os = "macos"));
         assert_eq!(new.modifiers.control, !cfg!(target_os = "macos"));
         assert!(accelerator("super+n").unwrap().0.modifiers.meta);
+        std::fs::write(
+            dir.join("zgui.json"),
+            r#"{ "app_id": "code", "application_id": "dev.zgui.code" }"#,
+        )
+        .unwrap();
+        let config = AppConfig::for_script(&script).unwrap();
+        assert_eq!(config.application_id.as_deref(), Some("dev.zgui.code"));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn file_urls_the_system_opens_are_paths_and_others_are_not() {
+        assert_eq!(
+            file_path("file:///tmp/a%20b.rs"),
+            Some(PathBuf::from("/tmp/a b.rs"))
+        );
+        assert_eq!(
+            file_path("file://localhost/tmp/x"),
+            Some(PathBuf::from("/tmp/x"))
+        );
+        assert_eq!(file_path("https://example.org/a"), None);
+        assert_eq!(file_path("file:///bad%zz"), None);
+        if cfg!(windows) {
+            assert_eq!(
+                file_path("file:///C:/a%20b.txt"),
+                Some(PathBuf::from("C:/a b.txt"))
+            );
+        }
     }
 }
