@@ -1,3 +1,55 @@
+# Correction (2026-10-24): macOS runs of 2026-10-23/24 built zgui with mimalloc
+
+The macOS comparisons published on 2026-10-23 and 2026-10-24 at `51a669c` (lab, heavy and animate) built zgui with **mimalloc** as its allocator, unintentionally, while GPUI, GPUI Fast and QuickGUI used the system allocator. zgui-desktop had `zgui-run` as a dev-dependency, and `zgui-run` turns on mimalloc by default; Cargo unifies features, so every zgui-desktop example (the comparison workloads among them) was built with it from `919b719` on. #332 fixed the dependency. All three scenes were re-run on `7d559ad` (#332 included; the zgui binaries were checked to contain no mimalloc) with the same protocol: dist builds, three trials per cell, a quiet desktop. The site and the README now show the corrected runs; the old runs stay in place, each with a `CORRECTION.md`.
+
+What changed, medians, old → new (CPU % of one core; GPU megacycles a second; mean footprint in MB; the window server's CPU less the desktop alone's):
+
+### Lab: [`latest-macos-2026-10-23-51a669c`](latest-macos-2026-10-23-51a669c/) → [`latest-macos-2026-10-24-7d559ad`](latest-macos-2026-10-24-7d559ad/)
+| Framework | Mode | CPU % old → new | GPU Mcyc/s old → new | memory MB old → new | WS CPU % (+) old → new |
+| --- | --- | --- | --- | --- | --- |
+| zgui | both | 4.35 → 3.68 | 13.0 → 12.9 | 238 → 238 | 7.4 → 17.5 |
+| zgui | idle | 0.06 → 0.00 | 0.0 → 0.0 | 98 → 104 | -1.0 → -0.0 |
+| zgui | scroll | 3.47 → 2.73 | 11.3 → 12.1 | 236 → 236 | 8.3 → 18.2 |
+| zgui | stream | 4.10 → 3.24 | 11.2 → 11.8 | 237 → 236 | 3.3 → 18.0 |
+| gpui | both | 7.23 → 6.99 | 16.0 → 18.1 | 251 → 249 | 10.1 → 16.6 |
+| gpui | idle | 0.43 → 0.38 | 0.0 → 0.0 | 132 → 106 | -0.8 → 0.4 |
+| gpui | scroll | 5.56 → 5.10 | 13.4 → 17.9 | 246 → 246 | 5.0 → 16.1 |
+| gpui | stream | 7.14 → 6.50 | 18.4 → 18.1 | 250 → 249 | -2.4 → 16.7 |
+| gpui-fast | both | 6.18 → 5.83 | 15.5 → 18.1 | 242 → 239 | 6.8 → 16.4 |
+| gpui-fast | idle | 0.44 → 0.40 | 0.0 → 0.0 | 121 → 95 | -0.6 → -0.0 |
+| gpui-fast | scroll | 4.72 → 4.44 | 13.6 → 18.1 | 242 → 236 | 3.8 → 17.4 |
+| gpui-fast | stream | 5.89 → 5.48 | 18.5 → 18.3 | 250 → 238 | 2.8 → 16.1 |
+| quickgui | both | 16.97 → 15.71 | 21.2 → 24.2 | 415 → 415 | -0.5 → 17.2 |
+| quickgui | idle | 0.07 → 0.01 | 0.0 → 0.0 | 173 → 136 | -1.0 → -0.0 |
+| quickgui | scroll | 9.73 → 8.95 | 24.4 → 24.1 | 402 → 413 | 0.8 → 17.3 |
+| quickgui | stream | 15.58 → 14.98 | 18.1 → 24.2 | 411 → 414 | 1.2 → 16.7 |
+
+### Heavy: [`latest-macos-heavy-2026-10-23-51a669c`](latest-macos-heavy-2026-10-23-51a669c/) → [`latest-macos-heavy-2026-10-24-7d559ad`](latest-macos-heavy-2026-10-24-7d559ad/)
+| Framework | Mode | CPU % old → new | GPU Mcyc/s old → new | memory MB old → new | WS CPU % (+) old → new |
+| --- | --- | --- | --- | --- | --- |
+| zgui | both | 10.83 → 9.85 | 17.7 → 19.8 | 262 → 260 | 8.1 → 16.2 |
+| zgui | idle | 0.07 → 0.00 | 0.0 → 0.0 | 107 → 116 | 7.7 → -0.0 |
+| zgui | scroll | 3.43 → 3.24 | 10.7 → 12.3 | 255 → 255 | 11.1 → 17.5 |
+| zgui | stream | 9.80 → 8.84 | 11.8 → 16.5 | 261 → 259 | 15.3 → 17.3 |
+| gpui | both | 22.05 → 22.92 | 18.9 → 22.4 | 276 → 273 | 5.9 → 15.8 |
+| gpui | idle | 0.42 → 0.35 | 0.0 → 0.0 | 157 → 137 | -1.4 → 0.3 |
+| gpui | scroll | 14.89 → 15.96 | 21.2 → 21.7 | 273 → 273 | 10.7 → 17.2 |
+| gpui | stream | 21.49 → 22.71 | 17.6 → 22.1 | 274 → 273 | 6.9 → 15.7 |
+| gpui-fast | both | 14.89 → 15.65 | 21.0 → 21.6 | 276 → 273 | 9.5 → 17.1 |
+| gpui-fast | idle | 0.43 → 0.38 | 0.0 → 0.0 | 129 → 111 | 5.1 → 0.1 |
+| gpui-fast | scroll | 8.01 → 8.53 | 21.3 → 21.9 | 273 → 261 | 14.6 → 17.4 |
+| gpui-fast | stream | 14.27 → 15.27 | 21.3 → 21.6 | 276 → 259 | 11.3 → 16.9 |
+
+### Animate: [`latest-macos-animate-2026-10-24-51a669c`](latest-macos-animate-2026-10-24-51a669c/) → [`latest-macos-animate-2026-10-24-7d559ad`](latest-macos-animate-2026-10-24-7d559ad/)
+| Framework | Mode | CPU % old → new | GPU Mcyc/s old → new | memory MB old → new | WS CPU % (+) old → new |
+| --- | --- | --- | --- | --- | --- |
+| zgui | animate | 5.43 → 5.02 | 17.6 → 20.6 | 247 → 248 | 20.3 → 37.6 |
+| gpui | animate | 7.19 → 7.64 | 17.4 → 27.7 | 248 → 249 | 20.6 → 37.3 |
+| gpui-fast | animate | 5.45 → 5.84 | 17.8 → 27.8 | 249 → 250 | 20.2 → 37.3 |
+
+
+zgui leads on CPU and GPU in every active cell of both runs. In memory, the new heavy run shows GPUI Fast lower than zgui at idle (111 vs 116 MB, where the driver's return of its startup memory decides the 5–20 s mean) and level with it in `stream` (259 vs 259). The window server's added CPU reads 15–18% for every framework on 2026-10-24, against at most 15% on 2026-10-23: the desktop differed between the days (every framework moved), so compare within a run.
+
 # Historical direct-scene GPU comparison on Xvfb / llvmpipe
 
 The latest [parity-expansion component series](gpui-parity-workers4/README.md)

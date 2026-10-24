@@ -1,12 +1,12 @@
 {
-  "date": "2026-10-23",
-  "commit": "51a669c0847f7316dd56c254da7428fd9aad07e9",
+  "date": "2026-10-24",
+  "commit": "7d559add0724ec67a7a7875148f9123f10fcf9ae",
   "scene": "lab",
   "source_dirty": false,
-  "trials": 51,
-  "samples": 12201,
+  "trials": 43,
+  "samples": 10301,
   "updates": {
-    "min": 59.8,
+    "min": 59.85,
     "max": 59.95
   },
   "environment": "Apple M5 Max (Mac17,6), macOS 26.4 (25E246), Metal; on AC Power",
@@ -18,6 +18,8 @@
     "sampled_seconds": 15,
     "interval_seconds": 0.05,
     "repeats": 3,
+    "idle_repeats": 1,
+    "quick": false,
     "frameworks": [
       "zgui",
       "gpui",
@@ -32,22 +34,23 @@
     ],
     "pacing_seconds": 8,
     "pacing_repeats": 8,
+    "pacing_during_trials": false,
     "acceptance_updates_per_second": [
       58,
       61
     ]
   },
   "frameworks": {
-    "zgui": "51a669c0847f7316dd56c254da7428fd9aad07e9",
+    "zgui": "7d559add0724ec67a7a7875148f9123f10fcf9ae",
     "gpui": "0.2.2",
     "quickgui": "811d6e2816d5229711f59683c4c9dfbb6fc74133"
   },
-  "csv_sha256": "5057ed59f1a8dedf6ec8f2c6d3d5c69b0cf6633b8601771f7227665ae039a9f7",
-  "source_csv_sha256": "cac4b39d2aa2b811c15d266e0ed66fbb58f649ce22adc59cb425692a37b09986",
+  "csv_sha256": "27fd8396e313f4d6f395268621083f422ee2cbe03076caff49e2fc797d1b8d4f",
+  "source_csv_sha256": "4ce48df233e6e8b9089e9a9c9fa8899dfea6b51eba17c69539b12354a4a534b0",
   "binaries": {
     "zgui": {
-      "sha256": "f230f8f6cf0519ffc8af7f0ece758936d28a48476d2b4fb3d6f55a4c6693dd0c",
-      "bytes": 11490784
+      "sha256": "a28fecd888fcb8726f711b64cc3d56e7cc46564509aa01ee4c6d89da63a8ad94",
+      "bytes": 11696512
     },
     "gpui": {
       "sha256": "b77ece194ba18c244007f463e4607ac012328c88cd7e195377bdc1f389bc3486",
@@ -58,7 +61,7 @@
       "bytes": 6732848
     },
     "quickgui": {
-      "sha256": "7b453975de338bdeee358f667e37fd753f987daed2ffec163ab058323b806cbf",
+      "sha256": "8b644305ef7e699d2b80cd6a58686bbc51d4c01db5f28967b0e4b818f5f81f96",
       "bytes": 11110544
     }
   }
