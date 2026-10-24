@@ -3268,6 +3268,12 @@ impl Scene {
             }
         } else {
             let index = self.slots.len() as u32;
+            // Half as much again, not double: a slot is most of a kilobyte,
+            // and doubling leaves up to half of them unused (650 KB in the
+            // heavy dashboard's 1,179 nodes).
+            if self.slots.len() == self.slots.capacity() {
+                self.slots.reserve_exact((self.slots.len() / 2).max(16));
+            }
             self.slots.push(Slot {
                 generation: 0,
                 dead: false,
