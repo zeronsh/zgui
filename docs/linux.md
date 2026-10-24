@@ -78,7 +78,11 @@ notification. `launch_token_smoke.py` checks all four.
 ## File dialogs
 
 File choosers go through the desktop's portal (`org.freedesktop.portal.FileChooser`),
-owned by their window and closed with it. Where no portal answers (a window
+owned by their window and closed with it: modal, and attached to it (the
+request's `parent_window`). A chooser dismissed any way is no choice
+(`Ok(None)`): its Cancel button, and Escape or its window's close button,
+which GTK's portal answers as "ended another way". `portal_dialog_smoke.py`
+checks it through xdg-desktop-portal and its GTK backend. Where no portal answers (a window
 manager alone: Openbox, i3, a sway without xdg-desktop-portal), zgui shows
 zenity's chooser, GTK's, as rfd and Chromium fall back to GTK's own: modal,
 attached to its window on X11 with zenity 3, and ended when its window closes

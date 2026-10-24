@@ -71,6 +71,7 @@ SMOKES = [
     ("xdnd-source", "python3 scripts/xdnd_source_smoke.py {bin} --output {out}", False),
     ("wayland-drag-out", "python3 scripts/wayland_drag_out_smoke.py {bin} --output {out}", False),
     ("zenity-dialog", "python3 scripts/zenity_dialog_smoke.py {bin}/platform_services --output {out}", False),
+    ("portal-dialog", "python3 scripts/portal_dialog_smoke.py {bin}/platform_services --output {out}", False),
     ("launch-token", "python3 scripts/launch_token_smoke.py {bin}/gallery {bin}/native_platform --output {out}", False),
     ("double-click-time", "python3 scripts/double_click_time_smoke.py {bin}/primary_selection --output {out}", False),
     ("touchpad-fling", "python3 scripts/touchpad_fling_smoke.py {bin}/scroll --output {out}", False),

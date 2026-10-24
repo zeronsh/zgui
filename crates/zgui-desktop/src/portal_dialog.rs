@@ -178,21 +178,7 @@ pub(crate) fn select(
                 .map(|index| pending.swap_remove(index))
         };
         if let Some((_, code, values)) = response {
-            return match code {
-                1 => Ok(None),
-                0 => {
-                    let uris = values
-                        .get("uris")
-                        .and_then(|v| v.0.as_iter())
-                        .ok_or(FileDialogError::BackendUnavailable)?;
-                    let paths = uris
-                        .map(|v| v.as_str().and_then(file_uri))
-                        .collect::<Option<Vec<_>>>()
-                        .ok_or(FileDialogError::BackendUnavailable)?;
-                    Ok(Some(paths))
-                }
-                _ => Err(FileDialogError::BackendUnavailable),
-            };
+            return answer(code, &values);
         }
         // Asleep until the portal answers or the request is cancelled.
         match cancel.wake() {
@@ -207,6 +193,26 @@ pub(crate) fn select(
                     .map_err(unavailable)?;
             }
         }
+    }
+}
+/// What the portal's `Response` says: 0, the paths chosen; 1, cancelled; 2,
+/// ended another way, which GTK's chooser says for Escape and its window's
+/// close button, and is no choice either.
+fn answer(code: u32, values: &PropMap) -> FileDialogResult<Vec<PathBuf>> {
+    match code {
+        1 | 2 => Ok(None),
+        0 => {
+            let uris = values
+                .get("uris")
+                .and_then(|v| v.0.as_iter())
+                .ok_or(FileDialogError::BackendUnavailable)?;
+            let paths = uris
+                .map(|v| v.as_str().and_then(file_uri))
+                .collect::<Option<Vec<_>>>()
+                .ok_or(FileDialogError::BackendUnavailable)?;
+            Ok(Some(paths))
+        }
+        _ => Err(FileDialogError::BackendUnavailable),
     }
 }
 pub(crate) fn file_uri(uri: &str) -> Option<PathBuf> {
@@ -250,5 +256,19 @@ mod tests {
         assert!(file_uri("file://remote/tmp/a").is_none());
         assert!(file_uri("file:///a%00b").is_none());
         assert!(file_uri("file:///a%xx").is_none());
+    }
+    #[test]
+    fn a_chooser_dismissed_any_way_is_no_choice() {
+        let mut chosen = PropMap::new();
+        option(&mut chosen, "uris", vec!["file:///tmp/a%20b".to_owned()]);
+        assert_eq!(
+            answer(0, &chosen).unwrap(),
+            Some(vec![PathBuf::from("/tmp/a b")])
+        );
+        // Cancel, and Escape or the close button (GTK's 2).
+        assert_eq!(answer(1, &PropMap::new()).unwrap(), None);
+        assert_eq!(answer(2, &PropMap::new()).unwrap(), None);
+        assert!(answer(0, &PropMap::new()).is_err(), "chosen, but no paths");
+        assert!(answer(3, &PropMap::new()).is_err());
     }
 }

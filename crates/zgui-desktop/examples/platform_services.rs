@@ -10,6 +10,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // For overwrite-sheet teardown: set ZGUI_DIALOG_DIRECTORY to a directory
     // containing saved.txt, launch --close-save, then press Save before the timer.
     // This fixture selects paths only and never writes the existing file.
+    // --smoke opens a file; ZGUI_DIALOG_ACTION=save (or another menu action)
+    // shows that dialog instead.
     let close_save = std::env::args().any(|arg| arg == "--close-save");
     let smoke = close_save || std::env::args().any(|arg| arg == "--smoke");
     let close_picker = close_save || std::env::args().any(|arg| arg == "--close-picker");
@@ -169,9 +171,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         if smoke {
             let window = cx.window.clone();
+            let action = std::env::var("ZGUI_DIALOG_ACTION")
+                .unwrap_or_else(|_| (if close_save { "save" } else { "open" }).into());
             cx.tasks.spawn(async move {
                 zgui::timer::sleep(std::time::Duration::from_secs(1)).await;
-                window.dispatch_menu_action(if close_save { "save" } else { "open" });
+                window.dispatch_menu_action(action.as_str());
                 zgui::timer::sleep(std::time::Duration::from_secs(25)).await;
                 window.close();
             });
