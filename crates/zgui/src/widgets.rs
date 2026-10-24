@@ -356,7 +356,9 @@ pub struct Ui {
 const RECLAIM_NOW: usize = 256;
 /// Effects freed between looks at the clock (`Ui::reclaim`).
 const RECLAIM_CHUNK: usize = 64;
-/// What freeing removed nodes may take of a frame being prepared.
+/// What freeing removed nodes may take of a frame being prepared. A chunk
+/// can overrun it while the system allocator returns pages (6–9 ms on
+/// macOS over the first); mimalloc doesn't (zgui-desktop's `mimalloc`).
 pub const RECLAIM_BUDGET: std::time::Duration = std::time::Duration::from_millis(1);
 const EDITOR_CACHE_TEXT_LIMIT: usize = 64 * 1024;
 const EDITOR_CACHE_WEIGHT_LIMIT: usize = 1024 * 1024;
