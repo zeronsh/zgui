@@ -153,22 +153,52 @@ impl Key {
     }
 }
 
-/// A shaped word, reduced to what line breaking reads.
+/// A shaped word, reduced to what line breaking reads (in a chunk of the
+/// `Slab`, packed: see `Word::pack`).
 #[derive(Clone, Copy)]
 struct Word {
     width: f32,
     blank: bool,
-    /// The first of its glyph advances in `Compact::glyphs`; the next word's
-    /// first ends them.
+    /// The first of its glyph advances among its compact's (`Compact::glyphs`);
+    /// the next word's first ends them.
     glyphs: u32,
     /// The line height its glyphs set, if they set one.
     line_height: Option<f32>,
 }
 
+/// A word packed in three of a chunk's words: its width, its first glyph
+/// advance with `blank` in the top bit, and its line height (`NONE` for
+/// none, a NaN no font's metrics give).
+type Packed = [u32; 3];
+impl Word {
+    const NONE: u32 = u32::MAX;
+    const BLANK: u32 = 1 << 31;
+    fn pack(self) -> Packed {
+        [
+            self.width.to_bits(),
+            self.glyphs | if self.blank { Self::BLANK } else { 0 },
+            self.line_height.map_or(Self::NONE, f32::to_bits),
+        ]
+    }
+    #[inline]
+    fn of(packed: &Packed) -> Self {
+        Self {
+            width: f32::from_bits(packed[0]),
+            blank: packed[1] & Self::BLANK != 0,
+            glyphs: packed[1] & !Self::BLANK,
+            line_height: (packed[2] != Self::NONE).then(|| f32::from_bits(packed[2])),
+        }
+    }
+}
+
 /// A text's line breaking inputs, without glyphs.
 struct Compact {
-    words: Vec<Word>,
-    glyphs: Vec<f32>,
+    /// Its packed words (`Packed`), then their glyph advances, at
+    /// `start..end` of chunk `chunk` of the cache's `Slab`.
+    chunk: u32,
+    start: u32,
+    end: u32,
+    words: u32,
     /// Every line's spans, as ranges of `words` (inline for the usual one:
     /// a compact is made for every new text).
     spans: smallvec::SmallVec<[Range<u32>; 1]>,
@@ -180,14 +210,10 @@ impl Compact {
     /// The measurements of shaped `lines`, or None where arithmetic over them
     /// would not match cosmic-text: right-to-left or mixed-direction lines,
     /// justified lines, or a word whose glyphs set different line heights.
-    /// `spares` hold retired compacts' lists, to fill rather than allocate.
-    fn of(
-        lines: &[BufferLine],
-        font_size: f32,
-        spares: &mut Vec<(Vec<Word>, Vec<f32>)>,
-    ) -> Option<Self> {
-        // Counted first, each list is allocated once at its size: a text
-        // changing every frame (a stream's) is prepared every frame.
+    /// Its words and advances go at the end of `slab`'s lists.
+    fn of(lines: &[BufferLine], font_size: f32, slab: &mut Slab) -> Option<Self> {
+        // Counted first, the lists grow once: a text changing every frame
+        // (a stream's) is prepared every frame.
         let (mut spans, mut words, mut glyphs) = (0, 0, 0);
         for line in lines {
             let shape = line.shape_opt()?;
@@ -204,67 +230,89 @@ impl Compact {
                     .sum::<usize>();
             }
         }
-        let (spare_words, spare_glyphs) = spare(spares, words, glyphs);
+        let index = slab.room(3 * words + glyphs);
+        let chunk = slab.chunks[index].as_mut().expect("live chunk");
+        let start = chunk.data.len();
+        // Its words, then their advances, filled in place.
+        chunk.data.resize(start + 3 * words + glyphs, 0);
+        let (packed, advances) = chunk.data[start..].split_at_mut(3 * words);
+        let (packed, _) = packed.as_chunks_mut::<3>();
         let mut compact = Self {
-            words: spare_words,
-            glyphs: spare_glyphs,
+            chunk: index as u32,
+            start: start as u32,
+            end: (start + 3 * words + glyphs) as u32,
+            words: words as u32,
             spans: smallvec::SmallVec::with_capacity(spans),
             lines: smallvec::SmallVec::with_capacity(lines.len()),
         };
-        for line in lines {
-            let shape = line.shape_opt()?;
-            let first_span = compact.spans.len() as u32;
-            for span in &shape.spans {
-                if span.level.is_rtl() {
-                    return None;
-                }
-                let first = compact.words.len() as u32;
-                for word in &span.words {
-                    let glyphs = compact.glyphs.len() as u32;
-                    let line_height = word
-                        .glyphs
-                        .first()
-                        .and_then(|glyph| glyph.metrics_opt)
-                        .map(|metrics| metrics.line_height);
-                    for glyph in &word.glyphs {
-                        if glyph.metrics_opt.map(|metrics| metrics.line_height) != line_height {
-                            return None;
-                        }
-                        compact.glyphs.push(glyph.width(font_size));
+        let (mut word_at, mut glyph_at) = (0, 0);
+        // What does not qualify leaves the chunk as it was.
+        let filled = (|| {
+            for line in lines {
+                let shape = line.shape_opt()?;
+                let first_span = compact.spans.len() as u32;
+                for span in &shape.spans {
+                    if span.level.is_rtl() {
+                        return None;
                     }
-                    compact.words.push(Word {
-                        width: word.width(font_size),
-                        blank: word.blank,
-                        glyphs,
-                        line_height,
-                    });
+                    let first = word_at as u32;
+                    for word in &span.words {
+                        let glyphs = glyph_at as u32;
+                        let line_height = word
+                            .glyphs
+                            .first()
+                            .and_then(|glyph| glyph.metrics_opt)
+                            .map(|metrics| metrics.line_height);
+                        for glyph in &word.glyphs {
+                            if glyph.metrics_opt.map(|metrics| metrics.line_height) != line_height {
+                                return None;
+                            }
+                            advances[glyph_at] = glyph.width(font_size).to_bits();
+                            glyph_at += 1;
+                        }
+                        packed[word_at] = Word {
+                            width: word.width(font_size),
+                            blank: word.blank,
+                            glyphs,
+                            line_height,
+                        }
+                        .pack();
+                        word_at += 1;
+                    }
+                    compact.spans.push(first..word_at as u32);
                 }
-                compact.spans.push(first..compact.words.len() as u32);
+                compact.lines.push((
+                    first_span..compact.spans.len() as u32,
+                    shape.metrics_opt.map(|metrics| metrics.line_height),
+                ));
             }
-            compact.lines.push((
-                first_span..compact.spans.len() as u32,
-                shape.metrics_opt.map(|metrics| metrics.line_height),
-            ));
+            Some(())
+        })();
+        if filled.is_none() {
+            // As if made and dropped at once: no gap, no text counted.
+            slab.unmake(index, start);
+            return None;
         }
         Some(compact)
     }
     fn bytes(&self) -> usize {
-        self.words.len() * size_of::<Word>()
-            + self.glyphs.len() * size_of::<f32>()
+        (self.end - self.start) as usize * size_of::<u32>()
             + self.spans.len() * size_of::<Range<u32>>()
             + self.lines.len() * size_of::<(Range<u32>, Option<f32>)>()
     }
-    fn advances(&self, word: usize) -> &[f32] {
-        let end = self
-            .words
+    /// Word `word`'s glyph advances (as bits), of `words` and `glyphs`
+    /// (this compact's).
+    fn advances<'a>(words: &[Packed], glyphs: &'a [u32], word: usize) -> &'a [u32] {
+        let end = words
             .get(word + 1)
-            .map_or(self.glyphs.len(), |next| next.glyphs as usize);
-        &self.glyphs[self.words[word].glyphs as usize..end]
+            .map_or(glyphs.len(), |next| Word::of(next).glyphs as usize);
+        &glyphs[Word::of(&words[word]).glyphs as usize..end]
     }
     /// The size cosmic-text's word-or-glyph wrapping gives these lines at
     /// `width`: the widest line, and the sum of line heights. This follows
     /// its congruent-direction branch step by step.
-    fn size(&self, width: Option<f32>, line_height: f32) -> (f32, f32) {
+    fn size(&self, slab: &Slab, width: Option<f32>, line_height: f32) -> (f32, f32) {
+        let (all_words, glyphs) = slab.of(self);
         let limit = crate::text::wrap_width(width).unwrap_or(f32::INFINITY);
         let (mut widest, mut height) = (0_f32, 0_f32);
         for (spans, empty) in &self.lines {
@@ -281,12 +329,13 @@ impl Compact {
             };
             for span in spans {
                 let offset = span.start as usize;
-                let words = &self.words[offset..span.end as usize];
+                let words = &all_words[offset..span.end as usize];
                 // Where the words not yet added start: (word, glyph).
                 let mut fitting = (0, 0);
                 let mut range_width = 0_f32;
                 let mut before_last_blank = 0_f32;
-                for (i, word) in words.iter().enumerate() {
+                for (i, packed) in words.iter().enumerate() {
+                    let word = Word::of(packed);
                     if line.w + (range_width + word.width) <= limit
                         || (word.blank && line.w + range_width <= limit)
                     {
@@ -303,20 +352,22 @@ impl Compact {
                             range_width = 0.;
                             fitting = (i, 0);
                         }
-                        for (glyph, advance) in self.advances(offset + i).iter().enumerate() {
+                        let advances = Self::advances(all_words, glyphs, offset + i);
+                        for (glyph, advance) in advances.iter().enumerate() {
+                            let advance = f32::from_bits(*advance);
                             if line.w + (range_width + advance) <= limit {
                                 range_width += advance;
                             } else {
                                 line.add(words, fitting, (i, glyph), range_width);
                                 push(&mut line);
-                                range_width = *advance;
+                                range_width = advance;
                                 fitting = (i, glyph);
                             }
                         }
                     } else {
                         if range_width > 0. {
                             // A blank before the break is left out.
-                            if i > 0 && words[i - 1].blank {
+                            if i > 0 && Word::of(&words[i - 1]).blank {
                                 line.add(words, fitting, (i - 1, 0), before_last_blank);
                             } else {
                                 line.add(words, fitting, (i, 0), range_width);
@@ -343,39 +394,123 @@ impl Compact {
     }
 }
 
-/// The most items a list kept for `len` may have room for: a compact is
-/// kept as long as its text, and spares taken whatever their size passed
-/// the largest capacity any text had to every text after it (a megabyte
-/// held for 30 KB of measurements in a dashboard).
-fn roomiest(len: usize) -> usize {
-    2 * len.max(8)
+/// Every compact's words and glyph advances, in chunks of a fixed size
+/// rather than two allocations a text: texts dropped among kept ones left
+/// allocator pages it could not give back (in a dashboard, 2 MiB of holes
+/// in the 3.5 and 7 KB size classes), and one list grown by doubling held
+/// its old and new copies at once. A text goes in the newest chunk with
+/// room (one too big for a chunk gets its own), its packed words then its
+/// advances; a chunk whose texts are all dropped is freed, its pages with
+/// it, and one mostly gaps has its texts moved to the newest and is freed.
+#[derive(Default)]
+struct Slab {
+    chunks: Vec<Option<Chunk>>,
+    /// Where texts go while it has room.
+    newest: Option<usize>,
 }
-/// The spare lists to fill for `words` and `glyphs`: the latest retired
-/// that has room for both and not too much, else one with too little,
-/// else new ones. A spare with too much room waits for a text its size.
-fn spare(
-    spares: &mut Vec<(Vec<Word>, Vec<f32>)>,
-    words: usize,
-    glyphs: usize,
-) -> (Vec<Word>, Vec<f32>) {
-    let (most_words, most_glyphs) = (roomiest(words), roomiest(glyphs));
-    let fits = |(w, g): &(Vec<Word>, Vec<f32>)| {
-        (words..=most_words).contains(&w.capacity())
-            && (glyphs..=most_glyphs).contains(&g.capacity())
-    };
-    let small =
-        |(w, g): &(Vec<Word>, Vec<f32>)| w.capacity() <= most_words && g.capacity() <= most_glyphs;
-    let (mut w, mut g) = match spares.iter().rposition(fits) {
-        Some(i) => spares.swap_remove(i),
-        None => spares
-            .iter()
-            .rposition(small)
-            .map(|i| spares.swap_remove(i))
-            .unwrap_or_default(),
-    };
-    w.reserve_exact(words);
-    g.reserve_exact(glyphs);
-    (w, g)
+struct Chunk {
+    data: Vec<u32>,
+    /// Texts in it, and the length dropped ones held.
+    texts: usize,
+    dropped: usize,
+}
+/// A chunk's length: 64 KiB, an allocation of whole pages of its own,
+/// given back whole.
+const CHUNK: usize = 16 * 1024;
+impl Slab {
+    /// `compact`'s words and glyph advances.
+    fn of(&self, compact: &Compact) -> (&[Packed], &[u32]) {
+        let chunk = self.chunks[compact.chunk as usize]
+            .as_ref()
+            .expect("live chunk");
+        let data = &chunk.data[compact.start as usize..compact.end as usize];
+        let (words, glyphs) = data.split_at(3 * compact.words as usize);
+        (words.as_chunks().0, glyphs)
+    }
+    /// The chunk a text of `length` goes in, counted in it.
+    fn room(&mut self, length: usize) -> usize {
+        let fits = |chunk: &Chunk| chunk.data.capacity() - chunk.data.len() >= length;
+        let index = match self.newest {
+            Some(index) if self.chunks[index].as_ref().is_some_and(fits) => index,
+            _ => {
+                let large = length > CHUNK;
+                let chunk = Chunk {
+                    data: Vec::with_capacity(length.max(CHUNK)),
+                    texts: 0,
+                    dropped: 0,
+                };
+                let index = match self.chunks.iter().position(Option::is_none) {
+                    Some(free) => {
+                        self.chunks[free] = Some(chunk);
+                        free
+                    }
+                    None => {
+                        self.chunks.push(Some(chunk));
+                        self.chunks.len() - 1
+                    }
+                };
+                // A text's own chunk takes no others.
+                if !large {
+                    self.newest = Some(index);
+                }
+                index
+            }
+        };
+        self.chunks[index].as_mut().expect("live chunk").texts += 1;
+        index
+    }
+    /// Uncount a text from chunk `index`, which ends at `start` again; a
+    /// chunk left with no texts is freed.
+    fn unmake(&mut self, index: usize, start: usize) {
+        let chunk = self.chunks[index].as_mut().expect("live chunk");
+        chunk.data.truncate(start);
+        chunk.texts -= 1;
+        if chunk.texts == 0 {
+            self.chunks[index] = None;
+            if self.newest == Some(index) {
+                self.newest = None;
+            }
+        }
+    }
+    /// Count `compact`'s part of its chunk as a gap (none at the chunk's
+    /// end: a stream's previous state, dropped just after it was made); a
+    /// chunk left with no texts is freed, and one mostly gaps has its
+    /// texts, found among `entries`, moved to the newest chunk.
+    fn drop(&mut self, compact: &Compact, entries: &mut FxHashMap<u64, Entry>) {
+        let index = compact.chunk as usize;
+        let chunk = self.chunks[index].as_mut().expect("live chunk");
+        if compact.end as usize == chunk.data.len() {
+            self.unmake(index, compact.start as usize);
+            return;
+        }
+        chunk.dropped += (compact.end - compact.start) as usize;
+        chunk.texts -= 1;
+        if chunk.texts == 0 {
+            self.chunks[index] = None;
+            if self.newest == Some(index) {
+                self.newest = None;
+            }
+            return;
+        }
+        if self.newest == Some(index) || 2 * chunk.dropped <= chunk.data.len() {
+            return;
+        }
+        // Mostly gaps: its texts to the newest chunk, and it goes.
+        let old = self.chunks[index].take().expect("live chunk");
+        for compact in entries
+            .values_mut()
+            .filter_map(|entry| entry.compact.as_mut())
+            .filter(|compact| compact.chunk as usize == index)
+        {
+            let data = &old.data[compact.start as usize..compact.end as usize];
+            let to = self.room(data.len());
+            let chunk = self.chunks[to].as_mut().expect("live chunk");
+            compact.chunk = to as u32;
+            compact.start = chunk.data.len() as u32;
+            compact.end = compact.start + data.len() as u32;
+            chunk.data.extend_from_slice(data);
+        }
+    }
 }
 
 /// A line being filled while breaking.
@@ -388,14 +523,14 @@ struct Visual {
 impl Visual {
     /// Add the words from `start` to `end` ((word, glyph) positions), as
     /// cosmic-text's `add_to_visual_line` does.
-    fn add(&mut self, words: &[Word], start: (usize, usize), end: (usize, usize), width: f32) {
+    fn add(&mut self, words: &[Packed], start: (usize, usize), end: (usize, usize), width: f32) {
         if start == end {
             return;
         }
         self.nonempty = true;
         self.w += width;
         for word in &words[start.0..end.0 + usize::from(end.1 != 0)] {
-            if let Some(height) = word.line_height {
+            if let Some(height) = Word::of(word).line_height {
                 self.height = Some(self.height.map_or(height, |line| line.max(height)));
             }
         }
@@ -446,12 +581,12 @@ impl Entry {
         }
         self.laid = Some(width);
     }
-    fn size(&mut self, fonts: &mut FontSystem, width: Option<f32>) -> (f32, f32) {
+    fn size(&mut self, fonts: &mut FontSystem, slab: &Slab, width: Option<f32>) -> (f32, f32) {
         if let Some((_, size)) = self.sizes.iter().find(|(w, _)| *w == width) {
             return *size;
         }
         let size = match &self.compact {
-            Some(compact) => compact.size(width, self.metrics.line_height),
+            Some(compact) => compact.size(slab, width, self.metrics.line_height),
             None => {
                 self.lay_out(fonts, width);
                 let lines = self.lines.as_deref().expect("laid out");
@@ -545,10 +680,10 @@ pub struct TextCache {
     /// shaping a short value.
     spare: Vec<BufferLine>,
     spare_long: Vec<BufferLine>,
-    /// The emptied line lists and compact measurements of dropped texts,
-    /// filled again by new ones.
+    /// The emptied line lists of dropped texts, filled again by new ones.
     spare_lists: Vec<Vec<BufferLine>>,
-    spare_compacts: Vec<(Vec<Word>, Vec<f32>)>,
+    /// Every compact's words and advances.
+    slab: Slab,
 }
 impl TextCache {
     /// Whether `rich` goes through the cache: clamped or ellipsized text is
@@ -657,7 +792,9 @@ impl TextCache {
         self.entry(fonts, source, true, need)
     }
     fn sized(&mut self, fonts: &mut FontSystem, hash: u64, width: Option<f32>) -> (f32, f32) {
-        let size = self.update(hash, |entry| entry.size(fonts, width));
+        // Measuring changes no compact (`update` is not needed).
+        let entry = self.entries.get_mut(&hash).expect("prepared");
+        let size = entry.size(fonts, &self.slab, width);
         self.evict(hash);
         size
     }
@@ -767,7 +904,7 @@ impl TextCache {
             for line in &mut lines {
                 line.shape(fonts, TAB_WIDTH);
             }
-            let compact = Compact::of(&lines, metrics.font_size, &mut self.spare_compacts);
+            let compact = Compact::of(&lines, metrics.font_size, &mut self.slab);
             // Text that is not drawn keeps no glyphs it can be measured without.
             let detached = need == Need::Detached && compact.is_some();
             let entry = Entry {
@@ -927,19 +1064,15 @@ impl TextCache {
         self.recent.retain(|recent| *recent != hash);
         entry
     }
-    /// Keep a dropped text's lines and measurements for new texts.
+    /// Keep a dropped text's lines for new texts, and give back its part
+    /// of the compact lists.
     fn retire(&mut self, entry: Entry) {
         self.recycle(entry.lines);
         self.retire_compact(entry.compact);
     }
     fn retire_compact(&mut self, compact: Option<Compact>) {
-        if let Some(compact) = compact
-            && self.spare_compacts.len() < SPARE_LINES
-        {
-            let (mut words, mut glyphs) = (compact.words, compact.glyphs);
-            words.clear();
-            glyphs.clear();
-            self.spare_compacts.push((words, glyphs));
+        if let Some(compact) = compact {
+            self.slab.drop(&compact, &mut self.entries);
         }
     }
     /// Keep `lines` for new texts to shape into.
@@ -1281,39 +1414,47 @@ mod tests {
         assert_eq!(long[0].key.text.len(), end - 7);
     }
 
-    /// The lists of dropped texts are kept for new texts, but a short text
-    /// does not take one with room for a long one: compacts keep room for no
-    /// more than twice what they hold.
+    /// Compact measurements go in chunks, and a chunk whose texts are all
+    /// dropped is freed: after a burst of long texts goes, what is held is
+    /// what the kept texts need, and every text measures as before.
     #[test]
-    fn short_texts_keep_no_room_long_ones_left() {
+    fn dropped_texts_give_back_their_chunks() {
         let mut fonts = FontSystem::new();
         let font = FontStyle::default();
         let mut cache = TextCache::default();
+        let held = |cache: &TextCache| -> usize {
+            cache
+                .slab
+                .chunks
+                .iter()
+                .flatten()
+                .map(|chunk| chunk.data.capacity() * size_of::<u32>())
+                .sum()
+        };
+        let value = |i: usize| -> Arc<str> { format!("{i} ms").into() };
+        let mut sizes = Vec::new();
         for i in 0..8 {
+            sizes.push(cache.measure_plain(&mut fonts, &value(i), 14., &font, None));
+        }
+        for i in 0..40 {
             let long: Arc<str> = format!("{i} {}", "a few words of a long line ".repeat(40)).into();
             cache.layout_plain(&mut fonts, &long, 14., &font, Some(320.));
         }
+        let grown = held(&cache);
+        assert!(cache.slab.chunks.iter().flatten().count() > 2);
         // None drawn: past the budget for undrawn text, they are dropped.
         cache.trim([]);
+        let live = cache.slab.chunks.iter().flatten().count();
+        assert!(live <= 1, "{live} chunks left");
         assert!(
-            !cache.spare_compacts.is_empty(),
-            "dropped texts' lists kept"
+            held(&cache) <= grown / 4,
+            "{} of {grown} bytes held",
+            held(&cache)
         );
-        for i in 0..8 {
-            let value: Arc<str> = format!("{i} ms").into();
-            cache.measure_plain(&mut fonts, &value, 14., &font, None);
-        }
-        for entry in cache.entries.values() {
-            let compact = entry.compact.as_ref().expect("measured");
-            assert!(
-                compact.words.capacity() <= roomiest(compact.words.len())
-                    && compact.glyphs.capacity() <= roomiest(compact.glyphs.len()),
-                "{:?}: room for {} words and {} glyphs, holding {} and {}",
-                entry.key.text,
-                compact.words.capacity(),
-                compact.glyphs.capacity(),
-                compact.words.len(),
-                compact.glyphs.len(),
+        for (i, size) in sizes.iter().enumerate() {
+            assert_eq!(
+                cache.measure_plain(&mut fonts, &value(i), 14., &font, None),
+                *size
             );
         }
     }
