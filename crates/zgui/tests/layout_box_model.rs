@@ -782,3 +782,56 @@ fn empty_boxes_are_their_padding_or_their_size() {
     assert_eq!(size("sized"), (12., 7.));
     assert_eq!(size("capped"), (40., 25.));
 }
+
+// Alignment of one child --------------------------------------------------
+
+/// A child's own alignment across (`align_self`) overrides its parent's for
+/// it alone, in a column, a row and an overlay (across is its width there),
+/// alike on the ordinary path and the taffy one.
+#[test]
+fn a_child_aligns_itself_across() {
+    use zgui::scene::Align;
+    for taffy in [false, true] {
+        let extra = || taffy.then(advanced);
+        let (ui, handle) = mount(
+            column()
+                .items_start()
+                .child(
+                    column()
+                        .w(200.)
+                        .items_start()
+                        .child(div().id("stretch").h(10.).align_self(Align::Stretch))
+                        .child(div().id("end").w(50.).h(10.).align_self(Align::End))
+                        .child(div().id("center").w(50.).h(10.).align_self(Align::Center))
+                        .children(extra()),
+                )
+                .child(
+                    row()
+                        .h(40.)
+                        .items_start()
+                        .child(div().id("tall").w(10.).align_self(Align::Stretch))
+                        .child(div().id("low").w(10.).h(10.).align_self(Align::End))
+                        .children(extra()),
+                )
+                .child(
+                    overlay()
+                        .id("overlay")
+                        .w(100.)
+                        .h(30.)
+                        .child(div().id("right").w(20.).h(5.).align_self(Align::End))
+                        .children(extra()),
+                ),
+        );
+        let r = |id: &str| rect(&ui, &handle, id);
+        assert_eq!(
+            (r("stretch").x, r("stretch").width),
+            (0., 200.),
+            "taffy {taffy}"
+        );
+        assert_eq!(r("end").x, 150., "taffy {taffy}");
+        assert_eq!(r("center").x, 75., "taffy {taffy}");
+        assert_eq!(r("tall").height, 40., "taffy {taffy}");
+        assert_eq!(r("low").y - r("tall").y, 30., "taffy {taffy}");
+        assert_eq!(r("right").x - r("overlay").x, 80., "taffy {taffy}");
+    }
+}

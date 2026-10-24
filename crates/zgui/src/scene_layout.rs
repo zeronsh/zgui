@@ -491,6 +491,11 @@ impl Scene {
                         options.visible = None;
                         options.clip_x = None;
                         options.clip_y = None;
+                        // Its own alignment across: laid out here too, but
+                        // for a baseline.
+                        if options.align_self != Some(Align::Baseline) {
+                            options.align_self = None;
+                        }
                         !options.is_empty()
                     })
             })

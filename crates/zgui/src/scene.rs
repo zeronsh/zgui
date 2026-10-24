@@ -4620,15 +4620,21 @@ impl Scene {
                 // overlay's width by `align` and its height by `justify`, as
                 // CSS grid's `justify-items` and `align-items` stretch an item
                 // in its area.
-                let (fill_w, fill_h) = match layout {
-                    Layout::Row => (false, style.align == Align::Stretch),
-                    Layout::Column => (style.align == Align::Stretch, false),
-                    Layout::Overlay => (
-                        style.align == Align::Stretch,
-                        style.justify == Justify::Stretch,
-                    ),
+                // A child's own alignment across (`align_self`), else this
+                // node's (in an overlay, across is its width).
+                let aligned = |s: &Style| {
+                    s.layout_options
+                        .as_deref()
+                        .and_then(|options| options.align_self)
+                        .unwrap_or(style.align)
                 };
                 let stretches = |s: &Style| {
+                    let stretch = aligned(s) == Align::Stretch;
+                    let (fill_w, fill_h) = match layout {
+                        Layout::Row => (false, stretch),
+                        Layout::Column => (stretch, false),
+                        Layout::Overlay => (stretch, style.justify == Justify::Stretch),
+                    };
                     (
                         fill_w
                             && (s.width.is_none() || s.intrinsic_width)
@@ -4964,7 +4970,7 @@ impl Scene {
                     } else {
                         inner_w - w - m.left - m.right
                     };
-                    let cross = match style.align {
+                    let cross = match aligned(s) {
                         Align::Center => cross_free / 2.0,
                         Align::End => cross_free,
                         _ => 0.0,
