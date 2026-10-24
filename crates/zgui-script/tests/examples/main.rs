@@ -5,6 +5,8 @@
 #![allow(clippy::duplicate_mod)]
 #[path = "../catalog_example.rs"]
 mod catalog_example;
+#[path = "../code_editor_example.rs"]
+mod code_editor_example;
 #[path = "../dashboard_example.rs"]
 mod dashboard_example;
 #[path = "../example_scripts.rs"]

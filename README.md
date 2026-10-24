@@ -57,6 +57,7 @@ The examples run from a checkout:
 ```sh
 cargo run --release -p zgui-desktop --example gallery
 cargo run --release -p zgui-run -- crates/zgui-script/examples/mail
+cargo run --release -p zgui-run -- crates/zgui-script/examples/code_editor path/to/file.rs
 cargo run -p zgui-script --bin zgui -- check crates/zgui-script/examples/mail
 ```
 
