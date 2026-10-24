@@ -2324,6 +2324,10 @@ impl Host {
             self.state.focus_requested = false;
         }
         window.request_redraw();
+        #[cfg(target_os = "linux")]
+        self.context
+            .dialogs
+            .set_display(event_loop.owned_display_handle());
         self.context.dialogs.attach(Some(&window));
         self.context
             .window_info

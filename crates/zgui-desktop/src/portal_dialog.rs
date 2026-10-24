@@ -25,6 +25,7 @@ pub(crate) fn select(
     kind: Kind,
     options: FileDialogOptions,
     parent: Arc<Window>,
+    display: Option<winit::event_loop::OwnedDisplayHandle>,
     cancel: Arc<crate::file_dialog::Cancel>,
 ) -> FileDialogResult<Vec<PathBuf>> {
     if cancel.is_cancelled() {
@@ -43,7 +44,10 @@ pub(crate) fn select(
         return zenity(FileDialogError::BackendUnavailable);
     };
     // This guard must be destroyed BEFORE the Arc parent, including every error return.
-    let exported = Parent::new(&parent).ok_or(FileDialogError::BackendUnavailable)?;
+    let exported = display
+        .as_ref()
+        .and_then(|display| Parent::new(&parent, display))
+        .ok_or(FileDialogError::BackendUnavailable)?;
     let mut random = [0u8; 16];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut random))

@@ -136,6 +136,10 @@ pub(crate) enum Kind {
 pub struct FileDialogs {
     owner: crate::WindowHandle,
     native: Rc<RefCell<Option<Weak<Window>>>>,
+    /// The event loop's display, which a dialog's worker holds while it
+    /// uses the window's (`portal_parent`).
+    #[cfg(target_os = "linux")]
+    display: Rc<RefCell<Option<winit::event_loop::OwnedDisplayHandle>>>,
     generation: Rc<Cell<u64>>,
     cancellations: Rc<RefCell<Vec<Weak<Cancel>>>>,
 }
@@ -144,9 +148,16 @@ impl FileDialogs {
         Self {
             owner,
             native: Rc::new(RefCell::new(None)),
+            #[cfg(target_os = "linux")]
+            display: Rc::default(),
             generation: Rc::new(Cell::new(0)),
             cancellations: Rc::new(RefCell::new(Vec::new())),
         }
+    }
+    /// The event loop's display, for the dialogs' workers to hold.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn set_display(&self, display: winit::event_loop::OwnedDisplayHandle) {
+        *self.display.borrow_mut() = Some(display);
     }
     pub(crate) fn attach(&self, window: Option<&Arc<Window>>) {
         #[cfg(target_os = "macos")]
@@ -192,6 +203,12 @@ impl FileDialogs {
             .borrow_mut()
             .push(Arc::downgrade(&cancel));
         let _cancel_on_drop = CancelOnDrop(cancel.clone());
+        #[cfg(target_os = "linux")]
+        let result = {
+            let display = self.display.borrow().clone();
+            native_select(kind, options, parent, display, cancel).await?
+        };
+        #[cfg(not(target_os = "linux"))]
         let result = native_select(kind, options, parent, cancel).await?;
         if self.owner.is_closed() {
             return Err(FileDialogError::WindowClosed);
@@ -337,9 +354,11 @@ async fn native_select(
     kind: Kind,
     options: FileDialogOptions,
     parent: Arc<Window>,
+    display: Option<winit::event_loop::OwnedDisplayHandle>,
     cancel: Arc<Cancel>,
 ) -> FileDialogResult<Vec<PathBuf>> {
-    background(move || crate::portal_dialog::select(kind, options, parent, cancel))?.await?
+    background(move || crate::portal_dialog::select(kind, options, parent, display, cancel))?
+        .await?
 }
 /// A window's handle, taken on its UI thread, for a worker to own a native
 /// dialog with: winit gives raw handles on its own thread only, so rfd,
