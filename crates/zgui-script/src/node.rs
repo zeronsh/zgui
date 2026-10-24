@@ -1164,6 +1164,8 @@ pub(crate) struct Env {
     /// plugin the app loads (`set_plugins`) one no script of the app's can
     /// have (a plugin named `app.luau` does not read the app's).
     pub persist_as: Rc<str>,
+    /// A plugin's: what its states hold, counted against its memory limit.
+    pub meter: Option<Rc<crate::meter::Meter>>,
 }
 /// What a script adds to a slot: the slot, who added it (`ui.slot`'s
 /// `from`) and the node.
@@ -3414,7 +3416,14 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     "ui.use_state is for component state; use ui.state at the top level",
                 ));
             }
-            Ok(State::new(env.runtime.signal(initial)))
+            if let Some(meter) = &env.meter {
+                meter.room(initial.weight())?;
+            }
+            let signal = env.runtime.signal(initial);
+            if let Some(meter) = &env.meter {
+                meter.set(&signal, signal.with_untracked(Value::weight));
+            }
+            Ok(State::new(signal))
         })?,
     )?;
     ui.set(
@@ -3745,7 +3754,16 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (key, initial): (String, Value)| {
             let env = env(lua)?;
             let key = module_key(lua, &env, key);
-            Ok(State::new(env.store.state(&key, initial)))
+            if let Some(meter) = &env.meter
+                && env.store.get(&key).is_none()
+            {
+                meter.room(initial.weight())?;
+            }
+            let signal = env.store.state(&key, initial);
+            if let Some(meter) = &env.meter {
+                meter.set(&signal, signal.with_untracked(Value::weight));
+            }
+            Ok(State::new(signal))
         })?,
     )?;
     // `ui.persist(key, initial)`: state saved in the host's storage and
@@ -3755,11 +3773,16 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (key, initial): (String, Value)| {
             let env = env(lua)?;
             let key = module_key(lua, &env, key);
-            Ok(State::new(env.persist.state(
-                &env.persist_as,
-                &key,
-                initial,
-            )))
+            if let Some(meter) = &env.meter
+                && env.persist.get(&env.persist_as, &key).is_none()
+            {
+                meter.room(initial.weight())?;
+            }
+            let signal = env.persist.state(&env.persist_as, &key, initial);
+            if let Some(meter) = &env.meter {
+                meter.set(&signal, signal.with_untracked(Value::weight));
+            }
+            Ok(State::new(signal))
         })?,
     )?;
     ui.set(
@@ -4000,6 +4023,7 @@ pub(crate) fn computed(lua: &Lua, env: &Env, f: Function) -> Signal<Value> {
 pub(crate) fn computed_state(_: &Lua, env: &Env, f: Function) -> crate::value::State {
     let signal = env.runtime.signal(Value::Nil);
     let (vm, out) = (env.vm.clone(), signal.clone());
+    let meter = env.meter.clone();
     // Its value is there as soon as it is made, even while a component
     // builds (inside a flush), where an effect would run only after the
     // build and its `on_mount`s.
@@ -4010,6 +4034,9 @@ pub(crate) fn computed_state(_: &Lua, env: &Env, f: Function) -> crate::value::S
             let result = vm.call::<mlua::Value>(&f, ()).and_then(|returned| {
                 let table = returned.as_table().cloned();
                 let value = crate::value::convert(returned, Some(&old))?;
+                if let Some(meter) = &meter {
+                    meter.hold(&out, value.weight())?;
+                }
                 if let Some(table) = table {
                     // Readers get the table back, not a conversion.
                     let _ = crate::value::remember(&vm.lua, &table, &value);

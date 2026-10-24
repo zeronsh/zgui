@@ -49,6 +49,7 @@ mod library;
 pub mod lint;
 mod lower;
 pub mod markdown;
+mod meter;
 mod motion;
 mod node;
 mod persist;
@@ -89,7 +90,8 @@ pub struct Limits {
     /// app holds its data there (100,000 table rows take some 60 MB); it
     /// stops a runaway allocation before the process runs out.
     pub memory: usize,
-    /// Heap limit for each plugin's VM, which the app needn't trust.
+    /// Heap limit for each plugin's VM, which the app needn't trust, with
+    /// what its state holds (values Rust keeps, outside the VM) counted in.
     pub plugin_memory: usize,
     /// Budget for evaluating a script on load.
     pub load: Duration,
@@ -1987,6 +1989,7 @@ impl ScriptHost {
         lua.set_memory_limit(memory).map_err(fail)?;
         let deadline: Rc<Cell<Option<Deadline>>> = Rc::default();
         let interrupt = interrupt::install(&lua, deadline.clone(), memory);
+        let watch = interrupt.watch();
         let vm = Rc::new(Vm {
             name: name.clone(),
             lua: lua.clone(),
@@ -2031,6 +2034,7 @@ impl ScriptHost {
                 Script::Plugin { .. } => script.key().into(),
                 _ => name.as_str().into(),
             },
+            meter: plugin.then(|| meter::Meter::new(&lua, memory, watch)),
         });
         node::install(&lua).map_err(fail)?;
         let ui: mlua::Table = lua.globals().get("ui").map_err(fail)?;

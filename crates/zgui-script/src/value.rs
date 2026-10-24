@@ -6,7 +6,11 @@
 //! first shared subtree. Scripts see values as read-only tables and change
 //! state through its methods: `set`, `set_key`, `patch`, `update`, `insert`.
 use mlua::{FromLua, IntoLua, Lua, Table, UserData, UserDataMethods};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 use zgui::reactive::{Runtime, Signal};
 
 /// A script value. State holds these, so equal writes are suppressed like any
@@ -30,6 +34,9 @@ pub enum Value {
     /// only to itself, and `null` as JSON.
     Element(ElementHandle),
 }
+
+/// A value's room in a list or map, for `Value::weight`.
+const SLOT: usize = std::mem::size_of::<Value>();
 
 /// A mounted (or once mounted) element held in state.
 #[derive(Clone)]
@@ -121,6 +128,24 @@ impl Value {
             }
         }
         convert(self).to_string()
+    }
+    /// About what the value holds on the heap, in bytes, for a plugin's
+    /// memory limit (`meter`): a list or map its items and their slots, a
+    /// string its text. A map's keys count as pointers alone: rows share
+    /// them (one string for 100,000 rows' `id`).
+    pub(crate) fn weight(&self) -> usize {
+        match self {
+            Value::Str(s) => 16 + s.len(),
+            Value::List(items) => 16 + items.iter().map(|v| SLOT + v.weight()).sum::<usize>(),
+            Value::Map(fields) => {
+                16 + fields
+                    .iter()
+                    .map(|(_, v)| 16 + SLOT + v.weight())
+                    .sum::<usize>()
+            }
+            Value::Element(_) => 64,
+            Value::Nil | Value::Bool(_) | Value::Num(_) => 0,
+        }
     }
     /// JSON as a value (`to_json`'s inverse), or `None` if it is not JSON.
     pub fn from_json(json: &str) -> Option<Value> {
@@ -1616,10 +1641,32 @@ impl State {
             None => self.0.set(value),
         };
     }
+    /// A plugin's state to hold what `bytes` makes of what it is counted
+    /// as holding (`meter`): an error if the plugin has no room for it.
+    fn charge(&self, lua: &Lua, bytes: impl FnOnce(usize) -> usize) -> mlua::Result<()> {
+        let meter = lua
+            .app_data_ref::<crate::node::Env>()
+            .and_then(|env| env.meter.clone());
+        match meter {
+            Some(meter) => meter.hold(&self.0, bytes(meter.held_by(&self.0))),
+            None => Ok(()),
+        }
+    }
     /// Writes what `f` makes of the current value.
     fn change(&self, lua: &Lua, f: impl FnOnce(&Value) -> mlua::Result<Value>) -> mlua::Result<()> {
+        self.change_by(lua, f, |next, _| next.weight())
+    }
+    /// `change`, a plugin's state then holding what `bytes` makes of the
+    /// next value and what it held.
+    fn change_by(
+        &self,
+        lua: &Lua,
+        f: impl FnOnce(&Value) -> mlua::Result<Value>,
+        bytes: impl FnOnce(&Value, usize) -> usize,
+    ) -> mlua::Result<()> {
         let old = self.0.with_untracked(Clone::clone);
         let next = f(&old)?;
+        self.charge(lua, |held| bytes(&next, held))?;
         // When a script reads it: its table from the old one's.
         derives_from(lua, &old, &next);
         self.write(lua, next);
@@ -1646,6 +1693,7 @@ impl UserData for State {
             let returned: mlua::Value = f.call(copy.clone())?;
             let next = if returned.is_nil() { copy } else { returned };
             let next = convert(next, Some(&old))?;
+            s.charge(lua, |_| next.weight())?;
             s.write(lua, next);
             Ok(())
         });
@@ -1659,6 +1707,9 @@ impl UserData for State {
                 // list of 100,000 copies it once, not once a write.
                 let at = s.0.with_untracked(|old| old.at(&path).cloned());
                 let leaf = convert(value, at.as_ref())?;
+                // What it holds less the leaf it replaces, and the new one.
+                let was = at.as_ref().map_or(0, Value::weight);
+                s.charge(lua, |held| held.saturating_sub(was) + leaf.weight())?;
                 let mut done = Ok(false);
                 let mut write = || {
                     s.0.mutate(|v| match v.set_path_in_place(&path, &leaf) {
@@ -1683,66 +1734,92 @@ impl UserData for State {
                 if done.map_err(|e| fail("set_key", e))? {
                     return Ok(());
                 }
-                s.change(lua, |old| {
-                    old.set_path(&path, leaf).map_err(|e| fail("set_key", e))
-                })
+                // (Charged above.)
+                s.change_by(
+                    lua,
+                    |old| old.set_path(&path, leaf).map_err(|e| fail("set_key", e)),
+                    |_, held| held,
+                )
             },
         );
         // A shallow merge: `patch({ a = 1, b = 2 })`.
         methods.add_method("patch", |lua, s, patch: Table| {
-            s.change(lua, |old| {
-                let mut next = old.clone();
-                for pair in patch.pairs::<mlua::Value, mlua::Value>() {
-                    let (key, value) = pair?;
-                    let mlua::Value::String(key) = key else {
-                        return Err(fail(
-                            "patch",
-                            format!("takes string keys, not {} keys", key.type_name()),
-                        ));
-                    };
-                    let path = [PathKey::Key(key.to_str()?.as_ref().into())];
-                    let leaf = convert(value, next.at(&path))?;
-                    next = next.set_path(&path, leaf).map_err(|e| fail("patch", e))?;
-                }
-                Ok(next)
-            })
+            // What the fields it replaces held, and what the new ones do.
+            let (replaced, added) = (Cell::new(0), Cell::new(0));
+            s.change_by(
+                lua,
+                |old| {
+                    let mut next = old.clone();
+                    for pair in patch.pairs::<mlua::Value, mlua::Value>() {
+                        let (key, value) = pair?;
+                        let mlua::Value::String(key) = key else {
+                            return Err(fail(
+                                "patch",
+                                format!("takes string keys, not {} keys", key.type_name()),
+                            ));
+                        };
+                        let path = [PathKey::Key(key.to_str()?.as_ref().into())];
+                        let was = next.at(&path);
+                        replaced.set(replaced.get() + was.map_or(0, |v| 16 + SLOT + v.weight()));
+                        let leaf = convert(value, was)?;
+                        added.set(added.get() + 16 + SLOT + leaf.weight());
+                        next = next.set_path(&path, leaf).map_err(|e| fail("patch", e))?;
+                    }
+                    Ok(next)
+                },
+                |_, held| held.saturating_sub(replaced.get()) + added.get(),
+            )
         });
         methods.add_method("toggle", |lua, s, ()| {
+            s.charge(lua, |_| 0)?;
             s.write(lua, Value::Bool(!s.0.with_untracked(Value::truthy)));
             Ok(())
         });
         methods.add_method("add", |lua, s, by: Option<f64>| {
             let n = s.0.with_untracked(|v| v.as_f64().unwrap_or(0.));
+            s.charge(lua, |_| 0)?;
             s.write(lua, Value::Num(n + by.unwrap_or(1.)));
             Ok(())
         });
         methods.add_method("push", |lua, s, item: mlua::Value| {
-            s.change(lua, |old| {
-                let items = list_of(old, "push")?;
-                // One allocation the right size: no regrowth.
-                let mut next = Vec::with_capacity(items.len() + 1);
-                next.extend_from_slice(items);
-                next.push(convert(item, None)?);
-                Ok(Value::List(next.into()))
-            })
+            let item = convert(item, None)?;
+            let bytes = SLOT + item.weight();
+            s.change_by(
+                lua,
+                |old| {
+                    let items = list_of(old, "push")?;
+                    // One allocation the right size: no regrowth.
+                    let mut next = Vec::with_capacity(items.len() + 1);
+                    next.extend_from_slice(items);
+                    next.push(item);
+                    Ok(Value::List(next.into()))
+                },
+                |_, held| held + bytes,
+            )
         });
         methods.add_method("insert", |lua, s, (index, item): (f64, mlua::Value)| {
-            s.change(lua, |old| {
-                let items = list_of(old, "insert")?;
-                let len = items.len();
-                if index.fract() != 0. || index < 1. || index as usize > len + 1 {
-                    return Err(fail(
-                        "insert",
-                        format!("index {index} is outside the list (1 to {})", len + 1),
-                    ));
-                }
-                let at = index as usize - 1;
-                let mut next = Vec::with_capacity(len + 1);
-                next.extend_from_slice(&items[..at]);
-                next.push(convert(item, None)?);
-                next.extend_from_slice(&items[at..]);
-                Ok(Value::List(next.into()))
-            })
+            let item = convert(item, None)?;
+            let bytes = SLOT + item.weight();
+            s.change_by(
+                lua,
+                |old| {
+                    let items = list_of(old, "insert")?;
+                    let len = items.len();
+                    if index.fract() != 0. || index < 1. || index as usize > len + 1 {
+                        return Err(fail(
+                            "insert",
+                            format!("index {index} is outside the list (1 to {})", len + 1),
+                        ));
+                    }
+                    let at = index as usize - 1;
+                    let mut next = Vec::with_capacity(len + 1);
+                    next.extend_from_slice(&items[..at]);
+                    next.push(item);
+                    next.extend_from_slice(&items[at..]);
+                    Ok(Value::List(next.into()))
+                },
+                |_, held| held + bytes,
+            )
         });
         methods.add_method("remove", |lua, s, index: usize| {
             let next = s.0.with_untracked(|v| {
@@ -1757,6 +1834,8 @@ impl UserData for State {
             let Some((removed, next)) = next else {
                 return Ok(Value::Nil);
             };
+            let bytes = SLOT + removed.weight();
+            s.charge(lua, |held| held.saturating_sub(bytes))?;
             s.write(lua, Value::List(next.into()));
             Ok(removed)
         });

@@ -25,17 +25,28 @@ use std::{
 };
 
 /// What a VM's interrupt checks.
-struct Watch {
+pub(crate) struct Watch {
     /// The running call's time budget, if any (`Vm::guard`).
     deadline: Rc<Cell<Option<Deadline>>>,
-    /// The VM's memory limit in bytes (0: none).
-    limit: usize,
+    /// The VM's memory limit in bytes (0: none): less, for a plugin, what
+    /// its states hold (`meter`).
+    limit: Cell<usize>,
+    /// What was live at the last collection.
+    live: Cell<usize>,
     /// Collect once the VM holds this much: halfway from what was live at
     /// the last collection to the limit. Luau collects as the VM allocates,
     /// but builtins such as `table.clone` allocate without giving the
     /// collector a turn, and a loop of them between host calls would fill
     /// the VM with garbage until the limit failed the script.
     collect_at: Cell<usize>,
+}
+impl Watch {
+    /// The VM may hold `limit` from now: it collects halfway there.
+    pub(crate) fn set_limit(&self, limit: usize) {
+        let live = self.live.get();
+        self.limit.set(limit);
+        self.collect_at.set(live + limit.saturating_sub(live) / 2);
+    }
 }
 
 thread_local! {
@@ -47,7 +58,13 @@ thread_local! {
 /// The interrupt installed on a VM; dropped, the VM is no longer watched.
 pub(crate) struct Installed {
     main: usize,
-    _watch: Rc<Watch>,
+    watch: Rc<Watch>,
+}
+impl Installed {
+    /// What the interrupt checks, to change the limit it collects by.
+    pub(crate) fn watch(&self) -> Rc<Watch> {
+        self.watch.clone()
+    }
 }
 impl Drop for Installed {
     fn drop(&mut self) {
@@ -62,7 +79,8 @@ impl Drop for Installed {
 pub(crate) fn install(lua: &Lua, deadline: Rc<Cell<Option<Deadline>>>, limit: usize) -> Installed {
     let watch = Rc::new(Watch {
         deadline,
-        limit,
+        limit: Cell::new(limit),
+        live: Cell::new(0),
         collect_at: Cell::new(limit / 2),
     });
     let main = Cell::new(0usize);
@@ -84,10 +102,7 @@ pub(crate) fn install(lua: &Lua, deadline: Rc<Cell<Option<Deadline>>>, limit: us
         w.retain(|(_, watch)| watch.strong_count() > 0);
         w.push((main, Rc::downgrade(&watch)));
     });
-    Installed {
-        main,
-        _watch: watch,
-    }
+    Installed { main, watch }
 }
 
 /// What a check finds the script should do.
@@ -180,7 +195,8 @@ unsafe fn check(state: *mut ffi::lua_State) -> Verdict {
     let Some(watch) = watch else {
         return Verdict::Continue;
     };
-    if watch.limit > 0 {
+    let limit = watch.limit.get();
+    if limit > 0 {
         // SAFETY: the counts read the VM's totals. The full collection runs
         // at a safepoint, where the VM has saved its frame and keeps the
         // thread's top above every live register, as it does for the
@@ -196,9 +212,8 @@ unsafe fn check(state: *mut ffi::lua_State) -> Verdict {
         if used(state) > watch.collect_at.get() {
             unsafe { ffi::lua_gc(state, ffi::LUA_GCCOLLECT, 0) };
             let live = used(state);
-            watch
-                .collect_at
-                .set(live + watch.limit.saturating_sub(live) / 2);
+            watch.live.set(live);
+            watch.collect_at.set(live + limit.saturating_sub(live) / 2);
         }
     }
     match watch.deadline.get() {

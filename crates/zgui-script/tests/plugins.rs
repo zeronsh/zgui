@@ -439,3 +439,59 @@ ui.contribute("bar", ui.text {
         assert_eq!(h.text("got"), format!("{opens} true"), "{name}");
     }
 }
+
+#[test]
+fn a_plugins_state_counts_against_its_memory_limit() {
+    // A state's value lives in Rust, outside the VM: without counting it,
+    // a plugin making state after state held as much as it liked.
+    let entry = plugin(
+        "hoarder",
+        r#"
+local made, err = 0, ""
+for i = 1, 1000 do
+    local ok, e = pcall(function() ui.state("k" .. i, string.rep("x", 100000) .. i) end)
+    if not ok then err = tostring(e) break end
+    made = i
+end
+local pushed, perr = 0, ""
+local list = ui.state("list", {})
+for i = 1, 1000 do
+    local ok, e = pcall(function() list:push(string.rep("y", 100000) .. i) end)
+    if not ok then perr = tostring(e) break end
+    pushed = i
+end
+-- One state written over and over holds one value.
+local again = ui.state("again", 0)
+local rewrites = 0
+for i = 1, 200 do
+    if pcall(function() again:set(string.rep("z", 10000) .. i) end) then
+        rewrites = i
+    end
+end
+ui.contribute("bar", ui.text { `{made} {err:find("memory") ~= nil} {pushed} {perr:find("memory") ~= nil} {rewrites}`, id = "got" })
+"#,
+    );
+    let mut h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(runtime, "app", APP).limits(zgui_script::Limits {
+            plugin_memory: 8 << 20,
+            ..Default::default()
+        });
+        host.set_plugins(vec![Plugin {
+            name: "hoarder".into(),
+            entry,
+            grants: vec![],
+        }]);
+        host
+    });
+    let got = h.text("got");
+    let parts: Vec<&str> = got.split(' ').collect();
+    let made: usize = parts[0].parse().unwrap();
+    let pushed: usize = parts[2].parse().unwrap();
+    // 8 MB is some 80 strings of 100 KB, less what the VM holds.
+    assert!((20..90).contains(&made), "{got}");
+    assert_eq!(parts[1], "true", "{got}");
+    // The first loop's states still hold theirs: little room is left.
+    assert!(pushed < 20, "{got}");
+    assert_eq!(parts[3], "true", "{got}");
+    assert_eq!(parts[4], "200", "{got}");
+}

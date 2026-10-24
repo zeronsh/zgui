@@ -397,6 +397,23 @@ impl<T> Clone for Signal<T> {
         }
     }
 }
+/// A [`Signal`] that may have been dropped (`Signal::downgrade`).
+pub struct WeakSignal<T>(Weak<SignalInner<T>>);
+impl<T> Clone for WeakSignal<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+impl<T> WeakSignal<T> {
+    /// The signal, if a handle to it still lives.
+    pub fn upgrade(&self) -> Option<Signal<T>> {
+        self.0.upgrade().map(|inner| Signal { inner })
+    }
+    /// Whether a handle to the signal still lives.
+    pub fn is_alive(&self) -> bool {
+        self.0.strong_count() > 0
+    }
+}
 /// The run mark of a subscription kept whatever its effect reads
 /// (`Signal::subscribe`).
 const KEPT: u64 = u64::MAX;
@@ -455,6 +472,10 @@ impl<T: 'static> Signal<T> {
     /// Identifies this signal while any handle to it lives.
     pub fn addr(&self) -> usize {
         Rc::as_ptr(&self.inner).cast::<()>() as usize
+    }
+    /// A handle that does not keep the signal (or its value) alive.
+    pub fn downgrade(&self) -> WeakSignal<T> {
+        WeakSignal(Rc::downgrade(&self.inner))
     }
     /// Call `f` with the value, subscribing the running effect.
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
