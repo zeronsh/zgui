@@ -4764,6 +4764,10 @@ impl Scene {
         if node.contents && !node.children.is_empty() {
             return self.measure_contents(id, constraints);
         }
+        if let Some(size) = self.measure_sized_box(id, constraints) {
+            return size;
+        }
+        let node = self.node(id);
         if let NodeKind::Container(layout) | NodeKind::Panel { layout, .. } = node.kind
             && self.uses_advanced_layout(id)
         {
@@ -5299,6 +5303,53 @@ impl Scene {
             child_constraints,
         );
         (width, height)
+    }
+    /// An empty box whose size its style or constraints fix (a bar, a
+    /// swatch), as the rest of `measure_uncached` works it out: its width and
+    /// height, with no padding, children or advanced layout to weigh, and
+    /// its style read in place rather than copied. `None` for any other node.
+    fn measure_sized_box(&mut self, id: NodeId, constraints: Constraints) -> Option<(f32, f32)> {
+        let node = self.node(id);
+        let style = &node.style;
+        if !matches!(node.kind, NodeKind::Container(_) | NodeKind::Panel { .. })
+            || !node.children.is_empty()
+            || node.contents
+            || style.layout_options.is_some()
+            || style.align == Align::Baseline
+        {
+            return None;
+        }
+        let explicit_w = constraints
+            .force_width
+            .or(style.width)
+            .or_else(|| percentage(style.width_percent, constraints.percent_width))
+            .map(|w| dimension(w, style.min_width, style.max_width))?;
+        let explicit_h = constraints
+            .force_height
+            .or(style.height)
+            .or_else(|| percentage(style.height_percent, constraints.percent_height))
+            .map(|h| dimension(h, style.min_height, style.max_height))?;
+        let size = (
+            dimension(explicit_w, style.min_width, style.max_width),
+            dimension(explicit_h, style.min_height, style.max_height),
+        );
+        // As `measure_uncached` leaves it: no advanced layout, and the last
+        // result's lists, when this pass replaces it, kept for this one.
+        let pass = self.layout_pass;
+        let node = self.node_mut(id);
+        node.advanced_layout = None;
+        let stale = node.dirty & LAYOUT != 0;
+        let (mut children, mut child_constraints) = match &mut node.measurement {
+            Some(last) if stale && last.pass != pass => (
+                std::mem::take(&mut last.children),
+                std::mem::take(&mut last.child_constraints),
+            ),
+            _ => (Vec::new(), Vec::new()),
+        };
+        children.clear();
+        child_constraints.clear();
+        self.store_measurement(id, constraints, size, children, child_constraints);
+        Some(size)
     }
     /// A leaf's own size: its text's at `available_w` (when it wraps), its
     /// image's pixels, or none. Reads the kind in place: cloning it took an

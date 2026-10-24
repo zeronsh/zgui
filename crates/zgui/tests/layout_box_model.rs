@@ -783,6 +783,37 @@ fn empty_boxes_are_their_padding_or_their_size() {
     assert_eq!(size("capped"), (40., 25.));
 }
 
+/// An empty box is the size it is given, however it is given: its width
+/// and height, a percentage of its parent, its parent's stretch across,
+/// within its minimum and maximum, and never below zero.
+#[test]
+fn sized_empty_boxes_are_the_size_they_are_given() {
+    let (ui, handle) = mount(
+        column()
+            .w(200.)
+            .h(300.)
+            .items_start()
+            .child(div().id("fixed").size(12., 7.).p(3.).border(1.))
+            .child(div().id("half").w_percent(50.).h(5.))
+            .child(div().id("floor").w(10.).min_w(30.).h(4.))
+            .child(div().id("ceiling").w(90.).max_w(60.).h(4.))
+            .child(div().id("tall").w(5.).h_percent(10.).max_h(20.))
+            .child(div().id("none").w(-4.).h(3.))
+            .child(column().w(200.).child(div().id("stretched").h(6.))),
+    );
+    let size = |id: &str| {
+        let r = rect(&ui, &handle, id);
+        (r.width, r.height)
+    };
+    assert_eq!(size("fixed"), (12., 7.));
+    assert_eq!(size("half"), (100., 5.));
+    assert_eq!(size("floor"), (30., 4.));
+    assert_eq!(size("ceiling"), (60., 4.));
+    assert_eq!(size("tall"), (5., 20.));
+    assert_eq!(size("none"), (0., 3.));
+    assert_eq!(size("stretched"), (200., 6.));
+}
+
 // Alignment of one child --------------------------------------------------
 
 /// A child's own alignment across (`align_self`) overrides its parent's for
