@@ -524,6 +524,9 @@ local HackerNews = ui.component(function(props: Props)
 				offset = offset,
 				px = 6,
 				py = 6,
+				-- Titles, sites and bylines select (a press still opens a
+				-- story; a drag selects).
+				selectable = true,
 				hidden = function()
 					return status:get() == "loading"
 				end,
@@ -531,6 +534,7 @@ local HackerNews = ui.component(function(props: Props)
 				ui.row {
 					py = 10,
 					justify = "center",
+					selectable = false,
 					hidden = function()
 						local entry = feeds[which]
 						return #stories:get() == 0 or (entry ~= nil and #stories:get() >= #entry.ids)
@@ -711,6 +715,7 @@ local HackerNews = ui.component(function(props: Props)
 							function()
 								return if is_folded() then `[+{c.replies + 1}]` else "[–]"
 							end,
+							selectable = false,
 							h = 18,
 							px = 4,
 							rounded = 4,
@@ -749,6 +754,8 @@ local HackerNews = ui.component(function(props: Props)
 				grow = 1,
 				w_full = true,
 				pb = 16,
+				-- The story and its discussion read as one document.
+				selectable = true,
 				ui.column {
 					px = 16,
 					pt = 14,
@@ -786,6 +793,7 @@ local HackerNews = ui.component(function(props: Props)
 					ui.row {
 						mt = 4,
 						gap = 8,
+						selectable = false,
 						hidden = story.url == nil,
 						pill(ICONS.article, "Read article", true, function()
 							push { view = "article", story = story }
@@ -814,6 +822,7 @@ local HackerNews = ui.component(function(props: Props)
 				ui.row {
 					pt = 14,
 					justify = "center",
+					selectable = false,
 					hidden = function()
 						return #shown:get() < limit:get()
 					end,
@@ -921,6 +930,7 @@ local HackerNews = ui.component(function(props: Props)
 				px = 16,
 				py = 16,
 				gap = 12,
+				selectable = true,
 				ui.row {
 					gap = 12,
 					items = "center",
