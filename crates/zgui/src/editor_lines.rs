@@ -569,6 +569,11 @@ impl LinesLayout {
         }
         let shown = self.lines_between(top, bottom);
         let lines = shown.start.max(self.line_of(start))..shown.end.min(self.line_of(end) + 1);
+        self.selection_on(start..end, lines)
+    }
+    /// The selection of `range` on `lines`, each shaped.
+    fn selection_on(&self, range: Range<usize>, lines: Range<usize>) -> Vec<Rect> {
+        let (start, end) = (range.start, range.end);
         let mut rects = Vec::new();
         for i in lines {
             let line = self.line_range(i);
@@ -628,8 +633,14 @@ impl TextLayout for LinesLayout {
         let layout = self.line(i);
         self.shift(i, layout.caret_position(self.local(i, position)))
     }
+    /// The selection of `range`: its own lines shaped, not those above it
+    /// (a composition's underline, a few characters of a long file).
     fn selection(&self, range: Range<usize>) -> Vec<Rect> {
-        self.selection_between(range, 0., f32::MAX)
+        let (start, end) = (range.start.min(range.end), range.start.max(range.end));
+        if start == end {
+            return Vec::new();
+        }
+        self.selection_on(start..end, self.line_of(start)..self.line_of(end) + 1)
     }
     fn selection_within(&self, range: Range<usize>, top: f32, bottom: f32) -> Vec<Rect> {
         self.selection_between(range, top, bottom)
@@ -790,5 +801,11 @@ mod tests {
         assert_eq!(caret.y, 99_999. * layout.row);
         // The sample row, the lines shown and the caret's.
         assert!(shaped.get() < 45, "{}", shaped.get());
+        // A selection (a composition's underline) shapes its own lines, not
+        // every line above it.
+        let at = text.find("line 70000").unwrap();
+        let before = shaped.get();
+        assert_eq!(layout.selection(at..at + 4).len(), 1);
+        assert!(shaped.get() - before <= 1, "{}", shaped.get() - before);
     }
 }
