@@ -171,3 +171,73 @@ fn boxes_grow_open_with_their_children_whatever_lays_them_out() {
         }
     }
 }
+
+/// Bars growing in a moved, clipping card (a dashboard's sparkline): each
+/// repaints where it was and where it is now, cut by the card's clip, and
+/// nothing outside the card repaints.
+#[test]
+fn growing_siblings_damage_their_old_and_new_boxes_within_the_clip() {
+    use zgui::scene::{Color, Insets, Layout, NodeKind, Scene, Style, Transform};
+    let mut scene = Scene::new(400., 300.);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let card = scene.append(
+        scene.root(),
+        NodeKind::Container(Layout::Overlay),
+        Style {
+            width: Some(120.),
+            height: Some(60.),
+            clip: true,
+            ..Style::default()
+        },
+    );
+    scene.set_transform(card, Transform { x: 50.5, y: 40. });
+    let bar = |height: f32, index: usize| Style {
+        absolute: true,
+        width: Some(6.),
+        height: Some(height),
+        margin: Insets {
+            left: 10. * index as f32,
+            top: 50. - height,
+            ..Insets::default()
+        },
+        ..Style::default()
+    };
+    let bars: Vec<_> = (0..12)
+        .map(|i| scene.append(card, NodeKind::Rect(Color(9, 9, 9, 255)), bar(20., i)))
+        .collect();
+    scene.flush();
+    let before: Vec<Rect> = bars.iter().map(|id| scene.bounds(*id)).collect();
+    for (i, id) in bars.iter().enumerate() {
+        // Some past the card's bottom edge: cut there.
+        scene.set_style(*id, bar(10. + 7. * i as f32, i));
+    }
+    let report = scene.flush();
+    let clip = Rect::new(50.5, 40., 120., 60.);
+    let covered = |x: f32, y: f32| {
+        report
+            .damage
+            .iter()
+            .any(|d| d.x <= x && x <= d.x + d.width && d.y <= y && y <= d.y + d.height)
+    };
+    for (i, id) in bars.iter().enumerate() {
+        for rect in [before[i], scene.bounds(*id)] {
+            let Some(rect) = rect.intersection(clip) else {
+                continue;
+            };
+            for (x, y) in [
+                (rect.x, rect.y),
+                (rect.x + rect.width, rect.y + rect.height),
+                (rect.x + rect.width / 2., rect.y + rect.height / 2.),
+            ] {
+                assert!(covered(x, y), "bar {i} at {rect:?} not repainted");
+            }
+        }
+    }
+    for d in &report.damage {
+        // Whole pixels around the clip.
+        assert!(
+            d.x >= 50. && d.y >= 40. && d.x + d.width <= 171. && d.y + d.height <= 100.,
+            "{d:?} repaints outside the card"
+        );
+    }
+}

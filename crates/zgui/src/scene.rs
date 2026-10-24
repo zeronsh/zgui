@@ -1427,6 +1427,8 @@ struct Slot {
     generation: u32,
     node: Option<Node>,
 }
+/// Where a parent's children are damaged (`Scene::damage_context`).
+type DamageContext = Option<(Transform, Option<Rect>)>;
 /// What a [`Scene::flush`] did, for renderers and diagnostics.
 #[derive(Default, Debug)]
 pub struct FrameReport {
@@ -3775,12 +3777,29 @@ impl Scene {
         (bounds, effects, clip)
     }
     fn damage_subtree(&mut self, id: NodeId) {
-        if self.damage_is_full() || !self.shown(id) {
+        self.damage_subtree_with(id, &mut None);
+    }
+    /// What `damage_subtree` works out for a parent's children: nothing if
+    /// the parent is not shown, else their translation and clip.
+    fn damage_context(&self, parent: Option<NodeId>) -> DamageContext {
+        match parent {
+            Some(parent) => self.shown(parent).then(|| self.world_context(parent)),
+            None => Some((Transform::default(), Some(self.viewport))),
+        }
+    }
+    /// `damage_subtree`, for one of many siblings: their parent's `context`
+    /// is worked out by the first and kept for the rest. Valid while the
+    /// ancestors keep their places, clips and visibility.
+    fn damage_subtree_with(&mut self, id: NodeId, context: &mut Option<DamageContext>) {
+        if self.damage_is_full() {
             return;
         }
         // Resolve the ancestors once, then carry translation and clipping down
         // instead of walking back up from every descendant.
         if self.transformed + self.filtered > 0 {
+            if !self.shown(id) {
+                return;
+            }
             let (transform, clip, placement) = match self.node(id).parent {
                 Some(parent) => self.context(parent),
                 None => (Transform::default(), Some(self.viewport), None),
@@ -3788,11 +3807,11 @@ impl Scene {
             self.damage_subtree_placed(id, transform, clip, placement, 0);
             return;
         }
-        let (transform, clip) = match self.node(id).parent {
-            Some(parent) => self.world_context(parent),
-            None => (Transform::default(), Some(self.viewport)),
-        };
-        self.damage_subtree_in(id, transform, clip, 0);
+        let parent = self.node(id).parent;
+        let context = *context.get_or_insert_with(|| self.damage_context(parent));
+        if let Some((transform, clip)) = context {
+            self.damage_subtree_in(id, transform, clip, 0);
+        }
     }
     /// `level`: how deep in the walk (`deep`).
     fn damage_subtree_in(
@@ -4012,6 +4031,8 @@ impl Scene {
     /// changes every frame (a stream in a larger box) repaints only that. Text
     /// laid out otherwise (line clamps, ellipses, padding) or right to left
     /// keeps its box.
+    // Out of line: `painted`, which every damaged node runs, stays small.
+    #[inline(never)]
     fn text_ink(&self, id: NodeId, bounds: Rect) -> Rect {
         let node = self.node(id);
         let style = &node.style;
@@ -5168,6 +5189,9 @@ impl Scene {
     /// `covered`: an ancestor moved and already damaged this whole subtree at
     /// its old and new positions.
     /// `level`: how deep in the walk (`deep`).
+    /// `context`: where it is damaged when it moves, shared with its
+    /// siblings (`damage_subtree_with`).
+    #[allow(clippy::too_many_arguments)]
     fn arrange(
         &mut self,
         id: NodeId,
@@ -5176,6 +5200,7 @@ impl Scene {
         report: &mut FrameReport,
         covered: bool,
         level: u32,
+        context: &mut Option<DamageContext>,
     ) {
         let (x, y) = match self.node(id).style.snap {
             true => self.snap(id, x, y),
@@ -5193,12 +5218,14 @@ impl Scene {
         }
         let damage = changed && !covered;
         if damage {
-            self.damage_subtree(id);
+            self.damage_subtree_with(id, context);
         }
         if changed {
             self.node_mut(id).bounds = bounds;
             self.invalidate(id, PAINTED);
         }
+        // Where the children are damaged, worked out when the first moves.
+        let mut children = None;
         // Read in place, not copied out: laying a child out leaves this
         // node's result as it is.
         for at in 0..count {
@@ -5215,11 +5242,12 @@ impl Scene {
             }
             crate::deep(level + 1, || {
                 let covered = covered || changed;
-                self.arrange(child, x + rect.x, y + rect.y, report, covered, level + 1)
+                let (x, y) = (x + rect.x, y + rect.y);
+                self.arrange(child, x, y, report, covered, level + 1, &mut children)
             });
         }
         if damage {
-            self.damage_subtree(id);
+            self.damage_subtree_with(id, context);
         }
         self.node_mut(id).dirty &= !LAYOUT;
         self.node_mut(id).arrange_dirty = false;
@@ -5374,7 +5402,7 @@ impl Scene {
                     (None, Some(bottom)) => origin_y + height - bottom - m.bottom - h,
                     (None, None) => start.y + content.top + m.top,
                 };
-                self.arrange(id, x, y, report, false, 0);
+                self.arrange(id, x, y, report, false, 0, &mut None);
             }
         }
         self.escaped = placed;
@@ -5396,7 +5424,7 @@ impl Scene {
         let mut report = FrameReport::default();
         if self.node(self.root).dirty & LAYOUT != 0 {
             self.measure_full(self.root, Constraints::default());
-            self.arrange(self.root, 0.0, 0.0, &mut report, false, 0);
+            self.arrange(self.root, 0.0, 0.0, &mut report, false, 0, &mut None);
         }
         // Boundaries under clean ancestors keep their place and size; lay out
         // just their subtrees, outermost first.
@@ -5426,11 +5454,11 @@ impl Scene {
                 continue;
             }
             let bounds = self.node(id).bounds;
-            self.arrange(id, bounds.x, bounds.y, &mut report, false, 0);
+            self.arrange(id, bounds.x, bounds.y, &mut report, false, 0, &mut None);
         }
         if relayout_all && self.node(self.root).dirty & LAYOUT != 0 {
             self.measure_full(self.root, Constraints::default());
-            self.arrange(self.root, 0.0, 0.0, &mut report, false, 0);
+            self.arrange(self.root, 0.0, 0.0, &mut report, false, 0, &mut None);
         }
         if !self.escaped.is_empty() {
             self.place_escaped(&mut report);
