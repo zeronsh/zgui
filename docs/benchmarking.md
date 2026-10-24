@@ -42,7 +42,8 @@ example apps' common interactions that way, each to its frame drawn: mail's
 open, search and archive, the dashboard's feed tick, sort and filter,
 Sketch's drag, pan and zoom among 500 shapes, and the code editor's
 keystroke, scroll and find-all keystroke on 100,000 lines; CI's instruction
-gate counts each app as a scene. Off, its phase boundaries cost nothing measurable: an A/B
+gate counts each app as a scene, small and undrawn, run by `list_state_bench`
+(`APP` set) so that it links no binary of its own. Off, its phase boundaries cost nothing measurable: an A/B
 of all scenes, five runs each, showed every scene within its spread. Time
 Profiler helpers and their use are in `scripts/perf/README.md`. The
 windowed comparison below stays the evidence for time, GPU and memory.

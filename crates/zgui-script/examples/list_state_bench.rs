@@ -3,7 +3,12 @@
 //! over them, a list of the filtered rows; each tick marks one message read
 //! or unread. Counts instructions retired per tick (macOS) and times them.
 //! Run: cargo run --release -p zgui-script --example list_state_bench
-//! (`N` sets the message count, `TICKS` the ticks.)
+//! (`N` sets the message count, `TICKS` the ticks.) With `APP` set it runs
+//! the example apps' interactions instead (`support/apps.rs`), undrawn:
+//! CI's instruction gate counts them here, with no binary of their own to
+//! link.
+#[path = "support/apps.rs"]
+mod apps;
 #[path = "support/bench_limits.rs"]
 mod bench_limits;
 use std::time::Instant;
@@ -88,6 +93,10 @@ return ui.column { w = 800, h = 600,
 "##;
 
 fn main() {
+    if std::env::var_os("APP").is_some() {
+        apps::run(&|_, _| None);
+        return;
+    }
     let n: usize = std::env::var("N")
         .ok()
         .and_then(|v| v.parse().ok())

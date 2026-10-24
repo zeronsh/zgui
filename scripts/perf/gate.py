@@ -45,13 +45,14 @@ SCENES = [
     ('list-state', 'zgui-script', 'list_state_bench', {}),
     ('style', 'zgui', 'style_bench', {}),
     ('widgets', 'zgui', 'widget_bench', {}),
-    # The example apps' common interactions (`apps_bench`): mail, the
-    # dashboard's 100,000 rows, Sketch's 500 shapes, the code editor's
-    # 100,000 lines.
-    ('app-mail', 'zgui-script', 'apps_bench', {'APP': 'mail', 'REPS': '10', 'RENDER': '0'}),
-    ('app-dashboard', 'zgui-script', 'apps_bench', {'APP': 'dashboard', 'REPS': '2', 'RENDER': '0'}),
-    ('app-sketch', 'zgui-script', 'apps_bench', {'APP': 'sketch', 'REPS': '10', 'RENDER': '0'}),
-    ('app-code', 'zgui-script', 'apps_bench', {'APP': 'code', 'REPS': '5', 'RENDER': '0'}),
+    # The example apps' common interactions (`support/apps.rs`), small and
+    # undrawn, run by list_state_bench (no binary of their own to link): the
+    # same paths at a sixth of the work (`suite.py` runs `apps_bench` full
+    # size).
+    ('app-mail', 'zgui-script', 'list_state_bench', {'APP': 'mail', 'REPS': '2'}),
+    ('app-dashboard', 'zgui-script', 'list_state_bench', {'APP': 'dashboard', 'ROWS': '2000', 'REPS': '2'}),
+    ('app-sketch', 'zgui-script', 'list_state_bench', {'APP': 'sketch', 'SHAPES': '50', 'REPS': '3'}),
+    ('app-code', 'zgui-script', 'list_state_bench', {'APP': 'code', 'LINES': '5000', 'REPS': '2'}),
 ]
 
 
@@ -60,6 +61,13 @@ def has_example(checkout, package, example):
     crate = checkout / 'crates' / package
     manifest = (crate / 'Cargo.toml').read_text() if (crate / 'Cargo.toml').exists() else ''
     return (crate / 'examples' / f'{example}.rs').exists() or f'name = "{example}"' in manifest
+
+
+def runs_scene(checkout, env):
+    """Whether `checkout`'s binary runs the scene `env` asks for: the app
+    scenes (`APP`) are `support/apps.rs`'s, which an older base lacks (its
+    binary would count its own bench under their name)."""
+    return 'APP' not in env or (checkout / 'crates/zgui-script/examples/support/apps.rs').exists()
 
 
 def build(checkout, target, into):
@@ -127,7 +135,7 @@ def main():
     for name, _, example, env in SCENES:
         base_binary = WORK / 'gate-bin-base' / example
         try:
-            before = count(base_binary, env) if base_binary.exists() else None
+            before = count(base_binary, env) if base_binary.exists() and runs_scene(base, env) else None
             after = count(WORK / 'gate-bin-head' / example, env)
         except Infra as error:
             # Loudly, and as what it is: no table that reads as a result.
