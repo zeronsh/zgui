@@ -4,7 +4,9 @@ example: a menu hanging past its window's bottom edge shows in a window of
 its own, override-redirect, typed a popup menu and transient for its parent,
 its rows past the parent's edge drawn and chosen there; a press on the bare
 desktop closes it (the pointer grab a menu holds); and no popup window
-exists before one is wanted, nor shows once it closed."""
+exists before one is wanted, nor shows once it closed. At a scale of 2
+(`WINIT_X11_SCALE_FACTOR`), its window is its size in the screen's pixels,
+where the scene put it in them, and its last item is chosen there."""
 import argparse
 import json
 import os
@@ -17,6 +19,10 @@ import time
 from platform_smoke import stop, wait_for_wm
 
 SCREEN = (1280, 1024)
+# popup_probe's menu, in its window's points: 16 in from the left, 12
+# above the window's bottom (its trigger's 28, in 16 of padding, and 4
+# below it), and its size.
+MENU_LEFT, MENU_ABOVE_BOTTOM, MENU_SIZE = 16, 12, (200, 202)
 
 
 def main():
@@ -138,8 +144,53 @@ def main():
         assert all(checks[key] for key in ("override-redirect", "transient for its window", "popup menu type",
                                            "drawn past the window")), checks
         assert checks["wakeups at rest (3 s)"] <= 1, checks
+        stop(app)
+
+        # At a scale of 2, on a screen twice the size: the same layout in
+        # points, in twice the pixels.
+        scaled = dict(env, WINIT_X11_SCALE_FACTOR="2")
+        xvfb = launch("xvfb-2x", ["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "%dx%dx24" % (SCREEN[0] * 2, SCREEN[1] * 2),
+                                  "-ac"], scaled, stdout=subprocess.PIPE, text=True)
+        if not select.select([xvfb.stdout], [], [], 10)[0]:
+            raise RuntimeError("Xvfb startup timed out")
+        env = scaled
+        env["DISPLAY"] = ":" + xvfb.stdout.readline().strip()
+        launch("openbox-2x", ["openbox"], env)
+        wait_for_wm(env)
+        log = args.output / "application-2x.log"
+        app = launch("application-2x", [str(args.binary.resolve())], env, stdout=log.open("w"))
+        until("READY at 2x", lambda: "READY" in log.read_text())
+        main_window = until("the window at 2x", lambda: (windows(True) or [None])[0])
+        run("xdotool", "windowactivate", "--sync", main_window)
+        x, y, w, h = geometry(main_window)
+        run("xdotool", "mousemove", x + 76 * 2, y + h - 30 * 2)
+        time.sleep(.3)
+        run("xdotool", "click", 1)
+        until("the menu open at 2x", lambda: state().startswith("OPEN true"))
+        popup = until("the menu's window at 2x",
+                      lambda: next((win for win in windows(True) if win != main_window), None))
+        px, py, pw, ph = geometry(popup)
+        # Its bounds are in pixels: half as many points at 2.
+        expected = [MENU_LEFT * 2, (h // 2 - MENU_ABOVE_BOTTOM) * 2, MENU_SIZE[0] * 2, MENU_SIZE[1] * 2]
+        checks["2x"] = {"window": [x, y, w, h], "menu window": [px, py, pw, ph], "expected": expected}
+        checks["2x: the menu's window in the screen's pixels, where the scene put it"] = (
+            [px - x, py - y, pw, ph] == expected)
+        # Drawn to its far corner, not into a quarter of it at a scale of 1.
+        shot = args.output / "open-2x.png"
+        run("import", "-window", "root", str(shot))
+        corner = Image.open(shot).convert("RGB").getpixel((px + pw - 12, py + ph - 12))
+        checks["2x: corner"] = corner
+        checks["2x: drawn to its far corner"] = corner != (0, 0, 0)
+        run("xdotool", "mousemove", px + pw // 2, py + ph - 20 * 2)
+        time.sleep(.3)
+        run("xdotool", "click", 1)
+        until("the item chosen at 2x", lambda: 'CHOSEN "Item 8"' in log.read_text())
+        checks["2x: chosen past the window"] = True
+        (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
+        assert all(value is not False for value in checks.values()), checks
         print("PASS: a menu past its window on X11: its own override-redirect popup-menu window, "
-              "drawn and chosen past the edge, closed by a press on the desktop, nothing at rest")
+              "drawn and chosen past the edge, closed by a press on the desktop, nothing at rest, "
+              "and at a scale of 2 in the screen's pixels")
     finally:
         for process in reversed(processes):
             stop(process)

@@ -112,9 +112,11 @@ Nothing is made before the pointer first nears something that opens a popup
 (`Ui::on_popup_soon`); then a window is made, unmapped, and up to three are
 kept for reuse. A popup's window is mapped off screen, takes its first
 frame there (an unmapped window's swapchain never completes a present), then
-moves into place; closed, it moves off and is unmapped. On Wayland popups stay
-inside their window: `xdg_popup` is not something winit exposes.
-`popup_windows_smoke.py` checks a menu past its window's edge.
+moves into place; closed, it moves off and is unmapped. On Wayland a popup is
+an `xdg_popup` instead ([Popups on Wayland](#popups-on-wayland)).
+`popup_windows_smoke.py` checks a menu past its window's edge, at a scale of
+1 and of 2 (its window in the screen's pixels, where the scene put it, drawn
+to its far corner and chosen from).
 
 A drag's preview shows in such a window too, so it follows the pointer past
 its window, over other windows. It is drawn once; as the pointer moves,
