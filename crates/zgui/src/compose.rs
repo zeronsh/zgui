@@ -3172,7 +3172,9 @@ fn open_element(
                 view.children.is_empty(),
                 "virtual lists build children through their row factory"
             );
-            let mut defaults = Styles::new().w(320.).h(240.).overflow_hidden();
+            // As a scroll view: 320 by 240 unless something sizes it (a
+            // parent stretching it across, `grow`, its own `w`/`h`).
+            let mut defaults = Styles::new().overflow_hidden();
             defaults.merge(&view.styles);
             view.styles = defaults;
             if keyboard_navigation && view.variants.focus.is_none() {
@@ -3181,7 +3183,7 @@ fn open_element(
             region = Some(Box::new(move |ui: &mut Ui, root, environment| {
                 build(ui, root, environment, scrollbar, keyboard_navigation)
             }) as RegionBuilder);
-            let root = ui.container(parent, Layout::Overlay, Default::default());
+            let root = ui.container(parent, Layout::Overlay, scroll_default_size());
             ui.semantics
                 .borrow_mut()
                 .set(root, SemanticNode::new(Role::ScrollView, ""));

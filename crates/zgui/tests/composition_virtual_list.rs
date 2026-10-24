@@ -244,3 +244,37 @@ fn callback_scroll_requests_survive_stale_range_writeback() {
         assert!(handle.find("callback-row-0").is_none());
     }
 }
+
+#[test]
+fn a_virtual_list_sizes_as_a_scroll_view_does() {
+    // Unsized, 320 by 240; stretched by its column, as wide as it; its own
+    // size holds.
+    let mut ui = Ui::new(600., 600.);
+    let offsets: Vec<_> = (0..3).map(|_| ui.signal(0_f32)).collect();
+    let list = |at: usize, id: &str| {
+        virtual_list(
+            offsets[at].clone(),
+            20.,
+            1,
+            || 50,
+            |i| i,
+            |_, i, _| text(format!("{i}")),
+        )
+        .id(id.to_owned())
+    };
+    let view = ui.mount(
+        column()
+            .w(500.)
+            .child(row().child(list(0, "alone")))
+            .child(list(1, "stretched"))
+            .child(list(2, "sized").w(200.).h(100.)),
+    );
+    ui.prepare_frame();
+    let size = |id: &str| {
+        let b = ui.scene.borrow().bounds(view.find(id).unwrap());
+        (b.width, b.height)
+    };
+    assert_eq!(size("alone"), (320., 240.));
+    assert_eq!(size("stretched"), (500., 240.));
+    assert_eq!(size("sized"), (200., 100.));
+}
