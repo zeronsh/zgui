@@ -1288,12 +1288,14 @@ fn bordered(styles: &Styles) -> bool {
         || styles.border_edges.is_some_and(|edges| edges.is_some())
 }
 /// A scroll view's size when nothing else sizes it (`Style::intrinsic_width`).
-fn scroll_default_size() -> crate::scene::Style {
+/// One scrolling across is as tall as what it holds, as CSS's
+/// `overflow-x: auto` box: a tab strip, a row of chips.
+fn scroll_default_size(horizontal: bool) -> crate::scene::Style {
     crate::scene::Style {
         width: Some(320.),
-        height: Some(240.),
+        height: (!horizontal).then_some(240.),
         intrinsic_width: true,
-        intrinsic_height: true,
+        intrinsic_height: !horizontal,
         ..Default::default()
     }
 }
@@ -3161,7 +3163,7 @@ fn open_element(
             view.styles = defaults;
             // 320 by 240 unless something sizes it: a parent stretching it
             // across, `grow`, or its own `w`/`h` (which then hold).
-            let root = ui.container(parent, Layout::Overlay, scroll_default_size());
+            let root = ui.container(parent, Layout::Overlay, scroll_default_size(horizontal));
             let mut semantics = SemanticNode::new(Role::ScrollView, "");
             semantics.scroll_axis = Some(if horizontal {
                 crate::semantics::ScrollAxis::Horizontal
@@ -3188,7 +3190,7 @@ fn open_element(
             region = Some(Box::new(move |ui: &mut Ui, root, environment| {
                 build(ui, root, environment, scrollbar, keyboard_navigation)
             }) as RegionBuilder);
-            let root = ui.container(parent, Layout::Overlay, scroll_default_size());
+            let root = ui.container(parent, Layout::Overlay, scroll_default_size(false));
             ui.semantics
                 .borrow_mut()
                 .set(root, SemanticNode::new(Role::ScrollView, ""));
@@ -4158,18 +4160,28 @@ fn mount_scroll(
             offset.set(position);
         }
         let mut scene = scene.borrow_mut();
+        // Scrolling across with no height of its own, it is as tall as what
+        // it holds (its measured height would be its content's, circularly:
+        // 0), or as a parent stretching it makes it: the viewport and the
+        // content take all of a definite height, none of an indefinite one.
+        let fitted = horizontal && {
+            let style = scene.style(root);
+            style.height.is_none() && style.height_percent.is_none()
+        };
         scene.set_style(
             viewport,
             Style {
                 width: Some(width),
-                height: Some(height),
+                height: (!fitted).then_some(height),
+                height_percent: fitted.then_some(1.),
                 clip: true,
                 ..Default::default()
             },
         );
         let mut content_style = scene.style(content);
         content_style.width = (!horizontal).then_some(width);
-        content_style.height = horizontal.then_some(height);
+        content_style.height = (horizontal && !fitted).then_some(height);
+        content_style.height_percent = fitted.then_some(1.);
         content_style.flex_shrink = 0.;
         scene.set_style(content, content_style);
         let rtl = rtl_of(&scene);

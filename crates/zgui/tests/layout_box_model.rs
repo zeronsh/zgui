@@ -422,6 +422,29 @@ fn an_unsized_scroll_fills_a_stretching_parent_and_its_content_fills_it() {
     assert_eq!(rect(&ui, &h, "chip").height, 70.);
 }
 
+#[test]
+fn an_unsized_horizontal_scroll_is_as_tall_as_what_it_holds() {
+    // A tab strip in a column: its tabs' height, not a default 240, and
+    // what follows it sits right under it.
+    let mut ui = Ui::new(600., 400.);
+    let across = ui.signal(0.);
+    let h = ui.mount(
+        column()
+            .w(300.)
+            .h(400.)
+            .child(
+                scroll_x(across)
+                    .id("strip")
+                    .child(div().id("tab").w(500.).h(33.)),
+            )
+            .child(div().id("panel").h(20.)),
+    );
+    ui.prepare_frame();
+    ui.prepare_frame();
+    assert_eq!(rect(&ui, &h, "strip").height, 33.);
+    assert_eq!(rect(&ui, &h, "panel").y, 33.);
+}
+
 // Inputs ---------------------------------------------------------------------
 
 #[test]
