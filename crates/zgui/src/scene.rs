@@ -3536,12 +3536,21 @@ impl Scene {
             return;
         }
         let old = &mut self.node_mut(id).style;
+        // Sizes for sizes leave what it and its ancestors read (`read_bits`:
+        // whether it has a width or height, and whether as a percentage).
+        let reads = old.width.is_some() == style.width.is_some()
+            && old.height.is_some() == style.height.is_some()
+            && old.width_percent.is_some() == style.width_percent.is_some()
+            && old.height_percent.is_some() == style.height_percent.is_some();
         old.width = style.width;
         old.height = style.height;
         old.width_percent = style.width_percent;
         old.height_percent = style.height_percent;
         old.margin = style.margin;
-        self.invalidate_layout(id);
+        match reads {
+            true => self.invalidate_layout_with(id, true),
+            false => self.invalidate_layout(id),
+        }
         // A contents parent lays out as its last child.
         if self.contents_count > 0
             && let Some(parent) = self.node(id).parent
@@ -3836,6 +3845,13 @@ impl Scene {
         }
     }
     fn invalidate(&mut self, id: NodeId, flags: u8) {
+        self.invalidate_with(id, flags, false);
+    }
+    /// `invalidate`, keeping (`keep_reads`) what a node's layout reads
+    /// (`read_bits`) and its text sizes where a change leaves them. Inlined:
+    /// each caller's `keep_reads` is a constant, `invalidate`'s false.
+    #[inline(always)]
+    fn invalidate_with(&mut self, id: NodeId, flags: u8, keep_reads: bool) {
         if self.isolation_count + self.promoted_count > 0 {
             let mut current = Some(id);
             while let Some(ancestor) = current {
@@ -3858,7 +3874,7 @@ impl Scene {
         }
         let node = self.node_mut(id);
         node.dirty |= flags;
-        if flags & LAYOUT != 0 {
+        if flags & LAYOUT != 0 && !keep_reads {
             node.text_size.set(TextSizes::default());
             node.reads.set(0);
         }
@@ -3871,10 +3887,16 @@ impl Scene {
     /// stops at a layout boundary: its size cannot depend on its content, so
     /// its parent keeps its layout and only the boundary's subtree is redone.
     fn invalidate_layout(&mut self, id: NodeId) {
-        self.invalidate(id, LAYOUT);
+        self.invalidate_layout_with(id, false);
+    }
+    /// `invalidate_layout`, keeping (`keep_reads`) what the nodes it marks
+    /// read (see `invalidate_with`).
+    #[inline(always)]
+    fn invalidate_layout_with(&mut self, id: NodeId, keep_reads: bool) {
+        self.invalidate_with(id, LAYOUT, keep_reads);
         let mut child = id;
         while let Some(parent) = self.node(child).parent {
-            self.invalidate(parent, LAYOUT);
+            self.invalidate_with(parent, LAYOUT, keep_reads);
             if self.is_layout_boundary(parent) {
                 // Siblings changing in turn (a card's bars) name it once.
                 if self.layout_roots.last() != Some(&parent) {
@@ -8528,6 +8550,14 @@ mod set_box_tests {
                 left: 4.,
                 ..Default::default()
             }
+        });
+    }
+    #[test]
+    fn a_box_given_or_losing_a_size_by_set_box_lays_out_as_by_set_style() {
+        both(|style| style.height = None);
+        both(|style| {
+            style.width = None;
+            style.width_percent = Some(50.);
         });
     }
     #[test]
