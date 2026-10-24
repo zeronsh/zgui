@@ -5490,7 +5490,12 @@ impl Scene {
         report.damage = match self.damage_grid.take() {
             Some(grid) if grid.full() => vec![self.viewport],
             Some(grid) => grid.rects(self.viewport),
-            None => std::mem::take(&mut self.damage),
+            // A copy: the list keeps its room for the next frame's damage.
+            None => {
+                let damage = self.damage.clone();
+                self.damage.clear();
+                damage
+            }
         };
         self.recent_damage = Default::default();
         if !report.damage.is_empty() || !self.moves.is_empty() {
