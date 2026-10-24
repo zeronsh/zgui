@@ -97,7 +97,9 @@ def main():
     parser.add_argument('--threshold', type=float, default=1.0, help='percent a scene may grow')
     parser.add_argument('--markdown', type=pathlib.Path)
     args = parser.parse_args()
-    target = WORK / 'gate-target'
+    # Both sides build into one target directory: CI's (ZGUI_GATE_TARGET)
+    # sits in the workspace's, where its cache keeps the dependencies.
+    target = pathlib.Path(os.environ.get('ZGUI_GATE_TARGET', WORK / 'gate-target')).resolve()
     base = WORK / 'gate-base'
     if base.exists():
         subprocess.run(['git', 'worktree', 'remove', '--force', str(base)], cwd=ROOT)

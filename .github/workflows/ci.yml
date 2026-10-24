@@ -177,13 +177,17 @@ jobs:
           sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update -qq -o Acquire::Retries=3
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends valgrind cmake pkg-config fonts-dejavu-core libdbus-1-dev libfontconfig1-dev libwayland-dev libxcb1-dev libxkbcommon-dev libxrandr-dev
+      # The gate's target directory sits in the workspace's, so this keeps
+      # its release dependencies (not zgui's crates, rebuilt either side):
+      # about a minute and a half of each build.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: perf
+          key: perf-gate
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Instruction counts
         env:
+          ZGUI_GATE_TARGET: target/perf-gate
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
           status=0
