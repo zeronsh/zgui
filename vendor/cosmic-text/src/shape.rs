@@ -215,6 +215,10 @@ fn shape_fallback(
     let mut missing = Vec::new();
     glyphs.reserve(glyph_infos.len());
     let glyph_start = glyphs.len();
+    // zgui patch: without spans every glyph has the run's attributes, looked
+    // up once rather than for each glyph.
+    let one = attrs_list.spans.is_empty();
+    let mut glyph_attrs;
     for (info, pos) in glyph_infos.iter().zip(glyph_positions.iter()) {
         let start_glyph = start_run + info.cluster as usize;
 
@@ -222,7 +226,12 @@ fn shape_fallback(
             missing.push(start_glyph);
         }
 
-        let attrs = attrs_list.get_span(start_glyph);
+        let attrs = if one {
+            &attrs
+        } else {
+            glyph_attrs = attrs_list.get_span(start_glyph);
+            &glyph_attrs
+        };
         let x_advance = pos.x_advance as f32 / font_scale
             + attrs.letter_spacing_opt.map_or(0.0, |spacing| spacing.0);
         let y_advance = pos.y_advance as f32 / font_scale;
@@ -246,7 +255,7 @@ fn shape_fallback(
             //TODO: color should not be related to shaping
             color_opt: attrs.color_opt,
             metadata: attrs.metadata,
-            cache_key_flags: override_fake_italic(attrs.cache_key_flags, font, &attrs),
+            cache_key_flags: override_fake_italic(attrs.cache_key_flags, font, attrs),
             metrics_opt: attrs.metrics_opt.map(Into::into),
         });
     }
@@ -297,7 +306,9 @@ fn shape_run(
         scripts.clear();
         scripts
     };
-    for c in line[start_run..end_run].chars() {
+    // zgui patch: ASCII is all Common or Latin; only other text is looked up.
+    let run = &line[start_run..end_run];
+    for c in run.chars().filter(|_| !run.is_ascii()) {
         match c.script() {
             Script::Common | Script::Inherited | Script::Latin | Script::Unknown => (),
             script => {
@@ -463,12 +474,12 @@ fn shape_run_cached(
     end_run: usize,
     span_rtl: bool,
 ) {
-    use crate::{AttrsOwned, ShapeRunKey};
+    use crate::ShapeRunKey;
 
     let run_range = start_run..end_run;
     // zgui patch: reuse the last lookup's key; its default attributes are
     // usually this run's too (one line, one paragraph's attributes).
-    let defaults = attrs_list.defaults();
+    let defaults = attrs_list.defaults_owned();
     let mut key = match font_system.shape_buffer.run_key.take() {
         Some(mut key) => {
             key.text.clear();
@@ -476,8 +487,8 @@ fn shape_run_cached(
             // Checked once a line: its attribute list is the same for every word.
             let list = core::ptr::from_ref(attrs_list) as usize;
             if font_system.shape_buffer.run_key_line != list {
-                if key.default_attrs.as_attrs() != defaults {
-                    key.set_defaults(AttrsOwned::new(&defaults), &mut font_system.shape_run_cache);
+                if *key.default_attrs != *defaults {
+                    key.set_defaults(defaults.clone(), &mut font_system.shape_run_cache);
                 }
                 font_system.shape_buffer.run_key_line = list;
             }
@@ -486,7 +497,7 @@ fn shape_run_cached(
         }
         None => ShapeRunKey::new(
             line[run_range.clone()].to_string(),
-            AttrsOwned::new(&defaults),
+            defaults.clone(),
             &mut font_system.shape_run_cache,
         ),
     };
@@ -915,14 +926,15 @@ impl ShapeWord {
         let is_simple_ascii =
             word.is_ascii() && !word.chars().any(|c| c.is_ascii_control() && c != '\t');
 
-        if is_simple_ascii && !word.is_empty() && {
+        // zgui patch: no spans, no attributes to compare.
+        if is_simple_ascii && !word.is_empty() && (attrs_list.spans.is_empty() || {
             let attrs_start = attrs_list.get_span(word_range.start);
             attrs_list.spans_iter().all(|(other_range, other_attrs)| {
                 word_range.end <= other_range.start
                     || other_range.end <= word_range.start
                     || attrs_start.compatible(&other_attrs.as_attrs())
             })
-        } {
+        }) {
             shaping.run(
                 &mut glyphs,
                 font_system,
@@ -1197,7 +1209,7 @@ impl ShapeSpan {
 
         // Early-out: skip font lookup and span iteration when no decorations exist.
         // For plain text (the common case) this is a single bool check.
-        let any_decoration = attrs_list.defaults().text_decoration.has_decoration()
+        let any_decoration = attrs_list.defaults_owned().text_decoration.has_decoration()
             || attrs_list.spans_iter().any(|(range, attr_owned)| {
                 let start = range.start.max(span_range.start);
                 let end = range.end.min(span_range.end);
@@ -1546,7 +1558,7 @@ impl ShapeLine {
 
         self.rtl = rtl;
         self.spans = spans;
-        self.metrics_opt = attrs_list.defaults().metrics_opt.map(Into::into);
+        self.metrics_opt = attrs_list.defaults_owned().metrics_opt.map(Into::into);
 
         // Return the buffer for later reuse.
         font_system.shape_buffer.spans = cached_spans;

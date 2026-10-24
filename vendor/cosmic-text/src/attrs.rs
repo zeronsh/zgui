@@ -577,20 +577,26 @@ impl AttrsList {
         self.spans.insert(range, AttrsOwned::new(attrs));
     }
 
-    /// Get the attribute span for an index
-    ///
-    /// This returns a span that contains the index
     /// zgui: whether the defaults or any span set padding.
     pub fn has_padding(&self) -> bool {
         self.defaults.padding_opt.is_some()
             || self.spans.iter().any(|(_, attrs)| attrs.padding_opt.is_some())
     }
 
+    /// zgui: the defaults, borrowed (`defaults` copies them out).
+    pub(crate) fn defaults_owned(&self) -> &AttrsOwned {
+        &self.defaults
+    }
+
+    /// Get the attribute span for an index
+    ///
+    /// This returns a span that contains the index
     pub fn get_span(&self, index: usize) -> Attrs<'_> {
+        // zgui patch: the defaults are copied out only when no span holds
+        // the index (they were copied out for every lookup).
         self.spans
             .get(&index)
-            .map(|v| v.as_attrs())
-            .unwrap_or(self.defaults.as_attrs())
+            .map_or_else(|| self.defaults.as_attrs(), AttrsOwned::as_attrs)
     }
 
     /// Split attributes list at an offset

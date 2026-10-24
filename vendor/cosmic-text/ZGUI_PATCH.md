@@ -105,3 +105,15 @@ gives each set of default attributes an id (`ShapeRunCache::intern`) that
 keys compare and hash, keeping the attributes behind an `Arc`; a line's
 words check its defaults once (`ShapeBuffer::run_key_line`); and an empty
 span map is not queried. `check/` finds every layout identical.
+
+## Attributes are borrowed, not copied out
+
+`AttrsList::get_span` built the default `Attrs` (a copy of every field, the
+font-feature list cloned) for every lookup, even one a span answered, and
+shaping called it for each glyph. It now builds them only when no span
+holds the index. Without spans, `shape_fallback` takes a run's attributes
+once rather than for each glyph, `ShapeWord::build` has no spans to compare,
+and the word cache key and decoration check borrow the defaults
+(`AttrsList::defaults_owned`). An ASCII run skips the per-character script
+lookup: ASCII is all Common or Latin, which the lookup skipped anyway.
+`check/` finds every layout identical.
