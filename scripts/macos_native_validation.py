@@ -120,10 +120,11 @@ def main():
             results['binaries'][name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
         run('component-host-lifecycle', [sys.executable, str(root / 'scripts/component_host_smoke.py'),
             str(directory / 'component_workload'), '--output', str(args.output / 'component-host')], 100)
+        # Closing a window ran as it should and caught nothing.
         log = run('multi-window-lifecycle', [str(directory / 'windows'), '--smoke-test'], 30)
-        assert 'multi-window smoke passed' in log, log
+        assert 'multi-window smoke passed' in log and 'contained a panic' not in log, log
         log = run('window-controls', [str(directory / 'window_controls'), '--smoke-test'], 30)
-        assert 'window controls smoke passed' in log, log
+        assert 'window controls smoke passed' in log and 'contained a panic' not in log, log
         log = run('native-surfaces-window', [str(directory / 'native_surfaces'), '--smoke-test'], 30)
         assert re.findall(r'NATIVE_SURFACE frame=(\d+) nv12=(true|false)', log) == [('1', 'false'), ('2', 'true'), ('3', 'false'), ('4', 'true')], log
         log = run('rich-text-window', [str(directory / 'rich_text'), '--smoke-test'], 30)
