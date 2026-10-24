@@ -537,6 +537,8 @@ struct UiStorage {
     mount_initialization: RefCell<Option<Rc<MountInitialization>>>,
     /// Views mounting now, nested (`Ui::mounting`).
     mounting: Cell<u32>,
+    /// Elements mounting now, outermost first (`Ui::open_element`).
+    open_elements: RefCell<Vec<NodeId>>,
     interaction: RefCell<Option<InteractionDeadline>>,
     advancing_interaction: Cell<bool>,
     window_gesture: Cell<Option<WindowGesture>>,
@@ -730,6 +732,7 @@ impl Ui {
             layout_listeners: RefCell::default(),
             mount_initialization: RefCell::new(None),
             mounting: Cell::new(0),
+            open_elements: RefCell::default(),
             interaction: RefCell::new(None),
             advancing_interaction: Cell::new(false),
             window_gesture: Cell::new(None),
@@ -1399,6 +1402,24 @@ impl Ui {
     }
     pub(crate) fn set_mount_depth(&self, depth: u32) {
         self.storage.mounting.set(depth);
+    }
+    /// `node`'s children are mounting, until `close_element`.
+    pub(crate) fn open_element(&self, node: NodeId) {
+        self.storage.open_elements.borrow_mut().push(node);
+    }
+    /// `node` is mounted, with whatever opened inside it and never closed
+    /// (a child's mount that failed).
+    pub(crate) fn close_element(&self, node: NodeId) {
+        let mut open = self.storage.open_elements.borrow_mut();
+        while let Some(top) = open.pop() {
+            if top == node {
+                break;
+            }
+        }
+    }
+    /// The innermost element whose children are mounting.
+    pub(crate) fn innermost_open_element(&self) -> Option<NodeId> {
+        self.storage.open_elements.borrow().last().copied()
     }
     /// Register newly mounted intrinsic content without forcing a layout for
     /// every row. The sentinel is replaced by the next prepared layout.

@@ -2783,6 +2783,7 @@ fn mount_element(
         scrollbar,
         follow_end,
     );
+    ui.open_element(opened.root);
     for child in std::mem::take(&mut opened.children) {
         mount(ui, opened.child_parent, child, opened.environment.clone());
     }
@@ -3913,8 +3914,14 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
         }
     }
     if let Some(accessibility) = accessibility {
+        // A button given another role (a radio, a menu item) keeps the name
+        // its content gives it as a button.
+        if accessibility.role.is_some() {
+            name_from_content(ui, &ui.scene.borrow(), root);
+        }
         apply_accessibility(ui, root, *accessibility);
     }
+    ui.close_element(root);
     update_button_labels(ui, root);
     for mounted in mounted {
         mounted(NodeHandle {
@@ -4854,43 +4861,56 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
         });
     }
 }
+/// The labels of the buttons (headings, tabs…) named by their content that
+/// hold `node`, as its text changed or it mounted. An element still
+/// mounting names itself as it closes, from all it holds by then: the walk
+/// ends there, so mounting a tree walks each element once, not each of its
+/// ancestors.
 fn update_button_labels(ui: &Ui, node: NodeId) {
     let scene = ui.scene.borrow();
+    let mounting = ui.innermost_open_element();
     let mut current = Some(node);
     while let Some(id) = current {
-        // Named by their content, as ARIA names a button, heading, tab or
-        // option from its text.
-        let is_button = ui.semantics.borrow().get(id).is_some_and(|n| {
-            !n.named
-                && matches!(
-                    n.role,
-                    Role::Button | Role::Heading | Role::ListItem | Role::ListBoxOption | Role::Tab
-                )
-        });
-        if is_button {
-            let mut parts = Vec::new();
-            let mut pending = vec![id];
-            let semantics = ui.semantics.borrow();
-            while let Some(child) = pending.pop() {
-                // What is hidden from assistive technology names nothing.
-                if child != id && semantics.get(child).is_some_and(|n| n.hidden) {
-                    continue;
-                }
-                match scene.kind(child) {
-                    NodeKind::Text { text, .. } if !text.is_empty() => parts.push(text.as_ref()),
-                    NodeKind::RichText { text } if !text.text().is_empty() => {
-                        parts.push(text.text())
-                    }
-                    _ => {}
-                }
-                pending.extend(scene.children(child).iter().rev().copied());
-            }
-            drop(semantics);
-            let label = parts.join(" ");
-            ui.semantics.borrow_mut().set_label(id, &label);
+        if Some(id) == mounting {
+            break;
         }
+        #[cfg(test)]
+        LABEL_STEPS.with(|steps| steps.set(steps.get() + 1));
+        name_from_content(ui, &scene, id);
         current = scene.parent(id);
     }
+}
+/// `id`'s label from its text, if its content names it, as ARIA names a
+/// button, heading, tab or option from its text.
+fn name_from_content(ui: &Ui, scene: &crate::scene::Scene, id: NodeId) {
+    let named_by_content = ui.semantics.borrow().get(id).is_some_and(|n| {
+        !n.named
+            && matches!(
+                n.role,
+                Role::Button | Role::Heading | Role::ListItem | Role::ListBoxOption | Role::Tab
+            )
+    });
+    if !named_by_content {
+        return;
+    }
+    let mut parts = Vec::new();
+    let mut pending = vec![id];
+    let semantics = ui.semantics.borrow();
+    while let Some(child) = pending.pop() {
+        // What is hidden from assistive technology names nothing.
+        if child != id && semantics.get(child).is_some_and(|n| n.hidden) {
+            continue;
+        }
+        match scene.kind(child) {
+            NodeKind::Text { text, .. } if !text.is_empty() => parts.push(text.as_ref()),
+            NodeKind::RichText { text } if !text.text().is_empty() => parts.push(text.text()),
+            _ => {}
+        }
+        pending.extend(scene.children(child).iter().rev().copied());
+    }
+    drop(semantics);
+    let label = parts.join(" ");
+    ui.semantics.borrow_mut().set_label(id, &label);
 }
 /// A mounted node, from `View::on_mount`. Weak: it keeps neither the UI
 /// nor the node alive.
@@ -5216,6 +5236,35 @@ pub mod prelude {
     pub use crate::web_view::{native_view, web_view, web_view_src};
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Ancestors `update_button_labels` has looked at.
+    static LABEL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+mod button_label_tests {
+    use super::*;
+
+    #[test]
+    fn mounting_a_deep_tree_looks_at_each_element_once_and_names_its_button() {
+        let mut ui = Ui::new(400., 300.);
+        let mut inner = text("deep");
+        for _ in 0..2_000 {
+            inner = column().child(inner);
+        }
+        LABEL_STEPS.with(|steps| steps.set(0));
+        let handle = ui.mount(button().id("b").child(text("Save")).child(inner));
+        let steps = LABEL_STEPS.with(|steps| steps.get());
+        // Each element once, and the outer walk to the root: not each
+        // element's ancestors (two million).
+        assert!(steps < 3 * 2_000, "{steps}");
+        let button = handle.find("b").unwrap();
+        assert_eq!(
+            ui.semantics.borrow().get(button).unwrap().label,
+            "Save deep"
+        );
+    }
+}
 #[cfg(test)]
 mod image_fit_tests {
     use super::fitted_image_size;
