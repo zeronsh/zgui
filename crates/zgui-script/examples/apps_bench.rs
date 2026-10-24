@@ -60,11 +60,16 @@ struct Bench {
 }
 impl Bench {
     fn new(script: &str, size: (f32, f32)) -> Self {
+        Self::with(script, size, |_| {})
+    }
+    /// `new`, with `setup` run on the app before its first frame.
+    fn with(script: &str, size: (f32, f32), setup: impl FnOnce(&mut TestApp)) -> Self {
         let path = format!("{EXAMPLES}/{script}/app.luau");
-        let app = TestApp::with_desktop(|runtime| {
+        let mut app = TestApp::with_desktop(|runtime| {
             ScriptHost::new(runtime, path).limits(bench_limits::limits())
         });
         app.ui.scene.borrow_mut().resize(size.0, size.1);
+        setup(&mut app);
         let render = std::env::var("RENDER").map_or(true, |v| v != "0");
         let scale = 2.;
         let (gpu, text) = if render {
@@ -195,7 +200,10 @@ fn mail() {
 }
 
 fn dashboard() {
-    let mut b = Bench::new("dashboard", (1280., 800.));
+    // The live feed's timer ticks by the wall clock, as often as the run
+    // is slow (under cachegrind, many times as often): paused before the
+    // first frame, each tick is the one this measures.
+    let mut b = Bench::with("dashboard", (1280., 800.), |app| app.click("live"));
     b.app.click("sort-price");
     b.frames(2);
     b.measure("dashboard: feed tick, sorted by price", |b, _| {
