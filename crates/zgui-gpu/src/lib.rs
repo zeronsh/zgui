@@ -499,12 +499,12 @@ fn spans_cover(clip: Rect, rects: impl Iterator<Item = Rect>, scale: f32) -> boo
 /// Positioned glyphs of laid-out runs; rich text takes each glyph's colour
 /// from its run (it is shaped without colours, see `rich_buffer_raw`).
 fn glyphs_of<'a>(
+    mut glyphs: Vec<Glyph>,
     runs: impl Iterator<Item = cosmic_text::LayoutRun<'a>>,
     starts: &[usize],
     rich: Option<&zgui::rich_text::RichText>,
     scale: f32,
 ) -> Vec<Glyph> {
-    let mut glyphs = Vec::new();
     for run in runs {
         // Most texts are one line: one allocation at its size.
         glyphs.reserve(run.glyphs.len());
@@ -3435,8 +3435,14 @@ impl GpuRenderer {
                             || s.scale != self.scale
                     });
                     if stale {
+                        // The old shape's glyphs and quads hold the new one's:
+                        // a changed value is as many allocations fewer.
+                        let (mut spare_glyphs, mut spare_quads) = (Vec::new(), Vec::new());
                         if let Some(old) = self.shapes.remove(&item.id) {
                             self.shaped_bytes -= old.bytes();
+                            (spare_glyphs, spare_quads) = (old.glyphs, old.quads);
+                            spare_glyphs.clear();
+                            spare_quads.clear();
                         }
                         let mut fonts = self.fonts.borrow_mut();
                         // Default-option rich text: the prepared lines layout
@@ -3457,8 +3463,13 @@ impl GpuRenderer {
                                 Some(bounds.width),
                             );
                             // Plain text has one run: no line starts to find it by.
-                            let glyphs =
-                                glyphs_of(laid.runs(Some(bounds.height)), &[], None, self.scale);
+                            let glyphs = glyphs_of(
+                                std::mem::take(&mut spare_glyphs),
+                                laid.runs(Some(bounds.height)),
+                                &[],
+                                None,
+                                self.scale,
+                            );
                             let underlines = item.font.underline.map_or_else(Vec::new, |line| {
                                 text::plain_underlines(
                                     laid.runs(Some(bounds.height)),
@@ -3472,6 +3483,7 @@ impl GpuRenderer {
                             let laid = cache.layout(&mut fonts, rich, Some(bounds.width));
                             let starts = laid.line_starts();
                             let glyphs = glyphs_of(
+                                std::mem::take(&mut spare_glyphs),
                                 laid.runs(Some(bounds.height)),
                                 &starts,
                                 Some(rich),
@@ -3520,6 +3532,7 @@ impl GpuRenderer {
                             Err((glyphs, decorations, key)) => (glyphs, decorations, Some(key)),
                             Ok(b) => (
                                 glyphs_of(
+                                    std::mem::take(&mut spare_glyphs),
                                     b.layout_runs(),
                                     &text::line_starts(&b),
                                     rich.as_deref(),
@@ -3546,7 +3559,7 @@ impl GpuRenderer {
                             height: bounds.height,
                             scale: self.scale,
                             glyphs,
-                            quads: Vec::new(),
+                            quads: spare_quads,
                             atlas_epoch: 0,
                             last_used: self.frame,
                             prepared,
