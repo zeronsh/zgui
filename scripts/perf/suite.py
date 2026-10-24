@@ -6,6 +6,7 @@
     python3 scripts/perf/suite.py --all                # the slow scenes too
     python3 scripts/perf/suite.py ab main HEAD         # two revisions, interleaved
     python3 scripts/perf/suite.py ab main .            # main against this checkout's files
+    python3 scripts/perf/suite.py dirs /tmp/a /tmp/b   # two sets of built examples (build flags)
     python3 scripts/perf/suite.py clean                # remove the A/B worktrees and builds
 
 A scene is a headless example run with a fixed workload: its whole run's
@@ -146,11 +147,22 @@ def ab(args):
             checkout, label = worktree(slot, revision)
             label = f'{revision} ({label})'
         sides.append((label, build(checkout, WORK / f'target-{slot}', scenes)))
+    compare(scenes, sides, args.repeat)
+
+
+def dirs(args):
+    """Two directories of examples built otherwise (flags, profiles, allocators)."""
+    sides = [(str(path), pathlib.Path(path)) for path in (args.a, args.b)]
+    scenes = [s for s in chosen(args) if all((side / s[2]).exists() for _, side in sides)]
+    compare(scenes, sides, args.repeat)
+
+
+def compare(scenes, sides, repeat):
     print(f'A = {sides[0][0]}\nB = {sides[1][0]}\n')
     print(f'{"scene":14} {"A":>11} {"B":>11} {"B - A":>8}  spread A/B')
     for name, _, example, env in scenes:
         counts = ([], [])
-        for _ in range(args.repeat):
+        for _ in range(repeat):
             for side, (_, examples) in enumerate(sides):
                 counts[side].append(measure(examples / example, env)[0])
         a, b = (min(c) for c in counts)
@@ -178,9 +190,12 @@ def main():
     compare = commands.add_parser('ab', help='compare two revisions (. for this checkout)')
     compare.add_argument('a')
     compare.add_argument('b')
+    built = commands.add_parser('dirs', help='compare two directories of built examples')
+    built.add_argument('a')
+    built.add_argument('b')
     commands.add_parser('clean', help='remove the A/B worktrees and builds')
     args = parser.parse_args()
-    {'ab': ab, 'clean': clean}.get(args.command, run)(args)
+    {'ab': ab, 'dirs': dirs, 'clean': clean}.get(args.command, run)(args)
 
 
 if __name__ == '__main__':

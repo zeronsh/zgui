@@ -21,7 +21,9 @@ core benches) a few times and reports the least disturbed run's
 instructions with the spread above it. `ab` builds each revision in a
 worktree of its own under `/tmp/zgui-perf` (kept: the next comparison
 builds incrementally), interleaves the runs, and marks differences larger
-than either side's spread. `suite.py clean` removes the worktrees.
+than either side's spread. `suite.py dirs A B` compares two directories of
+examples built otherwise from the same source (other `RUSTFLAGS`, a
+profile, an allocator). `suite.py clean` removes the worktrees.
 
 ## Where a frame's work goes: `ZGUI_PROFILE=1`
 
