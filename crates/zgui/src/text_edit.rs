@@ -52,6 +52,8 @@ pub struct TextEditor {
     selection: Selection,
     preedit: Option<Preedit>,
     composition_cancel_revision: u64,
+    /// How many times its text changed (`revision`).
+    revision: u64,
     undo: VecDeque<Edit>,
     redo: VecDeque<Edit>,
     undo_bytes: usize,
@@ -81,6 +83,7 @@ impl TextEditor {
             },
             preedit: None,
             composition_cancel_revision: 0,
+            revision: 0,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
             undo_bytes: 0,
@@ -93,6 +96,11 @@ impl TextEditor {
     /// The committed text, without any preedit.
     pub fn text(&self) -> &str {
         &self.text
+    }
+    /// Changes whenever the committed text does (it wraps): the same number
+    /// is the same text, without comparing it (a long document's).
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
     /// The selection.
     pub fn selection(&self) -> Selection {
@@ -189,6 +197,7 @@ impl TextEditor {
         self.redo.clear();
         self.redo_bytes = 0;
         self.text.replace_range(range.clone(), value);
+        self.revision = self.revision.wrapping_add(1);
         // Insertion can join an adjacent combining mark/ZWJ sequence. Keep the caret valid.
         let desired = range.start + value.len();
         let end = if desired == self.text.len() {
@@ -310,6 +319,7 @@ impl TextEditor {
         self.redo.clear();
         self.redo_bytes = 0;
         self.text.replace_range(prefix..old_end, &inserted);
+        self.revision = self.revision.wrapping_add(1);
         self.selection = Selection {
             anchor: self.text.len(),
             focus: self.text.len(),
@@ -572,6 +582,7 @@ impl TextEditor {
         };
         self.text
             .replace_range(edit.start..edit.start + edit.inserted.len(), &edit.deleted);
+        self.revision = self.revision.wrapping_add(1);
         self.selection = edit.before;
         self.cancel_preedit();
         let bytes = edit.deleted.len() + edit.inserted.len();
@@ -595,6 +606,7 @@ impl TextEditor {
         };
         self.text
             .replace_range(edit.start..edit.start + edit.deleted.len(), &edit.inserted);
+        self.revision = self.revision.wrapping_add(1);
         self.selection = edit.after;
         self.cancel_preedit();
         let bytes = edit.deleted.len() + edit.inserted.len();

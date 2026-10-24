@@ -327,6 +327,18 @@ pub struct View {
     /// builder call and mount level, and most carry none of it.
     rare: Option<Box<Rare>>,
 }
+/// Ranges of a text marked with a colour (`View::decorations`).
+type Decorations = Vec<(std::ops::Range<usize>, crate::scene::Color)>;
+/// What a code editor adds to a text area: its lines' colours, ranges
+/// marked behind its text, its current line and what Tab inserts.
+#[derive(Default)]
+pub(crate) struct CodeOptions {
+    highlighter: Option<crate::widgets::Highlighter>,
+    decorations: Option<Box<dyn FnMut() -> Decorations>>,
+    current_line: Option<Box<dyn FnMut() -> Option<crate::scene::Color>>>,
+    indent: Option<String>,
+    on_caret: Option<Box<dyn FnMut(crate::widgets::Caret)>>,
+}
 /// `View`'s fields few views set (`View::rare`).
 #[derive(Default)]
 pub(crate) struct Rare {
@@ -372,6 +384,8 @@ pub(crate) struct Rare {
     secure: Option<bool>,
     spellcheck: Option<Box<dyn FnMut() -> bool>>,
     line_numbers: Option<bool>,
+    /// What a code editor adds to a text area (`View::highlighter`, …).
+    code: Option<Box<CodeOptions>>,
     window_drag: bool,
     /// `View::selectable`.
     selectable: Option<bool>,
@@ -438,6 +452,9 @@ impl Rare {
         }
         if self.line_numbers.is_some() {
             inner.line_numbers = self.line_numbers;
+        }
+        if self.code.is_some() {
+            inner.code = self.code;
         }
         if self.selectable.is_some() {
             inner.selectable = self.selectable;
@@ -1075,6 +1092,51 @@ impl View {
     /// accept this.
     pub fn line_numbers(mut self, numbered: bool) -> Self {
         self.rare_mut().line_numbers = Some(numbered);
+        self
+    }
+    fn code_mut(&mut self) -> &mut CodeOptions {
+        self.rare_mut().code.get_or_insert_with(Default::default)
+    }
+    /// Colour a text area's lines, as a code editor colours its syntax
+    /// (see [`crate::widgets::Highlighter`]): asked for the lines in view,
+    /// and again only for those that change. Only editor roots accept this.
+    pub fn highlighter(
+        mut self,
+        highlighter: impl Fn(&str, u32) -> (crate::widgets::LineColors, u32) + 'static,
+    ) -> Self {
+        self.code_mut().highlighter = Some(std::rc::Rc::new(highlighter));
+        self
+    }
+    /// Ranges of a text area's text (UTF-8 byte ranges) marked with a colour
+    /// behind them, a search's matches; kept current as what `ranges` reads
+    /// changes. Only those in view are drawn.
+    pub fn decorations(
+        mut self,
+        ranges: impl FnMut() -> Vec<(std::ops::Range<usize>, crate::scene::Color)> + 'static,
+    ) -> Self {
+        self.code_mut().decorations = Some(Box::new(ranges));
+        self
+    }
+    /// A colour behind a text area's caret row (a code editor's current
+    /// line), kept current as what `color` reads changes.
+    pub fn current_line(
+        mut self,
+        color: impl FnMut() -> Option<crate::scene::Color> + 'static,
+    ) -> Self {
+        self.code_mut().current_line = Some(Box::new(color));
+        self
+    }
+    /// What Tab inserts in a text area (`"    "`, `"\t"`) instead of moving
+    /// focus: with lines selected it indents each, and Shift+Tab takes an
+    /// indent off (see `EditorHandle::set_indent`).
+    pub fn tab_indent(mut self, indent: impl Into<String>) -> Self {
+        self.code_mut().indent = Some(indent.into());
+        self
+    }
+    /// Call `told` with where a text area's caret is whenever it moves (a
+    /// status bar's line and column); see `EditorHandle::on_caret`.
+    pub fn on_caret(mut self, told: impl FnMut(crate::widgets::Caret) + 'static) -> Self {
+        self.code_mut().on_caret = Some(Box::new(told));
         self
     }
     /// Make the view a window drag region, like CSS's
@@ -2886,6 +2948,10 @@ fn open_element(
         rare.as_deref().is_none_or(|r| r.line_numbers.is_none()) || is_editor,
         "line_numbers is only supported on editor views"
     );
+    assert!(
+        rare.as_deref().is_none_or(|r| r.code.is_none()) || is_editor,
+        "highlighter, decorations, current_line and tab_indent are only supported on editor views"
+    );
     if is_editor {
         assert!(
             view.children.is_empty(),
@@ -3748,6 +3814,41 @@ fn open_element(
         }
         if let Some(numbered) = rare.as_deref().and_then(|r| r.line_numbers) {
             editor.set_line_numbers(numbered);
+        }
+        if let Some(code) = rare.as_deref_mut().and_then(|r| r.code.take()) {
+            let CodeOptions {
+                highlighter,
+                decorations,
+                current_line,
+                indent,
+                on_caret,
+            } = *code;
+            if highlighter.is_some() {
+                editor.set_highlighter(highlighter);
+                // Colours may be theme tokens: a new theme colours the lines
+                // again (the highlighter is asked anew).
+                let (editor, theme) = (editor.clone(), environment.theme.clone());
+                let first = Cell::new(true);
+                ui.bind(root, move || {
+                    theme.color(crate::theme::tok::TEXT_PRIMARY);
+                    theme.color(crate::theme::tok::ACCENT);
+                    if !first.replace(false) {
+                        editor.rehighlight();
+                    }
+                });
+            }
+            if let Some(told) = on_caret {
+                editor.on_caret(told);
+            }
+            editor.set_indent(indent.as_deref());
+            if let Some(mut ranges) = decorations {
+                let editor = editor.clone();
+                ui.bind(root, move || editor.set_decorations(ranges()));
+            }
+            if let Some(mut color) = current_line {
+                let editor = editor.clone();
+                ui.bind(root, move || editor.set_current_line(color()));
+            }
         }
         let (mut text, mut color) = (
             rare.as_deref_mut().and_then(|r| r.placeholder.take()),

@@ -261,6 +261,20 @@ impl Runtime {
         let _guard = Guard(self);
         f()
     }
+    /// Run queued observers now, even inside a batch, as React's
+    /// `flushSync` does: for code about to read what an observer writes (a
+    /// field's text synced from a state a handler just set, before it
+    /// selects in it). Inside a flush, they are left to it.
+    pub fn settle(&self) {
+        struct Restore<'a>(&'a Inner, usize);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.batch_depth.set(self.1);
+            }
+        }
+        let _restore = Restore(&self.inner, self.inner.batch_depth.replace(0));
+        self.flush();
+    }
     /// Run queued observers. Reentrant writes join the current flush.
     pub fn flush(&self) {
         if self.inner.batch_depth.get() != 0 || self.inner.flushing.replace(true) {

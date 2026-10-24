@@ -16,6 +16,8 @@ use std::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+pub use crate::editor_lines::{Highlighter, LineColors};
+
 #[derive(Default)]
 struct Owned {
     /// Most nodes own one effect: inline, it costs no allocation.
@@ -69,6 +71,76 @@ struct EditorHint {
     /// candidates show.
     clause: Cell<Option<Rect>>,
     composition_layer: Cell<Option<NodeId>>,
+    /// A selection set by the program shows the next time it is drawn,
+    /// focused or not (a search's match, chosen from its field).
+    reveal: Cell<bool>,
+    /// What a code editor adds (`CodeHint`), made when first used: an
+    /// editor without it carries a pointer's room.
+    code: std::cell::OnceCell<Box<CodeHint>>,
+}
+/// What a code editor adds to an editor's hint: its long text's lines,
+/// marks behind its selection, its current line, Tab's indent, and who is
+/// told where its caret is.
+#[derive(Default)]
+struct CodeHint {
+    /// Ranges of the text marked with a colour behind them (a search's
+    /// matches), by where they start.
+    decorations: RefCell<Vec<(std::ops::Range<usize>, Color)>>,
+    /// The colour behind the caret's row (a code editor's current line).
+    current_line: Cell<Option<Color>>,
+    /// What Tab inserts (a code editor's indent), instead of moving focus.
+    indent: RefCell<Option<std::sync::Arc<str>>>,
+    /// A long text's lines (`editor_lines`), made when one first shows, and
+    /// the layer of a text node a line in view, by line number.
+    lines: RefCell<Option<Rc<crate::editor_lines::LineCache>>>,
+    line_layer: Cell<Option<NodeId>>,
+    line_nodes: RefCell<Vec<(usize, NodeId)>>,
+    /// Marks behind the selection (the current line, decorations), made
+    /// when the first shows.
+    decoration_layer: Cell<Option<NodeId>>,
+    decoration_nodes: RefCell<Vec<NodeId>>,
+    /// Told where the caret is when it moves (`EditorHandle::on_caret`).
+    on_caret: RefCell<Option<CaretListener>>,
+    /// Where it was last drawn, and last told.
+    caret_drawn: Cell<Option<Caret>>,
+    caret_told: Cell<Option<Caret>>,
+}
+impl EditorHint {
+    fn code(&self) -> Option<&CodeHint> {
+        self.code.get().map(|code| &**code)
+    }
+    fn code_made(&self) -> &CodeHint {
+        self.code.get_or_init(Default::default)
+    }
+    /// Its long text's line cache, made the first time it is needed.
+    fn line_cache(&self) -> Rc<crate::editor_lines::LineCache> {
+        self.code_made()
+            .lines
+            .borrow_mut()
+            .get_or_insert_with(Default::default)
+            .clone()
+    }
+    fn highlighted(&self) -> bool {
+        self.code()
+            .and_then(|code| code.lines.borrow().clone())
+            .is_some_and(|lines| lines.highlighted())
+    }
+}
+/// What an editor tells where its caret is (`EditorHandle::on_caret`).
+type CaretListener = Box<dyn FnMut(Caret)>;
+/// Where an editor's caret is (`EditorHandle::on_caret`): its line and
+/// column, from 1 (the column in characters), and the selection as UTF-8
+/// byte offsets.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Caret {
+    /// The caret's line, from 1.
+    pub line: usize,
+    /// Its column in characters, from 1.
+    pub column: usize,
+    /// Where the selection starts (equal to `focus` for a caret).
+    pub anchor: usize,
+    /// Where the caret is.
+    pub focus: usize,
 }
 impl EditorHandle {
     /// Where an input method's candidate window goes: under the clause it
@@ -108,6 +180,7 @@ impl EditorHandle {
             affinity: TextAffinity::After,
         });
         self.preferred_x.set(None);
+        self.hint.reveal.set(true);
         self.refresh();
     }
     /// Select the whole text.
@@ -211,6 +284,59 @@ impl EditorHandle {
         if self.line_numbers.replace(numbered) != numbered {
             self.refresh();
         }
+    }
+    /// Colour a multiline editor's lines with `highlighter` (a code
+    /// editor's syntax): asked only for the lines that show, and again
+    /// only for those that change (see [`Highlighter`]). Its colours change
+    /// no metrics, so carets and selections stay where they were.
+    pub fn set_highlighter(&self, highlighter: Option<Highlighter>) {
+        if !self.multiline {
+            return;
+        }
+        self.hint.line_cache().set_highlighter(highlighter);
+        self.refresh();
+    }
+    /// Ask the highlighter for the lines anew (what it gives changed: a
+    /// theme's colours).
+    pub fn rehighlight(&self) {
+        if let Some(lines) = self.hint.code().and_then(|c| c.lines.borrow().clone()) {
+            lines.rehighlight();
+        }
+        self.refresh();
+    }
+    /// Mark `ranges` of the text (UTF-8 byte ranges) with a colour behind
+    /// them, a search's matches: only those in view are drawn.
+    pub fn set_decorations(&self, mut ranges: Vec<(std::ops::Range<usize>, Color)>) {
+        ranges.sort_by_key(|(range, _)| range.start);
+        let code = self.hint.code_made();
+        if *code.decorations.borrow() == ranges {
+            return;
+        }
+        *code.decorations.borrow_mut() = ranges;
+        self.refresh();
+    }
+    /// Call `told` with where the caret is whenever it moves or the
+    /// selection changes (a status bar's line and column), after the
+    /// editor is drawn: it may change what it likes.
+    pub fn on_caret(&self, told: impl FnMut(Caret) + 'static) {
+        let code = self.hint.code_made();
+        *code.on_caret.borrow_mut() = Some(Box::new(told));
+        code.caret_told.set(None);
+        self.refresh();
+    }
+    /// A colour behind the caret's row (a code editor's current line).
+    pub fn set_current_line(&self, color: Option<Color>) {
+        if self.hint.code_made().current_line.replace(color) != color {
+            self.refresh();
+        }
+    }
+    /// What Tab inserts in a multiline editor (a code editor's indent:
+    /// `"    "`, `"\t"`), instead of moving focus on; with lines selected
+    /// it indents each, and Shift+Tab takes an indent off. `None`: Tab
+    /// moves focus, as in any field.
+    pub fn set_indent(&self, indent: Option<&str>) {
+        *self.hint.code_made().indent.borrow_mut() =
+            indent.filter(|_| self.multiline).map(Into::into);
     }
     /// Update rendering and editing metrics together, including selection and IME geometry.
     pub fn set_typography(&self, color: Color, size: f32, font: FontStyle) {
@@ -407,6 +533,65 @@ fn editor_font<'a>(
     })
 }
 
+/// `line` in runs of the colours `colors` give it, the rest `color`: a
+/// highlighted line (`None` if it has none to give).
+fn line_runs(
+    line: &str,
+    colors: &LineColors,
+    color: Color,
+    size: f32,
+    font: &FontStyle,
+) -> Option<crate::rich_text::RichText> {
+    if line.is_empty() {
+        return None;
+    }
+    let run = |range: std::ops::Range<usize>, color| crate::rich_text::TextRun {
+        range,
+        font: font.clone(),
+        font_size: size,
+        color,
+        ..Default::default()
+    };
+    let mut runs = Vec::with_capacity(colors.len() * 2 + 1);
+    let mut at = 0;
+    for (range, shade) in colors {
+        let start = range.start.max(at);
+        if start >= range.end {
+            continue;
+        }
+        if start > at {
+            runs.push(run(at..start, color));
+        }
+        runs.push(run(start..range.end, *shade));
+        at = range.end;
+    }
+    if at < line.len() {
+        runs.push(run(at..line.len(), color));
+    }
+    crate::rich_text::RichText::new(line, runs).ok()
+}
+/// A long text's layout by its lines, the editor's last if the text is the
+/// same.
+#[allow(clippy::too_many_arguments)]
+fn long_layout(
+    lines: &Rc<crate::editor_lines::LineCache>,
+    scene: &Scene,
+    text: &str,
+    revision: Option<u64>,
+    size: f32,
+    width: Option<f32>,
+    font: &FontStyle,
+) -> Rc<crate::editor_lines::LinesLayout> {
+    lines.layout(
+        text,
+        revision,
+        size,
+        width,
+        font,
+        scene.text_shaper_revision(),
+        || scene.line_shaper(size, font),
+    )
+}
 fn editor_layout(
     storage: &Weak<UiStorage>,
     scene: &Scene,
@@ -418,6 +603,13 @@ fn editor_layout(
 ) -> Rc<dyn TextLayout> {
     let font = &*editor_font(scene, node, font);
     let storage = storage.upgrade();
+    if crate::editor_lines::is_long(text)
+        && let Some(lines) = storage
+            .as_ref()
+            .and_then(|s| s.editors.borrow().get(&node).map(|e| e.hint.line_cache()))
+    {
+        return long_layout(&lines, scene, text, None, size, width, font);
+    }
     let eligible = storage
         .as_ref()
         .is_some_and(|s| s.input.focused() == Some(node))
@@ -2533,7 +2725,14 @@ impl Ui {
         if let std::borrow::Cow::Owned(canonical) = normalize_text(&initial, multiline) {
             initial = canonical;
         }
-        let text = self.label(viewport, initial.clone(), fixed(width - 16., height - 12.));
+        // A long text's lines show apart (`editor_lines`): its node, never
+        // laid out with all of it, starts empty.
+        let shown = if crate::editor_lines::is_long(&initial) {
+            String::new()
+        } else {
+            initial.clone()
+        };
+        let text = self.label(viewport, shown, fixed(width - 16., height - 12.));
         self.semantics.borrow_mut().remove(text);
         let preedit_layer = self.container(viewport, Layout::Overlay, Style::default());
         let preedit_nodes = Rc::new(RefCell::new(Vec::new()));
@@ -2612,6 +2811,10 @@ impl Ui {
         let hint = Rc::new(EditorHint::default());
         hint.composition_layer.set(Some(preedit_layer));
         let draw_hint = hint.clone();
+        // Its text's line count and its semantic value, by the revision of
+        // the text they are for.
+        let draw_line_count: Cell<Option<(u64, usize)>> = Cell::new(None);
+        let draw_semantic_revision: Cell<Option<u64>> = Cell::new(None);
         let refresh: Rc<dyn Fn()> = Rc::new(move || {
             let e = edit.borrow();
             let selection = e.selection();
@@ -2659,8 +2862,45 @@ impl Ui {
             // The gutter: as wide as the last line's number (two digits at
             // least, so the text does not move at line 10), and a gap.
             let numbered = draw_numbers.get();
+            // Long, or coloured a line at a time: laid out by its lines.
+            let long = crate::editor_lines::is_long(&display) || draw_hint.highlighted();
             let (digits, digit) = if numbered {
-                let lines = memchr_count(b'\n', display.as_bytes()) + 1;
+                // Unwrapped, a long text's layout (its width is not the
+                // gutter's to give) has them counted.
+                let unwrapped_long = (long && !draw_wrap.get()).then(|| {
+                    // In the font its layout below has, so it is the same one.
+                    let font = editor_font(&s, root, &font).into_owned();
+                    let revision = e.preedit().is_none().then(|| e.revision());
+                    long_layout(
+                        &draw_hint.line_cache(),
+                        &s,
+                        &display,
+                        revision,
+                        size,
+                        None,
+                        &font,
+                    )
+                });
+                let lines = match draw_line_count.get() {
+                    _ if unwrapped_long.is_some() => unwrapped_long.as_ref().unwrap().line_count(),
+                    // Counted for this text (a scroll, a caret move).
+                    Some((revision, count))
+                        if e.preedit().is_none() && revision == e.revision() =>
+                    {
+                        count
+                    }
+                    _ => {
+                        let count = if long {
+                            display.match_indices('\n').count() + 1
+                        } else {
+                            memchr_count(b'\n', display.as_bytes()) + 1
+                        };
+                        if e.preedit().is_none() {
+                            draw_line_count.set(Some((e.revision(), count)));
+                        }
+                        count
+                    }
+                };
                 let digits = lines.max(10).ilog10() as usize + 1;
                 (digits, s.measure_text_with_font("0", size, None, &font).0)
             } else {
@@ -2708,6 +2948,8 @@ impl Ui {
                 ),
                 None => (display.as_ref(), color),
             };
+            // A long text's lines show apart (below): this node holds none.
+            let shown_text = if long { "" } else { shown_text };
             // Selection and policy changes retain the same immutable paint text.
             let paint_text = match s.kind(text) {
                 NodeKind::Text { text, .. } if text.as_ref() == shown_text => text.clone(),
@@ -2725,7 +2967,24 @@ impl Ui {
             s.set_font(text, font.clone());
             s.set_kind(caret, NodeKind::Rect(color));
             let wrap_width = draw_wrap.get().then_some(inner_width.max(1.));
-            let layout = editor_layout(&draw_storage, &s, root, &display, size, wrap_width, &font);
+            // The committed text's revision tells its layout it is the same
+            // (a scroll), without comparing a long document.
+            let revision = e.preedit().is_none().then(|| e.revision());
+            let long_lines = long.then(|| {
+                long_layout(
+                    &draw_hint.line_cache(),
+                    &s,
+                    &display,
+                    revision,
+                    size,
+                    wrap_width,
+                    &font,
+                )
+            });
+            let layout: Rc<dyn TextLayout> = match &long_lines {
+                Some(lines) => lines.clone(),
+                None => editor_layout(&draw_storage, &s, root, &display, size, wrap_width, &font),
+            };
             let prior_position = draw_position.get();
             let caret_position =
                 if e.preedit().is_none() && prior_position.byte_offset == display_cursor {
@@ -2742,7 +3001,8 @@ impl Ui {
             let line_height = caret_rect.height;
             let mut scroll = scroll_for_draw.borrow_mut();
             let reveal = draw_reveal_caret.replace(true) && draw_gesture.mode.get().is_none();
-            if *focus.borrow() && reveal {
+            let asked = draw_hint.reveal.take();
+            if (*focus.borrow() || asked) && reveal {
                 if cx - scroll.0 > (inner_width - 8.).max(0.) {
                     scroll.0 = cx - ((inner_width - 8.).max(0.));
                 }
@@ -2817,6 +3077,113 @@ impl Ui {
                     y: -scroll.1,
                 },
             );
+            // A long text shows the lines in view, a text node each (by line
+            // number: a scroll gives one node a new line, not each of them).
+            let shown_lines = match &long_lines {
+                Some(lines) => lines.lines_between(scroll.1, scroll.1 + inner_height),
+                None => 0..0,
+            };
+            // (Only an editor that ever showed a long text has these.)
+            let code = if long_lines.is_some() {
+                Some(draw_hint.code_made())
+            } else {
+                draw_hint.code()
+            };
+            if let Some(code) = code {
+                let mut pool = code.line_nodes.borrow_mut();
+                if !shown_lines.is_empty()
+                    && code.line_layer.get().is_none_or(|layer| !s.contains(layer))
+                {
+                    let layer = s.append(
+                        viewport,
+                        NodeKind::Container(Layout::Overlay),
+                        Style::default(),
+                    );
+                    // Where the text node is: over the selection, under the caret.
+                    let mut order = s.children(viewport).to_vec();
+                    order.retain(|id| *id != layer);
+                    let at = order
+                        .iter()
+                        .position(|id| *id == text)
+                        .map_or(order.len(), |i| i + 1);
+                    order.insert(at, layer);
+                    s.reorder_children(viewport, &order);
+                    code.line_layer.set(Some(layer));
+                    pool.clear();
+                }
+                let (kept, free): (Vec<_>, Vec<_>) = pool
+                    .drain(..)
+                    .partition(|(line, _)| shown_lines.contains(line));
+                let mut free: Vec<NodeId> = free.into_iter().map(|(_, id)| id).collect();
+                pool.extend(kept);
+                if let (Some(lines), Some(layer)) = (&long_lines, code.line_layer.get()) {
+                    for i in shown_lines.clone() {
+                        if pool.iter().any(|(line, _)| *line == i) {
+                            continue;
+                        }
+                        let id = free.pop().unwrap_or_else(|| {
+                            s.append(
+                                layer,
+                                NodeKind::Text {
+                                    text: std::sync::Arc::from(""),
+                                    color,
+                                    font_size: size,
+                                },
+                                Style::default(),
+                            )
+                        });
+                        pool.push((i, id));
+                    }
+                    for (i, id) in pool.iter() {
+                        let line = lines.line_text(*i);
+                        let colored = draw_hint
+                            .line_cache()
+                            .colors(lines, *i)
+                            .and_then(|colors| line_runs(line, &colors, color, size, &font));
+                        match colored {
+                            Some(rich) => {
+                                if !matches!(s.kind(*id), NodeKind::RichText { text } if **text == rich)
+                                {
+                                    s.set_kind(*id, NodeKind::RichText { text: rich.into() });
+                                }
+                            }
+                            None => {
+                                let unchanged = matches!(
+                                    s.kind(*id),
+                                    NodeKind::Text { text, color: c, font_size }
+                                        if **text == *line && *c == color && *font_size == size
+                                );
+                                if !unchanged {
+                                    s.set_kind(
+                                        *id,
+                                        NodeKind::Text {
+                                            text: std::sync::Arc::from(line),
+                                            color,
+                                            font_size: size,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        s.set_font(*id, font.clone());
+                        let width = wrap_width.unwrap_or_else(|| lines.line(*i).size().0 + 2.);
+                        let mut style = fixed(width, lines.height(*i));
+                        style.text_wrap = draw_wrap.get();
+                        s.set_style(*id, style);
+                        s.set_transform(
+                            *id,
+                            Transform {
+                                x: -scroll.0,
+                                y: lines.top(*i) - scroll.1,
+                            },
+                        );
+                    }
+                }
+                for id in free {
+                    s.remove(id);
+                }
+                drop(pool);
+            }
             s.set_transform(
                 caret,
                 Transform {
@@ -2846,7 +3213,7 @@ impl Ui {
                 *focus.borrow() || draw_window_blurred.get() || draw_read_only.get();
             let rects: Vec<_> = if e.preedit().is_none() && shows_selection {
                 layout
-                    .selection(selection.range())
+                    .selection_within(selection.range(), scroll.1, scroll.1 + inner_height)
                     .into_iter()
                     .filter_map(|r| {
                         let y = r.y - scroll.1;
@@ -2861,6 +3228,89 @@ impl Ui {
             } else {
                 Vec::new()
             };
+            // Behind the selection: the caret's row and the marked ranges
+            // (a search's matches), those in view.
+            if let Some(code) = draw_hint.code() {
+                let mut marks: Vec<(Rect, Color)> = Vec::new();
+                if let Some(row) = code.current_line.get() {
+                    marks.push((Rect::new(0., cy - scroll.1, inner_width, line_height), row));
+                }
+                {
+                    let decorations = code.decorations.borrow();
+                    // Those in the text in view: from where the first line
+                    // shown starts (all of them, if it is short).
+                    let shown_from = match &long_lines {
+                        Some(lines) => lines.line_range(lines.line_at(scroll.1)).start,
+                        None => 0,
+                    };
+                    let first = decorations.partition_point(|(range, _)| range.end < shown_from);
+                    for (range, mark) in &decorations[first..] {
+                        let rects = layout.selection_within(
+                            range.clone(),
+                            scroll.1,
+                            scroll.1 + inner_height,
+                        );
+                        if rects.is_empty()
+                            && long_lines.as_ref().is_some_and(|lines| {
+                                lines.top(lines.line_of(range.start)) > scroll.1 + inner_height
+                            })
+                        {
+                            break;
+                        }
+                        marks.extend(rects.into_iter().map(|r| {
+                            (
+                                Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height),
+                                *mark,
+                            )
+                        }));
+                    }
+                }
+                if !marks.is_empty()
+                    && code
+                        .decoration_layer
+                        .get()
+                        .is_none_or(|layer| !s.contains(layer))
+                {
+                    let layer = s.append(
+                        viewport,
+                        NodeKind::Container(Layout::Overlay),
+                        Style::default(),
+                    );
+                    let mut order = s.children(viewport).to_vec();
+                    order.retain(|id| *id != layer);
+                    let at = order
+                        .iter()
+                        .position(|id| *id == selection_layer)
+                        .unwrap_or(0);
+                    order.insert(at, layer);
+                    s.reorder_children(viewport, &order);
+                    code.decoration_layer.set(Some(layer));
+                    code.decoration_nodes.borrow_mut().clear();
+                }
+                let mut marked = code.decoration_nodes.borrow_mut();
+                while marked.len() > marks.len() {
+                    s.remove(marked.pop().unwrap());
+                }
+                if let Some(layer) = code.decoration_layer.get() {
+                    while marked.len() < marks.len() {
+                        marked.push(s.append(layer, NodeKind::Rect(color), Style::default()));
+                    }
+                    for (id, (rect, mark)) in marked.iter().zip(marks) {
+                        if !matches!(s.kind(*id), NodeKind::Rect(c) if *c == mark) {
+                            s.set_kind(*id, NodeKind::Rect(mark));
+                        }
+                        s.set_style(*id, fixed(rect.width.max(1.), rect.height));
+                        s.set_transform(
+                            *id,
+                            Transform {
+                                x: rect.x,
+                                y: rect.y,
+                            },
+                        );
+                    }
+                }
+                drop(marked);
+            }
             let mut nodes = selection_nodes.borrow_mut();
             while nodes.len() > rects.len() {
                 s.remove(nodes.pop().unwrap());
@@ -2881,7 +3331,19 @@ impl Ui {
             // built only for those.
             let mut shown: Vec<(usize, f32)> = Vec::new();
             let mut current = 0;
-            if numbered {
+            if numbered && let Some(lines) = &long_lines {
+                // From the line index: no line out of view is shaped.
+                for i in lines.line_at(scroll.1)..lines.line_count() {
+                    let y = lines.top(i) - scroll.1;
+                    if y >= inner_height {
+                        break;
+                    }
+                    if y + lines.height(i) > 0. {
+                        shown.push((i + 1, y));
+                    }
+                }
+                current = lines.line_of(display_cursor) + 1;
+            } else if numbered {
                 let starts: Vec<usize> = std::iter::once(0)
                     .chain(display.match_indices('\n').map(|(at, _)| at + 1))
                     .collect();
@@ -3012,7 +3474,9 @@ impl Ui {
                 .iter()
                 .filter(|range| range.end <= e.text().len())
                 .filter(|range| caret_at.is_none_or(|at| at < range.start || at > range.end))
-                .flat_map(|range| layout.selection(range.clone()))
+                .flat_map(|range| {
+                    layout.selection_within(range.clone(), scroll.1, scroll.1 + inner_height)
+                })
                 .filter_map(|r| {
                     let y = r.y + r.height - 2. - scroll.1;
                     (y >= 0. && y < inner_height).then_some((r.x - scroll.0, y, r.width))
@@ -3033,13 +3497,49 @@ impl Ui {
                 s.set_style(*id, fixed(w, 2.));
                 s.set_transform(*id, Transform { x, y });
             }
+            if let Some(code) = draw_hint.code()
+                && code.on_caret.borrow().is_some()
+            {
+                let text = e.text();
+                let focus = selection.focus.min(text.len());
+                let (line, start) = match &long_lines {
+                    Some(lines) if e.preedit().is_none() => {
+                        let line = lines.line_of(focus);
+                        (line, lines.line_range(line).start)
+                    }
+                    _ => {
+                        let before = &text[..focus];
+                        (
+                            before.match_indices('\n').count(),
+                            before.rfind('\n').map_or(0, |at| at + 1),
+                        )
+                    }
+                };
+                code.caret_drawn.set(Some(Caret {
+                    line: line + 1,
+                    column: text[start..focus].chars().count() + 1,
+                    anchor: selection.anchor,
+                    focus,
+                }));
+            }
             let mut semantics = sem.borrow_mut();
-            semantics.update_text_input(
-                root,
-                e.text(),
-                (selection.anchor, selection.focus),
-                draw_read_only.get(),
-            );
+            // The text, when it changed (a long document isn't compared on a
+            // scroll); the selection always.
+            if draw_semantic_revision.get() == Some(e.revision()) {
+                semantics.update_text_selection(
+                    root,
+                    (selection.anchor, selection.focus),
+                    draw_read_only.get(),
+                );
+            } else {
+                semantics.update_text_input(
+                    root,
+                    e.text(),
+                    (selection.anchor, selection.focus),
+                    draw_read_only.get(),
+                );
+                draw_semantic_revision.set(Some(e.revision()));
+            }
             semantics.set_placeholder(root, placeholder.as_ref().map(|(hint, _)| hint.as_ref()));
         });
         // Geometry refresh may make an existing stationary drag scrollable.
@@ -3047,8 +3547,25 @@ impl Ui {
         let interaction_refresh: InteractionRefresh = Rc::new(RefCell::new(None));
         let refresh: Rc<dyn Fn()> = {
             let hook = interaction_refresh.clone();
+            let told = hint.clone();
             Rc::new(move || {
                 refresh();
+                // Where the caret is, told once drawn (nothing borrowed),
+                // if it moved; the callback is out while it runs.
+                if let Some(code) = told.code() {
+                    let caret = code.caret_drawn.get();
+                    if caret.is_some() && caret != code.caret_told.get() {
+                        code.caret_told.set(caret);
+                        let callback = code.on_caret.borrow_mut().take();
+                        if let (Some(mut callback), Some(caret)) = (callback, caret) {
+                            callback(caret);
+                            let mut slot = code.on_caret.borrow_mut();
+                            if slot.is_none() {
+                                *slot = Some(callback);
+                            }
+                        }
+                    }
+                }
                 let arm = hook.borrow().as_ref().and_then(Weak::upgrade);
                 if let Some(arm) = arm {
                     arm();
@@ -3292,6 +3809,7 @@ impl Ui {
         };
         *interaction_refresh.borrow_mut() = Some(Rc::downgrade(&arm));
         let draw = refresh.clone();
+        let tab_indent = hint.clone();
         self.on_event(root, true, move |cx| {
             if cx.phase != EventPhase::Target {
                 return;
@@ -3802,6 +4320,14 @@ impl Ui {
                                     changed = e.insert("\n");
                                 }
                             }
+                            Key::Tab
+                                if !command
+                                    && !modifiers.alt
+                                    && tab_indent.code().is_some_and(|c| c.indent.borrow().is_some()) =>
+                            {
+                                let indent = tab_indent.code_made().indent.borrow().clone().unwrap();
+                                changed = indent_lines(&mut e, &indent, modifiers.shift);
+                            }
                             Key::Space => return,
                             Key::Character(ref k) if command && k.eq_ignore_ascii_case("a") => {
                                 e.select_all()
@@ -3870,6 +4396,64 @@ impl Ui {
             .dispatch_to(&self.scene, node, InputEvent::SetNumericValue(value))
             .default_prevented
     }
+}
+
+/// Tab in an editor with an indent (`EditorHandle::set_indent`): the
+/// indent where the caret is, or with lines selected (or Shift) each of
+/// them indented, or outdented, as one edit that undo takes back; the
+/// lines stay selected. Whether the text changed.
+fn indent_lines(e: &mut TextEditor, indent: &str, outdent: bool) -> bool {
+    let range = e.selection().range();
+    let text = e.text();
+    let lines = text[range.clone()].contains('\n');
+    if !lines && !outdent {
+        return e.insert(indent);
+    }
+    let start = text[..range.start].rfind('\n').map_or(0, |at| at + 1);
+    // A selection ending at a line's start leaves that line be.
+    let end = if lines && text[..range.end].ends_with('\n') {
+        range.end - 1
+    } else {
+        text[range.end..]
+            .find('\n')
+            .map_or(text.len(), |at| range.end + at)
+    };
+    let block = &text[start..end];
+    let mut next = String::with_capacity(block.len() + indent.len() * 8);
+    for (n, line) in block.split('\n').enumerate() {
+        if n > 0 {
+            next.push('\n');
+        }
+        if outdent {
+            // The indent, or as much of it as the line starts with (spaces
+            // up to its width, or a tab).
+            let cut = if line.starts_with(indent) {
+                indent.len()
+            } else if line.starts_with('\t') {
+                1
+            } else {
+                line.bytes()
+                    .take(indent.len().max(1))
+                    .take_while(|b| *b == b' ')
+                    .count()
+            };
+            next.push_str(&line[cut..]);
+        } else if line.is_empty() {
+            // An empty line stays empty.
+        } else {
+            next.push_str(indent);
+            next.push_str(line);
+        }
+    }
+    if next == block {
+        return false;
+    }
+    e.set_selection(start, end);
+    let changed = e.insert(&next);
+    if lines {
+        e.set_selection(start, start + next.len());
+    }
+    changed
 }
 
 /// Control alone on macOS: the text system's Emacs-style keys.

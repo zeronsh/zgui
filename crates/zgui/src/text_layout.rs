@@ -303,6 +303,15 @@ pub trait TextLayout {
     fn caret(&self, byte_offset: usize) -> Rect;
     /// Visual spans may be disjoint for bidirectional text.
     fn selection(&self, range: Range<usize>) -> Vec<Rect>;
+    /// The selection of `range` between `top` and `bottom` down the
+    /// layout: what shows of it. A long text's layout shapes no more than
+    /// those lines (a selection of a whole file draws what is in view).
+    fn selection_within(&self, range: Range<usize>, top: f32, bottom: f32) -> Vec<Rect> {
+        self.selection(range)
+            .into_iter()
+            .filter(|r| r.y + r.height > top && r.y < bottom)
+            .collect()
+    }
     /// Affinity-aware geometry; defaults preserve compatibility with custom shapers.
     fn hit_position(&self, x: f32, y: f32) -> TextPosition {
         TextPosition {

@@ -440,6 +440,26 @@ impl Semantics {
         self.revision = self.revision.wrapping_add(1);
         entry.revision = self.revision;
     }
+    /// As `update_text_input` for text known unchanged (an editor's text at
+    /// the same revision): its selection and read-only state.
+    pub fn update_text_selection(
+        &mut self,
+        id: NodeId,
+        selection: (usize, usize),
+        read_only: bool,
+    ) {
+        let Some(entry) = self.nodes.get_mut(&id) else {
+            return;
+        };
+        let node = &mut entry.node;
+        if node.text_selection == Some(selection) && node.read_only == read_only {
+            return;
+        }
+        node.text_selection = Some(selection);
+        node.read_only = read_only;
+        self.revision = self.revision.wrapping_add(1);
+        entry.revision = self.revision;
+    }
     /// Set a node's label in place: an equal one changes nothing, and a new
     /// one reuses the old one's room (a label bound to changing text).
     pub fn set_label(&mut self, id: NodeId, label: &str) {

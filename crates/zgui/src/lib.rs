@@ -26,6 +26,7 @@ pub mod timer;
 pub mod frame;
 pub mod profile;
 
+pub(crate) mod editor_lines;
 pub(crate) mod editor_menu;
 pub(crate) mod editor_spell;
 pub(crate) mod elastic;

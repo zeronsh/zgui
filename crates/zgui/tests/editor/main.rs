@@ -12,12 +12,16 @@ mod editor_accessible_selection;
 mod editor_autoscroll;
 #[path = "../editor_blur_selection.rs"]
 mod editor_blur_selection;
+#[path = "../editor_code.rs"]
+mod editor_code;
 #[path = "../editor_context_menu.rs"]
 mod editor_context_menu;
 #[path = "../editor_hints.rs"]
 mod editor_hints;
 #[path = "../editor_ingress_normalization.rs"]
 mod editor_ingress_normalization;
+#[path = "../editor_long_documents.rs"]
+mod editor_long_documents;
 #[path = "../editor_model_normalization.rs"]
 mod editor_model_normalization;
 #[path = "../editor_paging.rs"]

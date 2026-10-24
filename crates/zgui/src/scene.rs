@@ -1661,8 +1661,8 @@ pub struct Scene {
     /// Nodes that ever had one, a content blur or a mask (`Node::promoted`).
     promoted_count: usize,
     text_measurer: Option<Box<dyn TextMeasurer>>,
-    text_shaper: Option<Box<dyn crate::text_layout::TextShaper>>,
-    font_shaper: Option<Box<dyn crate::text_layout::FontTextShaper>>,
+    text_shaper: Option<std::rc::Rc<dyn crate::text_layout::TextShaper>>,
+    font_shaper: Option<std::rc::Rc<dyn crate::text_layout::FontTextShaper>>,
     font_measurer: Option<Box<FontMeasurer>>,
     rich_measurer: crate::rich_text::TextMeasure,
     rich_shaper: Option<Box<crate::rich_text::RichShaper>>,
@@ -2879,7 +2879,7 @@ impl Scene {
     /// Installs the native font engine for editor geometry and intrinsic measurement.
     pub fn set_text_shaper(&mut self, shaper: impl crate::text_layout::TextShaper + 'static) {
         self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
-        self.text_shaper = Some(Box::new(shaper));
+        self.text_shaper = Some(std::rc::Rc::new(shaper));
         let ids: Vec<_> = self.ids().collect();
         for id in ids {
             self.invalidate(id, LAYOUT | PAINT);
@@ -2948,7 +2948,7 @@ impl Scene {
         shaper: impl crate::text_layout::FontTextShaper + 'static,
     ) {
         self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
-        self.font_shaper = Some(Box::new(shaper));
+        self.font_shaper = Some(std::rc::Rc::new(shaper));
         let ids: Vec<_> = self
             .paint_items()
             .filter(|item| matches!(item.kind, NodeKind::Text { .. }))
@@ -3064,6 +3064,35 @@ impl Scene {
             ))
         } else {
             self.shape_text(text, size, width)
+        }
+    }
+    /// Lines of `font` at `size` shaped apart from the scene, as
+    /// `shape_text_with_font` shapes them: a long text's lines, shaped as
+    /// they show (`editor_lines`), while the scene is borrowed or not.
+    pub(crate) fn line_shaper(
+        &self,
+        size: f32,
+        font: &crate::text_layout::FontStyle,
+    ) -> crate::editor_lines::LineShaper {
+        let font = font.clone();
+        if let Some(shaper) = self.font_shaper.clone() {
+            std::rc::Rc::new(move |text, width| shaper.shape(text, size, width, &font))
+        } else if font.line_height != crate::text_layout::LineHeight::NORMAL
+            || font.letter_spacing != crate::text_layout::LetterSpacing::ZERO
+        {
+            std::rc::Rc::new(move |text, width| {
+                Box::new(crate::text_layout::FallbackTextLayout::with_font(
+                    text, size, width, &font,
+                ))
+            })
+        } else if let Some(shaper) = self.text_shaper.clone() {
+            std::rc::Rc::new(move |text, width| shaper.shape(text, size, width))
+        } else {
+            std::rc::Rc::new(move |text, width| {
+                Box::new(crate::text_layout::FallbackTextLayout::new(
+                    text, size, width,
+                ))
+            })
         }
     }
     /// The size of `text` at `size` in `font`, wrapped at `width` if given.
