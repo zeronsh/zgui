@@ -1653,6 +1653,8 @@ pub struct GpuRenderer {
     frame_quads: Vec<Quad>,
     /// The frame's draws, kept for their allocation.
     frame_draws: Vec<Draw>,
+    /// How many quads and draws frames have used lately (`keep_room`).
+    frame_peaks: (usize, usize),
     /// The quads of the lines of a text partly in its clip, made each frame
     /// (see `render_flat`), kept for their allocation.
     visible_glyphs: Vec<Quad>,
@@ -2036,6 +2038,7 @@ impl GpuRenderer {
             vertex_capacity: 4096,
             frame_quads: Vec::new(),
             frame_draws: Vec::new(),
+            frame_peaks: (0, 0),
             visible_glyphs: Vec::new(),
             background: Color(0, 0, 0, 0),
             images: FxHashMap::default(),
@@ -4204,6 +4207,8 @@ impl GpuRenderer {
         }
         *self.pending.get_mut() = Some(encoder);
         self.fresh = false;
+        keep_room(&mut quads, &mut self.frame_peaks.0);
+        keep_room(&mut draws, &mut self.frame_peaks.1);
         self.frame_quads = quads;
         draws.clear();
         self.frame_draws = draws;
@@ -4215,7 +4220,7 @@ impl GpuRenderer {
     #[allow(clippy::too_many_arguments)]
     fn render_direct(
         &mut self,
-        quads: Vec<Quad>,
+        mut quads: Vec<Quad>,
         mut draws: Vec<Draw>,
         regions: &[(Rect, Scissor)],
         batches: &[(usize, Vec<usize>)],
@@ -4387,6 +4392,8 @@ impl GpuRenderer {
         self.metal_frames += 1;
         stats.render_passes += 1;
         self.fresh = false;
+        keep_room(&mut quads, &mut self.frame_peaks.0);
+        keep_room(&mut draws, &mut self.frame_peaks.1);
         self.frame_quads = quads;
         draws.clear();
         self.frame_draws = draws;
@@ -6140,6 +6147,11 @@ impl GpuRenderer {
         });
         self.flush_pending();
         self.blur_scratch = None;
+        // A frame's quads and draws: the next frame makes them again.
+        self.frame_quads = Vec::new();
+        self.frame_draws = Vec::new();
+        self.visible_glyphs = Vec::new();
+        self.frame_peaks = (0, 0);
         // Effect slots draw again from their layers when next damaged.
         self.effects = None;
         self.images.remove(&effects::EFFECT_ATLAS);
@@ -6501,6 +6513,17 @@ fn scissor_holds(outer: Scissor, inner: Scissor) -> bool {
 /// A texture draws sample and the CPU writes (glyph cells, images): with
 /// `cpu_writes` on macOS, in shared memory written in place
 /// (`upload::shared_texture`).
+/// Keep `vec`'s room for the frames to come (its length is what this one
+/// used), unless a spike left it more than twice what frames have used
+/// lately (`peak`, which follows the length up at once and down a 64th a
+/// frame) and it holds more than 64 KB: a frame of a long page scrolled past
+/// keeps none of it.
+fn keep_room<T>(vec: &mut Vec<T>, peak: &mut usize) {
+    *peak = vec.len().max(*peak - *peak / 64);
+    if vec.capacity() > 2 * *peak && vec.capacity() * std::mem::size_of::<T>() > 64 << 10 {
+        vec.shrink_to(*peak);
+    }
+}
 fn sampled_texture(
     device: &wgpu::Device,
     #[allow(unused)] cpu_writes: bool,
@@ -7832,5 +7855,49 @@ mod texel_upload_tests {
             assert_eq!(pixel(2), &[255, 0, 0, 255], "left, copied={copied}");
             assert_eq!(pixel(37), &[0, 0, 255, 255], "right, copied={copied}");
         }
+    }
+}
+#[cfg(test)]
+mod keep_room_tests {
+    use super::keep_room;
+
+    #[test]
+    fn a_spike_of_quads_is_given_back_and_steady_frames_keep_their_room() {
+        let mut quads: Vec<[u8; 128]> = Vec::new();
+        let mut peak = 0;
+        let frame = |quads: &mut Vec<[u8; 128]>, peak: &mut usize, used: usize| {
+            quads.clear();
+            quads.resize(used, [0; 128]);
+            keep_room(quads, peak);
+        };
+        // Steady frames, a little above and below each other: no shrinking.
+        for i in 0..200 {
+            frame(&mut quads, &mut peak, 3000 + (i % 7) * 100);
+        }
+        let steady = quads.capacity();
+        for i in 0..200 {
+            frame(&mut quads, &mut peak, 3000 + (i % 7) * 100);
+            assert_eq!(quads.capacity(), steady, "steady frames keep their room");
+        }
+        // One frame of a long page: the room grows, then goes back.
+        frame(&mut quads, &mut peak, 60_000);
+        assert!(quads.capacity() >= 60_000);
+        for _ in 0..300 {
+            frame(&mut quads, &mut peak, 3000);
+        }
+        assert!(
+            quads.capacity() <= 2 * 3000,
+            "a spike's room is given back: {}",
+            quads.capacity()
+        );
+        // Small vectors are left alone.
+        let mut small: Vec<[u8; 128]> = Vec::with_capacity(400);
+        let mut small_peak = 0;
+        for _ in 0..200 {
+            small.clear();
+            small.push([0; 128]);
+            keep_room(&mut small, &mut small_peak);
+        }
+        assert_eq!(small.capacity(), 400);
     }
 }
