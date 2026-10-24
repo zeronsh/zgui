@@ -9,7 +9,10 @@ valgrind's cachegrind without cache simulation, and compares the counted
 instructions (`I refs`): exact, and the same on any machine of the
 architecture, where hardware counters and time are not. Prints a table (and
 writes it as Markdown); exits 1 when a scene costs more than THRESHOLD
-percent over BASE (a scene the base cannot run yet shows as new). Linux
+percent over BASE (a scene the base does not have yet shows as new). A run
+that fails (a script's time budget, a missing GPU) is reported as the
+gate's failure, never as a result; benches run with ZGUI_GATE=1, which
+the script benches take for budgets long enough for cachegrind. Linux
 (CI's `perf` job). Nothing renders: under valgrind a software rasterizer's
 instructions would swamp zgui's, so heavy, lab and animate run with
 RENDER=0 (update, layout and damage, text measured as a renderer would).
@@ -69,17 +72,22 @@ def build(checkout, target, into):
         shutil.copy2(target / 'release' / 'examples' / example, into / example)
 
 
-def count(binary, env, required=True):
-    """The run's instructions; None if it failed and need not succeed (a
-    scene the base cannot run yet)."""
+class Infra(Exception):
+    """The gate could not measure: not a result about the change."""
+
+
+def count(binary, env):
+    """The run's instructions. A run that fails is the gate's failure, not
+    the change's: under cachegrind a script's time budget (`ZGUI_GATE`
+    lifts it in the benches) or a missing GPU would otherwise look like a
+    result."""
     result = subprocess.run(
         ['valgrind', '--tool=cachegrind', '--cache-sim=no', '--cachegrind-out-file=/dev/null', str(binary)],
-        env=dict(os.environ, **env), capture_output=True, text=True)
+        env=dict(os.environ, ZGUI_GATE='1', **env), capture_output=True, text=True)
     found = re.search(r'I\s+refs:\s+([\d,]+)', result.stderr)
     if result.returncode or not found:
-        if not required:
-            return None
-        sys.exit(f'{binary} under cachegrind failed:\n{result.stdout}{result.stderr[-3000:]}')
+        why = 'a script hit its time budget' if 'time budget' in result.stdout + result.stderr else 'it failed'
+        raise Infra(f'{binary.name}: {why} under cachegrind\n{result.stdout[-1500:]}{result.stderr[-3000:]}')
     return int(found.group(1).replace(',', ''))
 
 
@@ -109,8 +117,14 @@ def main():
     rows, failed = [], []
     for name, _, example, env in SCENES:
         base_binary = WORK / 'gate-bin-base' / example
-        before = count(base_binary, env, required=False) if base_binary.exists() else None
-        after = count(WORK / 'gate-bin-head' / example, env)
+        try:
+            before = count(base_binary, env) if base_binary.exists() else None
+            after = count(WORK / 'gate-bin-head' / example, env)
+        except Infra as error:
+            # Loudly, and as what it is: no table that reads as a result.
+            if args.markdown:
+                args.markdown.write_text(f'**Instruction gate: infrastructure failure, no result.**\n\n```\n{error}\n```\n')
+            sys.exit(f'GATE INFRA FAILURE (not a performance result): {error}')
         delta = (after - before) / before * 100 if before else None
         if delta is not None and delta > args.threshold:
             failed.append(name)

@@ -4,6 +4,8 @@
 //! retired by phase (macOS), allocations, and times them.
 //! Run: cargo run --release -p zgui-script --example mount_bench
 //! (`N` sets the row count, 2,000 by default; `ONLY=luau|rust` runs one.)
+#[path = "support/bench_limits.rs"]
+mod bench_limits;
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicU64, Ordering::Relaxed},
@@ -111,7 +113,8 @@ fn run(luau: bool, n: usize) -> ([Phase; 3], usize) {
     let view = measure(&mut phases[0], || {
         if luau {
             let code = SCRIPT.replace("local N = ...", &format!("local N = {n}"));
-            let script = ScriptHost::inline(&ui.runtime, "bench", code);
+            let script =
+                ScriptHost::inline(&ui.runtime, "bench", code).limits(bench_limits::limits());
             script.reload().expect("the bench script loads");
             let view = script.view();
             host = Some(script);

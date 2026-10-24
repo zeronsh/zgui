@@ -5,6 +5,8 @@
 //! allocations per update, after a warm-up.
 //! Run: cargo run --release -p zgui-script --example update_bench
 //! (`TICKS` sets the updates, 600 by default; `ONLY=name` runs one scenario.)
+#[path = "support/bench_limits.rs"]
+mod bench_limits;
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicU64, Ordering::Relaxed},
@@ -283,7 +285,7 @@ fn run(scenario: &Scenario, luau: bool, ticks: usize) -> (f64, f64) {
     let mut host = None;
     let step = if luau {
         let code = scenario.script.replace("ROWS", &ROWS.to_string());
-        let script = ScriptHost::inline(&ui.runtime, "bench", code);
+        let script = ScriptHost::inline(&ui.runtime, "bench", code).limits(bench_limits::limits());
         let step = (scenario.luau)(&script, ticks);
         script.reload().expect("the bench script loads");
         let mounted = ui.mount(script.view());

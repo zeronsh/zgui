@@ -4,6 +4,8 @@
 //! or unread. Counts instructions retired per tick (macOS) and times them.
 //! Run: cargo run --release -p zgui-script --example list_state_bench
 //! (`N` sets the message count, `TICKS` the ticks.)
+#[path = "support/bench_limits.rs"]
+mod bench_limits;
 use std::time::Instant;
 use zgui::widgets::Ui;
 use zgui_script::ScriptHost;
@@ -96,7 +98,7 @@ fn main() {
         .unwrap_or(200);
     let mut ui = Ui::new(800., 600.);
     let code = SCRIPT.replace("local N = ...", &format!("local N = {n}"));
-    let host = ScriptHost::inline(&ui.runtime, "bench", code);
+    let host = ScriptHost::inline(&ui.runtime, "bench", code).limits(bench_limits::limits());
     host.reload().expect("the bench script loads");
     ui.mount(host.view());
     ui.prepare_frame();

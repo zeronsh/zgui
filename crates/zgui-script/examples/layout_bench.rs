@@ -4,6 +4,8 @@
 //! (the rows' new places and the moves' start), the frames that move the
 //! rows, and checks nothing runs once they settle.
 //! Run: cargo run --release -p zgui-script --example script_layout_bench
+#[path = "support/bench_limits.rs"]
+mod bench_limits;
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -41,7 +43,7 @@ fn run(options: &str) -> Costs {
             end, {{ key = function(i) return i end, {options} }}),
         }} }}"##
     );
-    let host = ScriptHost::inline(&ui.runtime, "bench", script);
+    let host = ScriptHost::inline(&ui.runtime, "bench", script).limits(bench_limits::limits());
     let order: Vec<Value> = (0..N).map(|i| Value::Num(i as f64)).collect();
     let rows = host.shared("rows", Value::List(order.clone().into()));
     host.reload().unwrap();

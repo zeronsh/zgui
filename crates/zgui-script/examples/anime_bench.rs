@@ -3,6 +3,8 @@
 //! with zgui signals and reactive styles.
 //! Run: cargo run --release -p zgui-script --example anime_bench
 //! (`ONLY=luau|rust|direct` runs one engine, `FRAMES` sets the frame count.)
+#[path = "support/bench_limits.rs"]
+mod bench_limits;
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -83,7 +85,8 @@ fn main() {
     } else {
         run(
             |ui| {
-                let host = ScriptHost::inline(&ui.runtime, "bench", script);
+                let host =
+                    ScriptHost::inline(&ui.runtime, "bench", script).limits(bench_limits::limits());
                 let evaluated = Instant::now();
                 host.reload().unwrap();
                 eprintln!(
