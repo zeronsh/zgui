@@ -143,10 +143,17 @@ impl Value {
                 (a, b) => a == b,
             }
         }
-        fn id_of(item: &Value) -> Option<String> {
+        /// An item's `id`, borrowed: a string, or a number by value (both
+        /// zeros alike).
+        #[derive(Hash, PartialEq, Eq)]
+        enum Id<'a> {
+            Str(&'a str),
+            Num(u64),
+        }
+        fn id_of(item: &Value) -> Option<Id<'_>> {
             match item.field("id")? {
-                Value::Str(s) => Some(format!("s{s}")),
-                Value::Num(n) => Some(format!("n{n}")),
+                Value::Str(s) => Some(Id::Str(s)),
+                Value::Num(n) => Some(Id::Num(if *n == 0. { 0 } else { n.to_bits() })),
                 _ => None,
             }
         }
@@ -155,8 +162,15 @@ impl Value {
                 if Rc::ptr_eq(&new, was) {
                     return old.clone();
                 }
-                // By id when every old item has one.
-                let ids: Option<HashMap<String, &Value>> = (was.len() > 1)
+                // By id when every old item has one; by position when the
+                // ids are where they were (the usual update: some items
+                // edited in place), with no table of them to build.
+                let in_place = new.len() == was.len()
+                    && new
+                        .iter()
+                        .zip(was.iter())
+                        .all(|(a, b)| id_of(a) == id_of(b));
+                let ids: Option<HashMap<Id<'_>, &Value>> = (was.len() > 1 && !in_place)
                     .then(|| was.iter().map(|v| id_of(v).map(|id| (id, v))).collect())
                     .flatten();
                 let mut unchanged = new.len() == was.len();
@@ -183,7 +197,9 @@ impl Value {
                 }
             }
             (Value::Map(new), Value::Map(was)) => {
-                if Rc::ptr_eq(&new, was) {
+                // Equal throughout (most of a republished model): the old
+                // value, found without building a new one first.
+                if Rc::ptr_eq(&new, was) || new == *was {
                     return old.clone();
                 }
                 // Both sorted by key: walk them together.
@@ -1801,6 +1817,35 @@ mod tests {
     }
     fn key(k: &str) -> PathKey {
         PathKey::Key(k.into())
+    }
+
+    #[test]
+    fn reconcile_keeps_what_did_not_change() {
+        let row = |id: f64, label: &str| map(&[("id", Value::Num(id)), ("label", label.into())]);
+        let list = |labels: &[(f64, &str)]| {
+            Value::List(
+                labels
+                    .iter()
+                    .map(|(id, l)| row(*id, l))
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
+        };
+        let ptr = |v: &Value| identity(v);
+        let old = list(&[(1., "a"), (2., "b"), (3., "c")]);
+        // Equal throughout: the old value itself.
+        let same = list(&[(1., "a"), (2., "b"), (3., "c")]).reconcile(&old);
+        assert_eq!(ptr(&same), ptr(&old));
+        // One edited in place: the others are the old items.
+        let edited = list(&[(1., "a"), (2., "B"), (3., "c")]).reconcile(&old);
+        assert_eq!(edited, list(&[(1., "a"), (2., "B"), (3., "c")]));
+        assert_eq!(ptr(&edited.list()[0]), ptr(&old.list()[0]));
+        assert_eq!(ptr(&edited.list()[2]), ptr(&old.list()[2]));
+        assert_ne!(ptr(&edited.list()[1]), ptr(&old.list()[1]));
+        // Reordered: matched by id, each the old item still.
+        let moved = list(&[(3., "c"), (1., "a"), (2., "b")]).reconcile(&old);
+        assert_eq!(ptr(&moved.list()[0]), ptr(&old.list()[2]));
+        assert_eq!(ptr(&moved.list()[1]), ptr(&old.list()[0]));
     }
 
     #[test]

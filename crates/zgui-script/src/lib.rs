@@ -93,7 +93,9 @@ pub struct Limits {
     pub plugin_memory: usize,
     /// Budget for evaluating a script on load.
     pub load: Duration,
-    /// Budget for one handler or computed property call.
+    /// Budget for one handler or computed property call. Budgets count the
+    /// CPU time from a reading up to 1 ms old, so a script may be stopped up
+    /// to 1 ms short of one, never past it.
     pub call: Duration,
 }
 impl Default for Limits {
@@ -173,7 +175,40 @@ pub(crate) struct Deadline {
     cpu: Duration,
     budget: Duration,
 }
+/// How old a CPU-time reading an outermost call's budget may start from:
+/// reading the thread's CPU clock costs more than a short call itself, and a
+/// flush runs hundreds of them. A reading this old is this much CPU early at
+/// most, so a script is stopped at most this much short of its budget, never
+/// past it. Starts that shift another budget (a nested call, work off the
+/// clock) read the clock afresh: an early start there would give the outer
+/// call back more than it spent, every time.
+const CPU_READING_AGE: Duration = Duration::from_millis(1);
+thread_local! {
+    /// The thread's last CPU-time reading, and when it was taken.
+    static CPU_READING: Cell<Option<(Instant, Duration)>> = const { Cell::new(None) };
+}
+/// The thread's CPU time, or a reading of it at most `CPU_READING_AGE` old.
+fn recent_thread_cpu(now: Instant) -> Duration {
+    CPU_READING.with(|reading| match reading.get() {
+        Some((at, cpu)) if now.saturating_duration_since(at) <= CPU_READING_AGE => cpu,
+        _ => {
+            let cpu = thread_cpu();
+            reading.set(Some((now, cpu)));
+            cpu
+        }
+    })
+}
 impl Deadline {
+    /// A budget from now, its CPU start a recent reading (`CPU_READING_AGE`).
+    fn start_recent(budget: Duration) -> Self {
+        let wall = Instant::now();
+        Self {
+            wall,
+            cpu: recent_thread_cpu(wall),
+            budget,
+        }
+    }
+    /// A budget from now, read exactly: one that will shift another.
     fn start(budget: Duration) -> Self {
         Self {
             wall: Instant::now(),
@@ -290,7 +325,11 @@ impl Vm {
         f: impl FnOnce() -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         self.calls.set(self.calls.get() + 1);
-        let started = Deadline::start(budget);
+        // Outermost, nothing shifts by this start: a recent reading will do.
+        let started = match self.deadline.get() {
+            None => Deadline::start_recent(budget),
+            Some(_) => Deadline::start(budget),
+        };
         let outer = self.deadline.replace(Some(started));
         let result = f();
         self.deadline.set(outer.map(|d| d.shifted(&started)));

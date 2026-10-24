@@ -42,6 +42,7 @@ SCENES = [
     ('lab-scroll', 'zgui-desktop', 'workload_headless', {'ZGUI_MODE': 'scroll'}),
     ('animate', 'zgui-desktop', 'animation_headless', {'FRAMES': '1200'}),
     ('mount', 'zgui-script', 'mount_bench', {}),
+    ('script-update', 'zgui-script', 'update_bench', {}),
     ('anime', 'zgui-script', 'anime_bench', {}),
     ('script-layout', 'zgui-script', 'script_layout_bench', {}),
     ('list-state', 'zgui-script', 'list_state_bench', {}),

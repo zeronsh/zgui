@@ -568,6 +568,80 @@ struct EachRow {
     /// Seen in this pass.
     seen: bool,
 }
+/// A `ui.each`'s rows by identity: each row's index and row name.
+type Noted = HashMap<Rc<str>, (usize, String)>;
+/// A keyed `ui.each`'s last key pass: what the next one checks first.
+struct LastPass {
+    items: Vec<Value>,
+    keys: Vec<String>,
+    identities: Vec<Rc<str>>,
+}
+impl LastPass {
+    /// The rows' identities if `items` keeps the last pass's keys in their
+    /// order, each changed item passed on (a live row's state set, another
+    /// row's generation bumped): `None` if a key moved, came or went, and
+    /// the full pass decides.
+    #[allow(clippy::too_many_arguments)]
+    fn same_keys(
+        &mut self,
+        items: &[Value],
+        key: &mlua::Function,
+        vm: &Vm,
+        rows: &mut HashMap<String, EachRow>,
+        noted: &mut Noted,
+        live: bool,
+        runtime: &zgui::reactive::Runtime,
+    ) -> Option<Vec<Rc<str>>> {
+        if items.len() != self.items.len() {
+            return None;
+        }
+        let same = |a: &Value, b: &Value| {
+            let id = crate::value::identity(a);
+            if id != 0 {
+                id == crate::value::identity(b)
+            } else {
+                a == b
+            }
+        };
+        // The changed items first: one whose key changed sends the list to
+        // the full pass before anything is touched.
+        let mut changed = Vec::new();
+        for (i, (now, then)) in items.iter().zip(&self.items).enumerate() {
+            if same(now, then) {
+                continue;
+            }
+            let k = match vm.call::<Value>(key, now.clone()) {
+                Ok(k) => k.to_string(),
+                Err(_) => return None,
+            };
+            if k != self.keys[i] {
+                return None;
+            }
+            changed.push(i);
+        }
+        for i in changed {
+            let identity = &self.identities[i];
+            let (_, row) = noted.get(identity).cloned()?;
+            let item = items[i].clone();
+            let state = rows.get_mut(&row)?;
+            if live {
+                if let Some(signal) = &state.item {
+                    let signal = signal.clone();
+                    runtime.untracked(|| signal.set(item.clone()));
+                }
+            } else {
+                state.last = item.clone();
+                state.generation += 1;
+                let next: Rc<str> = Rc::from(format!("{row}@{}", state.generation));
+                noted.remove(identity);
+                noted.insert(next.clone(), (i, row));
+                self.identities[i] = next;
+            }
+            self.items[i] = item;
+        }
+        Some(self.identities.clone())
+    }
+}
 /// What tells an item without a `key` from the others at a glance: a
 /// table by its allocation (state keeps what a change does not touch the
 /// same allocation), anything else by its value.
@@ -1206,7 +1280,11 @@ fn kind_view(
             // The key pass notes each row's index for the build that follows.
             let live = builder.info().num_params >= 3;
             let rows: Rc<std::cell::RefCell<HashMap<String, EachRow>>> = Rc::default();
-            let noted: Rc<std::cell::RefCell<HashMap<String, (usize, String)>>> = Rc::default();
+            let noted: Rc<std::cell::RefCell<Noted>> = Rc::default();
+            // The last pass's items, keys, rows and identities: a list whose
+            // keys stay as they were (its edited items in place, the usual
+            // update) is answered from them, each item an allocation's glance.
+            let mut last_pass: Option<LastPass> = None;
             let unkeyed = std::cell::RefCell::new(Unkeyed::default());
             let (keys_from, items) = (items.clone(), items.clone());
             let (key_fn, key_vm) = (key.clone(), vm.clone());
@@ -1218,8 +1296,21 @@ fn kind_view(
                 move || {
                     keys_from.with(|list| {
                         let mut noted = noted_in_keys.borrow_mut();
-                        noted.clear();
                         let mut rows = rows_in_keys.borrow_mut();
+                        if let (Some(last), Some(key_fn)) = (&mut last_pass, &key_fn)
+                            && let Some(identities) = last.same_keys(
+                                list.list(),
+                                key_fn,
+                                &key_vm,
+                                &mut rows,
+                                &mut noted,
+                                live,
+                                &runtime,
+                            )
+                        {
+                            return identities;
+                        }
+                        noted.clear();
                         if key_fn.is_none() {
                             let names = unkeyed_rows(
                                 list.list(),
@@ -1233,10 +1324,10 @@ fn kind_view(
                                 .into_iter()
                                 .enumerate()
                                 .map(|(i, row)| {
-                                    let identity = if live {
-                                        row.clone()
+                                    let identity: Rc<str> = if live {
+                                        Rc::from(row.as_str())
                                     } else {
-                                        format!("{row}@{}", rows[&row].generation)
+                                        Rc::from(format!("{row}@{}", rows[&row].generation))
                                     };
                                     noted.insert(identity.clone(), (i, row));
                                     identity
@@ -1294,16 +1385,24 @@ fn kind_view(
                                         }
                                     }
                                 };
+                                let identity: Rc<str> = Rc::from(identity);
                                 noted.insert(identity.clone(), (i, row));
                                 identity
                             })
                             .collect::<Vec<_>>();
                         // Rows gone from the list go from here too.
                         rows.retain(|_, state| std::mem::take(&mut state.seen));
+                        if let Some(keys) = keys {
+                            last_pass = Some(LastPass {
+                                items: list.list().to_vec(),
+                                keys,
+                                identities: identities.clone(),
+                            });
+                        }
                         identities
                     })
                 },
-                move |identity, cx| {
+                move |identity: Rc<str>, cx| {
                     let (index, row) = noted.borrow().get(&identity).cloned().unwrap_or_default();
                     let item = items
                         .with_untracked(|list| list.list().get(index).cloned().unwrap_or_default());

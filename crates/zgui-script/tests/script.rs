@@ -162,6 +162,27 @@ fn runaway_scripts_hit_their_time_budget() {
 }
 
 #[test]
+fn a_script_short_of_its_budget_is_never_stopped() {
+    // Budgets start from a CPU reading up to 1 ms old, so a script is
+    // stopped up to 1 ms short of its budget at most: one running 5 ms
+    // short finishes, every time.
+    let runtime = Runtime::new();
+    let limits = Limits {
+        load: Duration::from_millis(30),
+        ..Limits::default()
+    };
+    for _ in 0..10 {
+        let host = ScriptHost::inline(
+            &runtime,
+            "busy",
+            "local start = os.clock() while os.clock() - start < 0.025 do end return ui.text { 'done' }",
+        )
+        .limits(limits);
+        host.reload().expect("25 ms of a 30 ms budget");
+    }
+}
+
+#[test]
 fn nodes_a_script_keeps_mount_again_after_collections() {
     // Nodes made once and kept in variables are shown, hidden and shown
     // again, with garbage collected while they are away: a node lives as

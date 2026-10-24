@@ -36,6 +36,7 @@ SCENES = [
     ('lab-scroll', 'zgui-desktop', 'workload_headless', {'ZGUI_MODE': 'scroll', 'RENDER': '0'}),
     ('animate', 'zgui-desktop', 'animation_headless', {'FRAMES': '1200', 'RENDER': '0'}),
     ('mount', 'zgui-script', 'mount_bench', {}),
+    ('script-update', 'zgui-script', 'update_bench', {'TICKS': '200'}),
     ('anime', 'zgui-script', 'anime_bench', {}),
     ('script-layout', 'zgui-script', 'script_layout_bench', {}),
     ('list-state', 'zgui-script', 'list_state_bench', {}),
@@ -44,11 +45,19 @@ SCENES = [
 ]
 
 
+def has_example(checkout, package, example):
+    """Whether `checkout` has the example (a scene new since the base has not)."""
+    crate = checkout / 'crates' / package
+    manifest = (crate / 'Cargo.toml').read_text() if (crate / 'Cargo.toml').exists() else ''
+    return (crate / 'examples' / f'{example}.rs').exists() or f'name = "{example}"' in manifest
+
+
 def build(checkout, target, into):
+    scenes = [s for s in SCENES if has_example(checkout, s[1], s[2])]
     command = ['cargo', 'build', '--release', '--locked', '--quiet']
-    for package in dict.fromkeys(s[1] for s in SCENES):
+    for package in dict.fromkeys(s[1] for s in scenes):
         command += ['-p', package]
-        for example in dict.fromkeys(s[2] for s in SCENES if s[1] == package):
+        for example in dict.fromkeys(s[2] for s in scenes if s[1] == package):
             command += ['--example', example]
     env = dict(os.environ, CARGO_TARGET_DIR=str(target), CARGO_INCREMENTAL='0',
                CARGO_PROFILE_RELEASE_DEBUG='0')
@@ -56,7 +65,7 @@ def build(checkout, target, into):
     # One target directory serves both sides (their dependencies are
     # shared): keep this side's binaries before the other overwrites them.
     into.mkdir(parents=True, exist_ok=True)
-    for _, _, example, _ in SCENES:
+    for _, _, example, _ in scenes:
         shutil.copy2(target / 'release' / 'examples' / example, into / example)
 
 
@@ -90,7 +99,8 @@ def main():
     build(ROOT, target, WORK / 'gate-bin-head')
     rows, failed = [], []
     for name, _, example, env in SCENES:
-        before = count(WORK / 'gate-bin-base' / example, env, required=False)
+        base_binary = WORK / 'gate-bin-base' / example
+        before = count(base_binary, env, required=False) if base_binary.exists() else None
         after = count(WORK / 'gate-bin-head' / example, env)
         delta = (after - before) / before * 100 if before else None
         if delta is not None and delta > args.threshold:

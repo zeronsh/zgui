@@ -2267,6 +2267,16 @@ fn each_rows_follow_their_items_under_a_key() {
             ui.button { id = "edit", w = 10, h = 10, on_click = function()
                 items:set_key({ 2, "text" }, "TWO")
             end },
+            ui.button { id = "again", w = 10, h = 10, on_click = function()
+                items:set_key({ 2, "text" }, "Two!")
+            end },
+            ui.button { id = "swap", w = 10, h = 10, on_click = function()
+                local now = items:get()
+                items:set({ now[2], now[1] })
+            end },
+            ui.button { id = "rekey", w = 10, h = 10, on_click = function()
+                items:set_key({ 1, "id" }, "c")
+            end },
         }"##,
     );
     h.ui.prepare_frame();
@@ -2282,6 +2292,27 @@ fn each_rows_follow_their_items_under_a_key() {
         "3 2",
         "only the changed plain row was built again"
     );
+    // A second edit of the same row: the same again.
+    h.click("again");
+    h.ui.prepare_frame();
+    h.settle();
+    assert_eq!(
+        (h.text("plain-b"), h.text("live-b")),
+        ("Two!".into(), "Two!".into())
+    );
+    assert_eq!(h.text("counts"), "4 2");
+    // Reordered under their keys: the rows move, none is built again.
+    h.click("swap");
+    h.ui.prepare_frame();
+    h.settle();
+    assert_eq!(h.text("counts"), "4 2", "rows keep through a reorder");
+    assert_eq!(h.text("plain-a"), "one");
+    // A key changed: that row is a new one, in both lists.
+    h.click("rekey");
+    h.ui.prepare_frame();
+    h.settle();
+    assert_eq!(h.text("counts"), "5 3", "a new key builds a new row");
+    assert!(h.find("plain-b").is_none() && h.find("plain-c").is_some());
 }
 
 #[test]
