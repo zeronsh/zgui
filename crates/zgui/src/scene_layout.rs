@@ -505,7 +505,7 @@ impl Scene {
         let children = ids
             .into_iter()
             .map(|child| {
-                self.measure_hidden(child, hidden);
+                crate::deep(0, || self.measure_hidden(child, hidden));
                 (child, Rect::default())
             })
             .collect::<Vec<_>>();

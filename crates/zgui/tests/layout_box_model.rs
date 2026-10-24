@@ -733,3 +733,25 @@ fn containing_blocks_follow_relative_changes_resizes_and_hidden_ancestors() {
     ui.prepare_frame();
     assert_eq!(ui.scene.borrow_mut().flush().layout_nodes, 0);
 }
+
+// Depth ----------------------------------------------------------------------
+
+#[test]
+fn a_tree_thousands_deep_lays_out_on_a_small_stack() {
+    // A debug build's frames are large, and a thread's stack can be small
+    // (512 KB here): every recursion over the tree needs room made for it
+    // (`zgui::deep`).
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            let mut view = text("leaf").id("leaf").text_wrap(true);
+            for _ in 0..2_500 {
+                view = column().child(view);
+            }
+            let (ui, handle) = mount(view);
+            assert_eq!(rect(&ui, &handle, "leaf").x, 0.);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

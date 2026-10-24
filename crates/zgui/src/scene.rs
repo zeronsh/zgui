@@ -2364,15 +2364,17 @@ impl Scene {
                     Some(size) => size,
                     // Down a column, at the width it is laid out at, so
                     // text wraps there; across, with no room.
-                    None => self.min_content(
-                        child,
-                        if horizontal {
-                            Constraints::default()
-                        } else {
-                            asked
-                        },
-                        horizontal,
-                    ),
+                    None => crate::deep(0, || {
+                        self.min_content(
+                            child,
+                            if horizontal {
+                                Constraints::default()
+                            } else {
+                                asked
+                            },
+                            horizontal,
+                        )
+                    }),
                 }
             };
             let margins = if horizontal {
@@ -2543,7 +2545,7 @@ impl Scene {
         // Children first: a contents node lays out as its last child.
         if turned {
             for child in self.node(id).children.clone() {
-                self.refresh_direction(child, rtl, true);
+                crate::deep(0, || self.refresh_direction(child, rtl, true));
             }
         }
         if self.node(id).contents {
@@ -3293,7 +3295,7 @@ impl Scene {
             self.overflow_fades.retain(|(entry, _)| *entry != id);
         }
         for child in node.children {
-            self.free_subtree(child);
+            crate::deep(0, || self.free_subtree(child));
         }
         self.slots[id.index as usize].generation = self.slots[id.index as usize]
             .generation
@@ -3783,16 +3785,23 @@ impl Scene {
                 Some(parent) => self.context(parent),
                 None => (Transform::default(), Some(self.viewport), None),
             };
-            self.damage_subtree_placed(id, transform, clip, placement);
+            self.damage_subtree_placed(id, transform, clip, placement, 0);
             return;
         }
         let (transform, clip) = match self.node(id).parent {
             Some(parent) => self.world_context(parent),
             None => (Transform::default(), Some(self.viewport)),
         };
-        self.damage_subtree_in(id, transform, clip);
+        self.damage_subtree_in(id, transform, clip, 0);
     }
-    fn damage_subtree_in(&mut self, id: NodeId, parent: Transform, parent_clip: Option<Rect>) {
+    /// `level`: how deep in the walk (`deep`).
+    fn damage_subtree_in(
+        &mut self,
+        id: NodeId,
+        parent: Transform,
+        parent_clip: Option<Rect>,
+        level: u32,
+    ) {
         let node = self.node(id);
         // Not laid out since it was appended, so never painted: nothing to
         // repaint yet (a mounting row styles each node before its first
@@ -3818,7 +3827,9 @@ impl Scene {
         self.damage_painted(id, bounds, node.effects.blur_radius, own);
         for index in 0..self.node(id).children.len() {
             let child = self.node(id).children[index];
-            self.damage_subtree_in(child, transform, clip);
+            crate::deep(level + 1, || {
+                self.damage_subtree_in(child, transform, clip, level + 1)
+            });
         }
     }
     /// `damage_subtree_in` where local transforms exist (see `descend`).
@@ -3828,6 +3839,7 @@ impl Scene {
         parent: Transform,
         parent_clip: Option<Rect>,
         placement: Option<Placement>,
+        level: u32,
     ) {
         let node = self.node(id);
         let unplaced = node.measurement.is_none() && node.bounds == Rect::default();
@@ -3845,7 +3857,9 @@ impl Scene {
         self.damage_painted_placed(id, bounds, node.effects.blur_radius, own, placement);
         for index in 0..self.node(id).children.len() {
             let child = self.node(id).children[index];
-            self.damage_subtree_placed(child, transform, clip, placement);
+            crate::deep(level + 1, || {
+                self.damage_subtree_placed(child, transform, clip, placement, level + 1)
+            });
         }
     }
     /// What `node` paints under, given what its parent passes on: its
@@ -3943,7 +3957,7 @@ impl Scene {
         let own = self.own_ink(id);
         let mut held: Option<Rect> = None;
         for child in &node.children {
-            if let Some(child) = self.ink(*child) {
+            if let Some(child) = crate::deep(0, || self.ink(*child)) {
                 held = Some(held.map_or(child, |ink| ink.union(child)));
             }
         }
@@ -4335,11 +4349,15 @@ impl Scene {
         (bits & PERCENT_WIDTH != 0, bits & PERCENT_HEIGHT != 0)
     }
     fn reads_bits(&self, id: NodeId) -> u8 {
-        let node = self.node(id);
-        let cached = node.reads.get();
+        let cached = self.node(id).reads.get();
         if cached & READS_KNOWN != 0 {
             return cached;
         }
+        // Uncached, it recurses through the subtree (with room: `deep`).
+        crate::deep(0, || self.read_bits(id))
+    }
+    fn read_bits(&self, id: NodeId) -> u8 {
+        let node = self.node(id);
         // Percentages anywhere below, or its own.
         let (own_w, own_h) = self.percent_bases(id);
         let (mut percent_w, mut percent_h) = (own_w, own_h);
@@ -5149,7 +5167,16 @@ impl Scene {
     }
     /// `covered`: an ancestor moved and already damaged this whole subtree at
     /// its old and new positions.
-    fn arrange(&mut self, id: NodeId, x: f32, y: f32, report: &mut FrameReport, covered: bool) {
+    /// `level`: how deep in the walk (`deep`).
+    fn arrange(
+        &mut self,
+        id: NodeId,
+        x: f32,
+        y: f32,
+        report: &mut FrameReport,
+        covered: bool,
+        level: u32,
+    ) {
         let (x, y) = match self.node(id).style.snap {
             true => self.snap(id, x, y),
             false => (x, y),
@@ -5186,7 +5213,10 @@ impl Scene {
             if let Some(constraints) = constraints {
                 self.measure_full(child, constraints);
             }
-            self.arrange(child, x + rect.x, y + rect.y, report, covered || changed);
+            crate::deep(level + 1, || {
+                let covered = covered || changed;
+                self.arrange(child, x + rect.x, y + rect.y, report, covered, level + 1)
+            });
         }
         if damage {
             self.damage_subtree(id);
@@ -5344,7 +5374,7 @@ impl Scene {
                     (None, Some(bottom)) => origin_y + height - bottom - m.bottom - h,
                     (None, None) => start.y + content.top + m.top,
                 };
-                self.arrange(id, x, y, report, false);
+                self.arrange(id, x, y, report, false, 0);
             }
         }
         self.escaped = placed;
@@ -5366,7 +5396,7 @@ impl Scene {
         let mut report = FrameReport::default();
         if self.node(self.root).dirty & LAYOUT != 0 {
             self.measure_full(self.root, Constraints::default());
-            self.arrange(self.root, 0.0, 0.0, &mut report, false);
+            self.arrange(self.root, 0.0, 0.0, &mut report, false, 0);
         }
         // Boundaries under clean ancestors keep their place and size; lay out
         // just their subtrees, outermost first.
@@ -5396,11 +5426,11 @@ impl Scene {
                 continue;
             }
             let bounds = self.node(id).bounds;
-            self.arrange(id, bounds.x, bounds.y, &mut report, false);
+            self.arrange(id, bounds.x, bounds.y, &mut report, false, 0);
         }
         if relayout_all && self.node(self.root).dirty & LAYOUT != 0 {
             self.measure_full(self.root, Constraints::default());
-            self.arrange(self.root, 0.0, 0.0, &mut report, false);
+            self.arrange(self.root, 0.0, 0.0, &mut report, false, 0);
         }
         if !self.escaped.is_empty() {
             self.place_escaped(&mut report);
