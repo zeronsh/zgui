@@ -563,13 +563,46 @@ struct EachRow {
     last: Value,
     /// Bumped when the item changes: a new identity, so a new row.
     generation: u64,
+    /// What the row is known by: its name, and for a row built again when
+    /// its item changes, its generation (`EachRow::identity_of`).
+    identity: Rc<str>,
     /// A live row's item, as the state its builder was given.
     item: Option<Signal<Value>>,
     /// Seen in this pass.
     seen: bool,
 }
+impl EachRow {
+    /// A row named `name` showing `item`, known by `name` if `live` (its
+    /// item is state it is given) or else by `name` and its generation.
+    fn new(name: &str, item: Value, live: bool) -> Self {
+        let mut row = Self {
+            last: item,
+            generation: 0,
+            identity: Rc::from(""),
+            item: None,
+            seen: true,
+        };
+        row.identity = row.identity_of(name, live);
+        row
+    }
+    fn identity_of(&self, name: &str, live: bool) -> Rc<str> {
+        if live {
+            Rc::from(name)
+        } else {
+            Rc::from(format!("{name}@{}", self.generation))
+        }
+    }
+    /// Its item changed: a row built again (a new generation).
+    fn changed(&mut self, name: &str, item: Value) {
+        self.last = item;
+        self.generation += 1;
+        self.identity = self.identity_of(name, false);
+    }
+}
+/// A `ui.each`'s rows by name.
+type Rows = ContentMap<Rc<str>, EachRow>;
 /// A `ui.each`'s rows by identity: each row's index and row name.
-type Noted = HashMap<Rc<str>, (usize, String)>;
+type Noted = ContentMap<Rc<str>, (usize, Rc<str>)>;
 /// A keyed `ui.each`'s last key pass: what the next one checks first.
 struct LastPass {
     items: Vec<Value>,
@@ -587,7 +620,7 @@ impl LastPass {
         items: &[Value],
         key: &mlua::Function,
         vm: &Vm,
-        rows: &mut HashMap<String, EachRow>,
+        rows: &mut Rows,
         noted: &mut Noted,
         live: bool,
         runtime: &zgui::reactive::Runtime,
@@ -630,9 +663,8 @@ impl LastPass {
                     runtime.untracked(|| signal.set(item.clone()));
                 }
             } else {
-                state.last = item.clone();
-                state.generation += 1;
-                let next: Rc<str> = Rc::from(format!("{row}@{}", state.generation));
+                state.changed(&row, item.clone());
+                let next = state.identity.clone();
                 noted.remove(identity);
                 noted.insert(next.clone(), (i, row));
                 self.identities[i] = next;
@@ -664,6 +696,43 @@ fn quick(item: &Value) -> Quick {
         Value::Element(e) => Quick::At(Rc::as_ptr(&e.0).cast::<()>() as usize),
     }
 }
+/// Hashes items' contents to match rows (equal contents are compared
+/// after): a word at a time, a multiply each, as rustc's FxHasher does,
+/// where SipHash spent more than the comparisons it saves.
+#[derive(Default, Clone, Copy)]
+struct ContentHasher(u64);
+impl ContentHasher {
+    #[inline]
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+impl std::hash::Hasher for ContentHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let (words, rest) = bytes.as_chunks::<8>();
+        for word in words {
+            self.add(u64::from_le_bytes(*word));
+        }
+        if !rest.is_empty() {
+            let mut word = [0; 8];
+            word[..rest.len()].copy_from_slice(rest);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+    fn write_u8(&mut self, value: u8) {
+        self.add(u64::from(value));
+    }
+    fn write_u64(&mut self, value: u64) {
+        self.add(value);
+    }
+    fn write_usize(&mut self, value: usize) {
+        self.add(value as u64);
+    }
+}
+type ContentMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<ContentHasher>>;
 /// An item's contents, hashed: equal items hash equal.
 fn content_hash(item: &Value, hasher: &mut impl std::hash::Hasher) {
     use std::hash::Hash;
@@ -686,7 +755,7 @@ fn content_hash(item: &Value, hasher: &mut impl std::hash::Hasher) {
 /// names in list order, and the next name to give.
 #[derive(Default)]
 struct Unkeyed {
-    order: Vec<String>,
+    order: Vec<Rc<str>>,
     next: u64,
 }
 /// The rows of a `ui.each` without a `key` for `list`: each item keeps the
@@ -700,12 +769,12 @@ struct Unkeyed {
 /// `rows` keeps the rows still shown.
 fn unkeyed_rows(
     list: &[Value],
-    rows: &mut HashMap<String, EachRow>,
+    rows: &mut Rows,
     state: &mut Unkeyed,
     live: bool,
     runtime: &zgui::reactive::Runtime,
-) -> Vec<String> {
-    let mut names: Vec<Option<String>> = vec![None; list.len()];
+) -> Vec<Rc<str>> {
+    let mut names: Vec<Option<Rc<str>>> = vec![None; list.len()];
     for (index, item) in list.iter().enumerate() {
         if let Some(name) = state.order.get(index)
             && rows[name].last == *item
@@ -714,14 +783,14 @@ fn unkeyed_rows(
             names[index] = Some(name.clone());
         }
     }
-    let free: Vec<&String> = state
+    let free: Vec<&Rc<str>> = state
         .order
         .iter()
         .filter(|name| !rows[*name].seen)
         .collect();
     if !free.is_empty() && names.iter().any(Option::is_none) {
         // Earlier rows first: equal items keep their order.
-        let mut by_item: HashMap<Quick, Vec<String>> = HashMap::new();
+        let mut by_item: ContentMap<Quick, Vec<Rc<str>>> = ContentMap::default();
         for name in free.iter().rev() {
             by_item
                 .entry(quick(&rows[*name].last))
@@ -737,11 +806,11 @@ fn unkeyed_rows(
             }
         }
         let hash = |item: &Value| {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let mut hasher = ContentHasher::default();
             content_hash(item, &mut hasher);
             std::hash::Hasher::finish(&hasher)
         };
-        let mut by_contents: HashMap<u64, Vec<String>> = HashMap::new();
+        let mut by_contents: ContentMap<u64, Vec<Rc<str>>> = ContentMap::default();
         for name in free.iter().rev().filter(|name| !rows[**name].seen) {
             by_contents
                 .entry(hash(&rows[*name].last))
@@ -768,28 +837,22 @@ fn unkeyed_rows(
         let name = match state.order.get(index).filter(|name| !rows[*name].seen) {
             Some(name) => {
                 let row = rows.get_mut(name).unwrap();
-                if let (true, Some(signal)) = (live, &row.item) {
-                    let (signal, item) = (signal.clone(), item.clone());
-                    runtime.untracked(|| signal.set(item));
-                } else if !live {
-                    row.generation += 1;
+                if !live {
+                    row.changed(name, item.clone());
+                } else {
+                    if let Some(signal) = &row.item {
+                        let (signal, item) = (signal.clone(), item.clone());
+                        runtime.untracked(|| signal.set(item));
+                    }
+                    row.last = item.clone();
                 }
-                row.last = item.clone();
                 row.seen = true;
                 name.clone()
             }
             None => {
                 state.next += 1;
-                let name = state.next.to_string();
-                rows.insert(
-                    name.clone(),
-                    EachRow {
-                        last: item.clone(),
-                        generation: 0,
-                        item: None,
-                        seen: true,
-                    },
-                );
+                let name: Rc<str> = Rc::from(state.next.to_string());
+                rows.insert(name.clone(), EachRow::new(&name, item.clone(), live));
                 name
             }
         };
@@ -1279,7 +1342,7 @@ fn kind_view(
             // updates in place (a streaming message's row, its text growing).
             // The key pass notes each row's index for the build that follows.
             let live = builder.info().num_params >= 3;
-            let rows: Rc<std::cell::RefCell<HashMap<String, EachRow>>> = Rc::default();
+            let rows: Rc<std::cell::RefCell<Rows>> = Rc::default();
             let noted: Rc<std::cell::RefCell<Noted>> = Rc::default();
             // The last pass's items, keys, rows and identities: a list whose
             // keys stay as they were (its edited items in place, the usual
@@ -1324,11 +1387,7 @@ fn kind_view(
                                 .into_iter()
                                 .enumerate()
                                 .map(|(i, row)| {
-                                    let identity: Rc<str> = if live {
-                                        Rc::from(row.as_str())
-                                    } else {
-                                        Rc::from(format!("{row}@{}", rows[&row].generation))
-                                    };
+                                    let identity = rows[&row].identity.clone();
                                     noted.insert(identity.clone(), (i, row));
                                     identity
                                 })
@@ -1350,42 +1409,33 @@ fn kind_view(
                                 let n = seen.entry(base.clone()).or_default();
                                 *n += 1;
                                 let row = format!("{base}#{n}");
-                                let identity = match rows.get_mut(&row) {
-                                    Some(state) if live => {
+                                let name = rows.get_key_value(row.as_str()).map(|(n, _)| n.clone());
+                                let found = name.and_then(|n| Some((n.clone(), rows.get_mut(&n)?)));
+                                let (row, identity) = match found {
+                                    Some((name, state)) if live => {
                                         state.seen = true;
                                         if let Some(signal) = &state.item {
                                             let item = item.clone();
                                             let signal = signal.clone();
                                             runtime.untracked(|| signal.set(item));
                                         }
-                                        row.clone()
+                                        (name, state.identity.clone())
                                     }
-                                    Some(state) => {
+                                    Some((name, state)) => {
                                         state.seen = true;
                                         if state.last != *item {
-                                            state.last = item.clone();
-                                            state.generation += 1;
+                                            state.changed(&name, item.clone());
                                         }
-                                        format!("{row}@{}", state.generation)
+                                        (name, state.identity.clone())
                                     }
                                     None => {
-                                        rows.insert(
-                                            row.clone(),
-                                            EachRow {
-                                                last: item.clone(),
-                                                generation: 0,
-                                                item: None,
-                                                seen: true,
-                                            },
-                                        );
-                                        if live {
-                                            row.clone()
-                                        } else {
-                                            format!("{row}@0")
-                                        }
+                                        let name: Rc<str> = Rc::from(row);
+                                        let state = EachRow::new(&name, item.clone(), live);
+                                        let identity = state.identity.clone();
+                                        rows.insert(name.clone(), state);
+                                        (name, identity)
                                     }
                                 };
-                                let identity: Rc<str> = Rc::from(identity);
                                 noted.insert(identity.clone(), (i, row));
                                 identity
                             })
