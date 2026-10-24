@@ -4009,7 +4009,7 @@ impl Scene {
     /// the parent is not shown, else their translation and clip.
     fn damage_context(&self, parent: Option<NodeId>) -> DamageContext {
         match parent {
-            Some(parent) => self.shown(parent).then(|| self.world_context(parent)),
+            Some(parent) => self.shown_context(parent),
             None => Some((Transform::default(), Some(self.viewport))),
         }
     }
@@ -4172,19 +4172,29 @@ impl Scene {
         let (transform, _, clip, placement) = self.descend(node, transform, clip, placement);
         (transform, clip, placement)
     }
-    /// World translation of `id` including its own, and the clip its children
-    /// paint within.
-    fn world_context(&self, id: NodeId) -> (Transform, Option<Rect>) {
-        let (_, _, clip) = self.world(id);
+    /// If `id` is shown, its world translation including its own and the
+    /// clip its children paint within. One walk up its ancestors checks they
+    /// show and sums the translation (each of those walked them again);
+    /// only an ancestor that clips sends the clip to `world`.
+    fn shown_context(&self, id: NodeId) -> DamageContext {
         let mut transform = Transform::default();
+        let mut clips = false;
         let mut current = Some(id);
-        while let Some(id) = current {
-            let node = self.node(id);
+        while let Some(at) = current {
+            let node = self.node(at);
+            if !own_visible(&node.style) {
+                return None;
+            }
             transform.x += node.transform.x;
             transform.y += node.transform.y;
+            clips |= clip_axes(&node.style) != (false, false);
             current = node.parent;
         }
-        (transform, clip)
+        let clip = match clips {
+            true => self.world(id).2,
+            false => Some(self.viewport),
+        };
+        Some((transform, clip))
     }
     /// See `Node::ink`. Computed on demand and cached until invalidated.
     fn ink(&self, id: NodeId) -> Option<Rect> {
