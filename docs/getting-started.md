@@ -12,6 +12,8 @@ Add the crates (they are not on crates.io yet), and the fixes zgui builds its de
 [dependencies]
 zgui = { git = "https://github.com/zeronsh/zgui" }
 zgui-desktop = { git = "https://github.com/zeronsh/zgui" }
+# The component library (a data grid, a tree, tabs, toasts…), if you use it.
+zgui-components = { git = "https://github.com/zeronsh/zgui" }
 
 [patch.crates-io]
 cosmic-text = { git = "https://github.com/zeronsh/zgui" }

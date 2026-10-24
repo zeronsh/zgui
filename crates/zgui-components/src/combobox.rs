@@ -6,12 +6,12 @@
 //! the options as they should show for the text: filtered at once, or
 //! fetched (with `loading` while they come); the list is virtual, so
 //! thousands cost what shows.
-use crate::{
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use zgui::{
     compose::{
-        NodeHandle, PlacementEdge, PlacementSide, View, column, component, div, popover, switch,
-        text, text_input, virtual_list,
+        NodeHandle, Placement, PlacementEdge, PlacementSide, View, column, component, div, popover,
+        switch, text, text_input, virtual_list,
     },
-    compose_popover::Placement,
     input::{EventPhase, InputEvent, Key},
     reactive::Signal,
     scene::Color,
@@ -19,7 +19,6 @@ use crate::{
     style::{Styled, Styles},
     theme::tok,
 };
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 /// An option of a [`combobox`]: its value, what it shows, and a detail
 /// shown after it (a path, a kind).
@@ -170,11 +169,7 @@ pub fn combobox(
                     let value = items.with_untracked(|l| l.get(i).map(|o| o.value.clone()))?;
                     rows.borrow().get(&value).map(NodeHandle::node)
                 });
-                if let Some(ui) = field.weak_ui().upgrade() {
-                    ui.semantics
-                        .borrow_mut()
-                        .update(field.node(), |node| node.active_descendant = target);
-                }
+                field.update_semantics(|node| node.active_descendant = target);
             }));
         }
         let choose = {
@@ -274,7 +269,7 @@ pub fn combobox(
                 choose.clone(),
                 rows.clone(),
             );
-            move |index: Signal<usize>, key: String, _: &mut crate::compose::Context| {
+            move |index: Signal<usize>, key: String, _: &mut zgui::compose::Context| {
                 let item = {
                     let items = items.clone();
                     let index = index.clone();
@@ -284,7 +279,7 @@ pub fn combobox(
                 let (selected, styled) = (highlight.clone(), highlight.clone());
                 let (at, at_styled) = (index.clone(), index.clone());
                 let (choose, hover, at_event) = (choose.clone(), highlight.clone(), index.clone());
-                crate::compose::row()
+                zgui::compose::row()
                     .role(Role::ListBoxOption)
                     .selected_when(move || selected.get() == Some(at.get()))
                     .h(ROW)
@@ -326,13 +321,13 @@ pub fn combobox(
                         }
                     })
                     .child(
-                        crate::compose::text_signal(move || {
+                        zgui::compose::text_signal(move || {
                             shown().map(|i| i.label).unwrap_or_default()
                         })
                         .truncate(),
                     )
                     .child(
-                        crate::compose::text_signal(move || {
+                        zgui::compose::text_signal(move || {
                             detail().and_then(|i| i.detail).unwrap_or_default()
                         })
                         .text_color(tok::TEXT_SECONDARY)

@@ -5,23 +5,22 @@
 //! (paused while the pointer is over it), or at its ×; an error stays
 //! until dismissed. Assistive technology hears each as it comes (an error
 //! at once). F8 moves focus into the stack, as Radix's does.
-use crate::{
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
+use zgui::{
     compose::{
-        NodeHandle, TaskRunner, View, button, column, component, div, keyed, modal, row, text,
+        ModalPlacement, NodeHandle, PlacementEdge as Edge, TaskRunner, View, button, column,
+        component, div, keyed, modal, row, text,
     },
-    compose_modal::ModalPlacement,
-    compose_popover::Edge,
     input::{EventPhase, InputEvent, Key},
     reactive::{Runtime, Signal},
     scene::Color,
     semantics::{Live, Role},
     style::{Styled, Styles},
     theme::tok,
-};
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    time::Duration,
 };
 
 /// What a toast tells: its colour, and how urgently it is announced.
@@ -165,7 +164,6 @@ pub fn toast_host() -> View {
     component(|cx| {
         let runtime = cx.runtime();
         let toaster = Toaster::of(&runtime);
-        let runner = cx.try_service::<TaskRunner>();
         let open = runtime.signal(false);
         {
             let (showing, open) = (toaster.showing.clone(), open.clone());
@@ -187,13 +185,13 @@ pub fn toast_host() -> View {
             }
         };
         let build = {
-            let (toaster, runner) = (toaster.clone(), runner.clone());
-            move |id: u64, _: &mut crate::compose::Context| {
+            let toaster = toaster.clone();
+            move |id: u64, cx: &mut zgui::compose::Context| {
                 let toast = toaster
                     .showing
                     .with_untracked(|l| l.iter().find(|s| s.id == id).map(|s| s.toast.clone()))
                     .unwrap_or_default();
-                toast_view(id, toast, toaster.clone(), runner.clone())
+                toast_view(id, toast, toaster.clone(), cx)
             }
         };
         let focus_into = stack.clone();
@@ -217,21 +215,9 @@ pub fn toast_host() -> View {
                     ..
                 } = event
                     && let Some(handle) = focus_into.borrow().clone()
-                    && let Some(ui) = handle.weak_ui().upgrade()
                 {
-                    let first = handle
-                        .scene()
-                        .and_then(|scene| scene.borrow().children(handle.node()).first().copied());
-                    if let Some(first) = first {
-                        let scene = ui
-                            .scene
-                            .borrow()
-                            .children(first)
-                            .first()
-                            .copied()
-                            .unwrap_or(first);
-                        ui.input.focus(&ui.scene, Some(scene));
-                    }
+                    // The stack's first focusable node: its newest toast.
+                    handle.focus();
                 }
             })
             .child(
@@ -245,19 +231,27 @@ pub fn toast_host() -> View {
 }
 
 /// One toast: its colour, title and body, its action, its ×.
-fn toast_view(id: u64, toast: Toast, toaster: Rc<Toaster>, runner: Option<Rc<TaskRunner>>) -> View {
+fn toast_view(
+    id: u64,
+    toast: Toast,
+    toaster: Rc<Toaster>,
+    cx: &mut zgui::compose::Context,
+) -> View {
     let hovered = Rc::new(Cell::new(false));
-    // Its time: dismissed once it has passed with the pointer elsewhere.
-    let timer: Rc<RefCell<Option<crate::compose::TaskToken>>> = Rc::default();
-    if let (Some(stays), Some(runner)) = (toast.stays(), runner) {
+    // Its time: dismissed once it has passed with the pointer elsewhere (a
+    // task of the toast's own, ending as it goes). Without a task runner,
+    // toasts stay until dismissed.
+    if let Some(stays) = toast.stays()
+        && cx.try_service::<TaskRunner>().is_some()
+    {
         let (toaster, hovered) = (toaster.clone(), hovered.clone());
-        *timer.borrow_mut() = Some(runner.spawn(Box::pin(async move {
-            crate::timer::sleep(stays).await;
+        cx.tasks().spawn(async move {
+            zgui::timer::sleep(stays).await;
             while hovered.get() {
-                crate::timer::sleep(Duration::from_millis(500)).await;
+                zgui::timer::sleep(Duration::from_millis(500)).await;
             }
             toaster.dismiss(id);
-        })));
+        });
     }
     let stripe = match toast.kind {
         ToastKind::Info => tok::INFO,
@@ -343,7 +337,6 @@ fn toast_view(id: u64, toast: Toast, toaster: Rc<Toaster>, runner: Option<Rc<Tas
                 .child(text(action.label)),
         );
     }
-    let _keep = timer;
     card.child(
         button()
             .accessible_label("Dismiss")
@@ -357,10 +350,7 @@ fn toast_view(id: u64, toast: Toast, toaster: Rc<Toaster>, runner: Option<Rc<Tas
             .hover(|s| s.bg(tok::HOVER))
             .items_center()
             .justify_center()
-            .on_click(move || {
-                let _keep = &_keep;
-                toaster.dismiss(id);
-            })
+            .on_click(move || toaster.dismiss(id))
             .child(text("×").text_color(tok::TEXT_TERTIARY)),
     )
 }

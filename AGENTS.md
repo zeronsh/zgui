@@ -1,6 +1,6 @@
 # Working on zgui
 
-zgui is a retained-mode GUI framework: Rust core (`crates/zgui`), wgpu renderer (`crates/zgui-gpu`), winit desktop host (`crates/zgui-desktop`), Luau scripting (`crates/zgui-script`). Read `README.md` once, then the doc for what you touch.
+zgui is a retained-mode GUI framework: Rust core (`crates/zgui`), the component library built on it (`crates/zgui-components`: data grid, tree, dates, combobox, tabs, toasts…), wgpu renderer (`crates/zgui-gpu`), winit desktop host (`crates/zgui-desktop`), Luau scripting (`crates/zgui-script`, the components' `ui.*` behind its default `components` feature). Read `README.md` once, then the doc for what you touch.
 
 ## Build, run, test
 
@@ -8,7 +8,7 @@ zgui is a retained-mode GUI framework: Rust core (`crates/zgui`), wgpu renderer 
 export CARGO_PROFILE_DEV_DEBUG=0              # debug info fills disks: examples link the renderer
 cargo run -p zgui-desktop --example gallery    # a Rust app
 cargo run -p zgui-script --example hot_reload  # a Luau app, reloading as you save
-cargo test -p zgui -p zgui-desktop -p zgui-script --locked
+cargo test -p zgui -p zgui-components -p zgui-desktop -p zgui-script --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all -- --check
 ```

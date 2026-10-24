@@ -1,10 +1,11 @@
-//! The component catalogue in Rust: the controls, overlays and containers
-//! built from `zgui::compose`, each with what it does from the keyboard.
-//! The Luau catalogue (`crates/zgui-script/examples/catalog`) shows the
-//! same through `ui.*`.
-//! Run: cargo run -p zgui-desktop --example catalog
+//! The component catalogue in Rust: zgui-components' controls, overlays
+//! and containers beside zgui's own, each with what it does from the
+//! keyboard. The Luau catalogue (`crates/zgui-script/examples/catalog`)
+//! shows the same through `ui.*`.
+//! Run: cargo run -p zgui-components --example catalog
 use std::rc::Rc;
-use zgui::compose::{
+use zgui::compose::prelude::*;
+use zgui_components::{
     ComboItem, ComboboxOptions, PaletteCommand, SelectOption, StepperOptions, Tab, TabsOptions,
     Toast, ToastKind, Toaster, TreeChildren, TreeItem, prelude::*,
 };

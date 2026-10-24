@@ -2,12 +2,13 @@
 //! select (its menu, typeahead while closed, what it tells).
 use std::{cell::RefCell, rc::Rc};
 use zgui::{
-    compose::{SelectOption, Tab, TabsOptions, ViewHandle, prelude::*},
+    compose::{ViewHandle, prelude::*},
     input::{InputEvent, Key, Modifiers, PointerButton},
     scene::NodeId,
     semantics::Role,
     widgets::Ui,
 };
+use zgui_components::*;
 
 fn key_with(ui: &mut Ui, key: Key, modifiers: Modifiers) {
     ui.dispatch(InputEvent::KeyDown {

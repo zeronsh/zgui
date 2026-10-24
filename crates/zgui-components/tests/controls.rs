@@ -2,12 +2,13 @@
 //! pointer, keyboard, what assistive technology is told, and right to left.
 use std::rc::Rc;
 use zgui::{
-    compose::{StepperOptions, ViewHandle, prelude::*},
+    compose::{ViewHandle, prelude::*},
     input::{InputEvent, Key, Modifiers, PointerButton},
     scene::{Direction, NodeId},
     semantics::Role,
     widgets::Ui,
 };
+use zgui_components::*;
 
 fn key(ui: &mut Ui, key: Key) {
     ui.dispatch(InputEvent::KeyDown {

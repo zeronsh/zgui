@@ -4,7 +4,12 @@
 //! Delete, or a middle click; reorderable ones drag along the strip or move
 //! with ⌘ (Ctrl) Shift and an arrow; a strip too long for its width scrolls,
 //! and a menu at its end lists every tab.
-use crate::{
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
+use zgui::{
     compose::{
         Context, NodeHandle, View, button, column, component, div, keyed, menu, menu_item, row,
         scroll_x, switch, text, text_signal,
@@ -15,11 +20,6 @@ use crate::{
     semantics::Role,
     style::{Styled, Styles},
     theme::tok,
-};
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    rc::Rc,
 };
 
 /// A tab of [`tabs`]: its id (unique among them), what it shows, and
@@ -463,7 +463,7 @@ fn not_a_drag() -> bool {
     !DRAGGED.with(|d| d.replace(false))
 }
 /// Keep `into` equal to `handle`'s node's bounds, for as long as the node is.
-fn follow(runtime: &crate::reactive::Runtime, into: &Signal<Rect>, handle: &NodeHandle) {
+fn follow(runtime: &zgui::reactive::Runtime, into: &Signal<Rect>, handle: &NodeHandle) {
     let Some(from) = handle.observe_bounds() else {
         return;
     };

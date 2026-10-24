@@ -399,7 +399,7 @@ pub(crate) struct LayoutAnim {
     pub clip: bool,
 }
 impl Node {
-    fn new(owner: Weak<Vm>, kind: Kind) -> Self {
+    pub(crate) fn new(owner: Weak<Vm>, kind: Kind) -> Self {
         Self {
             owner,
             kind,
@@ -475,18 +475,6 @@ impl Node {
                 | Kind::Progress { .. }
                 | Kind::Slider { .. }
                 | Kind::Split { .. }
-                | Kind::Segmented { .. }
-                | Kind::Stepper { .. }
-                | Kind::Tabs { .. }
-                | Kind::Tree { .. }
-                | Kind::DataGrid { .. }
-                | Kind::Calendar { .. }
-                | Kind::TimeField { .. }
-                | Kind::Select { .. }
-                | Kind::Combobox { .. }
-                | Kind::CommandPalette { .. }
-                | Kind::Disclosure { .. }
-                | Kind::Accordion { .. }
                 | Kind::List { .. }
                 | Kind::Modal { .. }
                 | Kind::Popover { .. }
@@ -497,7 +485,8 @@ impl Node {
                     motion: Some(_),
                     ..
                 }
-        ) || self.props.iter().any(|(_, s)| matches!(s, Source::Anim(_)))
+        ) || self.kind.library_needs_context()
+            || self.props.iter().any(|(_, s)| matches!(s, Source::Anim(_)))
             // An icon's tint may be a theme token: it reads the scope.
             || matches!(self.kind, Kind::Svg { .. })
                 && self.props.iter().any(|(p, _)| *p == Prop::Tint)
@@ -525,21 +514,8 @@ impl Node {
             Kind::Progress { .. } => "progress",
             Kind::Slider { .. } => "slider",
             Kind::Split { .. } => "split",
-            Kind::Separator { .. } => "separator",
-            Kind::Tabs { .. } => "tabs",
-            Kind::Tree { .. } => "tree",
-            Kind::DataGrid { .. } => "data_grid",
-            Kind::Calendar { picker: false, .. } => "calendar",
-            Kind::Calendar { picker: true, .. } => "date_picker",
-            Kind::TimeField { .. } => "time_field",
-            Kind::Combobox { .. } => "combobox",
-            Kind::CommandPalette { .. } => "command_palette",
-            Kind::Select { .. } => "select",
-            Kind::Segmented { .. } => "segmented",
-            Kind::Stepper { .. } => "stepper",
-            Kind::Disclosure { .. } => "disclosure",
-            Kind::Accordion { .. } => "accordion",
-            Kind::Section { .. } => "section",
+            #[cfg(feature = "components")]
+            Kind::Library(ref library) => library.tag(),
             Kind::Show { .. } => "show",
             Kind::Each { .. } => "each",
             Kind::List { .. } => "list",
@@ -750,115 +726,10 @@ pub(crate) enum Kind {
         /// `step`: what an arrow moves, and what a drag lands on.
         step: Option<f32>,
     },
-    /// `ui.tabs { items = state, value = state, panel = fn(id), … }`.
-    Tabs {
-        label: String,
-        items: Signal<Value>,
-        value: Signal<Value>,
-        reorderable: bool,
-        on_close: Option<Function>,
-        panel: Function,
-    },
-    /// `ui.select { value = state, options = { … }, placeholder }`.
-    Select {
-        label: String,
-        value: Signal<Value>,
-        /// Each option's value, what it shows, and whether it is disabled.
-        options: Vec<(Value, String, bool)>,
-        placeholder: String,
-    },
-    /// `ui.combobox { text = state, items = state, value?, loading?, … }`.
-    Combobox {
-        label: String,
-        text: Signal<Value>,
-        value: Option<Signal<Value>>,
-        items: Signal<Value>,
-        loading: Option<Signal<Value>>,
-        empty: Option<String>,
-    },
-    /// `ui.command_palette { open = state, commands?, on_run? }`: the app's
-    /// commands, unless it lists its own.
-    CommandPalette {
-        open: Signal<Value>,
-        commands: Option<Vec<zgui::compose::PaletteCommand>>,
-        on_run: Option<Function>,
-    },
-    /// `ui.tree { items = state, open = state, value = state, … }`.
-    Tree {
-        label: String,
-        items: Signal<Value>,
-        open: Signal<Value>,
-        value: Signal<Value>,
-        on_open: Option<Function>,
-        on_activate: Option<Function>,
-    },
-    /// `ui.data_grid { columns, rows = state, sort?, value?, … }`.
-    DataGrid {
-        label: String,
-        /// A state (resizing and moving write it), or the columns as given.
-        columns: Result<Signal<Value>, Value>,
-        rows: Signal<Value>,
-        sort: Option<Signal<Value>>,
-        value: Option<Signal<Value>>,
-        /// The selected rows, indices into `rows` from 1.
-        selection: Option<Signal<Value>>,
-        /// A cell's text from its value, column and record.
-        cell: Option<Function>,
-        on_edit: Option<Function>,
-        on_activate: Option<Function>,
-    },
-    /// `ui.calendar { value = state, … }`, and `ui.date_picker` (a button
-    /// opening one): a date as `"2026-10-23"`.
-    Calendar {
-        label: String,
-        value: Signal<Value>,
-        picker: bool,
-        min: Option<String>,
-        max: Option<String>,
-        first_weekday: u8,
-        unavailable: Option<Function>,
-        format: Option<Function>,
-    },
-    /// `ui.time_field { value = state, hour12?, minute_step? }`: a time as
-    /// `"09:30"`.
-    TimeField {
-        label: String,
-        value: Signal<Value>,
-        hour12: bool,
-        minute_step: u8,
-    },
-    /// `ui.separator { vertical? }`: a line between groups.
-    Separator {
-        vertical: bool,
-    },
-    /// `ui.segmented { value = state, options = { … } }`: one of a few.
-    Segmented {
-        label: String,
-        value: Signal<Value>,
-        /// Each option's value and what it shows.
-        options: Vec<(Value, String)>,
-    },
-    /// `ui.stepper { value = state, min, max, step, decimals }`.
-    Stepper {
-        label: String,
-        value: Signal<Value>,
-        options: zgui::compose::StepperOptions,
-    },
-    /// `ui.disclosure { open = state, summary = "…", content… }`.
-    Disclosure {
-        open: Signal<Value>,
-        summary: Summary,
-    },
-    /// `ui.accordion { open = state, ui.section { … }… }`: sections, one
-    /// open at a time (`open` its id, or nil).
-    Accordion {
-        open: Signal<Value>,
-    },
-    /// `ui.section { id, title, content… }`: an accordion's section.
-    Section {
-        id: Value,
-        title: String,
-    },
+    /// A component of the library (`zgui-components`, the `components`
+    /// feature): a data grid, a tree, tabs, a select…
+    #[cfg(feature = "components")]
+    Library(Box<crate::library::Library>),
     /// `ui.split { size = state, a, b }`: two panes and a divider that
     /// resizes the first.
     Split {
@@ -984,15 +855,29 @@ impl Kind {
                 | Kind::Button
                 | Kind::Scroll { .. }
                 | Kind::Split { .. }
-                | Kind::Disclosure { .. }
-                | Kind::Accordion { .. }
-                | Kind::Section { .. }
                 | Kind::Modal { .. }
                 | Kind::Popover { .. }
                 | Kind::Menu { .. }
                 | Kind::Submenu { .. }
                 | Kind::MenuItem(..)
-        )
+        ) || self.library_takes_children()
+    }
+    /// A component of the library holding children (a disclosure's content,
+    /// an accordion's sections), which it lowers itself.
+    pub(crate) fn library_takes_children(&self) -> bool {
+        #[cfg(feature = "components")]
+        if let Kind::Library(library) = self {
+            return library.takes_children();
+        }
+        false
+    }
+    /// A component of the library that needs a component context.
+    fn library_needs_context(&self) -> bool {
+        #[cfg(feature = "components")]
+        if let Kind::Library(library) = self {
+            return library.needs_context();
+        }
+        false
     }
 }
 
@@ -1342,7 +1227,7 @@ pub(crate) fn env(lua: &Lua) -> mlua::Result<mlua::AppDataRef<'_, Env>> {
     lua.app_data_ref::<Env>()
         .ok_or_else(|| mlua::Error::runtime("ui library used outside a script host"))
 }
-fn node_ud(lua: &Lua, mut node: Node) -> mlua::Result<mlua::AnyUserData> {
+pub(crate) fn node_ud(lua: &Lua, mut node: Node) -> mlua::Result<mlua::AnyUserData> {
     if node.owner.upgrade().is_some_and(|vm| vm.locate.get()) {
         node.source = location(lua);
     }
@@ -1865,24 +1750,6 @@ fn a11y_role(name: &str) -> Option<zgui::semantics::Role> {
 /// Rows past which `ui.each` suggests `ui.list`.
 const LONG_EACH: usize = 1000;
 
-/// `{ id, title?, detail?, shortcut? }`: a command a palette lists.
-fn palette_command(c: &Table) -> mlua::Result<zgui::compose::PaletteCommand> {
-    let id: String = c.get("id")?;
-    let title: Option<String> = c.get("title")?;
-    let mut command = zgui::compose::PaletteCommand::new(id.clone(), title.unwrap_or(id));
-    command.detail = c.get("detail")?;
-    command.shortcut = c
-        .get::<Option<String>>("shortcut")?
-        .map(crate::lower::shown_shortcut);
-    Ok(command)
-}
-
-/// What a disclosure's summary shows: text, or a node of the app's.
-pub(crate) enum Summary {
-    Text(String),
-    Node(Rc<Node>),
-}
-
 /// A menu item's options: whether it leaves its menu open when chosen
 /// (`keep_open`), whether it is checked (`checked`, a radio's with
 /// `radio`), and the keys it shows (`shortcut`).
@@ -2092,7 +1959,7 @@ impl std::hash::Hasher for AddressHasher {
 }
 
 /// Fills a node's properties, pseudo-states, handlers and children.
-fn fill(lua: &Lua, mut node: Node, table: Option<&Table>) -> mlua::Result<Node> {
+pub(crate) fn fill(lua: &Lua, mut node: Node, table: Option<&Table>) -> mlua::Result<Node> {
     if let Some(table) = table {
         fill_from(lua, &mut node, table, None)?;
     }
@@ -2756,10 +2623,10 @@ fn placement_of(value: mlua::Value) -> mlua::Result<Option<zgui::compose::Placem
     Ok(Some(at))
 }
 
-fn owner(lua: &Lua) -> mlua::Result<Weak<Vm>> {
+pub(crate) fn owner(lua: &Lua) -> mlua::Result<Weak<Vm>> {
     Ok(env(lua)?.vm.clone())
 }
-fn label(table: &Table) -> mlua::Result<String> {
+pub(crate) fn label(table: &Table) -> mlua::Result<String> {
     Ok(table.get::<Option<String>>("label")?.unwrap_or_default())
 }
 
@@ -3157,323 +3024,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             node_ud(lua, node)
         })?,
     )?;
-    ui.set(
-        "tabs",
-        lua.create_function(|lua, table: Table| {
-            let items = expect_state(&table.get("items")?, "ui.tabs's `items`")?;
-            // Not the `items` alignment style: the tabs.
-            table.raw_remove("items")?;
-            let value = expect_state(&table.get("value")?, "ui.tabs's `value`")?;
-            let panel: Function = table
-                .get("panel")
-                .map_err(|_| mlua::Error::runtime("ui.tabs needs `panel`, fn(id) -> node"))?;
-            let kind = Kind::Tabs {
-                label: label(&table)?,
-                items,
-                value,
-                reorderable: table.get::<Option<bool>>("reorderable")?.unwrap_or(false),
-                on_close: table.get("on_close")?,
-                panel,
-            };
-            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
-        })?,
-    )?;
-    ui.set(
-        "select",
-        widget(|label, value, t| {
-            let list: Table = t
-                .get("options")
-                .map_err(|_| mlua::Error::runtime("ui.select needs `options`"))?;
-            let mut options = Vec::new();
-            for option in list.sequence_values::<mlua::Value>() {
-                options.push(match option? {
-                    mlua::Value::Table(o) => {
-                        let shown: String = o.get("label")?;
-                        let value = match o.get::<mlua::Value>("value")? {
-                            mlua::Value::Nil => Value::Str(shown.as_str().into()),
-                            v => crate::value::convert(v, None)?,
-                        };
-                        let disabled = o.get::<Option<bool>>("disabled")?.unwrap_or(false);
-                        (value, shown, disabled)
-                    }
-                    other => {
-                        let value = crate::value::convert(other, None)?;
-                        let shown = value.to_string();
-                        (value, shown, false)
-                    }
-                });
-            }
-            Ok(Kind::Select {
-                label,
-                value,
-                options,
-                placeholder: t.get::<Option<String>>("placeholder")?.unwrap_or_default(),
-            })
-        })?,
-    )?;
-    ui.set(
-        "tree",
-        lua.create_function(|lua, table: Table| {
-            let kind = Kind::Tree {
-                label: label(&table)?,
-                items: expect_state(&table.get("items")?, "ui.tree's `items`")?,
-                open: expect_state(&table.get("open")?, "ui.tree's `open`")?,
-                value: expect_state(&table.get("value")?, "ui.tree's `value`")?,
-                on_open: table.get("on_open")?,
-                on_activate: table.get("on_activate")?,
-            };
-            // Not the `items` alignment style: the tree's.
-            table.raw_remove("items")?;
-            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
-        })?,
-    )?;
-    ui.set(
-        "data_grid",
-        lua.create_function(|lua, table: Table| {
-            let optional_state = |key: &str| -> mlua::Result<Option<Signal<Value>>> {
-                match table.get::<mlua::Value>(key)? {
-                    mlua::Value::Nil => Ok(None),
-                    v => expect_state(&v, &format!("ui.data_grid's `{key}`")).map(Some),
-                }
-            };
-            let columns = match table.get::<mlua::Value>("columns")? {
-                v @ mlua::Value::Table(_) => Err(crate::value::convert(v, None)?),
-                mlua::Value::Nil => {
-                    return Err(mlua::Error::runtime("ui.data_grid needs `columns`"));
-                }
-                v => Ok(expect_state(&v, "ui.data_grid's `columns`")?),
-            };
-            let kind = Kind::DataGrid {
-                label: label(&table)?,
-                columns,
-                rows: expect_state(&table.get("rows")?, "ui.data_grid's `rows`")?,
-                sort: optional_state("sort")?,
-                value: optional_state("value")?,
-                selection: optional_state("selection")?,
-                cell: table.get("cell")?,
-                on_edit: table.get("on_edit")?,
-                on_activate: table.get("on_activate")?,
-            };
-            // Not the `rows` grid style: the grid's.
-            table.raw_remove("rows")?;
-            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
-        })?,
-    )?;
-    for (name, picker) in [("calendar", false), ("date_picker", true)] {
-        ui.set(
-            name,
-            lua.create_function(move |lua, table: Table| {
-                let kind = Kind::Calendar {
-                    label: label(&table)?,
-                    value: expect_state(&table.get("value")?, &format!("ui.{name}'s `value`"))?,
-                    picker,
-                    min: table.get("min")?,
-                    max: table.get("max")?,
-                    first_weekday: table.get::<Option<u8>>("first_weekday")?.unwrap_or(0) % 7,
-                    unavailable: table.get("unavailable")?,
-                    format: table.get("format")?,
-                };
-                node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
-            })?,
-        )?;
-    }
-    ui.set(
-        "time_field",
-        lua.create_function(|lua, table: Table| {
-            let kind = Kind::TimeField {
-                label: label(&table)?,
-                value: expect_state(&table.get("value")?, "ui.time_field's `value`")?,
-                hour12: table.get::<Option<bool>>("hour12")?.unwrap_or(false),
-                minute_step: table
-                    .get::<Option<u8>>("minute_step")?
-                    .unwrap_or(1)
-                    .clamp(1, 30),
-            };
-            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
-        })?,
-    )?;
-    ui.set(
-        "combobox",
-        lua.create_function(|lua, table: Table| {
-            let optional_state = |key: &str| -> mlua::Result<Option<Signal<Value>>> {
-                match table.get::<mlua::Value>(key)? {
-                    mlua::Value::Nil => Ok(None),
-                    v => expect_state(&v, &format!("ui.combobox's `{key}`")).map(Some),
-                }
-            };
-            let kind = Kind::Combobox {
-                label: label(&table)?,
-                text: expect_state(&table.get("text")?, "ui.combobox's `text`")?,
-                value: optional_state("value")?,
-                items: expect_state(&table.get("items")?, "ui.combobox's `items`")?,
-                loading: optional_state("loading")?,
-                empty: table.get("empty")?,
-            };
-            // Not the `items` alignment style: the options.
-            table.raw_remove("items")?;
-            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
-        })?,
-    )?;
-    ui.set(
-        "command_palette",
-        lua.create_function(|lua, table: Table| {
-            let open = expect_state(&table.get("open")?, "ui.command_palette's `open`")?;
-            let commands = match table.get::<Option<Table>>("commands")? {
-                None => None,
-                Some(list) => Some(
-                    list.sequence_values::<Table>()
-                        .map(|c| palette_command(&c?))
-                        .collect::<mlua::Result<Vec<_>>>()?,
-                ),
-            };
-            let kind = Kind::CommandPalette {
-                open,
-                commands,
-                on_run: table.get("on_run")?,
-            };
-            node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
-        })?,
-    )?;
-    ui.set(
-        "separator",
-        lua.create_function(|lua, table: Option<Table>| {
-            let vertical = match &table {
-                Some(t) => t.get::<Option<bool>>("vertical")?.unwrap_or(false),
-                None => false,
-            };
-            node_ud(
-                lua,
-                fill(
-                    lua,
-                    Node::new(owner(lua)?, Kind::Separator { vertical }),
-                    table.as_ref(),
-                )?,
-            )
-        })?,
-    )?;
-    ui.set(
-        "segmented",
-        widget(|label, value, t| {
-            let list: Table = t
-                .get("options")
-                .map_err(|_| mlua::Error::runtime("ui.segmented needs `options`"))?;
-            let mut options = Vec::new();
-            for option in list.sequence_values::<mlua::Value>() {
-                options.push(match option? {
-                    // `{ value = "w", label = "Week" }`, or the label alone.
-                    mlua::Value::Table(o) => {
-                        let shown: String = o.get("label")?;
-                        let value = match o.get::<mlua::Value>("value")? {
-                            mlua::Value::Nil => Value::Str(shown.as_str().into()),
-                            v => crate::value::convert(v, None)?,
-                        };
-                        (value, shown)
-                    }
-                    other => {
-                        let value = crate::value::convert(other, None)?;
-                        (value.clone(), value.to_string())
-                    }
-                });
-            }
-            if options.is_empty() {
-                return Err(mlua::Error::runtime(
-                    "ui.segmented needs at least one option",
-                ));
-            }
-            Ok(Kind::Segmented {
-                label,
-                value,
-                options,
-            })
-        })?,
-    )?;
-    ui.set(
-        "stepper",
-        widget(|label, value, t| {
-            let defaults = zgui::compose::StepperOptions::default();
-            let options = zgui::compose::StepperOptions {
-                min: t.get::<Option<f64>>("min")?.unwrap_or(defaults.min),
-                max: t.get::<Option<f64>>("max")?.unwrap_or(defaults.max),
-                step: t.get::<Option<f64>>("step")?.unwrap_or(defaults.step),
-                decimals: t
-                    .get::<Option<f64>>("decimals")?
-                    .map_or(defaults.decimals, |d| d.clamp(0., 10.) as usize),
-            };
-            if !(options.min <= options.max && options.step > 0. && options.step.is_finite()) {
-                return Err(mlua::Error::runtime(
-                    "ui.stepper needs min <= max and a positive step",
-                ));
-            }
-            Ok(Kind::Stepper {
-                label,
-                value,
-                options,
-            })
-        })?,
-    )?;
-    ui.set(
-        "disclosure",
-        lua.create_function(|lua, table: Table| {
-            let open = expect_state(&table.get("open")?, "ui.disclosure's `open`")?;
-            let summary = match table.get::<mlua::Value>("summary")? {
-                mlua::Value::String(s) => Summary::Text(s.to_string_lossy()),
-                mlua::Value::Nil => {
-                    return Err(mlua::Error::runtime("ui.disclosure needs a `summary`"));
-                }
-                node => Summary::Node(expect_node(node, "ui.disclosure's `summary`")?),
-            };
-            node_ud(
-                lua,
-                fill(
-                    lua,
-                    Node::new(owner(lua)?, Kind::Disclosure { open, summary }),
-                    Some(&table),
-                )?,
-            )
-        })?,
-    )?;
-    ui.set(
-        "accordion",
-        lua.create_function(|lua, table: Table| {
-            let open = expect_state(&table.get("open")?, "ui.accordion's `open`")?;
-            let node = fill(
-                lua,
-                Node::new(owner(lua)?, Kind::Accordion { open }),
-                Some(&table),
-            )?;
-            if let Some(other) = node
-                .children
-                .iter()
-                .find(|c| !matches!(c.kind, Kind::Section { .. }))
-            {
-                return Err(mlua::Error::runtime(format!(
-                    "ui.accordion holds ui.section nodes, not {}",
-                    other.tag()
-                )));
-            }
-            node_ud(lua, node)
-        })?,
-    )?;
-    ui.set(
-        "section",
-        lua.create_function(|lua, table: Table| {
-            let id = match table.get::<mlua::Value>("id")? {
-                mlua::Value::Nil => return Err(mlua::Error::runtime("ui.section needs an `id`")),
-                v => crate::value::convert(v, None)?,
-            };
-            let title: String = table
-                .get("title")
-                .map_err(|_| mlua::Error::runtime("ui.section needs a `title`"))?;
-            node_ud(
-                lua,
-                fill(
-                    lua,
-                    Node::new(owner(lua)?, Kind::Section { id, title }),
-                    Some(&table),
-                )?,
-            )
-        })?,
-    )?;
+    #[cfg(feature = "components")]
+    crate::library::register(lua, &ui)?;
     ui.set(
         "show",
         lua.create_function(

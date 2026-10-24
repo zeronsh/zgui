@@ -22,6 +22,9 @@ zgui is 0.1 and used from git; this lists what changed for apps, newest first.
 
 **Escape in a text field** with no composition to cancel goes to the dialog or menu around it, which closes.
 
+**The component library is a crate of its own, `zgui-components`.** The data grid, tree, calendar, date picker and time field, combobox, select, tabs, toasts, command palette, segmented control, stepper, disclosure, accordion and separator moved out of `zgui::compose`; the primitives they are made of (text, editors, buttons, checkboxes, sliders, progress, scroll views and virtual lists, menus, popovers, modals and tooltips, selection, drag) stay. zgui-script's `ui.*` for them is unchanged, through its `components` feature (on by default).
+- *Migrate:* add `zgui-components` beside `zgui` and import them from it (`use zgui_components::prelude::*;` beside `zgui::compose::prelude::*`). The local-time hook is `zgui::local_time::set_offset` (zgui-desktop sets it). A component's own semantics are set with the new `NodeHandle::update_semantics`.
+
 ### Layout
 
 - CSS's automatic minimum (`min-width`/`min-height: auto`) for flex items; text's min-content is its longest word.
@@ -42,6 +45,8 @@ zgui is 0.1 and used from git; this lists what changed for apps, newest first.
 - VoiceOver finds headings (accesskit_macos is vendored with `AXHeading`). Narrator moves between them by level. Empty text leaves the tree.
 
 ### Controls and platforms
+
+- A component library, `zgui-components`: a data grid (virtual rows, sorting, moving and resizing columns, cell editing, row selection, copying as a spreadsheet's), a tree view (lazy children), a calendar, a date picker and a time field, a combobox (async, virtual suggestions), a select with typeahead, tabs (closable, reorderable, overflowing), toasts, a command palette, a segmented control, a stepper, a disclosure, an accordion and a separator, each keyboard complete, accessible and right-to-left aware.
 
 - Checkboxes drawn as the platform draws them, with a mixed state and a disabled look.
 - zgui's own tooltips (`View::tooltip`), and scrollbars that hide at rest where the system's do.

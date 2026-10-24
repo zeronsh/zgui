@@ -1,5 +1,5 @@
-//! Local time's offset from UTC, for zgui's dates
-//! (`zgui::compose::set_local_offset`): the C library's on Unix; on
+//! Local time's offset from UTC, for zgui's dates and clocks
+//! (`zgui::local_time::set_offset`): the C library's on Unix; on
 //! Windows, the system's local and universal clocks compared.
 
 /// Seconds east of UTC, now.
@@ -55,12 +55,16 @@ mod imp {
     pub(super) fn offset() -> i32 {
         // SAFETY: each only reads the clock.
         let (local, utc) = unsafe { (GetLocalTime(), GetSystemTime()) };
-        let minutes = |t: &SYSTEMTIME| {
-            let day =
-                zgui::compose::CalendarDate::new(i32::from(t.wYear), t.wMonth as u8, t.wDay as u8)
-                    .map_or(0, |d| d.days());
-            day * 1440 + i64::from(t.wHour) * 60 + i64::from(t.wMinute)
+        // Days since 1970 (Howard Hinnant's `days_from_civil`).
+        let days = |t: &SYSTEMTIME| {
+            let (m, d) = (i64::from(t.wMonth), i64::from(t.wDay));
+            let y = i64::from(t.wYear) - i64::from(m <= 2);
+            let (era, yoe) = (y.div_euclid(400), y.rem_euclid(400));
+            let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+            era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
         };
+        let minutes =
+            |t: &SYSTEMTIME| days(t) * 1440 + i64::from(t.wHour) * 60 + i64::from(t.wMinute);
         ((minutes(&local) - minutes(&utc)) * 60) as i32
     }
 }

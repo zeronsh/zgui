@@ -2,12 +2,13 @@
 //! options) and the command palette (fuzzy matching, running).
 use std::{cell::RefCell, rc::Rc};
 use zgui::{
-    compose::{ComboItem, ComboboxOptions, PaletteCommand, ViewHandle, fuzzy_score, prelude::*},
+    compose::{ViewHandle, prelude::*},
     input::{InputEvent, Key, Modifiers, PointerButton},
     scene::NodeId,
     semantics::Role,
     widgets::Ui,
 };
+use zgui_components::*;
 
 fn key(ui: &mut Ui, key: Key) {
     ui.dispatch(InputEvent::KeyDown {

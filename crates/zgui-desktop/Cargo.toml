@@ -110,6 +110,8 @@ required-features = ["ghostty"]
 zgui-script = { path = "../zgui-script", version = "0.1.0", optional = true }
 
 [dev-dependencies]
+# The components the Linux probe's example shows (`components_probe`).
+zgui-components = { path = "../zgui-components" }
 accesskit_consumer = "0.38.0"
 # The terminal example's interface is a Luau script. Image formats come
 # through this crate's own features.

@@ -16,7 +16,12 @@
 //! takes one away, ⌘A (Ctrl+A) selects them all. ⌘C (Ctrl+C) copies as a
 //! spreadsheet does: the current cell, or the rows selected, as
 //! tab-separated text and an HTML table.
-use crate::{
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::{Rc, Weak},
+};
+use zgui::{
     compose::{
         Context, NodeHandle, View, column, component, div, keyed, row, scroll_x, switch,
         text_input, text_signal, virtual_list,
@@ -30,11 +35,6 @@ use crate::{
     style::{Styled, Styles},
     text_layout::TextAlign,
     theme::tok,
-};
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    rc::{Rc, Weak},
 };
 
 /// A column of a [`data_grid`].
@@ -332,8 +332,8 @@ struct Grid {
     node: RefCell<Option<NodeHandle>>,
     /// The cells and headers built, for the active descendant and their
     /// places.
-    cells: RefCell<HashMap<GridCell, NodeId>>,
-    headers: RefCell<HashMap<String, NodeId>>,
+    cells: RefCell<HashMap<GridCell, NodeHandle>>,
+    headers: RefCell<HashMap<String, NodeHandle>>,
     /// The widths the columns came with (a double click on an edge).
     defaults: HashMap<String, f32>,
 }
@@ -432,16 +432,14 @@ impl Grid {
     /// The grid's size: its rows (the header's too) and columns.
     fn describe_size(&self, rows: usize, columns: usize) {
         let Some(handle) = self.handle() else { return };
-        if let Some(ui) = handle.weak_ui().upgrade() {
-            ui.semantics.borrow_mut().update(handle.node(), |node| {
-                node.table = Some(Box::new(TablePlace {
-                    rows: Some(rows + 1),
-                    columns: Some(columns),
-                    multiselectable: true,
-                    ..Default::default()
-                }));
-            });
-        }
+        handle.update_semantics(|node| {
+            node.table = Some(Box::new(TablePlace {
+                rows: Some(rows + 1),
+                columns: Some(columns),
+                multiselectable: true,
+                ..Default::default()
+            }));
+        });
     }
     /// Row `row` chosen: alone, extending (Shift) or toggled (⌘, Ctrl).
     fn select(&self, row: usize, extend: bool, toggle: bool) {
@@ -485,16 +483,12 @@ impl Grid {
         let target = self.current.with_untracked(|at| {
             let at = at.as_ref()?;
             if self.header.with_untracked(|h| *h) {
-                self.headers.borrow().get(&at.column).copied()
+                self.headers.borrow().get(&at.column).map(NodeHandle::node)
             } else {
-                self.cells.borrow().get(at).copied()
+                self.cells.borrow().get(at).map(NodeHandle::node)
             }
         });
-        if let Some(ui) = handle.weak_ui().upgrade() {
-            ui.semantics
-                .borrow_mut()
-                .update(handle.node(), |node| node.active_descendant = target);
-        }
+        handle.update_semantics(|node| node.active_descendant = target);
     }
     /// The current cell in view: the rows' and the columns' scroll moved.
     fn reveal(&self) {
@@ -553,13 +547,13 @@ impl Drop for Registered {
         match &self.built {
             Built::Cell(at) => {
                 let mut cells = grid.cells.borrow_mut();
-                if cells.get(at) == Some(&self.node) {
+                if cells.get(at).map(NodeHandle::node) == Some(self.node) {
                     cells.remove(at);
                 }
             }
             Built::Header(id) => {
                 let mut headers = grid.headers.borrow_mut();
-                if headers.get(id) == Some(&self.node) {
+                if headers.get(id).map(NodeHandle::node) == Some(self.node) {
                     headers.remove(id);
                 }
             }
@@ -653,13 +647,9 @@ pub fn data_grid(
                 }
                 *last.borrow_mut() = now.clone();
                 let Some((order, sort)) = now else { return };
-                let Some(ui) = grid.handle().and_then(|h| h.weak_ui().upgrade()) else {
-                    return;
-                };
                 let column_of = |id: &str| order.iter().position(|o| o == id);
-                let mut semantics = ui.semantics.borrow_mut();
-                for (at, node) in grid.cells.borrow().iter() {
-                    semantics.update(*node, |n| {
+                for (at, cell) in grid.cells.borrow().iter() {
+                    cell.update_semantics(|n| {
                         n.table = Some(Box::new(TablePlace {
                             row: Some(at.row + 1),
                             column: column_of(&at.column),
@@ -667,8 +657,8 @@ pub fn data_grid(
                         }));
                     });
                 }
-                for (id, node) in grid.headers.borrow().iter() {
-                    semantics.update(*node, |n| {
+                for (id, header) in grid.headers.borrow().iter() {
+                    header.update_semantics(|n| {
                         n.table = Some(Box::new(header_place(column_of(id), &sort, id)));
                     });
                 }
@@ -1034,14 +1024,12 @@ fn grid_row(grid: Rc<Grid>, r: usize, cx: &mut Context) -> View {
             })
         })
         .on_mount(move |handle| {
-            if let Some(ui) = handle.weak_ui().upgrade() {
-                ui.semantics.borrow_mut().update(handle.node(), |n| {
-                    n.table = Some(Box::new(TablePlace {
-                        row: Some(r + 1),
-                        ..Default::default()
-                    }));
-                });
-            }
+            handle.update_semantics(|n| {
+                n.table = Some(Box::new(TablePlace {
+                    row: Some(r + 1),
+                    ..Default::default()
+                }));
+            });
         })
         .child(cells)
 }
@@ -1107,17 +1095,15 @@ fn grid_cell(
         })
         .on_mount(move |handle| {
             let at = GridCell::new(r, mount_id.clone());
-            mount.cells.borrow_mut().insert(at.clone(), handle.node());
-            if let Some(ui) = handle.weak_ui().upgrade() {
-                let column = mount.order().iter().position(|o| *o == mount_id);
-                ui.semantics.borrow_mut().update(handle.node(), |n| {
-                    n.table = Some(Box::new(TablePlace {
-                        row: Some(r + 1),
-                        column,
-                        ..Default::default()
-                    }));
-                });
-            }
+            mount.cells.borrow_mut().insert(at.clone(), handle.clone());
+            let column = mount.order().iter().position(|o| *o == mount_id);
+            handle.update_semantics(|n| {
+                n.table = Some(Box::new(TablePlace {
+                    row: Some(r + 1),
+                    column,
+                    ..Default::default()
+                }));
+            });
             let current = mount.current.with_untracked(|c| c.as_ref() == Some(&at));
             handle.retain(Registered {
                 grid: Rc::downgrade(&mount),
@@ -1322,14 +1308,12 @@ fn header_cell(grid: Rc<Grid>, id: String) -> View {
             mount
                 .headers
                 .borrow_mut()
-                .insert(mount_id.clone(), handle.node());
-            if let Some(ui) = handle.weak_ui().upgrade() {
-                let column = mount.order().iter().position(|o| *o == mount_id);
-                let sort = mount.sort.with_untracked(Clone::clone);
-                ui.semantics.borrow_mut().update(handle.node(), |n| {
-                    n.table = Some(Box::new(header_place(column, &sort, &mount_id)));
-                });
-            }
+                .insert(mount_id.clone(), handle.clone());
+            let column = mount.order().iter().position(|o| *o == mount_id);
+            let sort = mount.sort.with_untracked(Clone::clone);
+            handle.update_semantics(|n| {
+                n.table = Some(Box::new(header_place(column, &sort, &mount_id)));
+            });
             handle.retain(Registered {
                 grid: Rc::downgrade(&mount),
                 built: Built::Header(mount_id.clone()),

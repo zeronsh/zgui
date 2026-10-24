@@ -4433,6 +4433,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zgui-components"
+version = "0.1.0"
+dependencies = [
+ "zgui",
+ "zgui-desktop",
+]
+
+[[package]]
 name = "zgui-demo"
 version = "0.1.0"
 dependencies = [
@@ -4492,6 +4500,7 @@ dependencies = [
  "x11-dl",
  "x11rb",
  "zgui",
+ "zgui-components",
  "zgui-ghostty-sys",
  "zgui-gpu",
  "zgui-run",
@@ -4551,6 +4560,7 @@ dependencies = [
  "smallvec",
  "windows",
  "zgui",
+ "zgui-components",
  "zgui-desktop",
  "zgui-gpu",
 ]

@@ -106,6 +106,8 @@ Some costs the engine removes instead of asking scripts to avoid them: `ui.tween
 
 Elements take one table: string keys are properties, events and options; array entries are children (nodes, strings as text, functions as computed text, nested arrays, which flatten). `nil` and `false` entries are skipped, so `cond and node or nil` works anywhere in the list.
 
+The component library's elements (`ui.data_grid`, `ui.tree`, `ui.calendar`, `ui.date_picker`, `ui.time_field`, `ui.combobox`, `ui.select`, `ui.tabs`, `ui.command_palette`, `ui.segmented`, `ui.stepper`, `ui.disclosure`, `ui.accordion` and `ui.separator`, and `ui.toast`) are `zgui-components`', through zgui-script's `components` feature, on by default: a host built without it (`default-features = false`) has the rest of `ui`.
+
 | Function | |
 | --- | --- |
 | `column`, `row`, `div`, `overlay`, `button`, `grid` | containers (`grid` sets `grid = true`) |

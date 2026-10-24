@@ -44,6 +44,8 @@ mod file_events;
 mod file_events;
 mod interrupt;
 mod io;
+#[cfg(feature = "components")]
+mod library;
 pub mod lint;
 mod lower;
 pub mod markdown;
@@ -1625,42 +1627,40 @@ impl ScriptHost {
                 dismiss_types.clone(),
                 dismiss_lint.clone(),
             );
-            overlay()
-                .w_full()
-                .h_full()
-                .child(app.w_full().h_full())
-                // `ui.toast`'s, while one shows: nothing otherwise.
-                .child_when(
-                    {
-                        let toaster = zgui::compose::Toaster::of(&cx.runtime());
-                        move || toaster.any().then_some(())
-                    },
-                    |_, _| zgui::compose::toast_host(),
-                )
-                .child_when(
-                    move || {
-                        show_errors
-                            .then(|| {
-                                error
-                                    .get()
-                                    .or_else(|| type_errors.get())
-                                    .or_else(|| lint.get())
-                            })
-                            .flatten()
-                    },
-                    move |message, _| {
-                        let (error, types, lint) = (
-                            dismiss_error.clone(),
-                            dismiss_types.clone(),
-                            dismiss_lint.clone(),
-                        );
-                        banner(&message, move || {
-                            error.set(None);
-                            types.set(None);
-                            lint.set(None);
+            let root = overlay().w_full().h_full().child(app.w_full().h_full());
+            // `ui.toast`'s, while one shows: nothing otherwise.
+            #[cfg(feature = "components")]
+            let root = root.child_when(
+                {
+                    let toaster = zgui_components::Toaster::of(&cx.runtime());
+                    move || toaster.any().then_some(())
+                },
+                |_, _| zgui_components::toast_host(),
+            );
+            root.child_when(
+                move || {
+                    show_errors
+                        .then(|| {
+                            error
+                                .get()
+                                .or_else(|| type_errors.get())
+                                .or_else(|| lint.get())
                         })
-                    },
-                )
+                        .flatten()
+                },
+                move |message, _| {
+                    let (error, types, lint) = (
+                        dismiss_error.clone(),
+                        dismiss_types.clone(),
+                        dismiss_lint.clone(),
+                    );
+                    banner(&message, move || {
+                        error.set(None);
+                        types.set(None);
+                        lint.set(None);
+                    })
+                },
+            )
         })
     }
 
@@ -1756,6 +1756,7 @@ impl ScriptHost {
                 assets: self.0.assets.clone(),
                 inspector: self.0.inspector.clone(),
                 depth: Default::default(),
+                #[cfg(feature = "components")]
                 commands: self.0.commands.clone(),
             }),
         })

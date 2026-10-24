@@ -3,18 +3,18 @@
 //! (and WAI-ARIA's select-only combobox). Closed, typing chooses the next
 //! option starting with what was typed, Up and Down and Enter and Space
 //! open it; open, it is a menu (arrows, typeahead, Enter, Escape).
-use crate::{
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
+use zgui::{
     compose::{View, button, component, menu, menu_item, row, text, text_signal},
     input::{EventPhase, InputEvent, Key},
     reactive::Signal,
     semantics::Role,
     style::Styled,
     theme::tok,
-};
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    time::{Duration, Instant},
 };
 
 /// An option of a [`select`]: its value, what it shows, and whether it can

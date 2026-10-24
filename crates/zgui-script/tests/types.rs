@@ -15,6 +15,8 @@
 const SOURCE: &str = include_str!("../types/zgui.d.luau.in");
 const DEFS: &str = include_str!("../types/zgui.d.luau");
 const NODE: &str = include_str!("../src/node.rs");
+/// The component library's `ui.*` (the `components` feature).
+const LIBRARY: &str = include_str!("../src/library.rs");
 const ELEMENT: &str = include_str!("../src/element.rs");
 const VALUE: &str = include_str!("../src/value.rs");
 const TERM: &str = include_str!("../src/term.rs");
@@ -583,57 +585,61 @@ fn element_options_are_typed_on_their_constructors() {
         ),
     ];
     let mut checked = 0;
-    let chunks: Vec<&str> = NODE.split("ui.set(").collect();
-    for (i, chunk) in chunks.iter().enumerate().skip(1) {
-        let names: Vec<String> = match chunk.trim_start().strip_prefix('"') {
-            Some(rest) => vec![rest.split('"').next().unwrap().to_owned()],
-            None => {
-                // `for name in ["image", "svg"]` (or `[("scroll", false), …]`).
-                let before = chunks[i - 1];
-                let list = &before[before.rfind("for ").expect("a loop of names")..];
-                names_in(&list[..list.find('{').unwrap()])
+    for source in [NODE, LIBRARY] {
+        let chunks: Vec<&str> = source.split("ui.set(").collect();
+        for (i, chunk) in chunks.iter().enumerate().skip(1) {
+            let names: Vec<String> = match chunk.trim_start().strip_prefix('"') {
+                Some(rest) => vec![rest.split('"').next().unwrap().to_owned()],
+                None => {
+                    // `for name in ["image", "svg"]` (or `[("scroll", false), …]`).
+                    let before = chunks[i - 1];
+                    let list = &before[before.rfind("for ").expect("a loop of names")..];
+                    names_in(&list[..list.find('{').unwrap()])
+                }
+            };
+            // Up to the next function: `ui.tween`'s shared closure is checked
+            // below, not as `ui.shared`'s.
+            let own = &chunk[..chunk.find("\n    let ").unwrap_or(chunk.len())];
+            let mut keys = gets(own);
+            for (call, extra) in helpers {
+                if own.contains(call) {
+                    keys.extend(extra.iter().cloned());
+                }
             }
-        };
-        // Up to the next function: `ui.tween`'s shared closure is checked
-        // below, not as `ui.shared`'s.
-        let own = &chunk[..chunk.find("\n    let ").unwrap_or(chunk.len())];
-        let mut keys = gets(own);
-        for (call, extra) in helpers {
-            if own.contains(call) {
-                keys.extend(extra.iter().cloned());
+            // A component's props are its own type (it reads their `id` and
+            // `class`).
+            if keys.is_empty() || names == ["component"] {
+                continue;
             }
-        }
-        // A component's props are its own type (it reads their `id` and
-        // `class`).
-        if keys.is_empty() || names == ["component"] {
-            continue;
-        }
-        for name in &names {
-            let mut keys = keys.clone();
-            if name == "image" {
-                // Read with svg's (one constructor makes both): only svg
-                // draws `code`.
-                keys.retain(|k| k != "code");
+            for name in &names {
+                let mut keys = keys.clone();
+                if name == "image" {
+                    // Read with svg's (one constructor makes both): only svg
+                    // draws `code`.
+                    keys.retain(|k| k != "code");
+                }
+                if name == "svg" {
+                    // Likewise, only an image has a `fallback`.
+                    keys.retain(|k| k != "fallback");
+                }
+                if name == "calendar" {
+                    // Read with date_picker's: only its button writes a date.
+                    keys.retain(|k| k != "format");
+                }
+                let (line, tables) = options_of(name)
+                    .unwrap_or_else(|| panic!("ui.{name} reads {keys:?} but takes no table type"));
+                let gaps: Vec<_> = keys
+                    .iter()
+                    .filter(|k| {
+                        !tables.iter().any(|t| has(t, k)) && !line.contains(&format!(" {k}: "))
+                    })
+                    .collect();
+                assert!(
+                    gaps.is_empty(),
+                    "ui.{name}'s options without types: {gaps:?}"
+                );
+                checked += 1;
             }
-            if name == "svg" {
-                // Likewise, only an image has a `fallback`.
-                keys.retain(|k| k != "fallback");
-            }
-            if name == "calendar" {
-                // Read with date_picker's: only its button writes a date.
-                keys.retain(|k| k != "format");
-            }
-            let (line, tables) = options_of(name)
-                .unwrap_or_else(|| panic!("ui.{name} reads {keys:?} but takes no table type"));
-            let gaps: Vec<_> = keys
-                .iter()
-                .filter(|k| !tables.iter().any(|t| has(t, k)) && !line.contains(&format!(" {k}: ")))
-                .collect();
-            assert!(
-                gaps.is_empty(),
-                "ui.{name}'s options without types: {gaps:?}"
-            );
-            checked += 1;
         }
     }
     assert!(checked > 20, "checked {checked} constructors");
@@ -678,7 +684,7 @@ fn fn_body<'a>(source: &'a str, start: &str) -> &'a str {
 #[test]
 fn ui_functions_are_typed() {
     let mut names = Vec::new();
-    for source in [NODE, TERM, COMMAND, CANVAS] {
+    for source in [NODE, LIBRARY, TERM, COMMAND, CANVAS] {
         for chunk in source.split("ui.set(").skip(1) {
             if let Some(name) = chunk
                 .trim_start()

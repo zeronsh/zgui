@@ -204,7 +204,7 @@ return ui.row {
 | `minute_step` | `number` | `1` | `time_field`: what Up and Down step the minutes by |
 | `label` | `string` | `""` | its accessible name |
 
-In Rust: `calendar(label, value, CalendarOptions { … })`, `date_picker(…)` and `time_field(label, value, TimeOptions { … })`, with `CalendarDate` and `TimeOfDay` values (`CalendarDate::today()`, `add_days`, `add_months`, `weekday`, `parse`). `CalendarOptions` also takes month and weekday names for other languages.
+In Rust (`zgui-components`): `calendar(label, value, CalendarOptions { … })`, `date_picker(…)` and `time_field(label, value, TimeOptions { … })`, with `CalendarDate` and `TimeOfDay` values (`CalendarDate::today()`, `add_days`, `add_months`, `weekday`, `parse`). `CalendarOptions` also takes month and weekday names for other languages.
 
 ## progress
 

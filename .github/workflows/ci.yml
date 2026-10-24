@@ -88,7 +88,7 @@ jobs:
         run: |
           msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
           rustup toolchain install "$msrv" --profile minimal --no-self-update
-          cargo "+$msrv" check -p zgui-desktop -p zgui-script --no-default-features --locked
+          cargo "+$msrv" check -p zgui-components -p zgui-desktop -p zgui-script --no-default-features --locked
       # zgui-script's best-practice lint over every example script.
       - name: Script lint
         run: cargo run -q -p zgui-script --bin zgui --locked -- lint crates/zgui-script/examples crates/zgui-desktop/examples
@@ -102,7 +102,7 @@ jobs:
           unzip -q -o "$dir.zip" -d "$dir"
           echo "LUAU_LSP=$dir/luau-lsp" >> "$GITHUB_ENV"
           LUAU_LSP="$dir/luau-lsp" cargo run -q -p zgui-script --bin zgui --locked -- check crates/zgui-script/examples crates/zgui-desktop/examples
-      - run: cargo test -p zgui -p zgui-desktop -p zgui-workload -p zgui-script --all-targets --locked
+      - run: cargo test -p zgui -p zgui-components -p zgui-desktop -p zgui-workload -p zgui-script --all-targets --locked
       - run: cargo test --workspace --doc --locked
       # The API docs build without a warning (a broken link, a name collision).
       - run: cargo doc --workspace --no-deps --locked
@@ -170,7 +170,7 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test -p zgui -p zgui-desktop -p zgui-workload --all-targets --locked
+      - run: cargo test -p zgui -p zgui-components -p zgui-desktop -p zgui-workload --all-targets --locked
       # The soak (an app used for a while holds what it did), on Metal.
       - run: cargo test -p zgui-script --test soak --locked
       - run: cargo test --workspace --doc --locked
@@ -235,7 +235,7 @@ jobs:
       # zgui-script's unit tests (its file events wait on Windows' own
       # notifications) and its bundled script paths (caught a Windows
       # separator bug), in one run.
-      - run: cargo test -p zgui -p zgui-desktop -p zgui-script --lib --test bundle --locked
+      - run: cargo test -p zgui -p zgui-components -p zgui-desktop -p zgui-script --lib --test components --test bundle --locked
       # The vendored accesskit_windows' test of zgui's patch (UIA's
       # HeadingLevel, vendor/accesskit_windows/ZGUI_PATCH.md), alone: its
       # other tests move the foreground window. Built in the workspace's

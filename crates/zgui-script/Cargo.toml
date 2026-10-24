@@ -14,7 +14,11 @@ description = "Luau scripts that describe zgui component trees, with hot reload.
 
 [features]
 # Image formats (see zgui-gpu): all by default.
-default = ["svg", "png", "jpeg", "gif"]
+default = ["components", "svg", "png", "jpeg", "gif"]
+# The component library's `ui.*` (zgui-components): the data grid, tree,
+# dates and times, combobox, select, tabs, toasts, command palette and
+# controls.
+components = ["dep:zgui-components"]
 svg = ["zgui-gpu/svg"]
 png = ["zgui-gpu/png"]
 jpeg = ["zgui-gpu/jpeg"]
@@ -24,6 +28,7 @@ vulkan = ["zgui-gpu/vulkan"]
 
 [dependencies]
 zgui = { path = "../zgui", version = "0.1.0" }
+zgui-components = { path = "../zgui-components", version = "0.1.0", optional = true }
 # Image decoding for `ui.image` (PNG, JPEG).
 zgui-gpu = { path = "../zgui-gpu", version = "0.1.0", default-features = false }
 mlua = { version = "0.12.2", features = ["luau"] }

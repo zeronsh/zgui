@@ -1721,7 +1721,7 @@ mod vocabulary_tests {
 
     #[test]
     fn trees_and_grids_say_they_take_focus() {
-        use zgui::compose::{TreeChildren, TreeItem};
+        use zgui_components::{GridColumn, GridSource, TreeChildren, TreeItem, data_grid, tree};
         let mut ui = Ui::new(600., 400.);
         let files = |parent: Option<&str>| {
             TreeChildren::Ready(match parent {
@@ -1770,11 +1770,8 @@ mod atspi_tests {
         Adapter, AdapterCallback, AppContext, Event, InterfaceSet, PlatformNode, Role as AtspiRole,
         State, WindowBounds,
     };
-    use zgui::{
-        compose::prelude::*,
-        compose::{TreeChildren, TreeItem},
-        widgets::Ui,
-    };
+    use zgui::{compose::prelude::*, widgets::Ui};
+    use zgui_components::{GridColumn, GridSource, TreeChildren, TreeItem, data_grid, tree};
 
     struct Quiet;
     impl AdapterCallback for Quiet {

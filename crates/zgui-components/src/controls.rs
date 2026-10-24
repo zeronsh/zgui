@@ -3,7 +3,8 @@
 //! complete as WAI-ARIA describes its pattern, says what it is to
 //! assistive technology, mirrors right to left, and takes its colours from
 //! the theme.
-use crate::{
+use std::{cell::Cell, rc::Rc};
+use zgui::{
     compose::{View, button, column, component, div, row, switch, text, text_input},
     input::{EventPhase, FocusGroup, InputEvent, Key},
     reactive::Signal,
@@ -11,7 +12,6 @@ use crate::{
     style::{Styled, Styles},
     theme::tok,
 };
-use std::{cell::Cell, rc::Rc};
 
 /// `options` side by side, one chosen (`selected`, its index): AppKit's
 /// segmented control, a radio group to assistive technology. One Tab
@@ -55,7 +55,7 @@ pub fn segmented(
                             .text_color(tok::TEXT_PRIMARY)
                     } else {
                         Styles::new()
-                            .bg(crate::scene::Color(0, 0, 0, 0))
+                            .bg(zgui::scene::Color(0, 0, 0, 0))
                             .text_color(tok::TEXT_SECONDARY)
                     }
                 })
@@ -215,7 +215,7 @@ pub fn stepper(label: impl Into<String>, value: Signal<f64>, options: StepperOpt
                 .p(0.)
                 .rounded(0.)
                 .border(0.)
-                .bg(crate::scene::Color(0, 0, 0, 0))
+                .bg(zgui::scene::Color(0, 0, 0, 0))
                 .hover(|s| s.bg(tok::HOVER))
                 .items_center()
                 .justify_center()
@@ -262,7 +262,7 @@ pub fn disclosure(open: Signal<bool>, summary: View, content: impl Fn() -> View 
                 .py(6.)
                 .items_center()
                 .rounded(6.)
-                .bg(crate::scene::Color(0, 0, 0, 0))
+                .bg(zgui::scene::Color(0, 0, 0, 0))
                 .border(0.)
                 .hover(|s| s.bg(tok::HOVER))
                 .on_click(move || {

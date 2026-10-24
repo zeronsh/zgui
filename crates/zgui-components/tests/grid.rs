@@ -3,13 +3,14 @@
 //! of rows, right to left, and the pointer.
 use std::{cell::RefCell, rc::Rc};
 use zgui::{
-    compose::{GridCell, GridColumn, GridSort, GridSource, ViewHandle, prelude::*},
+    compose::{ViewHandle, prelude::*},
     input::{InputEvent, Key, Modifiers, PointerButton},
     reactive::Signal,
     scene::{Direction, NodeId, NodeKind},
     semantics::{Role, SortOrder},
     widgets::Ui,
 };
+use zgui_components::*;
 
 struct Fixture {
     ui: Ui,

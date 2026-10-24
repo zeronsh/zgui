@@ -10,8 +10,9 @@
 //!
 //! The dates are the proleptic Gregorian calendar's, with no time zone;
 //! "today" is the local one where the host says what the local offset is
-//! ([`set_local_offset`]: zgui-desktop does), else UTC's.
-use crate::{
+//! ([`zgui::local_time::set_offset`]: zgui-desktop does), else UTC's.
+use std::{cell::RefCell, rc::Rc};
+use zgui::{
     compose::{
         Context, NodeHandle, View, button, column, component, div, popover, row, text, text_signal,
     },
@@ -22,12 +23,6 @@ use crate::{
     style::{Styled, Styles},
     text_layout::{FontFeatures, TextAlign},
     theme::tok,
-};
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::OnceLock,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 /// A day of the calendar: a year, a month (1 to 12) and a day of it.
@@ -107,9 +102,9 @@ impl CalendarDate {
     pub fn first_of_month(self) -> Self {
         Self { day: 1, ..self }
     }
-    /// Today, here (see [`set_local_offset`]).
+    /// Today, here (see [`zgui::local_time`]).
     pub fn today() -> Self {
-        Self::from_days((now_seconds() + i64::from(local_offset())).div_euclid(86_400))
+        Self::from_days(zgui::local_time::now_seconds().div_euclid(86_400))
     }
     /// A date written `2026-10-23` (ISO 8601's).
     pub fn parse(text: &str) -> Option<Self> {
@@ -143,9 +138,9 @@ impl TimeOfDay {
     pub fn new(hour: u8, minute: u8) -> Option<Self> {
         (hour < 24 && minute < 60).then_some(Self { hour, minute })
     }
-    /// Now, here (see [`set_local_offset`]).
+    /// Now, here (see [`zgui::local_time`]).
     pub fn now() -> Self {
-        let seconds = (now_seconds() + i64::from(local_offset())).rem_euclid(86_400);
+        let seconds = zgui::local_time::now_seconds().rem_euclid(86_400);
         Self {
             hour: (seconds / 3600) as u8,
             minute: (seconds / 60 % 60) as u8,
@@ -162,22 +157,6 @@ impl std::fmt::Display for TimeOfDay {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:02}:{:02}", self.hour, self.minute)
     }
-}
-
-static LOCAL_OFFSET: OnceLock<fn() -> i32> = OnceLock::new();
-/// Tell zgui how far local time is from UTC: `offset` answers, in seconds
-/// east of it, as it is now (daylight saving moves it). Set once, by the
-/// host; until then "today" is UTC's.
-pub fn set_local_offset(offset: fn() -> i32) {
-    let _ = LOCAL_OFFSET.set(offset);
-}
-fn local_offset() -> i32 {
-    LOCAL_OFFSET.get().map_or(0, |offset| offset())
-}
-fn now_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 const MONTHS: [&str; 12] = [
@@ -305,11 +284,7 @@ impl Month {
         let cursor = self.cursor.with_untracked(|c| *c);
         let index = (cursor.days() - self.options.first_shown(cursor).days()) as usize;
         let target = self.cells.borrow().get(index).copied().flatten();
-        if let Some(ui) = handle.weak_ui().upgrade() {
-            ui.semantics
-                .borrow_mut()
-                .update(handle.node(), |node| node.active_descendant = target);
-        }
+        handle.update_semantics(|node| node.active_descendant = target);
     }
     fn read_direction(&self) {
         let rtl = self.grid.borrow().as_ref().is_some_and(|h| {

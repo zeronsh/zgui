@@ -7,7 +7,13 @@
 //! current item. Children come from the app as each item opens (loaded
 //! then, if it likes: "loading" until they come); the rows are virtual, so
 //! a tree of thousands builds only what shows.
-use crate::{
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    time::{Duration, Instant},
+};
+use zgui::{
     compose::{Context, NodeHandle, View, component, div, text, text_signal, virtual_list},
     input::{EventPhase, InputEvent, Key, PointerButton},
     reactive::Signal,
@@ -15,12 +21,6 @@ use crate::{
     semantics::Role,
     style::{Styled, Styles},
     theme::tok,
-};
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    rc::Rc,
-    time::{Duration, Instant},
 };
 
 /// An item of a [`tree`]: its id (unique in the tree), what it shows, and
@@ -205,23 +205,20 @@ pub fn tree(
                     }
                 }
                 let target = id.and_then(|id| row_nodes.borrow().get(&id).map(NodeHandle::node));
-                if let Some(ui) = handle.weak_ui().upgrade() {
-                    let mut semantics = ui.semantics.borrow_mut();
-                    semantics.update(handle.node(), |node| node.active_descendant = target);
-                    // Each row's place: its level, and where among its siblings.
-                    let nodes = row_nodes.borrow();
-                    shown.with(|rows| {
-                        for r in rows {
-                            if let Some(n) = nodes.get(&r.item.id) {
-                                semantics.update(n.node(), |node| {
-                                    node.level = Some(r.level);
-                                    node.position_in_set = Some(r.position);
-                                    node.size_of_set = Some(r.siblings);
-                                });
-                            }
+                handle.update_semantics(|node| node.active_descendant = target);
+                // Each row's place: its level, and where among its siblings.
+                let nodes = row_nodes.borrow();
+                shown.with(|rows| {
+                    for r in rows {
+                        if let Some(n) = nodes.get(&r.item.id) {
+                            n.update_semantics(|node| {
+                                node.level = Some(r.level);
+                                node.position_in_set = Some(r.position);
+                                node.size_of_set = Some(r.siblings);
+                            });
                         }
-                    });
-                }
+                    }
+                });
             }));
         }
 
@@ -253,7 +250,7 @@ pub fn tree(
                 let (id_chosen, id_styled) = (id.clone(), id.clone());
                 let (label_row, chevron_row, expanded_row) =
                     (row.clone(), row.clone(), row.clone());
-                let mut view = crate::compose::row()
+                let mut view = zgui::compose::row()
                     .role(Role::TreeItem)
                     .accessible_label(current.item.label.clone())
                     .selected_when(move || chosen.with(|s| s.as_deref() == Some(&*id_chosen)))

@@ -2,13 +2,14 @@
 //! time (paused under the pointer), announced, and reached with F8.
 use std::{cell::RefCell, rc::Rc, time::Duration};
 use zgui::{
-    compose::{TaskRunner, Toast, ToastKind, Toaster, ViewHandle, prelude::*},
+    compose::{TaskRunner, ViewHandle, prelude::*},
     input::{InputEvent, Key, Modifiers, PointerButton},
     scene::{NodeId, NodeKind},
     semantics::Role,
     task::LocalExecutor,
     widgets::Ui,
 };
+use zgui_components::*;
 
 fn host(ui: &mut Ui, executor: &Rc<RefCell<LocalExecutor>>) -> ViewHandle {
     let view = ui.mount(provide(

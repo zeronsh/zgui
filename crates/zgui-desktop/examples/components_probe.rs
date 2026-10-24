@@ -6,7 +6,9 @@
 //! accessibility tree.
 //! Run: cargo run -p zgui-desktop --example components_probe
 use zgui::compose::prelude::*;
-use zgui::compose::{SelectOption, StepperOptions, Tab, TabsOptions, TreeChildren, TreeItem};
+use zgui_components::{
+    SelectOption, StepperOptions, Tab, TabsOptions, TreeChildren, TreeItem, prelude::*,
+};
 use zgui_desktop::{Application, WindowOptions};
 
 fn files(parent: Option<&str>) -> TreeChildren {

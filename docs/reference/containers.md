@@ -179,7 +179,7 @@ Each cell shows its row's field named by the column's `id` (or what `cell` makes
 | `on_activate` | `(row: number) -> ()` | none | Enter on a cell that doesn't edit, or a double click |
 | `label` | `string` | `""` | its accessible name |
 
-In Rust, `data_grid(label, columns, sort, current, GridSource::new(rows, cell).on_edit(…).on_activate(…))`: `cell(row, column)` gives each cell's text, and the app gives its rows in the order `sort` asks.
+In Rust (`zgui-components`), `data_grid(label, columns, sort, current, GridSource::new(rows, cell).on_edit(…).on_activate(…))`: `cell(row, column)` gives each cell's text, and the app gives its rows in the order `sort` asks.
 
 ## disclosure, accordion, separator
 

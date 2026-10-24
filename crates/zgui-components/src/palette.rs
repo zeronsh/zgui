@@ -4,10 +4,12 @@
 //! runs the highlighted command (closing the palette first), Escape closes
 //! it. It opens near the window's top, over a backdrop; the list is
 //! virtual.
-use crate::{
-    compose::{View, column, component, modal, row, text, text_input, text_signal, virtual_list},
-    compose_modal::ModalPlacement,
-    compose_popover::Edge,
+use std::rc::Rc;
+use zgui::{
+    compose::{
+        ModalPlacement, PlacementEdge as Edge, View, column, component, modal, row, text,
+        text_input, text_signal, virtual_list,
+    },
     input::{EventPhase, InputEvent, Key},
     reactive::Signal,
     scene::Color,
@@ -15,7 +17,6 @@ use crate::{
     style::{Styled, Styles},
     theme::tok,
 };
-use std::rc::Rc;
 
 /// A command a [`command_palette`] lists: its id (what `run` is given),
 /// title, a detail (its menu, a category) and the keys that run it.
@@ -216,7 +217,7 @@ pub fn command_palette(
         let row_view = {
             let (matches, highlight, execute) =
                 (matches.clone(), highlight.clone(), execute.clone());
-            move |index: Signal<usize>, _: String, _: &mut crate::compose::Context| {
+            move |index: Signal<usize>, _: String, _: &mut zgui::compose::Context| {
                 let item = {
                     let (matches, index) = (matches.clone(), index.clone());
                     move || matches.with(|m| m.get(index.get()).cloned())
@@ -308,7 +309,7 @@ pub fn command_palette(
             .gap(6.)
             .child(field)
             .child(list)
-            .child(crate::compose::switch(
+            .child(zgui::compose::switch(
                 move || empty.with(Vec::is_empty),
                 |none, _| {
                     if none {

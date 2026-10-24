@@ -4907,6 +4907,21 @@ impl NodeHandle {
     pub(crate) fn weak_ui(&self) -> WeakUi {
         self.ui.clone()
     }
+    /// Change what assistive technology is told of the node (its
+    /// `SemanticNode`) in place: what a component works out itself, as a
+    /// grid's current cell (`active_descendant`) or a row's place in a
+    /// virtual set. Whether the node has semantics to change.
+    pub fn update_semantics(&self, f: impl FnOnce(&mut crate::semantics::SemanticNode)) -> bool {
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        let mut semantics = ui.semantics.borrow_mut();
+        if semantics.get(self.node).is_none() {
+            return false;
+        }
+        semantics.update(self.node, f);
+        true
+    }
     /// Whether a text field holds keyboard focus (anywhere in this UI): a
     /// bare-key shortcut (`j`, `k`) gives way to typing then.
     pub fn editing(&self) -> bool {
@@ -5169,32 +5184,10 @@ impl Ui {
         mounted
     }
 }
-pub use crate::compose_combobox::{ComboItem, ComboboxOptions, combobox};
-pub use crate::compose_controls::{
-    StepperOptions, accordion, disclosure, segmented, separator, stepper,
-};
-pub use crate::compose_date::{
-    CalendarDate, CalendarOptions, TimeOfDay, TimeOptions, calendar, date_picker, days_in_month,
-    is_leap_year, set_local_offset, time_field,
-};
-pub use crate::compose_grid::{
-    GridCell, GridColumn, GridSelection, GridSort, GridSource, data_grid,
-};
-pub use crate::compose_palette::{PaletteCommand, command_palette, fuzzy_score};
-pub use crate::compose_select::{SelectOption, select};
 pub use crate::compose_split::{SplitOptions, split};
-pub use crate::compose_tabs::{CloseTab, Tab, TabsOptions, tabs};
-pub use crate::compose_toast::{Toast, ToastAction, ToastKind, Toaster, toast_host};
-pub use crate::compose_tree::{TreeChildren, TreeItem, tree};
 
 /// Common imports for component application code.
 pub mod prelude {
-    pub use super::{
-        CalendarDate, CalendarOptions, TimeOfDay, TimeOptions, calendar, date_picker, time_field,
-    };
-    pub use super::{
-        ComboItem, ComboboxOptions, SelectOption, Tab, TabsOptions, combobox, select, tabs,
-    };
     pub use super::{
         Context, Slot, VariableHeights, View, button, checkbox, column, component, div, image,
         image_signal, keyed, measured_rows, measured_virtual_list, menu, menu_item, modal, overlay,
@@ -5202,13 +5195,8 @@ pub mod prelude {
         submenu, switch, text, text_area, text_input, text_signal, variable_virtual_list,
         virtual_list,
     };
-    pub use super::{GridCell, GridColumn, GridSelection, GridSort, GridSource, data_grid};
-    pub use super::{PaletteCommand, command_palette};
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
     pub use super::{SplitOptions, split};
-    pub use super::{StepperOptions, accordion, disclosure, segmented, separator, stepper};
-    pub use super::{Toast, ToastKind, Toaster, toast_host};
-    pub use super::{TreeChildren, TreeItem, tree};
     pub use super::{animated_image, animated_image_controlled, async_image, canvas};
     #[cfg(target_os = "macos")]
     pub use super::{native_surface, native_surface_signal};

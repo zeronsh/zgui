@@ -3,16 +3,14 @@
 //! technology hears, a date picker opening and closing as a day is chosen,
 //! and a time field's segments stepping, typed in and cleared.
 use zgui::{
-    compose::{
-        CalendarDate, CalendarOptions, TimeOfDay, TimeOptions, ViewHandle, days_in_month,
-        prelude::*,
-    },
+    compose::{ViewHandle, prelude::*},
     input::{InputEvent, Key, Modifiers, PointerButton},
     reactive::Signal,
     scene::{Direction, NodeId},
     semantics::Role,
     widgets::Ui,
 };
+use zgui_components::*;
 
 fn date(year: i32, month: u8, day: u8) -> CalendarDate {
     CalendarDate::new(year, month, day).unwrap()
