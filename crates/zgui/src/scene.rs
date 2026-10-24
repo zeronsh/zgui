@@ -1551,6 +1551,18 @@ impl PaintExtras {
         (self != Self::default()).then(|| std::rc::Rc::new(self))
     }
 }
+/// What a node that is not plain adds, in the paint walk, to what its
+/// parent passed on: its own and its children's fade masks, rounded clips
+/// and colour filters.
+struct Own {
+    mask: Option<FadeMask>,
+    rounded: RoundedClip,
+    parent_color: Option<ColorMatrix>,
+    color: Option<ColorMatrix>,
+    child_mask: Option<FadeMask>,
+    child_rounded: RoundedClip,
+    item_rounded: RoundedClip,
+}
 /// Moves `items` by `(dx, dy)`, into a layer's or a plane's space: their
 /// boxes, clips, fade masks and rounded clips (not a layer's matrix, which
 /// maps from its own box). Items sharing extras share the moved ones.
@@ -6069,63 +6081,78 @@ impl Scene {
                 && !fades(&node.style)
                 && !(matches!(node.kind, NodeKind::Quad(_) | NodeKind::Panel { .. })
                     && clip_axes(&node.style) == (true, true));
-            let inherited = context.as_deref().filter(|_| !plain);
-            let mask = inherited.and_then(|c| c.mask);
-            let rounded = inherited.map_or_else(RoundedClip::default, |c| c.rounded);
-            let parent_color = inherited.and_then(|c| c.color);
-            let color = compose_color(parent_color, own_color);
-            let child_mask = match plain {
-                true => mask,
-                false => fade_mask(mask, clip, &node.style, self.overflow_of(id, node)),
-            };
-            let mut child_rounded = match plain {
-                true => rounded,
-                false => rounded_clip(rounded, node, bounds),
-            };
-            // Its clip inset: on its item and descendants here, on the
-            // composite of an untransformed layer (after its effect), and
-            // inside a transformed one, where its own space is.
-            let inset = node
-                .clip_inset
-                .as_deref()
-                .filter(|_| match (is_root, isolated) {
-                    (true, _) => transformed,
-                    (false, true) => !transformed,
-                    (false, false) => true,
-                })
-                .map(|inset| inset.apply(bounds));
-            let clip = match inset {
-                None => clip,
-                Some(inset) => {
-                    Some(clip.map_or(inset, |clip| clip.intersection(inset).unwrap_or_default()))
+            // What it adds to what was passed on: none for a plain node, which
+            // passes on what it was given (most nodes, so none of this is
+            // worked out for them).
+            let (clip, inset, own) = if plain {
+                (clip, None, None)
+            } else {
+                let inherited = context.as_deref();
+                let mask = inherited.and_then(|c| c.mask);
+                let rounded = inherited.map_or_else(RoundedClip::default, |c| c.rounded);
+                let parent_color = inherited.and_then(|c| c.color);
+                let color = compose_color(parent_color, own_color);
+                let child_mask = fade_mask(mask, clip, &node.style, self.overflow_of(id, node));
+                let mut child_rounded = rounded_clip(rounded, node, bounds);
+                // Its clip inset: on its item and descendants here, on the
+                // composite of an untransformed layer (after its effect), and
+                // inside a transformed one, where its own space is.
+                let inset = node
+                    .clip_inset
+                    .as_deref()
+                    .filter(|_| match (is_root, isolated) {
+                        (true, _) => transformed,
+                        (false, true) => !transformed,
+                        (false, false) => true,
+                    })
+                    .map(|inset| inset.apply(bounds));
+                let clip = match inset {
+                    None => clip,
+                    Some(inset) => Some(
+                        clip.map_or(inset, |clip| clip.intersection(inset).unwrap_or_default()),
+                    ),
+                };
+                // Its rounded clip rounds the inset box instead.
+                let mut item_rounded = rounded;
+                if let Some(inset) = inset
+                    && child_rounded != rounded
+                    && let Some(own) = &mut child_rounded[0]
+                {
+                    own.rect = inset;
+                    item_rounded = child_rounded;
                 }
+                let own = Own {
+                    mask,
+                    rounded,
+                    parent_color,
+                    color,
+                    child_mask,
+                    child_rounded,
+                    item_rounded,
+                };
+                (clip, inset, Some(own))
             };
-            // Its rounded clip rounds the inset box instead.
-            let mut item_rounded = rounded;
-            if let Some(inset) = inset
-                && child_rounded != rounded
-                && let Some(own) = &mut child_rounded[0]
-            {
-                own.rect = inset;
-                item_rounded = child_rounded;
-            }
             // Its border over what it holds: a second item once they paint.
             let border_over = matches!(&node.kind,
                 NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } if quad.paints_over());
             // The item's extras and its children's, shared with what passed
             // them on wherever they are the same.
-            let extras =
-                if plain || matrix.is_none() && item_rounded == rounded && color == parent_color {
-                    context.clone()
-                } else {
+            let extras = match &own {
+                Some(own)
+                    if matrix.is_some()
+                        || own.item_rounded != own.rounded
+                        || own.color != own.parent_color =>
+                {
                     PaintExtras {
                         matrix,
-                        mask,
-                        rounded: item_rounded,
-                        color,
+                        mask: own.mask,
+                        rounded: own.item_rounded,
+                        color: own.color,
                     }
                     .shared()
-                };
+                }
+                _ => context.clone(),
+            };
             if !isolated && !border && border_over {
                 let opacity = parent_opacity;
                 stack.push((
@@ -6138,20 +6165,29 @@ impl Scene {
                 ));
             }
             if !isolated && !border {
-                let passed = if plain
-                    || child_mask == mask && child_rounded == rounded && color == parent_color
-                {
-                    context
-                } else if matrix.is_none() && child_rounded == item_rounded && child_mask == mask {
-                    extras.clone()
-                } else {
-                    PaintExtras {
-                        matrix: None,
-                        mask: child_mask,
-                        rounded: child_rounded,
-                        color,
+                let passed = match own {
+                    None => context,
+                    Some(own)
+                        if own.child_mask == own.mask
+                            && own.child_rounded == own.rounded
+                            && own.color == own.parent_color =>
+                    {
+                        context
                     }
-                    .shared()
+                    Some(own)
+                        if matrix.is_none()
+                            && own.child_rounded == own.item_rounded
+                            && own.child_mask == own.mask =>
+                    {
+                        extras.clone()
+                    }
+                    Some(own) => PaintExtras {
+                        matrix: None,
+                        mask: own.child_mask,
+                        rounded: own.child_rounded,
+                        color: own.color,
+                    }
+                    .shared(),
                 };
                 stack.extend(
                     node.children

@@ -1117,7 +1117,11 @@ const PROMOTED_PIXELS: f32 = 16_384.;
 /// As `PROMOTED_PIXELS`, into the full shader, whose cost per pixel is a
 /// multiple of the basic one's: at 16K a batch, text promoted beside its
 /// rounded panels raised the heavy dashboard's GPU cycles 5 to 8%. Icons,
-/// dots and chips still join.
+/// dots and chips still join. (An early return in `shade` for plain quads,
+/// computing `basic`'s colour, does not make promotion cheap: the cost is
+/// the full shader's registers and flat varyings, which a branch keeps,
+/// and the test slowed the quads that need it. Measured: headless GPU time
+/// per frame, heavy stream +3.5% with promotion, heavy both's own +1.3%.)
 const PROMOTED_FULL_PIXELS: f32 = 1024.;
 /// The shading drawing both `a` and `b`, if one can: the full shader draws
 /// every basic quad, and blending every opaque one, to the same bytes (see
