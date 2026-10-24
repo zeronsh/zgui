@@ -3876,7 +3876,10 @@ impl Scene {
         while let Some(parent) = self.node(child).parent {
             self.invalidate(parent, LAYOUT);
             if self.is_layout_boundary(parent) {
-                self.layout_roots.push(parent);
+                // Siblings changing in turn (a card's bars) name it once.
+                if self.layout_roots.last() != Some(&parent) {
+                    self.layout_roots.push(parent);
+                }
                 return;
             }
             child = parent;
@@ -5684,7 +5687,8 @@ impl Scene {
         // just their subtrees, outermost first.
         let mut roots = std::mem::take(&mut self.layout_roots);
         roots.retain(|id| self.contains(*id));
-        roots.sort_by_key(|id| (self.depth(*id), id.index, id.generation));
+        // Each root's depth worked out once, not at every comparison.
+        roots.sort_by_cached_key(|id| (self.depth(*id), id.index, id.generation));
         roots.dedup();
         let mut relayout_all = false;
         for id in roots {
