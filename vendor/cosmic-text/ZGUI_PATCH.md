@@ -117,3 +117,9 @@ and the word cache key and decoration check borrow the defaults
 (`AttrsList::defaults_owned`). An ASCII run skips the per-character script
 lookup: ASCII is all Common or Latin, which the lookup skipped anyway.
 `check/` finds every layout identical.
+
+## A visual line's display order goes into a kept list
+
+`ShapeLine::reorder` returned a new list of ranges for every visual line
+laid out, the usual all-left-to-right line included. It now fills a list
+kept in the `ShapeBuffer`. `check/` finds every layout identical.

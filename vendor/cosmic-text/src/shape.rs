@@ -116,6 +116,9 @@ pub struct ShapeBuffer {
     #[cfg(feature = "shape-run-cache")]
     run_key_line: usize,
 
+    /// zgui patch: a visual line's ranges in display order (`reorder`).
+    order: Vec<Range<usize>>,
+
     /// Buffer for sets of layout glyphs.
     glyph_sets: Vec<Vec<LayoutGlyph>>,
 }
@@ -1664,19 +1667,23 @@ impl ShapeLine {
     }
 
     // A modified version of second part of unicode_bidi::bidi_info::visual run
-    fn reorder(&self, line_range: &[VlRange]) -> Vec<Range<usize>> {
+    /// zgui patch: into `order`, a scratch list, rather than a new one for
+    /// every visual line laid out.
+    fn reorder(&self, line_range: &[VlRange], order: &mut Vec<Range<usize>>) {
+        order.clear();
         // zgui patch: a line all at one left-to-right level stays in order
         // (L2 reverses only odd levels), without collecting its levels.
         let level = line_range.first().map(|range| range.level);
         if level.is_some_and(|level| {
             level.is_ltr() && line_range.iter().all(|range| range.level == level)
         }) {
-            return (0..line_range.len()).map(|i| i..i + 1).collect();
+            order.extend((0..line_range.len()).map(|i| i..i + 1));
+            return;
         }
         let line: Vec<unicode_bidi::Level> = line_range.iter().map(|range| range.level).collect();
         let count = line.len();
         if count == 0 {
-            return Vec::new();
+            return;
         }
 
         // Each VlRange is its own element for L2 reordering.
@@ -1725,7 +1732,7 @@ impl ShapeLine {
                 .expect("Lowering embedding level below zero");
         }
 
-        elements
+        *order = elements;
     }
 
     pub fn layout(
@@ -2462,6 +2469,7 @@ impl ShapeLine {
 
         // Cache glyph sets in reverse order so they will ideally be reused in exactly the same lines.
         let mut cached_glyph_sets = mem::take(&mut scratch.glyph_sets);
+        let mut order = mem::take(&mut scratch.order);
         cached_glyph_sets.clear();
         cached_glyph_sets.extend(layout_lines.drain(..).rev().map(|mut v| {
             v.glyphs.clear();
@@ -2940,7 +2948,7 @@ impl ShapeLine {
                 continue;
             }
 
-            let new_order = self.reorder(&visual_line.ranges);
+            self.reorder(&visual_line.ranges, &mut order);
 
             let mut glyphs = cached_glyph_sets
                 .pop()
@@ -3147,7 +3155,7 @@ impl ShapeLine {
             };
 
             if self.rtl {
-                for range in new_order.into_iter().rev() {
+                for range in order.iter().rev().cloned() {
                     process_range(
                         range,
                         &mut x,
@@ -3160,7 +3168,7 @@ impl ShapeLine {
                 }
             } else {
                 /* LTR */
-                for range in new_order {
+                for range in order.iter().cloned() {
                     process_range(
                         range,
                         &mut x,
@@ -3216,5 +3224,6 @@ impl ShapeLine {
         scratch.visual_lines.append(&mut cached_visual_lines);
         scratch.cached_visual_lines = cached_visual_lines;
         scratch.glyph_sets = cached_glyph_sets;
+        scratch.order = order;
     }
 }
