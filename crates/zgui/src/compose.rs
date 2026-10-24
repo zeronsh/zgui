@@ -2979,11 +2979,14 @@ fn open_element(
         Kind::Canvas(draw) => {
             assert!(view.children.is_empty(), "canvas views own their drawing");
             canvas_compute = Some(draw);
-            ui.container(parent, Layout::Overlay, Default::default())
+            let root = ui.container(parent, Layout::Overlay, Default::default());
+            ui.scene.borrow_mut().set_replaced(root, true);
+            root
         }
         Kind::Svg { label, source } => {
             assert!(view.children.is_empty(), "SVG views own their artwork");
             let root = ui.container(parent, Layout::Overlay, Default::default());
+            ui.scene.borrow_mut().set_replaced(root, true);
             ui.semantics
                 .borrow_mut()
                 .set(root, SemanticNode::new(Role::Image, label));
@@ -2994,6 +2997,7 @@ fn open_element(
         Kind::NativeSurface { label, mut source } => {
             assert!(view.children.is_empty(), "native surfaces own their pixels");
             let root = ui.container(parent, Layout::Overlay, Default::default());
+            ui.scene.borrow_mut().set_replaced(root, true);
             ui.semantics
                 .borrow_mut()
                 .set(root, SemanticNode::new(Role::Image, label));
@@ -3013,6 +3017,7 @@ fn open_element(
         Kind::Image { label, mut source } => {
             assert!(view.children.is_empty(), "image views own their pixels");
             let root = ui.container(parent, Layout::Overlay, Default::default());
+            ui.scene.borrow_mut().set_replaced(root, true);
             ui.semantics
                 .borrow_mut()
                 .set(root, SemanticNode::new(Role::Image, label));

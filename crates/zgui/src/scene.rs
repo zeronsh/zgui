@@ -1099,6 +1099,9 @@ struct Node {
     /// Lays out as its last child (`Scene::set_contents`): `style` is then
     /// derived, its own kept in `Scene::contents_styles`.
     contents: bool,
+    /// Draws an image, an icon or a canvas to its box (`Scene::set_replaced`):
+    /// a size it sets is also its least.
+    replaced: bool,
     /// Its lines run right to left (`Scene::set_direction`, its own or its
     /// parent's): `style` is then laid out mirrored (`laid_out_style`).
     rtl: bool,
@@ -1866,6 +1869,7 @@ impl Scene {
                     promoted: false,
                     scroll_copy: false,
                     contents: false,
+                    replaced: false,
                     rtl: false,
                     align_logical: None,
                     layer_revision: 0,
@@ -2353,6 +2357,17 @@ impl Scene {
             return 0.;
         }
         let style = &self.node(id).style;
+        // An image or an icon that sets its size keeps it (CSS's replaced
+        // elements); its box holds no content to measure.
+        if self.node(self.laid_out_as(id)).replaced
+            && let Some(size) = if horizontal {
+                style.width
+            } else {
+                style.height
+            }
+        {
+            return size;
+        }
         if !horizontal {
             // Down a column, CSS's min-content block size at the width it
             // has: as tall as it lays out there, its own height set aside.
@@ -2567,6 +2582,18 @@ impl Scene {
             given.clone()
         } else {
             self.node(id).style.clone()
+        }
+    }
+    /// Mark `id` as drawing an image, an icon, a canvas or a native surface
+    /// to its box, as CSS's replaced elements (`<img>`, `<canvas>`) do: a
+    /// width or height it sets is also its automatic minimum, so a flex
+    /// line too tight for it overflows rather than squashing the artwork
+    /// (its box has no content of its own, which would let it shrink to
+    /// nothing).
+    pub fn set_replaced(&mut self, id: NodeId, replaced: bool) {
+        if self.node(id).replaced != replaced {
+            self.node_mut(id).replaced = replaced;
+            self.invalidate_layout(id);
         }
     }
     /// Make `id` lay out as its last child would in its place, as CSS
@@ -3326,6 +3353,7 @@ impl Scene {
             promoted: false,
             scroll_copy: false,
             contents: false,
+            replaced: false,
             rtl,
             align_logical: None,
             layer_revision: 0,

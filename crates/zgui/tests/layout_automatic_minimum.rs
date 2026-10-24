@@ -1,7 +1,9 @@
 //! A flex item shrinks no further than its content's min-content size
 //! (CSS's `min-width: auto`): a word it cannot break keeps its width while
 //! a sibling gives way. One that clips (a scroll container) may shrink to
-//! nothing, and a minimum the item sets, `min_w(0.)` say, is its own.
+//! nothing, and a minimum the item sets, `min_w(0.)` say, is its own. An
+//! icon or an image that sets its size keeps it, as CSS's replaced elements
+//! (`<img>`, `<canvas>`) do: its box holds no content to measure.
 use zgui::{compose::prelude::*, scene::Align, scene::NodeId, scene::Rect, widgets::Ui};
 
 const WORD: &str = "Unbreakable";
@@ -98,4 +100,62 @@ fn a_wrapping_row_needs_only_its_widest_child() {
     let rects = squeezed(chips);
     assert!(rects[1].width < 180., "{rects:?}");
     assert!(rects[1].width >= 60., "{rects:?}");
+}
+
+/// A 15 px icon.
+fn icon() -> View {
+    let source = std::sync::Arc::new(SvgData::new(&b"<svg viewBox='0 0 24 24'/>"[..]).unwrap());
+    svg("Icon", source).size(15., 15.)
+}
+
+#[test]
+fn an_icon_keeps_its_size_and_its_sibling_gives_way() {
+    // A 200 px row: a 190 px box and the icon, 5 px too many.
+    let rects = children(
+        row()
+            .w(200.)
+            .child(div().w(190.).h(10.).flex_shrink(1.))
+            .child(icon().flex_shrink(1.)),
+    );
+    assert_eq!((rects[1].width, rects[1].height), (15., 15.), "{rects:?}");
+    assert!((rects[0].width - 185.).abs() < 0.01, "{rects:?}");
+    // Across a column too.
+    let rects = children(
+        column()
+            .h(100.)
+            .child(div().w(10.).h(95.).flex_shrink(1.))
+            .child(icon().flex_shrink(1.)),
+    );
+    assert_eq!(rects[1].height, 15., "{rects:?}");
+}
+
+#[test]
+fn an_icon_in_a_padded_button_overflows_the_padding_centred_not_squashed() {
+    // A 28 px square button whose 12 px padding leaves 4 px for content: the
+    // icon stays 15 px, centred over the padding.
+    let mut ui = Ui::new(400., 300.);
+    let view = ui.mount(
+        row()
+            .size(28., 28.)
+            .px(12.)
+            .items_center()
+            .justify_center()
+            .child(icon().id("icon")),
+    );
+    ui.prepare_frame();
+    let bounds = ui.scene.borrow().bounds(view.find("icon").unwrap());
+    assert_eq!((bounds.width, bounds.height), (15., 15.), "{bounds:?}");
+    assert!((bounds.x - 6.5).abs() < 0.01, "centred: {bounds:?}");
+}
+
+#[test]
+fn taffy_laid_out_rows_keep_an_icons_size() {
+    // A child's own alignment lays the row out with taffy.
+    let rects = children(
+        row()
+            .w(200.)
+            .child(div().w(190.).h(10.).flex_shrink(1.))
+            .child(icon().flex_shrink(1.).align_self(Align::Center)),
+    );
+    assert_eq!(rects[1].width, 15., "{rects:?}");
 }
