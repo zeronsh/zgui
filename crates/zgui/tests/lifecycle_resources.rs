@@ -253,3 +253,44 @@ fn spawning_many_tasks_checks_each_a_bounded_number_of_times() {
         checks.get()
     );
 }
+
+#[test]
+fn a_large_removal_stops_its_effects_at_once_and_frees_them_over_frames() {
+    // Removing a thousand rows: their effects stop at once (a write they
+    // read runs none of them), and what they hold is freed over the frames
+    // that follow, within a bounded number, while new rows mount meanwhile.
+    let mut ui = Ui::new(800., 600.);
+    let tick = ui.signal(0_u32);
+    let runs = Rc::new(Cell::new(0usize));
+    let live = Rc::new(Cell::new(0usize));
+    let rows = |n: usize| {
+        let (tick, runs, live) = (tick.clone(), runs.clone(), live.clone());
+        column().children((0..n).map(move |_| {
+            let (tick, runs) = (tick.clone(), runs.clone());
+            let lease = Lease::new(live.clone());
+            text_signal(move || {
+                let _held = &lease;
+                runs.set(runs.get() + 1);
+                tick.get().to_string()
+            })
+        }))
+    };
+    for round in 0..3 {
+        let mounted = ui.mount(rows(1000));
+        ui.prepare_frame();
+        assert!(live.get() >= 1000, "round {round}: mounted");
+        mounted.unmount();
+        assert!(ui.reclaiming(), "round {round}: freed later, not now");
+        let ran = runs.get();
+        tick.update(|t| *t += 1);
+        ui.prepare_frame();
+        assert_eq!(runs.get(), ran, "round {round}: no removed row ran again");
+    }
+    let mut frames = 0;
+    while ui.reclaiming() {
+        ui.prepare_frame();
+        frames += 1;
+        assert!(frames < 200, "freed within a bounded number of frames");
+    }
+    assert_eq!(live.get(), 0, "everything the rows held is freed");
+}

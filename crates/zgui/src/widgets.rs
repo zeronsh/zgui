@@ -351,6 +351,13 @@ pub struct Ui {
 }
 // One focused-editor snapshot per document. Large or unaccounted custom layouts
 // remain usable but are never retained by this reuse entry.
+/// Subtrees up to this many nodes free what their effects held at once;
+/// larger ones a chunk at a time after frames (`Ui::reclaim`).
+const RECLAIM_NOW: usize = 256;
+/// Effects freed between looks at the clock (`Ui::reclaim`).
+const RECLAIM_CHUNK: usize = 64;
+/// What freeing removed nodes may take of a frame being prepared.
+pub const RECLAIM_BUDGET: std::time::Duration = std::time::Duration::from_millis(1);
 const EDITOR_CACHE_TEXT_LIMIT: usize = 64 * 1024;
 const EDITOR_CACHE_WEIGHT_LIMIT: usize = 1024 * 1024;
 struct EditorLayoutEntry {
@@ -517,6 +524,10 @@ struct UiStorage {
     input: InputDispatcher,
     semantics: Rc<RefCell<Semantics>>,
     owned: RefCell<crate::scene::NodeMap<Owned>>,
+    /// Effects of removed nodes, retired (they never run again) and freed in
+    /// chunks after frames (`Ui::reclaim`): a large subtree's closures and
+    /// subscriptions take tens of milliseconds to drop at once.
+    graveyard: RefCell<std::collections::VecDeque<crate::reactive::Retired>>,
     editors: RefCell<crate::scene::NodeMap<EditorHandle>>,
     editor_layout: RefCell<Option<EditorLayoutEntry>>,
     editor_layout_revision: Cell<Option<u64>>,
@@ -716,6 +727,7 @@ impl Ui {
             input: InputDispatcher::new(),
             semantics: Rc::new(RefCell::new(Semantics::new())),
             owned: RefCell::default(),
+            graveyard: RefCell::default(),
             editors: RefCell::default(),
             editor_layout: RefCell::new(None),
             editor_layout_revision: Cell::new(None),
@@ -1739,6 +1751,8 @@ impl Ui {
             return Ok(());
         }
         let _preparation = FramePreparationGuard(&self.storage.preparing_frame);
+        // What the last frames' removals left to free, a little at a time.
+        self.reclaim(RECLAIM_BUDGET);
         for _ in 0..64 {
             self.scene.borrow_mut().prepare_layout();
             self.input.validate_drag(&self.scene);
@@ -2134,8 +2148,36 @@ impl Ui {
         drop(old);
         self.input.dispatch(&self.scene, InputEvent::PointerCancel);
     }
+    /// Whether removed nodes' effects still hold what they held, to be
+    /// freed over the next frames: frames call `reclaim` as they are
+    /// prepared, so a large removal costs a few of them a little each
+    /// instead of one of them a lot, and a host asks for frames while this
+    /// holds.
+    pub fn reclaiming(&self) -> bool {
+        !self.storage.graveyard.borrow().is_empty()
+    }
+    /// Free what removed nodes' effects held, for at most `budget`:
+    /// whether some is left for the next call.
+    pub fn reclaim(&self, budget: std::time::Duration) -> bool {
+        let started = std::time::Instant::now();
+        loop {
+            // A chunk at a time between looks at the clock.
+            for _ in 0..RECLAIM_CHUNK {
+                let Some(retired) = self.storage.graveyard.borrow_mut().pop_front() else {
+                    return false;
+                };
+                // Outside the borrow: a closure's captures may remove nodes.
+                drop(retired);
+            }
+            if started.elapsed() >= budget {
+                return !self.storage.graveyard.borrow().is_empty();
+            }
+        }
+    }
     /// Remove `node` and its subtree, disposing their effects, listeners and
-    /// semantics. Focus within it moves on to what remains.
+    /// semantics. Focus within it moves on to what remains. A large subtree's
+    /// effects stop at once and what they held is freed over the next frames
+    /// (`Ui::reclaim`).
     pub fn remove(&mut self, node: NodeId) {
         if !self.scene.borrow().contains(node) {
             return;
@@ -2175,10 +2217,18 @@ impl Ui {
         };
         // Extract all ownership before running user destructors. A destructor may
         // upgrade WeakUi and remove a sibling or the already detached subtree.
-        let owned: Vec<_> = {
+        let mut owned: Vec<_> = {
             let mut storage = self.storage.owned.borrow_mut();
             ids.iter().filter_map(|id| storage.remove(id)).collect()
         };
+        // Their effects stop now; what they hold goes later, a chunk after
+        // each frame (`Ui::reclaim`), unless the subtree is small.
+        if ids.len() > RECLAIM_NOW {
+            let mut graveyard = self.storage.graveyard.borrow_mut();
+            for owned in &mut owned {
+                graveyard.extend(owned.effects.drain(..).map(crate::reactive::Effect::retire));
+            }
+        }
         let editors: Vec<_> = {
             let mut storage = self.storage.editors.borrow_mut();
             ids.iter().filter_map(|id| storage.remove(id)).collect()

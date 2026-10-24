@@ -1636,6 +1636,11 @@ impl Host {
             .ui
             .advance_interactions(std::time::Instant::now())?;
         self.context.ui.try_prepare_frame()?;
+        // A large removal's effects are freed a chunk per frame (`Ui::reclaim`,
+        // as the frame is prepared): frames keep coming until they are.
+        if self.context.ui.reclaiming() {
+            window.request_redraw();
+        }
         // The layout inspector's overlay and warnings follow layout (and
         // the pointer); off, this is one flag.
         if self.context.inspector.active() {

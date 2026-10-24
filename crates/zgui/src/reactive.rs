@@ -326,6 +326,22 @@ pub struct Effect {
     runtime: Weak<Inner>,
 }
 impl Effect {
+    /// Take the effect out of its runtime now, so it never runs again, and
+    /// let what it holds (its closure and what that captured, its
+    /// subscriptions) go when the `Retired` drops: later, off the frame
+    /// (`Ui::remove` frees a large subtree's in chunks).
+    pub fn retire(mut self) -> Retired {
+        let record = self
+            .runtime
+            .upgrade()
+            .and_then(|runtime| runtime.effects.borrow_mut().remove(&self.id));
+        // Dropped now with nothing left to do.
+        self.runtime = Weak::new();
+        Retired {
+            id: self.id,
+            record,
+        }
+    }
     /// A handle that runs this effect early, while it lives.
     pub fn refresher(&self) -> Refresh {
         Refresh {
@@ -356,6 +372,23 @@ impl Refresh {
             .get(&self.id)
             .is_none_or(|record| record.callback.try_borrow_mut().is_err());
         !running && runtime.run(self.id)
+    }
+}
+/// An effect that will not run again (`Effect::retire`), holding what it
+/// held until it drops.
+pub struct Retired {
+    id: EffectId,
+    record: Option<EffectRecord>,
+}
+impl Drop for Retired {
+    fn drop(&mut self) {
+        if let Some(record) = self.record.take() {
+            for dependency in record.dependencies {
+                if let Some(dependency) = dependency.source.upgrade() {
+                    dependency.unsubscribe(self.id);
+                }
+            }
+        }
     }
 }
 impl Drop for Effect {
