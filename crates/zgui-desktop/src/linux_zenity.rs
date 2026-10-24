@@ -117,9 +117,19 @@ pub(crate) fn select(
         let _ = stdout.read_to_string(&mut output);
         output
     });
-    // SAFETY: a descriptor of ours for the child we spawned, closed with it.
-    let process = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id(), 0) };
+    // SAFETY: pidfd_open takes a pid and flags, no pointers; they go as the
+    // `long`s the variadic `syscall` reads. The child is ours and not yet
+    // waited for, so its pid still names it.
+    let process = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_open,
+            child.id() as libc::pid_t as libc::c_long,
+            0 as libc::c_long,
+        )
+    };
     if process >= 0 {
+        // SAFETY: the descriptor pidfd_open just made, owned by nothing
+        // else: this closes it.
         let process = unsafe { OwnedFd::from_raw_fd(process as i32) };
         let wake = cancel.wake().map_or(-1, |wake| wake.as_raw_fd());
         loop {
@@ -135,6 +145,9 @@ pub(crate) fn select(
                     revents: 0,
                 },
             ];
+            // SAFETY: two initialized `pollfd`s, written for the call only:
+            // the pidfd owned above, and `cancel`'s eventfd, open while
+            // `cancel` is borrowed (or -1, which poll skips).
             let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
             if fds[1].revents != 0 || cancel.is_cancelled() {
                 let _ = child.kill();

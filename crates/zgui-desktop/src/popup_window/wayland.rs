@@ -123,8 +123,12 @@ fn connect(window: &Window) -> Option<Client> {
     let RawDisplayHandle::Wayland(handle) = display else {
         return None;
     };
-    // SAFETY: winit's display, alive as long as the event loop (and with it
-    // the windows this module draws popups of).
+    // SAFETY: winit's display, connected while its event loop is; the loop
+    // runs once per process (winit refuses a second). The backend is never
+    // dropped (`CLIENT`), so never touches the display once winit has closed
+    // it, and is used only from the loop's turns (`dispatch`) and from
+    // windows' hosts, which all go before the loop does
+    // (`WindowManager::exiting`).
     let backend = unsafe {
         wayland_backend::sys::client::Backend::from_foreign_display(handle.display.as_ptr().cast())
     };
@@ -436,8 +440,9 @@ fn show(
     let (parent_xdg, (gx, gy)) = match &of {
         Some((_, xdg, rect)) => (xdg.clone(), (rect.x.round() as i32, rect.y.round() as i32)),
         None => {
-            // SAFETY: winit's live xdg_surface on this display: `parent`
-            // holds it.
+            // SAFETY: winit's live xdg_surface on this display, which
+            // `parent` holds for this call; the proxy made of it goes when
+            // this returns (`get_popup` takes it as an argument only).
             let xdg = unsafe {
                 ObjectId::from_ptr(
                     XdgSurface::interface(),
@@ -500,8 +505,11 @@ fn show(
         surface.id().as_ptr().cast(),
     )?));
     zgui_gpu::present_log::log(|| format!("popup show {root:?} at {rect:?}"));
-    // SAFETY: the display outlives the popup, and its surface is destroyed
-    // only after the renderer (`Shown::destroy`).
+    // SAFETY: the display outlives the popup: a `Shown` goes with its
+    // window's host, before the event loop closes the display
+    // (`WindowManager::exiting`). Its `wl_surface` is destroyed only after
+    // the renderer (`Shown::destroy`; dropped whole, the renderer is its
+    // first field and the surface proxy's drop destroys nothing).
     let renderer = unsafe {
         GpuRenderer::for_raw_surface(
             client.display,

@@ -20,9 +20,9 @@ type FreeList = unsafe extern "C" fn(*mut c_void, *mut *mut c_char);
 type Add = unsafe extern "C" fn(*mut c_void, *const c_char, isize);
 
 /// An open dictionary and the functions that use it. The broker that opened
-/// it is never freed: the dictionary lives as long as the app.
+/// it is never freed, nor the library unloaded: the dictionary lives as long
+/// as the app.
 struct Dictionary {
-    _library: libloading::Library,
     dict: *mut c_void,
     check: Check,
     suggest: Suggest,
@@ -30,26 +30,37 @@ struct Dictionary {
     add: Add,
     add_to_session: Add,
 }
-// SAFETY: used only behind `DICTIONARY`'s mutex, one call at a time.
+// SAFETY: `dict` is not tied to the thread that opened it, and Enchant's
+// dictionaries are not safe to use from two threads at once: this is used
+// behind `DICTIONARY`'s mutex, one call at a time (not `Sync`; a test's own
+// dictionary stays on its thread).
 unsafe impl Send for Dictionary {}
 
 impl Dictionary {
     /// Enchant's dictionary for the first of `tags` it has.
     fn open(tags: &[String]) -> Option<Self> {
-        // SAFETY: Enchant's documented C API, its symbols typed as declared
-        // in enchant.h; the library is kept loaded with the dictionary.
+        // SAFETY: loading runs Enchant's (and GLib's) initializers, which
+        // assume nothing of the caller. The symbols are typed as enchant.h
+        // (Enchant 2) declares them: `ssize_t` is `isize` and `size_t`
+        // `usize`, and the broker and dictionary are opaque pointers. The
+        // library is never unloaded once the broker exists, so the function
+        // pointers stay valid as long as the leaked broker and its
+        // dictionaries.
         unsafe {
             let library = libloading::Library::new("libenchant-2.so.2").ok()?;
-            let init: libloading::Symbol<unsafe extern "C" fn() -> *mut c_void> =
-                library.get(b"enchant_broker_init\0").ok()?;
-            let request: libloading::Symbol<
-                unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void,
-            > = library.get(b"enchant_broker_request_dict\0").ok()?;
+            let init: unsafe extern "C" fn() -> *mut c_void =
+                *library.get(b"enchant_broker_init\0").ok()?;
+            let request: unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void =
+                *library.get(b"enchant_broker_request_dict\0").ok()?;
             let check: Check = *library.get(b"enchant_dict_check\0").ok()?;
             let suggest: Suggest = *library.get(b"enchant_dict_suggest\0").ok()?;
             let free_list: FreeList = *library.get(b"enchant_dict_free_string_list\0").ok()?;
             let add: Add = *library.get(b"enchant_dict_add\0").ok()?;
             let add_to_session: Add = *library.get(b"enchant_dict_add_to_session\0").ok()?;
+            // Kept loaded for good: the broker is never freed (its providers,
+            // and what it set up, run Enchant's code), even where no
+            // dictionary is found or a test drops its dictionary.
+            std::mem::forget(library);
             let broker = init();
             if broker.is_null() {
                 return None;
@@ -60,7 +71,6 @@ impl Dictionary {
                 (!dict.is_null()).then_some(dict)
             })?;
             Some(Self {
-                _library: library,
                 dict,
                 check,
                 suggest,
@@ -71,13 +81,17 @@ impl Dictionary {
         }
     }
     fn misspelled(&self, word: &str) -> bool {
-        // SAFETY: a pointer and length into `word`, which outlives the call.
+        // SAFETY: `dict` is the live dictionary `open` requested; a pointer
+        // and byte length into `word` (UTF-8, as Enchant takes), which
+        // outlives the call and is not kept. Enchant reads `len` bytes and
+        // needs no terminator.
         unsafe { (self.check)(self.dict, word.as_ptr().cast(), word.len() as isize) > 0 }
     }
     fn guesses(&self, word: &str) -> Vec<String> {
         let mut count = 0;
-        // SAFETY: as in `misspelled`; the list Enchant returns is read, then
-        // given back to it to free.
+        // SAFETY: as in `misspelled`. A non-null list holds `count` valid
+        // NUL-terminated strings, copied out before the list goes back to
+        // Enchant to free, once.
         unsafe {
             let list = (self.suggest)(
                 self.dict,

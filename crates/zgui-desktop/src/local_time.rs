@@ -11,8 +11,11 @@ pub(crate) fn offset() -> i32 {
 mod imp {
     use std::ffi::{c_char, c_int, c_long};
 
-    /// C's `struct tm`, as glibc, musl and Darwin lay it out: C writes
-    /// every field, zgui reads the offset.
+    /// C's `struct tm`, as glibc, musl, bionic, Darwin and the BSDs lay it
+    /// out on 64-bit targets (nine `int`s, then `long tm_gmtoff` and
+    /// `const char *tm_zone`): C writes every field, zgui reads the offset.
+    /// Where the C library's is shorter (illumos has no `tm_gmtoff`), it
+    /// writes a prefix of this one and the offset reads as the zero it was.
     #[repr(C)]
     #[allow(dead_code)]
     struct Tm {
@@ -28,6 +31,7 @@ mod imp {
         gmtoff: c_long,
         zone: *const c_char,
     }
+    // SAFETY: POSIX's declaration, `time_t` being 64 bits on these targets.
     unsafe extern "C" {
         fn localtime_r(time: *const i64, out: *mut Tm) -> *mut Tm;
     }
@@ -36,11 +40,15 @@ mod imp {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
         let mut tm = std::mem::MaybeUninit::<Tm>::zeroed();
-        // SAFETY: `localtime_r` writes the `tm` it is given and keeps neither.
+        // SAFETY: both pointers are valid for the call, and `localtime_r`
+        // writes at most a `struct tm` to `tm` and keeps neither. It reads
+        // `TZ` from the environment: a concurrent `set_var` is that call's
+        // unsafety, not this one's.
         if unsafe { localtime_r(&now, tm.as_mut_ptr()) }.is_null() {
             return 0;
         }
-        // SAFETY: zeroed, then written by `localtime_r`.
+        // SAFETY: zeroed (a valid `Tm`: integers and a null pointer), then
+        // written by `localtime_r` with valid values.
         unsafe { tm.assume_init() }.gmtoff as i32
     }
 }

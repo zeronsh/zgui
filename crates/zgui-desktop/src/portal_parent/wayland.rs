@@ -23,6 +23,17 @@ pub struct WaylandWindowIdentifier {
 }
 
 impl WaylandWindowIdentifier {
+    /// The toplevel `surface_ptr` exported (`zxdg_exporter_v2`) on a queue of
+    /// this call's own on `display_ptr`.
+    ///
+    /// # Safety
+    ///
+    /// `display_ptr` is a connected `wl_display` and `surface_ptr` a live
+    /// `wl_surface` proxy on it, both until this returns. Nothing made here
+    /// holds the display after: the backend made on it goes when this
+    /// returns (the identifier's proxy keeps only a weak reference, so its
+    /// `destroy` on drop sends nothing), and libwayland discards what the
+    /// server sends its objects after.
     pub unsafe fn from_raw(
         surface_ptr: *mut std::ffi::c_void,
         display_ptr: *mut std::ffi::c_void,
@@ -31,8 +42,12 @@ impl WaylandWindowIdentifier {
             return None;
         }
 
+        // SAFETY: a connected display, until this returns (the caller's
+        // word), and the backend and its clones go before then.
         let backend = unsafe { Backend::from_foreign_display(display_ptr as *mut _) };
         let conn = wayland_client::Connection::from_backend(backend);
+        // SAFETY: a live wl_surface until this returns (the caller's word);
+        // the id and the proxy made of it are dropped by then.
         let obj_id = unsafe {
             wayland_backend::sys::client::ObjectId::from_ptr(
                 WlSurface::interface(),

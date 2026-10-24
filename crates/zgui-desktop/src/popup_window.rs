@@ -1576,8 +1576,11 @@ mod x11 {
         let (window, display) = (xid(parent)?, display(parent)?);
         XI.with(|xi| {
             let (xi, x) = xi.as_ref()?;
-            // SAFETY: winit's open display, on its event loop's thread; the
-            // mask outlives the call.
+            // SAFETY: winit's open display (`parent` holds winit's
+            // connection, which XInitThreads made safe to share), on its
+            // event loop's thread (libXi checks the extension on it itself).
+            // `pointer` and `mask`, and the bits `mask` points to, are valid
+            // for the calls and not kept.
             unsafe {
                 let mut pointer = 0;
                 if (xi.XIGetClientPointer)(display, 0, &mut pointer) == 0 {
@@ -1619,8 +1622,11 @@ mod x11 {
             let Some((xi, x)) = xi.as_ref() else {
                 return;
             };
-            // SAFETY: winit's display, still open: the event loop outlives
-            // the windows whose popups grabbed.
+            // SAFETY: winit's display, still open: a grab is let go by its
+            // window's `PopupHost`, which goes with the window's host, and
+            // every host goes while the event loop (holding the display)
+            // still runs (`WindowManager::close`, and `exiting` for those
+            // still open at the end).
             unsafe {
                 let mut pointer = 0;
                 if (xi.XIGetClientPointer)(display, 0, &mut pointer) != 0 {

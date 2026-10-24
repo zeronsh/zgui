@@ -8,7 +8,10 @@
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsString,
-    os::{fd::RawFd, unix::ffi::OsStrExt},
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::ffi::OsStrExt,
+    },
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -20,10 +23,17 @@ use std::{
 /// watched whole), or a change to one of these entries of its directory.
 type Watches = HashMap<i32, Option<HashSet<OsString>>>;
 
+/// The inotify instance and the eventfd that wakes its thread, shared with
+/// that thread: closed when both are done with them, so neither uses a
+/// descriptor the other closed (and the kernel gave to someone else).
+struct Descriptors {
+    inotify: OwnedFd,
+    wake: OwnedFd,
+}
+
 pub(crate) struct FileEvents {
-    inotify: RawFd,
-    /// Written when this goes: its thread closes both and ends.
-    wake: RawFd,
+    /// Its `wake` is written when this goes: its thread ends.
+    fds: Arc<Descriptors>,
     done: Arc<AtomicBool>,
     watches: Arc<Mutex<Watches>>,
     /// What is watched now: files, then directories.
@@ -35,22 +45,29 @@ impl FileEvents {
     /// An inotify instance and the thread that reads it; `None` if the
     /// kernel gives none.
     pub fn new() -> Option<Self> {
+        // SAFETY: takes no pointers; a new descriptor or -1.
         let inotify = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
         if inotify < 0 {
             return None;
         }
+        // SAFETY: the descriptor just made, owned by nothing else.
+        let inotify = unsafe { OwnedFd::from_raw_fd(inotify) };
+        // SAFETY: as for `inotify_init1`.
         let wake = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC) };
         if wake < 0 {
-            unsafe { libc::close(inotify) };
             return None;
         }
+        // SAFETY: the descriptor just made, owned by nothing else.
+        let wake = unsafe { OwnedFd::from_raw_fd(wake) };
+        let fds = Arc::new(Descriptors { inotify, wake });
         let (tell, changed) = zgui::task::latest::<()>();
         let done = Arc::new(AtomicBool::new(false));
         let watches = Arc::new(Mutex::new(Watches::new()));
-        let (ended, heard) = (done.clone(), watches.clone());
+        let (ended, heard, open) = (done.clone(), watches.clone(), fds.clone());
         let spawned = std::thread::Builder::new()
             .name("zgui-script file events".into())
             .spawn(move || {
+                let (inotify, wake) = (open.inotify.as_raw_fd(), open.wake.as_raw_fd());
                 // Aligned for `inotify_event`, and room for many at once.
                 let mut buffer = [0u64; 512];
                 loop {
@@ -66,21 +83,24 @@ impl FileEvents {
                             revents: 0,
                         },
                     ];
+                    // SAFETY: two initialized `pollfd`s, written for the
+                    // call only, of descriptors `open` keeps open.
                     let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
                     if ended.load(Ordering::Acquire)
                         || (n < 0
                             && std::io::Error::last_os_error().kind()
                                 != std::io::ErrorKind::Interrupted)
                     {
-                        unsafe {
-                            libc::close(inotify);
-                            libc::close(wake);
-                        }
+                        // `open` goes: the descriptors close once `FileEvents`
+                        // is gone too.
                         return;
                     }
                     if n <= 0 || fds[0].revents & libc::POLLIN == 0 {
                         continue;
                     }
+                    // SAFETY: `buffer` is valid for writes of its whole size
+                    // (initialized, so what the kernel leaves is too), and
+                    // `inotify` is open (`open`).
                     let read = unsafe {
                         libc::read(
                             inotify,
@@ -91,6 +111,8 @@ impl FileEvents {
                     if read <= 0 {
                         continue;
                     }
+                    // SAFETY: `read` (at most the buffer's size) initialized
+                    // bytes of `buffer`, borrowed while `bytes` is.
                     let bytes = unsafe {
                         std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), read as usize)
                     };
@@ -99,16 +121,12 @@ impl FileEvents {
                     }
                 }
             });
+        // Not spawned: the closure, and its share of `fds`, went with it.
         if spawned.is_err() {
-            unsafe {
-                libc::close(inotify);
-                libc::close(wake);
-            }
             return None;
         }
         Some(Self {
-            inotify,
-            wake,
+            fds,
             done,
             watches,
             watched: Default::default(),
@@ -149,7 +167,11 @@ impl FileEvents {
         let mut next = Watches::new();
         let add = |path: &std::path::Path, mask: u32| {
             let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-            let wd = unsafe { libc::inotify_add_watch(self.inotify, c_path.as_ptr(), mask) };
+            // SAFETY: a NUL-terminated path, valid for the call, and the
+            // inotify descriptor `self` holds open.
+            let wd = unsafe {
+                libc::inotify_add_watch(self.fds.inotify.as_raw_fd(), c_path.as_ptr(), mask)
+            };
             (wd >= 0).then_some(wd)
         };
         for path in &paths {
@@ -179,7 +201,9 @@ impl FileEvents {
         }
         for wd in watches.keys() {
             if !next.contains_key(wd) {
-                unsafe { libc::inotify_rm_watch(self.inotify, *wd) };
+                // SAFETY: takes no pointers; the inotify descriptor `self`
+                // holds open (a watch it no longer has fails harmlessly).
+                unsafe { libc::inotify_rm_watch(self.fds.inotify.as_raw_fd(), *wd) };
             }
         }
         *watches = next;
@@ -200,6 +224,9 @@ fn concerns(mut bytes: &[u8], watches: &Watches) -> bool {
     const HEADER: usize = std::mem::size_of::<libc::inotify_event>();
     let mut any = false;
     while bytes.len() >= HEADER {
+        // SAFETY: `bytes` holds at least `HEADER` bytes, read unaligned, and
+        // `inotify_event` (four 32-bit integers, its name not counted) is
+        // valid for any bits.
         let event = unsafe {
             bytes
                 .as_ptr()
@@ -227,7 +254,9 @@ impl Drop for FileEvents {
     fn drop(&mut self) {
         self.done.store(true, Ordering::Release);
         let one = 1u64;
-        unsafe { libc::write(self.wake, (&one as *const u64).cast(), 8) };
+        // SAFETY: 8 readable bytes (an eventfd takes exactly a u64) to the
+        // eventfd `self.fds` holds open; written once, it cannot block.
+        unsafe { libc::write(self.fds.wake.as_raw_fd(), (&one as *const u64).cast(), 8) };
     }
 }
 

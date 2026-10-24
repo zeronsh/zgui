@@ -30,9 +30,13 @@ pub(crate) fn nudge(window: &Window) {
         return;
     };
     let display = display.as_ptr().cast::<xlib::Display>();
-    // SAFETY: winit's open display, on the thread that runs its event loop;
-    // the event is a plain value naming our own window, which winit ignores
-    // (an atom it does not know).
+    // SAFETY: winit's display, open while `window` (which holds winit's
+    // connection) is borrowed, on the thread that runs its event loop
+    // (winit made Xlib thread-safe besides, XInitThreads). The atom is
+    // interned on it once: winit's one event loop has one display per
+    // process. The event is a zeroed union with its client-message member
+    // written, a plain value naming our own window, which winit ignores (an
+    // atom it does not know).
     unsafe {
         static ATOM: OnceLock<xlib::Atom> = OnceLock::new();
         let atom = *ATOM.get_or_init(|| (x.XInternAtom)(display, c"ZGUI_NUDGE".as_ptr(), 0));

@@ -31,13 +31,18 @@ impl AsRawFd for Stop {
 
 impl Stop {
     pub fn new() -> Option<Self> {
+        // SAFETY: takes no pointers; a new descriptor or -1.
         let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC) };
-        // SAFETY: a descriptor of ours, closed with this.
+        // SAFETY: the descriptor `eventfd` just made, open and owned by
+        // nothing else: this closes it.
         (fd >= 0).then(|| Self(unsafe { OwnedFd::from_raw_fd(fd) }))
     }
 
     pub fn stop(&self) {
         let one = 1u64;
+        // SAFETY: 8 readable bytes (an eventfd takes exactly a u64) to the
+        // eventfd `self` owns, open while `self` is. It could block only at
+        // a count of 2^64 - 2, which adding one per stop never reaches.
         unsafe { libc::write(self.0.as_raw_fd(), (&one as *const u64).cast(), 8) };
     }
 }
@@ -80,6 +85,9 @@ pub(crate) fn wait(connection: &Connection, stop: &Stop) -> bool {
             revents: 0,
         },
     ];
+    // SAFETY: two initialized `pollfd`s, written for the call only; the
+    // connection's descriptor is open while `connection` is borrowed, and
+    // `stop`'s while it is.
     let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
     !(fds[1].revents != 0
         || (n < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted))
@@ -118,6 +126,7 @@ mod tests {
         let told = stop.clone();
         let (tid_of, tid) = mpsc::channel();
         let serving = std::thread::spawn(move || {
+            // SAFETY: takes nothing, cannot fail.
             tid_of.send(unsafe { libc::gettid() }).unwrap();
             serve(&served, &told);
         });

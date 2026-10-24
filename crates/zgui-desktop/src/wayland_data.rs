@@ -211,7 +211,11 @@ impl NativeData {
         else {
             return Ok(None);
         };
-        // SAFETY: the owned display remains alive until the worker has joined.
+        // SAFETY: `display` (winit's connection, kept in `_display`) keeps
+        // the wl_display connected until `NativeData` has dropped, which
+        // joins the worker first. The backend and every clone of it stay on
+        // the worker and go before it ends (or with its closure, if it never
+        // starts).
         let backend = unsafe {
             wayland_backend::sys::client::Backend::from_foreign_display(raw.display.as_ptr().cast())
         };
@@ -480,8 +484,10 @@ impl State {
         let RawWindowHandle::Wayland(handle) = handle.as_raw() else {
             return;
         };
-        // SAFETY: winit's live surface on this connection: `window` holds
-        // it until this returns.
+        // SAFETY: winit's live surface on this display: `window` holds it
+        // until this returns, and the id and proxy made of it go by then.
+        // Read from this thread, it is only its fixed class, id, listener
+        // and user data.
         let Ok(id) = (unsafe {
             wayland_backend::client::ObjectId::from_ptr(
                 wl_surface::WlSurface::interface(),
@@ -540,8 +546,9 @@ impl State {
         let RawWindowHandle::Wayland(handle) = handle.as_raw() else {
             return ended(&*send);
         };
-        // SAFETY: winit's live surface on this connection: `window` holds
-        // it while the drag lasts.
+        // SAFETY: winit's live surface on this display: `window` holds it
+        // while the drag lasts (`Outgoing::_window`), and the proxy made of
+        // it goes when this returns (only its protocol id is kept).
         let Some(origin) = (unsafe {
             wayland_backend::client::ObjectId::from_ptr(
                 wl_surface::WlSurface::interface(),
@@ -606,12 +613,14 @@ impl State {
         if size != (image.width * image.height * 4) as usize || size == 0 {
             return None;
         }
-        // SAFETY: a new anonymous file, owned here.
+        // SAFETY: a NUL-terminated name, valid for the call; a new
+        // descriptor or -1.
         let fd = unsafe { libc::memfd_create(c"zgui-drag-icon".as_ptr(), libc::MFD_CLOEXEC) };
         if fd < 0 {
             return None;
         }
-        // SAFETY: the descriptor just made, owned from here.
+        // SAFETY: the descriptor just made, owned by nothing else: the file
+        // closes it.
         let mut file = File::from(unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) });
         // ARGB8888 is premultiplied BGRA in memory on little-endian machines,
         // as the image is.

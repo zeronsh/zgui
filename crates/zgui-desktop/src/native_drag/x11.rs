@@ -523,7 +523,8 @@ impl Worker {
                 events: libc::POLLIN,
                 revents: 0,
             };
-            // SAFETY: one pollfd, ours, for the call.
+            // SAFETY: one initialized pollfd, written for the call only, of
+            // the connection's socket, open while `self.connection` is.
             unsafe { libc::poll(&mut poll, 1, 50) };
         }
     }

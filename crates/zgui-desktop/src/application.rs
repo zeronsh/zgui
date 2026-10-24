@@ -2340,7 +2340,9 @@ impl Host {
             if let Ok(handle) = window.window_handle()
                 && let RawWindowHandle::Wayland(handle) = handle.as_raw()
             {
-                // SAFETY: the native window owns this wl_surface while registered.
+                // SAFETY: winit's live wl_surface proxy, which `window` keeps
+                // for this call; the id is read from it at once and not kept
+                // (the protocol id is a number).
                 let object = unsafe {
                     wayland_backend::sys::client::ObjectId::from_ptr(<wayland_client::protocol::wl_surface::WlSurface as wayland_client::Proxy>::interface(),handle.surface.as_ptr().cast())
                 };
@@ -4915,6 +4917,23 @@ impl ApplicationHandler<Event> for WindowManager {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.contain(event_loop, None, |this| this.about_to_wait_turn(event_loop));
     }
+    /// The windows still open (`Application::quit`, a failure) close while
+    /// the event loop is still there, not after `run_app` returns. On Linux
+    /// the loop's display connection goes with the loop (Wayland's
+    /// `wl_display` and every proxy winit made on it; X11's `Display` with
+    /// its last window), and what a window holds on it would go after: its
+    /// renderer's surface and its popups' (Mesa's WSI destroys their
+    /// buffers and queues through the display), and its pointer grab
+    /// (`popup_window::x11::release_grab`), all through freed memory.
+    #[cfg(target_os = "linux")]
+    fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+        self.contain(event_loop, None, |this| {
+            let open: Vec<u64> = this.hosts.keys().copied().collect();
+            for token in open {
+                this.close(token);
+            }
+        });
+    }
 }
 impl WindowManager {
     /// Run one turn of the event loop. A panic in it (an app's handler or
@@ -5809,6 +5828,84 @@ mod tests {
         };
         event_loop.run_app(&mut probe).unwrap();
         assert!(probe.completed);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires an owned X11 display and GPU; run alone with --test-threads=1"]
+    fn windows_still_open_close_before_the_event_loop_ends() {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        struct Probe {
+            manager: WindowManager,
+            window: std::sync::Weak<winit::window::Window>,
+            closed_in_loop: bool,
+        }
+        impl ApplicationHandler<Event> for Probe {
+            fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+                let handle = self.manager.factory.allocate();
+                let token = handle.token;
+                let mut host = Host::new(
+                    WindowOptions::default(),
+                    handle,
+                    self.manager.factory.clone(),
+                );
+                host.create_window(event_loop).unwrap();
+                self.window = Arc::downgrade(host.window.as_ref().unwrap());
+                self.manager.hosts.insert(token, host);
+                // As `Application::quit` does: the loop ends, its window open.
+                event_loop.exit();
+            }
+            fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
+            fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+                ApplicationHandler::exiting(&mut self.manager, event_loop);
+                // Gone, renderer and all, while the display is still open.
+                self.closed_in_loop =
+                    self.manager.hosts.is_empty() && self.window.upgrade().is_none();
+            }
+        }
+        let event_loop = EventLoop::<Event>::with_user_event()
+            .with_x11()
+            .with_any_thread(true)
+            .build()
+            .unwrap();
+        let factory = WindowFactory {
+            fonts: Rc::new(Vec::new()),
+            file_routes: Default::default(),
+            application_id: None,
+            activation: Rc::default(),
+            menus: Rc::new(RefCell::new(Vec::new())),
+            pending: Rc::new(RefCell::new(VecDeque::new())),
+            next: Rc::new(Cell::new(1)),
+            alive: Rc::new(Cell::new(true)),
+            clipboard: Rc::new(RefCell::new(None)),
+            gpu_contexts: Rc::new(RefCell::new(Vec::new())),
+            proxy: event_loop.create_proxy(),
+            runtime: zgui::reactive::Runtime::new(),
+        };
+        let manager = WindowManager {
+            native_data: None,
+            appearance: None,
+            _native_events: None,
+            application_event: None,
+            quit_on_last_window_close: true,
+            hosts: HashMap::new(),
+            panics: Vec::new(),
+            native: HashMap::new(),
+            drag_over: Cell::new(None),
+            carrying: None,
+            last_focused: None,
+            factory,
+            active: false,
+            error: None,
+            timers: zgui::timer::host(|| {}),
+        };
+        let mut probe = Probe {
+            manager,
+            window: std::sync::Weak::new(),
+            closed_in_loop: false,
+        };
+        event_loop.run_app(&mut probe).unwrap();
+        assert!(probe.closed_in_loop);
     }
 
     #[cfg(target_os = "macos")]
