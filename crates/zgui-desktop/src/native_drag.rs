@@ -285,6 +285,19 @@ mod macos {
 
     /// `image`'s pixels as an image of its size in points.
     fn ns_image(image: &DragImage) -> Option<Retained<NSImage>> {
+        let rep = bitmap(image)?;
+        let size = NSSize::new(
+            image.width as f64 / image.scale as f64,
+            image.height as f64 / image.scale as f64,
+        );
+        let ns_image = NSImage::initWithSize(NSImage::alloc(), size);
+        ns_image.addRepresentation(&rep);
+        Some(ns_image)
+    }
+
+    /// `image`'s pixels as a bitmap, premultiplied as they come (the
+    /// renderer's are, as AppKit's bitmaps are unless told otherwise).
+    fn bitmap(image: &DragImage) -> Option<Retained<NSBitmapImageRep>> {
         let (width, height) = (image.width as isize, image.height as isize);
         // The bitmap holds exactly these pixels: no more are copied into it.
         if image.bgra.len() != image.width as usize * image.height as usize * 4 {
@@ -324,13 +337,7 @@ mod macos {
         for (out, [b, g, r, a]) in pixels.iter_mut().zip(bgra) {
             *out = [*r, *g, *b, *a];
         }
-        let size = NSSize::new(
-            image.width as f64 / image.scale as f64,
-            image.height as f64 / image.scale as f64,
-        );
-        let ns_image = NSImage::initWithSize(NSImage::alloc(), size);
-        ns_image.addRepresentation(&rep);
-        Some(ns_image)
+        Some(rep)
     }
 
     /// Hand the drag under way in `window` (a mouse drag AppKit is
@@ -428,7 +435,7 @@ mod macos {
 
     #[cfg(test)]
     mod tests {
-        use super::{DragImage, ns_image};
+        use super::{DragImage, bitmap, ns_image};
 
         /// A drag image's pixels are copied into a bitmap of its size: more
         /// (or fewer) than its size holds make no image.
@@ -444,6 +451,31 @@ mod macos {
             assert!(ns_image(&image(vec![255; 2 * 3 * 4])).is_some());
             assert!(ns_image(&image(vec![255; 2 * 3 * 4 + 4])).is_none());
             assert!(ns_image(&image(vec![255; 4])).is_none());
+        }
+
+        /// The renderer's pixels are premultiplied, as the bitmap reads
+        /// them: half-covered white (128 in every channel) is white at half
+        /// alpha, not grey (read as straight), nor darker (multiplied again).
+        #[test]
+        fn a_drag_images_premultiplied_pixels_show_as_drawn() {
+            let image = DragImage {
+                width: 1,
+                height: 1,
+                bgra: vec![128, 128, 128, 128],
+                scale: 1.,
+                grab: (0., 0.),
+            };
+            let rep = bitmap(&image).unwrap();
+            let color = rep.colorAtX_y(0, 0).unwrap();
+            let near = |got: f64, want: f64| (got - want).abs() < 0.01;
+            assert!(near(color.alphaComponent(), 128. / 255.), "{color:?}");
+            for channel in [
+                color.redComponent(),
+                color.greenComponent(),
+                color.blueComponent(),
+            ] {
+                assert!(near(channel, 1.), "{color:?}");
+            }
         }
     }
 }
