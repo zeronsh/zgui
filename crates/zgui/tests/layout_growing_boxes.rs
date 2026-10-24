@@ -241,3 +241,43 @@ fn growing_siblings_damage_their_old_and_new_boxes_within_the_clip() {
         );
     }
 }
+
+/// A box growing in place (a bar) repaints where it was and where it is
+/// as one area, whole points out: the union of the two, as two damaged
+/// apart would merge. A box that jumps clear of where it was repaints the
+/// two apart.
+#[test]
+fn a_box_growing_in_place_damages_its_old_and_new_box_as_one() {
+    use zgui::scene::{Color, Insets, Layout, NodeKind, Scene, Style};
+    let mut scene = Scene::new(400., 300.);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let bar = |height: f32, left: f32| Style {
+        absolute: true,
+        width: Some(6.5),
+        height: Some(height),
+        margin: Insets {
+            left,
+            top: 100.25 - height,
+            ..Insets::default()
+        },
+        ..Style::default()
+    };
+    let id = scene.append(
+        scene.root(),
+        NodeKind::Rect(Color(9, 9, 9, 255)),
+        bar(20., 10.),
+    );
+    scene.flush();
+    scene.set_style(id, bar(30.5, 10.));
+    let grown = scene.flush();
+    // From y 80.25 (then 69.75) to 100.25, x 10 to 16.5: whole points out.
+    assert_eq!(grown.damage, vec![Rect::new(10., 69., 7., 32.)]);
+    scene.set_style(id, bar(30.5, 200.));
+    let jumped = scene.flush();
+    let mut damage = jumped.damage.clone();
+    damage.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(
+        damage,
+        vec![Rect::new(10., 69., 7., 32.), Rect::new(200., 69., 7., 32.)]
+    );
+}
