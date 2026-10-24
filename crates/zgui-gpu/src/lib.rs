@@ -3568,8 +3568,6 @@ impl GpuRenderer {
                         self.shapes.insert(item.id, shaped);
                         stats.shaped_nodes += 1;
                     }
-                    let mut shaped = self.shapes.remove(&item.id).unwrap();
-                    self.shaped_bytes -= shaped.bytes();
                     let snap = |value: f32| (value * self.scale).round() / self.scale;
                     let (x, y) = (snap(bounds.x), snap(bounds.y));
                     // Partly outside its clip (a long document scrolled in a
@@ -3584,59 +3582,6 @@ impl GpuRenderer {
                             && outer.x + outer.width >= bounds.x + bounds.width
                             && outer.y + outer.height >= bounds.y + bounds.height
                     };
-                    let partial = self.cull_glyphs
-                        && !(holds(viewport) && item.clip.is_none_or(holds))
-                        && self.visible_lines(
-                            &shaped,
-                            clip.y - y,
-                            clip.height,
-                            font_size,
-                            &mut stats,
-                        )?;
-                    if !partial && shaped.atlas_epoch != self.atlas_epoch {
-                        shaped.quads.clear();
-                        shaped.quads.extend(
-                            shaped
-                                .decorations
-                                .iter()
-                                .filter(|d| d.background)
-                                .map(rich_decoration_quad),
-                        );
-                        shaped.quads.reserve(shaped.glyphs.len());
-                        for glyph in &shaped.glyphs {
-                            if let Some(a) = self.glyph(glyph.key, &mut stats)? {
-                                shaped.quads.push(Quad {
-                                    rect: [
-                                        (glyph.x + a.left as f32) / self.scale,
-                                        (glyph.y - a.top as f32) / self.scale,
-                                        a.width as f32 / self.scale,
-                                        a.height as f32 / self.scale,
-                                    ],
-                                    uv: [
-                                        a.x as f32 / self.atlas_size as f32,
-                                        a.y as f32 / self.atlas_size as f32,
-                                        a.width as f32 / self.atlas_size as f32,
-                                        a.height as f32 / self.atlas_size as f32,
-                                    ],
-                                    color: glyph.color.map_or([0.; 4], |c| rgba(c, 1.)),
-                                    fade: [0.; 4],
-                                    options: [0., 1., 0., 0.],
-                                    shape: [0.; 4],
-                                    border: [0.; 4],
-                                    mask: NO_MASK,
-                                });
-                            }
-                        }
-                        shaped.quads.extend(
-                            shaped
-                                .decorations
-                                .iter()
-                                .filter(|d| !d.background)
-                                .map(rich_decoration_quad),
-                        );
-                        shaped.atlas_epoch = self.atlas_epoch;
-                        stats.geometry_rebuilds += 1;
-                    }
                     // A text selection, under the glyphs; rounded, its box
                     // rides in `fade`, as a rounded run background's does.
                     let highlight = scene.text_highlight(item.id);
@@ -3668,57 +3613,128 @@ impl GpuRenderer {
                     // sign) turns into two rows at half strength.
                     // Plain text's one colour, worked out once for its glyphs.
                     let plain_color = rgba(color, item.effects.opacity);
-                    let visible = std::mem::take(&mut self.visible_glyphs);
-                    let source = if partial { &visible } else { &shaped.quads };
-                    quads.reserve(source.len());
-                    for cached in source {
-                        let mut quad = *cached;
-                        quad.rect[0] += x;
-                        quad.rect[1] += y;
-                        if quad.shape[3] > 0.5 {
-                            quad.fade[0] += x;
-                            quad.fade[1] += y;
-                        }
-                        let recolor = selected.filter(|_| cached.options[1] > 0.5).and_then(|h| {
-                            h.glyph_color(
-                                cached.rect[0] + cached.rect[2] * 0.5,
-                                cached.rect[1] + cached.rect[3] * 0.5,
-                            )
-                        });
-                        quad.color = if let Some(color) = recolor {
-                            rgba(color, item.effects.opacity)
-                        } else if rich.is_some() {
-                            [
-                                cached.color[0],
-                                cached.color[1],
-                                cached.color[2],
-                                cached.color[3] * item.effects.opacity,
-                            ]
-                        } else {
-                            plain_color
-                        };
-                        quad.fade = fade;
-                        quad.options[0] = item.effects.edge_fade;
-                        quads.push(quad);
-                    }
-                    self.visible_glyphs = visible;
-                    shaped.last_used = self.frame;
-                    let bytes = shaped.bytes();
-                    if bytes <= SHAPE_BUDGET {
-                        let mut used = self.shaped_bytes;
-                        while self.shapes.len() >= 1024 || used + bytes > SHAPE_BUDGET {
-                            let Some(id) = self
-                                .shapes
-                                .iter()
-                                .min_by_key(|(_, s)| s.last_used)
-                                .map(|(id, _)| *id)
-                            else {
-                                break;
+                    // Its quads from the shape's, placed and coloured.
+                    let place = |quads: &mut Vec<Quad>, source: &[Quad]| {
+                        quads.reserve(source.len());
+                        for cached in source {
+                            let mut quad = *cached;
+                            quad.rect[0] += x;
+                            quad.rect[1] += y;
+                            if quad.shape[3] > 0.5 {
+                                quad.fade[0] += x;
+                                quad.fade[1] += y;
+                            }
+                            let recolor =
+                                selected.filter(|_| cached.options[1] > 0.5).and_then(|h| {
+                                    h.glyph_color(
+                                        cached.rect[0] + cached.rect[2] * 0.5,
+                                        cached.rect[1] + cached.rect[3] * 0.5,
+                                    )
+                                });
+                            quad.color = if let Some(color) = recolor {
+                                rgba(color, item.effects.opacity)
+                            } else if rich.is_some() {
+                                [
+                                    cached.color[0],
+                                    cached.color[1],
+                                    cached.color[2],
+                                    cached.color[3] * item.effects.opacity,
+                                ]
+                            } else {
+                                plain_color
                             };
-                            used -= self.shapes.remove(&id).unwrap().bytes();
+                            quad.fade = fade;
+                            quad.options[0] = item.effects.edge_fade;
+                            quads.push(quad);
                         }
-                        self.shaped_bytes = used + bytes;
-                        self.shapes.insert(item.id, shaped);
+                    };
+                    // Its shape as it was, inside its clip and with the atlas it
+                    // was placed in: its quads, borrowed where they are kept.
+                    let whole =
+                        !self.cull_glyphs || (holds(viewport) && item.clip.is_none_or(holds));
+                    if whole
+                        && let Some(shaped) = self.shapes.get_mut(&item.id)
+                        && shaped.atlas_epoch == self.atlas_epoch
+                    {
+                        place(&mut quads, &shaped.quads);
+                        shaped.last_used = self.frame;
+                    } else {
+                        let mut shaped = self.shapes.remove(&item.id).unwrap();
+                        self.shaped_bytes -= shaped.bytes();
+                        let partial = self.cull_glyphs
+                            && !(holds(viewport) && item.clip.is_none_or(holds))
+                            && self.visible_lines(
+                                &shaped,
+                                clip.y - y,
+                                clip.height,
+                                font_size,
+                                &mut stats,
+                            )?;
+                        if !partial && shaped.atlas_epoch != self.atlas_epoch {
+                            shaped.quads.clear();
+                            shaped.quads.extend(
+                                shaped
+                                    .decorations
+                                    .iter()
+                                    .filter(|d| d.background)
+                                    .map(rich_decoration_quad),
+                            );
+                            shaped.quads.reserve(shaped.glyphs.len());
+                            for glyph in &shaped.glyphs {
+                                if let Some(a) = self.glyph(glyph.key, &mut stats)? {
+                                    shaped.quads.push(Quad {
+                                        rect: [
+                                            (glyph.x + a.left as f32) / self.scale,
+                                            (glyph.y - a.top as f32) / self.scale,
+                                            a.width as f32 / self.scale,
+                                            a.height as f32 / self.scale,
+                                        ],
+                                        uv: [
+                                            a.x as f32 / self.atlas_size as f32,
+                                            a.y as f32 / self.atlas_size as f32,
+                                            a.width as f32 / self.atlas_size as f32,
+                                            a.height as f32 / self.atlas_size as f32,
+                                        ],
+                                        color: glyph.color.map_or([0.; 4], |c| rgba(c, 1.)),
+                                        fade: [0.; 4],
+                                        options: [0., 1., 0., 0.],
+                                        shape: [0.; 4],
+                                        border: [0.; 4],
+                                        mask: NO_MASK,
+                                    });
+                                }
+                            }
+                            shaped.quads.extend(
+                                shaped
+                                    .decorations
+                                    .iter()
+                                    .filter(|d| !d.background)
+                                    .map(rich_decoration_quad),
+                            );
+                            shaped.atlas_epoch = self.atlas_epoch;
+                            stats.geometry_rebuilds += 1;
+                        }
+                        let visible = std::mem::take(&mut self.visible_glyphs);
+                        place(&mut quads, if partial { &visible } else { &shaped.quads });
+                        self.visible_glyphs = visible;
+                        shaped.last_used = self.frame;
+                        let bytes = shaped.bytes();
+                        if bytes <= SHAPE_BUDGET {
+                            let mut used = self.shaped_bytes;
+                            while self.shapes.len() >= 1024 || used + bytes > SHAPE_BUDGET {
+                                let Some(id) = self
+                                    .shapes
+                                    .iter()
+                                    .min_by_key(|(_, s)| s.last_used)
+                                    .map(|(id, _)| *id)
+                                else {
+                                    break;
+                                };
+                                used -= self.shapes.remove(&id).unwrap().bytes();
+                            }
+                            self.shaped_bytes = used + bytes;
+                            self.shapes.insert(item.id, shaped);
+                        }
                     }
                 }
                 NodeKind::Container(_) => {}
