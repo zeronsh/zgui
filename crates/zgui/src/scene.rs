@@ -1032,6 +1032,71 @@ impl Style {
             && *text_options == other.text_options
             && *layout_options == other.layout_options
     }
+    /// Whether this is `Style::default()`, as `==` would say, without making
+    /// one to compare with: what nearly every node has before it is styled.
+    pub(crate) fn is_default(&self) -> bool {
+        // Destructured so that a new field cannot be left out.
+        let Style {
+            layout_options,
+            absolute,
+            relative,
+            intrinsic_width,
+            intrinsic_height,
+            width,
+            height,
+            width_percent,
+            height_percent,
+            padding,
+            padding_edges,
+            gap,
+            clip,
+            fade_edges,
+            fade_insets,
+            fade_edges_x,
+            fade_insets_x,
+            fade_overflow,
+            snap,
+            min_width,
+            max_width,
+            min_height,
+            max_height,
+            margin,
+            flex_grow,
+            flex_shrink,
+            align,
+            justify,
+            text_wrap,
+            text_options,
+        } = self;
+        let set = *absolute
+            | *relative
+            | *intrinsic_width
+            | *intrinsic_height
+            | *clip
+            | *fade_overflow
+            | *snap
+            | *text_wrap;
+        let unset = layout_options.is_none()
+            & width.is_none()
+            & height.is_none()
+            & width_percent.is_none()
+            & height_percent.is_none()
+            & padding_edges.is_none()
+            & min_width.is_none()
+            & max_width.is_none()
+            & min_height.is_none()
+            & max_height.is_none();
+        !set && unset
+            && (*padding == 0.) & (*gap == 0.) & (*flex_grow == 0.) & (*flex_shrink == 1.)
+            && *fade_edges == [0.; 2]
+            && *fade_insets == [0.; 2]
+            && *fade_edges_x == [0.; 2]
+            && *fade_insets_x == [0.; 2]
+            && *margin == Insets::default()
+            && *align == Align::default()
+            && *justify == Justify::default()
+            && *text_options == crate::text_layout::TextOptions::default()
+    }
 }
 const LAYOUT: u8 = 1;
 const PAINT: u8 = 2;
@@ -7879,6 +7944,54 @@ mod absolute_layout_tests {
         let before = scene.geometry_revision();
         scene.set_transform(scene.root(), Transform { x: 1., y: 2. });
         assert_eq!(scene.geometry_revision(), before);
+    }
+}
+
+#[cfg(test)]
+mod style_default_tests {
+    use super::*;
+
+    #[test]
+    fn a_style_is_default_as_equality_says() {
+        assert!(Style::default().is_default());
+        let changes: [fn(&mut Style); 30] = [
+            |s| s.layout_options = Some(Arc::new(Default::default())),
+            |s| s.absolute = true,
+            |s| s.relative = true,
+            |s| s.intrinsic_width = true,
+            |s| s.intrinsic_height = true,
+            |s| s.width = Some(0.),
+            |s| s.height = Some(0.),
+            |s| s.width_percent = Some(0.),
+            |s| s.height_percent = Some(0.),
+            |s| s.padding = 1.,
+            |s| s.padding_edges = Some(Insets::default()),
+            |s| s.gap = 1.,
+            |s| s.clip = true,
+            |s| s.fade_edges = [0., 1.],
+            |s| s.fade_insets = [1., 0.],
+            |s| s.fade_edges_x = [0., 1.],
+            |s| s.fade_insets_x = [1., 0.],
+            |s| s.fade_overflow = true,
+            |s| s.snap = true,
+            |s| s.min_width = Some(0.),
+            |s| s.max_width = Some(0.),
+            |s| s.min_height = Some(0.),
+            |s| s.max_height = Some(0.),
+            |s| s.margin.left = 1.,
+            |s| s.flex_grow = 1.,
+            |s| s.flex_shrink = 0.,
+            |s| s.align = Align::Center,
+            |s| s.justify = Justify::Center,
+            |s| s.text_wrap = true,
+            |s| s.text_options.line_clamp = std::num::NonZeroU32::new(1),
+        ];
+        for (i, change) in changes.iter().enumerate() {
+            let mut style = Style::default();
+            change(&mut style);
+            assert_ne!(style, Style::default(), "change {i}");
+            assert!(!style.is_default(), "change {i}");
+        }
     }
 }
 

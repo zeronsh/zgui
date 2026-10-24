@@ -656,7 +656,9 @@ pub(crate) fn mount_style_with_intrinsic(
     ];
     let weak = ui.downgrade();
     let originals = Originals {
-        style: ui.scene.borrow().style(node),
+        style: Some(ui.scene.borrow().style(node))
+            .filter(|style| !style.is_default())
+            .map(Box::new),
         effects: ui.scene.borrow().effects(node),
         transform: ui.scene.borrow().transform(node),
         local: ui.scene.borrow().local_transform(node),
@@ -1304,7 +1306,9 @@ pub(crate) fn mount_style_with_intrinsic(
 /// What a node showed before its style first applied: what properties no
 /// style sets fall back to.
 struct Originals {
-    style: crate::scene::Style,
+    /// `None` for the default style, which nearly every node has before it
+    /// is styled: inline, it made each node's style effect 168 bytes bigger.
+    style: Option<Box<crate::scene::Style>>,
     effects: crate::scene::Effects,
     transform: crate::scene::Transform,
     local: crate::scene::LocalTransform,
@@ -1354,7 +1358,7 @@ fn apply_resolved(
     content_layout: Option<NodeId>,
     layout_target: bool,
 ) -> crate::scene::Style {
-    let mut style = originals.style.clone();
+    let mut style = originals.style.as_deref().cloned().unwrap_or_default();
     if let Some(resolved_options) = &resolved.layout_options {
         if let Some(original) = &style.layout_options {
             let mut options = **original;
