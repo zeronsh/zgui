@@ -1271,6 +1271,7 @@ impl GpuContext {
             && adapter
                 .features()
                 .contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
+        zgui::profile::mark("GPU adapter");
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("zgui shared device"),
             required_features: if mapped_uploads {
@@ -1354,6 +1355,9 @@ impl GpuContext {
             basic: Default::default(),
             basic_clear: Default::default(),
         };
+        zgui::profile::mark("GPU device and pipelines");
+        let fonts = Rc::new(RefCell::new(font_cache::system_fonts()));
+        zgui::profile::mark("system fonts");
         Ok(Self {
             inner: Rc::new(GpuContextInner {
                 lost,
@@ -1362,7 +1366,7 @@ impl GpuContext {
                 device,
                 queue,
                 info,
-                fonts: Rc::new(RefCell::new(font_cache::system_fonts())),
+                fonts,
                 text_cache: Default::default(),
                 quads,
                 texture_layout,

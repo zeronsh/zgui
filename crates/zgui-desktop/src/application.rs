@@ -730,7 +730,9 @@ impl Application {
     /// Run the event loop: open the first window, `build` its content, and
     /// return once the application quits.
     pub fn run(self, build: impl FnOnce(&mut WindowContext)) -> Result<(), Box<dyn Error>> {
+        zgui::profile::mark("run");
         let event_loop = EventLoop::<Event>::with_user_event().build()?;
+        zgui::profile::mark("event loop");
         let proxy = event_loop.create_proxy();
         let native_events = if let Some(id) = &self.application_id {
             let wake = proxy.clone();
@@ -780,10 +782,12 @@ impl Application {
             proxy: proxy.clone(),
             runtime: zgui::reactive::Runtime::new(),
         };
+        zgui::profile::mark("menus");
         let handle = factory.allocate();
         let token = handle.token;
         let mut root = Host::new(self.options, handle, factory.clone());
         build(&mut root.context);
+        zgui::profile::mark("app built");
         // Timers fire as the loop wakes for its own deadlines, without a
         // scheduler thread waking it with a message per timer.
         let timers = {
@@ -1694,6 +1698,7 @@ impl Host {
                         format!("render forced={forced} rects={}", damage.len())
                     });
                     let stats = renderer.render(&scene, damage)?;
+                    first_mark(&FIRST_RENDER, "first frame rendered");
                     self.native.render(&scene, damage)?;
                     if let Some(frame) = &mut self.damage_check {
                         *frame += 1;
@@ -1736,6 +1741,7 @@ impl Host {
                     }
                 })?;
                 self.native.apply();
+                first_mark(&FIRST_PRESENT, "first frame presented");
                 // Commits the transaction (macOS; elsewhere there is none).
                 #[allow(dropping_copy_types)]
                 drop(transaction);
@@ -2153,7 +2159,6 @@ impl Host {
         if self.window.is_some() {
             return Ok(());
         }
-
         let window = Arc::new(event_loop.create_window(crate::window_info::attributes(
             &self.options,
             event_loop,
@@ -2258,7 +2263,9 @@ impl Host {
             &window,
             self.proxy.clone(),
         );
+        zgui::profile::mark("window created");
         let mut renderer = self.make_renderer(&window)?;
+        zgui::profile::mark("renderer made");
         self.scale_factor = window.scale_factor();
         renderer.set_scale_factor(self.scale_factor as f32);
         let themes = self.context.ui.theme().clone();
@@ -2296,6 +2303,7 @@ impl Host {
             .set_elastic_scrolling(cfg!(target_os = "macos"));
         renderer.install_text(&mut self.context.ui.scene.borrow_mut());
         self.context.ui.refresh_text_geometry();
+        zgui::profile::mark("text installed");
         self.renderer = Some(renderer);
         self.adapter = Some(adapter);
         window.set_maximized(self.state.maximized);
@@ -5453,6 +5461,12 @@ fn is_key_window(window: &winit::window::Window) -> bool {
     view.window().is_some_and(|window| window.isKeyWindow())
 }
 
+static FIRST_RENDER: std::sync::Once = std::sync::Once::new();
+static FIRST_PRESENT: std::sync::Once = std::sync::Once::new();
+/// A `zgui::profile::mark` the first time only (the process's first frame).
+fn first_mark(once: &std::sync::Once, what: &str) {
+    once.call_once(|| zgui::profile::mark(what));
+}
 #[cfg(test)]
 mod tests {
     use super::*;

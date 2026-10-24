@@ -154,6 +154,27 @@ pub fn frame() {
     }
 }
 
+/// A point in starting up: with `ZGUI_PROFILE` set, prints the process's
+/// instructions retired and time since it started (macOS; elsewhere the
+/// thread's, and time since the first mark), as
+/// `profile mark 412.3M instr 81.2 ms: window created`. Marks sit at a
+/// start's milestones (window, renderer, fonts, the app's build, the first
+/// frame), so what each step costs is the difference between two lines.
+pub fn mark(what: &str) {
+    if enabled() {
+        mark_now(what);
+    }
+}
+
+#[cold]
+fn mark_now(what: &str) {
+    let (instructions, ms) = counter::since_start();
+    eprintln!(
+        "profile mark {:.1}M instr {ms:.1} ms: {what}",
+        instructions as f64 / 1e6
+    );
+}
+
 /// Report what was measured since the last report now (a benchmark's end).
 pub fn report() {
     if enabled() {
@@ -342,6 +363,46 @@ mod counter {
             if ok { info.fields[29] } else { 0 }
         }
     }
+    /// The process's (every thread) instructions so far and milliseconds
+    /// since it started.
+    #[cfg(target_os = "macos")]
+    pub fn since_start() -> (u64, f64) {
+        #[repr(C)]
+        struct RusageInfoV4 {
+            uuid: [u8; 16],
+            fields: [u64; 40],
+        }
+        #[repr(C)]
+        struct Timebase {
+            numer: u32,
+            denom: u32,
+        }
+        unsafe extern "C" {
+            fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut RusageInfoV4) -> i32;
+            fn mach_absolute_time() -> u64;
+            fn mach_timebase_info(info: *mut Timebase) -> i32;
+        }
+        let mut info = RusageInfoV4 {
+            uuid: [0; 16],
+            fields: [0; 40],
+        };
+        let mut base = Timebase { numer: 1, denom: 1 };
+        // SAFETY: As in `read`; the timebase fills two u32s. Field 8 is
+        // ri_proc_start_abstime, in mach_absolute_time's units.
+        let (now, ok) = unsafe {
+            mach_timebase_info(&mut base);
+            let ok = proc_pid_rusage(std::process::id() as i32, 4, &mut info) == 0;
+            (mach_absolute_time(), ok)
+        };
+        if !ok {
+            return (0, 0.);
+        }
+        let ticks = now.saturating_sub(info.fields[8]) as f64;
+        (
+            info.fields[29],
+            ticks * base.numer as f64 / base.denom.max(1) as f64 / 1e6,
+        )
+    }
 
     #[cfg(target_os = "linux")]
     pub struct Counter {
@@ -418,6 +479,18 @@ mod counter {
             unsafe { read(self.fd, (&raw mut value).cast(), 8) };
             value
         }
+    }
+
+    /// This thread's instructions so far and milliseconds since the first
+    /// mark.
+    #[cfg(not(target_os = "macos"))]
+    pub fn since_start() -> (u64, f64) {
+        use std::sync::OnceLock;
+        static FIRST: OnceLock<std::time::Instant> = OnceLock::new();
+        thread_local!(static COUNTER: Counter = Counter::new());
+        let first = *FIRST.get_or_init(std::time::Instant::now);
+        let count = COUNTER.with(Counter::read);
+        (count, first.elapsed().as_secs_f64() * 1e3)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -543,5 +616,15 @@ mod tests {
             "{update:?} + {layout:?} > {wall:?}"
         );
         assert!(PROFILE.with(|profile| profile.borrow().open.is_empty()));
+    }
+
+    #[test]
+    fn marks_count_from_the_start() {
+        let (first, at) = counter::since_start();
+        let (second, later) = counter::since_start();
+        assert!(later >= at && at >= 0., "{at} then {later}");
+        // Counts never go back (they are 0 where there is no counter to
+        // read, as in virtual machines).
+        assert!(second >= first);
     }
 }

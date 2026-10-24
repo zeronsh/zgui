@@ -42,7 +42,9 @@ scene moving (`docs/benchmarking.md`). Building with
 phases (a check in every style and text run, so never in normal builds).
 On macOS the phases are `os_signpost` intervals (subsystem `dev.zgui`):
 record with Instruments' os_signpost instrument to see them on a timeline
-beside a Time Profiler.
+beside a Time Profiler. At startup it also prints a line per milestone
+(window created, renderer made, first frame presented, ...) with the
+process's instructions and time so far (`zgui::profile::mark`).
 
 ## Where a phase's work goes: samples
 

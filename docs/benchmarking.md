@@ -81,6 +81,8 @@ for i in $(seq 10); do
 done
 ```
 
+Within zgui's start, `ZGUI_PROFILE=1` prints the process's instructions and milliseconds at each milestone (run, event loop, menus, app built, window created, GPU adapter, device and pipelines, system fonts, renderer made, text installed, first frame rendered and presented), so each step's cost is the difference between two lines. On the heavy dashboard (October 2026, about 810 M instructions to the first present): the loader and Rust start 54 M, AppKit's application 153 M, its launch 86 M, the window (AppKit's `NSWindow` and title bar) 249 M, the Metal device 64 M, pipelines 22 M, and the first frame's layout, text and paint about 75 M of the 155 M before it is encoded (AppKit orders the window in and displays it meanwhile). Activation then takes about 130 M more before the window's content shows, as it does for GPUI.
+
 `crates/zgui-gpu/examples/startup_bench.rs` isolates the renderer's share headless: the GPU device, the system font database and the first text in four styles.
 
 ## Selecting and validating the zgui renderer
