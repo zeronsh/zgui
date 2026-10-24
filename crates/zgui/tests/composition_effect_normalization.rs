@@ -82,3 +82,49 @@ fn reactive_nonfinite_effects_normalize_before_equality_and_restore_sparse_base(
         assert!(ui.scene.borrow_mut().flush().is_idle());
     }
 }
+
+/// A style re-run that changes only a box's size (a bar growing) writes no
+/// paint: what else set the node's translation and effects since (a script
+/// animation) stays. A style that sets paint again still applies it.
+#[test]
+fn a_size_only_restyle_leaves_paint_set_elsewhere() {
+    use zgui::scene::Transform;
+    let mut ui = Ui::new(200., 160.);
+    let width = ui.signal(40_f32);
+    let fade = ui.signal(None::<f32>);
+    let (read_width, read_fade) = (width.clone(), fade.clone());
+    let view = ui.mount(div().h(20.).reactive_style(move || {
+        let styles = Styles::new().w(read_width.get());
+        match read_fade.get() {
+            Some(opacity) => styles.opacity(opacity),
+            None => styles,
+        }
+    }));
+    ui.prepare_frame();
+    // Two size changes: the second takes the size-only path.
+    for w in [50., 60.] {
+        width.set(w);
+        ui.prepare_frame();
+    }
+    let node = view.node();
+    let moved = Transform { x: 12., y: 3. };
+    {
+        let mut scene = ui.scene.borrow_mut();
+        scene.set_transform(node, moved);
+        let effects = Effects {
+            brightness: 0.5,
+            ..scene.effects(node)
+        };
+        scene.set_effects(node, effects);
+    }
+    width.set(70.);
+    ui.prepare_frame();
+    let scene = ui.scene.borrow();
+    assert_eq!(scene.layout_bounds(node).width, 70.);
+    assert_eq!(scene.transform(node), moved);
+    assert_eq!(scene.effects(node).brightness, 0.5);
+    drop(scene);
+    fade.set(Some(0.5));
+    ui.prepare_frame();
+    assert_eq!(ui.scene.borrow().effects(node).opacity, 0.5);
+}

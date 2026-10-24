@@ -395,6 +395,13 @@ struct Memo {
     /// The layout style the last full application gave the node: a run that
     /// changes only box sizes and margins patches it (see `boxes`).
     shown: Option<crate::scene::Style>,
+    /// Whether the last run wrote a size change with no dynamic paint
+    /// (false after any other application). Another such run writes no
+    /// paint: a bar growing every frame re-wrote its unchanged effects,
+    /// transform and clip, which also undid what else had set them since.
+    /// (Only for size changes: checking every run cost animated paint more
+    /// than it saved.)
+    painted: bool,
 }
 /// Which box fields `styles` sets (width, height, margins), whatever their
 /// values: a run that sets the same ones, with other values, changes only
@@ -663,6 +670,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 applied: None,
                 settled: None,
                 shown: None,
+                painted: false,
             }));
         }
         // Interaction styles that changed take their slots, their tokens
@@ -724,6 +732,7 @@ pub(crate) fn mount_style_with_intrinsic(
             applied: Some(applied),
             settled: Some(last),
             shown,
+            painted,
         }) = memo.as_deref_mut()
             && last.state == state
             && last.disabled == is_disabled
@@ -731,31 +740,25 @@ pub(crate) fn mount_style_with_intrinsic(
             && !swapped
         {
             let paint = produced.as_mut().map(Paint::take);
-            // A box that changes only its size or margins (a bar growing):
-            // the same fields set, other values, and no interaction style
-            // over them.
+            // Unchanged, or a box that changes only its size or margins (a
+            // bar growing): the same fields set, other values, no interaction
+            // style over them, and the rest compared once.
             let same = produced == last.dynamic;
-            let resized = match (&mut produced, &last.dynamic) {
-                (Some(now), Some(then))
-                    if !same
-                        && shown.is_some()
-                        && boxes(now) == boxes(then)
-                        && sizes(now) != sizes(then)
-                        && active_variants.iter().all(|(enabled, variant)| {
-                            !enabled
-                                || variant
-                                    .as_deref()
-                                    .is_none_or(|v| boxes(v) == (false, false, false))
-                        }) =>
-                {
-                    let new = sizes(now);
-                    set_sizes(now, sizes(then));
-                    let same = *now == *then;
-                    set_sizes(now, new);
-                    same
-                }
-                _ => false,
-            };
+            let resized = !same
+                && match (&produced, &last.dynamic) {
+                    (Some(now), Some(then)) => {
+                        shown.is_some()
+                            && boxes(now) == boxes(then)
+                            && active_variants.iter().all(|(enabled, variant)| {
+                                !enabled
+                                    || variant
+                                        .as_deref()
+                                        .is_none_or(|v| boxes(v) == (false, false, false))
+                            })
+                            && now.eq_except_sizes(then)
+                    }
+                    _ => false,
+                };
             let unchanged = glass.is_none_or(|opaque| {
                 opaque == ui.theme().system_preferences().reduced_transparency
             }) && paint.map(|p| p.set()) == last.paint
@@ -804,6 +807,12 @@ pub(crate) fn mount_style_with_intrinsic(
                     set_sizes(then, sizes(now));
                     patch_sizes(style, next);
                     ui.scene.borrow_mut().set_style(node, style.clone());
+                }
+                // The paint written last time, from the same inputs.
+                // Resized with no dynamic paint, as last time: nothing to write.
+                let none = resized && paint.is_none_or(|paint| paint.set() == ([false; 11], 0));
+                if std::mem::replace(painted, none) && none {
+                    return;
                 }
                 let mut resolved = Paint::of(&base);
                 if let Some(paint) = paint {
@@ -1073,6 +1082,7 @@ pub(crate) fn mount_style_with_intrinsic(
         if let Some(Memo {
             applied: Some(previous),
             shown,
+            painted,
             ..
         }) = memo.as_deref_mut()
             && previous.1 == inputs.1
@@ -1148,6 +1158,8 @@ pub(crate) fn mount_style_with_intrinsic(
                 next.local_transform,
             );
             if previous.0 == *next {
+                // Written here from the resolved styles, not a dynamic paint.
+                *painted = false;
                 let resized = sizes
                     != (
                         next.width,
@@ -1228,6 +1240,7 @@ pub(crate) fn mount_style_with_intrinsic(
         );
         if let Some(memo) = &mut memo {
             memo.shown = Some(style);
+            memo.painted = false;
         }
     });
     typography

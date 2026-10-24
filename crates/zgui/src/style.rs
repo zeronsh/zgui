@@ -94,6 +94,106 @@ pub struct Styles {
     /// when the node is styled; see `crate::theme`.
     pub(crate) tokens: Option<std::sync::Arc<crate::theme::Bindings>>,
 }
+/// Whether `self` and `other` are equal but for their box fields (width,
+/// height, their percentages and margins: what a growing bar changes),
+/// in one pass. Every field is named, so a new one cannot be left out.
+impl Styles {
+    pub(crate) fn eq_except_sizes(&self, other: &Self) -> bool {
+        let Styles {
+            layout_options,
+            object_fit,
+            layout,
+            absolute,
+            width: _,
+            height: _,
+            width_percent: _,
+            height_percent: _,
+            padding,
+            margin: _,
+            gap,
+            clip,
+            flex_grow,
+            flex_shrink,
+            align,
+            justify,
+            text_wrap,
+            background,
+            cursor,
+            text_color,
+            text_size,
+            line_height,
+            font_family,
+            text_align,
+            font_weight,
+            italic,
+            radius,
+            border_width,
+            border_color,
+            opacity,
+            blur,
+            edge_fade,
+            filter_blur,
+            brightness,
+            contrast,
+            saturate,
+            mask_offset,
+            clip_inset,
+            transform,
+            local_transform,
+            isolated,
+            padding_sides,
+            margin_sides,
+            paint_background,
+            corners,
+            border_edges,
+            rare,
+            tokens,
+        } = self;
+        *layout_options == other.layout_options
+            && *object_fit == other.object_fit
+            && *layout == other.layout
+            && *absolute == other.absolute
+            && *padding == other.padding
+            && *gap == other.gap
+            && *clip == other.clip
+            && *flex_grow == other.flex_grow
+            && *flex_shrink == other.flex_shrink
+            && *align == other.align
+            && *justify == other.justify
+            && *text_wrap == other.text_wrap
+            && *background == other.background
+            && *cursor == other.cursor
+            && *text_color == other.text_color
+            && *text_size == other.text_size
+            && *line_height == other.line_height
+            && *font_family == other.font_family
+            && *text_align == other.text_align
+            && *font_weight == other.font_weight
+            && *italic == other.italic
+            && *radius == other.radius
+            && *border_width == other.border_width
+            && *border_color == other.border_color
+            && *opacity == other.opacity
+            && *blur == other.blur
+            && *edge_fade == other.edge_fade
+            && *filter_blur == other.filter_blur
+            && *brightness == other.brightness
+            && *contrast == other.contrast
+            && *saturate == other.saturate
+            && *mask_offset == other.mask_offset
+            && *clip_inset == other.clip_inset
+            && *transform == other.transform
+            && *local_transform == other.local_transform
+            && *isolated == other.isolated
+            && *padding_sides == other.padding_sides
+            && *margin_sides == other.margin_sides
+            && *paint_background == other.paint_background
+            && *corners == other.corners
+            && *border_edges == other.border_edges
+            && *rare == other.rare
+            && *tokens == other.tokens
+    }
+}
 /// As derived, but copying the plain fields as one block: a derived clone
 /// moves each of some fifty `Option`s on its own (a load and store per tag
 /// and per value), which a style effect re-running every frame pays for.
