@@ -50,6 +50,22 @@ What changed, medians, old → new (CPU % of one core; GPU megacycles a second; 
 
 The idle cells of the lab and heavy re-runs were then measured again with the protocol that followed (2026-10-24, zgui at `81c73a7`): 20–35 s after launch, five launches, median and range. In MB, zgui / GPUI / GPUI Fast (/ QuickGUI): lab 42 (41–66) / 89 (64–89) / 60 (53–78) / 116; heavy 78 (63–78) / 113 (98–114) / 70 (70–95). An idle window settles at one of two levels about 25 MB apart; in heavy, zgui's levels (63, 78) are below GPUI Fast's (70, 95), but three of zgui's launches settled on its upper one and four of GPUI Fast's on its lower. The first idle trials (5–20 s, once) stay in each run's `idle-5-20s/`, and each new trial keeps its 5–20 s figures as `early_*`.
 
+Heavy's active cells were measured again the same day with zgui at `81c73a7` (after the memory work of #354–#361; the other frameworks' binaries unchanged): zgui 9.3 / 8.8 / 3.2% CPU (both / stream / scroll) and 260 / 259 / 254 MB; GPUI 22.7 / 22.3 / 14.8% and 273 / 272 / 273; GPUI Fast 16.1 / 14.8 / 8.5% and 275 / 274 / 272. zgui's footprint is unchanged by that work (its live heap fell 3 MiB, but fragmentation took most of it back). GPUI Fast's `stream` and `scroll` memory moved by about 15 MB between the two sessions (259 and 261 MB, then 274 and 272): read its memory cells with that spread. The first active trials stay in each mode's `<mode>-before/`.
+
+**PGO supplement** (2026-10-24, zgui at `c9975e1`): every framework built with profile-guided optimization, each app trained on its own scene (`scripts/perf/pgo_compare.py`), measured without pacing captures or idle. Medians of three, zgui / GPUI / GPUI Fast:
+
+| Scene, mode | CPU % of a core | GPU Mcycles/s | Memory MB |
+| --- | --- | --- | --- |
+| heavy, both | 8.57 / 21.53 / 14.42 | 19.2 / 22.3 / 21.6 | 260 / 274 / 276 |
+| heavy, stream | 7.71 / 20.61 / 13.92 | 17.6 / 22.2 / 21.7 | 259 / 273 / 275 |
+| heavy, scroll | 2.98 / 14.63 / 8.06 | 12.3 / 21.6 / 21.8 | 255 / 273 / 255 |
+| lab, both | 3.36 / 6.29 / 5.41 | 12.9 / 18.2 / 18.3 | 237 / 248 / 247 |
+| lab, stream | 2.96 / 6.36 / 5.40 | 11.5 / 18.2 / 18.1 | 236 / 249 / 240 |
+| lab, scroll | 2.54 / 4.72 / 4.17 | 12.1 / 17.9 / 18.1 | 236 / 246 / 237 |
+| animate | 4.59 / 7.21 / 5.62 | 20.5 / 28.0 / 27.8 | 247 / 249 / 249 |
+
+Against the plain heavy run of the same session, PGO took CPU down 7.6 / 12 / 7% for zgui (both / stream / scroll), 5 / 8 / 1% for GPUI and 10 / 6 / 5% for GPUI Fast; GPU and memory barely moved. Runs: [`latest-macos-pgo-2026-10-24-c9975e1`](latest-macos-pgo-2026-10-24-c9975e1/), [`latest-macos-heavy-pgo-2026-10-24-c9975e1`](latest-macos-heavy-pgo-2026-10-24-c9975e1/), [`latest-macos-animate-pgo-2026-10-24-c9975e1`](latest-macos-animate-pgo-2026-10-24-c9975e1/).
+
 zgui leads on CPU and GPU in every active cell of both runs. In memory, the new heavy run shows GPUI Fast lower than zgui at idle (111 vs 116 MB, where the driver's return of its startup memory decides the 5–20 s mean) and level with it in `stream` (259 vs 259). The window server's added CPU reads 15–18% for every framework on 2026-10-24, against at most 15% on 2026-10-23: the desktop differed between the days (every framework moved), so compare within a run.
 
 # Historical direct-scene GPU comparison on Xvfb / llvmpipe

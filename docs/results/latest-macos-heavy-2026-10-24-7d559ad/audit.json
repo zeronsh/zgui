@@ -151,5 +151,55 @@
     "bytes": 6767232
    }
   }
+ },
+ "stream_scroll_both_rerun": {
+  "commit": "c9975e13e4d8da23eb807452d370fbe8730ca4ca",
+  "source_dirty": true,
+  "source_diff_sha256": "1fbc9011e6e31f6b4a9f650fd6ded3bb3862961044f38c170d16ef718d39d869",
+  "started_utc": "2026-10-24T19:58:44.935904+00:00",
+  "finished_utc": "2026-10-24T20:09:57.931825+00:00",
+  "environment": {
+   "displays": [
+    {
+     "name": "Studio Display XDR",
+     "resolution": "3200 x 1800 @ 120.00Hz",
+     "pixels": "6400 x 3600",
+     "main": true
+    },
+    {
+     "name": "Studio Display XDR",
+     "resolution": "3200 x 1800 @ 120.00Hz",
+     "pixels": "6400 x 3600",
+     "main": false
+    }
+   ],
+   "display_count": 2,
+   "wallpaper_apps": [],
+   "power_mode": "powermode 2",
+   "on_battery": false,
+   "macos": "26.4 (25E246)",
+   "uptime_hours": 936.8,
+   "machine": "Mac17,6",
+   "chip": "Apple M5 Max",
+   "cores": 18,
+   "memory_bytes": 137438953472,
+   "power": "AC Power",
+   "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+  },
+  "preflight": null,
+  "binaries": {
+   "zgui": {
+    "sha256": "73c2985a90a8338cef64994ef7cf98e9c6571449879ac013137dca07f5844820",
+    "bytes": 11764880
+   },
+   "gpui": {
+    "sha256": "f39313f39e0ecd605a15a720a4527e99c6f75aa13aaf9981a7a091661fb1449d",
+    "bytes": 4144208
+   },
+   "gpui-fast": {
+    "sha256": "20d834e1c1e9eff9fbc7aae8be5d710133fc8bae9b4fe87d388ac79c2dee8f40",
+    "bytes": 6767232
+   }
+  }
  }
 }

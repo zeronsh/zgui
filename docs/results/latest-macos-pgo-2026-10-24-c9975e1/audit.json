@@ -1,0 +1,92 @@
+{
+ "accepted": true,
+ "trials": 30,
+ "samples": 7184,
+ "pacing_trials": 0,
+ "active_ticks_per_requested_second": {
+  "min": 59.85,
+  "max": 59.95
+ },
+ "powermetrics": false,
+ "scene": "lab",
+ "commit": "c9975e13e4d8da23eb807452d370fbe8730ca4ca",
+ "source_dirty": true,
+ "source_diff_sha256": "1fbc9011e6e31f6b4a9f650fd6ded3bb3862961044f38c170d16ef718d39d869",
+ "started_utc": "2026-10-24T19:42:48.080012+00:00",
+ "finished_utc": "2026-10-24T19:54:01.224709+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": true
+   },
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": false
+   }
+  ],
+  "display_count": 2,
+  "wallpaper_apps": [],
+  "power_mode": "powermode 2",
+  "on_battery": false,
+  "macos": "26.4 (25E246)",
+  "uptime_hours": 936.6,
+  "machine": "Mac17,6",
+  "chip": "Apple M5 Max",
+  "cores": 18,
+  "memory_bytes": 137438953472,
+  "power": "AC Power",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+ },
+ "preflight": null,
+ "binaries": {
+  "zgui": {
+   "sha256": "34c6b07e58e2958a93819037924cced46e4446bc9497dee598ba420db091f0c8",
+   "bytes": 11488608
+  },
+  "gpui": {
+   "sha256": "cf7fb0912c9632688bcff2a48f023198bdc8f8458d5b0401969da81ac52a5af7",
+   "bytes": 4026256
+  },
+  "gpui-fast": {
+   "sha256": "08ce488a29144c686a2b0f16c0c06ff396aa92c5c96c1b08c5d0323d85acc6a6",
+   "bytes": 6638464
+  }
+ },
+ "protocol": {
+  "requested_seconds": 20,
+  "warmup_seconds": 5,
+  "sampled_seconds": 15,
+  "interval_seconds": 0.05,
+  "repeats": 3,
+  "idle_repeats": 5,
+  "idle_window_seconds": [
+   20,
+   35
+  ],
+  "idle_requested_seconds": 36,
+  "quick": false,
+  "pgo": true,
+  "frameworks": [
+   "zgui",
+   "gpui",
+   "gpui-fast"
+  ],
+  "modes": [
+   "stream",
+   "scroll",
+   "both"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 0,
+  "pacing_during_trials": false,
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ]
+ }
+}

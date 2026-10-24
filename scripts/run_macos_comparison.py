@@ -297,7 +297,7 @@ def main():
     parser.add_argument('--pgo', action='store_true',
                         help='every framework profile-guided, from target/pgo-compare (scripts/perf/pgo_compare.py)')
     parser.add_argument('--into', type=Path,
-                        help="a published run of the scene: replace its idle cells with this run's (with --modes idle)")
+                        help="a published run of the scene: replace its cells of --modes with this run's")
     args = parser.parse_args()
     frameworks, modes = list(SCENES[args.scene]['binaries']), SCENES[args.scene]['modes']
     if not args.quickgui:
@@ -308,7 +308,7 @@ def main():
         frameworks = [f for f in args.frameworks.split(',') if f in SCENES[args.scene]['binaries']]
     if args.modes:
         modes = [m for m in modes if m in args.modes.split(',')]
-    assert not args.into or modes == ['idle'], '--into takes an idle-only run (--modes idle)'
+    assert not args.into or args.modes, '--into replaces the cells of --modes'
     repeats = args.repeats or (2 if args.quick else 3)
     if args.pgo:
         # The supplement: each framework's apps built with a profile of their own runs.
@@ -351,12 +351,16 @@ def measure(args, frameworks, modes, repeats, commit, found):
     out.mkdir(parents=True, exist_ok=True)
     rows, paced = [], []
     idle_repeats = min(IDLE_REPEATS, repeats) if args.quick else IDLE_REPEATS
+    rerun = list(modes)
     if args.into:
-        # The run's earlier idle trials stay, apart: they are what it first published.
-        legacy = out / 'idle-5-20s'
-        legacy.mkdir(exist_ok=True)
-        for path in out.glob('*.idle.*'):
-            path.rename(legacy / path.name)
+        # The run's earlier trials of these modes stay, apart: they are what
+        # it first published. Its pacing captures stay where they are.
+        for mode in rerun:
+            legacy = out / ('idle-5-20s' if mode == 'idle' else f'{mode}-before')
+            legacy.mkdir(exist_ok=True)
+            for path in out.glob(f'*.{mode}.*'):
+                if '.pacing.' not in path.name:
+                    path.rename(legacy / path.name)
     for repeat in range(max(repeats, idle_repeats) if 'idle' in modes else repeats):
         order = frameworks[repeat % len(frameworks):] + frameworks[:repeat % len(frameworks)]
         chosen = [m for m in modes if repeat < (idle_repeats if m == 'idle' else repeats)]
@@ -381,7 +385,7 @@ def measure(args, frameworks, modes, repeats, commit, found):
                 time.sleep(2)
     if args.into:
         # The published run's other cells, and its pacing, with this run's idle.
-        kept = [r for r in csv.DictReader((out / 'current.csv').open()) if r['mode'] != 'idle']
+        kept = [r for r in csv.DictReader((out / 'current.csv').open()) if r['mode'] not in rerun]
         for row in kept:
             for key in ('repeat', 'workload_ticks', 'exit_code', 'samples'):
                 row[key] = int(row[key])
@@ -395,7 +399,7 @@ def measure(args, frameworks, modes, repeats, commit, found):
     groups = [group(rows, METRICS + POWER, 'desktop', 'baseline')]
     groups += [group(rows, METRICS + POWER + ['reported_fps'], f, m) for f in frameworks for m in modes]
     pacing_groups = [group(paced, PACING, f, m) for f in frameworks for m in modes if m != 'idle']
-    if 'idle' in modes:
+    if 'idle' in rerun:
         # What the idle cells read over 5-20 s, as runs before October 24 sampled them.
         early = [group(rows, [f'early_{k}' for k in METRICS], f, 'idle') for f in frameworks]
         (out / 'idle-5-20s.json').write_text(json.dumps({'groups': early}, indent=1) + '\n')
@@ -434,12 +438,13 @@ def measure(args, frameworks, modes, repeats, commit, found):
     if args.into:
         # The published run's own record, with this one's as the idle cells'.
         published = json.loads((out / 'audit.json').read_text())
-        published.setdefault('protocol', {}).update(
-            {k: audit['protocol'][k] for k in ('idle_repeats', 'idle_window_seconds', 'idle_requested_seconds')})
+        if 'idle' in rerun:
+            published.setdefault('protocol', {}).update(
+                {k: audit['protocol'][k] for k in ('idle_repeats', 'idle_window_seconds', 'idle_requested_seconds')})
         published.update({'accepted': published['accepted'] and accepted, 'trials': len(rows),
-                          'idle_rerun': {k: audit[k] for k in ('commit', 'source_dirty', 'source_diff_sha256',
-                                                               'started_utc', 'finished_utc', 'environment',
-                                                               'preflight', 'binaries')}})
+                          f"{'_'.join(rerun)}_rerun": {k: audit[k] for k in ('commit', 'source_dirty', 'source_diff_sha256',
+                                                                              'started_utc', 'finished_utc', 'environment',
+                                                                              'preflight', 'binaries')}})
         audit = published
     (out / 'audit.json').write_text(json.dumps(audit, indent=1) + '\n')
     print(('ACCEPTED' if accepted else 'REJECTED'), out)

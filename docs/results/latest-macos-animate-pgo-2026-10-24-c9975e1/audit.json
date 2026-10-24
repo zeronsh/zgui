@@ -1,0 +1,90 @@
+{
+ "accepted": true,
+ "trials": 12,
+ "samples": 2871,
+ "pacing_trials": 0,
+ "reported_fps": {
+  "min": 117.6,
+  "max": 119.7
+ },
+ "powermetrics": false,
+ "scene": "animate",
+ "commit": "c9975e13e4d8da23eb807452d370fbe8730ca4ca",
+ "source_dirty": true,
+ "source_diff_sha256": "1fbc9011e6e31f6b4a9f650fd6ded3bb3862961044f38c170d16ef718d39d869",
+ "started_utc": "2026-10-24T19:54:03.794499+00:00",
+ "finished_utc": "2026-10-24T19:58:32.518837+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": true
+   },
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": false
+   }
+  ],
+  "display_count": 2,
+  "wallpaper_apps": [],
+  "power_mode": "powermode 2",
+  "on_battery": false,
+  "macos": "26.4 (25E246)",
+  "uptime_hours": 936.6,
+  "machine": "Mac17,6",
+  "chip": "Apple M5 Max",
+  "cores": 18,
+  "memory_bytes": 137438953472,
+  "power": "AC Power",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+ },
+ "preflight": null,
+ "binaries": {
+  "zgui": {
+   "sha256": "42daf04124ed1f265252c6ea863aa86b115ec9cd64bc03365082f29ddef271cb",
+   "bytes": 11406368
+  },
+  "gpui": {
+   "sha256": "54345a3cc18ae06274fec7af164151c0efe4d1e8f570c662d80118b93874568c",
+   "bytes": 4005584
+  },
+  "gpui-fast": {
+   "sha256": "188c41737720209dd9b0366651399875baa69ac0b7acd87de8ecb100ba438360",
+   "bytes": 6613008
+  }
+ },
+ "protocol": {
+  "requested_seconds": 20,
+  "warmup_seconds": 5,
+  "sampled_seconds": 15,
+  "interval_seconds": 0.05,
+  "repeats": 3,
+  "idle_repeats": 5,
+  "idle_window_seconds": [
+   20,
+   35
+  ],
+  "idle_requested_seconds": 36,
+  "quick": false,
+  "pgo": true,
+  "frameworks": [
+   "zgui",
+   "gpui",
+   "gpui-fast"
+  ],
+  "modes": [
+   "animate"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 0,
+  "pacing_during_trials": false,
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ]
+ }
+}
