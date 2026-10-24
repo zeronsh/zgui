@@ -703,6 +703,12 @@ impl TextCache {
                 self.retire(entry);
             }
         }
+        // The table keeps the room its most entries took (an interface's
+        // first layout measures every text), 360 bytes an entry: give back
+        // what is more than twice what is held.
+        if self.entries.capacity() > 2 * self.entries.len() + 64 {
+            self.entries.shrink_to_fit();
+        }
     }
     /// Estimated bytes held: shaped lines, and compact measurements.
     pub fn bytes(&self) -> (usize, usize) {
@@ -1310,6 +1316,30 @@ mod tests {
                 compact.glyphs.len(),
             );
         }
+    }
+
+    /// An interface's first layout measures every text; once most are gone,
+    /// the table holding them gives back its room.
+    #[test]
+    fn the_table_shrinks_after_a_burst() {
+        let mut fonts = FontSystem::new();
+        let font = FontStyle::default();
+        let mut cache = TextCache::default();
+        for i in 0..2000 {
+            let text: Arc<str> = format!("row {i}").into();
+            cache.layout_plain(&mut fonts, &text, 14., &font, None);
+        }
+        let burst = cache.entries.capacity();
+        assert!(burst >= 2000);
+        // None drawn: past the budget for undrawn text, they are dropped.
+        cache.trim([]);
+        assert!(cache.entries.len() < 1000, "{}", cache.entries.len());
+        assert!(
+            cache.entries.capacity() <= 2 * cache.entries.len() + 64,
+            "room for {} after the burst's {burst}, holding {}",
+            cache.entries.capacity(),
+            cache.entries.len()
+        );
     }
 
     #[test]

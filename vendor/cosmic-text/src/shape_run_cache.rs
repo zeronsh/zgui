@@ -118,7 +118,7 @@ impl ShapeRunCache {
     /// few changed values called this each time over a table of thousands;
     /// it runs every `TRIM_PERIOD` ages instead, so a word lives between
     /// `keep_ages` and `keep_ages + TRIM_PERIOD` ages unused. A table left
-    /// far larger than what it holds (after a burst of shaping) is shrunk,
+    /// over twice what it holds (after a burst of shaping) is shrunk,
     /// where callers dropped it whole before.
     pub fn trim(&mut self, keep_ages: u64) {
         // Increase age
@@ -129,7 +129,7 @@ impl ShapeRunCache {
         let age = self.age;
         self.cache
             .retain(|_key, (used, _glyphs)| *used + keep_ages + TRIM_PERIOD >= age);
-        if self.cache.capacity() > 4 * self.cache.len() + 64 {
+        if self.cache.capacity() > 2 * self.cache.len() + 64 {
             self.cache.shrink_to_fit();
         }
     }

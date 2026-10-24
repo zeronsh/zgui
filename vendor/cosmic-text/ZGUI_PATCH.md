@@ -76,7 +76,7 @@ a frame swept a table of thousands each time, and zgui dropped the whole
 table every 512 texts shaped to bound its size, after which every word was
 shaped again. The sweep now runs every `TRIM_PERIOD` (8) ages, a word
 lives `keep_ages` to `keep_ages + 8` ages unused, and a table left more
-than four times larger than what it holds is shrunk, so zgui no longer
+than twice as large as what it holds is shrunk, so zgui no longer
 drops it (`len` and `is_empty` report its size). zgui-gpu's
 `tests/word_cache.rs` checks it stays the size of what is shown.
 
