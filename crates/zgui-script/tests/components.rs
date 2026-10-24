@@ -597,3 +597,76 @@ fn a_date_picker_and_a_time_field_write_iso_dates_and_times() {
     assert_eq!(h.text("start-text"), "09:05");
     assert_eq!(h.error(), None);
 }
+
+#[test]
+fn a_data_grids_cells_are_formatted_and_its_selection_follows_its_records() {
+    let mut h = Harness::inline(
+        r#"local items = ui.state("items", {
+            { name = "Tea", price = 3 },
+            { name = "Cake", price = 4.5 },
+            { name = "Bread", price = 2.25 },
+        })
+        local sort = ui.state("sort", nil :: { column: string, descending: boolean? }?)
+        local chosen = ui.state("chosen", {} :: { number })
+        return ui.column {
+            h = 300,
+            ui.data_grid {
+                label = "Items",
+                columns = {
+                    { id = "name", title = "Name", sortable = true },
+                    { id = "price", title = "Price", sortable = true, align = "end" },
+                },
+                rows = items,
+                sort = sort,
+                selection = chosen,
+                cell = function(value: any, column: string): string
+                    return if column == "price" then string.format("$%.2f", value) else tostring(value)
+                end,
+            },
+            ui.text { id = "chosen", function()
+                local names = {}
+                for _, i in chosen:get() do
+                    table.insert(names, items:get()[i].name)
+                end
+                table.sort(names)
+                return table.concat(names, ",")
+            end },
+        }"#,
+    );
+    h.frames(2);
+    assert_eq!(h.error(), None);
+    let texts: Vec<String> = with_role(&mut h, Role::Cell)
+        .iter()
+        .map(|c| {
+            let scene = h.ui.scene.borrow();
+            let mut stack = vec![*c];
+            let mut text = String::new();
+            while let Some(n) = stack.pop() {
+                if let zgui::scene::NodeKind::Text { text: t, .. } = scene.kind(n) {
+                    text.push_str(t);
+                }
+                stack.extend(scene.children(n).iter().rev());
+            }
+            text
+        })
+        .collect();
+    assert_eq!(texts[..2], ["Tea", "$3.00"], "formatted: {texts:?}");
+    let grid = with_role(&mut h, Role::Grid)[0];
+    h.ui.input.focus(&h.ui.scene, Some(grid));
+    h.frames(1);
+    // Tea and Cake selected (Shift and Down from Tea).
+    h.key_with(
+        Key::ArrowDown,
+        Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(h.text("chosen"), "Cake,Tea");
+    // Sorted by price: the same records stay selected, wherever they show.
+    let price = with_role(&mut h, Role::ColumnHeader)[1];
+    click_node(&mut h, price);
+    h.frames(1);
+    assert_eq!(h.text("chosen"), "Cake,Tea");
+    assert_eq!(h.error(), None);
+}

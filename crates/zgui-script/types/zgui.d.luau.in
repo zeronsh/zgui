@@ -1572,6 +1572,10 @@ export type DataGridProps = Merge<Props, {
 	sort: (State<GridSort?> | State<any>)?,
 	-- The current cell, both ways: its row an index into `rows`.
 	value: (State<{ row: number, column: string }?> | State<any>)?,
+	-- The selected rows, both ways: indices into `rows`.
+	selection: (State<{ number }> | State<any>)?,
+	-- A cell's text from its value (and column and record): `"$1.25"`.
+	cell: ((value: any, column: string, record: any) -> string)?,
 	-- An edit kept (else it is written into the row).
 	on_edit: ((row: number, column: string, text: string) -> ...unknown)?,
 	-- Enter on a cell that doesn't edit, or a double click.

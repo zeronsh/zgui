@@ -10,6 +10,12 @@
 //! sorts, a drag moves its column and its edge's drag resizes it (a double
 //! click puts it back). The rows are virtual: a grid of a hundred thousand
 //! builds only what shows.
+//!
+//! Rows are selected as a list's are: a click selects one, Shift extends
+//! from the last one clicked (the arrows with Shift too), ⌘ (Ctrl) adds or
+//! takes one away, ⌘A (Ctrl+A) selects them all. ⌘C (Ctrl+C) copies as a
+//! spreadsheet does: the current cell, or the rows selected, as
+//! tab-separated text and an HTML table.
 use crate::{
     compose::{
         Context, NodeHandle, View, column, component, div, keyed, row, scroll_x, switch,
@@ -17,6 +23,7 @@ use crate::{
     },
     cursor::Cursor,
     input::{EventContext, EventPhase, InputEvent, Key, PointerButton},
+    platform::PlatformService,
     reactive::Signal,
     scene::{Direction, NodeId},
     semantics::{Role, SortOrder, TablePlace},
@@ -106,6 +113,152 @@ impl GridCell {
     }
 }
 
+/// The rows a grid has selected, by where they show (from 0): ranges of
+/// them, and the row Shift extends from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GridSelection {
+    /// Inclusive, in order, apart.
+    ranges: Vec<(usize, usize)>,
+    anchor: Option<usize>,
+}
+impl GridSelection {
+    /// Row `row` alone, Shift extending from it.
+    pub fn row(row: usize) -> Self {
+        Self {
+            ranges: vec![(row, row)],
+            anchor: Some(row),
+        }
+    }
+    /// The rows from `first` to `last`, either way round, Shift extending
+    /// from `first`.
+    pub fn span(first: usize, last: usize) -> Self {
+        Self {
+            ranges: vec![(first.min(last), first.max(last))],
+            anchor: Some(first),
+        }
+    }
+    /// The first `rows` rows.
+    pub fn all(rows: usize) -> Self {
+        Self {
+            ranges: if rows == 0 {
+                Vec::new()
+            } else {
+                vec![(0, rows - 1)]
+            },
+            anchor: None,
+        }
+    }
+    /// These rows, in any order, Shift extending from none of them.
+    pub fn from_rows(rows: impl IntoIterator<Item = usize>) -> Self {
+        let mut rows: Vec<usize> = rows.into_iter().collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        for row in rows {
+            match ranges.last_mut() {
+                Some(last) if last.1 + 1 == row => last.1 = row,
+                _ => ranges.push((row, row)),
+            }
+        }
+        Self {
+            ranges,
+            anchor: None,
+        }
+    }
+    /// Whether `row` is selected.
+    pub fn contains(&self, row: usize) -> bool {
+        self.ranges
+            .binary_search_by(|&(first, last)| {
+                if last < row {
+                    std::cmp::Ordering::Less
+                } else if first > row {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .is_ok()
+    }
+    /// How many rows are selected.
+    pub fn len(&self) -> usize {
+        self.ranges
+            .iter()
+            .map(|(first, last)| last - first + 1)
+            .sum()
+    }
+    /// Whether none is.
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
+    /// The selected rows, in order.
+    pub fn rows(&self) -> impl Iterator<Item = usize> + '_ {
+        self.ranges.iter().flat_map(|&(first, last)| first..=last)
+    }
+    /// The row Shift extends from.
+    pub fn anchor(&self) -> Option<usize> {
+        self.anchor
+    }
+    /// From the anchor to `row` (from `row` alone with none).
+    pub fn extended_to(&self, row: usize) -> Self {
+        Self::span(self.anchor.unwrap_or(row), row)
+    }
+    /// With `row` added, or taken away if it was selected; it is the anchor.
+    pub fn toggled(&self, row: usize) -> Self {
+        let mut rows: Vec<(usize, usize)> = Vec::with_capacity(self.ranges.len() + 1);
+        if self.contains(row) {
+            for &(first, last) in &self.ranges {
+                if row < first || row > last {
+                    rows.push((first, last));
+                    continue;
+                }
+                if first < row {
+                    rows.push((first, row - 1));
+                }
+                if row < last {
+                    rows.push((row + 1, last));
+                }
+            }
+        } else {
+            // In order, joined to its neighbours.
+            let mut placed = false;
+            for &(first, last) in &self.ranges {
+                if !placed && row < first {
+                    rows.push((row, row));
+                    placed = true;
+                }
+                rows.push((first, last));
+            }
+            if !placed {
+                rows.push((row, row));
+            }
+            let mut joined: Vec<(usize, usize)> = Vec::with_capacity(rows.len());
+            for (first, last) in rows {
+                match joined.last_mut() {
+                    Some(previous) if previous.1 + 1 >= first => previous.1 = previous.1.max(last),
+                    _ => joined.push((first, last)),
+                }
+            }
+            rows = joined;
+        }
+        Self {
+            ranges: rows,
+            anchor: Some(row),
+        }
+    }
+    /// Those below `rows` (the rows that are left as they shrink).
+    fn within(&self, rows: usize) -> Self {
+        Self {
+            ranges: self
+                .ranges
+                .iter()
+                .filter(|(first, _)| *first < rows)
+                .map(|&(first, last)| (first, last.min(rows - 1)))
+                .collect(),
+            anchor: self.anchor.filter(|a| *a < rows),
+        }
+    }
+}
+
 type Edit = Rc<dyn Fn(usize, &str, String)>;
 type CellText = Rc<dyn Fn(usize, &str) -> String>;
 
@@ -117,6 +270,7 @@ pub struct GridSource {
     cell: CellText,
     edit: Option<Edit>,
     activate: Option<Rc<dyn Fn(usize)>>,
+    selection: Option<Signal<GridSelection>>,
 }
 impl GridSource {
     /// `rows` rows, row `r`'s cell in column `c` showing `cell(r, c)`.
@@ -129,6 +283,7 @@ impl GridSource {
             cell: Rc::new(cell),
             edit: None,
             activate: None,
+            selection: None,
         }
     }
     /// An edit kept: its row, column and text. Without one nothing edits.
@@ -139,6 +294,11 @@ impl GridSource {
     /// A row activated: a double click on it, or Enter where nothing edits.
     pub fn on_activate(mut self, activate: impl Fn(usize) + 'static) -> Self {
         self.activate = Some(Rc::new(activate));
+        self
+    }
+    /// The rows selected, both ways (the grid keeps its own otherwise).
+    pub fn selection(mut self, selection: Signal<GridSelection>) -> Self {
+        self.selection = Some(selection);
         self
     }
 }
@@ -163,6 +323,8 @@ struct Grid {
     editing: Signal<Option<GridCell>>,
     draft: Signal<String>,
     focused: Signal<bool>,
+    selection: Signal<GridSelection>,
+    platform: Option<Rc<PlatformService>>,
     source: GridSource,
     /// The rows' scroll, and the columns'.
     offset: Signal<f32>,
@@ -275,10 +437,47 @@ impl Grid {
                 node.table = Some(Box::new(TablePlace {
                     rows: Some(rows + 1),
                     columns: Some(columns),
+                    multiselectable: true,
                     ..Default::default()
                 }));
             });
         }
+    }
+    /// Row `row` chosen: alone, extending (Shift) or toggled (⌘, Ctrl).
+    fn select(&self, row: usize, extend: bool, toggle: bool) {
+        let next = self.selection.with_untracked(|s| {
+            if extend {
+                s.extended_to(row)
+            } else if toggle {
+                s.toggled(row)
+            } else {
+                GridSelection::row(row)
+            }
+        });
+        self.selection.set(next);
+    }
+    /// Copy, as a spreadsheet does: the current cell, or (several rows
+    /// selected) the rows, as tab-separated text and an HTML table.
+    fn copy(&self) {
+        let Some(platform) = &self.platform else {
+            return;
+        };
+        let selection = self.selection.with_untracked(Clone::clone);
+        let (rows, columns): (Vec<usize>, Vec<String>) = if selection.len() > 1 {
+            (selection.rows().collect(), self.order())
+        } else {
+            match self.current.with_untracked(Clone::clone) {
+                Some(at) => (vec![at.row], vec![at.column]),
+                None => return,
+            }
+        };
+        let table: Vec<Vec<String>> = rows
+            .iter()
+            .map(|&r| columns.iter().map(|c| (self.source.cell)(r, c)).collect())
+            .collect();
+        platform
+            .0
+            .set_clipboard_rich_text(tab_separated(&table), html_table(&table));
     }
     /// The grid's active descendant: the current cell, or its header.
     fn describe_active(&self) {
@@ -396,6 +595,10 @@ pub fn data_grid(
                 order.set(columns.with(|cs| cs.iter().map(|c| c.id.clone()).collect()));
             }));
         }
+        let selection = source
+            .selection
+            .clone()
+            .unwrap_or_else(|| runtime.signal(GridSelection::default()));
         let grid = Rc::new(Grid {
             columns,
             order,
@@ -405,6 +608,8 @@ pub fn data_grid(
             editing: runtime.signal(None),
             draft: runtime.signal(String::new()),
             focused: runtime.signal(false),
+            selection,
+            platform: cx.try_service::<PlatformService>(),
             source,
             offset: runtime.signal(0.),
             scroll: runtime.signal(0.),
@@ -429,6 +634,9 @@ pub fn data_grid(
                 let rows = (grid.source.rows)();
                 let columns = grid.columns.with(Vec::len);
                 grid.describe_size(rows, columns);
+                // Rows gone take their selection with them.
+                let kept = grid.selection.with_untracked(|s| s.within(rows));
+                grid.selection.set(kept);
             }));
         }
         // Each built cell's and header's column, as columns move; each
@@ -538,6 +746,44 @@ pub fn data_grid(
     })
 }
 
+/// Rows of cells as spreadsheets paste them: cells apart by tabs, rows by
+/// newlines; a cell holding either (or a quote) quoted, its quotes doubled.
+fn tab_separated(table: &[Vec<String>]) -> String {
+    let cell = |text: &String| {
+        if text.contains(['\t', '\n', '\r', '"']) {
+            format!("\"{}\"", text.replace('"', "\"\""))
+        } else {
+            text.clone()
+        }
+    };
+    table
+        .iter()
+        .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+/// Rows of cells as an HTML table, its text escaped.
+fn html_table(table: &[Vec<String>]) -> String {
+    let escape = |text: &str| {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let mut html = String::from("<table>");
+    for row in table {
+        html.push_str("<tr>");
+        for cell in row {
+            html.push_str("<td>");
+            html.push_str(&escape(cell));
+            html.push_str("</td>");
+        }
+        html.push_str("</tr>");
+    }
+    html.push_str("</table>");
+    html
+}
+
 /// A header's place: row 0, its column, and its sort.
 fn header_place(column: Option<usize>, sort: &Option<GridSort>, id: &str) -> TablePlace {
     TablePlace {
@@ -567,8 +813,12 @@ fn grid_keys(grid: &Rc<Grid>, cx: &mut EventContext) {
             if grid.current.with_untracked(Option::is_none)
                 && let Some(first) = grid.order().into_iter().next()
             {
-                grid.header.set((grid.source.rows)() == 0);
+                let rows = (grid.source.rows)();
+                grid.header.set(rows == 0);
                 grid.current.set(Some(GridCell::new(0, first)));
+                if rows > 0 && grid.selection.with_untracked(GridSelection::is_empty) {
+                    grid.selection.set(GridSelection::row(0));
+                }
             }
             return;
         }
@@ -651,6 +901,12 @@ fn grid_keys(grid: &Rc<Grid>, cx: &mut EventContext) {
         cx.stop_propagation();
         return;
     }
+    // In the rows, a move selects the row it reaches; with Shift, from the
+    // anchor to it.
+    let go = |r: usize, c: usize| {
+        go(r, c);
+        grid.select(r, modifiers.shift, false);
+    };
     // A page: the rows that show, less one.
     let page = grid
         .handle()
@@ -694,6 +950,14 @@ fn grid_keys(grid: &Rc<Grid>, cx: &mut EventContext) {
                 edit(at.row, &at.column, String::new());
             }
         }
+        Key::Character(s) if command && s.eq_ignore_ascii_case("a") => {
+            grid.selection.set(GridSelection::all(rows));
+        }
+        Key::Character(s) if command && s.eq_ignore_ascii_case("c") => grid.copy(),
+        // Several selected: back to the current row's alone.
+        Key::Escape if grid.selection.with_untracked(|s| s.len() > 1) => {
+            grid.selection.set(GridSelection::row(r));
+        }
         // Typing over a cell edits it: what is typed goes on into its field.
         Key::Character(_) if !command && !modifiers.alt => {
             grid.start(at, Some(String::new()));
@@ -734,6 +998,17 @@ fn grid_row(grid: Rc<Grid>, r: usize, cx: &mut Context) -> View {
             }
         }));
     }
+    // Whether the row is selected: only it follows its own.
+    let chosen = runtime.signal(false);
+    {
+        let (grid, chosen) = (grid.clone(), chosen.clone());
+        cx.retain(runtime.effect(move || {
+            let now = grid.selection.with(|s| s.contains(r));
+            if chosen.with_untracked(|c| *c != now) {
+                chosen.set(now);
+            }
+        }));
+    }
     let cells = {
         let (grid, ids, here) = (grid.clone(), grid.clone(), here.clone());
         keyed(
@@ -744,13 +1019,13 @@ fn grid_row(grid: Rc<Grid>, r: usize, cx: &mut Context) -> View {
         )
         .flex_row()
     };
-    let (selected, styled) = (here.clone(), here);
+    let (selected, styled) = (chosen.clone(), chosen);
     row()
         .role(Role::Row)
         .h(ROW)
-        .selected_when(move || selected.with(Option::is_some))
+        .selected_when(move || selected.get())
         .reactive_style(move || {
-            Styles::new().bg(if styled.with(Option::is_some) {
+            Styles::new().bg(if styled.get() {
                 tok::SELECTION_ITEM
             } else if r % 2 == 1 {
                 tok::SURFACE_SUNKEN
@@ -878,8 +1153,12 @@ fn grid_cell(
                     activate(r);
                 }
             } else {
+                // Shift extends the selection from its anchor; ⌘ (Ctrl
+                // elsewhere) adds or takes the row away.
+                let modifiers = cx.pointer_modifiers();
                 press.header.set(false);
                 press.current.set(Some(at));
+                press.select(r, modifiers.shift, modifiers.primary_shortcut());
             }
         })
         // The text (or field) fills the cell: aligned, and truncated at its
@@ -917,6 +1196,7 @@ fn cell_editor(grid: Rc<Grid>, r: usize) -> View {
                         && r + 1 < (grid.source.rows)()
                     {
                         grid.current.set(Some(GridCell::new(r + 1, column)));
+                        grid.select(r + 1, false, false);
                     }
                 }
                 InputEvent::KeyDown {

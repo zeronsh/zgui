@@ -800,6 +800,10 @@ pub(crate) enum Kind {
         rows: Signal<Value>,
         sort: Option<Signal<Value>>,
         value: Option<Signal<Value>>,
+        /// The selected rows, indices into `rows` from 1.
+        selection: Option<Signal<Value>>,
+        /// A cell's text from its value, column and record.
+        cell: Option<Function>,
         on_edit: Option<Function>,
         on_activate: Option<Function>,
     },
@@ -1970,6 +1974,8 @@ const WIDGET_FIELDS: &[&str] = &[
     "columns",
     "sort",
     "on_edit",
+    "selection",
+    "cell",
     "first_weekday",
     "unavailable",
     "format",
@@ -3241,6 +3247,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 rows: expect_state(&table.get("rows")?, "ui.data_grid's `rows`")?,
                 sort: optional_state("sort")?,
                 value: optional_state("value")?,
+                selection: optional_state("selection")?,
+                cell: table.get("cell")?,
                 on_edit: table.get("on_edit")?,
                 on_activate: table.get("on_activate")?,
             };

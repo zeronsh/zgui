@@ -405,3 +405,159 @@ fn the_pointer_chooses_sorts_moves_and_resizes() {
         "a move doesn't sort"
     );
 }
+
+/// The clipboard: the text and HTML last put on it.
+#[derive(Default)]
+struct Clipboard(RefCell<Option<(String, String)>>);
+impl zgui::platform::Platform for Clipboard {
+    fn clipboard_text(&self) -> Option<String> {
+        self.0.borrow().as_ref().map(|c| c.0.clone())
+    }
+    fn set_clipboard_text(&self, text: String) -> bool {
+        *self.0.borrow_mut() = Some((text, String::new()));
+        true
+    }
+    fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {
+        *self.0.borrow_mut() = Some((text, html));
+        true
+    }
+    fn open_files(
+        &self,
+        _: zgui::platform::FilePicker,
+    ) -> zgui::platform::Pending<Result<Vec<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn save_file(
+        &self,
+        _: zgui::platform::FilePicker,
+    ) -> zgui::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+#[test]
+fn rows_are_selected_by_click_shift_and_command_and_copied_as_a_spreadsheet_does() {
+    let mut ui = Ui::new(500., 300.);
+    let clipboard = Rc::new(Clipboard::default());
+    let columns = ui.signal(vec![
+        GridColumn::new("name", "Name", 160.),
+        GridColumn::new("note", "Note", 160.),
+    ]);
+    let (sort, current) = (ui.signal(None), ui.signal(None));
+    let selection = ui.signal(GridSelection::default());
+    let source = GridSource::new(
+        || 50,
+        |r, c| match c {
+            "name" => format!("Row {r}"),
+            _ if r == 2 => "tab\there & <b>".into(),
+            _ => "ok".into(),
+        },
+    )
+    .selection(selection.clone());
+    ui.mount(provide(
+        zgui::platform::PlatformService(clipboard.clone()),
+        column()
+            .w(500.)
+            .h(300.)
+            .child(data_grid("Rows", columns, sort, current.clone(), source)),
+    ));
+    ui.prepare_frame();
+    ui.prepare_frame();
+    let rows = |s: &GridSelection| s.rows().collect::<Vec<_>>();
+    let cell = |ui: &Ui, row: usize| {
+        with_role(ui, Role::Cell)
+            .into_iter()
+            .find(|c| text_of(ui, *c) == format!("Row {row}"))
+            .unwrap()
+    };
+    let click = |ui: &mut Ui, row: usize, modifiers: Modifiers| {
+        let b = ui.scene.borrow().bounds(cell(ui, row));
+        let (x, y, button) = (b.x + 10., b.y + 10., PointerButton::Primary);
+        ui.dispatch_with_modifiers(InputEvent::PointerDown { x, y, button }, modifiers);
+        ui.dispatch_with_modifiers(InputEvent::PointerUp { x, y, button }, modifiers);
+        ui.prepare_frame();
+    };
+    let shift = Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    click(&mut ui, 1, Modifiers::default());
+    assert_eq!(rows(&selection.get()), [1]);
+    click(&mut ui, 4, shift);
+    assert_eq!(
+        rows(&selection.get()),
+        [1, 2, 3, 4],
+        "Shift: from the anchor"
+    );
+    click(&mut ui, 3, command());
+    assert_eq!(rows(&selection.get()), [1, 2, 4], "⌘: one taken away");
+    click(&mut ui, 6, command());
+    assert_eq!(rows(&selection.get()), [1, 2, 4, 6], "⌘: one added");
+    // The rows say so; the grid that several can be.
+    let selected = with_role(&ui, Role::Row)
+        .into_iter()
+        .filter(|r| ui.semantics.borrow().get(*r).unwrap().selected == Some(true))
+        .count();
+    assert_eq!(selected, 4);
+    let grid = with_role(&ui, Role::Grid)[0];
+    assert!(
+        ui.semantics
+            .borrow()
+            .get(grid)
+            .unwrap()
+            .table
+            .as_deref()
+            .unwrap()
+            .multiselectable
+    );
+    // ⌘C: the rows, tab-separated (a cell with a tab quoted) and as HTML.
+    key_with(&mut ui, Key::Character("c".into()), command());
+    let (text, html) = clipboard.0.borrow().clone().unwrap();
+    assert_eq!(
+        text,
+        "Row 1\tok\nRow 2\t\"tab\there & <b>\"\nRow 4\tok\nRow 6\tok"
+    );
+    assert!(
+        html.starts_with("<table><tr><td>Row 1</td><td>ok</td></tr>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<td>tab\there &amp; &lt;b&gt;</td>"),
+        "{html}"
+    );
+    // Shift and an arrow extend from the anchor (row 6); an arrow alone
+    // selects the row it reaches; one row copies the current cell.
+    key_with(&mut ui, Key::ArrowDown, shift);
+    assert_eq!(rows(&selection.get()), [6, 7]);
+    key(&mut ui, Key::ArrowDown);
+    assert_eq!(rows(&selection.get()), [8]);
+    assert_eq!(current.get(), at(8, "name"));
+    key_with(&mut ui, Key::Character("c".into()), command());
+    assert_eq!(clipboard.0.borrow().as_ref().unwrap().0, "Row 8");
+    // ⌘A: all of them; Escape: the current row's alone again.
+    key_with(&mut ui, Key::Character("a".into()), command());
+    assert_eq!(selection.get().len(), 50);
+    key(&mut ui, Key::Escape);
+    assert_eq!(rows(&selection.get()), [8]);
+}
+
+#[test]
+fn a_selection_toggles_and_joins_its_ranges() {
+    let s = GridSelection::span(2, 4).toggled(5).toggled(9);
+    assert_eq!(s.rows().collect::<Vec<_>>(), [2, 3, 4, 5, 9]);
+    assert_eq!(s.anchor(), Some(9));
+    let s = s.toggled(3);
+    assert_eq!(s.rows().collect::<Vec<_>>(), [2, 4, 5, 9]);
+    assert!(s.contains(4) && !s.contains(3) && !s.contains(6));
+    assert_eq!(
+        s.extended_to(7).rows().collect::<Vec<_>>(),
+        [3, 4, 5, 6, 7],
+        "from the anchor, 3"
+    );
+    assert_eq!(
+        GridSelection::from_rows([7, 1, 2, 3, 7])
+            .rows()
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 7]
+    );
+}

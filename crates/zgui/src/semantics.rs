@@ -130,6 +130,9 @@ pub struct TablePlace {
     pub columns: Option<usize>,
     /// A column header's sort.
     pub sort: Option<SortOrder>,
+    /// A grid whose rows are selected several at once
+    /// (`aria-multiselectable`).
+    pub multiselectable: bool,
 }
 /// The single scrolling axis supported by a semantic scroll view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

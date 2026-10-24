@@ -165,7 +165,7 @@ return ui.column {
 }
 ```
 
-Each cell shows its row's field named by the column's `id`. The grid sorts `rows` itself (numbers by value, text without case); `row` in `value`, `on_edit` and `on_activate` is the record's index in `rows`, whatever the sort.
+Each cell shows its row's field named by the column's `id` (or what `cell` makes of it). ⌘C (Ctrl+C) copies as a spreadsheet does: the current cell, or the selected rows, as tab-separated text and an HTML table. The grid sorts `rows` itself (numbers by value, text without case); `row` in `value`, `on_edit` and `on_activate` is the record's index in `rows`, whatever the sort.
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
@@ -173,6 +173,8 @@ Each cell shows its row's field named by the column's `id`. The grid sorts `rows
 | `rows` | `State<{ any }>` | required | the records |
 | `sort` | `State<GridSort?>` | none | `{ column, descending? }`, both ways; nil shows `rows` as they are |
 | `value` | `State<{ row: number, column: string }?>` | none | the current cell, both ways |
+| `selection` | `State<{ number }>` | none | the selected rows, both ways: a click selects one, Shift (or Shift and an arrow) extends from the last, ⌘ (Ctrl) adds or takes one away, ⌘A (Ctrl+A) selects all |
+| `cell` | `(value: any, column: string, record: any) -> string` | the value as text | a cell's text: `function(v, column) return if column == "price" then string.format("$%.2f", v) else tostring(v) end` |
 | `on_edit` | `(row: number, column: string, text: string) -> ()` | none | an edit kept; without it the text is written into the record, a number staying a number |
 | `on_activate` | `(row: number) -> ()` | none | Enter on a cell that doesn't edit, or a double click |
 | `label` | `string` | `""` | its accessible name |

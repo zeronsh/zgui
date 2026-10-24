@@ -458,6 +458,24 @@ fn bridge_with<T: PartialEq + Clone + 'static>(
     typed
 }
 
+/// Whether a state's list holds `records`, in any order.
+fn state_rows_equal(state: &Value, records: &[Value]) -> bool {
+    let mut held: Vec<i64> = state
+        .list()
+        .iter()
+        .filter_map(Value::as_f64)
+        .map(|n| n as i64)
+        .collect();
+    let mut given: Vec<i64> = records
+        .iter()
+        .filter_map(Value::as_f64)
+        .map(|n| n as i64)
+        .collect();
+    held.sort_unstable();
+    given.sort_unstable();
+    held == given
+}
+
 fn need<'a>(cx: &'a mut Option<&mut Context>) -> &'a mut Context {
     cx.as_deref_mut()
         .expect("node lowered without a component context")
@@ -1195,11 +1213,13 @@ fn kind_view(
             rows,
             sort,
             value,
+            selection,
+            cell,
             on_edit,
             on_activate,
         } => {
             use crate::value::PathKey;
-            use zgui::compose::{GridCell, GridColumn, GridSort, GridSource};
+            use zgui::compose::{GridCell, GridColumn, GridSelection, GridSort, GridSource};
             let cx = need(&mut cx);
             // A column: `{ id, title?, width?, min_width?, sortable?,
             // editable?, align? }`.
@@ -1331,18 +1351,32 @@ fn kind_view(
                 }
             };
             let (count, cells, cell_order) = (rows.clone(), rows.clone(), order.clone());
+            let (format, format_vm) = (cell.clone(), vm.clone());
             let mut source = GridSource::new(
                 move || count.with(|v| v.list().len()),
                 move |r, column| {
                     let i = cell_order
                         .with(|o| o.as_ref().map_or(r, |o| o.get(r).copied().unwrap_or(r)));
-                    cells.with(|v| {
-                        v.list()
-                            .get(i)
-                            .and_then(|row| row.field(column))
-                            .map(Value::to_string)
-                            .unwrap_or_default()
-                    })
+                    let Some(format) = &format else {
+                        return cells.with(|v| {
+                            v.list()
+                                .get(i)
+                                .and_then(|row| row.field(column))
+                                .map(Value::to_string)
+                                .unwrap_or_default()
+                        });
+                    };
+                    // `cell(value, column, record)`: the app's text for it.
+                    let record = cells
+                        .with(|v| v.list().get(i).cloned())
+                        .unwrap_or(Value::Nil);
+                    let value = record.field(column).cloned().unwrap_or(Value::Nil);
+                    format_vm
+                        .call::<String>(format, (value.clone(), column.to_owned(), record))
+                        .unwrap_or_else(|error| {
+                            format_vm.report(error);
+                            value.to_string()
+                        })
                 },
             );
             {
@@ -1438,6 +1472,69 @@ fn kind_view(
                         state.set(order.with_untracked(|o| value_of(&cell, o)));
                     }
                 }));
+            }
+            // The selected rows, indices into `rows` from 1: that state is the
+            // truth, the rows following their records as the order changes.
+            if let Some(state) = selection {
+                fn shown_of(v: &Value, order: &Option<Rc<Vec<usize>>>) -> GridSelection {
+                    let given = v
+                        .list()
+                        .iter()
+                        .filter_map(Value::as_f64)
+                        .filter(|i| *i >= 1.)
+                        .map(|i| i as usize - 1);
+                    match order {
+                        // Each record's place as shown.
+                        Some(o) => {
+                            let mut place = vec![usize::MAX; o.len()];
+                            for (shown, &i) in o.iter().enumerate() {
+                                place[i] = shown;
+                            }
+                            GridSelection::from_rows(
+                                given.filter_map(|i| {
+                                    place.get(i).copied().filter(|p| *p != usize::MAX)
+                                }),
+                            )
+                        }
+                        None => GridSelection::from_rows(given),
+                    }
+                }
+                let chosen = cx.state(GridSelection::default());
+                {
+                    let (state, order, chosen) = (state.clone(), order.clone(), chosen.clone());
+                    cx.retain(cx.runtime().effect(move || {
+                        let o = order.get();
+                        let next = state.with(|v| shown_of(v, &o));
+                        // The same rows keep what Shift extends from.
+                        if !chosen.with_untracked(|c| c.rows().eq(next.rows())) {
+                            chosen.set(next);
+                        }
+                    }));
+                }
+                {
+                    let (state, order, chosen) = (state.clone(), order.clone(), chosen.clone());
+                    let mut first = true;
+                    cx.retain(cx.runtime().effect(move || {
+                        let rows: Vec<usize> = chosen.with(|c| c.rows().collect());
+                        if std::mem::take(&mut first) {
+                            return;
+                        }
+                        let records = order.with_untracked(|o| {
+                            rows.iter()
+                                .map(|&r| {
+                                    let i =
+                                        o.as_ref().map_or(r, |o| o.get(r).copied().unwrap_or(r));
+                                    Value::Num((i + 1) as f64)
+                                })
+                                .collect::<Vec<_>>()
+                        });
+                        let same = state.with_untracked(|v| state_rows_equal(v, &records));
+                        if !same {
+                            state.set(Value::List(records.into()));
+                        }
+                    }));
+                }
+                source = source.selection(chosen);
             }
             data_grid(label.clone(), columns, sort, current, source)
         }

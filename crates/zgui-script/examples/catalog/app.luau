@@ -386,10 +386,11 @@ local order_columns = ui.state(
 	} :: { GridColumn }
 )
 local order_sort = ui.state("order_sort", nil :: GridSort?)
+local selected_orders = ui.state("selected_orders", {} :: { number })
 
 local grid_section = section(
 	"Data grid",
-	"Arrows move; Enter, F2 or typing edits, Escape drops; Up from the first row reaches the header, where Enter sorts, ⌘⇧ arrows move a column and Alt arrows resize it. Drag a header to move its column, its edge to resize it.",
+	"Arrows move; Enter, F2 or typing edits, Escape drops; Shift extends the selection, ⌘ adds a row, ⌘A selects all, ⌘C copies. Up from the first row reaches the header, where Enter sorts, ⌘⇧ arrows move a column and Alt arrows resize it. Drag a header to move its column, its edge to resize it.",
 	ui.column {
 		w = 520,
 		h = 260,
@@ -399,6 +400,10 @@ local grid_section = section(
 			columns = order_columns,
 			rows = orders,
 			sort = order_sort,
+			selection = selected_orders,
+			cell = function(value: any, column: string): string
+				return if column == "total" then string.format("$%.2f", value) else tostring(value)
+			end,
 			on_activate = function(row: number)
 				ui.toast { title = `Opened order {orders:get()[row].id}` }
 			end,

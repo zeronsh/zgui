@@ -5165,7 +5165,9 @@ pub use crate::compose_date::{
     CalendarDate, CalendarOptions, TimeOfDay, TimeOptions, calendar, date_picker, days_in_month,
     is_leap_year, set_local_offset, time_field,
 };
-pub use crate::compose_grid::{GridCell, GridColumn, GridSort, GridSource, data_grid};
+pub use crate::compose_grid::{
+    GridCell, GridColumn, GridSelection, GridSort, GridSource, data_grid,
+};
 pub use crate::compose_palette::{PaletteCommand, command_palette, fuzzy_score};
 pub use crate::compose_select::{SelectOption, select};
 pub use crate::compose_split::{SplitOptions, split};
@@ -5188,7 +5190,7 @@ pub mod prelude {
         submenu, switch, text, text_area, text_input, text_signal, variable_virtual_list,
         virtual_list,
     };
-    pub use super::{GridCell, GridColumn, GridSort, GridSource, data_grid};
+    pub use super::{GridCell, GridColumn, GridSelection, GridSort, GridSource, data_grid};
     pub use super::{PaletteCommand, command_palette};
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
     pub use super::{SplitOptions, split};

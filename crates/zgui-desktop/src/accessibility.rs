@@ -400,6 +400,9 @@ impl AccessibilityTree {
                 if let Some(columns) = table.columns {
                     n.set_column_count(columns);
                 }
+                if table.multiselectable {
+                    n.set_multiselectable();
+                }
                 match table.sort {
                     Some(zgui::semantics::SortOrder::Ascending) => {
                         n.set_sort_direction(accesskit::SortDirection::Ascending)
