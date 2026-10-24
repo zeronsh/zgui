@@ -174,6 +174,7 @@ impl Runtime {
         Signal {
             inner: Rc::new(SignalInner {
                 value: RefCell::new(value),
+                version: Cell::new(0),
                 subscribers: RefCell::default(),
                 runtime: Rc::downgrade(&self.inner),
             }),
@@ -374,6 +375,8 @@ impl Drop for Effect {
 
 struct SignalInner<T> {
     value: RefCell<T>,
+    /// Writes that changed the value (`Signal::version`).
+    version: Cell<u64>,
     subscribers: RefCell<IdSet>,
     runtime: Weak<Inner>,
 }
@@ -458,6 +461,15 @@ impl<T: 'static> Signal<T> {
         self.track();
         f(&self.inner.value.borrow())
     }
+    /// How many writes have changed it: the same number means the same
+    /// value, so a reader that kept one need not compare it again.
+    pub(crate) fn version(&self) -> u64 {
+        self.inner.version.get()
+    }
+    /// Subscribe the running effect, as a read does, without reading.
+    pub(crate) fn track_read(&self) {
+        self.track();
+    }
     /// Call `f` with the value, without subscribing.
     pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         f(&self.inner.value.borrow())
@@ -497,6 +509,9 @@ impl<T: 'static> Signal<T> {
             }
             *old = value;
         }
+        self.inner
+            .version
+            .set(self.inner.version.get().wrapping_add(1));
         self.notify();
         true
     }
@@ -506,6 +521,9 @@ impl<T: 'static> Signal<T> {
     pub fn mutate(&self, f: impl FnOnce(&mut T) -> bool) -> bool {
         let changed = f(&mut self.inner.value.borrow_mut());
         if changed {
+            self.inner
+                .version
+                .set(self.inner.version.get().wrapping_add(1));
             self.notify();
         }
         changed
@@ -559,6 +577,22 @@ impl ServiceScope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_signal_version_counts_the_writes_that_changed_it() {
+        let runtime = Runtime::new();
+        let signal = runtime.signal(1);
+        assert_eq!(signal.version(), 0);
+        signal.set(1);
+        signal.update(|value| *value = 1);
+        signal.mutate(|_| false);
+        assert_eq!(signal.version(), 0, "writes changing nothing keep it");
+        signal.set(2);
+        signal.mutate(|value| {
+            *value = 3;
+            true
+        });
+        assert_eq!(signal.version(), 2);
+    }
     #[test]
     fn a_refreshed_effect_derives_its_value_inside_a_batch_and_runs_once() {
         let runtime = Runtime::new();

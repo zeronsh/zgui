@@ -3534,7 +3534,14 @@ impl Scene {
             self.blur_nodes.retain(|entry| *entry != id);
         }
         // A content blur's spread damages under the old effects, then the new.
-        self.damage_subtree(id);
+        // Opacity and colour filters paint where the node painted before:
+        // that place is damaged once (an animated fade, every frame).
+        let old = self.node(id).effects;
+        let same_area =
+            old.blur_radius == effects.blur_radius && old.filter_blur == effects.filter_blur;
+        if !same_area {
+            self.damage_subtree(id);
+        }
         let old_filter = self.node(id).filtered();
         if old_filter != (effects.filter_blur > 0.) {
             if old_filter {

@@ -339,6 +339,12 @@ impl Paint {
         }
     }
 }
+/// Give `output` the text colour `color`, notifying what inherits it if
+/// that changes it: in place, where `Signal::update` would clone and compare
+/// the whole typography (an animated text colour does this every frame).
+fn set_color(output: &Signal<Typography>, color: Themed<crate::scene::Color>) {
+    output.mutate(|typography| std::mem::replace(&mut typography.color, color) != color);
+}
 /// Set `node`'s mask from `resolved`: its image and size, or else the
 /// node's own mask, at its offset if set. Nodes without one cost nothing.
 fn apply_mask(
@@ -372,6 +378,8 @@ struct Settled {
     state: Interaction,
     disabled: bool,
     parent: Option<Typography>,
+    /// The inherited typography's version when `parent` was read.
+    parent_version: u64,
     intrinsic: Option<(f32, f32)>,
     content: Option<NodeId>,
     /// A text node's size and family as inherited (tokens, maybe): a
@@ -726,9 +734,11 @@ pub(crate) fn mount_style_with_intrinsic(
             // A box that changes only its size or margins (a bar growing):
             // the same fields set, other values, and no interaction style
             // over them.
+            let same = produced == last.dynamic;
             let resized = match (&mut produced, &last.dynamic) {
                 (Some(now), Some(then))
-                    if shown.is_some()
+                    if !same
+                        && shown.is_some()
                         && boxes(now) == boxes(then)
                         && sizes(now) != sizes(then)
                         && active_variants.iter().all(|(enabled, variant)| {
@@ -749,11 +759,12 @@ pub(crate) fn mount_style_with_intrinsic(
             let unchanged = glass.is_none_or(|opaque| {
                 opaque == ui.theme().system_preferences().reduced_transparency
             }) && paint.map(|p| p.set()) == last.paint
-                && (resized || produced == last.dynamic)
-                && last
-                    .parent
-                    .as_ref()
-                    .is_none_or(|parent| inherited.with(|now| now == parent))
+                && (same || resized)
+                && last.parent.as_ref().is_none_or(|parent| {
+                    inherited.track_read();
+                    inherited.version() == last.parent_version
+                        || inherited.with_untracked(|now| now == parent)
+                })
                 && intrinsic.as_ref().map(|size| size.get()) == last.intrinsic
                 && layout_target.as_ref().and_then(|target| target.get()) == last.content
                 && last.text.as_ref().is_none_or(|(size, family)| {
@@ -868,15 +879,13 @@ pub(crate) fn mount_style_with_intrinsic(
                         let shown = resolve_color(color, scope.as_deref());
                         applied.1.color = Themed::Value(shown);
                         text_color = Some(shown);
-                        if let Some(output) = &output
-                            && output.with_untracked(|typography| typography.color != color)
-                        {
-                            output.update(|typography| typography.color = color);
+                        if let Some(output) = &output {
+                            set_color(output, color);
                         }
                     } else if applied.1.color != color {
                         applied.1.color = color;
                         if let Some(output) = &output {
-                            output.update(|typography| typography.color = color);
+                            set_color(output, color);
                         }
                     }
                 }
@@ -941,6 +950,7 @@ pub(crate) fn mount_style_with_intrinsic(
             || resolved.rare().letter_spacing.is_none()
             || resolved.rare().underline.is_none()
             || resolved.rare().underline_offset.is_none();
+        let parent_version = inherited.version();
         let parent = if tracks_parent {
             inherited.get()
         } else {
@@ -1035,6 +1045,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 state,
                 disabled: is_disabled,
                 parent: tracked_parent,
+                parent_version,
                 intrinsic: intrinsic_size,
                 content: content_layout,
                 text: is_text.then_some((current.size, current.family)),
