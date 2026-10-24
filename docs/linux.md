@@ -368,10 +368,16 @@ scrolling its items as it does in an X11 or macOS screen, and the popup
 shows anew at that size. The probe opens a menu of 60 items on a 960-point
 output, sees it cut to 960, scrolls it and chooses its last item.
 
+A popup the compositor flipped to its trigger's other side (its configure
+puts it across the trigger from where it asked) is reported to the scene
+once while it is open (`Ui::set_popup_flipped`), which places a popover with
+an arrow on that side, the arrow on its edge facing the trigger, and it
+shows anew there. Menus, which have no arrow, are left where the compositor
+put them.
+
 Not yet: the grab (`xdg_popup.grab`, which moves the keyboard to the popup,
 so keys must come through a `wl_keyboard` of zgui's own with winit's
-keymap); and a popover's arrow pointing back at its trigger once the
-compositor flips it (the scene drew it on the side it chose).
+keymap).
 
 ## Web views
 

@@ -62,14 +62,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         chosen.set(format!("Item {n}"));
                     })
             });
-            let view = cx.render(
-                column().w_full().h_full().p(16.).justify_end().child(
-                    menu("File", open.clone(), anchor)
-                        .w(200.)
-                        .p(5.)
-                        .children(items),
-                ),
-            );
+            // `POPUP_PROBE_POPOVER`: a popover with an arrow in the menu's
+            // place, for `wayland_popups_smoke.py` to see it flipped.
+            let popup = if std::env::var_os("POPUP_PROBE_POPOVER").is_some() {
+                popover("Details", open.clone(), anchor)
+                    .w(200.)
+                    .h(120.)
+                    .bg(rgb(0x4a3768))
+                    .arrow(8.)
+            } else {
+                menu("File", open.clone(), anchor)
+                    .w(200.)
+                    .p(5.)
+                    .children(items)
+            };
+            let view = cx.render(column().w_full().h_full().p(16.).justify_end().child(popup));
             #[cfg(target_os = "macos")]
             {
                 let window = cx.window.clone();

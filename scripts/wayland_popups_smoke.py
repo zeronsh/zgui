@@ -18,6 +18,9 @@ Under a headless sway, driven with a virtual pointer (`wayland_pointer.py`):
 - a menu of 60 items, taller than the output, is cut to it by the
   compositor, laid out at that height, and scrolled to its last item, which
   takes a click;
+- a popover with an arrow, flipped above its trigger by the compositor near
+  the output's bottom, is placed there by the scene: its arrow on its
+  bottom edge, pointing down at the trigger's centre;
 - on outputs scaled 2× and 1.5× (fractional, through the viewporter), the
   menu's buffer is its size in the output's pixels, it shows where the
   scene put it in those pixels, and its last item takes a click.
@@ -47,6 +50,8 @@ CONTENT = (16, 20, 28)
 MENU = (35, 46, 64)
 # The submenus example's menu and its submenu.
 SUBMENU_PARENT, SUBMENU = (0x36, 0x51, 0x6e), (0x4a, 0x37, 0x68)
+# popup_probe's popover (`POPUP_PROBE_POPOVER`).
+POPOVER = (0x4a, 0x37, 0x68)
 # popup_probe's menu, in its window's points: the File button's centre, the
 # menu's top-left as the scene places it, and its size.
 FILE = (16 + 60, 396 + 14)
@@ -255,6 +260,34 @@ def main():
             checks["sway: its last item, scrolled to, takes a click"] = 'CHOSEN "Item 60"' in chosen
             stop(app)
 
+            # A popover with an arrow, with no room below its trigger: the
+            # compositor flips it, and the scene places it above, its arrow
+            # on its bottom edge pointing down at the trigger.
+            app, log = launch("sway-popover", [str(args.probe)], dict(env, POPUP_PROBE_POPOVER="1"))
+            until("the popover probe", lambda: "READY" in log.read_text())
+            until("its window", lambda: box(shot("popover"), CONTENT))
+            subprocess.run(["swaymsg", "-s", sway_socket, "[app_id=popup_probe] move position 0 520"], env=env,
+                           check=True, capture_output=True)
+            time.sleep(.5)
+            content = until("the moved window", lambda: (lambda b: b if b and b[1] == 520 else None)(
+                box(shot("popover-moved"), CONTENT)))
+            click(*FILE)
+            until("the popover flipped", lambda: "popup flipped" in log.read_text())
+            until("it shown anew", lambda: log.read_text().count("popup configured") >= 2)
+            time.sleep(.3)
+            image = shot("popover-flipped")
+            popover = box(image, POPOVER)
+            trigger_top, centre = content[1] + FILE[1] - 14, content[0] + FILE[0]
+            # The arrow's tip: its last rows, a few pixels wide.
+            tip = box(image.crop((0, popover[3] - 3, image.width, popover[3])), POPOVER) if popover else None
+            checks["sway: popover"] = {"popover": popover, "tip": tip, "trigger top": trigger_top, "centre": centre,
+                                        "flipped": re.search(r"popup flipped .*", log.read_text()).group(0)}
+            checks["sway: a flipped popover shows above its trigger"] = bool(popover) and popover[3] <= trigger_top
+            checks["sway: its arrow points down at the trigger"] = (
+                bool(tip) and tip[2] - tip[0] < 12 and abs((tip[0] + tip[2]) / 2 - centre) <= 2
+                and trigger_top - 6 <= popover[3] <= trigger_top)
+            stop(app)
+
             # A submenu is a popup of its menu: near the output's bottom the
             # menu flips, and the submenu opens beside it there.
             sub_app, sub_log = launch("sway-submenus", [str(args.probe.with_name("submenus"))], env)
@@ -312,6 +345,7 @@ def main():
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
         print("PASS: Wayland popups: past the window on sway and Weston, chosen from, closed, flipped at the output's "
               "edge, a submenu beside its flipped menu, a menu taller than the output cut to it and scrolled, "
+              "a flipped popover's arrow facing its trigger, "
               "and on outputs scaled 2x and 1.5x")
     finally:
         for process in reversed(processes):

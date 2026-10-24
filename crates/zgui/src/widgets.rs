@@ -851,6 +851,9 @@ struct UiStorage {
     /// The sizes the platform cut popups to, by their roots
     /// (`Ui::set_popup_limit`).
     popup_limits: Signal<Vec<(NodeId, (f32, f32))>>,
+    /// Popups the platform showed on their triggers' other sides, by their
+    /// roots (`Ui::set_popup_flipped`).
+    popup_flips: Signal<Vec<(NodeId, (bool, bool))>>,
     /// Open signals of anchored popups, by their popup roots
     /// (`Ui::dismiss_popups`).
     popups: RefCell<Vec<(NodeId, Signal<bool>)>>,
@@ -1063,6 +1066,7 @@ impl Ui {
             overlay_scrollbars: runtime.signal(false),
             popup_screens: runtime.signal(Vec::new()),
             popup_limits: runtime.signal(Vec::new()),
+            popup_flips: runtime.signal(Vec::new()),
             popups: RefCell::new(Vec::new()),
             popup_soon: RefCell::new(None),
             popup_soon_sent: Cell::new(false),
@@ -2038,6 +2042,31 @@ impl Ui {
     }
     pub(crate) fn popup_limits(&self) -> Signal<Vec<(NodeId, (f32, f32))>> {
         self.storage.popup_limits.clone()
+    }
+    /// Whether the platform showed popup `root` on the other side of its
+    /// trigger than the scene put it, across and down (a Wayland compositor
+    /// flips a popup with no room on its side of the output, which the app
+    /// cannot know beforehand); `(false, false)` once it has closed. A
+    /// popover's arrow is drawn on the side facing its trigger, so the scene
+    /// places such a popover on that other side.
+    pub fn set_popup_flipped(&self, root: NodeId, flipped: (bool, bool)) {
+        let current = self.storage.popup_flips.with_untracked(|flips| {
+            flips
+                .iter()
+                .find(|(flipped, _)| *flipped == root)
+                .map_or((false, false), |(_, flipped)| *flipped)
+        });
+        if current != flipped {
+            self.storage.popup_flips.update(|flips| {
+                flips.retain(|(flipped, _)| *flipped != root);
+                if flipped != (false, false) {
+                    flips.push((root, flipped));
+                }
+            });
+        }
+    }
+    pub(crate) fn popup_flips(&self) -> Signal<Vec<(NodeId, (bool, bool))>> {
+        self.storage.popup_flips.clone()
     }
     /// Call `soon` as the pointer reaches something that opens a popup (a
     /// popover's or menu's trigger, a view with a tooltip or context menu),

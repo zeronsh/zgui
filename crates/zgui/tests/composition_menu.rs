@@ -444,6 +444,63 @@ fn a_popovers_arrow_points_at_its_trigger() {
     );
 }
 #[test]
+fn a_popover_the_platform_flipped_is_placed_there_its_arrow_facing_the_trigger() {
+    let mut ui = Ui::new(500., 400.);
+    // As on Wayland: screens unbounded, the compositor flipping at its edge.
+    ui.set_popup_screens(vec![zgui::scene::Rect::new(-1e5, -1e5, 2e5, 2e5)]);
+    let open = ui.signal(true);
+    let view = ui.mount(
+        column().p(20.).pt(200.).child(
+            popover(
+                "Details",
+                open.clone(),
+                button().id("anchor").size(80., 28.),
+            )
+            .id("panel")
+            .w(200.)
+            .h(100.)
+            .arrow(8.),
+        ),
+    );
+    ui.prepare_frame();
+    ui.prepare_frame();
+    let root = *ui.scene.borrow().popups().first().expect("a popup root");
+    let bounds = |ui: &Ui| {
+        let scene = ui.scene.borrow();
+        let panel_node = view.find("panel").unwrap();
+        let position = scene.parent(panel_node).unwrap();
+        (
+            scene.bounds(view.find("anchor").unwrap()),
+            scene.bounds(panel_node),
+            scene.bounds(scene.children(position)[1]),
+        )
+    };
+    let (anchor, panel, _) = bounds(&ui);
+    assert_eq!(panel.y, anchor.y + anchor.height + 12., "below, as asked");
+    // The compositor put it above: the scene places it there, the arrow on
+    // its bottom edge, pointing down at the trigger.
+    ui.set_popup_flipped(root, (false, true));
+    ui.prepare_frame();
+    ui.prepare_frame();
+    let (anchor, panel, arrow) = bounds(&ui);
+    assert_eq!(panel.y + panel.height, anchor.y - 12., "above");
+    assert_eq!(
+        arrow.y,
+        panel.y + panel.height,
+        "on the panel's bottom edge"
+    );
+    assert_eq!(arrow.x + arrow.width / 2., anchor.x + anchor.width / 2.);
+    // Closed, below again.
+    ui.set_popup_flipped(root, (false, false));
+    open.set(false);
+    ui.prepare_frame();
+    open.set(true);
+    ui.prepare_frame();
+    ui.prepare_frame();
+    let (anchor, panel, _) = bounds(&ui);
+    assert_eq!(panel.y, anchor.y + anchor.height + 12.);
+}
+#[test]
 fn a_menu_in_a_popup_window_names_its_trigger_while_open() {
     let mut ui = Ui::new(500., 400.);
     ui.set_popup_screens(vec![zgui::scene::Rect::new(0., 0., 1000., 800.)]);

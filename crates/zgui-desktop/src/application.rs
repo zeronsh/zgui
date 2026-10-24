@@ -3492,6 +3492,10 @@ impl Host {
                 self.context.ui.set_popup_limit(root, size);
                 Ok(())
             }
+            PopupInput::Flip { root, flipped } => {
+                self.context.ui.set_popup_flipped(root, flipped);
+                Ok(())
+            }
             PopupInput::Screens => {
                 if let Some(window) = &self.window {
                     self.context

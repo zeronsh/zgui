@@ -64,6 +64,14 @@ pub(crate) enum PopupInput {
         root: zgui::scene::NodeId,
         size: Option<(f32, f32)>,
     },
+    /// The platform showed popup `root` on its trigger's other side, across
+    /// and down, or it closed (`(false, false)`): `Ui::set_popup_flipped`.
+    /// (Wayland's, as `Limit`.)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Flip {
+        root: zgui::scene::NodeId,
+        flipped: (bool, bool),
+    },
     /// The screens changed (a monitor, the taskbar), or popups can have no
     /// windows of their own after all: `popup_screens` again. (Windows'; AppKit
     /// and X11 popups follow screens as their windows move.)

@@ -17,7 +17,9 @@
 //! popup taller (or wider) than the output has room for is cut to it by the
 //! compositor, which says so in its configure: the scene lays its panel out
 //! no bigger (`Ui::set_popup_limit`), a menu scrolling its items, and it
-//! shows anew at that size.
+//! shows anew at that size. One the compositor flipped to its trigger's
+//! other side is placed there by the scene (`Ui::set_popup_flipped`), so a
+//! popover's arrow faces its trigger.
 //!
 //! The popup takes no grab: keys stay the window's, which drives menus as
 //! before, and a press on another app takes the window's focus, which
@@ -86,8 +88,9 @@ struct State {
     live: std::collections::HashSet<ObjectId>,
     /// Popups the compositor dismissed (`popup_done`).
     done: Vec<ObjectId>,
-    /// Each `xdg_popup`'s size as last configured.
-    sizes: HashMap<ObjectId, (i32, i32)>,
+    /// Each `xdg_popup`'s place and size as last configured (its parent's
+    /// window geometry's coordinates).
+    placed: HashMap<ObjectId, (i32, i32, i32, i32)>,
 }
 
 /// zgui's queue on winit's display.
@@ -187,6 +190,10 @@ struct Shown {
     rect: Rect,
     /// The size it asked for (its box's, in whole points).
     size: (i32, i32),
+    /// Where it asked to be, and its trigger, if any (its parent's window
+    /// geometry's coordinates).
+    asked: Rect,
+    trigger: Option<Rect>,
     revision: Option<u64>,
     /// The popup it is a popup of (a submenu's menu), if not the window's.
     parent: Option<NodeId>,
@@ -212,7 +219,7 @@ impl Shown {
             client.state.over = None;
         }
         client.state.live.remove(&xdg.id());
-        client.state.sizes.remove(&popup.id());
+        client.state.placed.remove(&popup.id());
         popup.destroy();
         xdg.destroy();
         if let Some(viewport) = viewport {
@@ -229,6 +236,9 @@ pub(super) struct Popups {
     /// Popups the compositor cut to its room, and the size it gave them
     /// (`Ui::set_popup_limit`), until they close.
     limited: Vec<(NodeId, (i32, i32))>,
+    /// Popups the compositor flipped (`Ui::set_popup_flipped`), until they
+    /// close: once each, so a popup with room on neither side settles.
+    flipped: Vec<NodeId>,
     send: Sink,
 }
 impl Popups {
@@ -236,6 +246,7 @@ impl Popups {
         Self {
             shown: Vec::new(),
             limited: Vec::new(),
+            flipped: Vec::new(),
             send,
         }
     }
@@ -263,6 +274,7 @@ impl Popups {
             .collect();
         let shown = std::mem::take(&mut self.shown);
         let limited = &mut self.limited;
+        let flipped = &mut self.flipped;
         let send = self.send.clone();
         with_client(parent, |client| {
             // Closed: no longer cut to the room it had.
@@ -272,6 +284,16 @@ impl Popups {
                     (send)(PopupInput::Limit {
                         root: *root,
                         size: None,
+                    });
+                }
+                open
+            });
+            flipped.retain(|root| {
+                let open = wanted.iter().any(|(wanted, _)| wanted == root);
+                if !open {
+                    (send)(PopupInput::Flip {
+                        root: *root,
+                        flipped: (false, false),
                     });
                 }
                 open
@@ -344,7 +366,8 @@ impl Popups {
                 let popup = &mut kept[index].1;
                 // Cut by the compositor to the room on its output: the scene
                 // lays it out no bigger, and it shows anew at that size.
-                if let Some(&(width, height)) = client.state.sizes.get(&popup.popup.id())
+                let placed = client.state.placed.get(&popup.popup.id()).copied();
+                if let Some((_, _, width, height)) = placed
                     && width > 0
                     && height > 0
                     && (width < popup.size.0 || height < popup.size.1)
@@ -359,6 +382,23 @@ impl Popups {
                         root: *root,
                         size: Some((width as f32, height as f32)),
                     });
+                }
+                // Flipped by the compositor to its trigger's other side: the
+                // scene places it there, and it shows anew.
+                if let Some((x, y, width, height)) = placed
+                    && let Some(trigger) = popup.trigger
+                    && !flipped.contains(root)
+                {
+                    let got = Rect::new(x as f32, y as f32, width as f32, height as f32);
+                    let turned = sides_turned(popup.asked, got, trigger);
+                    if turned != (false, false) {
+                        flipped.push(*root);
+                        zgui_gpu::present_log::log(|| format!("popup flipped {root:?} {turned:?}"));
+                        (send)(PopupInput::Flip {
+                            root: *root,
+                            flipped: turned,
+                        });
+                    }
                 }
                 let revision = scene.layer_revision(*root);
                 if full || popup.revision != Some(revision) {
@@ -395,6 +435,19 @@ impl Popups {
             Some(())
         });
     }
+}
+
+/// Whether a popup that asked to be at `asked` beside `trigger` was put at
+/// `got` on the trigger's other side, across and down.
+fn sides_turned(asked: Rect, got: Rect, trigger: Rect) -> (bool, bool) {
+    let (right, bottom) = (trigger.x + trigger.width, trigger.y + trigger.height);
+    let before = |start: f32, size: f32, edge: f32| start + size <= edge + 0.5;
+    let after = |start: f32, edge: f32| start >= edge - 0.5;
+    let down = (after(asked.y, bottom) && before(got.y, got.height, trigger.y))
+        || (before(asked.y, asked.height, trigger.y) && after(got.y, bottom));
+    let across = (after(asked.x, right) && before(got.x, got.width, trigger.x))
+        || (before(asked.x, asked.width, trigger.x) && after(got.x, right));
+    (across, down)
 }
 
 fn rects_match(a: Rect, b: Rect) -> bool {
@@ -593,6 +646,8 @@ fn show(
         surface,
         rect,
         size: (width, height),
+        asked: geometry(rect),
+        trigger: trigger.map(geometry),
         revision: None,
         parent: of.map(|(holder, ..)| holder),
     })
@@ -812,7 +867,7 @@ impl Dispatch<XdgPopup, ()> for State {
                 zgui_gpu::present_log::log(|| {
                     format!("popup configured at {x},{y} {width}x{height}")
                 });
-                state.sizes.insert(popup.id(), (width, height));
+                state.placed.insert(popup.id(), (x, y, width, height));
             }
             xdg_popup::Event::PopupDone => state.done.push(popup.id()),
             _ => {}
@@ -869,5 +924,23 @@ mod tests {
             position(Rect::new(5., 6., 7., 8.), None).0,
             Rect::new(5., 6., 1., 1.)
         );
+    }
+
+    #[test]
+    fn a_popup_put_on_its_triggers_other_side_is_seen_flipped() {
+        let trigger = Rect::new(16., 396., 120., 28.);
+        let below = Rect::new(16., 436., 200., 120.);
+        // Put above instead, 12 points off: flipped down the screen.
+        let above = Rect::new(16., 264., 200., 120.);
+        assert_eq!(sides_turned(below, above, trigger), (false, true));
+        assert_eq!(sides_turned(above, below, trigger), (false, true));
+        // Slid along the trigger, or where it asked: not flipped.
+        let slid = Rect::new(-40., 436., 200., 120.);
+        assert_eq!(sides_turned(below, slid, trigger), (false, false));
+        assert_eq!(sides_turned(below, below, trigger), (false, false));
+        // Beside it, put on its left.
+        let right = Rect::new(140., 396., 160., 80.);
+        let left = Rect::new(-148., 396., 160., 80.);
+        assert_eq!(sides_turned(right, left, trigger), (true, false));
     }
 }

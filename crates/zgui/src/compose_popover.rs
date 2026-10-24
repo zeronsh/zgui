@@ -127,6 +127,7 @@ fn mount_placement(
     let panel_bounds = ui.observe_bounds(panel);
     let position_bounds = ui.observe_bounds(position);
     let screens = ui.popup_screens();
+    let flips = ui.popup_flips();
     let weak = ui.downgrade();
     let anchor_node = anchor;
     ui.bind(owner, move || {
@@ -162,6 +163,24 @@ fn mount_placement(
             (None, _) => submenu_placement(anchor, viewport, panel.width, panel.height, rtl),
             (Some(mut at), None) => {
                 at.offset += arrow.map_or(0., |arrow| arrow.size);
+                // Shown on the trigger's other side by the platform
+                // (`Ui::set_popup_flipped`): placed there, so its arrow
+                // faces the trigger.
+                if arrow.is_some() {
+                    let (across, down) = flips.with(|flips| {
+                        flips
+                            .iter()
+                            .find(|(root, _)| *root == position)
+                            .map_or((false, false), |(_, flipped)| *flipped)
+                    });
+                    at.side = match at.side {
+                        Side::Bottom if down => Side::Top,
+                        Side::Top if down => Side::Bottom,
+                        Side::Left if across => Side::Right,
+                        Side::Right if across => Side::Left,
+                        side => side,
+                    };
+                }
                 placement(anchor, viewport, panel.width, panel.height, at, rtl)
             }
         };
