@@ -1640,6 +1640,9 @@ pub struct GpuRenderer {
     layer_frame: u64,
     layer_origin: (f32, f32),
     shapes: FxHashMap<NodeId, Shaped>,
+    /// For text the prepared cache doesn't lay out, a node shaped from each
+    /// of its inputs (hashed: see `render_flat`), to copy rather than shape.
+    shaped_like: FxHashMap<u64, NodeId>,
     shaped_bytes: usize,
     fresh: bool,
     /// Consecutive presented frames whose damage covered the window.
@@ -2030,6 +2033,7 @@ impl GpuRenderer {
             layer_frame: 0,
             layer_origin: (0., 0.),
             shapes: FxHashMap::default(),
+            shaped_like: FxHashMap::default(),
             shaped_bytes: 0,
             fresh: true,
             whole_frames: 0,
@@ -3461,7 +3465,43 @@ impl GpuRenderer {
                         let plain = rich.is_none()
                             && item.text_options == Default::default()
                             && prepared::TextCache::handles_plain(text, font_size);
-                        let b = if plain {
+                        // Text the prepared cache doesn't lay out (with clamping
+                        // or an ellipsis): another node's shape of the same
+                        // inputs, copied rather than shaped again (a list moved
+                        // by a row shows in each what the next showed).
+                        let content = (!plain && prepared.is_none()).then(|| {
+                            use std::hash::{Hash, Hasher};
+                            let mut hasher = rustc_hash::FxHasher::default();
+                            text.hash(&mut hasher);
+                            font_size.to_bits().hash(&mut hasher);
+                            bounds.width.to_bits().hash(&mut hasher);
+                            bounds.height.to_bits().hash(&mut hasher);
+                            hasher.finish()
+                        });
+                        let twin = content
+                            .and_then(|content| self.shaped_like.get(&content))
+                            .and_then(|id| self.shapes.get(id))
+                            .filter(|twin| {
+                                twin.text == *text
+                                    && twin.size == font_size
+                                    && twin.width == bounds.width
+                                    && twin.height == bounds.height
+                                    && twin.scale == self.scale
+                                    && twin.text_options == item.text_options
+                                    && twin.font == *item.font
+                                    && twin.rich == rich
+                            })
+                            .map(|twin| {
+                                spare_glyphs.extend_from_slice(&twin.glyphs);
+                                let placed = twin.atlas_epoch == self.atlas_epoch;
+                                if placed {
+                                    spare_quads.extend_from_slice(&twin.quads);
+                                }
+                                (twin.decorations.clone(), placed.then_some(twin.atlas_epoch))
+                            });
+                        let b = if let Some((decorations, epoch)) = twin {
+                            Err((std::mem::take(&mut spare_glyphs), decorations, None, epoch))
+                        } else if plain {
                             let mut cache = self.text_cache.borrow_mut();
                             let laid = cache.layout_plain(
                                 &mut fonts,
@@ -3485,7 +3525,7 @@ impl GpuRenderer {
                                     line,
                                 )
                             });
-                            Err((glyphs, underlines, laid.key()))
+                            Err((glyphs, underlines, Some(laid.key()), None))
                         } else if let Some(rich) = prepared {
                             let mut cache = self.text_cache.borrow_mut();
                             let laid = cache.layout(&mut fonts, rich, Some(bounds.width));
@@ -3502,7 +3542,7 @@ impl GpuRenderer {
                                 &starts,
                                 rich,
                             );
-                            Err((glyphs, decorations, laid.key()))
+                            Err((glyphs, decorations, Some(laid.key()), None))
                         } else if let Some(rich) = &rich {
                             Ok(text::rich_buffer(
                                 &mut fonts,
@@ -3536,8 +3576,8 @@ impl GpuRenderer {
                             b.shape_until_scroll(&mut fonts, false);
                             Ok(b)
                         };
-                        let (glyphs, decorations, prepared) = match b {
-                            Err((glyphs, decorations, key)) => (glyphs, decorations, Some(key)),
+                        let (glyphs, decorations, prepared, epoch) = match b {
+                            Err(made) => made,
                             Ok(b) => (
                                 glyphs_of(
                                     std::mem::take(&mut spare_glyphs),
@@ -3554,6 +3594,7 @@ impl GpuRenderer {
                                     (None, None) => Vec::new(),
                                 },
                                 None,
+                                None,
                             ),
                         };
                         let shaped = Shaped {
@@ -3568,13 +3609,19 @@ impl GpuRenderer {
                             scale: self.scale,
                             glyphs,
                             quads: spare_quads,
-                            atlas_epoch: 0,
+                            atlas_epoch: epoch.unwrap_or(0),
                             last_used: self.frame,
                             prepared,
                         };
                         self.shaped_bytes += shaped.bytes();
                         self.shapes.insert(item.id, shaped);
                         stats.shaped_nodes += 1;
+                        if let Some(content) = content {
+                            if self.shaped_like.len() >= SHAPED_LIKE {
+                                self.shaped_like.clear();
+                            }
+                            self.shaped_like.insert(content, item.id);
+                        }
                     }
                     let snap = |value: f32| (value * self.scale).round() / self.scale;
                     let (x, y) = (snap(bounds.x), snap(bounds.y));
@@ -7373,6 +7420,9 @@ fn push_panel(quads: &mut Vec<Quad>, quad: Quad, scale: f32, split: bool) {
         ..quad
     });
 }
+/// Nodes `shaped_like` remembers at most by what they show: past it, it
+/// starts again.
+const SHAPED_LIKE: usize = 4096;
 /// Panels split only with an interior of at least this many logical pixels:
 /// below, five quads cost more than shading one.
 const PANEL_INTERIOR: f32 = 1024.;

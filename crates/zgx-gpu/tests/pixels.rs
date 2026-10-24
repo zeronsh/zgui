@@ -5177,6 +5177,59 @@ fn split_shading_matches_the_full_shader() {
     assert_eq!(worst, 0, "split shading differs by up to {worst}");
 }
 
+/// Clamped labels moving by a row (a mail list after archiving one) take
+/// their shapes from the labels that showed their text before: the same
+/// pixels as a renderer drawing that frame afresh.
+#[test]
+fn clamped_labels_moving_by_a_row_draw_as_afresh() {
+    let _gpu_fixture = gpu_fixture();
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let subjects: Vec<String> = (0..24)
+        .map(|i| format!("Message {i}: a subject long enough to be cut short at the end"))
+        .collect();
+    let first = std::rc::Rc::new(std::cell::Cell::new(0));
+    let view = |ui: &mut Ui, first: std::rc::Rc<std::cell::Cell<usize>>| {
+        let offset = ui.signal(first.get());
+        let rows = (0..12).map(|row| {
+            let (offset, subjects) = (offset.clone(), subjects.clone());
+            text_signal(move || subjects[offset.get() + row].clone())
+                .text_size(12.)
+                .truncate()
+                .w(180.)
+                .h(16.)
+        });
+        ui.mount(column().w(320.).h(240.).bg(rgb(0x14161c)).children(rows));
+        offset
+    };
+    let mut gpu = GpuRenderer::new(640, 480).unwrap();
+    gpu.set_scale_factor(2.);
+    let mut ui = Ui::new(320., 240.);
+    gpu.install_text(&mut ui.scene.borrow_mut());
+    let offset = view(&mut ui, first.clone());
+    for shift in 0..3 {
+        offset.set(shift);
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+    }
+    let moved = gpu.readback().unwrap();
+    first.set(2);
+    let mut fresh = GpuRenderer::new(640, 480).unwrap();
+    fresh.set_scale_factor(2.);
+    let mut afresh = Ui::new(320., 240.);
+    fresh.install_text(&mut afresh.scene.borrow_mut());
+    view(&mut afresh, first);
+    afresh.prepare_frame();
+    let damage = afresh.scene.borrow_mut().flush().damage;
+    fresh.render(&afresh.scene.borrow(), &damage).unwrap();
+    let differing = moved
+        .chunks(4)
+        .zip(fresh.readback().unwrap().chunks(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(differing, 0, "{differing} pixels differ");
+}
+
 /// Small neighbours of different shading (a rounded chip, then a plain bar)
 /// join draw calls, the full shader drawing the plain ones: a draw costs
 /// the driver more than shading their few pixels. A plain box beside a

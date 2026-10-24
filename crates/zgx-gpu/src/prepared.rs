@@ -684,7 +684,20 @@ pub struct TextCache {
     spare_lists: Vec<Vec<BufferLine>>,
     /// Every compact's words and advances.
     slab: Slab,
+    /// Sizes of the texts it does not prepare (clamped or ellipsized: see
+    /// `handles`), by what shapes them and their options, at the widths
+    /// they were measured at: shaped whole for each measurement, a list of
+    /// them moving by a row (a mail archived) shaped every row again.
+    clamped: FxHashMap<u64, Clamped>,
 }
+/// A clamped or ellipsized text's sizes (`TextCache::clamped`).
+struct Clamped {
+    key: Key,
+    options: zgx::text_layout::TextOptions,
+    sizes: smallvec::SmallVec<[SizeAt; SIZES]>,
+}
+/// Clamped texts' sizes kept at most: past it they start again.
+const CLAMPED: usize = 4096;
 impl TextCache {
     /// Whether `rich` goes through the cache: clamped or ellipsized text is
     /// laid out by its own path.
@@ -699,7 +712,7 @@ impl TextCache {
         width: Option<f32>,
     ) -> (f32, f32) {
         if !Self::handles(rich) {
-            return crate::text::ShapedText::with_runs(fonts, rich, width).size();
+            return self.clamped_size(fonts, rich, width);
         }
         let hash = self.entry(fonts, Source::Rich(rich), false, Need::Measure);
         self.sized(fonts, hash, width)
@@ -715,10 +728,55 @@ impl TextCache {
         width: Option<f32>,
     ) -> (f32, f32) {
         if !Self::handles(rich) {
-            return crate::text::ShapedText::with_runs(fonts, rich, width).size();
+            return self.clamped_size(fonts, rich, width);
         }
         let hash = self.entry(fonts, Source::Rich(rich), false, Need::Detached);
         self.sized(fonts, hash, width)
+    }
+    /// A clamped or ellipsized text's size at `width`, as
+    /// `ShapedText::with_runs` measures it, shaped only the first time.
+    fn clamped_size(
+        &mut self,
+        fonts: &mut FontSystem,
+        rich: &RichText,
+        width: Option<f32>,
+    ) -> (f32, f32) {
+        let key = Key::of(rich, false);
+        let options = rich.options();
+        let mut hasher = FxHasher::default();
+        key.hash().hash(&mut hasher);
+        options.hash(&mut hasher);
+        let hash = hasher.finish();
+        if let Some(known) = self.clamped.get(&hash)
+            && known.key == key
+            && known.options == options
+            && let Some((_, size)) = known.sizes.iter().find(|(w, _)| *w == width)
+        {
+            self.hits += 1;
+            return *size;
+        }
+        let size = crate::text::ShapedText::with_runs(fonts, rich, width).size();
+        if self.clamped.len() >= CLAMPED {
+            self.clamped.clear();
+        }
+        let known = self.clamped.entry(hash).or_insert_with(|| Clamped {
+            key: key.clone(),
+            options,
+            sizes: smallvec::SmallVec::new(),
+        });
+        // A hash shared with another text: this one's now.
+        if known.key != key || known.options != options {
+            *known = Clamped {
+                key,
+                options,
+                sizes: smallvec::SmallVec::new(),
+            };
+        }
+        if known.sizes.len() == SIZES {
+            known.sizes.remove(0);
+        }
+        known.sizes.push((width, size));
+        size
     }
     /// `rich` laid out at `width`. Only for texts `handles` accepts.
     pub fn layout(
@@ -1385,6 +1443,37 @@ mod tests {
         cache.layout(&mut fonts, &rich, Some(300.));
         assert_eq!(cache.shaped, 2);
         assert!(cache.bytes().0 > 0);
+    }
+
+    /// Clamped text the cache does not prepare is shaped once per width:
+    /// measured again (a list's rows re-measured as it moves), its size is
+    /// the one `ShapedText::with_runs` gave.
+    #[test]
+    fn clamped_text_is_measured_once() {
+        let mut fonts = FontSystem::new();
+        let mut cache = TextCache::default();
+        let text = "A subject long enough to be cut short with an ellipsis at the end";
+        let clamped = rich(text, &[(text.len(), FontStyle::default(), 13.)]).with_options(
+            zgx::text_layout::TextOptions {
+                overflow: zgx::text_layout::TextOverflow::Ellipsis,
+                line_clamp: std::num::NonZeroU32::new(1),
+            },
+        );
+        assert!(!TextCache::handles(&clamped));
+        let expected = ShapedText::with_runs(&mut fonts, &clamped, Some(120.)).size();
+        assert_eq!(cache.measure(&mut fonts, &clamped, Some(120.)), expected);
+        let hits = cache.hits;
+        assert_eq!(cache.measure(&mut fonts, &clamped, Some(120.)), expected);
+        assert_eq!(cache.hits, hits + 1, "measured again without shaping");
+        // Another width, or other options, is measured as itself.
+        let wide = ShapedText::with_runs(&mut fonts, &clamped, Some(400.)).size();
+        assert_eq!(cache.measure(&mut fonts, &clamped, Some(400.)), wide);
+        let two = clamped.clone().with_options(zgx::text_layout::TextOptions {
+            overflow: zgx::text_layout::TextOverflow::Ellipsis,
+            line_clamp: std::num::NonZeroU32::new(2),
+        });
+        let expected = ShapedText::with_runs(&mut fonts, &two, Some(120.)).size();
+        assert_eq!(cache.measure(&mut fonts, &two, Some(120.)), expected);
     }
 
     #[test]
