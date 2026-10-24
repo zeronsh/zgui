@@ -8,8 +8,8 @@ On macOS a zgui app's menus, drags and windows behave as AppKit's do, past the e
 | A popover's arrow at its trigger | `View::arrow` / Luau `arrow` | everywhere (drawn in the window where popups stay in it) |
 | A drag's preview over every window and app | any drag with a `drag_preview` | macOS, X11 |
 | Drag out to other apps | `View::drag_export` / Luau `drag_export` | macOS, Windows, X11, Wayland |
-| Drags between the app's windows | any drag and drop; `DragEvent::visiting` | macOS, X11 |
-| Tear a tab off into a window of its own | `View::on_drag_outside`, `WindowOptions::under_pointer` | macOS, X11; Windows places the new window |
+| Drags between the app's windows | any drag and drop; `DragEvent::visiting` | macOS, X11, Wayland |
+| Tear a tab off into a window of its own | `View::on_drag_outside`, `WindowOptions::under_pointer` | macOS, X11; Windows and Wayland place the new window |
 | A window's only tab moves the window | `View::drag_moves_window` | macOS, X11; Wayland moves it, without merging into another window's strip |
 | Window menu, ⌘`, AppKit tabs | `WindowOptions::{tabbing, tabbing_identifier}` | macOS |
 | New windows cascading from the front one | a window with no position | macOS, Windows, X11 |

@@ -15,6 +15,9 @@ Checks that:
   hears it not accepted;
 - over a target that refuses it (and hears it move), let go there, nothing
   is dropped, not accepted;
+- a tab, carrying nothing to other apps, goes by the compositor's drag
+  too: onto the other window's strip it drops there, accepted; let go on the
+  bare desktop it is torn off;
 - a window's only tab (`drag_moves_window`) moves its window, the
   compositor moving it as the pointer goes."""
 import argparse
@@ -148,6 +151,28 @@ def main():
             checks["refused: heard it move"] = "MOTION" in refuses_log.read_text()
             checks["refused: nothing dropped"] = "RECEIVED" not in refuses_log.read_text()
             checks["refused: not accepted"] = app_log.read_text().count("DRAG_END accepted=false") == 2
+            # A tab, which carries nothing to other apps, goes between the
+            # app's windows by the compositor's drag too: onto the Other
+            # window's strip it drops there; let go on the bare desktop, it
+            # is torn off.
+            tab = (CHIP[0], CHIP[1] + 28 + 10)
+            grab_at = lambda point: (pointer.move_to(*point, *OUTPUT), time.sleep(.2), pointer.button(True),
+                                     time.sleep(.05))
+            grab_at(tab)
+            glide(tab, (1100, 40))
+            time.sleep(.3)
+            pointer.button(False)
+            until("the tab's drop", lambda: "DROPPED tab" in app_log.read_text())
+            until("the tab's end", lambda: "TAB_END tab accepted=true" in app_log.read_text())
+            checks["a tab drops on another window's strip"] = True
+            time.sleep(.5)
+            grab_at(tab)
+            glide(tab, (860, 480))
+            time.sleep(.3)
+            pointer.button(False)
+            until("the tab torn off", lambda: "TORN tab" in app_log.read_text())
+            checks["a tab let go past every window is torn off"] = True
+
             # A window's only tab moves the window: the compositor's move,
             # following the pointer from where the drag began.
             sway_socket = str(next(pathlib.Path(private).glob("sway-ipc*.sock")))
@@ -187,7 +212,8 @@ def main():
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
         print("PASS: Wayland drags out of zgui: a GTK target takes the text under its icon; back home and over "
-              "a refusing target nothing drops; a window's only tab moves its window")
+              "a refusing target nothing drops; tabs go between windows and tear off; a window's only tab "
+              "moves its window")
     finally:
         for process in reversed(processes):
             stop(process)

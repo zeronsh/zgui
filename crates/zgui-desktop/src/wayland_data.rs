@@ -426,6 +426,9 @@ struct Outgoing {
     point: (f64, f64),
     /// Over its own window.
     home: bool,
+    /// Over another of the app's windows (its host's token), at a point in
+    /// its coordinates.
+    over: Option<(u64, (f64, f64))>,
     /// The offer of it to one of the app's windows, refused, held until
     /// the drag leaves (destroyed sooner, the compositor cancels the drag).
     offer: Option<wl_data_offer::WlDataOffer>,
@@ -587,6 +590,7 @@ impl State {
             icon,
             point,
             home: false,
+            over: None,
             offer: None,
             performed: false,
         });
@@ -636,11 +640,32 @@ impl State {
     /// The app's own drag ends: `accepted` by another app, or not. Its host
     /// hears it unless it already has.
     fn end_outgoing(&mut self, accepted: bool) {
+        let Some((x, y)) = self.outgoing.as_ref().map(|outgoing| outgoing.point) else {
+            return;
+        };
+        self.end_outgoing_with(crate::native_drag::NativeDrag::Ended { x, y, accepted });
+    }
+    /// The app's own drag was dropped on one of its windows: done with the
+    /// offer, as a target is (the drop is zgui's, not taken by another app:
+    /// the drag ends before the source hears it performed).
+    fn finish_own_drop(&mut self) {
+        if let Some(offer) = self
+            .outgoing
+            .as_mut()
+            .and_then(|outgoing| outgoing.offer.take())
+        {
+            if offer.version() >= 3 {
+                offer.finish();
+            }
+            offer.destroy();
+        }
+    }
+    /// The app's own drag ends, its host hearing `how`.
+    fn end_outgoing_with(&mut self, how: crate::native_drag::NativeDrag) {
         let Some(outgoing) = self.outgoing.take() else {
             return;
         };
-        let (x, y) = outgoing.point;
-        (outgoing.send)(crate::native_drag::NativeDrag::Ended { x, y, accepted });
+        (outgoing.send)(how);
         if let Some(offer) = outgoing.offer {
             offer.destroy();
         }
@@ -1010,7 +1035,13 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for State {
                     .outgoing
                     .as_ref()
                     .is_some_and(|outgoing| outgoing.performed && outgoing.source.version() < 3);
-                state.end_outgoing(taken);
+                if taken {
+                    state.end_outgoing(true);
+                } else if let Some((x, y)) = state.outgoing.as_ref().map(|outgoing| outgoing.point)
+                {
+                    // Let go past every window of the app's, taken by none.
+                    state.end_outgoing_with(crate::native_drag::NativeDrag::Left { x, y });
+                }
             }
             wl_data_source::Event::Send { mime_type, fd } => {
                 if let Some((current, text, html)) = &state.source
@@ -1230,18 +1261,36 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
                 else {
                     return;
                 };
-                // The app's own drag back over one of its windows: zgui's,
-                // not taken as a drop. Over the window it came from, its
-                // host hears where.
+                // The app's own drag over one of its windows: zgui's, its
+                // window's destinations hearing where. It is accepted there
+                // (one of its own types, copied), so a release drops it rather
+                // than cancels, and zgui drops it on them.
                 if let Some(outgoing) = &mut state.outgoing {
-                    offer.proxy.accept(serial, None);
+                    let id = surface.id().protocol_id();
+                    outgoing.home = id == outgoing.origin;
+                    outgoing.over = None;
+                    let window = state.routes.lock().unwrap().get(&id).copied();
+                    if outgoing.home || window.is_some() {
+                        offer.proxy.accept(
+                            serial,
+                            outgoing.data.first().map(|(kind, _)| (*kind).into()),
+                        );
+                        if offer.proxy.version() >= 3 {
+                            offer.proxy.set_actions(DndAction::Copy, DndAction::Copy);
+                        }
+                    } else {
+                        offer.proxy.accept(serial, None);
+                    }
                     if let Some(previous) = outgoing.offer.replace(offer.proxy) {
                         previous.destroy();
                     }
-                    outgoing.home = surface.id().protocol_id() == outgoing.origin;
                     if outgoing.home {
                         outgoing.point = (x, y);
                         (outgoing.send)(crate::native_drag::NativeDrag::Moved { x, y });
+                    } else if let Some(window) = window {
+                        // Over another of the app's windows.
+                        outgoing.over = Some((window, (x, y)));
+                        (outgoing.send)(crate::native_drag::NativeDrag::MovedIn { window, x, y });
                     }
                     return;
                 }
@@ -1293,6 +1342,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
                 if outgoing.home {
                     outgoing.point = (x, y);
                     (outgoing.send)(crate::native_drag::NativeDrag::Moved { x, y });
+                } else if let Some((window, point)) = &mut outgoing.over {
+                    *point = (x, y);
+                    let window = *window;
+                    (outgoing.send)(crate::native_drag::NativeDrag::MovedIn { window, x, y });
                 }
             }
             wl_data_device::Event::Drop
@@ -1302,11 +1355,31 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
                     .is_some_and(|outgoing| outgoing.home) =>
             {
                 // Released over its own window: zgui drops it there.
+                state.finish_own_drop();
                 state.end_outgoing(false);
+            }
+            wl_data_device::Event::Drop
+                if state
+                    .outgoing
+                    .as_ref()
+                    .is_some_and(|outgoing| outgoing.over.is_some()) =>
+            {
+                // Released over another of the app's windows: zgui drops it
+                // there.
+                let over = state.outgoing.as_ref().and_then(|outgoing| outgoing.over);
+                state.finish_own_drop();
+                if let Some((window, (x, y))) = over {
+                    state.end_outgoing_with(crate::native_drag::NativeDrag::DroppedIn {
+                        window,
+                        x,
+                        y,
+                    });
+                }
             }
             wl_data_device::Event::Leave if state.outgoing.is_some() => {
                 if let Some(outgoing) = &mut state.outgoing {
                     outgoing.home = false;
+                    outgoing.over = None;
                     if let Some(offer) = outgoing.offer.take() {
                         offer.destroy();
                     }

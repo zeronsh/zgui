@@ -3142,8 +3142,22 @@ impl Host {
     /// Its drag left the app's windows: carrying what other apps take
     /// (`View::drag_export`), it becomes the platform's.
     fn hand_off_drag(&mut self, drag: &zgui::input::DragState) {
-        let (Some(items), Some(window)) = (&drag.export, self.window.clone()) else {
+        let Some(window) = self.window.clone() else {
             return;
+        };
+        // On Wayland a drag carrying nothing to other apps (a tab) is handed
+        // off too, so the app's other windows hear it (`native_drag::begin`):
+        // its windows have no place on screen to find them by.
+        #[cfg(target_os = "linux")]
+        let internal = window
+            .display_handle()
+            .is_ok_and(|handle| matches!(handle.as_raw(), RawDisplayHandle::Wayland(_)));
+        #[cfg(not(target_os = "linux"))]
+        let internal = false;
+        let items: &[zgui::input::DragItem] = match &drag.export {
+            Some(items) => items,
+            None if internal => &[],
+            None => return,
         };
         if self.native_drag.active() {
             return;
@@ -3261,6 +3275,12 @@ impl Host {
         let (x, y, ended) = match event {
             NativeDrag::Moved { x, y } => (x, y, None),
             NativeDrag::Ended { x, y, accepted } => (x, y, Some(accepted)),
+            // Over another of the app's windows: that window's to hear
+            // (`WindowManager::native_drag`).
+            NativeDrag::MovedIn { .. } => return Ok(()),
+            // Dropped in another window (the manager dropped it there), or
+            // let go past every window: the platform's part ends untaken.
+            NativeDrag::DroppedIn { x, y, .. } | NativeDrag::Left { x, y } => (x, y, Some(false)),
         };
         let (left, top) = crate::popup_window::content_origin(&window).unwrap_or((0., 0.));
         let at = ((x - left) as f32, (y - top) as f32);
@@ -4097,9 +4117,14 @@ impl WindowManager {
         event: crate::native_drag::NativeDrag,
     ) -> Result<(), Box<dyn Error>> {
         use crate::native_drag::NativeDrag;
-        let (x, y, ended) = match event {
-            NativeDrag::Moved { x, y } => (x, y, None),
-            NativeDrag::Ended { x, y, accepted } => (x, y, Some(accepted)),
+        // Where the platform says (Wayland: in which of the app's windows),
+        // else at a global point.
+        let (x, y, ended, within) = match event {
+            NativeDrag::Moved { x, y } => (x, y, None, None),
+            NativeDrag::Ended { x, y, accepted } => (x, y, Some(accepted), None),
+            NativeDrag::MovedIn { window, x, y } => (x, y, None, Some(window)),
+            NativeDrag::DroppedIn { window, x, y } => (x, y, Some(false), Some(window)),
+            NativeDrag::Left { x, y } => (x, y, Some(false), None),
         };
         let Some(drag) = self
             .hosts
@@ -4113,7 +4138,23 @@ impl WindowManager {
             }
             return Ok(());
         };
-        let over = self.window_under(x, y).filter(|(over, ..)| *over != token);
+        // Let go past every window, a drag of the app's own is torn off, as
+        // one released past them all without the platform (`drop_elsewhere`).
+        if let NativeDrag::Left { .. } = event
+            && drag.export.is_none()
+            && let Some(source) = self.hosts.get(&token)
+        {
+            let ui = &source.context.ui;
+            ui.input.end_drag_elsewhere(&ui.scene, false, true);
+        }
+        let over = match within {
+            Some(window) => self
+                .hosts
+                .contains_key(&window)
+                .then_some((window, x as f32, y as f32)),
+            None => self.window_under(x, y),
+        }
+        .filter(|(over, ..)| *over != token);
         for (other, host) in &self.hosts {
             if over.is_none_or(|(over, ..)| over != *other) {
                 host.context.ui.input.drag_out(&host.context.ui.scene);
@@ -4151,6 +4192,11 @@ impl WindowManager {
         if dropped {
             let ui = &source.context.ui;
             ui.input.end_drag_elsewhere(&ui.scene, true, false);
+        }
+        // Dropped in another window and not taken there: not taken at all.
+        if ended.is_some() && !dropped && within.is_some() {
+            let ui = &source.context.ui;
+            ui.input.end_drag_elsewhere(&ui.scene, false, false);
         }
         source.native_drag_event(event)
     }

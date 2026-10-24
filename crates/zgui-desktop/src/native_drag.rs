@@ -45,6 +45,31 @@ pub(crate) enum NativeDrag {
         y: f64,
         accepted: bool,
     },
+    /// Over another of the app's windows, at `x`, `y` in its coordinates
+    /// (Wayland, where windows have no place on screen): `window`, its
+    /// host's token.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    MovedIn {
+        window: u64,
+        x: f64,
+        y: f64,
+    },
+    /// Released over another of the app's windows (Wayland): it drops there.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    DroppedIn {
+        window: u64,
+        x: f64,
+        y: f64,
+    },
+    /// Released over none of the app's windows and taken by no app
+    /// (Wayland): a drag of the app's own, carrying nothing to other apps,
+    /// is torn off, as one released past every window; one carrying an
+    /// export ends untaken (`Ended`).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Left {
+        x: f64,
+        y: f64,
+    },
 }
 
 /// A window's drag handed to the platform, as its host keeps it: whether the
@@ -108,6 +133,11 @@ mod x11;
 #[cfg(target_os = "linux")]
 pub(crate) use x11::{active, cancel, end_session, moved, released};
 
+/// The type a drag of the app's own is offered as on Wayland: no other app
+/// takes it.
+#[cfg(target_os = "linux")]
+pub(crate) const INTERNAL: &str = "application/x-zgui-drag";
+
 /// Hand the drag under way in `window` to the platform, carrying `items`:
 /// on X11 an XDND source of zgui's (`x11`), on Wayland the compositor's drag
 /// (`wl_data_device.start_drag`, by the data worker) with `image` as its
@@ -127,9 +157,14 @@ pub(crate) fn begin(
     if !wayland {
         return x11::begin(window, items, image, send);
     }
-    let data = x11::offers(items);
-    !data.is_empty()
-        && crate::wayland_data::start_drag(window.clone(), data, image, point, Box::new(send))
+    // A drag carrying nothing to other apps (a tab) is the compositor's too,
+    // so the app's other windows hear it: offered as a type of zgui's own,
+    // which no other app takes.
+    let mut data = x11::offers(items);
+    if data.is_empty() {
+        data.push((INTERNAL, Vec::new()));
+    }
+    crate::wayland_data::start_drag(window.clone(), data, image, point, Box::new(send))
 }
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]

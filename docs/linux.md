@@ -280,20 +280,27 @@ the window it came from: the data worker, on winit's display, makes a
 starts the drag from the press that began it (`wl_data_device.start_drag`).
 Its icon is the preview drawn once, offscreen, into shared memory, the point
 it was grabbed by under the pointer. The compositor has the pointer then, and
-says where it goes only to the window under it: back over the window it came
-from, the worker hears the drag as that window's data device, refuses it
-there (holding the offer until it leaves: destroyed sooner, wlroots cancels
-the drag), and the window's destinations hear where it is, so a release
-there drops on them. A target taking it finishes it (`dnd_finished`), and the
+says where it goes only to the window under it: over any of the app's
+windows the worker hears the drag as that window's data device (which
+window, from the surfaces it routes file drops by), and the window's
+destinations hear where it is. It accepts the drag there, as one of its own
+types, copied, so a release drops it rather than cancels, and drops it on
+those destinations itself; it holds the offer until the drag leaves
+(destroyed sooner, wlroots cancels the drag) and finishes it on the drop. A
+target of another app taking it finishes it (`dnd_finished`), and the
 source hears it accepted; a drag nothing takes is cancelled. Windows have no
-place on screen on Wayland, so out of the window a drag came from is out of
-the app, and drags between the app's windows stay in theirs. A window's only
+place on screen on Wayland, so a drag leaving its window becomes the
+compositor's even carrying nothing to other apps (a tab), offered only as
+`application/x-zgui-drag`, which no other app takes: that is how it reaches
+the app's other windows, and let go past every window it is torn off, as on
+X11. A window's only
 tab (`drag_moves_window`) has the compositor move its window, as a title
 bar's drag does (`xdg_toplevel.move`): the compositor holds the pointer from
 there until it is let go, so zgui's drag ends as the move begins, and the
 tab cannot merge into another window's strip (where that is, only the
 compositor knows). `wayland_drag_out_smoke.py` drags onto GTK windows of its
-own under sway, and drags a window's only tab.
+own under sway, drags a tab onto the other window's strip and off past every
+window, and drags a window's only tab.
 
 ## Popups on Wayland
 
