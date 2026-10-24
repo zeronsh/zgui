@@ -35,8 +35,14 @@ For a change's cost, compare instruction counts of the headless scenes:
 `python3 scripts/perf/suite.py ab main .` builds both, interleaves the runs
 and marks differences beyond their spread, in about two minutes. Run any
 app or bench with `ZGUI_PROFILE=1` for a per-phase line every 120 frames
-(update, layout, damage, paint, encode, submit, present: instructions and
-time per frame). Off, its phase boundaries cost nothing measurable: an A/B
+(input, script, update, layout, damage, paint, encode, submit, present:
+instructions and time per frame; `zgui::profile::take` gives a bench the
+same split for its own intervals). `apps_bench` (zgui-script) measures the
+example apps' common interactions that way, each to its frame drawn: mail's
+open, search and archive, the dashboard's feed tick, sort and filter,
+Sketch's drag, pan and zoom among 500 shapes, and the code editor's
+keystroke, scroll and find-all keystroke on 100,000 lines; CI's instruction
+gate counts each app as a scene. Off, its phase boundaries cost nothing measurable: an A/B
 of all scenes, five runs each, showed every scene within its spread. Time
 Profiler helpers and their use are in `scripts/perf/README.md`. The
 windowed comparison below stays the evidence for time, GPU and memory.

@@ -53,6 +53,10 @@ SCENES = [
     ('core', 'zgui', 'core_bench', {}, 'slow'),
     ('style', 'zgui', 'style_bench', {}),
     ('widgets', 'zgui', 'widget_bench', {}),
+    ('app-mail', 'zgui-script', 'apps_bench', {'APP': 'mail'}),
+    ('app-dashboard', 'zgui-script', 'apps_bench', {'APP': 'dashboard', 'REPS': '5'}),
+    ('app-sketch', 'zgui-script', 'apps_bench', {'APP': 'sketch'}),
+    ('app-code', 'zgui-script', 'apps_bench', {'APP': 'code'}),
 ]
 
 

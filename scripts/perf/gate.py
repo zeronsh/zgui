@@ -45,6 +45,13 @@ SCENES = [
     ('list-state', 'zgui-script', 'list_state_bench', {}),
     ('style', 'zgui', 'style_bench', {}),
     ('widgets', 'zgui', 'widget_bench', {}),
+    # The example apps' common interactions (`apps_bench`): mail, the
+    # dashboard's 100,000 rows, Sketch's 500 shapes, the code editor's
+    # 100,000 lines.
+    ('app-mail', 'zgui-script', 'apps_bench', {'APP': 'mail', 'REPS': '10', 'RENDER': '0'}),
+    ('app-dashboard', 'zgui-script', 'apps_bench', {'APP': 'dashboard', 'REPS': '2', 'RENDER': '0'}),
+    ('app-sketch', 'zgui-script', 'apps_bench', {'APP': 'sketch', 'REPS': '10', 'RENDER': '0'}),
+    ('app-code', 'zgui-script', 'apps_bench', {'APP': 'code', 'REPS': '5', 'RENDER': '0'}),
 ]
 
 
