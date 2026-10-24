@@ -151,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 app(),
             ));
-            if std::env::var_os("ZGX_SNAPSHOT").is_some() {
+            if zgx::env::var_os("ZGX_SNAPSHOT").is_some() {
                 let semantics = cx.ui.semantics.clone();
                 cx.on_closed(move || {
                     for (_, node) in semantics.borrow().iter() {
@@ -159,7 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
             }
-            if let Ok(seconds) = std::env::var("ZGX_SECONDS")
+            if let Ok(seconds) = zgx::env::var("ZGX_SECONDS")
                 .unwrap_or_default()
                 .parse::<u64>()
             {

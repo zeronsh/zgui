@@ -42,7 +42,7 @@ fn examples() -> Vec<Example> {
         pages.push(Path::new(DOCS).join(page));
     }
     // `ZGX_REFERENCE_PAGE=text.md` runs one page's.
-    if let Some(only) = std::env::var_os("ZGX_REFERENCE_PAGE") {
+    if let Some(only) = zgx::env::var_os("ZGX_REFERENCE_PAGE") {
         pages.retain(|p| p.file_name() == Some(only.as_os_str()));
     }
     let mut out = Vec::new();
@@ -113,7 +113,7 @@ fn write(example: &Example, root: &Path) -> PathBuf {
 #[test]
 fn reference_examples_run_and_type_check() {
     let examples = examples();
-    let one_page = std::env::var_os("ZGX_REFERENCE_PAGE").is_some();
+    let one_page = zgx::env::var_os("ZGX_REFERENCE_PAGE").is_some();
     assert!(
         one_page || examples.len() >= 15,
         "found {} examples",

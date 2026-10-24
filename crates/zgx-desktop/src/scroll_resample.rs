@@ -25,7 +25,7 @@ const WHEEL_RATE: f32 = 30.;
 /// `ZGX_SCROLL_RESAMPLE=0` applies wheel input on arrival instead.
 pub(crate) fn enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("ZGX_SCROLL_RESAMPLE").is_none_or(|v| v != "0"))
+    *ENABLED.get_or_init(|| zgx::env::var_os("ZGX_SCROLL_RESAMPLE").is_none_or(|v| v != "0"))
 }
 
 #[derive(Default)]

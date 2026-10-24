@@ -350,7 +350,7 @@ fn preference_tokens(preferences: SystemPreferences) -> Vec<(TokenId, TokenInput
 /// `LC_MESSAGES` or `LANG`.
 pub(crate) fn locale_direction() -> zgx::scene::Direction {
     use zgx::scene::Direction;
-    match std::env::var("ZGX_DIRECTION").as_deref() {
+    match zgx::env::var("ZGX_DIRECTION").as_deref() {
         Ok("rtl") => return Direction::Rtl,
         Ok("ltr") => return Direction::Ltr,
         _ => {}

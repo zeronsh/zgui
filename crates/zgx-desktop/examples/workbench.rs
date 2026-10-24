@@ -567,7 +567,7 @@ fn build(cx: &mut zgx_desktop::WindowContext) {
         detail_scroll.resize(430.0, (main_height - 40.0).max(100.0));
         modal.resize_to_viewport();
     });
-    if let Ok(seconds) = std::env::var("ZGX_SECONDS")
+    if let Ok(seconds) = zgx::env::var("ZGX_SECONDS")
         .unwrap_or_default()
         .parse::<f64>()
         && seconds > 0.0

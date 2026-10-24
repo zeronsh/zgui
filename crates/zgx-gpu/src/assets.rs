@@ -16,9 +16,7 @@ pub fn decode_image(bytes: &[u8]) -> Result<Arc<ImageData>, GpuError> {
             return Err(GpuError("PNG images need zgx-gpu's `png` feature".into()));
         }
         Some(image::ImageFormat::Jpeg) if !cfg!(feature = "jpeg") => {
-            return Err(GpuError(
-                "JPEG images need zgx-gpu's `jpeg` feature".into(),
-            ));
+            return Err(GpuError("JPEG images need zgx-gpu's `jpeg` feature".into()));
         }
         _ => {}
     }

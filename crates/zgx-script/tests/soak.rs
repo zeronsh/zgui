@@ -202,12 +202,12 @@ struct Sample {
 
 #[test]
 fn an_app_used_for_a_while_holds_what_it_did() {
-    let cycles: usize = std::env::var("ZGX_SOAK_CYCLES")
+    let cycles: usize = zgx::env::var("ZGX_SOAK_CYCLES")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(12);
     // Every so many cycles the script reloads (`ZGX_SOAK_RELOAD`, 0: never).
-    let reload_every: usize = std::env::var("ZGX_SOAK_RELOAD")
+    let reload_every: usize = zgx::env::var("ZGX_SOAK_RELOAD")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(4);

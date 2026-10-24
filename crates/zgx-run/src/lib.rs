@@ -108,8 +108,8 @@ pub struct AppConfig {
     pub application_id: Option<String>,
 }
 impl AppConfig {
-    /// The config for the script at `script`: its directory's `zgx.json`,
-    /// or the defaults (named after the directory).
+    /// The config for the script at `script`: its directory's `zgx.json`
+    /// (or `zgui.json`, deprecated), or the defaults (named after the directory). rename-to-zgx: keep
     pub fn for_script(script: &Path) -> Result<Self, String> {
         let dir = script.parent().unwrap_or(Path::new("."));
         let name = dir
@@ -127,7 +127,13 @@ impl AppConfig {
             app_id: name,
             application_id: None,
         };
-        let path = dir.join("zgx.json");
+        // Or, for one release, the name it had before the rename to zgx.
+        let old = dir.join("zgui.json"); // rename-to-zgx: keep
+        let mut path = dir.join("zgx.json");
+        if !path.exists() && old.exists() {
+            eprintln!("zgx: {} is deprecated; name it zgx.json", old.display());
+            path = old;
+        }
         let Ok(text) = std::fs::read_to_string(&path) else {
             return Ok(config);
         };
@@ -346,10 +352,7 @@ pub fn run_with(path: &Path, args: Vec<String>) -> Result<(), Box<dyn std::error
 /// Open and close `host`'s windows (`ui.window`) as their `open` states
 /// say, and set a state false when its window is closed. The effect it
 /// returns keeps this going.
-pub fn follow_windows(
-    host: &ScriptHost,
-    cx: &zgx_desktop::WindowContext,
-) -> zgx::reactive::Effect {
+pub fn follow_windows(host: &ScriptHost, cx: &zgx_desktop::WindowContext) -> zgx::reactive::Effect {
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
     use zgx_script::Value;
     let factory = cx.windows.clone();
@@ -434,6 +437,20 @@ mod tests {
         .unwrap();
         let config = AppConfig::for_script(&script).unwrap();
         assert_eq!(config.application_id.as_deref(), Some("dev.zgx.code"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_config_under_its_name_from_before_the_rename_still_configures() {
+        let dir = std::env::temp_dir().join(format!("zgx-run-old-config-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("app.luau");
+        std::fs::write(&script, "return ui.text 'x'").unwrap();
+        let old = dir.join("zgui.json"); // rename-to-zgx: keep
+        std::fs::write(&old, r#"{ "title": "Old" }"#).unwrap();
+        assert_eq!(AppConfig::for_script(&script).unwrap().title, "Old");
+        std::fs::write(dir.join("zgx.json"), r#"{ "title": "New" }"#).unwrap();
+        assert_eq!(AppConfig::for_script(&script).unwrap().title, "New");
         std::fs::remove_dir_all(dir).ok();
     }
 

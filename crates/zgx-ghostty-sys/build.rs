@@ -53,7 +53,14 @@ const FRAMEWORKS: &[&str] = &[
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=patches/embedded-macos.patch");
-    for var in ["ZIG", "GHOSTTY_SOURCE_DIR", "ZGX_GHOSTTY_CACHE"] {
+    // (ZGUI_GHOSTTY_CACHE: its name before the rename, read for one release.) rename-to-zgx: keep
+    for var in [
+        "ZIG",
+        "GHOSTTY_SOURCE_DIR",
+        "ZGX_GHOSTTY_CACHE",
+        "ZGX_GHOSTTY_CACHE",
+    ] {
+        // rename-to-zgx: keep
         println!("cargo:rerun-if-env-changed={var}");
     }
     if env::var_os("CARGO_FEATURE_LINK").is_none() {
@@ -125,7 +132,8 @@ fn zig() -> PathBuf {
 }
 
 fn cache_root() -> PathBuf {
-    if let Some(dir) = env::var_os("ZGX_GHOSTTY_CACHE") {
+    let dir = env::var_os("ZGX_GHOSTTY_CACHE").or_else(|| env::var_os("ZGUI_GHOSTTY_CACHE")); // rename-to-zgx: keep
+    if let Some(dir) = dir {
         return dir.into();
     }
     let home = env::var_os("HOME").expect("HOME is set");

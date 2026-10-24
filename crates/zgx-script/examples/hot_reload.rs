@@ -11,7 +11,7 @@ use zgx_script::ScriptHost;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `ZGX_SCRIPT_DIR` runs another app.luau and plugins/ folder.
-    let dir = std::env::var_os("ZGX_SCRIPT_DIR").map_or_else(
+    let dir = zgx::env::var_os("ZGX_SCRIPT_DIR").map_or_else(
         || Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/hot_reload"),
         Into::into,
     );

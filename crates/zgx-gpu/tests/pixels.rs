@@ -452,10 +452,7 @@ fn scene_installs_native_text_geometry() {
     let fonts = std::rc::Rc::new(std::cell::RefCell::new(cosmic_text::FontSystem::new()));
     let mut scene = Scene::new(100., 100.);
     scene.set_text_shaper(
-        move |text: &str,
-              size: f32,
-              width: Option<f32>|
-              -> Box<dyn zgx::text_layout::TextLayout> {
+        move |text: &str, size: f32, width: Option<f32>| -> Box<dyn zgx::text_layout::TextLayout> {
             Box::new(zgx_gpu::text::ShapedText::new(
                 &mut fonts.borrow_mut(),
                 text,

@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tasks = cx.tasks.clone();
         let update = message.clone();
         let owned = guards.clone();
-        let directory = std::env::var_os("ZGX_DIALOG_DIRECTORY").map(std::path::PathBuf::from);
+        let directory = zgx::env::var_os("ZGX_DIALOG_DIRECTORY").map(std::path::PathBuf::from);
         cx.on_menu_action(move |action| {
             let dialogs = dialogs.clone();
             let update = update.clone();
@@ -171,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         if smoke {
             let window = cx.window.clone();
-            let action = std::env::var("ZGX_DIALOG_ACTION")
+            let action = zgx::env::var("ZGX_DIALOG_ACTION")
                 .unwrap_or_else(|_| (if close_save { "save" } else { "open" }).into());
             cx.tasks.spawn(async move {
                 zgx::timer::sleep(std::time::Duration::from_secs(1)).await;

@@ -204,7 +204,7 @@ mod macos {
     /// another number (to measure what each costs).
     fn pool_size() -> usize {
         thread_local! {
-            static SIZE: usize = std::env::var("ZGX_POPUP_POOL")
+            static SIZE: usize = zgx::env::var("ZGX_POPUP_POOL")
                 .ok()
                 .and_then(|size| size.parse().ok())
                 .unwrap_or(3);
@@ -1058,7 +1058,7 @@ mod macos {
     /// `ZGX_POPUP_WINDOWS=0` (inside their window, as elsewhere).
     pub(crate) fn enabled() -> bool {
         thread_local! {
-            static ON: bool = std::env::var_os("ZGX_POPUP_WINDOWS").is_none_or(|v| v != "0");
+            static ON: bool = zgx::env::var_os("ZGX_POPUP_WINDOWS").is_none_or(|v| v != "0");
         }
         ON.with(|on| *on)
     }
@@ -1559,7 +1559,7 @@ mod x11 {
         /// thread of its own until it is home and hidden.
         static SLIDING: RefCell<Vec<(std::thread::JoinHandle<()>, Popup)>> =
             const { RefCell::new(Vec::new()) };
-        static ON: bool = std::env::var_os("ZGX_POPUP_WINDOWS").is_none_or(|v| v != "0");
+        static ON: bool = zgx::env::var_os("ZGX_POPUP_WINDOWS").is_none_or(|v| v != "0");
     }
 
     pub(crate) fn enabled() -> bool {

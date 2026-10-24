@@ -303,7 +303,7 @@ fn expand(source: &str) -> String {
 #[test]
 fn definitions_are_written_out_from_their_source() {
     let expanded = expand(SOURCE);
-    if std::env::var_os("ZGX_BLESS").is_some_and(|v| v != "0") {
+    if zgx::env::var_os("ZGX_BLESS").is_some_and(|v| v != "0") {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/types/zgx.d.luau");
         std::fs::write(path, &expanded).unwrap();
         return;

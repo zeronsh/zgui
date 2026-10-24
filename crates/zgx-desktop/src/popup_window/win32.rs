@@ -92,7 +92,7 @@ const BUTTONS: usize = 0x01 | 0x02 | 0x10 | 0x20 | 0x40;
 /// another number (to measure what each costs).
 fn pool_size() -> usize {
     thread_local! {
-        static SIZE: usize = std::env::var("ZGX_POPUP_POOL")
+        static SIZE: usize = zgx::env::var("ZGX_POPUP_POOL")
             .ok()
             .and_then(|size| size.parse().ok())
             .unwrap_or(3);
@@ -692,7 +692,7 @@ pub(crate) fn warm(context: &GpuContext, scale: f32) {
 /// could be made.
 pub(crate) fn enabled() -> bool {
     thread_local! {
-        static ON: bool = std::env::var_os("ZGX_POPUP_WINDOWS").is_none_or(|v| v != "0");
+        static ON: bool = zgx::env::var_os("ZGX_POPUP_WINDOWS").is_none_or(|v| v != "0");
     }
     ON.with(|on| *on) && !UNSUPPORTED.get()
 }

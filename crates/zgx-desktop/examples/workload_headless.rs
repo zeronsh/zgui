@@ -112,7 +112,7 @@ fn rss_mb() -> f64 {
 }
 
 fn main() {
-    let mode = match std::env::var("ZGX_MODE").as_deref() {
+    let mode = match zgx::env::var("ZGX_MODE").as_deref() {
         Ok("idle") => Mode::Idle,
         Ok("scroll") => Mode::Scroll,
         Ok("both") => Mode::Both,

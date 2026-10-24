@@ -311,11 +311,7 @@ fn display_clamping_reflows_retained_text_but_never_editor_documents() {
                     .text_wrap(true)
                     .child(text_span(text.clone())),
             )
-            .child(
-                zgx::compose::text(text.clone())
-                    .id("plain")
-                    .text_wrap(true),
-            )
+            .child(zgx::compose::text(text.clone()).id("plain").text_wrap(true))
             .child(text_area("Editor", value.clone()).id("editor").h(100.)),
     );
     ui.prepare_frame();

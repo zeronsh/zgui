@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             let window = cx.window.clone();
             cx.tasks.spawn(async move {
-                let ticks = std::env::var("ZGX_SECONDS")
+                let ticks = zgx::env::var("ZGX_SECONDS")
                     .ok()
                     .and_then(|s| s.parse::<usize>().ok())
                     .map_or(40, |s| s * 2);

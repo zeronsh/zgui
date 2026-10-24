@@ -67,3 +67,7 @@ path = "tests/font_default_allocations.rs"
 [[test]]
 name = "semantics_text_allocations"
 path = "tests/semantics_text_allocations.rs"
+
+[[test]]
+name = "env_aliases"
+path = "tests/env_aliases.rs"

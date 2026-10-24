@@ -25,9 +25,19 @@ p.add_argument('results', type=Path, nargs='+')
 p.add_argument('--output', type=Path, default=Path('site/compare'))
 a = p.parse_args()
 
+
+def renamed(rows):
+    """`rows`, zgx's under its name: runs recorded before the rename to zgx
+    name it zgx."""
+    return [{**g, 'framework': 'zgx' if g['framework'] == 'zgui' else g['framework']} for g in rows]  # rename-to-zgx: keep
+
+
 scenes = []
 for directory in a.results:
     summary = json.loads((directory / 'summary.json').read_text())
+    for key in ('groups', 'pacing', 'gpu_trace'):
+        if key in summary:
+            summary[key] = renamed(summary[key])
     audit = json.loads((directory / 'audit.json').read_text())
     assert audit['accepted'], f'{directory} was not accepted; only accepted runs are published'
     groups = [g for g in summary['groups'] if g['framework'] in NAMES]

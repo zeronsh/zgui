@@ -582,10 +582,7 @@ mod tests {
         ]));
         assert_eq!(
             wait(),
-            ApplicationEvent::OpenUrls(vec![
-                "file:///C:/a%20b.txt".into(),
-                "zgx-test:open".into()
-            ])
+            ApplicationEvent::OpenUrls(vec!["file:///C:/a%20b.txt".into(), "zgx-test:open".into()])
         );
         assert!(next(Vec::new()));
         assert_eq!(wait(), ApplicationEvent::Reopen);

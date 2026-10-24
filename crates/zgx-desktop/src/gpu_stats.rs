@@ -10,7 +10,7 @@ pub(crate) struct GpuStatsLog {
 }
 impl GpuStatsLog {
     pub(crate) fn from_env() -> Option<Self> {
-        std::env::var_os("ZGX_GPU_STATS").map(|_| Self {
+        zgx::env::var_os("ZGX_GPU_STATS").map(|_| Self {
             since: Instant::now(),
             frames: 0,
             sum: GpuStats::default(),

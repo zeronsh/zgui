@@ -141,7 +141,7 @@ const CONTENT: Color = Color(120, 220, 140, 210);
 const MARGIN: Color = Color(255, 190, 90, 170);
 
 fn env_on(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
+    crate::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
 }
 
 impl Default for Inspector {

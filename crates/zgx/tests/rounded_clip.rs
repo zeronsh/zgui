@@ -3,11 +3,7 @@
 //! clip (innermost first), radii no larger than half the box.
 use zgx::{compose::prelude::*, decoration::Corners, scene::RoundRect, widgets::Ui};
 
-fn items_rounded(
-    ui: &Ui,
-    id: &str,
-    handle: &zgx::compose::ViewHandle,
-) -> zgx::scene::RoundedClip {
+fn items_rounded(ui: &Ui, id: &str, handle: &zgx::compose::ViewHandle) -> zgx::scene::RoundedClip {
     let node = handle.find(id).expect("mounted");
     let scene = ui.scene.borrow();
     scene

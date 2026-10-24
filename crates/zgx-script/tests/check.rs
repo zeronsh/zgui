@@ -138,7 +138,7 @@ fn every_shipped_example_passes_in_strict_mode() {
 
 #[test]
 fn a_debug_build_watching_checks_after_reloads() {
-    if !installed() || !cfg!(debug_assertions) || std::env::var_os("ZGX_CHECK").is_some() {
+    if !installed() || !cfg!(debug_assertions) || zgx::env::var_os("ZGX_CHECK").is_some() {
         return;
     }
     let dir = scripts(

@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.label(root,"Notes — multiline editing",fixed(800.,24.));
         let notes=ui.signal(String::from("Tab moves focus. Shift+Tab moves back.\nTry selecting Unicode text and composing with your IME.\nUse Ctrl/Cmd+A, C, X, V, Z."));
         ui.text_input(root,"Notes",notes,780.,true);
-        if std::env::var_os("ZGX_SNAPSHOT").is_some(){
+        if zgx::env::var_os("ZGX_SNAPSHOT").is_some(){
             let semantics=ui.semantics.clone();
             let viewport=cx.viewport.clone();
             cx.on_closed(move||{
@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         }
-        if let Ok(seconds)=std::env::var("ZGX_SECONDS").unwrap_or_default().parse::<f64>()
+        if let Ok(seconds)=zgx::env::var("ZGX_SECONDS").unwrap_or_default().parse::<f64>()
             && seconds>0.
         {
             let window=cx.window.clone();

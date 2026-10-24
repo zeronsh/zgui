@@ -60,7 +60,7 @@ unsafe extern "system" {
 
 /// Defines `window.zgx.postMessage(value)`, sending `value` as JSON, and
 /// WebKit's `window.webkit.messageHandlers.zgx` for pages written for it.
-const CHANNEL_SCRIPT: &str = "(() => { const view = window.chrome && window.chrome.webview; if (!view || window.zgx) return; const post = (value) => view.postMessage(JSON.stringify(value === undefined ? null : value)); Object.defineProperty(window, 'zgx', { value: Object.freeze({ postMessage: post }) }); if (!window.webkit) { Object.defineProperty(window, 'webkit', { value: Object.freeze({ messageHandlers: Object.freeze({ zgx: Object.freeze({ postMessage: (value) => typeof value === 'string' ? view.postMessage(value) : post(value) }) }) }) }); } })();";
+const CHANNEL_SCRIPT: &str = "(() => { const view = window.chrome && window.chrome.webview; if (!view || window.zgx) return; const post = (value) => view.postMessage(JSON.stringify(value === undefined ? null : value)); Object.defineProperty(window, 'zgx', { value: Object.freeze({ postMessage: post }) }); if (!window.webkit) { Object.defineProperty(window, 'webkit', { value: Object.freeze({ messageHandlers: Object.freeze({ zgx: Object.freeze({ postMessage: (value) => typeof value === 'string' ? view.postMessage(value) : post(value) }) }) }) }); } Object.defineProperty(window, 'zgui', { value: window.zgx }); })();"; // rename-to-zgx: keep
 
 /// Whether the WebView2 runtime is installed (said once when it is not).
 pub(crate) fn available() -> bool {
@@ -194,10 +194,7 @@ fn with_environment(
     let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(
         move |result, environment| {
             if let Err(error) = &result {
-                eprintln!(
-                    "zgx: WebView2 environment unavailable: {}",
-                    error.message()
-                );
+                eprintln!("zgx: WebView2 environment unavailable: {}", error.message());
             }
             let environment = environment.filter(|_| result.is_ok());
             let waiting = ENVIRONMENTS.with(|environments| {

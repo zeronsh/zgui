@@ -126,6 +126,18 @@ fn themes_extend_and_fall_back_to_their_type() {
 }
 
 #[test]
+fn the_built_in_themes_answer_to_their_names_from_before_the_rename() {
+    let runtime = Runtime::new();
+    let themes = Themes::of(&runtime);
+    themes.set("zgui-light").unwrap(); // rename-to-zgx: keep
+    assert_eq!(themes.current().as_ref(), LIGHT);
+    themes.register(Theme::new("test-old-base", ThemeKind::Dark).extending("zgui-dark")); // rename-to-zgx: keep
+    themes.set("test-old-base").unwrap();
+    assert_eq!(themes.color(tok::BACKGROUND), Color(16, 20, 28, 255));
+    assert!(themes.theme("zgui-dark").is_some()); // rename-to-zgx: keep
+}
+
+#[test]
 fn app_tokens_default_to_standard_tokens_and_themes_may_set_them() {
     let mut ui = Ui::new(200., 200.);
     let card = token("test.app.card");

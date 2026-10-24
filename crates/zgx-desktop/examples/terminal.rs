@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // source tree's, reloaded as it is edited.
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/terminal/app.luau");
     let from_source = !cfg!(feature = "terminal-bundle")
-        || std::env::var("ZGX_SCRIPTS").as_deref() == Ok("source");
+        || zgx::env::var("ZGX_SCRIPTS").as_deref() == Ok("source");
     let mut application = Application::new();
     // Geist, the interface's typeface (`font.sans` in terminal/glass.json).
     for bytes in [

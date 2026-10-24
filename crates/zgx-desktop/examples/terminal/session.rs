@@ -54,7 +54,7 @@ const IDLE_EXIT: Duration = Duration::from_secs(30);
 /// Where the app keeps its state (`ZGX_TERMINAL_DIR` to keep another, as
 /// a second instance or a test does).
 pub fn dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("ZGX_TERMINAL_DIR") {
+    if let Some(dir) = zgx::env::var_os("ZGX_TERMINAL_DIR") {
         return PathBuf::from(dir);
     }
     let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);

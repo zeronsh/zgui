@@ -1389,7 +1389,7 @@ impl Host {
             input_arrived: false,
             present_ready: false,
             gpu_stats: crate::gpu_stats::GpuStatsLog::from_env(),
-            damage_check: std::env::var_os("ZGX_DAMAGE_CHECK").map(|_| 0),
+            damage_check: zgx::env::var_os("ZGX_DAMAGE_CHECK").map(|_| 0),
             frames,
             #[cfg(any(target_os = "macos", windows))]
             display_link: None,
@@ -3336,10 +3336,7 @@ impl Host {
     /// preview shows in its window (Wayland). Premultiplied BGRA at the
     /// window's scale, with the pointer's place in it.
     #[cfg(target_os = "linux")]
-    fn drawn_preview(
-        &self,
-        drag: &zgx::input::DragState,
-    ) -> Option<crate::native_drag::DragImage> {
+    fn drawn_preview(&self, drag: &zgx::input::DragState) -> Option<crate::native_drag::DragImage> {
         let root = drag.preview?;
         let context = self.renderer.as_ref()?.context();
         let scene = self.context.ui.scene.borrow();

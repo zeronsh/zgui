@@ -24,6 +24,7 @@ pub mod components;
 pub mod local_time;
 pub mod timer;
 
+pub mod env;
 pub mod frame;
 pub mod profile;
 

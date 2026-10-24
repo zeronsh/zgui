@@ -375,9 +375,7 @@ impl Popups {
                 {
                     limited.retain(|(limited, _)| limited != root);
                     limited.push((*root, (width, height)));
-                    zgx_gpu::present_log::log(|| {
-                        format!("popup cut {root:?} to {width}x{height}")
-                    });
+                    zgx_gpu::present_log::log(|| format!("popup cut {root:?} to {width}x{height}"));
                     (send)(PopupInput::Limit {
                         root: *root,
                         size: Some((width as f32, height as f32)),

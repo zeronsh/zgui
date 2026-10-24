@@ -14,9 +14,14 @@ pub enum Mode {
     Scroll,
     Both,
 }
+/// `std::env::var(key)`, or for one release the name the variable had before
+/// the rename to zgx.
+fn var(key: &str) -> Result<String, std::env::VarError> {
+    std::env::var(key).or_else(|_| std::env::var(key.replace("ZGX_", "ZGUI_"))) // rename-to-zgx: keep
+}
 impl Mode {
     pub fn from_env() -> Self {
-        match std::env::var("ZGX_MODE").as_deref() {
+        match var("ZGX_MODE").as_deref() {
             Ok("idle") => Self::Idle,
             Ok("stream") => Self::Stream,
             Ok("scroll") => Self::Scroll,
@@ -43,13 +48,13 @@ impl Workload {
             scroll_offset: 0.,
             frames: 0,
             mode: Mode::from_env(),
-            seconds: std::env::var("ZGX_SECONDS")
+            seconds: var("ZGX_SECONDS")
                 .ok()
                 .and_then(|v| v.parse::<f64>().ok())
                 .filter(|v| v.is_finite() && *v >= 0.)
                 .unwrap_or(30.),
         };
-        let initial_ticks = std::env::var("ZGX_INITIAL_TICKS")
+        let initial_ticks = var("ZGX_INITIAL_TICKS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(0)
@@ -329,7 +334,7 @@ pub mod heavy {
         /// (`scripts/windowserver_pair.py`); otherwise always.
         pub fn turn() -> bool {
             static PARITY: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
-            let parity = PARITY.get_or_init(|| match std::env::var("ZGX_PARITY").as_deref() {
+            let parity = PARITY.get_or_init(|| match super::var("ZGX_PARITY").as_deref() {
                 Ok("even") => Some(0),
                 Ok("odd") => Some(1),
                 _ => None,

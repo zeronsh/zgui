@@ -50,7 +50,7 @@
     "gpui": "0.2.2",
     "quickgui": "811d6e2816d5229711f59683c4c9dfbb6fc74133"
   },
-  "csv_sha256": "6954496ca94afb281e3ef3df2a1722b7171b01a9d0fcf81814726235b8b6bcb8",
+  "csv_sha256": "1e2733850878fe68a130ddd6f2257eb427731e2365aec10812331dbbcbef77a5",
   "source_csv_sha256": "7d01e5465cc0793ccf43f04c9116bcdb42349b2994a454ff53412ea7713c8edc",
   "binaries": {
     "zgx": {

@@ -4,6 +4,15 @@ zgx is 0.1 and used from git; this lists what changed for apps, newest first.
 
 ## Unreleased (October 2026)
 
+<!-- rename-to-zgx: off (the old names, on purpose) -->
+### Renamed: zgui is zgx
+
+**Every crate, binary and name is zgx's:** `zgui` is `zgx`, `zgui-desktop` `zgx-desktop`, and so on for `-gpu`, `-script`, `-components`, `-run` (the crate and its binary) and `-ghostty-sys`. The `zgui` command (`lint`, `check`, …) is `zgx`, Luau's types are `zgx.d.luau`, the built-in themes `zgx-dark` and `zgx-light`, and the environment variables `ZGX_*`. The repository is github.com/zeronsh/zgx (the old address redirects).
+- *Migrate:* depend on `zgx`, `zgx-desktop`, … (`zgx = { git = "https://github.com/zeronsh/zgx" }`) and write `zgx::` for `zgui::`; run `zgx lint` and `zgx check`; point luau-lsp at `crates/zgx-script/types/zgx.d.luau`; rename a script's `zgui.json` to `zgx.json` and `ZGUI_*` variables to `ZGX_*`. `scripts/rename-to-zgx.sh` does all of this to a checkout of zgx or a branch begun before the rename.
+- *Still read for this release:* each `ZGUI_*` variable where its `ZGX_*` one is unset, and a `zgui.json` where there is no `zgx.json` (each with a warning, once); the theme names `zgui-dark` and `zgui-light`; a page's `window.zgui`.
+- *Not carried over:* the window frames zgx keeps for an app (Linux and Windows) are kept under zgx's name now, so windows open at their default size once; the Ghostty build cache (`~/Library/Caches/zgx-ghostty`) builds once more.
+<!-- rename-to-zgx: on -->
+
 ### Changed defaults: what to check in an existing app
 
 **Children stretch across their container**, as in CSS's flexbox (`align-items: stretch`). A `column`'s children are as wide as it, a `row`'s as tall, unless they size themselves on that axis. `div` and zgx-script's `ui.column`, `ui.row` and `ui.div` do the same.

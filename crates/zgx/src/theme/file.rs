@@ -170,7 +170,8 @@ impl Theme {
     }
     /// Start from `base` and override only what this theme sets.
     pub fn extending(mut self, base: impl Into<String>) -> Self {
-        self.extends = Some(base.into());
+        let base = base.into();
+        self.extends = Some(super::scope::renamed(&base).into());
         self
     }
     /// Set `token`; a later value for the same token replaces it.
@@ -240,7 +241,7 @@ impl Theme {
         let mut theme = Theme::new(name, kind);
         match root.get("extends") {
             None | Some(Json::Null) => {}
-            Some(Json::String(base)) => theme.extends = Some(base.clone()),
+            Some(Json::String(base)) => theme.extends = Some(super::scope::renamed(base).into()),
             Some(_) => return Err(ThemeError("`extends` must be a theme's name".into())),
         }
         match root.get("tokens") {
@@ -411,7 +412,8 @@ impl ThemeOverride {
     }
     /// Use the theme `name` in the subtree.
     pub fn theme(mut self, name: impl Into<String>) -> Self {
-        self.theme = Some(name.into());
+        let name = name.into();
+        self.theme = Some(super::scope::renamed(&name).into());
         self
     }
     /// Give `token` this value in the subtree. Tokens derived from it (a

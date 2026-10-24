@@ -45,7 +45,7 @@ impl DesignLint {
     }
     /// `ZGX_DESIGN_LINT=off|warn|error`, which overrides the app's choice.
     pub(crate) fn from_env() -> Option<Self> {
-        let value = std::env::var("ZGX_DESIGN_LINT").ok()?;
+        let value = zgx::env::var("ZGX_DESIGN_LINT").ok()?;
         Self::parse(value.trim()).or_else(|| {
             eprintln!("warning: ZGX_DESIGN_LINT is off, warn or error, not `{value}`");
             None

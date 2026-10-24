@@ -760,7 +760,7 @@ mod edit_keys {
         let block = block2::RcBlock::new(|event: NonNull<NSEvent>| -> *mut NSEvent {
             // SAFETY: AppKit passes a valid event for the handler's duration.
             let key = unsafe { event.as_ref() };
-            if std::env::var_os("ZGX_TRACE_KEYS").is_some()
+            if zgx::env::var_os("ZGX_TRACE_KEYS").is_some()
                 && key.modifierFlags().contains(NSEventModifierFlags::Command)
             {
                 trace(key);

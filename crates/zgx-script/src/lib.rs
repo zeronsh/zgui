@@ -871,7 +871,7 @@ impl Notify {
 fn diagnostics_requested() -> bool {
     ["ZGX_INSPECT", "ZGX_LAYOUT_WARNINGS"]
         .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0"))
+        .any(|name| zgx::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0"))
 }
 
 /// Loads an application script and its plugins and mounts what they describe.
@@ -962,7 +962,7 @@ impl ScriptHost {
             inspect: Cell::new(false),
             relocate: Rc::default(),
             check: Cell::new(
-                std::env::var_os("ZGX_CHECK")
+                zgx::env::var_os("ZGX_CHECK")
                     .filter(|v| !v.is_empty())
                     .map(|v| v != "0"),
             ),
@@ -986,15 +986,13 @@ impl ScriptHost {
             .configure(|inner| inner.files = Files::Bundle(bundle));
         host.0.assets.set_files(Files::Bundle(bundle));
         // Theme files from the bundle; other hosts' still from the disk.
-        zgx::theme::Themes::of(runtime).set_reader(Some(Rc::new(
-            move |path: &std::path::Path| {
-                if path.starts_with(&root) {
-                    Files::Bundle(bundle).read_to_string(path)
-                } else {
-                    std::fs::read_to_string(path)
-                }
-            },
-        )));
+        zgx::theme::Themes::of(runtime).set_reader(Some(Rc::new(move |path: &std::path::Path| {
+            if path.starts_with(&root) {
+                Files::Bundle(bundle).read_to_string(path)
+            } else {
+                std::fs::read_to_string(path)
+            }
+        })));
         host
     }
     /// Whether a script error shows over the interface, with where it
@@ -1406,7 +1404,7 @@ impl ScriptHost {
     fn lint_loaded(&self) {
         if !cfg!(debug_assertions)
             || matches!(self.0.files, Files::Bundle(_))
-            || std::env::var_os("ZGX_LINT").is_some_and(|v| v == "0")
+            || zgx::env::var_os("ZGX_LINT").is_some_and(|v| v == "0")
         {
             return;
         }

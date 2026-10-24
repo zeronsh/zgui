@@ -29,6 +29,16 @@ pub const DARK: &str = "zgx-dark";
 /// The name of the built-in light theme.
 pub const LIGHT: &str = "zgx-light";
 
+/// `name`, or the built-in theme's that had it before the rename to zgx (for
+/// one release).
+pub(crate) fn renamed(name: &str) -> &str {
+    match name {
+        "zgui-dark" => DARK,   // rename-to-zgx: keep
+        "zgui-light" => LIGHT, // rename-to-zgx: keep
+        _ => name,
+    }
+}
+
 /// The built-in themes, parsed once per process.
 fn builtins() -> &'static [Arc<Theme>; 2] {
     static BUILTINS: OnceLock<[Arc<Theme>; 2]> = OnceLock::new();
@@ -657,6 +667,7 @@ impl Themes {
     }
     /// The theme named `name`, if registered.
     pub fn theme(&self, name: &str) -> Option<Arc<Theme>> {
+        let name = renamed(name);
         self.shared.state.borrow().themes.get(name).cloned()
     }
     /// Every registered theme's name, built-ins first.
@@ -665,6 +676,7 @@ impl Themes {
     }
     /// Apply the theme `name`. This also stops following the system.
     pub fn set(&self, name: &str) -> Result<(), ThemeError> {
+        let name = renamed(name);
         {
             let mut state = self.shared.state.borrow_mut();
             if !state.themes.contains_key(name) {
@@ -683,6 +695,7 @@ impl Themes {
     /// Apply `name` unless the app has chosen a theme (`set`) or follows the
     /// system: a default that a reload does not undo.
     pub fn set_default(&self, name: &str) -> Result<(), ThemeError> {
+        let name = renamed(name);
         {
             let mut state = self.shared.state.borrow_mut();
             if !state.themes.contains_key(name) {
@@ -709,7 +722,7 @@ impl Themes {
     pub fn follow_system(&self, pair: Option<(&str, &str)>) {
         {
             let mut state = self.shared.state.borrow_mut();
-            state.follow = pair.map(|(d, l)| (d.to_owned(), l.to_owned()));
+            state.follow = pair.map(|(d, l)| (renamed(d).to_owned(), renamed(l).to_owned()));
         }
         self.apply_appearance();
     }

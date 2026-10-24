@@ -10,6 +10,16 @@ p.add_argument('--output', type=Path, default=Path('site/macos'))
 a = p.parse_args()
 r = a.results
 audit = json.loads((r / 'audit.json').read_text())
+
+
+def renamed(f):
+    """Runs recorded before the rename to zgx name it zgx."""
+    return 'zgx' if f == 'zgui' else f  # rename-to-zgx: keep
+
+
+if 'frameworks' in audit['protocol']:
+    audit['protocol']['frameworks'] = [renamed(f) for f in audit['protocol']['frameworks']]
+audit['binaries'] = {renamed(f): b for f, b in audit.get('binaries', {}).items()}
 scene = audit.get('scene', 'lab')
 assert scene in ('lab', 'heavy')
 # Newer runs add GPUI Fast (shown on the compare page) and the desktop
@@ -23,8 +33,10 @@ assert not audit['protocol'].get('quick'), 'quick runs are for iterating, not pu
 # Runs since October 2026 measure idle once.
 repeats = {m: audit['protocol'].get('idle_repeats', 3) if m == 'idle' else 3 for m in modes}
 summary = json.loads((r / 'summary.json').read_text())
+summary['groups'] = [{**g, 'framework': renamed(g['framework'])} for g in summary['groups']]
 summary['groups'] = [g for g in summary['groups'] if g['framework'] in frameworks]
-trials = [t for t in csv.DictReader((r / 'current.csv').open()) if t['framework'] in frameworks]
+trials = [{**t, 'framework': renamed(t['framework'])} for t in csv.DictReader((r / 'current.csv').open())]
+trials = [t for t in trials if t['framework'] in frameworks]
 assert audit['accepted'], 'only accepted runs are published'
 assert len(trials) == len(frameworks) * sum(repeats.values()) <= audit['trials']
 assert len(summary['groups']) == len(frameworks) * 4

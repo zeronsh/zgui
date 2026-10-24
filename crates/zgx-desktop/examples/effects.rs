@@ -13,7 +13,7 @@ use zgx_desktop::{Application, WindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let smoke = std::env::args().any(|arg| arg == "--smoke-test");
-    let seconds = std::env::var("ZGX_SECONDS")
+    let seconds = zgx::env::var("ZGX_SECONDS")
         .ok()
         .and_then(|value| value.parse::<f64>().ok())
         .filter(|value| value.is_finite() && *value > 0.)

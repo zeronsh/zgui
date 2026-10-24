@@ -191,8 +191,7 @@ fn decorated(view: View, node: &Rc<Node>, vm: &Rc<Vm>, low: &Rc<Lowering>) -> Vi
 /// script's node or text in the theme's look.
 fn tooltip(anchor: View, tip: &crate::node::Tooltip, low: &Rc<Lowering>) -> View {
     use crate::node::TooltipContent;
-    let mut core: zgx::compose::Tooltip = match tip.content.as_ref().expect("a tooltip's content")
-    {
+    let mut core: zgx::compose::Tooltip = match tip.content.as_ref().expect("a tooltip's content") {
         TooltipContent::Node(node) => lower(node, low).into(),
         TooltipContent::Text(text) => text.clone().into(),
     };
@@ -3225,8 +3224,7 @@ fn code_editor(
 ) -> View {
     // A colour as scripts write them (`"#ff8800"`, `"$accent"`), each
     // distinct one parsed once.
-    let colors: Rc<std::cell::RefCell<HashMap<Rc<str>, Option<zgx::scene::Color>>>> =
-        Rc::default();
+    let colors: Rc<std::cell::RefCell<HashMap<Rc<str>, Option<zgx::scene::Color>>>> = Rc::default();
     let color_of = {
         let theme = theme.clone();
         move |text: &mlua::LuaString| -> Option<zgx::scene::Color> {

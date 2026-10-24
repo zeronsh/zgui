@@ -509,13 +509,7 @@ impl Raster {
             }
         }
     }
-    fn image(
-        &mut self,
-        bounds: Rect,
-        clip: Rect,
-        image: &zgx::image::ImageData,
-        effects: Effects,
-    ) {
+    fn image(&mut self, bounds: Rect, clip: Rect, image: &zgx::image::ImageData, effects: Effects) {
         let transform = image.paint_transform(bounds);
         let Some(inverse) = transform.inverse() else {
             return;
@@ -1381,8 +1375,7 @@ mod tests {
             red,
             Some(zgx::scene::ImageMask {
                 image: std::sync::Arc::new(
-                    zgx::image::ImageData::new(2, 1, vec![255, 255, 255, 255, 0, 0, 0, 0])
-                        .unwrap(),
+                    zgx::image::ImageData::new(2, 1, vec![255, 255, 255, 255, 0, 0, 0, 0]).unwrap(),
                 ),
                 offset: (0., 0.),
                 size: (30., 30.),

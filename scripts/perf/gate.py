@@ -56,9 +56,23 @@ SCENES = [
 ]
 
 
+def package_in(checkout, package):
+    """`package` as `checkout` names it: a base from before the rename to zgx
+    has the crates under their old names."""
+    old = package.replace('zgx', 'zgui')  # rename-to-zgx: keep
+    renamed = not (checkout / 'crates' / package).exists() and (checkout / 'crates' / old).exists()
+    return old if renamed else package
+
+
+def renamed_env(env):
+    """`env`, and each `ZGX_` variable under its old name too: a base from
+    before the rename reads those."""
+    return {**env, **{'ZGUI_' + k[4:]: v for k, v in env.items() if k.startswith('ZGX_')}}  # rename-to-zgx: keep
+
+
 def has_example(checkout, package, example):
     """Whether `checkout` has the example (a scene new since the base has not)."""
-    crate = checkout / 'crates' / package
+    crate = checkout / 'crates' / package_in(checkout, package)
     manifest = (crate / 'Cargo.toml').read_text() if (crate / 'Cargo.toml').exists() else ''
     return (crate / 'examples' / f'{example}.rs').exists() or f'name = "{example}"' in manifest
 
@@ -67,14 +81,15 @@ def runs_scene(checkout, env):
     """Whether `checkout`'s binary runs the scene `env` asks for: the app
     scenes (`APP`) are `support/apps.rs`'s, which an older base lacks (its
     binary would count its own bench under their name)."""
-    return 'APP' not in env or (checkout / 'crates/zgx-script/examples/support/apps.rs').exists()
+    apps = checkout / 'crates' / package_in(checkout, 'zgx-script') / 'examples/support/apps.rs'
+    return 'APP' not in env or apps.exists()
 
 
 def build(checkout, target, into):
     scenes = [s for s in SCENES if has_example(checkout, s[1], s[2])]
     command = ['cargo', 'build', '--release', '--locked', '--quiet']
     for package in dict.fromkeys(s[1] for s in scenes):
-        command += ['-p', package]
+        command += ['-p', package_in(checkout, package)]
         for example in dict.fromkeys(s[2] for s in scenes if s[1] == package):
             command += ['--example', example]
     env = dict(os.environ, CARGO_TARGET_DIR=str(target), CARGO_INCREMENTAL='0',
@@ -98,7 +113,7 @@ def count(binary, env):
     result."""
     result = subprocess.run(
         ['valgrind', '--tool=cachegrind', '--cache-sim=no', '--cachegrind-out-file=/dev/null', str(binary)],
-        env=dict(os.environ, ZGX_GATE='1', **env), capture_output=True, text=True)
+        env=dict(os.environ, **renamed_env({'ZGX_GATE': '1', **env})), capture_output=True, text=True)
     found = re.search(r'I\s+refs:\s+([\d,]+)', result.stderr)
     if result.returncode or not found:
         why = 'a script hit its time budget' if 'time budget' in result.stdout + result.stderr else 'it failed'

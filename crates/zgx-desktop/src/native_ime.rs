@@ -38,10 +38,7 @@ pub(crate) fn discard_native_composition(window: &winit::window::Window) {
 }
 
 /// Native composition permission follows editability, not logical focus.
-pub(crate) fn editable_editor(
-    ui: &Ui,
-    native_focused: bool,
-) -> Option<zgx::widgets::EditorHandle> {
+pub(crate) fn editable_editor(ui: &Ui, native_focused: bool) -> Option<zgx::widgets::EditorHandle> {
     native_focused
         .then(|| ui.focused_editor())
         .flatten()

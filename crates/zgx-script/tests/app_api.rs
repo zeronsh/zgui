@@ -441,9 +441,8 @@ fn host_functions_answer_now() {
 
 #[test]
 fn host_images_show_and_follow_replacement() {
-    let image = |shade: u8| {
-        std::sync::Arc::new(zgx::image::ImageData::new(2, 2, vec![shade; 16]).unwrap())
-    };
+    let image =
+        |shade: u8| std::sync::Arc::new(zgx::image::ImageData::new(2, 2, vec![shade; 16]).unwrap());
     let mut h = Harness::inline(
         r##"return ui.column { ui.image { id = "i", src = "host:art", w = 10, h = 10 } }"##,
     );

@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             titlebar: Titlebar::Inset,
             glass: Some(Glass::default()),
             // ZGX_MAX_FPS=<hz> caps the window's frame rate from the start.
-            max_frame_rate: std::env::var("ZGX_MAX_FPS")
+            max_frame_rate: zgx::env::var("ZGX_MAX_FPS")
                 .ok()
                 .and_then(|v| v.parse().ok()),
             ..Default::default()
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 start: Instant::now(),
             };
             // ZGX_SECTION=<index> opens a section directly.
-            let first = std::env::var("ZGX_SECTION")
+            let first = zgx::env::var("ZGX_SECTION")
                 .ok()
                 .and_then(|s| s.parse().ok());
             let section = cx
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let page = cx.ui.signal(0_f32);
             // ZGX_SCROLL=<points> scrolls the page once laid out, e.g. to put
             // Motion's reveal on screen for profiling.
-            if let Some(offset) = std::env::var("ZGX_SCROLL")
+            if let Some(offset) = zgx::env::var("ZGX_SCROLL")
                 .ok()
                 .and_then(|v| v.parse().ok())
             {
@@ -125,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // ZGX_SCROLL_SPEED=<points per second> scrolls the page up and
             // down continuously, like a long trackpad fling, for profiling.
-            if let Some(speed) = std::env::var("ZGX_SCROLL_SPEED")
+            if let Some(speed) = zgx::env::var("ZGX_SCROLL_SPEED")
                 .ok()
                 .and_then(|v| v.parse::<f32>().ok())
             {
@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // ZGX_CYCLE_MS=<ms> steps through every section on a timer: a
             // soak test for mounting and unmounting whole pages.
-            if let Some(ms) = std::env::var("ZGX_CYCLE_MS")
+            if let Some(ms) = zgx::env::var("ZGX_CYCLE_MS")
                 .ok()
                 .and_then(|v| v.parse().ok())
             {
@@ -159,7 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // ZGX_TOUR=<section>:<seconds>,... visits sections in order once,
             // printing TOUR lines, e.g. "6:10,0:20" for a Motion round trip.
-            if let Ok(tour) = std::env::var("ZGX_TOUR") {
+            if let Ok(tour) = zgx::env::var("ZGX_TOUR") {
                 let steps: Vec<(usize, f64)> = tour
                     .split(',')
                     .filter_map(|step| {
@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             // ZGX_RESIZE_MS=<ms> resizes the window on a timer, like dragging
             // its edge: a soak test for per-size caches and textures.
-            if let Some(ms) = std::env::var("ZGX_RESIZE_MS")
+            if let Some(ms) = zgx::env::var("ZGX_RESIZE_MS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
             {
@@ -988,7 +988,7 @@ fn motion_section(cx: &mut Context, window: &zgx_desktop::WindowHandle) -> View 
     };
     let replayed = cx.state(0_f32);
     // Profiling aid: ZGX_REPLAY_MS=<ms> replays the reveal on a timer, like spamming Replay.
-    if let Some(ms) = std::env::var("ZGX_REPLAY_MS")
+    if let Some(ms) = zgx::env::var("ZGX_REPLAY_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
     {

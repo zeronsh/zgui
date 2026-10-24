@@ -4,7 +4,7 @@
 //! measured, not stopped. Only the benches read it; apps never do.
 pub fn limits() -> zgx_script::Limits {
     let limits = zgx_script::Limits::default();
-    if std::env::var_os("ZGX_GATE").is_none() {
+    if zgx::env::var_os("ZGX_GATE").is_none() {
         return limits;
     }
     zgx_script::Limits {

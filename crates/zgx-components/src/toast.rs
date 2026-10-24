@@ -231,12 +231,7 @@ pub fn toast_host() -> View {
 }
 
 /// One toast: its colour, title and body, its action, its ×.
-fn toast_view(
-    id: u64,
-    toast: Toast,
-    toaster: Rc<Toaster>,
-    cx: &mut zgx::compose::Context,
-) -> View {
+fn toast_view(id: u64, toast: Toast, toaster: Rc<Toaster>, cx: &mut zgx::compose::Context) -> View {
     let hovered = Rc::new(Cell::new(false));
     // Its time: dismissed once it has passed with the pointer elsewhere (a
     // task of the toast's own, ending as it goes). Without a task runner,

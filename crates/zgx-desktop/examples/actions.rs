@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let dropped = status.clone();
             let editor = value.clone();
             window.render(component(move |cx| {
-                if std::env::var_os("ZGX_ACTION_TRACE").is_some() {
+                if zgx::env::var_os("ZGX_ACTION_TRACE").is_some() {
                     let observed = value.clone();
                     let trace = cx
                         .runtime()
@@ -61,14 +61,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .keymap(map)
                     .on_action(move |_: &Save, cx| {
                         saved.set(format!("Saved: {}", editor.get()));
-                        if std::env::var_os("ZGX_ACTION_TRACE").is_some() {
+                        if zgx::env::var_os("ZGX_ACTION_TRACE").is_some() {
                             println!("ACTION_SAVE {:?}", editor.get());
                         }
                         cx.prevent_default();
                         cx.stop_propagation();
                     })
                     .on_event(move |cx| {
-                        if std::env::var_os("ZGX_ACTION_EVENTS").is_some()
+                        if zgx::env::var_os("ZGX_ACTION_EVENTS").is_some()
                             && cx.phase == EventPhase::Capture
                         {
                             eprintln!("ACTION_EVENT {:?}", cx.event);

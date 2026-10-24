@@ -7,7 +7,7 @@ use zgx::compose::prelude::*;
 use zgx_desktop::{Application, WindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let animate = std::env::var_os("ZGX_ANIMATE").is_some_and(|v| v != "0");
+    let animate = zgx::env::var_os("ZGX_ANIMATE").is_some_and(|v| v != "0");
     Application::new()
         .window(WindowOptions {
             title: "zgx input latency".into(),

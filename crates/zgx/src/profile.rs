@@ -109,7 +109,7 @@ pub fn enabled() -> bool {
 
 #[cold]
 fn read_state() -> bool {
-    let on = std::env::var_os("ZGX_PROFILE").is_some_and(|value| value != "0");
+    let on = crate::env::var_os("ZGX_PROFILE").is_some_and(|value| value != "0");
     STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
     on
 }

@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let _ = host.reload();
-        if std::env::var_os("ZGX_HOT_RELOAD").is_some() {
+        if zgx::env::var_os("ZGX_HOT_RELOAD").is_some() {
             cx.tasks.spawn(host.watch(Duration::from_millis(250)));
         }
         cx.render(host.view());

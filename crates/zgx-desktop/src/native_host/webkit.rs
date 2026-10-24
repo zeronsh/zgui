@@ -86,7 +86,7 @@ fn history(
 /// The page-side name of the app's message channel.
 const CHANNEL: &str = "zgx";
 /// Defines `window.zgx.postMessage(value)`, sending `value` as JSON.
-const CHANNEL_SCRIPT: &str = "(() => { const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zgx; if (!handler || window.zgx) return; Object.defineProperty(window, 'zgx', { value: Object.freeze({ postMessage(value) { handler.postMessage(JSON.stringify(value === undefined ? null : value)); } }) }); })();";
+const CHANNEL_SCRIPT: &str = "(() => { const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zgx; if (!handler || window.zgx) return; Object.defineProperty(window, 'zgx', { value: Object.freeze({ postMessage(value) { handler.postMessage(JSON.stringify(value === undefined ? null : value)); } }) }); Object.defineProperty(window, 'zgui', { value: window.zgx }); })();"; // rename-to-zgx: keep
 
 pub(crate) struct ObserverState {
     web: WeakWebView,

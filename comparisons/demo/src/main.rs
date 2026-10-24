@@ -144,7 +144,7 @@ impl Demo {
         viewport.clip = true;
         let list_root = scene.append(canvas, NodeKind::Container(Layout::Overlay), viewport);
         scene.set_transform(list_root, Transform { x: 20., y: 290. });
-        if std::env::var_os("ZGX_EFFECTS").is_some() {
+        if zgx::env::var_os("ZGX_EFFECTS").is_some() {
             let glass = place(
                 &mut scene,
                 canvas,
@@ -416,7 +416,7 @@ impl Demo {
     }
     fn report(&self) {
         if self.window.is_some()
-            && let Some(path) = std::env::var_os("ZGX_SCREENSHOT")
+            && let Some(path) = zgx::env::var_os("ZGX_SCREENSHOT")
         {
             if let Some(gpu) = &self.gpu {
                 use std::io::Write;
@@ -480,7 +480,7 @@ impl ApplicationHandler for Demo {
         let physical = window.inner_size();
         self.physical_size = (physical.width.max(1), physical.height.max(1));
         self.scale_factor = window.scale_factor() as f32;
-        if std::env::var("ZGX_RENDERER").is_ok_and(|renderer| renderer == "software") {
+        if zgx::env::var("ZGX_RENDERER").is_ok_and(|renderer| renderer == "software") {
             let context = Context::new(window.clone()).expect("display context");
             let mut surface = Surface::new(&context, window.clone()).expect("surface");
             surface
@@ -603,7 +603,7 @@ fn main() {
     let mut app = Demo::new();
     if std::env::args().any(|arg| arg == "--headless") {
         app.draw(true);
-        let ticks = std::env::var("ZGX_TICKS")
+        let ticks = zgx::env::var("ZGX_TICKS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(600);
@@ -613,7 +613,7 @@ fn main() {
             }
             app.draw(false);
         }
-        if let Some(path) = std::env::var_os("ZGX_SCREENSHOT") {
+        if let Some(path) = zgx::env::var_os("ZGX_SCREENSHOT") {
             app.raster
                 .as_ref()
                 .unwrap()

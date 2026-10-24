@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 pub(crate) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("ZGX_PRESENT_LOG").is_some_and(|v| v != "0"))
+    *ON.get_or_init(|| zgx::env::var_os("ZGX_PRESENT_LOG").is_some_and(|v| v != "0"))
 }
 
 /// Nanoseconds on the host clock.
