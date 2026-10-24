@@ -1173,8 +1173,8 @@ struct Host {
     native: crate::native_host::NativeHost,
     /// Popups shown past the window, in windows of their own.
     popups: crate::popup_window::PopupHost,
-    /// Its drag is the platform's now (`native_drag`).
-    native_drag: bool,
+    /// Its drag handed to the platform (`native_drag`).
+    native_drag: crate::native_drag::Handoff,
     /// It was in fullscreen as its geometry last changed: popups close as
     /// it goes in or out.
     popups_fullscreen: bool,
@@ -1385,7 +1385,7 @@ impl Host {
             ime_target: None,
             native,
             popups,
-            native_drag: false,
+            native_drag: Default::default(),
             popups_fullscreen: false,
             content_origin: None,
             window_number: None,
@@ -2988,7 +2988,11 @@ impl Host {
                 // Menus and popovers close as their window or the app
                 // loses focus, as AppKit's do.
                 self.context.ui.dismiss_popups();
-                self.deactivate()
+                // A drag the platform has goes on: it deactivates as that
+                // ends (`Handoff`).
+                if self.native_drag.deactivate() {
+                    self.deactivate()
+                }
             }
             WindowEvent::ThemeChanged(appearance) => {
                 self.context
@@ -3010,6 +3014,7 @@ impl Host {
                 // AppKit may have reset the cursor while another app had it.
                 self.native_cursor = None;
                 self.native_focused = true;
+                self.native_drag.activate();
                 self.focus_memory.activate(&self.context.ui);
                 self.context.ui.set_window_active(true);
                 #[cfg(target_os = "linux")]
@@ -3115,7 +3120,7 @@ impl Host {
         };
         // X11 leaves the preview the app's to move, its drag the platform's
         // or not.
-        if !self.native_drag || cfg!(target_os = "linux") {
+        if !self.native_drag.active() || cfg!(target_os = "linux") {
             self.popups.follow(window, &drag);
         }
     }
@@ -3125,7 +3130,7 @@ impl Host {
         let (Some(items), Some(window)) = (&drag.export, self.window.clone()) else {
             return;
         };
-        if self.native_drag {
+        if self.native_drag.active() {
             return;
         }
         let image = self.popups.preview_image(drag);
@@ -3144,7 +3149,7 @@ impl Host {
         let begun = crate::native_drag::begin(&window, items, image, send);
         if begun {
             zgui_gpu::present_log::log(|| "native drag begin".into());
-            self.native_drag = true;
+            self.native_drag.begun();
             self.popups.show_preview(&window, drag, None);
         }
     }
@@ -3252,7 +3257,7 @@ impl Host {
                 position,
             });
         };
-        self.native_drag = false;
+        let deactivate = self.native_drag.ended();
         if let Some(drag) = self.context.ui.input.drag_state() {
             if taken {
                 let ui = &self.context.ui;
@@ -3266,11 +3271,23 @@ impl Host {
             device_id,
             position,
         })?;
-        self.window_event(WindowEvent::MouseInput {
+        let released = self.window_event(WindowEvent::MouseInput {
             device_id,
             state: ElementState::Released,
             button: MouseButton::Left,
-        })
+        });
+        // It lost focus meanwhile (the app taking it came to the front).
+        if deactivate {
+            self.deactivate();
+        }
+        released
+    }
+    /// The platform's drag ended after zgui's had (its source went): the
+    /// window's next drag hands off again.
+    fn native_drag_gone(&mut self) {
+        if self.native_drag.ended() {
+            self.deactivate();
+        }
     }
     /// Pointer input over a popup window, as the window's own (its point in
     /// the window's coordinates, past its edges).
@@ -3914,7 +3931,7 @@ impl WindowManager {
         let dragging = self
             .hosts
             .get(&token)
-            .is_some_and(|host| host.context.ui.input.is_dragging() && !host.native_drag);
+            .is_some_and(|host| host.context.ui.input.is_dragging() && !host.native_drag.active());
         if !dragging {
             if let Some(host) = self.hosts.get_mut(&token)
                 && host.window_grab.take().is_some()
@@ -3966,7 +3983,11 @@ impl WindowManager {
     /// Window `token`'s drag is released: over another of the app's
     /// windows, it drops there; over none, it is torn off (`outside`).
     fn drop_elsewhere(&mut self, token: u64) {
-        if self.hosts.get(&token).is_none_or(|host| host.native_drag) {
+        if self
+            .hosts
+            .get(&token)
+            .is_none_or(|host| host.native_drag.active())
+        {
             return;
         }
         let Some((over, drag)) = self.drag_target(token) else {
@@ -4061,6 +4082,11 @@ impl WindowManager {
             .get(&token)
             .and_then(|host| host.context.ui.input.drag_state())
         else {
+            if ended.is_some()
+                && let Some(source) = self.hosts.get_mut(&token)
+            {
+                source.native_drag_gone();
+            }
             return Ok(());
         };
         let over = self.window_under(x, y).filter(|(over, ..)| *over != token);
@@ -4582,7 +4608,7 @@ impl WindowManager {
         // would, stepping animations and painting, so windows go on as
         // through a live resize. Frames keep coming every refresh meanwhile.
         #[cfg(windows)]
-        if self.hosts.values().any(|host| host.native_drag) {
+        if self.hosts.values().any(|host| host.native_drag.active()) {
             self.about_to_wait(event_loop);
         }
     }

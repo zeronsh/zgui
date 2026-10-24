@@ -47,6 +47,46 @@ pub(crate) enum NativeDrag {
     },
 }
 
+/// A window's drag handed to the platform, as its host keeps it: whether the
+/// platform has it, and whether the window lost focus meanwhile.
+///
+/// Only the platform's end ends the hand-off, whether or not zgui's drag
+/// is still under way then: the drag may have ended on zgui's side first
+/// (its source went), and a hand-off kept past it would keep every later
+/// drag in its window. Losing focus does not end it either (an app taking
+/// the drop may come to the front first): the window deactivates once the
+/// platform is done, so the source hears whether it was taken.
+#[derive(Debug, Default)]
+pub(crate) struct Handoff {
+    active: bool,
+    deactivated: bool,
+}
+impl Handoff {
+    /// Whether the platform has the drag.
+    pub(crate) fn active(&self) -> bool {
+        self.active
+    }
+    pub(crate) fn begun(&mut self) {
+        self.active = true;
+    }
+    /// The window lost focus: whether it deactivates now (not while the
+    /// platform has its drag).
+    pub(crate) fn deactivate(&mut self) -> bool {
+        self.deactivated = self.active;
+        !self.active
+    }
+    /// The window has focus again: nothing held back is due.
+    pub(crate) fn activate(&mut self) {
+        self.deactivated = false;
+    }
+    /// The platform's drag ended: whether the window's deactivation, held
+    /// back meanwhile, is due now.
+    pub(crate) fn ended(&mut self) -> bool {
+        self.active = false;
+        std::mem::take(&mut self.deactivated)
+    }
+}
+
 /// The drag image: premultiplied BGRA pixels at `scale`, and the pointer
 /// within it, in points.
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
@@ -326,5 +366,47 @@ mod macos {
         session.setAnimatesToStartingPositionsOnCancelOrFail(false);
         SOURCE.with(|current| *current.borrow_mut() = Some(source));
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Handoff;
+
+    #[test]
+    fn a_handoff_ends_with_the_platforms_drag() {
+        let mut handoff = Handoff::default();
+        handoff.begun();
+        assert!(handoff.active());
+        assert!(!handoff.ended());
+        assert!(!handoff.active());
+        // The next drag hands off again.
+        handoff.begun();
+        assert!(handoff.active());
+    }
+
+    #[test]
+    fn losing_focus_waits_for_the_platforms_drag_to_end() {
+        let mut handoff = Handoff::default();
+        assert!(handoff.deactivate());
+        handoff.activate();
+        handoff.begun();
+        // The app taking the drop came to the front.
+        assert!(!handoff.deactivate());
+        assert!(handoff.ended());
+        assert!(!handoff.active());
+        // Held back once, not again.
+        assert!(!handoff.ended());
+        assert!(handoff.deactivate());
+    }
+
+    #[test]
+    fn focus_back_during_the_platforms_drag_cancels_the_held_deactivation() {
+        let mut handoff = Handoff::default();
+        handoff.begun();
+        assert!(!handoff.deactivate());
+        handoff.activate();
+        assert!(!handoff.ended());
+        assert!(!handoff.active());
     }
 }
