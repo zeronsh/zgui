@@ -1,0 +1,105 @@
+{
+ "accepted": true,
+ "trials": 43,
+ "samples": 10301,
+ "pacing_trials": 96,
+ "active_ticks_per_requested_second": {
+  "min": 59.85,
+  "max": 59.95
+ },
+ "powermetrics": false,
+ "scene": "lab",
+ "commit": "7d559add0724ec67a7a7875148f9123f10fcf9ae",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-24T14:29:07.075831+00:00",
+ "finished_utc": "2026-10-24T15:25:33.271349+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": true
+   },
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": false
+   }
+  ],
+  "display_count": 2,
+  "wallpaper_apps": [],
+  "power_mode": "powermode 2",
+  "on_battery": false,
+  "macos": "26.4 (25E246)",
+  "uptime_hours": 932.1,
+  "machine": "Mac17,6",
+  "chip": "Apple M5 Max",
+  "cores": 18,
+  "memory_bytes": 137438953472,
+  "power": "AC Power",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+ },
+ "preflight": {
+  "heavy": [],
+  "other_cpu_percent": 60.3,
+  "busiest": [
+   "Zeron Engine 16.3%",
+   "celld 13.7%",
+   "opendirectoryd 2.0%",
+   "opencode 2.0%",
+   "opencode 2.0%",
+   "claude 2.0%"
+  ],
+  "window_server_percent": 0.3,
+  "residents": []
+ },
+ "binaries": {
+  "zgui": {
+   "sha256": "a28fecd888fcb8726f711b64cc3d56e7cc46564509aa01ee4c6d89da63a8ad94",
+   "bytes": 11696512
+  },
+  "gpui": {
+   "sha256": "b77ece194ba18c244007f463e4607ac012328c88cd7e195377bdc1f389bc3486",
+   "bytes": 4110176
+  },
+  "gpui-fast": {
+   "sha256": "93fc6cc1f5ea1414bc88e9b690c06c2228801e97cf648a1033b48d54d549982b",
+   "bytes": 6732848
+  },
+  "quickgui": {
+   "sha256": "8b644305ef7e699d2b80cd6a58686bbc51d4c01db5f28967b0e4b818f5f81f96",
+   "bytes": 11110544
+  }
+ },
+ "protocol": {
+  "requested_seconds": 20,
+  "warmup_seconds": 5,
+  "sampled_seconds": 15,
+  "interval_seconds": 0.05,
+  "repeats": 3,
+  "idle_repeats": 1,
+  "quick": false,
+  "frameworks": [
+   "zgui",
+   "gpui",
+   "gpui-fast",
+   "quickgui"
+  ],
+  "modes": [
+   "idle",
+   "stream",
+   "scroll",
+   "both"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 8,
+  "pacing_during_trials": false,
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ]
+ }
+}

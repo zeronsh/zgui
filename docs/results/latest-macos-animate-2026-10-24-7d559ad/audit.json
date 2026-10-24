@@ -1,0 +1,97 @@
+{
+ "accepted": true,
+ "trials": 12,
+ "samples": 2887,
+ "pacing_trials": 24,
+ "reported_fps": {
+  "min": 118.0,
+  "max": 119.8
+ },
+ "powermetrics": false,
+ "scene": "animate",
+ "commit": "7d559add0724ec67a7a7875148f9123f10fcf9ae",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-24T15:57:55.698461+00:00",
+ "finished_utc": "2026-10-24T16:08:55.485461+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": true
+   },
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": false
+   }
+  ],
+  "display_count": 2,
+  "wallpaper_apps": [],
+  "power_mode": "powermode 2",
+  "on_battery": false,
+  "macos": "26.4 (25E246)",
+  "uptime_hours": 932.8,
+  "machine": "Mac17,6",
+  "chip": "Apple M5 Max",
+  "cores": 18,
+  "memory_bytes": 137438953472,
+  "power": "AC Power",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+ },
+ "preflight": {
+  "heavy": [],
+  "other_cpu_percent": 54.7,
+  "busiest": [
+   "celld 13.7%",
+   "Zeron Engine 12.0%",
+   "codex 2.3%",
+   "opencode 2.0%",
+   "opencode 1.7%",
+   "zeron 1.3%"
+  ],
+  "window_server_percent": 0.3,
+  "residents": []
+ },
+ "binaries": {
+  "zgui": {
+   "sha256": "ce885c03ca0866769051a3c475571d05848248e0344e685d57ef6a7cf0a282b9",
+   "bytes": 11597776
+  },
+  "gpui": {
+   "sha256": "8c96ca0281d961a8ec11b2051af840c82e0cf3bdb6199b292ca1604607df06c0",
+   "bytes": 4090080
+  },
+  "gpui-fast": {
+   "sha256": "83871b538a2784f90b707ca5e896b4b3f36898342ef3ba9c06a6fd08ff9fb1d1",
+   "bytes": 6709840
+  }
+ },
+ "protocol": {
+  "requested_seconds": 20,
+  "warmup_seconds": 5,
+  "sampled_seconds": 15,
+  "interval_seconds": 0.05,
+  "repeats": 3,
+  "idle_repeats": 1,
+  "quick": false,
+  "frameworks": [
+   "zgui",
+   "gpui",
+   "gpui-fast"
+  ],
+  "modes": [
+   "animate"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 8,
+  "pacing_during_trials": false,
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ]
+ }
+}

@@ -65,16 +65,18 @@ cargo run -p zgui-script --bin zgui -- check crates/zgui-script/examples/mail
 
 ## Performance
 
-The [macOS dashboard comparison](docs/results/latest-macos-heavy-2026-10-23-51a669c/) runs the same heavy scene in zgui and GPUI (with and without its fast path) on an Apple Silicon Mac, three runs each of builds made with each framework's `dist` profile, medians:
+The [macOS dashboard comparison](docs/results/latest-macos-heavy-2026-10-24-7d559ad/) runs the same heavy scene in zgui and GPUI (with and without its fast path) on an Apple Silicon Mac, three runs each of builds made with each framework's `dist` profile, medians:
 
 | Mode | CPU (% of a core) zgui / GPUI / GPUI fast | GPU (Mcycles/s) zgui / GPUI / GPUI fast | Memory (MB) zgui / GPUI / GPUI fast |
 | --- | --- | --- | --- |
-| idle | 0.07 / 0.42 / 0.43 | 0 / 0 / 0 | 107 / 157 / 129 |
-| scroll | 3.4 / 14.9 / 8.0 | 10.7 / 21.2 / 21.3 | 255 / 273 / 273 |
-| stream | 9.8 / 21.5 / 14.3 | 11.8 / 17.6 / 21.3 | 261 / 274 / 276 |
-| both | 10.8 / 22.0 / 14.9 | 17.7 / 18.9 / 21.0 | 262 / 276 / 276 |
+| idle | 0.00 / 0.35 / 0.38 | 0 / 0 / 0 | 116 / 137 / 111 |
+| scroll | 3.2 / 16.0 / 8.5 | 12.3 / 21.7 / 21.9 | 255 / 273 / 261 |
+| stream | 8.8 / 22.7 / 15.3 | 16.5 / 22.1 / 21.6 | 259 / 273 / 259 |
+| both | 9.9 / 22.9 / 15.7 | 19.8 / 22.4 / 21.6 | 260 / 273 / 273 |
 
-zgui also paces every mode's frames more evenly (99th-percentile interval 22–23 ms against 29–30 ms, with no frame late). The window server's own CPU is too noisy between separate trials to rank here. Measured in paired seconds, with the two windows taking turns, zgui's costs the same as GPUI fast's in `stream` and `scroll`, and at most about 2 points more in `both` ([how, and what it depends on](docs/performance-feature-audit.md#the-window-servers-cost-of-heavy-content-macos)). Every framework measured higher on this run's day than on the last (the desktop alone too), so compare within a run.
+zgui also paces every mode's frames more evenly (99th-percentile interval 17.5–17.6 ms against 24.4–25.3 ms, with no frame late). In memory, GPUI fast is lower at idle and level in `stream`. The window server's own CPU is too noisy between separate trials to rank here. Measured in paired seconds, with the two windows taking turns, zgui's costs the same as GPUI fast's in `stream` and `scroll`, and at most about 2 points more in `both` ([how, and what it depends on](docs/performance-feature-audit.md#the-window-servers-cost-of-heavy-content-macos)).
+
+**Correction:** the comparison published here on 2026-10-23/24 (zgui at `51a669c`) built zgui with mimalloc, unintentionally, while GPUI used the system allocator. The table above is the re-run with the system allocator for zgui too; [old and new numbers side by side](docs/results/README.md#correction-2026-10-24-macos-runs-of-2026-1023-24-built-zgui-with-mimalloc).
 
 These are one scene on one machine; Windows and Linux are not measured against GPUI yet. How the runs are made, and the other series, are in [benchmarking](docs/benchmarking.md).
 
