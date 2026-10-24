@@ -100,7 +100,7 @@ fn file(dir: &Option<PathBuf>, path: &str) -> mlua::Result<PathBuf> {
     };
     let root = dir.canonicalize().unwrap_or_else(|_| dir.clone());
     let full = crate::normalize(&root.join(path));
-    if !full.starts_with(&root) {
+    if !crate::within(&root, &full) {
         return Err(mlua::Error::runtime(format!(
             "ui.theme.load(\"{path}\"): theme files come from the script's directory or below"
         )));

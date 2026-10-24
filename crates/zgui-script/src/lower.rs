@@ -2366,11 +2366,33 @@ fn placeholder() -> Arc<ImageData> {
     }
     EMPTY.with(Clone::clone)
 }
-fn resolve_path(vm: &Vm, path: &str) -> std::path::PathBuf {
-    let path = std::path::Path::new(path);
-    match (&vm.base, path.is_relative()) {
-        (Some(base), true) => base.join(path),
-        _ => path.to_path_buf(),
+/// An image's path, from the script's directory. A plugin's come from its
+/// own directory or below, as its modules do, not from anywhere the user
+/// can read.
+fn resolve_path(vm: &Vm, path: &str) -> Result<std::path::PathBuf, String> {
+    let given = std::path::Path::new(path);
+    let resolved = match (&vm.base, given.is_relative()) {
+        (Some(base), true) => base.join(given),
+        _ => given.to_path_buf(),
+    };
+    let plugin = vm
+        .lua
+        .app_data_ref::<crate::node::Env>()
+        .is_some_and(|env| matches!(*env.grants, crate::Grants::Only(_)));
+    if !plugin {
+        return Ok(resolved);
+    }
+    let root = vm
+        .base
+        .as_ref()
+        .map(|base| base.canonicalize().unwrap_or_else(|_| base.clone()));
+    match root {
+        Some(root) if crate::within(&root, &crate::normalize(&root.join(given))) => {
+            Ok(crate::normalize(&root.join(given)))
+        }
+        _ => Err(format!(
+            "{path}: a plugin's images come from its directory or below"
+        )),
     }
 }
 fn is_remote(src: &str) -> bool {
@@ -2393,6 +2415,20 @@ fn remote_ready(vm: &Rc<Vm>, low: &Lowering, src: &str, svg: bool) -> bool {
 /// Remote `src`'s status (`LOADING`, `READY`, `FAILED`), fetching it the
 /// first time. Tracked.
 fn remote_status(vm: &Rc<Vm>, low: &Lowering, src: &str, svg: bool) -> u8 {
+    // A remote source is a request to the network: a plugin makes it only
+    // if granted it, as `ui.fetch` (else an image's URL would carry out what
+    // the plugin read).
+    let fetches = vm
+        .lua
+        .app_data_ref::<crate::node::Env>()
+        .is_none_or(|env| env.grants.allows(&crate::Capability::Fetch));
+    if !fetches {
+        vm.report(mlua::Error::runtime(format!(
+            "{src}: a plugin shows remote images only if the host grants it \
+             (`ScriptHost::grant(plugin, Capability::Fetch)`)"
+        )));
+        return FAILED;
+    }
     let existing = low.assets.remote.borrow().get(src).cloned();
     let ready = match existing {
         Some(status) if status.get() != FAILED => return status.get(),
@@ -2510,12 +2546,14 @@ fn load_image(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Option<Arc<ImageData>> 
         remote_ready(vm, low, src, false);
         return None;
     }
-    let path = resolve_path(vm, src);
-    let decoded = low
-        .assets
-        .read(src, &path)
-        .map_err(|e| format!("{}: {e}", path.display()))
-        .and_then(|bytes| {
+    let decoded = resolve_path(vm, src)
+        .and_then(|path| {
+            low.assets
+                .read(src, &path)
+                .map_err(|e| format!("{}: {e}", path.display()))
+                .map(|bytes| (path, bytes))
+        })
+        .and_then(|(path, bytes)| {
             zgui_gpu::assets::decode_image(&bytes).map_err(|e| format!("{}: {e}", path.display()))
         });
     match decoded {
@@ -2547,12 +2585,11 @@ fn load_svg(vm: &Rc<Vm>, low: &Lowering, src: &str) -> Arc<SvgData> {
     }
     let bytes = match src.strip_prefix("code:") {
         Some(code) => Ok(code.as_bytes().to_vec()),
-        None => {
-            let path = resolve_path(vm, src);
+        None => resolve_path(vm, src).and_then(|path| {
             low.assets
                 .read(src, &path)
                 .map_err(|e| format!("{}: {e}", path.display()))
-        }
+        }),
     };
     let parsed = bytes.and_then(|b| SvgData::new(b).map_err(|e| format!("{src}: {e}")));
     match parsed {

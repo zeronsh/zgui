@@ -147,7 +147,11 @@ impl TextSpan {
     }
     /// A link to `url`: a click (after `on_click`'s, if it has one) opens it
     /// with the system's handler (`Platform::open_url`, a browser for
-    /// `https:`), and its context menu opens or copies it.
+    /// `https:`), and its context menu opens or copies it. Only web and mail
+    /// links open (`http:`, `https:`, `mailto:`): text often isn't the
+    /// app's own (a message, a document), and a `file:` or another
+    /// scheme's handler can run what the link names. An app's own schemes
+    /// it handles itself, in `on_click`.
     pub fn href(mut self, url: impl Into<Arc<str>>) -> Self {
         self.href = Some(url.into());
         self
@@ -308,27 +312,41 @@ fn mount_link_menu(
             };
             let (open, copy) = (platform.clone(), platform.clone());
             let opened = url.clone();
-            vec![
-                crate::compose::menu_item("Open Link")
-                    .id("link-open")
-                    .on_click(move || {
-                        if let Some(platform) = &open {
-                            platform.0.open_url(&opened);
-                        }
-                    }),
-                crate::compose::menu_item("Copy Link")
-                    .id("link-copy")
-                    .on_click(move || {
-                        if let Some(platform) = &copy {
-                            platform.0.set_clipboard_text(url.to_string());
-                        }
-                    }),
-            ]
+            let mut items = Vec::new();
+            if opens(&url) {
+                items.push(
+                    crate::compose::menu_item("Open Link")
+                        .id("link-open")
+                        .on_click(move || {
+                            if let Some(platform) = &open {
+                                platform.0.open_url(&opened);
+                            }
+                        }),
+                );
+            }
+            items.extend([crate::compose::menu_item("Copy Link")
+                .id("link-copy")
+                .on_click(move || {
+                    if let Some(platform) = &copy {
+                        platform.0.set_clipboard_text(url.to_string());
+                    }
+                })]);
+            items
         }),
         None,
         false,
         environment,
     );
+}
+
+/// Whether a link opens through the system's handler: web and mail links
+/// only (see `TextSpan::href`).
+fn opens(url: &str) -> bool {
+    url.split_once(':').is_some_and(|(scheme, _)| {
+        ["http", "https", "mailto"]
+            .iter()
+            .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
+    })
 }
 pub(crate) fn mount_links(
     ui: &mut crate::widgets::Ui,
@@ -454,7 +472,9 @@ pub(crate) fn mount_links(
                     if let Some(action) = &link.0 {
                         (action.0.borrow_mut())(held);
                     }
-                    if let (Some(url), Some(platform)) = (&link.1, &open) {
+                    if let (Some(url), Some(platform)) = (&link.1, &open)
+                        && opens(url)
+                    {
                         platform.0.open_url(url);
                     }
                 };

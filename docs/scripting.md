@@ -326,7 +326,11 @@ A plugin is a script that runs beside the app in a VM of its own and adds to the
 | the clipboard, file dialogs | yes | with `Capability::Clipboard`, `Capability::Files` |
 | terminals (`ui.term`) | yes | with `Capability::Terminals` |
 | web pages (`ui.web`, `ui.webview`) | yes | with `Capability::Web`: its own pages, with their own cookies and storage, not the app's |
+| windows of its own (`ui.window`) | yes | with `Capability::Windows` (one could pose as the app's, or the system's asking for a password); never the app's title bar (`ui.window.titlebar_area`, `controls`) |
+| files: modules, themes, images | from its directory | from its directory or below, links followed (one pointing outside is outside) |
 | commands (`ui.command`) | yes | yes, as `<plugin>/<id>`; a shortcut the app (or an earlier plugin) has stays theirs |
+
+A plugin's files are source, always: Luau checks no bytecode it loads, so a plugin's (or a module's) bytecode is read as source and fails to parse, rather than run. Only an app's bundle carries bytecode, its build's.
 
 Reaching for something it was not given is an error that names what it needs; a plugin that fails to load is left out, and the app and the other plugins load. `Capability::Named(..)` is the app's own vocabulary for what `expose_*` asks. The terminal example's plugins (`examples/terminal/plugins.rs`) are a whole system on top: a folder per plugin with a manifest saying what it needs, a sheet asking the user to allow it, and its panels opened from ⌘K.
 

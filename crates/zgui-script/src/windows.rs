@@ -117,15 +117,22 @@ pub(crate) fn install(
     shared: &Store,
 ) -> mlua::Result<()> {
     let window = lua.create_table()?;
-    window.set(
-        "titlebar_area",
-        State::new(shared.state(TITLEBAR_AREA, Value::Nil)),
-    )?;
-    window.set("controls", State::new(shared.state(CONTROLS, Value::Nil)))?;
+    // The app's own window's title bar: the app's, not a plugin's to read
+    // or to move.
+    let plugin =
+        crate::node::env(lua).is_ok_and(|env| matches!(*env.grants, crate::Grants::Only(_)));
+    if !plugin {
+        window.set(
+            "titlebar_area",
+            State::new(shared.state(TITLEBAR_AREA, Value::Nil)),
+        )?;
+        window.set("controls", State::new(shared.state(CONTROLS, Value::Nil)))?;
+    }
     let meta = lua.create_table()?;
     meta.set(
         "__call",
-        lua.create_function(move |_, (_, table): (Table, Table)| {
+        lua.create_function(move |lua, (_, table): (Table, Table)| {
+            crate::node::env(lua)?.may(crate::Capability::Windows, "ui.window")?;
             let id: String = table
                 .get::<Option<String>>("id")?
                 .ok_or_else(|| mlua::Error::runtime("ui.window needs an `id`"))?;

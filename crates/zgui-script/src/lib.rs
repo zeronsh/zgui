@@ -134,8 +134,17 @@ fn read_aliases(dir: &std::path::Path, files: Files) -> HashMap<String, PathBuf>
         })
         .unwrap_or_default()
 }
+/// Whether `path` is in `root` (a canonical directory): by its name, and,
+/// where it exists, by what it is, so a symbolic link inside the root to a
+/// file outside it (a plugin shipping one to `~/.ssh`) is outside too.
+pub(crate) fn within(root: &std::path::Path, path: &std::path::Path) -> bool {
+    path.starts_with(root)
+        && path
+            .canonicalize()
+            .map_or(true, |real| real.starts_with(root))
+}
 /// `path` with `.` and `..` resolved in place, without touching the disk.
-fn normalize(path: &std::path::Path) -> PathBuf {
+pub(crate) fn normalize(path: &std::path::Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
         match part {
@@ -559,6 +568,9 @@ pub enum Capability {
     Terminals,
     /// `ui.web` and `ui.webview`: web pages.
     Web,
+    /// `ui.window`: windows of its own, which could pose as the app's or
+    /// the system's (asking for a password).
+    Windows,
     /// What the app defines (`expose_action`, `expose_shared`): a host
     /// action or shared state a plugin reaches only if granted it.
     Named(String),
@@ -604,6 +616,18 @@ pub(crate) enum Files {
     Bundle(&'static Bundle),
 }
 impl Files {
+    /// A chunk read from here, loading as the files allow: an app's bundle
+    /// holds the bytecode its build compiled from its own scripts; what
+    /// comes from the disk is source, always. Luau checks no bytecode it
+    /// loads, so a file of crafted bytecode (a plugin's, or a module one
+    /// requires) would corrupt the VM and step out of the sandbox: read as
+    /// source, it just fails to parse.
+    fn chunk(self, chunk: mlua::chunk::Chunk<'_>) -> mlua::chunk::Chunk<'_> {
+        match self {
+            Files::Bundle(_) => chunk,
+            Files::Disk => chunk.set_mode(mlua::chunk::ChunkMode::Text),
+        }
+    }
     pub(crate) fn read(self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
         match self {
             Files::Disk => std::fs::read(path),
@@ -1821,15 +1845,15 @@ impl ScriptHost {
                 root.join(&name)
             };
             let mut path = normalize(&joined);
-            if !path.starts_with(root) {
-                return Err(fail(
-                    "modules come from the script's directory or below".into(),
-                ));
-            }
             if files.is_dir(&path) {
                 path = path.join("init.luau");
             } else if path.extension().is_none() {
                 path.set_extension("luau");
+            }
+            if !within(root, &path) {
+                return Err(fail(
+                    "modules come from the script's directory or below".into(),
+                ));
             }
             match modules.borrow().get(&path) {
                 Some(Some(value)) => return Ok(value.clone()),
@@ -1850,9 +1874,8 @@ impl ScriptHost {
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .into_owned();
-            let value = match lua
-                .load(code)
-                .set_name(format!("@{chunk}"))
+            let value = match files
+                .chunk(lua.load(code).set_name(format!("@{chunk}")))
                 .eval::<mlua::Value>()
             {
                 Ok(mlua::Value::Nil) => mlua::Value::Boolean(true),
@@ -1988,8 +2011,8 @@ impl ScriptHost {
         // must not subscribe whatever is currently mounting.
         let result = self.0.runtime.untracked(|| {
             vm.guard(limits.load, || {
-                lua.load(code)
-                    .set_name(format!("@{name}"))
+                files
+                    .chunk(lua.load(code).set_name(format!("@{name}")))
                     .eval::<mlua::Value>()
             })
         });

@@ -183,3 +183,49 @@ fn an_hrefs_context_menu_opens_or_copies_it_and_a_plain_links_has_none() {
     );
     assert_eq!(*outer.borrow(), 1);
 }
+
+#[test]
+fn only_web_and_mail_links_open_through_the_system() {
+    // Text often isn't the app's own: a `file:` link would launch what it
+    // names, another scheme its handler. Its action still runs.
+    let host = Rc::new(Host::default());
+    let acted = Rc::new(RefCell::new(0));
+    let count = acted.clone();
+    let mut ui = Ui::new(400., 100.);
+    let view = ui.mount(provide(
+        zgui::platform::PlatformService(host.clone()),
+        rich_text()
+            .text_size(16.)
+            .child(
+                text_span("app")
+                    .href("file:///Applications/Calculator.app")
+                    .on_click(move || *count.borrow_mut() += 1),
+            )
+            .child(text_span(" "))
+            .child(text_span("share").href("smb://server/share"))
+            .child(text_span(" "))
+            .child(text_span("mail").href("MAILTO:someone@example.org"))
+            .child(text_span(" "))
+            .child(text_span("web").href("HTTPS://example.org"))
+            .into(),
+    ));
+    ui.prepare_frame();
+    let links = links(&ui);
+    for link in &links {
+        click(&mut ui, *link, PointerButton::Primary, Modifiers::default());
+    }
+    assert_eq!(*acted.borrow(), 1, "the action ran");
+    assert_eq!(
+        *host.opened.borrow(),
+        ["MAILTO:someone@example.org", "HTTPS://example.org"]
+    );
+    // Its menu copies it, but doesn't open it.
+    click(
+        &mut ui,
+        links[0],
+        PointerButton::Secondary,
+        Modifiers::default(),
+    );
+    assert!(view.find("link-copy").is_some());
+    assert!(view.find("link-open").is_none(), "no Open Link for a file");
+}

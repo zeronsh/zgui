@@ -296,3 +296,146 @@ return ui.column { ui.text { function() return page.url end, id = "app" }, ui.sl
         "the plugin's web:p1 is another page"
     );
 }
+
+#[test]
+fn a_plugin_of_bytecode_is_read_as_source_and_never_runs() {
+    // Luau checks no bytecode it loads: crafted bytecode would corrupt the
+    // VM, so a plugin's files are source, always.
+    let bytecode = mlua::chunk::Compiler::new()
+        .compile(r#"ui.contribute("bar", ui.text { "ran", id = "ran" })"#)
+        .unwrap();
+    let entry = plugin("bytecode", "");
+    std::fs::write(&entry, &bytecode).unwrap();
+    let mut h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(runtime, "app", APP);
+        host.set_plugins(vec![Plugin {
+            name: "bytecode".into(),
+            entry,
+            grants: vec![],
+        }]);
+        host
+    });
+    assert!(h.find("ran").is_none(), "the bytecode ran");
+}
+
+#[test]
+fn a_plugin_shows_remote_images_only_with_the_fetch_grant() {
+    // An image's URL is a request: without the grant, a plugin could send
+    // out what it read in one.
+    let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    for (name, grants) in [("viewer", vec![]), ("fetcher", vec![Capability::Fetch])] {
+        let entry = plugin(
+            name,
+            r#"ui.contribute("bar", ui.image { src = "https://images.test/secret?k=v", w = 10, h = 10 })"#,
+        );
+        let log = asked.clone();
+        let h = Harness::new(|runtime| {
+            let host = ScriptHost::inline(runtime, "app", APP);
+            host.fetcher(move |request: zgui_script::Request| {
+                log.borrow_mut().push(request.url.clone());
+                async move { Err::<zgui_script::Response, String>("offline".into()) }
+            });
+            host.set_plugins(vec![Plugin {
+                name: name.into(),
+                entry,
+                grants,
+            }]);
+            host
+        });
+        h.frames(2);
+        let made = asked.borrow().len();
+        match name {
+            "viewer" => assert_eq!(made, 0, "a request without the grant"),
+            _ => assert_eq!(made, 1, "the granted plugin's request"),
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_plugin_requires_nothing_outside_its_directory_through_a_link() {
+    // A module that is a link to a file outside (a secret the plugin would
+    // read back in a parse error) is outside, whatever its name says.
+    let outside = std::env::temp_dir().join(format!("zgui-outside-{}.luau", std::process::id()));
+    std::fs::write(&outside, r#"return "outside""#).unwrap();
+    let entry = plugin(
+        "linked",
+        r#"local ok, got = pcall(require, "./secret")
+ui.contribute("bar", ui.text { tostring(ok) .. " " .. tostring(got), id = "got" })"#,
+    );
+    let link = entry.parent().unwrap().join("secret.luau");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    let mut h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(runtime, "app", APP);
+        host.set_plugins(vec![Plugin {
+            name: "linked".into(),
+            entry,
+            grants: vec![],
+        }]);
+        host
+    });
+    let got = h.text("got");
+    assert!(got.starts_with("false"), "{got}");
+    assert!(got.contains("directory or below"), "{got}");
+}
+
+#[test]
+fn a_plugins_images_come_from_its_directory() {
+    let outside = std::env::temp_dir().join(format!("zgui-outside-{}.png", std::process::id()));
+    std::fs::write(&outside, b"not really a png").unwrap();
+    let entry = plugin(
+        "pictures",
+        &format!(
+            r#"ui.contribute("bar", ui.image {{ src = "{}", w = 10, h = 10 }})"#,
+            outside.display()
+        ),
+    );
+    let h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(runtime, "app", APP);
+        host.set_plugins(vec![Plugin {
+            name: "pictures".into(),
+            entry,
+            grants: vec![],
+        }]);
+        host
+    });
+    h.frames(1);
+    let error = h.error().unwrap_or_default();
+    assert!(
+        error.contains("a plugin's images come from its directory"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_plugin_opens_windows_only_with_the_grant_and_never_reaches_the_apps_title_bar() {
+    // A window of its own could pose as the app's or the system's, asking
+    // for a password; the app's title bar area is the app's.
+    for (name, grants, opens) in [
+        ("posing", vec![], false),
+        ("inspector", vec![Capability::Windows], true),
+    ] {
+        let entry = plugin(
+            name,
+            r#"
+local ok = pcall(ui.window, {
+    id = "w", open = ui.state("open", true), ui.text { "window" },
+})
+ui.contribute("bar", ui.text {
+    tostring(ok) .. " " .. tostring(ui.window.titlebar_area == nil), id = "got",
+})
+"#,
+        );
+        let mut h = Harness::new(|runtime| {
+            let host = ScriptHost::inline(runtime, "app", APP);
+            host.set_plugins(vec![Plugin {
+                name: name.into(),
+                entry,
+                grants,
+            }]);
+            host
+        });
+        assert_eq!(h.text("got"), format!("{opens} true"), "{name}");
+    }
+}
