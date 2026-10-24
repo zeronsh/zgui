@@ -100,7 +100,8 @@ fn load(name: &str) -> Option<Frame> {
     let key = key(KEY_READ)?;
     let mut buffer = [0u16; 128];
     let mut size = std::mem::size_of_val(&buffer) as u32;
-    // SAFETY: reads a string value into a local buffer of the size given.
+    // SAFETY: reads a string value into a local buffer, given its size in
+    // bytes; `RRF_RT_REG_SZ` has it NUL-terminated, or fails if it does not fit.
     let read = unsafe {
         RegGetValueW(
             key,
@@ -184,6 +185,10 @@ struct Autosave {
     name: String,
     looping: std::cell::Cell<bool>,
 }
+/// # Safety
+///
+/// Called by comctl32 alone, as the subclass `autosave` installs: `data` is
+/// the `Autosave` it leaked for it.
 unsafe extern "system" fn autosave_proc(
     hwnd: HWND,
     message: u32,

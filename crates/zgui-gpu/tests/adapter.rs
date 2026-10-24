@@ -7,12 +7,15 @@ use windows::Win32::Graphics::Dxgi::*;
 /// DXGI's first adapter for `preference`, a GPU before software: its name,
 /// vendor and device ids, and whether it is software.
 fn first(preference: DXGI_GPU_PREFERENCE) -> (String, u32, u32, bool) {
+    // SAFETY: DXGI calls on objects made here, writing locals (as below).
     let factory: IDXGIFactory6 =
         unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.unwrap();
     let mut adapters: Vec<_> = (0..)
         .map_while(|i| {
+            // SAFETY: as above.
             let adapter: IDXGIAdapter1 =
                 unsafe { factory.EnumAdapterByGpuPreference(i, preference) }.ok()?;
+            // SAFETY: as above.
             let desc = unsafe { adapter.GetDesc1() }.unwrap();
             let name = String::from_utf16_lossy(&desc.Description);
             let name = name.trim_end_matches('\0').to_string();
@@ -53,12 +56,14 @@ fn high_performance_takes_dxgis_first_gpu_for_performance() {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = wgpu::Backends::DX12;
     let instance = wgpu::Instance::new(descriptor);
+    // SAFETY: the hal instance is only read (an adapter exposed from it).
     let Some(hal) = (unsafe { instance.as_hal::<wgpu::hal::api::Dx12>() }) else {
         return;
     };
     let exposed = hal
         .expose_preferred_adapter(wgpu::PowerPreference::HighPerformance)
         .unwrap();
+    // SAFETY: exposed from this instance's own hal instance.
     let adapter = unsafe { instance.create_adapter_from_hal(exposed) };
     assert_on(
         &adapter.get_info(),

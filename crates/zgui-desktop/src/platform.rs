@@ -264,9 +264,12 @@ mod spelling {
     pub(super) fn misspellings(text: &str) -> Vec<Range<usize>> {
         with_checker(|checker| {
             let mut found = Vec::new();
-            // SAFETY: plain COM calls; each error is released as it goes.
+            // Kept until the enumeration ends, which may check as it goes.
+            let checked = HSTRING::from(text);
+            // SAFETY: plain COM calls on a checker of this thread's, with a
+            // string alive across them; each error is released as it goes.
             unsafe {
-                let Ok(errors) = checker.Check(&HSTRING::from(text)) else {
+                let Ok(errors) = checker.Check(&checked) else {
                     return found;
                 };
                 let mut error = None;
@@ -297,7 +300,9 @@ mod spelling {
     pub(super) fn guesses(word: &str) -> Vec<String> {
         with_checker(|checker| {
             let mut guesses = Vec::new();
-            // SAFETY: each suggestion is the callee's allocation, ours to free.
+            // SAFETY: plain COM calls; each suggestion fetched is a
+            // NUL-terminated string the callee allocated with CoTaskMemAlloc,
+            // ours to free once read.
             unsafe {
                 let Ok(suggestions) = checker.Suggest(&HSTRING::from(word)) else {
                     return guesses;

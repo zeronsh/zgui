@@ -27,6 +27,21 @@ mod churn {
             .unwrap_or(default)
     }
 
+    /// `resource` as a structure's field: borrowed, not a reference of the
+    /// structure's own (a clone there is never released, and keeps the
+    /// resource and its device alive past `device_life`).
+    ///
+    /// # Safety
+    ///
+    /// The field is never dropped, and `resource` outlives its use.
+    unsafe fn borrowed(
+        resource: &ID3D12Resource,
+    ) -> std::mem::ManuallyDrop<Option<ID3D12Resource>> {
+        // SAFETY: an interface is one non-null pointer, as is `Some` of one;
+        // copied without AddRef, and never released (`ManuallyDrop`).
+        unsafe { std::mem::transmute_copy(resource) }
+    }
+
     fn committed(
         device: &ID3D12Device,
         kind: D3D12_HEAP_TYPE,
@@ -38,6 +53,8 @@ mod churn {
             Type: kind,
             ..Default::default()
         };
+        // SAFETY: descriptions of ours, read during the call; the resource
+        // is written into a local.
         unsafe {
             device.CreateCommittedResource(
                 &heap,
@@ -53,6 +70,11 @@ mod churn {
 
     /// One device's life: made, drawn with, read back and released.
     fn device_life(adapter: &IDXGIAdapter1) -> windows::core::Result<()> {
+        // SAFETY: Direct3D 12 objects made here, used on this thread; what
+        // the command list names stays alive until the fence says the GPU
+        // is done with it (the wait at the end). An error between submitting
+        // and the wait drops them early, as the device fails: the caller
+        // takes any error as the end of the run.
         unsafe {
             let mut device: Option<ID3D12Device> = None;
             D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, &mut device)?;
@@ -114,7 +136,7 @@ mod churn {
                 Type: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
                 Anonymous: D3D12_RESOURCE_BARRIER_0 {
                     Transition: std::mem::ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
-                        pResource: std::mem::ManuallyDrop::new(Some(target.clone())),
+                        pResource: borrowed(&target),
                         Subresource: 0,
                         StateBefore: D3D12_RESOURCE_STATE_RENDER_TARGET,
                         StateAfter: D3D12_RESOURCE_STATE_COPY_SOURCE,
@@ -123,7 +145,7 @@ mod churn {
                 ..Default::default()
             }]);
             let dst = D3D12_TEXTURE_COPY_LOCATION {
-                pResource: std::mem::ManuallyDrop::new(Some(readback.clone())),
+                pResource: borrowed(&readback),
                 Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
                 Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
                     PlacedFootprint: D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
@@ -139,7 +161,7 @@ mod churn {
                 },
             };
             let src = D3D12_TEXTURE_COPY_LOCATION {
-                pResource: std::mem::ManuallyDrop::new(Some(target.clone())),
+                pResource: borrowed(&target),
                 Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
                 Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
                     SubresourceIndex: 0,
@@ -165,8 +187,10 @@ mod churn {
             .map(|_| {
                 let start = start.clone();
                 std::thread::spawn(move || {
+                    // SAFETY: a factory and adapter of this thread's own.
                     let factory: IDXGIFactory6 =
                         unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.unwrap();
+                    // SAFETY: as above.
                     let adapter: IDXGIAdapter1 = unsafe {
                         factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_MINIMUM_POWER)
                     }
@@ -185,6 +209,8 @@ mod churn {
 
     pub fn main() {
         let (workers, iterations) = (setting("WORKERS", 24), setting("ITERATIONS", 10));
+        // SAFETY (this and the three below): DXGI calls on objects made
+        // here, writing locals.
         let factory: IDXGIFactory6 =
             unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.unwrap();
         let adapter: IDXGIAdapter1 =

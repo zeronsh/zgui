@@ -41,6 +41,10 @@ use zgui::web_view::{
 };
 
 // The loader linked in (webview2-com-sys ships it): no DLL beside the app.
+// SAFETY: WebView2Loader.h's declarations (`STDAPI`, so "system"): string
+// arguments are NUL-terminated or null, `options` and `handler` the COM
+// interfaces' raw pointers, `version` a string the loader allocates with
+// CoTaskMemAlloc.
 #[link(name = "WebView2LoaderStatic", kind = "static")]
 unsafe extern "system" {
     #[link_name = "CreateCoreWebView2EnvironmentWithOptions"]
@@ -214,7 +218,9 @@ fn with_environment(
         },
     ));
     let folder = HSTRING::from(data_folder(&schemes).as_os_str());
-    // SAFETY: the loader holds what it needs of its arguments.
+    // SAFETY: on the UI thread, in its STA; `folder`, `options` and
+    // `handler` are locals alive across the call, and the loader takes
+    // references of its own to the interfaces it keeps (COM's rule).
     let result = unsafe {
         create_environment(
             PCWSTR::null(),
@@ -280,6 +286,9 @@ fn answers_window() -> isize {
     thread_local! {
         static WINDOW: std::cell::OnceCell<isize> = const { std::cell::OnceCell::new() };
     }
+    /// # Safety
+    ///
+    /// Called by Windows alone, as the answers window's class procedure.
     unsafe extern "system" fn procedure(
         hwnd: HWND,
         message: u32,
@@ -438,8 +447,11 @@ impl WebViewBackend for Backend {
 }
 impl Drop for Backend {
     fn drop(&mut self) {
-        // The controller goes now (with the page's processes).
-        if let Some(ready) = self.0.ready.borrow_mut().take() {
+        // The controller goes now (with the page's processes). Taken out
+        // first: focus moving and the controller closing send messages and
+        // events, whose handlers read `ready`.
+        let ready = self.0.ready.borrow_mut().take();
+        if let Some(ready) = ready {
             // SAFETY: WebView2 objects on the UI thread.
             unsafe {
                 if self.0.has_focus() {

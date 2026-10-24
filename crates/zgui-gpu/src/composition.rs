@@ -19,7 +19,10 @@ pub(crate) struct Target {
 }
 impl Target {
     pub fn surface(&self, instance: &wgpu::Instance) -> Result<wgpu::Surface<'static>, GpuError> {
-        // SAFETY: the visual is alive (held here) for as long as the surface.
+        // SAFETY: `as_raw` is a live IDCompositionVisual (`self` holds a
+        // reference) during the call, and wgpu keeps a reference of its own
+        // for as long as the surface lives (`SurfaceTargetUnsafe::
+        // CompositionVisual`).
         unsafe {
             instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CompositionVisual(
                 self.visual.as_raw(),

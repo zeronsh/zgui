@@ -1148,9 +1148,11 @@ const POWER: wgpu::PowerPreference = wgpu::PowerPreference::LowPower;
 /// a second adapter (an indirect display's) on an NVIDIA machine.
 #[cfg(windows)]
 fn preferred_dx12_adapter(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
-    // SAFETY: the hal instance is only read, and the adapter is exposed from it.
+    // SAFETY: the hal instance is only read (DXGI's adapters listed, one
+    // exposed), never destroyed or changed.
     let hal = unsafe { instance.as_hal::<wgpu::hal::api::Dx12>() }?;
     let exposed = hal.expose_preferred_adapter(POWER)?;
+    // SAFETY: the adapter was exposed from this instance's own hal instance.
     Some(unsafe { instance.create_adapter_from_hal(exposed) })
 }
 /// Shared native GPU device, pipelines, and font database. Clone this cheaply for

@@ -16,8 +16,8 @@ use std::{
 use windows::{
     Win32::{
         Foundation::{
-            COLORREF, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, HGLOBAL,
-            HWND, LPARAM, LRESULT, POINT, S_OK, SIZE, WPARAM,
+            COLORREF, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, GlobalFree,
+            HGLOBAL, HWND, LPARAM, LRESULT, POINT, S_OK, SIZE, WPARAM,
         },
         Graphics::Gdi::{
             BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateDIBSection, DIB_RGB_COLORS, DeleteObject,
@@ -128,6 +128,9 @@ thread_local! {
     static STARTER: Cell<Option<isize>> = const { Cell::new(None) };
 }
 
+/// # Safety
+///
+/// Called by Windows alone, as the `ZguiDragStarter` class's procedure.
 unsafe extern "system" fn starter_proc(
     hwnd: HWND,
     message: u32,
@@ -185,7 +188,10 @@ fn starter() -> Option<HWND> {
 fn run(data: &IDataObject, session: Rc<Session>) {
     let source: IDropSource = Source(session.clone()).into();
     let mut effect = DROPEFFECT_NONE;
-    // SAFETY: our data object and source, on this (an OLE) thread.
+    // SAFETY: our data object and source, alive across the call, on the
+    // thread that made them: winit's, which winit initialized OLE on (a
+    // single-threaded apartment) as it made its windows, as DoDragDrop
+    // needs. DoDragDrop calls the source on this thread alone.
     let result = unsafe {
         DoDragDrop(
             data,
@@ -202,11 +208,13 @@ fn run(data: &IDataObject, session: Rc<Session>) {
 
 /// `bytes` in memory a data object can own.
 fn global(bytes: &[u8]) -> Option<HGLOBAL> {
-    // SAFETY: a movable block of `bytes`' size, filled while locked.
+    // SAFETY: a movable block of at least `bytes`' length, ours until handed
+    // over; filled while locked (`at` points at its start then).
     unsafe {
         let handle = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1)).ok()?;
         let at = GlobalLock(handle);
         if at.is_null() {
+            let _ = GlobalFree(Some(handle));
             return None;
         }
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), at.cast::<u8>(), bytes.len());
@@ -231,11 +239,19 @@ fn set(data: &IDataObject, format: u16, bytes: &[u8]) -> bool {
         u: STGMEDIUM_0 { hGlobal: handle },
         pUnkForRelease: ManuallyDrop::new(None),
     };
-    // SAFETY: the data object takes the block (`fRelease`).
-    unsafe { data.SetData(&format, &medium, true) }.is_ok()
+    // SAFETY: `format` and `medium` are locals read during the call. With
+    // `fRelease` the data object owns the block once the call succeeds;
+    // when it fails the block is still ours, and freed.
+    if unsafe { data.SetData(&format, &medium, true) }.is_ok() {
+        return true;
+    }
+    // SAFETY: our block, not taken.
+    let _ = unsafe { GlobalFree(Some(handle)) };
+    false
 }
 fn registered(name: PCWSTR) -> u16 {
-    // SAFETY: registers (or finds) a format by a static name.
+    // SAFETY: registers (or finds) a format by a name the caller keeps
+    // alive for the call (a `w!` literal).
     unsafe { RegisterClipboardFormatW(name) as u16 }
 }
 fn wide(text: &str) -> Vec<u8> {
@@ -283,7 +299,8 @@ fn drop_files(files: &[std::path::PathBuf]) -> Vec<u8> {
         fWide: true.into(),
         ..Default::default()
     };
-    // SAFETY: a plain struct's bytes.
+    // SAFETY: the bytes of a `repr(C)` struct of five 4-byte fields (a u32,
+    // a POINT's two i32s, two BOOLs): no padding, so all are initialized.
     let mut bytes = unsafe {
         std::slice::from_raw_parts(
             (&header as *const DROPFILES).cast::<u8>(),

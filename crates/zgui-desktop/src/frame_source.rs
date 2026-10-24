@@ -619,21 +619,27 @@ mod compositor_clock {
     /// has no compositor clock, and a static import would stop the program
     /// loading there.
     fn compositor_clock() -> Option<WaitForCompositorClock> {
-        static WAIT: OnceLock<Option<usize>> = OnceLock::new();
-        let address = *WAIT.get_or_init(|| {
+        static WAIT: OnceLock<Option<WaitForCompositorClock>> = OnceLock::new();
+        *WAIT.get_or_init(|| {
             // SAFETY: loads a system library by name and looks up an export;
-            // the library stays loaded for the process.
+            // the library's reference is never released, so the export stays
+            // loaded for the process. It has this signature (dcomp.h:
+            // `STDAPI_(DWORD) DCompositionWaitForCompositorClock(UINT count,
+            // const HANDLE* handles, DWORD timeoutInMs)`).
             unsafe {
                 let library = LoadLibraryW(windows::core::w!("dcomp.dll")).ok()?;
                 GetProcAddress(
                     library,
                     windows::core::s!("DCompositionWaitForCompositorClock"),
                 )
-                .map(|f| f as usize)
+                .map(|f| {
+                    std::mem::transmute::<
+                        unsafe extern "system" fn() -> isize,
+                        WaitForCompositorClock,
+                    >(f)
+                })
             }
-        });
-        // SAFETY: the export has this signature (dcomp.h).
-        address.map(|f| unsafe { std::mem::transmute::<usize, WaitForCompositorClock>(f) })
+        })
     }
 
     /// The compositor's last refresh and the refresh period, in
@@ -664,7 +670,8 @@ mod compositor_clock {
     /// Blocks until the compositor's next frame.
     fn wait_for_tick(timer: &Timer) {
         if let Some(wait) = compositor_clock() {
-            // SAFETY: no handles to wait on besides the clock.
+            // SAFETY: no handles to wait on besides the clock (a count of 0
+            // with a null array), for at most 100 ms.
             unsafe { wait(0, std::ptr::null(), 100) };
             return;
         }

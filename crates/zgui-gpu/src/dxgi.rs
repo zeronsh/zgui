@@ -16,8 +16,8 @@ impl PresentStats {
         if !crate::present_log::enabled() {
             return;
         }
-        // SAFETY: only reads the swap chain's statistics, on the thread
-        // that presents to it.
+        // SAFETY: the hal surface is only read (its swap chain taken, not
+        // changed), on the thread that presents to it.
         let Some(hal) = (unsafe { surface.as_hal::<wgpu::hal::api::Dx12>() }) else {
             return;
         };
@@ -26,10 +26,13 @@ impl PresentStats {
         };
         let mut stats = DXGI_FRAME_STATISTICS::default();
         // Fails until a present has shown, and after a mode change.
+        // SAFETY: `chain` is a reference of our own to the surface's swap
+        // chain (`swap_chain` adds one); writes `stats`, a local.
         if unsafe { chain.GetFrameStatistics(&mut stats) }.is_err() {
             self.shown = None;
             return;
         }
+        // SAFETY: as above; reads a count.
         let queued = unsafe { chain.GetLastPresentCount() }
             .map_or(0, |last| last.saturating_sub(stats.PresentCount));
         // A composed (windowed) swap chain reports no refresh counts of its

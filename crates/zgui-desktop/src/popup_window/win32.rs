@@ -135,6 +135,10 @@ fn client_point(lparam: LPARAM) -> (i32, i32) {
     )
 }
 
+/// # Safety
+///
+/// Called by Windows alone, as the `ZguiPopup` class's procedure: `hwnd` is
+/// a window of the class, whose `GWLP_USERDATA` is 0 or its `Panel`'s target.
 unsafe extern "system" fn popup_proc(
     hwnd: HWND,
     message: u32,
@@ -160,8 +164,11 @@ unsafe extern "system" fn popup_proc(
         }
         _ => {}
     }
-    // SAFETY: our window's slot holds its `Target` (`Panel::new`), alive
-    // until the window is destroyed (`Panel::drop` clears it first).
+    // SAFETY: our window's slot is 0 or its panel's `Target` (`Panel::new`),
+    // which the panel's `Rc` keeps alive while it is set: `Panel::drop` and a
+    // failed `Panel::new` clear it before the `Rc` goes. Nothing `pointer`
+    // does drops a panel meanwhile: its sink only posts to the event loop
+    // (`PopupHost::new`'s caller), and capture changes run no app code.
     let target = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Target;
     if let Some(target) = unsafe { target.as_ref() }
         && pointer(hwnd, target, message, wparam, lparam)
@@ -819,6 +826,10 @@ fn screen_rect(origin: (i32, i32), scale: f32, rect: Rect) -> (i32, i32, i32, i3
     )
 }
 fn work_areas() -> Vec<RECT> {
+    /// # Safety
+    ///
+    /// Called by `EnumDisplayMonitors` alone, with `data` the `areas` of the
+    /// call below.
     unsafe extern "system" fn each(monitor: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
         let mut info = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
@@ -847,6 +858,11 @@ fn work_areas() -> Vec<RECT> {
 }
 /// The parent's subclass: popups follow it, and close as the app
 /// deactivates or its frame is pressed.
+///
+/// # Safety
+///
+/// Called by comctl32 alone, as the subclass `PopupHost::update` installs;
+/// it holds no data (the parents are found in `PARENTS`).
 unsafe extern "system" fn parent_proc(
     hwnd: HWND,
     message: u32,
@@ -874,7 +890,8 @@ unsafe extern "system" fn parent_proc(
         WM_DISPLAYCHANGE => send(PopupInput::Screens),
         WM_SETTINGCHANGE if wparam.0 as u32 == SPI_SETWORKAREA.0 => send(PopupInput::Screens),
         WM_WINDOWPOSCHANGED => {
-            // SAFETY: the system's WINDOWPOS for this message.
+            // SAFETY: this message's `lparam` is the system's WINDOWPOS,
+            // valid during the call.
             let flags = unsafe { (*(lparam.0 as *const WINDOWPOS)).flags };
             if !flags.contains(SWP_NOMOVE) {
                 follow(hwnd);

@@ -366,9 +366,14 @@ mod win {
             Id(usize),
             Text(Vec<u16>),
         }
+        /// # Safety
+        ///
+        /// Called by `EnumResourceNamesW` alone, with `found` the
+        /// `Option<Name>` of the call below.
         unsafe extern "system" fn first(_: HMODULE, _: PCWSTR, name: PCWSTR, found: isize) -> BOOL {
-            // SAFETY: `found` is the `Option<Name>` below, for this call;
-            // a string name is valid during it.
+            // SAFETY: `found` is the `Option<Name>` below, borrowed by
+            // nothing else while the enumeration runs; a name that is not an
+            // integer ID is a NUL-terminated string, valid during the call.
             unsafe {
                 let found = &mut *(found as *mut Option<Name>);
                 *found = Some(if (name.0 as usize) >> 16 == 0 {
@@ -382,7 +387,8 @@ mod win {
             false.into()
         }
         // SAFETY: this executable's resources; the callback writes `found`
-        // only while it runs.
+        // only while the enumeration runs, and `name` borrows `found`'s
+        // string (or is an integer ID) for the loads after it.
         unsafe {
             let Ok(module) = GetModuleHandleW(None) else {
                 return;
@@ -576,8 +582,12 @@ mod win {
             {
                 return None;
             }
-            // SAFETY: uxtheme stays loaded (comctl32's controls use it), and
-            // from 1903 (18362) the ordinals are these functions.
+            // SAFETY: the library's reference is never released, so its
+            // functions stay loaded for the process. From 1903 (18362) the
+            // ordinals are these functions, of these signatures: but that
+            // AllowDarkModeForWindow takes and returns a C++ `bool`, which a
+            // `BOOL` of 1 passes the same in its register, and its result
+            // is never read.
             unsafe {
                 let uxtheme = LoadLibraryW(w!("uxtheme.dll")).ok()?;
                 let ordinal = |n: usize| GetProcAddress(uxtheme, PCSTR(n as _));
@@ -644,15 +654,16 @@ mod win {
             tracking: Cell::new(false),
             wake: RefCell::new(None),
         });
+        let data = Rc::into_raw(caption.clone());
         // SAFETY: the subclass runs on this (the window's) thread; its
-        // reference is released when the window is destroyed.
+        // reference is released when the window is destroyed (`subclass`
+        // on WM_NCDESTROY), or now if it was not installed.
         let installed = unsafe {
-            SetWindowSubclass(
-                hwnd,
-                Some(subclass),
-                SUBCLASS_ID,
-                Rc::into_raw(caption.clone()) as usize,
-            )
+            let installed = SetWindowSubclass(hwnd, Some(subclass), SUBCLASS_ID, data as usize);
+            if !installed.as_bool() {
+                drop(Rc::from_raw(data));
+            }
+            installed
         }
         .as_bool();
         if installed {
@@ -748,6 +759,10 @@ mod win {
         })
     }
 
+    /// # Safety
+    ///
+    /// Called by comctl32 alone, as the subclass `apply` installs: `data` is
+    /// the `Rc<Caption>` it leaked for it.
     unsafe extern "system" fn subclass(
         hwnd: HWND,
         message: u32,
@@ -757,7 +772,8 @@ mod win {
         data: usize,
     ) -> LRESULT {
         // SAFETY: `data` is the `Rc` `apply` leaked for this subclass, alive
-        // until `WM_NCDESTROY` below takes it back.
+        // until `WM_NCDESTROY` below takes it back (no other message of the
+        // window comes after that one, and nothing here destroys it).
         let caption = unsafe { &*(data as *const Caption) };
         let point = || {
             (

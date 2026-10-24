@@ -37,10 +37,13 @@ fn observe_native_focus(tick: usize) {
 #[cfg(windows)]
 fn open_input_method() {
     use std::ffi::c_void;
+    // SAFETY: winuser.h's and imm.h's declarations: HWND and HIMC are
+    // pointers, a BOOL an i32, a DWORD a u32.
     #[link(name = "user32")]
     unsafe extern "system" {
         fn GetFocus() -> *mut c_void;
     }
+    // SAFETY: as above.
     #[link(name = "imm32")]
     unsafe extern "system" {
         fn ImmGetContext(window: *mut c_void) -> *mut c_void;

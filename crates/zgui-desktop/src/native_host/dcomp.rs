@@ -374,6 +374,11 @@ impl Pointer {
     }
 }
 
+/// # Safety
+///
+/// Called by comctl32 alone, as the window's subclass installed by
+/// `Surfaces::new`: `data` is the `Rc<Pointer>` it leaked for it, whose
+/// reference the subclass holds until it is removed.
 unsafe extern "system" fn subclass(
     hwnd: HWND,
     message: u32,
@@ -383,12 +388,21 @@ unsafe extern "system" fn subclass(
     data: usize,
 ) -> LRESULT {
     // SAFETY: `data` is the `Rc` `Surfaces::new` leaked for this subclass,
-    // alive until it is removed (here or when the surfaces go).
-    let pointer = unsafe { &*(data as *const Pointer) };
+    // whose reference stays until the subclass is removed (here or when the
+    // surfaces go). A reference of this call's own keeps it alive while the
+    // message is handled: handling it sends messages (`SetFocus`, a page's
+    // input) that run winit's procedure and the app, which may drop the
+    // surfaces meanwhile.
+    let pointer = unsafe {
+        Rc::increment_strong_count(data as *const Pointer);
+        Rc::from_raw(data as *const Pointer)
+    };
 
     if message == WM_NCDESTROY {
         pointer.attached.set(false);
-        // SAFETY: removes this subclass and takes back its reference.
+        // SAFETY: removes this subclass and takes back its reference: it
+        // runs, so it is installed, and the surfaces take the reference
+        // back only once they have removed it.
         unsafe {
             let _ = RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS_ID);
             drop(Rc::from_raw(data as *const Pointer));
@@ -858,9 +872,11 @@ impl Drop for Surfaces {
                 page.unmount(&clip.inner);
             }
         }
-        // SAFETY: removes our subclass (if the window still has it: its
-        // handle may be another window's by now) and takes back its
-        // reference, and our visuals from our tree.
+        // SAFETY: removes our subclass if the window still has it (once it
+        // is destroyed, `attached` is false and its handle may be another
+        // window's), and only once removed takes back the reference
+        // `Surfaces::new` leaked for it (`Rc::as_ptr` is that pointer); then
+        // our visuals from our tree.
         unsafe {
             if self.pointer.attached.replace(false)
                 && RemoveWindowSubclass(self.hwnd, Some(subclass), SUBCLASS_ID).as_bool()

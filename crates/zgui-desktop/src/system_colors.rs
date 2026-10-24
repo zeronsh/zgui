@@ -375,6 +375,7 @@ pub(crate) fn locale_direction() -> zgui::scene::Direction {
         use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_IREADINGLAYOUT};
         let mut buffer = [0_u16; 4];
         // 1: right to left (Arabic, Hebrew, Persian, Urdu).
+        // SAFETY: the user's locale; writes at most `buffer`'s length.
         let written = unsafe { GetLocaleInfoEx(None, LOCALE_IREADINGLAYOUT, Some(&mut buffer)) };
         if written > 0 && buffer[0] == u16::from(b'1') {
             Direction::Rtl

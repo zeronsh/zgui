@@ -44,6 +44,8 @@ fn cpu_time() -> Duration {
         low: u32,
         high: u32,
     }
+    // SAFETY: processthreadsapi.h's declarations: a HANDLE is a pointer,
+    // a FILETIME two DWORDs (`FileTime`), a BOOL an i32.
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GetCurrentProcess() -> *mut std::ffi::c_void;
