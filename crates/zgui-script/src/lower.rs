@@ -1803,14 +1803,15 @@ fn styled(
         let vm = vm.clone();
         let element = element.clone();
         view = view.reactive_style(move || {
-            let lits: Vec<(Prop, Lit)> = dynamic
+            // On the stack: this runs whenever what the styles read changes.
+            let lits: smallvec::SmallVec<[(Prop, Lit); 4]> = dynamic
                 .iter()
                 .filter_map(|(prop, source, scalar)| {
                     Some((*prop, resolve_style(source, *prop, scalar.as_ref(), &vm)?))
                 })
                 .collect();
             let styles = match &element {
-                Some(element) => with_animated(element, lits),
+                Some(element) => with_animated(element, lits.into_vec()),
                 None => apply_all(Styles::new(), &lits),
             };
             let image = bg_image.as_ref().and_then(|(src, fit, low)| {
@@ -3151,6 +3152,33 @@ fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Opt
             .iter()
             .find_map(|(p, l)| (p == prop).then(|| l.clone())),
         Owned::State(s) => s.with(|v| lit(v, ty)),
+        // A colour or a number (most computed styles): read from what the
+        // function returned as it is, without making a `Value` of it first.
+        Owned::Computed(f) if matches!(ty, Ty::Color | Ty::Num) => {
+            match vm.call::<mlua::Value>(f, ()) {
+                Ok(mlua::Value::Number(n)) => lit(&Value::Num(n), ty),
+                Ok(mlua::Value::Integer(n)) => lit(&Value::Num(n as f64), ty),
+                Ok(mlua::Value::String(s))
+                    if matches!(ty, Ty::Color)
+                        && s.to_str().is_ok_and(|text| {
+                            !text.starts_with('$') && !text.eq_ignore_ascii_case("currentcolor")
+                        }) =>
+                {
+                    s.to_str()
+                        .ok()
+                        .and_then(|text| crate::node::parse_color(&text))
+                        .map(Lit::Color)
+                }
+                Ok(other) => crate::value::convert(other, None)
+                    .map_err(|e| vm.report(e))
+                    .ok()
+                    .and_then(|v| lit(&v, ty)),
+                Err(e) => {
+                    vm.report(e);
+                    None
+                }
+            }
+        }
         Owned::Computed(f) => vm
             .call::<Value>(f, ())
             .map_err(|e| vm.report(e))

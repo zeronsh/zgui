@@ -671,3 +671,24 @@ fn a_table_nesting_thousands_deep_or_holding_itself_is_an_error_not_a_crash() {
     }
     assert_eq!(h.text("inner"), "set");
 }
+
+#[test]
+fn a_small_table_read_again_is_the_same_until_written() {
+    // Read twice (a row's key, then the row), a small value gives the same
+    // read-only table; written, it gives the new one.
+    let mut h = Harness::inline(
+        r##"local item = ui.state("item", { id = 1, label = "a" })
+        local seen = ui.state("seen", "")
+        return ui.column {
+            ui.text { id = "seen", "{seen}" },
+            ui.button { id = "check", w = 10, h = 10, on_click = function()
+                local a, b = item:get(), item:get()
+                item:set({ id = 1, label = "b" })
+                local c = item:get()
+                seen:set(tostring(rawequal(a, b)) .. " " .. tostring(rawequal(a, c)) .. " " .. c.label .. " " .. a.label)
+            end },
+        }"##,
+    );
+    h.click("check");
+    assert_eq!(h.text("seen"), "true false b a");
+}

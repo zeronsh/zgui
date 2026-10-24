@@ -1029,6 +1029,8 @@ pub(crate) fn install_cache(lua: &Lua) {
             bases: Default::default(),
             weight: std::cell::Cell::new(0),
             swept: std::cell::Cell::new(0),
+            recent: Default::default(),
+            next_recent: std::cell::Cell::new(0),
         });
     }
 }
@@ -1057,6 +1059,11 @@ struct Converted {
     weight: std::cell::Cell<usize>,
     /// The `weight` of what was held after the last sweep.
     swept: std::cell::Cell<usize>,
+    /// The last few small tables converted (`recent_lua`): id, the value it
+    /// was made from (held, so the id stays its own), the table.
+    recent: std::cell::RefCell<Vec<(usize, Value, Table)>>,
+    /// Where the next one goes once `recent` is full.
+    next_recent: std::cell::Cell<usize>,
 }
 /// Sweeps wait until the cache holds this much (`weight`) at least.
 const SWEPT_FROM: usize = 1 << 12;
@@ -1099,9 +1106,42 @@ fn id_key(id: usize) -> mlua::Value {
 /// conversion of them.
 fn shared_lua(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
     if !large(value) {
-        return to_lua(value, lua, true);
+        return recent_lua(value, lua);
     }
     shared_part(value, lua)
+}
+/// Small tables kept from their last conversions (`Converted::recent`).
+const RECENT: usize = 32;
+/// `to_lua` for a small value, a table converted lately given again: a row's
+/// item read by its key and then by the row (`row:get()`), or by every
+/// function of the row, is converted once until it is written.
+fn recent_lua(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
+    if !matches!(value, Value::List(_) | Value::Map(_)) {
+        return to_lua(value, lua, true);
+    }
+    let Some(cache) = lua.app_data_ref::<Converted>() else {
+        return to_lua(value, lua, true);
+    };
+    let id = identity(value);
+    if let Some((_, _, table)) = cache.recent.borrow().iter().find(|(at, ..)| *at == id) {
+        return Ok(mlua::Value::Table(table.clone()));
+    }
+    drop(cache);
+    let converted = to_lua(value, lua, true)?;
+    if let (mlua::Value::Table(table), Some(cache)) = (&converted, lua.app_data_ref::<Converted>())
+    {
+        let mut recent = cache.recent.borrow_mut();
+        // Held with its value, so its address is not another's meanwhile.
+        let entry = (id, value.clone(), table.clone());
+        if recent.len() < RECENT {
+            recent.push(entry);
+        } else {
+            let at = cache.next_recent.get();
+            recent[at] = entry;
+            cache.next_recent.set((at + 1) % RECENT);
+        }
+    }
+    Ok(converted)
 }
 /// `shared_lua` for a large value or any table in one: each row of a long
 /// list keeps its table, so a computed returning some of the rows (a

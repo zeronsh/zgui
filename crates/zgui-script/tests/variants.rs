@@ -293,3 +293,19 @@ fn the_error_mode_fails_and_ui_raw_needs_a_reason() {
     );
     assert!(error.contains("design lint"), "{error}");
 }
+
+#[test]
+fn computed_colours_apply_as_literal_ones_do() {
+    // A function returning a colour, in each form a literal takes.
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.div { id = "hex", w = 10, h = 10, bg = function() return "#123456" end },
+            ui.div { id = "number", w = 10, h = 10, bg = function() return 0x112233 end },
+            ui.div { id = "token", w = 10, h = 10, bg = function() return "$accent" end },
+            ui.div { id = "literal-token", w = 10, h = 10, bg = "$accent" },
+        }"##,
+    );
+    assert_eq!(h.fill("hex"), Color(0x12, 0x34, 0x56, 255));
+    assert_eq!(h.fill("number"), Color(0x11, 0x22, 0x33, 255));
+    assert_eq!(h.fill("token"), h.fill("literal-token"));
+}
