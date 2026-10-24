@@ -27,6 +27,11 @@ use std::{
 /// A part of a frame's work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
+    /// Dispatching input: hit testing, handlers, default actions.
+    Input,
+    /// A script running (Luau, in `zgui-script`), wherever it is called
+    /// from: what a handler, effect or computed spends in the script itself.
+    Script,
     /// Tasks and reactive effects: what the app changed.
     Update,
     /// Style effects re-running (within an update).
@@ -48,7 +53,9 @@ pub enum Phase {
 }
 
 /// Every phase, in report order.
-pub const PHASES: [Phase; 9] = [
+pub const PHASES: [Phase; 11] = [
+    Phase::Input,
+    Phase::Script,
     Phase::Update,
     Phase::Style,
     Phase::Layout,
@@ -67,6 +74,8 @@ impl Phase {
     /// Its name in reports and signposts.
     pub fn name(self) -> &'static str {
         match self {
+            Phase::Input => "input",
+            Phase::Script => "script",
             Phase::Update => "update",
             Phase::Style => "style",
             Phase::Layout => "layout",
@@ -173,6 +182,26 @@ fn mark_now(what: &str) {
         "profile mark {:.1}M instr {ms:.1} ms: {what}",
         instructions as f64 / 1e6
     );
+}
+
+/// What each phase cost since the last report (or take), its instructions
+/// and time, and start counting again: a benchmark's own split of each
+/// interaction. Empty with `ZGUI_PROFILE` unset.
+pub fn take() -> Vec<(Phase, u64, Duration)> {
+    if !enabled() {
+        return Vec::new();
+    }
+    PROFILE.with(|profile| {
+        let mut profile = profile.borrow_mut();
+        let taken = PHASES
+            .iter()
+            .zip(profile.totals)
+            .map(|(phase, totals)| (*phase, totals.instructions, totals.time))
+            .collect();
+        profile.totals = Default::default();
+        profile.frames = 0;
+        taken
+    })
 }
 
 /// Report what was measured since the last report now (a benchmark's end).
@@ -530,8 +559,8 @@ mod signpost {
     /// The phases' names as C strings, static in this image (signpost
     /// names must be).
     static NAMES: [&std::ffi::CStr; PHASES.len()] = [
-        c"update", c"style", c"layout", c"text", c"damage", c"paint", c"encode", c"submit",
-        c"present",
+        c"input", c"script", c"update", c"style", c"layout", c"text", c"damage", c"paint",
+        c"encode", c"submit", c"present",
     ];
     struct Log(*mut c_void);
     // SAFETY: An os_log_t is usable from any thread.

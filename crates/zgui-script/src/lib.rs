@@ -327,6 +327,7 @@ impl Vm {
         budget: Duration,
         f: impl FnOnce() -> mlua::Result<R>,
     ) -> mlua::Result<R> {
+        let _span = zgui::profile::span(zgui::profile::Phase::Script);
         self.calls.set(self.calls.get() + 1);
         // Outermost, nothing shifts by this start: a recent reading will do.
         let started = match self.deadline.get() {
