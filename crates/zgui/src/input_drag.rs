@@ -132,7 +132,19 @@ pub(super) struct DragSession {
     away: bool,
     moves_window: bool,
 }
+impl Visit {
+    /// The node it names.
+    pub(super) fn node(&self) -> Option<NodeId> {
+        self.destination
+    }
+}
 impl DragSession {
+    /// The nodes it names.
+    pub(super) fn nodes(&self) -> impl Iterator<Item = NodeId> {
+        [Some(self.source), self.destination, self.preview]
+            .into_iter()
+            .flatten()
+    }
     fn event(&self, phase: DragPhase, accepted: bool) -> InputEvent {
         InputEvent::Drag(DragEvent {
             phase,

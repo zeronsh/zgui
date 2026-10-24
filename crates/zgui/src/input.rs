@@ -1082,6 +1082,41 @@ impl InputDispatcher {
         drop(observer);
         drop(removed);
     }
+    /// Unregister the nodes the scene no longer has that the pointer,
+    /// focus, a press, a drag or a scope still names, as removing them does
+    /// (`Ui::remove`, which leaves the others' registrations to be freed
+    /// later: nothing routes to a node the scene no longer has, but through
+    /// these).
+    pub(crate) fn forget_removed(&self, scene: &Scene) {
+        let named: Vec<NodeId> = {
+            let s = self.state.borrow();
+            s.focused
+                .into_iter()
+                .chain(s.captured)
+                .chain(s.pressed)
+                .chain(s.key_pressed.as_ref().map(|(id, _)| *id))
+                .chain(s.clicks.0.map(|click| click.target))
+                .chain(s.hover.iter().copied())
+                .chain(s.file_hovered)
+                .chain(s.scroll_latch.map(|(id, ..)| id))
+                .chain(s.drag.iter().flat_map(drag::DragSession::nodes))
+                .chain(s.drag_ending)
+                .chain(s.visit.as_ref().and_then(drag::Visit::node))
+                .chain(
+                    s.scopes
+                        .iter()
+                        .flat_map(|scope| [Some(scope.root), scope.previous])
+                        .flatten(),
+                )
+                .chain(s.layers.iter().copied())
+                .chain(s.unfocused_keys.iter().copied())
+                .filter(|id| !scene.contains(*id))
+                .collect()
+        };
+        for id in named {
+            self.unregister(id);
+        }
+    }
     /// The node with keyboard focus, if any.
     pub fn focused(&self) -> Option<NodeId> {
         self.state.borrow().focused

@@ -351,11 +351,15 @@ pub struct Ui {
 }
 // One focused-editor snapshot per document. Large or unaccounted custom layouts
 // remain usable but are never retained by this reuse entry.
-/// Subtrees up to this many nodes free what their effects held at once;
-/// larger ones a chunk at a time after frames (`Ui::reclaim`).
+/// Subtrees up to this many nodes are freed as they are removed; larger
+/// ones a chunk at a time after frames (`Ui::reclaim`).
 const RECLAIM_NOW: usize = 256;
-/// Effects freed between looks at the clock (`Ui::reclaim`).
+/// Nodes freed between looks at the clock (`Ui::reclaim`).
 const RECLAIM_CHUNK: usize = 64;
+/// Removed nodes left to free beyond which a removal frees the excess at
+/// once, whatever it takes: memory stays bounded however often large
+/// subtrees go.
+const RECLAIM_BACKLOG: usize = 1 << 18;
 /// What freeing removed nodes may take of a frame being prepared. A chunk
 /// can overrun it while the system allocator returns pages (6–9 ms on
 /// macOS over the first); mimalloc doesn't (zgui-desktop's `mimalloc`).
@@ -526,10 +530,12 @@ struct UiStorage {
     input: InputDispatcher,
     semantics: Rc<RefCell<Semantics>>,
     owned: RefCell<crate::scene::NodeMap<Owned>>,
-    /// Effects of removed nodes, retired (they never run again) and freed in
-    /// chunks after frames (`Ui::reclaim`): a large subtree's closures and
-    /// subscriptions take tens of milliseconds to drop at once.
-    graveyard: RefCell<std::collections::VecDeque<crate::reactive::Retired>>,
+    /// Nodes a large removal took out of the scene, to be freed a chunk
+    /// at a time after frames (`Ui::reclaim`): freeing a page of tens of
+    /// thousands of nodes takes tens of milliseconds at once.
+    dying: RefCell<std::collections::VecDeque<NodeId>>,
+    /// A large subtree was removed since the last frame was prepared.
+    removed: Cell<bool>,
     editors: RefCell<crate::scene::NodeMap<EditorHandle>>,
     editor_layout: RefCell<Option<EditorLayoutEntry>>,
     editor_layout_revision: Cell<Option<u64>>,
@@ -731,7 +737,8 @@ impl Ui {
             input: InputDispatcher::new(),
             semantics: Rc::new(RefCell::new(Semantics::new())),
             owned: RefCell::default(),
-            graveyard: RefCell::default(),
+            dying: RefCell::default(),
+            removed: Cell::new(false),
             editors: RefCell::default(),
             editor_layout: RefCell::new(None),
             editor_layout_revision: Cell::new(None),
@@ -1774,8 +1781,14 @@ impl Ui {
             return Ok(());
         }
         let _preparation = FramePreparationGuard(&self.storage.preparing_frame);
-        // What the last frames' removals left to free, a little at a time.
-        self.reclaim(RECLAIM_BUDGET);
+        // What the last frames' removals left to free, a little at a time:
+        // a chunk only in a frame that removed a large subtree, which has
+        // spent its share.
+        if self.storage.removed.replace(false) {
+            self.reclaim(std::time::Duration::ZERO);
+        } else {
+            self.reclaim(RECLAIM_BUDGET);
+        }
         for _ in 0..64 {
             self.scene.borrow_mut().prepare_layout();
             self.input.validate_drag(&self.scene);
@@ -2171,55 +2184,97 @@ impl Ui {
         drop(old);
         self.input.dispatch(&self.scene, InputEvent::PointerCancel);
     }
-    /// Whether removed nodes' effects still hold what they held, to be
-    /// freed over the next frames: frames call `reclaim` as they are
+    /// Whether nodes removed (`Ui::remove`) still hold what they held, to
+    /// be freed over the next frames: frames call `reclaim` as they are
     /// prepared, so a large removal costs a few of them a little each
     /// instead of one of them a lot, and a host asks for frames while this
     /// holds.
     pub fn reclaiming(&self) -> bool {
-        !self.storage.graveyard.borrow().is_empty()
+        !self.storage.dying.borrow().is_empty()
     }
-    /// Free what removed nodes' effects held, for at most `budget`:
-    /// whether some is left for the next call.
+    /// Free what removed nodes held, a chunk at least and for at most
+    /// `budget` past it: whether some is left for the next call.
     pub fn reclaim(&self, budget: std::time::Duration) -> bool {
         let started = std::time::Instant::now();
         loop {
             // A chunk at a time between looks at the clock.
-            for _ in 0..RECLAIM_CHUNK {
-                let Some(retired) = self.storage.graveyard.borrow_mut().pop_front() else {
-                    return false;
-                };
-                // Outside the borrow: a closure's captures may remove nodes.
-                drop(retired);
+            let chunk: Vec<NodeId> = {
+                let mut dying = self.storage.dying.borrow_mut();
+                let count = RECLAIM_CHUNK.min(dying.len());
+                dying.drain(..count).collect()
+            };
+            if chunk.is_empty() {
+                self.shrink_storage();
+                return false;
             }
+            self.free_removed(&chunk);
             if started.elapsed() >= budget {
-                return !self.storage.graveyard.borrow().is_empty();
+                return self.reclaiming();
             }
         }
     }
-    /// Remove `node` and its subtree, disposing their effects, listeners and
-    /// semantics. Focus within it moves on to what remains. A large subtree's
-    /// effects stop at once and what they held is freed over the next frames
-    /// (`Ui::reclaim`).
-    pub fn remove(&mut self, node: NodeId) {
-        if !self.scene.borrow().contains(node) {
-            return;
+    /// Free what `ids`, nodes a large removal took out of the scene, held.
+    fn free_removed(&self, ids: &[NodeId]) {
+        let owned: Vec<_> = {
+            let mut storage = self.storage.owned.borrow_mut();
+            ids.iter().filter_map(|id| storage.remove(id)).collect()
+        };
+        let mut listeners = Vec::new();
+        for id in ids {
+            for sizes in [&self.storage.content_sizes, &self.storage.observed_sizes] {
+                if !sizes.borrow().is_empty() {
+                    sizes.borrow_mut().remove(id);
+                }
+            }
+            if !self.storage.observed_bounds.borrow().is_empty() {
+                self.storage.observed_bounds.borrow_mut().remove(id);
+            }
+            if !self.storage.observed_visibility.borrow().is_empty() {
+                self.storage.observed_visibility.borrow_mut().remove(id);
+            }
+            if !self.storage.layout_listeners.borrow().is_empty() {
+                listeners.extend(self.storage.layout_listeners.borrow_mut().remove(id));
+            }
+            self.input.unregister(*id);
         }
-        let mut ids = vec![node];
         {
-            let s = self.scene.borrow();
-            let mut i = 0;
-            while i < ids.len() {
-                ids.extend_from_slice(s.children(ids[i]));
-                i += 1;
+            let mut semantics = self.semantics.borrow_mut();
+            for id in ids {
+                semantics.forget(*id);
             }
         }
+        {
+            let mut scene = self.scene.borrow_mut();
+            for id in ids {
+                scene.free_dead(*id);
+            }
+        }
+        // Outside every borrow: their captures may reenter.
+        drop(owned);
+        drop(listeners);
+    }
+    /// A page of thousands of nodes gone: the maps give back their room.
+    fn shrink_storage(&self) {
+        crate::shrink_sparse(&mut self.storage.owned.borrow_mut());
+        crate::shrink_sparse(&mut self.storage.editors.borrow_mut());
+        crate::shrink_sparse(&mut self.storage.content_sizes.borrow_mut());
+        crate::shrink_sparse(&mut self.storage.observed_sizes.borrow_mut());
+        crate::shrink_sparse(&mut self.storage.observed_bounds.borrow_mut());
+    }
+    /// What removing `node` ends before its subtree goes: an interaction
+    /// or a cached editor layout in it (the cached layout returned, to be
+    /// dropped once the subtree is gone), and where focus in it falls.
+    fn before_removal(&self, node: NodeId) -> (Option<EditorLayoutEntry>, Option<NodeId>) {
+        let inside = |id: NodeId| {
+            let scene = self.scene.borrow();
+            scene.contains(id) && scene.is_within(id, node)
+        };
         let remove_interaction = self
             .storage
             .interaction
             .borrow()
             .as_ref()
-            .is_some_and(|pending| ids.contains(&pending.job.owner));
+            .is_some_and(|pending| inside(pending.job.owner));
         if remove_interaction {
             let old = self.storage.interaction.borrow_mut().take();
             if let Some(pending) = &old {
@@ -2232,51 +2287,64 @@ impl Ui {
             .editor_layout
             .borrow()
             .as_ref()
-            .is_some_and(|entry| ids.contains(&entry.node))
+            .is_some_and(|entry| inside(entry.node))
         {
             self.storage.editor_layout.borrow_mut().take()
         } else {
             None
-        };
-        // Extract all ownership before running user destructors. A destructor may
-        // upgrade WeakUi and remove a sibling or the already detached subtree.
-        let mut owned: Vec<_> = {
-            let mut storage = self.storage.owned.borrow_mut();
-            ids.iter().filter_map(|id| storage.remove(id)).collect()
-        };
-        // Their effects stop now; what they hold goes later, a chunk after
-        // each frame (`Ui::reclaim`), unless the subtree is small.
-        if ids.len() > RECLAIM_NOW {
-            let mut graveyard = self.storage.graveyard.borrow_mut();
-            for owned in &mut owned {
-                graveyard.extend(owned.effects.drain(..).map(crate::reactive::Effect::retire));
-            }
-        }
-        let editors: Vec<_> = {
-            let mut storage = self.storage.editors.borrow_mut();
-            ids.iter().filter_map(|id| storage.remove(id)).collect()
         };
         // Focus inside it falls to its nearest focusable ancestor that stays,
         // else to the next Tab stop (as a native toolkit moves it on, rather
         // than to the window), so keys still reach the app and a screen
         // reader says where it went: once the frame settles
         // (`try_prepare_frame`).
-        let refocus = self
-            .input
-            .focused()
-            .filter(|id| ids.contains(id))
-            .and_then(|_| {
-                let s = self.scene.borrow();
-                let mut at = s.parent(node);
-                while let Some(id) = at {
-                    if self.input.options(id).is_some_and(|o| o.focusable) {
-                        return Some(id);
-                    }
-                    at = s.parent(id);
+        let refocus = self.input.focused().filter(|id| inside(*id)).and_then(|_| {
+            let s = self.scene.borrow();
+            let mut at = s.parent(node);
+            while let Some(id) = at {
+                if self.input.options(id).is_some_and(|o| o.focusable) {
+                    return Some(id);
                 }
-                // None stays: the next Tab stop takes it, never the window.
-                self.input.successor(&s, node)
-            });
+                at = s.parent(id);
+            }
+            // None stays: the next Tab stop takes it, never the window.
+            self.input.successor(&s, node)
+        });
+        (cached_layout, refocus)
+    }
+    /// Remove `node` and its subtree, disposing their effects, listeners and
+    /// semantics. Focus within it moves on to what remains. A large subtree
+    /// goes at once (nothing reaches its nodes, its effects never run again
+    /// and what its components keep is dropped), and what else its nodes
+    /// held is freed over the next frames (`Ui::reclaim`).
+    pub fn remove(&mut self, node: NodeId) {
+        if !self.scene.borrow().contains(node) {
+            return;
+        }
+        let mut ids = vec![node];
+        {
+            let s = self.scene.borrow();
+            let mut i = 0;
+            while i < ids.len() {
+                if ids.len() > RECLAIM_NOW {
+                    drop(s);
+                    return self.remove_large(node);
+                }
+                ids.extend_from_slice(s.children(ids[i]));
+                i += 1;
+            }
+        }
+        let (cached_layout, refocus) = self.before_removal(node);
+        // Extract all ownership before running user destructors. A destructor may
+        // upgrade WeakUi and remove a sibling or the already detached subtree.
+        let owned: Vec<_> = {
+            let mut storage = self.storage.owned.borrow_mut();
+            ids.iter().filter_map(|id| storage.remove(id)).collect()
+        };
+        let editors: Vec<_> = {
+            let mut storage = self.storage.editors.borrow_mut();
+            ids.iter().filter_map(|id| storage.remove(id)).collect()
+        };
         // Detach geometry before listener captures or cached layouts can run
         // user destructors. Reentrant removal of this owner (or an ancestor)
         // then observes an already removed subtree instead of stale node IDs.
@@ -2295,16 +2363,62 @@ impl Ui {
             self.semantics.borrow_mut().remove(id);
         }
         drop(cached_layout);
-        // A page of thousands of nodes gone: the maps give back their room.
-        crate::shrink_sparse(&mut self.storage.owned.borrow_mut());
-        crate::shrink_sparse(&mut self.storage.editors.borrow_mut());
-        crate::shrink_sparse(&mut self.storage.content_sizes.borrow_mut());
-        crate::shrink_sparse(&mut self.storage.observed_sizes.borrow_mut());
-        crate::shrink_sparse(&mut self.storage.observed_bounds.borrow_mut());
+        self.shrink_storage();
         drop(owned);
         drop(editors);
         if refocus.is_some() && self.input.focused().is_none() {
             self.storage.refocus.set(refocus);
+        }
+    }
+    /// `remove` for a subtree of more than `RECLAIM_NOW` nodes: freeing
+    /// each node takes a few hundred nanoseconds, tens of milliseconds for
+    /// a page of tens of thousands, so the subtree goes from the scene, the
+    /// accessibility tree and input at once, and its nodes are freed over
+    /// the next frames. Its effects stop now and its components' resources
+    /// (tasks, timers, cleanups) drop now, as a small subtree's do.
+    fn remove_large(&mut self, node: NodeId) {
+        let (cached_layout, refocus) = self.before_removal(node);
+        // No id names its nodes from here: the scene no longer has them.
+        let ids = self.scene.borrow_mut().kill(node);
+        let resources: Vec<_> = {
+            let mut storage = self.storage.owned.borrow_mut();
+            let mut kept = Vec::new();
+            let mut effects = Vec::with_capacity(ids.len());
+            for id in &ids {
+                if let Some(owned) = storage.get(id) {
+                    effects.extend(owned.effects.iter());
+                    if !owned.resources.is_empty() {
+                        kept.push(*id);
+                    }
+                }
+            }
+            self.runtime.stop_effects(effects);
+            let mut resources = Vec::with_capacity(kept.len());
+            for id in kept {
+                if let Some(owned) = storage.get_mut(&id) {
+                    resources.push(std::mem::take(&mut owned.resources));
+                }
+            }
+            resources
+        };
+        let editors: Vec<_> = {
+            let scene = self.scene.borrow();
+            let mut storage = self.storage.editors.borrow_mut();
+            storage.extract_if(|id, _| !scene.contains(*id)).collect()
+        };
+        self.semantics.borrow_mut().bury(&ids);
+        self.input.forget_removed(&self.scene.borrow());
+        self.storage.dying.borrow_mut().extend(ids);
+        self.storage.removed.set(true);
+        // User destructors, once nothing names the subtree.
+        drop(cached_layout);
+        drop(resources);
+        drop(editors);
+        if refocus.is_some() && self.input.focused().is_none() {
+            self.storage.refocus.set(refocus);
+        }
+        while self.storage.dying.borrow().len() > RECLAIM_BACKLOG {
+            self.reclaim(std::time::Duration::ZERO);
         }
     }
 }

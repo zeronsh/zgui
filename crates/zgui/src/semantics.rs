@@ -273,6 +273,11 @@ struct SemanticEntry {
 /// host uses to send only what changed.
 pub struct Semantics {
     nodes: crate::scene::NodeMap<SemanticEntry>,
+    /// Slots of nodes removed whose information is not yet freed
+    /// (`bury`), a bit each: what they hold reads as gone.
+    buried: Vec<u64>,
+    /// How many bits of `buried` are set.
+    buried_count: usize,
     revision: u64,
     instance: u64,
 }
@@ -286,6 +291,8 @@ impl Default for Semantics {
             .expect("semantic store identity exhausted");
         Self {
             nodes: Default::default(),
+            buried: Vec::new(),
+            buried_count: 0,
             revision: 0,
             instance,
         }
@@ -311,8 +318,50 @@ impl Semantics {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Whether `id`'s information reads as gone (`bury`).
+    #[inline]
+    fn buried(&self, id: NodeId) -> bool {
+        self.buried_count > 0
+            && self
+                .buried
+                .get(id.slot() / 64)
+                .is_some_and(|bits| bits & (1 << (id.slot() % 64)) != 0)
+    }
+    /// The information of `ids`, nodes just removed, reads as gone from now
+    /// on; `forget` frees it, one node at a time.
+    pub(crate) fn bury(&mut self, ids: &[NodeId]) {
+        for id in ids {
+            let (word, bit) = (id.slot() / 64, 1 << (id.slot() % 64));
+            if word >= self.buried.len() {
+                self.buried.resize(word + 1, 0);
+            }
+            if self.buried[word] & bit == 0 {
+                self.buried[word] |= bit;
+                self.buried_count += 1;
+            }
+        }
+        self.revision = self.revision.wrapping_add(1);
+    }
+    /// Free the information of `id`, a node `bury` buried.
+    pub(crate) fn forget(&mut self, id: NodeId) {
+        if let Some(bits) = self.buried.get_mut(id.slot() / 64) {
+            let bit = 1 << (id.slot() % 64);
+            if *bits & bit != 0 {
+                *bits &= !bit;
+                self.buried_count -= 1;
+            }
+        }
+        if self.buried_count == 0 {
+            self.buried = Vec::new();
+        }
+        self.nodes.remove(&id);
+        crate::shrink_sparse(&mut self.nodes);
+    }
     /// Set `id`'s information; equal information changes nothing.
     pub fn set(&mut self, id: NodeId, node: SemanticNode) {
+        if self.buried(id) {
+            return;
+        }
         if self.get(id) != Some(&node) {
             self.revision = self.revision.wrapping_add(1);
             self.nodes.insert(
@@ -326,11 +375,17 @@ impl Semantics {
     }
     /// `id`'s information, if it has any.
     pub fn get(&self, id: NodeId) -> Option<&SemanticNode> {
+        if self.buried(id) {
+            return None;
+        }
         self.nodes.get(&id).map(|entry| &entry.node)
     }
     /// Changes only when this node changes. Removal invalidates the token;
     /// reinsertion and different semantic stores receive distinct tokens.
     pub fn node_revision(&self, id: NodeId) -> Option<SemanticRevision> {
+        if self.buried(id) {
+            return None;
+        }
         self.nodes.get(&id).map(|entry| SemanticRevision {
             instance: self.instance,
             revision: entry.revision,
@@ -339,6 +394,9 @@ impl Semantics {
     /// Change `id`'s information in place, if it has any. It counts as
     /// changed only if `f` changed it.
     pub fn update(&mut self, id: NodeId, f: impl FnOnce(&mut SemanticNode)) {
+        if self.buried(id) {
+            return;
+        }
         if let Some(entry) = self.nodes.get_mut(&id) {
             let before = entry.node.clone();
             let update = SemanticUpdate {
@@ -359,6 +417,9 @@ impl Semantics {
         selection: (usize, usize),
         read_only: bool,
     ) {
+        if self.buried(id) {
+            return;
+        }
         let Some(entry) = self.nodes.get_mut(&id) else {
             return;
         };
@@ -382,6 +443,9 @@ impl Semantics {
     /// Set a node's label in place: an equal one changes nothing, and a new
     /// one reuses the old one's room (a label bound to changing text).
     pub fn set_label(&mut self, id: NodeId, label: &str) {
+        if self.buried(id) {
+            return;
+        }
         let Some(entry) = self.nodes.get_mut(&id) else {
             return;
         };
@@ -394,6 +458,9 @@ impl Semantics {
     }
     /// Set a text input's placeholder; an equal one changes nothing.
     pub fn set_placeholder(&mut self, id: NodeId, placeholder: Option<&str>) {
+        if self.buried(id) {
+            return;
+        }
         let Some(entry) = self.nodes.get_mut(&id) else {
             return;
         };
@@ -406,6 +473,9 @@ impl Semantics {
     }
     /// Remove `id`'s information.
     pub fn remove(&mut self, id: NodeId) {
+        if self.buried(id) {
+            return self.forget(id);
+        }
         if self.nodes.remove(&id).is_some() {
             self.revision = self.revision.wrapping_add(1);
             crate::shrink_sparse(&mut self.nodes);
@@ -421,7 +491,10 @@ impl Semantics {
     }
     /// Every node's information, in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = (NodeId, &SemanticNode)> {
-        self.nodes.iter().map(|(id, entry)| (*id, &entry.node))
+        self.nodes
+            .iter()
+            .filter(|(id, _)| !self.buried(**id))
+            .map(|(id, entry)| (*id, &entry.node))
     }
     /// Counts changes to the store: unchanged, nothing needs sending.
     pub fn revision(&self) -> u64 {

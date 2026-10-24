@@ -14,6 +14,8 @@ mod composition_slider;
 mod composition_split;
 #[path = "../deferred_mount_failure.rs"]
 mod deferred_mount_failure;
+#[path = "../lazy_removal.rs"]
+mod lazy_removal;
 #[path = "../lifecycle_resources.rs"]
 mod lifecycle_resources;
 #[path = "../native_views.rs"]

@@ -12,6 +12,12 @@ pub struct NodeId {
     index: u32,
     generation: u32,
 }
+impl NodeId {
+    /// Its slot: no other node in the scene has it while this one is there.
+    pub(crate) fn slot(self) -> usize {
+        self.index as usize
+    }
+}
 /// What measuring a container works in, per child, kept for the next one
 /// (`Scene::scratch`): laying out allocates none of it once warm.
 #[derive(Default)]
@@ -1425,6 +1431,9 @@ fn percentage(fraction: Option<f32>, basis: Option<f32>) -> Option<f32> {
 }
 struct Slot {
     generation: u32,
+    /// Removed and not yet freed (`Scene::kill`): its generation has moved
+    /// on, so no id reaches it, and it is not reused until freed.
+    dead: bool,
     node: Option<Node>,
 }
 /// Where a parent's children are damaged (`Scene::damage_context`).
@@ -1618,6 +1627,8 @@ pub struct Scene {
     identity: u64,
     slots: Vec<Slot>,
     free: Vec<u32>,
+    /// Slots of nodes removed and not yet freed (`kill`).
+    dead: usize,
     root: NodeId,
     dirty: Vec<NodeId>,
     damage: Vec<Rect>,
@@ -1739,6 +1750,7 @@ impl Scene {
                 .expect("scene identity exhausted"),
             slots: vec![Slot {
                 generation: 0,
+                dead: false,
                 node: Some(Node {
                     cursor: None,
                     parent: None,
@@ -1779,6 +1791,7 @@ impl Scene {
                 }),
             }],
             free: Vec::new(),
+            dead: 0,
             root,
             dirty: vec![root],
             damage: Vec::new(),
@@ -1969,7 +1982,25 @@ impl Scene {
     }
     /// The number of nodes, the root included.
     pub fn len(&self) -> usize {
-        self.slots.len() - self.free.len()
+        self.slots.len() - self.free.len() - self.dead
+    }
+    /// The ids of the nodes in the scene, in slot order.
+    fn ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.slots.iter().enumerate().filter_map(|(index, slot)| {
+            (slot.node.is_some() && !slot.dead).then_some(NodeId {
+                index: index as u32,
+                generation: slot.generation,
+            })
+        })
+    }
+    /// Layout and paint walk the tree from its root, which reaches no
+    /// removed node: in debug builds, check it.
+    #[inline(always)]
+    fn visit(&self, id: NodeId) {
+        debug_assert!(
+            !self.slots[id.index as usize].dead,
+            "layout or paint reached a removed node"
+        );
     }
     /// Always false: a scene keeps its root.
     pub fn is_empty(&self) -> bool {
@@ -2849,17 +2880,7 @@ impl Scene {
     pub fn set_text_shaper(&mut self, shaper: impl crate::text_layout::TextShaper + 'static) {
         self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
         self.text_shaper = Some(Box::new(shaper));
-        let ids: Vec<_> = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                slot.node.as_ref().map(|_| NodeId {
-                    index: index as u32,
-                    generation: slot.generation,
-                })
-            })
-            .collect();
+        let ids: Vec<_> = self.ids().collect();
         for id in ids {
             self.invalidate(id, LAYOUT | PAINT);
         }
@@ -2887,17 +2908,7 @@ impl Scene {
     pub fn set_text_measurer(&mut self, measurer: impl TextMeasurer + 'static) {
         self.text_measurer = Some(Box::new(measurer));
         self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
-        let ids: Vec<_> = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                slot.node.as_ref().map(|_| NodeId {
-                    index: index as u32,
-                    generation: slot.generation,
-                })
-            })
-            .collect();
+        let ids: Vec<_> = self.ids().collect();
         for id in ids {
             self.invalidate(id, LAYOUT | PAINT);
         }
@@ -3218,6 +3229,7 @@ impl Scene {
             let index = self.slots.len() as u32;
             self.slots.push(Slot {
                 generation: 0,
+                dead: false,
                 node: Some(node),
             });
             NodeId {
@@ -3265,8 +3277,57 @@ impl Scene {
             });
         }
     }
-    fn free_subtree(&mut self, id: NodeId) {
-        let node = self.slots[id.index as usize].node.take().unwrap();
+    /// Take `id` and its subtree out of the tree at once, as `remove` does,
+    /// leaving their slots to be freed later, one at a time (`free_dead`):
+    /// returns their ids, `id` first, none of which the scene contains from
+    /// now on (nothing reaches them: their generations have moved on, and
+    /// the lists that name nodes no longer name them). For a large subtree:
+    /// the whole viewport repaints, rather than each node's ink. Panics for
+    /// the root.
+    pub(crate) fn kill(&mut self, id: NodeId) -> Vec<NodeId> {
+        self.content_revision = self.content_revision.wrapping_add(1);
+        assert_ne!(id, self.root, "cannot remove scene root");
+        self.add_damage(self.viewport);
+        let parent = self.node(id).parent.unwrap();
+        self.node_mut(parent).children.retain(|child| *child != id);
+        let mut ids = vec![id];
+        let mut at = 0;
+        while let Some(&id) = ids.get(at) {
+            at += 1;
+            let slot = &mut self.slots[id.index as usize];
+            slot.generation = slot
+                .generation
+                .checked_add(1)
+                .expect("node generation exhausted");
+            slot.dead = true;
+            ids.extend_from_slice(&slot.node.as_ref().unwrap().children);
+        }
+        self.dead += ids.len();
+        let slots = &self.slots;
+        let live = |id: &NodeId| slots[id.index as usize].generation == id.generation;
+        self.blur_nodes.retain(live);
+        self.popups.retain(live);
+        self.popups_promoted.retain(live);
+        self.overflow_fades.retain(|(id, _)| live(id));
+        self.inert.retain(live);
+        self.invalidate_layout(parent);
+        self.children_changed(parent);
+        ids
+    }
+    /// Free the slot of `id`, a node `kill` took out (and not its subtree,
+    /// whose nodes come in turn).
+    pub(crate) fn free_dead(&mut self, id: NodeId) {
+        let slot = &mut self.slots[id.index as usize];
+        assert!(slot.dead, "freeing a node that was not removed");
+        let node = slot.node.take().unwrap();
+        slot.dead = false;
+        self.dead -= 1;
+        self.forget(id, &node);
+        self.free.push(id.index);
+    }
+    /// What the scene keeps about `node`, gone, but in the lists `kill`
+    /// filters.
+    fn forget(&mut self, id: NodeId, node: &Node) {
         self.selectable.forget(id);
         self.cursor_styles -= usize::from(node.cursor.is_some());
         self.relative_count -= usize::from(node.style.relative);
@@ -3286,6 +3347,10 @@ impl Scene {
         self.transformed -= usize::from(node.transformed());
         self.filtered -= usize::from(node.filtered());
         self.promoted_count -= usize::from(node.promoted);
+    }
+    fn free_subtree(&mut self, id: NodeId) {
+        let node = self.slots[id.index as usize].node.take().unwrap();
+        self.forget(id, &node);
         if node.effects.blur_radius > 0.0 {
             self.blur_nodes.retain(|entry| *entry != id);
         }
@@ -4466,6 +4531,7 @@ impl Scene {
         {
             self.measure_calls += 1;
         }
+        self.visit(id);
         let constraints = self.relevant(id, constraints);
         let node = self.node(id);
         let pass = self.layout_pass;
@@ -5225,6 +5291,7 @@ impl Scene {
         level: u32,
         context: &mut Option<DamageContext>,
     ) {
+        self.visit(id);
         let (x, y) = match self.node(id).style.snap {
             true => self.snap(id, x, y),
             false => (x, y),
@@ -5829,7 +5896,7 @@ impl Scene {
         self.slots.iter().enumerate().filter_map(|(index, slot)| {
             slot.node
                 .as_ref()
-                .filter(|node| node.isolated)
+                .filter(|node| node.isolated && !slot.dead)
                 .map(|_| NodeId {
                     index: index as u32,
                     generation: slot.generation,
@@ -5952,6 +6019,7 @@ impl Scene {
         while let Some((id, parent_transform, parent_opacity, parent_clip, context, border)) =
             stack.pop()
         {
+            self.visit(id);
             let node = self.node(id);
             let is_root = root == Some(id);
             // A popup window draws it (`set_popup`).
@@ -6667,6 +6735,43 @@ mod tests {
         assert!(!scene.contains(old));
         assert!(scene.contains(new));
         assert_ne!(old, new);
+        scene.flush();
+    }
+    #[test]
+    fn a_killed_subtree_leaves_at_once_and_its_slots_free_one_at_a_time() {
+        let mut scene = Scene::new(100.0, 100.0);
+        let page = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Column),
+            Style::default(),
+        );
+        let rows: Vec<_> = (0..4)
+            .map(|i| scene.append(page, text(&format!("row {i}")), Style::default()))
+            .collect();
+        scene.set_isolated(rows[0], true);
+        let kept = scene.append(scene.root(), text("kept"), Style::default());
+        scene.flush();
+        let before = scene.len();
+        let ids = scene.kill(page);
+        assert_eq!(ids.len(), 5);
+        assert!(ids.iter().all(|id| !scene.contains(*id)));
+        assert_eq!(scene.len(), before - 5);
+        assert_eq!(scene.children(scene.root()), &[kept]);
+        assert!(scene.isolated_nodes().all(|id| !ids.contains(&id)));
+        // Layout and paint walk only what stays (a debug build asserts it).
+        scene.set_text(kept, "kept, laid out again");
+        scene.flush();
+        assert!(scene.paint_items().all(|item| !ids.contains(&item.id)));
+        // Its slots wait: a new node takes a fresh one.
+        let fresh = scene.append(scene.root(), text("fresh"), Style::default());
+        assert!(!ids.iter().any(|id| id.index == fresh.index));
+        for id in &ids {
+            scene.free_dead(*id);
+        }
+        assert_eq!(scene.len(), before - 5 + 1);
+        let reused = scene.append(scene.root(), text("reused"), Style::default());
+        assert!(ids.iter().any(|id| id.index == reused.index));
+        assert!(ids.iter().all(|id| !scene.contains(*id)));
         scene.flush();
     }
     #[test]

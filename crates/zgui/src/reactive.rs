@@ -30,6 +30,8 @@ struct EffectRecord {
     run: u64,
     /// In `pending`, waiting to run: queued once however many writes.
     queued: bool,
+    /// Never to run again (`Effect::stop`); freed when its handle drops.
+    stopped: bool,
 }
 /// Effect ids are unique integers; a multiplicative hash beats SipHash here.
 #[derive(Default, Clone, Copy)]
@@ -61,6 +63,8 @@ struct Inner {
     pending: RefCell<BinaryHeap<Reverse<EffectId>>>,
     active: Cell<Option<EffectId>>,
     next: Cell<EffectId>,
+    /// Effects stopped whose handles still live (`Effect::stop`).
+    stopped: Cell<usize>,
     batch_depth: Cell<usize>,
     flushing: Cell<bool>,
     /// One value per type that belongs to this runtime (`Runtime::extension`).
@@ -193,6 +197,7 @@ impl Runtime {
                 dependencies: Default::default(),
                 run: 0,
                 queued: true,
+                stopped: false,
             },
         );
         self.inner.pending.borrow_mut().push(Reverse(id));
@@ -223,6 +228,7 @@ impl Runtime {
                 dependencies: Default::default(),
                 run: 1,
                 queued: false,
+                stopped: false,
             },
         );
         // Made before it runs: a first run that panics drops it, so
@@ -278,9 +284,30 @@ impl Runtime {
             self.inner.run(id);
         }
     }
-    /// How many effects are alive.
+    /// `Effect::stop` for each of `effects`, this runtime's looked up at
+    /// once.
+    pub fn stop_effects<'a>(&self, effects: impl IntoIterator<Item = &'a Effect>) {
+        let mut records = self.inner.effects.borrow_mut();
+        let mut stopped = 0;
+        for effect in effects {
+            if !std::ptr::eq(effect.runtime.as_ptr(), Rc::as_ptr(&self.inner)) {
+                drop(records);
+                effect.stop();
+                records = self.inner.effects.borrow_mut();
+                continue;
+            }
+            if let Some(record) = records.get_mut(&effect.id)
+                && !std::mem::replace(&mut record.stopped, true)
+            {
+                record.queued = false;
+                stopped += 1;
+            }
+        }
+        self.inner.stopped.set(self.inner.stopped.get() + stopped);
+    }
+    /// How many effects are alive (not stopped).
     pub fn effect_count(&self) -> usize {
-        self.inner.effects.borrow().len()
+        self.inner.effects.borrow().len() - self.inner.stopped.get()
     }
     /// The runtime's one value of type `T`, made by `init` the first time
     /// it is asked for, so that independent parts of an application (its
@@ -326,20 +353,19 @@ pub struct Effect {
     runtime: Weak<Inner>,
 }
 impl Effect {
-    /// Take the effect out of its runtime now, so it never runs again, and
-    /// let what it holds (its closure and what that captured, its
-    /// subscriptions) go when the `Retired` drops: later, off the frame
-    /// (`Ui::remove` frees a large subtree's in chunks).
-    pub fn retire(mut self) -> Retired {
-        let record = self
-            .runtime
-            .upgrade()
-            .and_then(|runtime| runtime.effects.borrow_mut().remove(&self.id));
-        // Dropped now with nothing left to do.
-        self.runtime = Weak::new();
-        Retired {
-            id: self.id,
-            record,
+    /// Never run again, from now: no write queues it, nor does a queued
+    /// run happen. What it holds (its closure and what that captured, its
+    /// subscriptions) goes when the handle drops, which may be later, off
+    /// the frame (`Ui::remove` frees a large subtree's over frames).
+    pub fn stop(&self) {
+        let Some(runtime) = self.runtime.upgrade() else {
+            return;
+        };
+        if let Some(record) = runtime.effects.borrow_mut().get_mut(&self.id)
+            && !std::mem::replace(&mut record.stopped, true)
+        {
+            record.queued = false;
+            runtime.stopped.set(runtime.stopped.get() + 1);
         }
     }
     /// A handle that runs this effect early, while it lives.
@@ -374,28 +400,14 @@ impl Refresh {
         !running && runtime.run(self.id)
     }
 }
-/// An effect that will not run again (`Effect::retire`), holding what it
-/// held until it drops.
-pub struct Retired {
-    id: EffectId,
-    record: Option<EffectRecord>,
-}
-impl Drop for Retired {
-    fn drop(&mut self) {
-        if let Some(record) = self.record.take() {
-            for dependency in record.dependencies {
-                if let Some(dependency) = dependency.source.upgrade() {
-                    dependency.unsubscribe(self.id);
-                }
-            }
-        }
-    }
-}
 impl Drop for Effect {
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.upgrade() {
             let record = runtime.effects.borrow_mut().remove(&self.id);
             if let Some(record) = record {
+                if record.stopped {
+                    runtime.stopped.set(runtime.stopped.get() - 1);
+                }
                 for dependency in record.dependencies {
                     if let Some(dependency) = dependency.source.upgrade() {
                         dependency.unsubscribe(self.id);
@@ -542,6 +554,7 @@ impl<T: 'static> Signal<T> {
                 let mut pending = inner.pending.borrow_mut();
                 for id in self.inner.subscribers.borrow().iter() {
                     if let Some(record) = effects.get_mut(id)
+                        && !record.stopped
                         && !std::mem::replace(&mut record.queued, true)
                     {
                         pending.push(Reverse(*id));

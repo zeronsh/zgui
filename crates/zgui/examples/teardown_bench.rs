@@ -2,9 +2,10 @@
 //! texts in a column, mounted, laid out, then unmounted in one frame, and
 //! the frames after it until what it held is freed (`Ui::reclaim`). Prints
 //! the removal frame's time and instructions (macOS), the slowest frame
-//! after it, and how many frames the freeing took.
+//! after it, and how many frames the freeing took: the least of `REPEAT`
+//! runs (5), as other work on the machine only adds.
 //! Run: cargo run --release -p zgui --example teardown_bench
-//! (`N` sets the rows, 30,000 by default; several sizes: `N=2000,10000,30000`.)
+//! (`N` sets the rows, several sizes: `N=2000,10000,30000` by default.)
 use std::time::{Duration, Instant};
 use zgui::{compose::prelude::*, scene::Color, widgets::Ui};
 
@@ -37,7 +38,9 @@ fn rows(n: usize) -> View {
     column().w(1200.).children((1..=n).map(row))
 }
 
-fn run(n: usize) {
+/// One run: the removal frame's time and instructions, the nodes, the
+/// frames after it and the slowest of them.
+fn run(n: usize) -> (Duration, u64, usize, usize, Duration) {
     let mut ui = Ui::new(1200., 900.);
     let frame = |ui: &Ui| {
         ui.prepare_frame();
@@ -59,18 +62,28 @@ fn run(n: usize) {
         after = after.max(at.elapsed());
         frames += 1;
     }
-    println!(
-        "{n} rows ({nodes} nodes): removal frame {:.2} ms, {:.1} M instructions ({:.0} a node); after it, {frames} frames, slowest {:.2} ms",
-        removal.as_secs_f64() * 1e3,
-        spent as f64 / 1e6,
-        spent as f64 / nodes as f64,
-        after.as_secs_f64() * 1e3,
-    );
+    (removal, spent, nodes, frames, after)
 }
 
 fn main() {
     let sizes = std::env::var("N").unwrap_or_else(|_| "2000,10000,30000".into());
+    let repeat = std::env::var("REPEAT")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(5);
     for n in sizes.split(',').filter_map(|n| n.trim().parse().ok()) {
-        run(n);
+        let runs: Vec<_> = (0..repeat).map(|_| run(n)).collect();
+        let nodes = runs[0].2;
+        let removal = runs.iter().map(|r| r.0).min().unwrap();
+        let spent = runs.iter().map(|r| r.1).min().unwrap();
+        let frames = runs.iter().map(|r| r.3).max().unwrap();
+        let after = runs.iter().map(|r| r.4).min().unwrap();
+        println!(
+            "{n} rows ({nodes} nodes): removal frame {:.2} ms, {:.1} M instructions ({:.0} a node); after it, {frames} frames, slowest {:.2} ms",
+            removal.as_secs_f64() * 1e3,
+            spent as f64 / 1e6,
+            spent as f64 / nodes as f64,
+            after.as_secs_f64() * 1e3,
+        );
     }
 }
