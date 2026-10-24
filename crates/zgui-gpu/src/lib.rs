@@ -1104,6 +1104,26 @@ struct Batch {
     shading: Shading,
     start: u32,
     end: u32,
+    /// Device pixels its draws cover, and of them those drawn with a
+    /// costlier shader than their own (see `merged_shading`).
+    pixels: f32,
+    promoted: f32,
+}
+/// Device pixels a batch may draw with a costlier shader than they need, to
+/// join neighbours of another shading into one draw call: a draw costs the
+/// driver thousands of instructions, shading a small area costs little.
+const PROMOTED_PIXELS: f32 = 16_384.;
+/// The shading drawing both `a` and `b`, if one can: the full shader draws
+/// every basic quad, and blending every opaque one, to the same bytes (see
+/// `shading`). Shader fills keep their own pipeline.
+fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
+    let cost = |shading| match shading {
+        Shading::Opaque => Some(0),
+        Shading::Basic => Some(1),
+        Shading::Full => Some(2),
+        Shading::Fill(_) => None,
+    };
+    Some(if cost(a)? >= cost(b)? { a } else { b })
 }
 fn quad_bounds(quads: &[Quad]) -> Rect {
     quads
@@ -4676,25 +4696,50 @@ impl GpuRenderer {
                 continue;
             };
             let source = (draw.image, draw.layer);
-            match &mut batch {
-                Some(open)
-                    if open.rect == rect && open.source == source && open.shading == shading =>
-                {
-                    open.end = draw.end;
-                }
-                _ => {
-                    if let Some(done) = batch.take() {
-                        emit(done);
+            let pixels = draw
+                .bounds
+                .intersection(rect)
+                .map_or(0., |covered| covered.width * covered.height)
+                * self.scale
+                * self.scale;
+            if let Some(open) = &mut batch
+                && open.rect == rect
+                && open.source == source
+            {
+                // Another shading joins when what it promotes (quads drawn
+                // with a costlier shader than theirs) stays small.
+                let merged = match merged_shading(open.shading, shading) {
+                    _ if open.shading == shading => Some((shading, open.promoted)),
+                    Some(merged) => {
+                        let promoted = if merged == open.shading {
+                            open.promoted
+                        } else {
+                            open.pixels
+                        } + if merged == shading { 0. } else { pixels };
+                        (promoted <= PROMOTED_PIXELS).then_some((merged, promoted))
                     }
-                    batch = Some(Batch {
-                        rect,
-                        source,
-                        shading,
-                        start,
-                        end: draw.end,
-                    });
+                    None => None,
+                };
+                if let Some((merged, promoted)) = merged {
+                    open.shading = merged;
+                    open.promoted = promoted;
+                    open.pixels += pixels;
+                    open.end = draw.end;
+                    continue;
                 }
             }
+            if let Some(done) = batch.take() {
+                emit(done);
+            }
+            batch = Some(Batch {
+                rect,
+                source,
+                shading,
+                start,
+                end: draw.end,
+                pixels,
+                promoted: 0.,
+            });
         }
         if let Some(done) = batch.take() {
             emit(done);

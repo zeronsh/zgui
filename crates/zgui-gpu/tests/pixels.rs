@@ -5180,6 +5180,29 @@ fn split_shading_matches_the_full_shader() {
     assert_eq!(worst, 0, "split shading differs by up to {worst}");
 }
 
+/// Small neighbours of different shading (a rounded chip, then a plain bar)
+/// join one draw call, the full shader drawing the plain ones: a draw costs
+/// the driver more than shading their few pixels.
+#[test]
+fn small_quads_of_different_shading_share_a_draw() {
+    let _gpu_fixture = gpu_fixture();
+    use zgui::{compose::prelude::*, widgets::Ui};
+    let mut gpu = GpuRenderer::new(600, 200).unwrap();
+    gpu.set_scale_factor(2.);
+    let mut ui = Ui::new(300., 100.);
+    gpu.install_text(&mut ui.scene.borrow_mut());
+    ui.mount(row().gap(2.).children((0..20).map(|i| {
+        let chip = div().size(6., 6.).rounded(2.).bg(rgb(0x3366aa));
+        let bar = div().size(4., 10. + i as f32).bg(rgb(0xaa6633));
+        row().child(chip).child(bar)
+    })));
+    ui.prepare_frame();
+    let damage = ui.scene.borrow_mut().flush().damage;
+    let stats = gpu.render(&ui.scene.borrow(), &damage).unwrap();
+    // The background, then the forty quads (alternating shaders) as one.
+    assert!(stats.draw_calls <= 3, "{} draw calls", stats.draw_calls);
+}
+
 /// Opaque rounded and bordered panels draw a flat interior with the basic
 /// shader and only their edge bands with the full one: the same bytes as one
 /// quad, at fractional positions and sizes, per-corner radii and any scale.
