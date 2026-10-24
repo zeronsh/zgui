@@ -1,3 +1,6 @@
+// It counts allocations with an allocator of its own: not with the
+// `mimalloc` feature's.
+#![cfg(not(feature = "mimalloc"))]
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,

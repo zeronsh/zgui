@@ -19,6 +19,7 @@ use zgui_workload::{Mode, heavy::*};
 mod view;
 
 /// Counts the allocations made (`realloc` counts as one).
+#[cfg_attr(feature = "mimalloc", allow(dead_code))]
 struct Counting;
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 // SAFETY: every call goes to `System` with the caller's own arguments (so
@@ -40,7 +41,10 @@ unsafe impl GlobalAlloc for Counting {
         unsafe { System.realloc(ptr, layout, size) }
     }
 }
-#[global_allocator]
+// With the `mimalloc` feature, that allocator stands instead (allocations
+// then read 0).
+#[cfg_attr(not(feature = "mimalloc"), global_allocator)]
+#[cfg_attr(feature = "mimalloc", allow(dead_code))]
 static GLOBAL: Counting = Counting;
 
 fn env<T: std::str::FromStr>(name: &str, default: T) -> T {

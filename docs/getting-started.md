@@ -201,6 +201,8 @@ RUSTFLAGS="-Cprofile-generate=/tmp/pgo" cargo build --profile dist
 RUSTFLAGS="-Cprofile-use=/tmp/app.profdata" cargo build --profile dist
 ```
 
+zgui-desktop's `mimalloc` feature makes mimalloc the program's allocator: 1–10% fewer cycles in zgui's headless scenes (text 7%, layout 6%, animation 9%, the heavy dashboard 2%) for about 2–3 MB more memory. Turn it on with `features = ["mimalloc"]` on the dependency, unless your program declares a `#[global_allocator]` of its own.
+
 Release binaries keep their symbol table, so backtraces and crash reports name functions. Stripping it saves about another 1.4 MB, and is your choice to make: add `strip = "symbols"` to `[profile.dist]` and keep the symbols apart, in a dSYM, to read crash reports with. On macOS that is `split-debuginfo = "packed"` with `debug = "line-tables-only"` in the profile; Cargo writes `<binary>.dSYM` beside the binary. Keep it with each release you ship, so crash reports from it can be symbolicated (`atos`, or Xcode's Organizer).
 
 To ship it on Windows (an icon, a manifest, one instance per user, an installer), see [shipping on Windows](windows.md#shipping-a-zgui-app-on-windows); on macOS, bundle the binary in an `.app` with an `Info.plist` (the terminal example's `scripts/zterm-app.sh` does).

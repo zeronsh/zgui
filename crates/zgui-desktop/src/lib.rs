@@ -19,7 +19,12 @@
 //!     })
 //! }
 //! ```
+
 #![warn(missing_docs)]
+/// The `mimalloc` feature's allocator for the whole program.
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 pub mod app_menu;
 mod clipboard;
 pub mod file_dialog;

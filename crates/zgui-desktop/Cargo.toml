@@ -35,9 +35,15 @@ terminal-bundle = ["dep:zgui-script"]
 # webview2.rs).
 # Needs the WebView2 runtime, which Windows 11 ships.
 webview2 = ["dep:webview2-com", "zgui-gpu/composition", "windows/Win32_Graphics_DirectComposition", "windows/Win32_Graphics_Gdi", "windows/Win32_System_Com", "windows/Win32_System_Com_StructuredStorage", "windows/Win32_System_Ole"]
+# mimalloc as the program's allocator, in place of the system's: 1-10%
+# fewer cycles in zgui's headless scenes (text 7%, layout 6%, animation
+# 9%), for up to 3 MB more resident memory. A program has one allocator:
+# leave this off if yours declares a `#[global_allocator]`.
+mimalloc = ["dep:mimalloc"]
 
 [dependencies]
 zgui = { path = "../zgui", version = "0.1.0" }
+mimalloc = { version = "0.1", default-features = false, optional = true }
 zgui-gpu = { path = "../zgui-gpu", version = "0.1.0", default-features = false }
 winit = "0.30.13"
 softbuffer = "0.4.8"
