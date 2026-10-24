@@ -59,7 +59,7 @@ local function header(): Node
 		)
 	end
 	table.insert(cells, ui.text { "Trend", w = 80, color = "$text.secondary" })
-	return ui.row { gap = 4, px = 8, py = 6, cells }
+	return ui.row { gap = 4, px = 8, py = 6, items = "center", cells }
 end
 
 local function row(i: number): Node
