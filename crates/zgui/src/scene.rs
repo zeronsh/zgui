@@ -2357,8 +2357,9 @@ impl Scene {
             return 0.;
         }
         let style = &self.node(id).style;
-        // An image or an icon that sets its size keeps it (CSS's replaced
-        // elements); its box holds no content to measure.
+        // An image or an icon that sets its size, or is sized by its
+        // pixels, keeps it (CSS's replaced elements); its box holds no
+        // content to measure.
         if self.node(self.laid_out_as(id)).replaced
             && let Some(size) = if horizontal {
                 style.width

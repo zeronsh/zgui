@@ -61,6 +61,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             image("Six color regions", source())
                                 .grow()
                                 .flex_shrink(1.)
+                                // Narrower than its pixels in a small window,
+                                // as CSS's `min-width: 0` lets an `<img>` be.
+                                .min_w(0.)
                                 .h(180.)
                                 .p(20.)
                                 .bg(rgb(0x203040))

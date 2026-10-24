@@ -3,7 +3,9 @@
 //! a sibling gives way. One that clips (a scroll container) may shrink to
 //! nothing, and a minimum the item sets, `min_w(0.)` say, is its own. An
 //! icon or an image that sets its size keeps it, as CSS's replaced elements
-//! (`<img>`, `<canvas>`) do: its box holds no content to measure.
+//! (`<img>`, `<canvas>`) do: its box holds no content to measure. An image
+//! sized by its pixels keeps that natural size, as `<img>` does, unless its
+//! minimum is set.
 use zgui::{compose::prelude::*, scene::Align, scene::NodeId, scene::Rect, widgets::Ui};
 
 const WORD: &str = "Unbreakable";
@@ -146,6 +148,27 @@ fn an_icon_in_a_padded_button_overflows_the_padding_centred_not_squashed() {
     let bounds = ui.scene.borrow().bounds(view.find("icon").unwrap());
     assert_eq!((bounds.width, bounds.height), (15., 15.), "{bounds:?}");
     assert!((bounds.x - 6.5).abs() < 0.01, "centred: {bounds:?}");
+}
+
+/// A 120 × 60 image sized by its pixels, 20 px of padding around them.
+fn photo() -> View {
+    let pixels =
+        std::sync::Arc::new(zgui::image::ImageData::new(120, 60, vec![255; 120 * 60 * 4]).unwrap());
+    image("Photo", pixels).p(20.).flex_shrink(1.)
+}
+
+#[test]
+fn an_image_keeps_its_natural_size_unless_its_minimum_is_set() {
+    // CSS's `<img>` with no width: its natural size is its automatic
+    // minimum, so the 180 px box gives way to its 160...
+    let rects = squeezed(photo());
+    assert_eq!(rects[1].width, 160., "{rects:?}");
+    assert!((rects[0].width - 40.).abs() < 0.01, "{rects:?}");
+    // ...and `min_w(0.)` (`min-width: 0`) lets it shrink with the box, in
+    // proportion to their sizes, as `object-fit` then fits its pixels in.
+    let rects = squeezed(photo().min_w(0.));
+    let proportional = 160. - 140. * 160. / 340.;
+    assert!((rects[1].width - proportional).abs() < 0.01, "{rects:?}");
 }
 
 #[test]
