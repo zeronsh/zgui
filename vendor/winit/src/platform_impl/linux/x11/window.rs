@@ -124,6 +124,11 @@ pub struct UnownedWindow {
     pub shared_state: Mutex<SharedState>,
     redraw_sender: WakeSender<WindowId>,
     activation_sender: WakeSender<super::ActivationToken>,
+    // zgui patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER`, and the value
+    // the window manager last asked for, set once the frame for its resize
+    // is presented (`pre_present_notify`).
+    sync_counter: Option<u32>,
+    sync_pending: Mutex<Option<i64>>,
 }
 
 macro_rules! leap {
@@ -351,6 +356,8 @@ impl UnownedWindow {
             shared_state: SharedState::new(guessed_monitor, &window_attrs),
             redraw_sender: event_loop.redraw_sender.clone(),
             activation_sender: event_loop.activation_sender.clone(),
+            sync_counter: None,
+            sync_pending: Mutex::new(None),
         };
 
         // Title must be set before mapping. Some tiling window managers (i.e. i3) use the window
@@ -474,18 +481,24 @@ impl UnownedWindow {
                 leap!(window.set_icon_inner(icon.inner)).ignore_error();
             }
 
+            // zgui patch: a counter the window manager waits on as it resizes the
+            // window, so each frame is drawn at the size it gave
+            // (`_NET_WM_SYNC_REQUEST`, as GTK and Chromium do).
+            window.sync_counter = window.create_sync_counter();
+
             // Opt into handling window close
+            let mut protocols = vec![atoms[WM_DELETE_WINDOW], atoms[_NET_WM_PING]];
+            if window.sync_counter.is_some() {
+                protocols.push(atoms[_NET_WM_SYNC_REQUEST]);
+            }
             let result = xconn.xcb_connection().change_property(
                 xproto::PropMode::REPLACE,
                 window.xwindow,
                 atoms[WM_PROTOCOLS],
                 xproto::AtomEnum::ATOM,
                 32,
-                2,
-                bytemuck::cast_slice::<xproto::Atom, u8>(&[
-                    atoms[WM_DELETE_WINDOW],
-                    atoms[_NET_WM_PING],
-                ]),
+                protocols.len() as u32,
+                bytemuck::cast_slice::<xproto::Atom, u8>(&protocols),
             );
             leap!(result).ignore_error();
 
@@ -1848,6 +1861,58 @@ impl UnownedWindow {
     #[inline]
     pub fn pre_present_notify(&self) {
         // TODO timer
+        // zgui patch: the frame for the window manager's resize is drawn.
+        self.answer_sync();
+    }
+
+    // zgui patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER` (the SYNC
+    // extension), at 0; none if the server has no SYNC.
+    fn create_sync_counter(&self) -> Option<u32> {
+        use x11rb::{
+            protocol::sync::{self, ConnectionExt as _},
+            wrapper::ConnectionExt as _,
+        };
+        let xcb = self.xconn.xcb_connection();
+        xcb.sync_initialize(3, 1).ok()?.reply().ok()?;
+        let counter = xcb.generate_id().ok()?;
+        xcb.sync_create_counter(counter, sync::Int64 { hi: 0, lo: 0 }).ok()?.check().ok()?;
+        let atoms = self.xconn.atoms();
+        xcb.change_property32(
+            xproto::PropMode::REPLACE,
+            self.xwindow,
+            atoms[_NET_WM_SYNC_REQUEST_COUNTER],
+            xproto::AtomEnum::CARDINAL,
+            &[counter],
+        )
+        .ok()?
+        .ignore_error();
+        Some(counter)
+    }
+
+    // zgui patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER`.
+    pub(crate) fn sync_counter(&self) -> Option<u32> {
+        self.sync_counter
+    }
+
+    // zgui patch: the window manager asks for `value` once the window is
+    // drawn at the size it is about to give.
+    pub(crate) fn sync_request(&self, value: i64) {
+        *self.sync_pending.lock().unwrap() = Some(value);
+    }
+
+    // zgui patch: tell the window manager the frame it waited for is there.
+    pub(crate) fn answer_sync(&self) {
+        use x11rb::protocol::sync::{self, ConnectionExt as _};
+        let (Some(counter), Some(value)) = (self.sync_counter, self.sync_pending.lock().unwrap().take())
+        else {
+            return;
+        };
+        let value = sync::Int64 { hi: (value >> 32) as i32, lo: value as u32 };
+        let xcb = self.xconn.xcb_connection();
+        if let Ok(cookie) = xcb.sync_set_counter(counter, value) {
+            cookie.ignore_error();
+        }
+        let _ = self.xconn.flush_requests();
     }
 
     #[cfg(feature = "rwh_04")]

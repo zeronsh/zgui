@@ -177,6 +177,18 @@ an app did not start ("Failed to create surface for any enabled backend").
 The GL instance is made only once Vulkan finds no driver, so a Vulkan system
 loads no EGL. `gl_fallback_smoke.py` draws the gallery both ways.
 
+## Resizing on X11
+
+A window manager resizing a zgui window waits for each frame
+(`_NET_WM_SYNC_REQUEST`, as GTK, Chromium and Qt): the vendored winit names
+the protocol and a SYNC counter on the window, keeps the window manager's
+request, and sets the counter as zgui presents the frame at the new size
+(`Window::pre_present_notify`), or at once when no new size comes. Without
+it the window manager resized as fast as the pointer moved, ahead of the
+frames. `resize_sync_smoke.py` resizes window_probe's window with Openbox's
+Alt and right button drag: the counter, at 0 before, reaches Openbox's last
+request, with a frame drawn for each step.
+
 ## Frame pacing and latency
 
 On Wayland a window draws when the compositor's frame callback grants a

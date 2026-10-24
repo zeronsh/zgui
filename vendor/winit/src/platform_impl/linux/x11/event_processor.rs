@@ -425,6 +425,14 @@ impl EventProcessor {
             return;
         }
 
+        // zgui patch: the window manager is about to resize the window, and
+        // waits for the frame at its new size (`answer_sync`).
+        if xev.data.get_long(0) as xproto::Atom == atoms[_NET_WM_SYNC_REQUEST] {
+            let value = (xev.data.get_long(2) as u32 as i64) | ((xev.data.get_long(3) as i32 as i64) << 32);
+            self.with_window(window, |window| window.sync_request(value));
+            return;
+        }
+
         if xev.data.get_long(0) as xproto::Atom == wt.net_wm_ping {
             let client_msg = xproto::ClientMessageEvent {
                 response_type: xproto::CLIENT_MESSAGE_EVENT,
@@ -785,6 +793,10 @@ impl EventProcessor {
                 window_id,
                 event: WindowEvent::Resized(new_inner_size.into()),
             });
+        } else {
+            // zgui patch: no new size, no new frame: the window manager waits
+            // for none.
+            window.answer_sync();
         }
     }
 
