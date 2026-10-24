@@ -25,7 +25,7 @@ use std::{
     },
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
     },
     thread,
@@ -585,6 +585,15 @@ struct Session {
     /// Its reader and its waiter that have finished: the last closes
     /// `master`.
     finished: std::sync::atomic::AtomicU8,
+    /// Its shell's reaping, which hang-ups wait for (`hang_up`).
+    reap: Mutex<Reap>,
+    reaped: Condvar,
+}
+/// Whether the shell is reaped, and the hang-ups not yet over.
+#[derive(Default)]
+struct Reap {
+    reaped: bool,
+    hanging_up: u32,
 }
 struct Live {
     screen: vt100::Parser<Recorder>,
@@ -604,6 +613,36 @@ impl Session {
         self.live
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    fn reap(&self) -> std::sync::MutexGuard<'_, Reap> {
+        self.reap
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// Hang up its shell's process group, then kill what is left of it two
+    /// seconds later. The shell stays unreaped until then (its waiter
+    /// waits, `wait_session`), and an unreaped leader's pid, so its group's
+    /// id, is no other process's: the kill reaches this group, not one
+    /// that took its number. Nothing, once the shell is reaped.
+    fn hang_up(self: &Arc<Self>) {
+        let mut reap = self.reap();
+        if reap.reaped {
+            return;
+        }
+        reap.hanging_up += 1;
+        // SAFETY: signals the shell's process group (it leads one, made by
+        // `forkpty`), its id its own while the shell is unreaped (above).
+        unsafe { libc::killpg(self.child, libc::SIGHUP) };
+        drop(reap);
+        let session = self.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(2));
+            let mut reap = session.reap();
+            // SAFETY: as above: the waiter reaps only once this is over.
+            unsafe { libc::killpg(session.child, libc::SIGKILL) };
+            reap.hanging_up -= 1;
+            session.reaped.notify_all();
+        });
     }
     /// One of its two threads is done; the second closes the terminal.
     fn finish(&self) {
@@ -1084,17 +1123,7 @@ fn end(server: &Shared, which: impl Fn(&str) -> bool) {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     for (id, session) in &server.sessions {
         if which(id) {
-            let child = session.child;
-            // SAFETY: signals the shell's process group (it leads one, made by
-            // `forkpty`); no memory is involved.
-            unsafe { libc::killpg(child, libc::SIGHUP) };
-            thread::spawn(move || {
-                thread::sleep(Duration::from_secs(2));
-                // SAFETY: as above. Were the shell reaped and its group id
-                // reused meanwhile, this would signal another group: pids are
-                // handed out in sequence, so not within 2 seconds.
-                unsafe { libc::killpg(child, libc::SIGKILL) };
-            });
+            session.hang_up();
         }
     }
 }
@@ -1264,16 +1293,47 @@ fn read_session(session: Arc<Session>) {
     session.finish();
 }
 
+/// Wait for the session's shell to exit and reap it, once no hang-up
+/// signals its group any more; its wait status.
+fn reap_shell(session: &Session) -> libc::c_int {
+    // Its exit, leaving it unreaped (`WNOWAIT`): its group's id stays its
+    // own while a hang-up still signals the group (`Session::hang_up`).
+    // SAFETY: waits for the session's own child, writing `info`.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    while unsafe {
+        libc::waitid(
+            libc::P_PID,
+            session.child as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOWAIT,
+        )
+    } < 0
+        && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
+    {}
+    let mut status = 0;
+    {
+        let mut reap = session.reap();
+        while reap.hanging_up > 0 {
+            reap = session
+                .reaped
+                .wait(reap)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        // SAFETY: reaps the session's own child, writing its status.
+        while unsafe { libc::waitpid(session.child, &mut status, 0) } < 0
+            && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
+        {}
+        reap.reaped = true;
+    }
+    status
+}
+
 /// End a session when its shell exits, whatever still holds its terminal
 /// (a background job the shell left keeps it open, so the reader would
 /// never hear the end): it goes from the server and its terminal hears the
 /// exit code, after the shell's last output.
 fn wait_session(server: Shared, id: String, session: Arc<Session>) {
-    let mut status = 0;
-    // SAFETY: waits for the session's own child, writing its status.
-    while unsafe { libc::waitpid(session.child, &mut status, 0) } < 0
-        && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
-    {}
+    let status = reap_shell(&session);
     let code = if libc::WIFEXITED(status) {
         libc::WEXITSTATUS(status)
     } else {
@@ -1407,6 +1467,8 @@ fn spawn(hello: &serde_json::Value, cols: u16, rows: u16) -> Option<Session> {
         child,
         drained: AtomicBool::new(false),
         finished: Default::default(),
+        reap: Mutex::default(),
+        reaped: Condvar::new(),
         live: Mutex::new(Live {
             screen: vt100::Parser::new_with_callbacks(rows, cols, SCROLLBACK, Recorder::default()),
             client: None,
@@ -1483,5 +1545,38 @@ fn arguments(pid: libc::pid_t) -> Option<Vec<String>> {
             .map(|a| String::from_utf8_lossy(a).into_owned())
             .collect();
         Some(args)
+    }
+}
+
+#[cfg(test)]
+mod hang_up_tests {
+    use super::*;
+
+    /// A shell ignoring its hang-up is killed two seconds later, with its
+    /// group, while it is unreaped (its group's id its own), and reaped
+    /// only then; once it is reaped, a hang-up signals nothing.
+    #[test]
+    fn a_hang_up_kills_what_ignores_it_before_the_shell_is_reaped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("zgui-hang-up-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shell = dir.join("stubborn");
+        std::fs::write(&shell, "#!/bin/sh\ntrap '' HUP\nsleep 30\n").unwrap();
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let hello = serde_json::json!({ "env": [["SHELL", shell.to_str().unwrap()]] });
+        let session = Arc::new(spawn(&hello, 80, 24).unwrap());
+        // Time for the shell to ignore the hang-up.
+        thread::sleep(Duration::from_millis(500));
+        let started = Instant::now();
+        session.hang_up();
+        let status = reap_shell(&session);
+        assert!(started.elapsed() >= Duration::from_millis(1900));
+        assert!(
+            libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGKILL,
+            "{status}"
+        );
+        assert!(session.reap().reaped);
+        session.hang_up();
+        assert_eq!(session.reap().hanging_up, 0);
     }
 }
