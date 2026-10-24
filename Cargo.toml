@@ -3,7 +3,9 @@ members = ["crates/zgui", "crates/zgui-desktop", "crates/zgui-ghostty-sys", "cra
 exclude = [
     "comparisons/gpui",
     "comparisons/quickgui",
+    "vendor/accesskit_atspi_common",
     "vendor/accesskit_macos",
+    "vendor/accesskit_unix",
     "vendor/accesskit_windows",
     "vendor/cosmic-text",
     "vendor/mlua",
@@ -73,6 +75,11 @@ taffy = { path = "vendor/taffy" }
 # AccessKit 0.26 on macOS with headings VoiceOver finds: see
 # vendor/accesskit_macos/ZGUI_PATCH.md.
 accesskit_macos = { path = "vendor/accesskit_macos" }
+# AccessKit's Linux adapter (accesskit_unix 0.22, accesskit_atspi_common 0.19)
+# with tables Orca reads and tree items that say they are open: see
+# vendor/accesskit_unix/ZGUI_PATCH.md.
+accesskit_atspi_common = { path = "vendor/accesskit_atspi_common" }
+accesskit_unix = { path = "vendor/accesskit_unix" }
 # AccessKit 0.34 on Windows with headings Narrator navigates by: see
 # vendor/accesskit_windows/ZGUI_PATCH.md.
 accesskit_windows = { path = "vendor/accesskit_windows" }

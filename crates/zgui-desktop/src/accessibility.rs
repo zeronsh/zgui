@@ -378,6 +378,8 @@ impl AccessibilityTree {
                     | Role::Tab
                     | Role::Dialog
                     | Role::Menu
+                    | Role::Tree
+                    | Role::Grid
             ) {
                 n.add_action(Action::Focus);
             }
@@ -1715,5 +1717,181 @@ mod vocabulary_tests {
         assert_eq!(labels(&mut ui), ["Inbox", "3"]);
         count.set(String::new());
         assert_eq!(labels(&mut ui), ["Inbox"]);
+    }
+
+    #[test]
+    fn trees_and_grids_say_they_take_focus() {
+        use zgui::compose::{TreeChildren, TreeItem};
+        let mut ui = Ui::new(600., 400.);
+        let files = |parent: Option<&str>| {
+            TreeChildren::Ready(match parent {
+                None => vec![TreeItem::leaf("a", "Alpha")],
+                Some(_) => Vec::new(),
+            })
+        };
+        let (open, chosen) = (ui.signal(Vec::new()), ui.signal(None));
+        let columns = ui.signal(vec![GridColumn::new("name", "Name", 100.)]);
+        let (sort, current) = (ui.signal(None), ui.signal(None));
+        let source = GridSource::new(|| 3, |r, _| format!("Item {r}"));
+        ui.mount(
+            row()
+                .w(600.)
+                .h(300.)
+                .child(
+                    column()
+                        .w(200.)
+                        .h_full()
+                        .child(tree("Files", files, open, chosen, |_| {})),
+                )
+                .child(
+                    column()
+                        .w(200.)
+                        .h_full()
+                        .child(data_grid("Items", columns, sort, current, source)),
+                ),
+        );
+        let nodes = project(&mut ui);
+        // An assistive technology focuses them (AT-SPI's Focusable): their
+        // focus then shows on their current item.
+        for role in [accesskit::Role::Tree, accesskit::Role::Grid] {
+            let found = find(&nodes, role);
+            assert_eq!(found.len(), 1, "{role:?}");
+            assert!(found[0].supports_action(Action::Focus), "{role:?}");
+        }
+    }
+}
+
+/// What AT-SPI reads of zgui's tree, through the adapter AccessKit's Linux
+/// host serves it from (vendor/accesskit_unix/ZGUI_PATCH.md).
+#[cfg(all(test, target_os = "linux"))]
+mod atspi_tests {
+    use super::*;
+    use accesskit_atspi_common::{
+        Adapter, AdapterCallback, AppContext, Event, InterfaceSet, PlatformNode, Role as AtspiRole,
+        State, WindowBounds,
+    };
+    use zgui::{
+        compose::prelude::*,
+        compose::{TreeChildren, TreeItem},
+        widgets::Ui,
+    };
+
+    struct Quiet;
+    impl AdapterCallback for Quiet {
+        fn register_interfaces(
+            &self,
+            _: &Adapter,
+            _: accesskit_atspi_common::NodeId,
+            _: InterfaceSet,
+        ) {
+        }
+        fn unregister_interfaces(
+            &self,
+            _: &Adapter,
+            _: accesskit_atspi_common::NodeId,
+            _: InterfaceSet,
+        ) {
+        }
+        fn emit_event(&self, _: &Adapter, _: Event) {}
+    }
+    struct Ignore;
+    impl accesskit::ActionHandler for Ignore {
+        fn do_action(&mut self, _: accesskit::ActionRequest) {}
+    }
+
+    /// Every node under `node`, depth first.
+    fn walk(adapter: &Adapter, node: PlatformNode, out: &mut Vec<PlatformNode>) {
+        for index in 0..node.child_count().unwrap() as usize {
+            if let Some(child) = node.child_at_index(index).unwrap() {
+                walk(adapter, adapter.platform_node(child), out);
+            }
+        }
+        out.push(node);
+    }
+
+    #[test]
+    fn a_grid_reads_as_a_table_and_a_tree_item_as_open_or_closed() {
+        let mut ui = Ui::new(600., 400.);
+        let files = |parent: Option<&str>| {
+            TreeChildren::Ready(match parent {
+                None => vec![
+                    TreeItem::parent("a", "Alpha"),
+                    TreeItem::parent("b", "Beta"),
+                ],
+                Some("a") => vec![TreeItem::leaf("a1", "Apple")],
+                Some(_) => Vec::new(),
+            })
+        };
+        let (open, chosen) = (ui.signal(vec!["a".to_owned()]), ui.signal(None));
+        let columns = ui.signal(vec![
+            GridColumn::new("name", "Name", 100.),
+            GridColumn::new("size", "Size", 80.),
+        ]);
+        let (sort, current) = (ui.signal(None), ui.signal(None));
+        let source = GridSource::new(|| 500, |r, c| format!("{c} {r}"));
+        ui.mount(
+            row()
+                .w(600.)
+                .h(300.)
+                .child(
+                    column()
+                        .w(200.)
+                        .h_full()
+                        .child(tree("Files", files, open, chosen, |_| {})),
+                )
+                .child(
+                    column()
+                        .w(300.)
+                        .h_full()
+                        .child(data_grid("Items", columns, sort, current, source)),
+                ),
+        );
+        ui.prepare_frame();
+        let update = AccessibilityTree::new().update(
+            &ui.scene.borrow(),
+            &ui.semantics.borrow(),
+            None,
+            "Test",
+            1.,
+        );
+        let adapter = Adapter::new(
+            &AppContext::new(None),
+            Quiet,
+            update,
+            true,
+            WindowBounds::default(),
+            Ignore,
+        );
+        let mut nodes = Vec::new();
+        walk(
+            &adapter,
+            adapter.platform_node(adapter.root_id()),
+            &mut nodes,
+        );
+        let named = |role: AtspiRole, name: &str| {
+            nodes
+                .iter()
+                .find(|n| n.role().unwrap() == role && n.name().unwrap() == name)
+                .unwrap_or_else(|| panic!("no {role:?} {name}"))
+        };
+        // The grid: its rows counted though few are built, the header's too.
+        let grid = named(AtspiRole::Table, "Items");
+        assert_eq!(grid.table_size().unwrap(), (501, 2));
+        let header = grid.table_header(1, true).unwrap().unwrap();
+        assert_eq!(adapter.platform_node(header).name().unwrap(), "Size");
+        assert_eq!(grid.table_description(0, true).unwrap(), "Name");
+        // Row 3 (the header is row 0), column 1: its cell, which says where
+        // it is and which header is over it.
+        let cell = adapter.platform_node(grid.table_cell_at(3, 1).unwrap().unwrap());
+        assert_eq!(cell.table_cell_position().unwrap(), (3, 1));
+        let table = adapter.platform_node(cell.table_cell_table().unwrap());
+        assert_eq!(table.name().unwrap(), "Items");
+        assert_eq!(cell.table_cell_headers(true).unwrap(), vec![header]);
+        assert_eq!(grid.table_cell_at(400, 0).unwrap(), None, "not built");
+        // The tree: Alpha open, Beta closed, Apple a leaf.
+        let state = |name| named(AtspiRole::TreeItem, name).state();
+        assert!(state("Alpha").contains(State::Expandable | State::Expanded));
+        assert!(state("Beta").contains(State::Expandable | State::Collapsed));
+        assert!(!state("Apple").contains(State::Expandable));
     }
 }

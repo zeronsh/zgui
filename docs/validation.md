@@ -346,7 +346,12 @@ focus, caret and selection, buttons, numeric values, checkbox state, disabled
 input and fresh-state reactivation. Static labels now use the AccessKit text
 value contract; editors publish cached Unicode TextRuns and route selection
 actions through guarded core input. The evidence records the pinned bridge
-limitations, source hashes, native trees/events and integrated checks.
+limitations, source hashes, native trees/events and integrated checks. The
+bridge is AccessKit's, patched (`vendor/accesskit_unix/ZGUI_PATCH.md`) with
+AT-SPI's Table and TableCell interfaces and the expandable, expanded and
+collapsed states: a data grid reads as a table of all its rows, its cells
+with their row, column and header, and a tree item as open or closed
+(zgui-desktop's `atspi_tests`).
 
 [Image fitting](platform-validation/image-fit/README.md) now supports local fluent
 Fill/Contain/Cover/None/ScaleDown styles with centered padded clipping. Core
