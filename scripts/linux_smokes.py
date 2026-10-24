@@ -101,6 +101,7 @@ SMOKES = [
     ("clipboard-shutdown", "cargo test -p zgui-desktop --lib retained_window_factory_releases_native_clipboard_after_manager_shutdown --locked -- --ignored --test-threads=1", True),
     ("host-suspend", "cargo test -p zgui-desktop --lib host_suspend_recreates_native_resources_and_retains_editor_state --locked -- --ignored --test-threads=1", True),
     ("atspi", "/usr/bin/python3 scripts/atspi_smoke.py {bin}/atspi --output {out}", False),
+    ("components-atspi", "/usr/bin/python3 scripts/components_atspi_smoke.py {bin}/components_probe --output {out}", False),
     ("image-fit", "python3 scripts/image_fit_smoke.py {bin}/image_fit --output {out}", False),
     ("effects", "python3 scripts/effects_smoke.py {bin}/effects --output {out}", False),
     ("pointer-chords", "python3 scripts/pointer_chords_smoke.py {bin}/pointer_chords --output {out}", False),
