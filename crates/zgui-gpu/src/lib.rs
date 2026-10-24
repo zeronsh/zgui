@@ -3584,20 +3584,40 @@ impl GpuRenderer {
             // it would cut, transformed quads and filters keep the scissor.
             let mut draw_clip = clip;
             let limit = snap_out(clip, self.scale);
-            if item.effects.blur_radius <= 0.
-                && quads[start as usize..]
-                    .iter()
-                    .all(|quad| quad.options[2] < 0.5 && !crosses(quad, limit))
-            {
-                let mut kept = start as usize;
-                for index in start as usize..quads.len() {
-                    if inside(&quads[index], limit) {
-                        quads[kept] = quads[index];
-                        kept += 1;
+            // The kept quads' bounds, when the clip culls on the CPU.
+            let mut culled_bounds = None;
+            if item.effects.blur_radius <= 0. {
+                // One pass: each quad inside the clip, outside it, or cut.
+                let (mut cut, mut outside, mut kept) = (false, false, None::<Rect>);
+                for quad in &quads[start as usize..] {
+                    if quad.options[2] >= 0.5 {
+                        cut = true;
+                        break;
+                    }
+                    let rect = quad_rect(quad);
+                    if rect_inside(rect, limit) {
+                        kept = Some(kept.map_or(rect, |bounds| bounds.union(rect)));
+                    } else if rect_outside(rect, limit) {
+                        outside = true;
+                    } else {
+                        cut = true;
+                        break;
                     }
                 }
-                quads.truncate(kept);
-                draw_clip = viewport;
+                if !cut {
+                    if outside {
+                        let mut kept = start as usize;
+                        for index in start as usize..quads.len() {
+                            if inside(&quads[index], limit) {
+                                quads[kept] = quads[index];
+                                kept += 1;
+                            }
+                        }
+                        quads.truncate(kept);
+                    }
+                    draw_clip = viewport;
+                    culled_bounds = Some(kept.unwrap_or_default());
+                }
             }
             if quads.len() as u32 > start || item.effects.blur_radius > 0. {
                 let draw = Draw {
@@ -3611,7 +3631,7 @@ impl GpuRenderer {
                     start,
                     end: quads.len() as u32,
                     clip: draw_clip,
-                    bounds: quad_bounds(&quads[start as usize..]),
+                    bounds: culled_bounds.unwrap_or_else(|| quad_bounds(&quads[start as usize..])),
                     image: if let Some(image) = canvas_image {
                         Some(image)
                     } else if let NodeKind::Image(image) = item.kind {
@@ -6868,25 +6888,27 @@ fn snap_out(r: Rect, scale: f32) -> Rect {
 }
 /// Whether `quad` lies entirely within `clip`.
 fn inside(quad: &Quad, clip: Rect) -> bool {
+    rect_inside(quad_rect(quad), clip)
+}
+/// Whether a quad covering `rect` lies entirely within `clip`.
+fn rect_inside(rect: Rect, clip: Rect) -> bool {
     let Rect {
         x,
         y,
         width: w,
         height: h,
-    } = quad_rect(quad);
+    } = rect;
     x >= clip.x && y >= clip.y && x + w <= clip.x + clip.width && y + h <= clip.y + clip.height
 }
-/// Whether `clip` would cut `quad` rather than keep or cull it whole.
-fn crosses(quad: &Quad, clip: Rect) -> bool {
+/// Whether a quad covering `rect` lies entirely outside `clip`.
+fn rect_outside(rect: Rect, clip: Rect) -> bool {
     let Rect {
         x,
         y,
         width: w,
         height: h,
-    } = quad_rect(quad);
-    let outside =
-        x + w <= clip.x || y + h <= clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height;
-    !outside && !inside(quad, clip)
+    } = rect;
+    x + w <= clip.x || y + h <= clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height
 }
 /// A backdrop filter's corner radii (top-left, top-right, bottom-right,
 /// bottom-left): a rounded panel blurs only inside its own curve.
