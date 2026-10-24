@@ -61,20 +61,26 @@ const DAMAGE_CELL: f32 = 8.;
 /// Damage past `DAMAGE_RECTS` separate places (a busy dashboard changes
 /// hundreds a frame): marking cells costs the same however many there are,
 /// where merging into a list scans it each time. Rectangles again at flush.
+/// A row's cells are bits, so a rectangle marks each row's run in a word or
+/// two rather than a cell at a time.
 struct DamageGrid {
     columns: usize,
     rows: usize,
-    cells: Vec<bool>,
+    /// Words per row.
+    stride: usize,
+    cells: Vec<u64>,
     marked: usize,
 }
 impl DamageGrid {
     fn new(viewport: Rect) -> Self {
         let columns = (viewport.width / DAMAGE_CELL).ceil().max(1.) as usize;
         let rows = (viewport.height / DAMAGE_CELL).ceil().max(1.) as usize;
+        let stride = columns.div_ceil(64);
         Self {
             columns,
             rows,
-            cells: vec![false; columns * rows],
+            stride,
+            cells: vec![0; stride * rows],
             marked: 0,
         }
     }
@@ -90,23 +96,84 @@ impl DamageGrid {
             end(rect.y + rect.height, self.rows),
         )
     }
+    /// The words of a row holding columns `left..right` (`left < right`),
+    /// and the bits of those columns in the first and last of them.
+    fn masks(left: usize, right: usize) -> (usize, usize, u64, u64) {
+        let (first, last) = (left / 64, (right - 1) / 64);
+        let head = u64::MAX << (left % 64);
+        let tail = u64::MAX >> (63 - (right - 1) % 64);
+        match first == last {
+            true => (first, last, head & tail, head & tail),
+            false => (first, last, head, tail),
+        }
+    }
     fn mark(&mut self, rect: Rect) {
         let (left, top, right, bottom) = self.span(rect);
+        if left >= right {
+            return;
+        }
+        let (first, last, head, tail) = Self::masks(left, right);
+        // Most damage is narrower than a word: a bar, a value.
+        if first == last {
+            for row in top..bottom {
+                let cell = &mut self.cells[row * self.stride + first];
+                self.marked += (head & !*cell).count_ones() as usize;
+                *cell |= head;
+            }
+            return;
+        }
         for row in top..bottom {
-            for cell in &mut self.cells[row * self.columns + left..row * self.columns + right] {
-                self.marked += usize::from(!*cell);
-                *cell = true;
+            let cells = &mut self.cells[row * self.stride + first..=row * self.stride + last];
+            let count = cells.len();
+            for (index, cell) in cells.iter_mut().enumerate() {
+                let bits = match index {
+                    0 => head,
+                    _ if index + 1 == count => tail,
+                    _ => u64::MAX,
+                };
+                self.marked += (bits & !*cell).count_ones() as usize;
+                *cell |= bits;
             }
         }
     }
     fn touches(&self, rect: Rect) -> bool {
         let (left, top, right, bottom) = self.span(rect);
+        if left >= right {
+            return false;
+        }
+        let (first, last, head, tail) = Self::masks(left, right);
         (top..bottom).any(|row| {
-            self.cells[row * self.columns + left..row * self.columns + right].contains(&true)
+            let cells = &self.cells[row * self.stride + first..=row * self.stride + last];
+            let count = cells.len();
+            cells.iter().enumerate().any(|(index, cell)| {
+                let bits = match index {
+                    0 => head,
+                    _ if index + 1 == count => tail,
+                    _ => u64::MAX,
+                };
+                cell & bits != 0
+            })
         })
     }
     fn full(&self) -> bool {
-        self.marked == self.cells.len()
+        self.marked == self.columns * self.rows
+    }
+    /// The first column from `column` on (before `columns`) whose cell in
+    /// `row` is `marked`, or `columns`.
+    fn seek(&self, row: usize, mut column: usize, columns: usize, marked: bool) -> usize {
+        let cells = &self.cells[row * self.stride..(row + 1) * self.stride];
+        while column < columns {
+            let word = cells[column / 64];
+            let bits = match marked {
+                true => word,
+                false => !word,
+            } >> (column % 64);
+            if bits != 0 {
+                return (column + bits.trailing_zeros() as usize).min(columns);
+            }
+            column = (column / 64 + 1) * 64;
+        }
+        columns
     }
     /// Each row's runs of marked cells, a run repeated straight down the
     /// next rows joining them as one rectangle.
@@ -115,21 +182,14 @@ impl DamageGrid {
         // Runs still growing down: first and end column, first row.
         let (mut open, mut next) = (Vec::<(usize, usize, usize)>::new(), Vec::new());
         for row in 0..=self.rows {
-            let cells = if row < self.rows {
-                &self.cells[row * self.columns..(row + 1) * self.columns]
-            } else {
-                &[][..]
-            };
+            let columns = if row < self.rows { self.columns } else { 0 };
             let mut column = 0;
-            while column < cells.len() {
-                if !cells[column] {
-                    column += 1;
-                    continue;
+            while column < columns {
+                let start = self.seek(row, column, columns, true);
+                if start == columns {
+                    break;
                 }
-                let start = column;
-                while column < cells.len() && cells[column] {
-                    column += 1;
-                }
+                column = self.seek(row, start, columns, false);
                 let top = open
                     .iter()
                     .find(|(left, right, _)| (*left, *right) == (start, column))
@@ -8462,6 +8522,118 @@ mod set_box_tests {
             style.height = Some(25.);
             style.padding = 6.;
         });
+    }
+}
+#[cfg(test)]
+mod damage_grid_tests {
+    use super::*;
+    /// A grid of one flag per cell, as `DamageGrid` was.
+    struct Reference {
+        columns: usize,
+        rows: usize,
+        cells: Vec<bool>,
+    }
+    impl Reference {
+        fn span(&self, rect: Rect) -> (usize, usize, usize, usize) {
+            let first = |value: f32| (value / DAMAGE_CELL).floor().max(0.) as usize;
+            let end = |value: f32, count: usize| {
+                ((value / DAMAGE_CELL).ceil().max(0.) as usize).min(count)
+            };
+            (
+                first(rect.x).min(self.columns),
+                first(rect.y).min(self.rows),
+                end(rect.x + rect.width, self.columns),
+                end(rect.y + rect.height, self.rows),
+            )
+        }
+        fn mark(&mut self, rect: Rect) {
+            let (left, top, right, bottom) = self.span(rect);
+            for row in top..bottom {
+                for cell in &mut self.cells[row * self.columns + left..row * self.columns + right] {
+                    *cell = true;
+                }
+            }
+        }
+        fn touches(&self, rect: Rect) -> bool {
+            let (left, top, right, bottom) = self.span(rect);
+            (top..bottom).any(|row| {
+                self.cells[row * self.columns + left..row * self.columns + right].contains(&true)
+            })
+        }
+        fn rects(&self, viewport: Rect) -> Vec<Rect> {
+            let mut done = Vec::new();
+            let (mut open, mut next) = (Vec::<(usize, usize, usize)>::new(), Vec::new());
+            for row in 0..=self.rows {
+                let cells = if row < self.rows {
+                    &self.cells[row * self.columns..(row + 1) * self.columns]
+                } else {
+                    &[][..]
+                };
+                let mut column = 0;
+                while column < cells.len() {
+                    if !cells[column] {
+                        column += 1;
+                        continue;
+                    }
+                    let start = column;
+                    while column < cells.len() && cells[column] {
+                        column += 1;
+                    }
+                    let top = open
+                        .iter()
+                        .find(|(left, right, _)| (*left, *right) == (start, column))
+                        .map_or(row, |run| run.2);
+                    next.push((start, column, top));
+                }
+                for &(left, right, top) in &open {
+                    if !next.iter().any(|run| (run.0, run.1) == (left, right)) {
+                        let cell = |index: usize| index as f32 * DAMAGE_CELL;
+                        let rect =
+                            Rect::new(cell(left), cell(top), cell(right - left), cell(row - top));
+                        done.extend(rect.intersection(viewport));
+                    }
+                }
+                std::mem::swap(&mut open, &mut next);
+                next.clear();
+            }
+            done
+        }
+    }
+    #[test]
+    fn a_grid_of_bits_marks_touches_and_joins_cells_as_one_of_flags() {
+        // Wider than two words of cells, and not a whole number of them.
+        let viewport = Rect::new(0., 0., 1100., 300.);
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut random = |limit: f32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % 10_000) as f32 / 10_000. * limit
+        };
+        for round in 0..40 {
+            let mut grid = DamageGrid::new(viewport);
+            let mut reference = Reference {
+                columns: grid.columns,
+                rows: grid.rows,
+                cells: vec![false; grid.columns * grid.rows],
+            };
+            for _ in 0..round * 3 {
+                let (x, y) = (random(1150.) - 25., random(320.) - 10.);
+                let rect = Rect::new(x, y, random(600.), random(80.));
+                grid.mark(rect);
+                reference.mark(rect);
+                let probe = Rect::new(random(1100.), random(300.), random(90.), random(30.));
+                assert_eq!(grid.touches(probe), reference.touches(probe));
+            }
+            let marked = reference.cells.iter().filter(|cell| **cell).count();
+            assert_eq!(grid.marked, marked);
+            assert_eq!(grid.full(), marked == reference.cells.len());
+            assert_eq!(grid.rects(viewport), reference.rects(viewport));
+        }
+        let mut grid = DamageGrid::new(viewport);
+        grid.mark(viewport);
+        assert!(grid.full());
+        assert_eq!(grid.rects(viewport), vec![viewport]);
     }
 }
 #[cfg(test)]
