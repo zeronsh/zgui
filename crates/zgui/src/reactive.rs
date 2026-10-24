@@ -28,7 +28,7 @@ struct EffectRecord {
     /// Inline for the few most effects read: no allocation of its own.
     dependencies: smallvec::SmallVec<[Subscription; 2]>,
     run: u64,
-    /// In `pending`, waiting to run: queued once however many writes.
+    /// In `queued` or `pending`, waiting to run: once however many writes.
     queued: bool,
     /// Never to run again (`Effect::stop`); freed when its handle drops.
     stopped: bool,
@@ -50,7 +50,7 @@ impl std::hash::Hasher for IdHasher {
     }
 }
 type IdMap<V> = HashMap<EffectId, V, std::hash::BuildHasherDefault<IdHasher>>;
-/// A signal's subscribers, in no order: `pending` orders what runs. A set
+/// A signal's subscribers, in no order: a flush orders what runs. A set
 /// most nodes' effects join (the inherited typography) is removed from
 /// one by one as they go, in constant time.
 type IdSet = HashSet<EffectId, std::hash::BuildHasherDefault<IdHasher>>;
@@ -58,8 +58,12 @@ type IdSet = HashSet<EffectId, std::hash::BuildHasherDefault<IdHasher>>;
 struct Inner {
     effects: RefCell<IdMap<EffectRecord>>,
     /// Effects to run, the oldest first (they were made before what they
-    /// made). A heap keeps its room: a set allocated as writes queued
-    /// effects. A disposed effect's id may stay until it is popped.
+    /// made): those queued outside a flush (a batch's writes, most of them)
+    /// in `queued`, sorted once as a flush starts; those queued while it
+    /// runs in `pending`, a heap. A flush runs the oldest of either next.
+    /// Each keeps its room. A disposed effect's id may stay until it is
+    /// taken.
+    queued: RefCell<Vec<EffectId>>,
     pending: RefCell<BinaryHeap<Reverse<EffectId>>>,
     active: Cell<Option<EffectId>>,
     next: Cell<EffectId>,
@@ -92,6 +96,13 @@ impl Drop for Active<'_> {
     }
 }
 impl Inner {
+    /// Queue effect `id` to run: in a flush's heap if one is running.
+    fn queue(&self, id: EffectId) {
+        match self.flushing.get() {
+            true => self.pending.borrow_mut().push(Reverse(id)),
+            false => self.queued.borrow_mut().push(id),
+        }
+    }
     /// Run effect `id` if it is queued. Its heap entry may outlive the
     /// queueing (`Refresh::refresh` ran it early), so an effect that isn't
     /// queued is left alone. Returns whether it ran.
@@ -200,7 +211,7 @@ impl Runtime {
                 stopped: false,
             },
         );
-        self.inner.pending.borrow_mut().push(Reverse(id));
+        self.inner.queue(id);
         let effect = Effect {
             id,
             runtime: Rc::downgrade(&self.inner),
@@ -289,11 +300,38 @@ impl Runtime {
         }
         let _guard = Guard(&self.inner);
         // Only a flush with work: most find nothing queued.
-        let _span = (crate::profile::enabled() && !self.inner.pending.borrow().is_empty())
-            .then(|| crate::profile::span(crate::profile::Phase::Update));
+        let _span = (crate::profile::enabled()
+            && !(self.inner.queued.borrow().is_empty() && self.inner.pending.borrow().is_empty()))
+        .then(|| crate::profile::span(crate::profile::Phase::Update));
+        // Sorted newest first, so the oldest is last. Left unrun by a
+        // panicking effect, they are queued again.
+        struct Sorted<'a>(&'a Inner, Vec<EffectId>);
+        impl Drop for Sorted<'_> {
+            fn drop(&mut self) {
+                let mut queued = self.0.queued.borrow_mut();
+                match queued.is_empty() {
+                    true => std::mem::swap(&mut *queued, &mut self.1),
+                    false => queued.append(&mut self.1),
+                }
+            }
+        }
+        let mut sorted = Sorted(
+            &self.inner,
+            std::mem::take(&mut *self.inner.queued.borrow_mut()),
+        );
+        sorted.1.sort_unstable_by(|a, b| b.cmp(a));
         loop {
-            let Some(Reverse(id)) = self.inner.pending.borrow_mut().pop() else {
-                break;
+            let id = {
+                let mut pending = self.inner.pending.borrow_mut();
+                match (sorted.1.last(), pending.peek()) {
+                    (Some(&old), Some(&Reverse(new))) if new < old => {
+                        pending.pop();
+                        new
+                    }
+                    (Some(_), _) => sorted.1.pop().expect("an id"),
+                    (None, Some(_)) => pending.pop().expect("an id").0,
+                    (None, None) => break,
+                }
             };
             self.inner.run(id);
         }
@@ -565,13 +603,18 @@ impl<T: 'static> Signal<T> {
         if let Some(inner) = self.inner.runtime.upgrade() {
             {
                 let mut effects = inner.effects.borrow_mut();
-                let mut pending = inner.pending.borrow_mut();
+                let flushing = inner.flushing.get();
+                let (mut queued, mut pending) =
+                    (inner.queued.borrow_mut(), inner.pending.borrow_mut());
                 for id in self.inner.subscribers.borrow().iter() {
                     if let Some(record) = effects.get_mut(id)
                         && !record.stopped
                         && !std::mem::replace(&mut record.queued, true)
                     {
-                        pending.push(Reverse(*id));
+                        match flushing {
+                            true => pending.push(Reverse(*id)),
+                            false => queued.push(*id),
+                        }
                     }
                 }
             }
@@ -885,8 +928,81 @@ mod tests {
         assert!(late.inner.subscribers.borrow().is_empty());
         runtime.batch(|| {
             late.set(1);
+            assert!(runtime.inner.queued.borrow().is_empty());
             assert!(runtime.inner.pending.borrow().is_empty());
         });
+    }
+
+    #[test]
+    fn effects_run_oldest_first_whether_queued_before_or_during_a_flush() {
+        let runtime = Runtime::new();
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let (a, b, c) = (runtime.signal(0), runtime.signal(0), runtime.signal(0));
+        let log = |name: &'static str| {
+            let order = order.clone();
+            move || order.borrow_mut().push(name)
+        };
+        // Made in this order: the oldest first.
+        let _first = runtime.effect({
+            let (a, log) = (a.clone(), log("first"));
+            move || {
+                a.get();
+                log();
+            }
+        });
+        let _second = runtime.effect({
+            let (a, b, log) = (a.clone(), b.clone(), log("second"));
+            move || {
+                if b.get() > 0 {
+                    a.set(b.get());
+                }
+                log();
+            }
+        });
+        let _third = runtime.effect({
+            let (c, log) = (c.clone(), log("third"));
+            move || {
+                c.get();
+                log();
+            }
+        });
+        order.borrow_mut().clear();
+        // The third queued first and the second then; the second queues the
+        // first as it runs, which still runs before the third.
+        runtime.batch(|| {
+            c.set(1);
+            b.set(1);
+        });
+        assert_eq!(*order.borrow(), ["second", "first", "third"]);
+    }
+
+    #[test]
+    fn effects_left_by_a_panicking_one_run_at_the_next_flush() {
+        let runtime = Runtime::new();
+        let ran = Rc::new(Cell::new(0));
+        let (a, b) = (runtime.signal(0), runtime.signal(0));
+        let _panics = runtime.effect({
+            let a = a.clone();
+            move || assert_ne!(a.get(), 1, "on purpose")
+        });
+        let _after = runtime.effect({
+            let (b, ran) = (b.clone(), ran.clone());
+            move || {
+                b.get();
+                ran.set(ran.get() + 1);
+            }
+        });
+        ran.set(0);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.batch(|| {
+                a.set(1);
+                b.set(1);
+            })
+        }));
+        assert!(result.is_err());
+        assert_eq!(ran.get(), 0);
+        runtime.flush();
+        assert_eq!(ran.get(), 1);
     }
 
     #[test]
