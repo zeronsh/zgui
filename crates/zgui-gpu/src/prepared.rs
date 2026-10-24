@@ -180,11 +180,11 @@ impl Compact {
     /// The measurements of shaped `lines`, or None where arithmetic over them
     /// would not match cosmic-text: right-to-left or mixed-direction lines,
     /// justified lines, or a word whose glyphs set different line heights.
-    /// `spare` holds a retired compact's lists, to fill rather than allocate.
+    /// `spares` hold retired compacts' lists, to fill rather than allocate.
     fn of(
         lines: &[BufferLine],
         font_size: f32,
-        spare: Option<(Vec<Word>, Vec<f32>)>,
+        spares: &mut Vec<(Vec<Word>, Vec<f32>)>,
     ) -> Option<Self> {
         // Counted first, each list is allocated once at its size: a text
         // changing every frame (a stream's) is prepared every frame.
@@ -204,9 +204,7 @@ impl Compact {
                     .sum::<usize>();
             }
         }
-        let (mut spare_words, mut spare_glyphs) = spare.unwrap_or_default();
-        spare_words.reserve(words);
-        spare_glyphs.reserve(glyphs);
+        let (spare_words, spare_glyphs) = spare(spares, words, glyphs);
         let mut compact = Self {
             words: spare_words,
             glyphs: spare_glyphs,
@@ -343,6 +341,41 @@ impl Compact {
         }
         (widest, height)
     }
+}
+
+/// The most items a list kept for `len` may have room for: a compact is
+/// kept as long as its text, and spares taken whatever their size passed
+/// the largest capacity any text had to every text after it (a megabyte
+/// held for 30 KB of measurements in a dashboard).
+fn roomiest(len: usize) -> usize {
+    2 * len.max(8)
+}
+/// The spare lists to fill for `words` and `glyphs`: the latest retired
+/// that has room for both and not too much, else one with too little,
+/// else new ones. A spare with too much room waits for a text its size.
+fn spare(
+    spares: &mut Vec<(Vec<Word>, Vec<f32>)>,
+    words: usize,
+    glyphs: usize,
+) -> (Vec<Word>, Vec<f32>) {
+    let (most_words, most_glyphs) = (roomiest(words), roomiest(glyphs));
+    let fits = |(w, g): &(Vec<Word>, Vec<f32>)| {
+        (words..=most_words).contains(&w.capacity())
+            && (glyphs..=most_glyphs).contains(&g.capacity())
+    };
+    let small =
+        |(w, g): &(Vec<Word>, Vec<f32>)| w.capacity() <= most_words && g.capacity() <= most_glyphs;
+    let (mut w, mut g) = match spares.iter().rposition(fits) {
+        Some(i) => spares.swap_remove(i),
+        None => spares
+            .iter()
+            .rposition(small)
+            .map(|i| spares.swap_remove(i))
+            .unwrap_or_default(),
+    };
+    w.reserve_exact(words);
+    g.reserve_exact(glyphs);
+    (w, g)
 }
 
 /// A line being filled while breaking.
@@ -728,7 +761,7 @@ impl TextCache {
             for line in &mut lines {
                 line.shape(fonts, TAB_WIDTH);
             }
-            let compact = Compact::of(&lines, metrics.font_size, self.spare_compacts.pop());
+            let compact = Compact::of(&lines, metrics.font_size, &mut self.spare_compacts);
             // Text that is not drawn keeps no glyphs it can be measured without.
             let detached = need == Need::Detached && compact.is_some();
             let entry = Entry {
@@ -1240,6 +1273,43 @@ mod tests {
             .collect();
         assert_eq!(long.len(), 1, "earlier states were superseded");
         assert_eq!(long[0].key.text.len(), end - 7);
+    }
+
+    /// The lists of dropped texts are kept for new texts, but a short text
+    /// does not take one with room for a long one: compacts keep room for no
+    /// more than twice what they hold.
+    #[test]
+    fn short_texts_keep_no_room_long_ones_left() {
+        let mut fonts = FontSystem::new();
+        let font = FontStyle::default();
+        let mut cache = TextCache::default();
+        for i in 0..8 {
+            let long: Arc<str> = format!("{i} {}", "a few words of a long line ".repeat(40)).into();
+            cache.layout_plain(&mut fonts, &long, 14., &font, Some(320.));
+        }
+        // None drawn: past the budget for undrawn text, they are dropped.
+        cache.trim([]);
+        assert!(
+            !cache.spare_compacts.is_empty(),
+            "dropped texts' lists kept"
+        );
+        for i in 0..8 {
+            let value: Arc<str> = format!("{i} ms").into();
+            cache.measure_plain(&mut fonts, &value, 14., &font, None);
+        }
+        for entry in cache.entries.values() {
+            let compact = entry.compact.as_ref().expect("measured");
+            assert!(
+                compact.words.capacity() <= roomiest(compact.words.len())
+                    && compact.glyphs.capacity() <= roomiest(compact.glyphs.len()),
+                "{:?}: room for {} words and {} glyphs, holding {} and {}",
+                entry.key.text,
+                compact.words.capacity(),
+                compact.glyphs.capacity(),
+                compact.words.len(),
+                compact.glyphs.len(),
+            );
+        }
     }
 
     #[test]
