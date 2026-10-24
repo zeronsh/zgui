@@ -512,3 +512,25 @@ result:set(`{made} {memory(made_error)} {pushed} {memory(push_error)} {rewrites}
     assert_eq!(parts[3], "true", "{got}");
     assert_eq!(parts[4], "200", "{got}");
 }
+
+#[test]
+fn a_plugin_is_not_handed_what_the_system_opens() {
+    let entry = plugin(
+        "opener",
+        r#"
+local ok, err = pcall(ui.on_open, function() end)
+ui.contribute("bar", ui.text { `{ok} {tostring(err):find("the app's") ~= nil} {#ui.args}`, id = "got" })
+"#,
+    );
+    let mut h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(runtime, "app", APP).args(["secret.txt"]);
+        host.set_plugins(vec![Plugin {
+            name: "opener".into(),
+            entry,
+            grants: vec![],
+        }]);
+        host
+    });
+    // It may read the launch's arguments (they are no file it can open).
+    assert_eq!(h.text("got"), "false true 1");
+}

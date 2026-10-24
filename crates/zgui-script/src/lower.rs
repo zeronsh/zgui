@@ -1073,6 +1073,7 @@ fn kind_view(
             line_numbers,
             secure,
             spellcheck,
+            code,
         } => {
             let (value, controlled) = match value {
                 crate::node::InputValue::State(value) => (
@@ -1154,6 +1155,13 @@ fn kind_view(
             }
             if *line_numbers {
                 view = view.line_numbers(true);
+            }
+            if let Some(code) = code {
+                let theme = match cx.as_deref().map(Context::theme) {
+                    Some(theme) => theme,
+                    None => zgui::theme::Themes::of(&low.runtime).root().clone(),
+                };
+                view = code_editor(view, code, vm, theme);
             }
             view
         }
@@ -3143,6 +3151,113 @@ fn resolve_style(source: &Owned, prop: Prop, scalar: Option<&Signal<f32>>, vm: &
     }
     resolve(source, prop.ty(), scalar, vm)
 }
+/// A textarea's code editor props (`highlight`, `decorations`,
+/// `current_line`, `tab`) as its editor takes them.
+fn code_editor(
+    mut view: View,
+    code: &Rc<crate::node::CodeProps>,
+    vm: &Rc<Vm>,
+    theme: Rc<zgui::theme::ThemeScope>,
+) -> View {
+    // A colour as scripts write them (`"#ff8800"`, `"$accent"`), each
+    // distinct one parsed once.
+    let colors: Rc<std::cell::RefCell<HashMap<Rc<str>, Option<zgui::scene::Color>>>> =
+        Rc::default();
+    let color_of = {
+        let theme = theme.clone();
+        move |text: &mlua::LuaString| -> Option<zgui::scene::Color> {
+            let text = text.to_str().ok()?;
+            if let Some(color) = colors.borrow().get(&*text) {
+                return *color;
+            }
+            let color = match text.strip_prefix('$') {
+                Some(token) => theme.get(zgui::theme::token(token)).color(),
+                None => crate::node::parse_color(&text),
+            };
+            colors.borrow_mut().insert(Rc::from(&*text), color);
+            color
+        }
+    };
+    let color_of = Rc::new(color_of);
+    // `{ { from, to, color }, … }`, from and to bytes counted from 1 (as
+    // `string.find` gives them), `to` the last.
+    let ranges = {
+        let color_of = color_of.clone();
+        move |list: &mlua::Table, offset: usize, color: Option<zgui::scene::Color>| {
+            let mut out = Vec::with_capacity(list.raw_len());
+            for span in list.sequence_values::<mlua::Table>().flatten() {
+                let (Ok(from), Ok(to)) = (span.raw_get::<f64>(1), span.raw_get::<f64>(2)) else {
+                    continue;
+                };
+                let shade = match span.raw_get::<Option<mlua::LuaString>>(3) {
+                    Ok(Some(text)) => color_of(&text),
+                    _ => color,
+                };
+                if let Some(shade) = shade
+                    && from >= 1.
+                    && to >= from
+                {
+                    out.push((offset + from as usize - 1..offset + to as usize, shade));
+                }
+            }
+            out
+        }
+    };
+    let ranges = Rc::new(ranges);
+    if let Some(highlight) = &code.highlight {
+        let (highlight, vm, ranges) = (highlight.clone(), vm.clone(), ranges.clone());
+        view = view.highlighter(move |line, state| {
+            match vm.call::<(Option<mlua::Table>, Option<f64>)>(&highlight, (line, state)) {
+                Ok((spans, next)) => (
+                    spans.map_or_else(Vec::new, |spans| ranges(&spans, 0, None)),
+                    next.map_or(0, |n| n as u32),
+                ),
+                Err(error) => {
+                    vm.report(error);
+                    (Vec::new(), 0)
+                }
+            }
+        });
+    }
+    if let Some(decorations) = &code.decorations {
+        let (decorations, vm) = (decorations.clone(), vm.clone());
+        let default = theme.clone();
+        view = view.decorations(move || {
+            let fallback = Some(default.color(zgui::theme::tok::SELECTION));
+            let list = match &decorations {
+                crate::node::Readable::State(state) => {
+                    state.with(|value| crate::value::to_lua(value, &vm.lua, false).ok())
+                }
+                crate::node::Readable::Function(f) => vm.call::<mlua::Value>(f, ()).ok(),
+            };
+            match list {
+                Some(mlua::Value::Table(list)) => ranges(&list, 0, fallback),
+                _ => Vec::new(),
+            }
+        });
+    }
+    if let Some(color) = &code.current_line {
+        let (color, vm, theme) = (resolve_owned(color), vm.clone(), theme.clone());
+        view = view.current_line(move || match resolve(&color, Ty::Color, None, &vm) {
+            Some(Lit::Color(color)) => Some(color),
+            Some(Lit::Token(t)) => theme.get(t).color(),
+            _ => None,
+        });
+    }
+    if let Some(tab) = &code.tab {
+        view = view.tab_indent(tab.clone());
+    }
+    if let Some(told) = &code.on_caret {
+        let (told, vm) = (told.clone(), vm.clone());
+        view = view.on_caret(move |caret| {
+            let args = (caret.line, caret.column, caret.anchor, caret.focus);
+            if let Err(error) = vm.call::<()>(&told, args) {
+                vm.report(error);
+            }
+        });
+    }
+    view
+}
 fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Option<Lit> {
     match source {
         Owned::Lit(l) => Some(l.clone()),
@@ -3252,9 +3367,20 @@ fn render_text(text: &Text, vm: &Vm) -> String {
             for segment in segments {
                 match segment {
                     Segment::Literal(literal) => out.push_str(literal),
-                    Segment::State(state) => state.with(|v| {
+                    Segment::State(state, path) => state.with(|v| {
                         use std::fmt::Write;
-                        let _ = write!(out, "{v}");
+                        // A field of it, by name or (in a list) position
+                        // from 1; nothing where there is none.
+                        let mut at = Some(v);
+                        for step in path.iter() {
+                            at = at.and_then(|v| match step.parse::<usize>() {
+                                Ok(i) if i >= 1 => v.list().get(i - 1),
+                                _ => v.field(step),
+                            });
+                        }
+                        if let Some(v) = at {
+                            let _ = write!(out, "{v}");
+                        }
                     }),
                 }
             }
@@ -3277,7 +3403,7 @@ fn lower_text(text: &Text, vm: &Rc<Vm>) -> View {
                 .iter()
                 .map(|s| match s {
                     Segment::Literal(l) => Segment::Literal(l.clone()),
-                    Segment::State(s) => Segment::State(s.clone()),
+                    Segment::State(s, path) => Segment::State(s.clone(), path.clone()),
                 })
                 .collect();
             let template = Text::Template(segments);
@@ -3541,7 +3667,7 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                         .iter()
                         .map(|seg| match seg {
                             Segment::Literal(l) => Segment::Literal(l.clone()),
-                            Segment::State(s) => Segment::State(s.clone()),
+                            Segment::State(s, path) => Segment::State(s.clone(), path.clone()),
                         })
                         .collect(),
                 ),

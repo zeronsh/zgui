@@ -64,6 +64,7 @@ pub const RULES: &[(&str, &str)] = &[
 /// them are read at build time. Every function of `ui` in `zgui.d.luau` is
 /// one or the other (`every_ui_function_is_classified`).
 const NOT_ELEMENTS: &[&str] = &[
+    "on_open",
     "state",
     "shared",
     "persist",

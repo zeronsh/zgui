@@ -52,6 +52,7 @@ pub mod markdown;
 mod meter;
 mod motion;
 mod node;
+mod opens;
 mod persist;
 mod term;
 pub mod testing;
@@ -776,6 +777,8 @@ struct Inner {
     platform: io::SharedPlatform,
     /// The files the user picked in this host's dialogs.
     picked: io::Picked,
+    /// `ui.args` and `ui.on_open` (`ScriptHost::args`, `open`).
+    opens: Rc<opens::Opens>,
     /// Whether errors show over the interface (`error_banner`).
     show_errors: bool,
     /// What hears each script error (`on_error`), and what follows them.
@@ -915,6 +918,7 @@ impl ScriptHost {
             rewatch: RefCell::default(),
             platform: Rc::default(),
             picked: Rc::default(),
+            opens: Rc::default(),
             show_errors: cfg!(debug_assertions),
             error_hooks: Rc::default(),
             error_watch: RefCell::default(),
@@ -1034,6 +1038,21 @@ impl ScriptHost {
             code: code.into(),
         };
         self.configure(|inner| inner.plugins.push(script))
+    }
+    /// `ui.args`: what the app was launched with after its script (a
+    /// command line's `notes.txt`).
+    pub fn args(self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.0
+            .opens
+            .set_args(args.into_iter().map(Into::into).collect());
+        self
+    }
+    /// Hand the scripts' `ui.on_open` handlers files and URLs the system
+    /// asks the app to open (a file opened with it, a link, a second
+    /// launch's): the files become ones they may read and write, as a
+    /// dialog's would. Before a script registers a handler, they wait for it.
+    pub fn open(&self, files: Vec<std::path::PathBuf>, urls: Vec<String>) {
+        self.0.opens.open(&self.0.picked, files, urls);
     }
     /// Run scripts within `limits`: heap, and time to load and per call.
     pub fn limits(self, limits: Limits) -> Self {
@@ -1485,6 +1504,8 @@ impl ScriptHost {
                 *self.0.current.borrow_mut() = Some(Rc::new(loaded));
                 self.0.commands.publish();
                 self.0.windows.publish();
+                // What the system asked to open before a script could take it.
+                self.0.opens.deliver_waiting(&self.0.picked);
                 self.0.runtime.batch(|| {
                     self.0.error.set(broken);
                     self.0.generation.update(|g| *g += 1);
@@ -2055,6 +2076,7 @@ impl ScriptHost {
         )
         .map_err(fail)?;
         theme::install(&lua, &ui, script.dir()).map_err(fail)?;
+        opens::install(&lua, &ui, self.0.opens.clone(), plugin).map_err(fail)?;
         ui.set_readonly(true);
         anime::api::install(&lua).map_err(fail)?;
         self.install_require(&lua, script.dir(), files)

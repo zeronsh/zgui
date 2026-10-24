@@ -39,6 +39,35 @@ fn templates_bind_identifiers_and_leave_other_braces_alone() {
 }
 
 #[test]
+fn templates_read_a_states_fields_after_a_dot() {
+    let mut h = Harness::inline(
+        r#"local user = ui.state("user", { name = "Ada", tags = { "math", "engines" } })
+        ui.command { id = "rename", run = function() user:set_key("name", "Grace") end }
+        return ui.column {
+            ui.text { "{user.name} likes {user.tags.2}{user.missing}", id = "t" },
+        }"#,
+    );
+    assert_eq!(h.text("t"), "Ada likes engines");
+    assert!(h.host.run_command("rename"));
+    h.settle();
+    assert_eq!(h.text("t"), "Grace likes engines");
+    // A Luau path is not a key: said so when the text is built.
+    let error = ScriptHost::inline(
+        &Runtime::new(),
+        "app",
+        r#"local state = { status = ui.state("status", "") }
+        return ui.text { "{state.status}" }"#,
+    )
+    .reload()
+    .unwrap_err();
+    assert!(error.contains("unknown state `state`"), "{error}");
+    assert!(
+        error.contains("`{state.status}` is state `state`'s field `status`"),
+        "{error}"
+    );
+}
+
+#[test]
 fn template_text_and_handlers_update_rust_state() {
     let mut h = Harness::inline(COUNTER);
     assert_eq!(h.text("label"), "Count: 0");

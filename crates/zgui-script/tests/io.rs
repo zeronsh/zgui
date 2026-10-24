@@ -154,3 +154,46 @@ fn without_a_platform_it_says_so() {
     let error = h.host.error().get().unwrap_or_default();
     assert!(error.contains("need a desktop window"), "{error}");
 }
+
+/// `ui.args` is what the app was launched with; `ui.on_open` is handed the
+/// files and URLs the system opens with it, the files the script's to read
+/// as a dialog's are, and a launch's waiting until the script takes them.
+#[test]
+fn launch_arguments_and_files_the_system_opens_reach_the_script() {
+    let file = std::env::temp_dir().join(format!("zgui-on-open-{}.txt", std::process::id()));
+    std::fs::write(&file, "opened by the system").unwrap();
+    let (opened, given) = (file.clone(), file.clone());
+    let mut h = Harness::with_desktop(move |runtime| {
+        let host = ScriptHost::inline(
+            runtime,
+            "app",
+            r#"local args = ui.state("args", table.concat(ui.args, " "))
+            local got = ui.state("got", "")
+            ui.on_open(function(e)
+                local urls = table.concat(e.urls, " ")
+                for _, file in e.files do
+                    ui.task(function()
+                        got:set(`{file.name}: {ui.read_file(file):await()} {urls}`)
+                    end)
+                end
+                if #e.files == 0 then got:set(urls) end
+            end)
+            return ui.column { ui.text { "{args}", id = "args" }, ui.text { "{got}", id = "got" } }"#,
+        )
+        .args(["--verbose", "notes.txt"]);
+        // Asked before the script loads (a launch's file): it waits.
+        host.open(vec![opened], vec!["zgui://launch".into()]);
+        host
+    });
+    assert_eq!(h.text("args"), "--verbose notes.txt");
+    let name = given.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(h.wait_until(|h| h.text("got").starts_with(&name)));
+    assert_eq!(
+        h.text("got"),
+        format!("{name}: opened by the system zgui://launch")
+    );
+    h.host.open(vec![], vec!["https://example.org/a".into()]);
+    h.settle();
+    assert_eq!(h.text("got"), "https://example.org/a");
+    let _ = std::fs::remove_file(&file);
+}

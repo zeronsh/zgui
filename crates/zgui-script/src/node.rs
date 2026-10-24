@@ -708,6 +708,8 @@ pub(crate) enum Kind {
         select_on_focus: bool,
         /// `line_numbers = true`: a textarea numbers its lines.
         line_numbers: bool,
+        /// What a code editor adds to a textarea (`highlight`, …).
+        code: Option<Rc<CodeProps>>,
         /// `secure = true`: a password field (masked, never copied).
         secure: bool,
         /// `spellcheck = true` (or a state or function of one): the system's
@@ -890,7 +892,8 @@ pub(crate) enum Text {
 }
 pub(crate) enum Segment {
     Literal(String),
-    State(Signal<Value>),
+    /// A state, or a field of it (`"{user.name}"`: the path after its key).
+    State(Signal<Value>, Rc<[Box<str>]>),
 }
 
 /// A rich text run.
@@ -956,6 +959,30 @@ pub(crate) enum Heights {
     Computed(Function),
 }
 
+/// What a code editor adds to a textarea: `highlight`, `decorations`,
+/// `current_line` and `tab`.
+pub(crate) struct CodeProps {
+    /// `highlight = function(line, state) return spans, state end`: a
+    /// line's colours, `{ { from, to, color }, … }` (bytes, as
+    /// `string.find` gives them), and what it leaves the next line.
+    pub highlight: Option<Function>,
+    /// `decorations`: a state or function of `{ { from, to, color }, … }`,
+    /// bytes of the whole text marked behind it (a search's matches).
+    pub decorations: Option<Readable>,
+    /// `current_line`: the colour behind the caret's row.
+    pub current_line: Option<Source>,
+    /// `tab`: what Tab inserts (`"    "`), indenting selected lines.
+    pub tab: Option<String>,
+    /// `on_caret = function(line, column, anchor, focus)`: where the caret
+    /// is, whenever it moves.
+    pub on_caret: Option<Function>,
+}
+/// A state, or a function of states, read as a value.
+#[derive(Clone)]
+pub(crate) enum Readable {
+    State(Signal<Value>),
+    Function(Function),
+}
 pub(crate) enum Source {
     Lit(Lit),
     State(Signal<Value>),
@@ -1507,13 +1534,22 @@ fn template(lua: &Lua, text: &str) -> mlua::Result<Text> {
             .then(|| rest[1..].split_once('}'))
             .flatten()
             .filter(|(name, _)| {
+                // A key, and a field path after it (`user.name`, `rows.1`).
                 name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
-                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                    && !name.ends_with('.')
+                    && !name.contains("..")
             });
         let Some((name, after)) = name else {
             literal.push(c);
             rest = &rest[c.len_utf8()..];
             continue;
+        };
+        let (name, path) = match name.split_once('.') {
+            Some((key, path)) => (key, path.split('.').map(Box::from).collect::<Rc<[_]>>()),
+            None => (name, Rc::from([])),
         };
         // A module's `ui.state` and `ui.persist` keys are its own (see
         // `module_key`): its templates name those first.
@@ -1533,7 +1569,25 @@ fn template(lua: &Lua, text: &str) -> mlua::Result<Text> {
             Some(state) => state,
             None => {
                 let shared = env.shared.get(name).ok_or_else(|| {
-                    mlua::Error::runtime(format!("text `{text}` names unknown state `{name}`"))
+                    let hint = if path.is_empty() {
+                        String::new()
+                    } else {
+                        // `"{state.status}"`, a Luau path, for `{status}`.
+                        format!(
+                            " (a template names a state by its key, and a field of it after a dot: \
+                             `{{{}}}` is state `{}`'s field `{}`)",
+                            [name]
+                                .into_iter()
+                                .chain(path.iter().map(|p| &**p))
+                                .collect::<Vec<_>>()
+                                .join("."),
+                            name,
+                            path.join(".")
+                        )
+                    };
+                    mlua::Error::runtime(format!(
+                        "text `{text}` names unknown state `{name}`{hint}"
+                    ))
                 })?;
                 env.permits(
                     &env.exposed_shared,
@@ -1546,7 +1600,7 @@ fn template(lua: &Lua, text: &str) -> mlua::Result<Text> {
         if !literal.is_empty() {
             segments.push(Segment::Literal(std::mem::take(&mut literal)));
         }
-        segments.push(Segment::State(state));
+        segments.push(Segment::State(state, path));
         rest = after;
     }
     if segments.is_empty() {
@@ -1818,6 +1872,11 @@ const WIDGET_FIELDS: &[&str] = &[
     "secure",
     "spellcheck",
     "line_numbers",
+    "highlight",
+    "decorations",
+    "current_line",
+    "tab",
+    "on_caret",
     "animate",
     "size",
     "vertical",
@@ -2961,6 +3020,35 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     secure: table.get::<Option<bool>>("secure")?.unwrap_or(false),
                     spellcheck: optional("spellcheck", Ty::Bool)?,
                     line_numbers: table.get::<Option<bool>>("line_numbers")?.unwrap_or(false),
+                    code: {
+                        let highlight = table.get::<Option<Function>>("highlight")?;
+                        let decorations = match table.get::<mlua::Value>("decorations")? {
+                            mlua::Value::Nil => None,
+                            mlua::Value::Function(f) => Some(Readable::Function(f)),
+                            v => Some(Readable::State(state_of(&v).ok_or_else(|| {
+                                mlua::Error::runtime(
+                                    "`decorations` must be a ui.state or a function of ranges",
+                                )
+                            })?)),
+                        };
+                        let current_line = optional("current_line", Ty::Color)?;
+                        let tab = table.get::<Option<String>>("tab")?;
+                        let on_caret = table.get::<Option<Function>>("on_caret")?;
+                        (highlight.is_some()
+                            || decorations.is_some()
+                            || current_line.is_some()
+                            || tab.is_some()
+                            || on_caret.is_some())
+                        .then(|| {
+                            Rc::new(CodeProps {
+                                highlight,
+                                decorations,
+                                current_line,
+                                tab,
+                                on_caret,
+                            })
+                        })
+                    },
                 };
                 node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
             })?,

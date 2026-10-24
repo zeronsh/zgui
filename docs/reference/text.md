@@ -18,6 +18,7 @@ type TextValue = (string | number | boolean)?
 | Form | Shows |
 | --- | --- |
 | `"Count: {count}"` | the string, with `{name}` replaced by the state named `name`, followed in Rust (no script call per change) |
+| `"{user.name}"` | a field of a state after a dot (`{rows.1}`: a list's first item); nothing where there is none |
 | `"{{" "}}"` | literal braces; braces around anything but a name (`{not a name}`) are literal too |
 | a number | it, as written (`3`, `2.5`) |
 | a function | what it returns, run again when the state it reads changes: strings as they are, numbers and booleans as text, `nil` as nothing |
@@ -159,7 +160,7 @@ Text is not selectable unless asked, as in native apps. `selectable = true` on a
 ## Gotchas
 
 - Text from data is a template too: a commit message with `{id}` in it looks for state named `id` (an error if there is none), and `{{` shows as `{`. Pass `literal = true` (on `ui.text`, `ui.rich` or a span) for text the script didn't write.
-- A template names state by its key, not by its Luau variable: `"{count}"` shows `ui.state("count", …)` whatever the local is called. A name no state has is an error when the text is built.
+- A template names state by its key, not by its Luau variable: `"{count}"` shows `ui.state("count", …)` whatever the local is called, and `"{state.count}"` is state `state`'s field `count`, not a module's state. A name no state has is an error when the text is built.
 - Text does not wrap by default, and a row shrinks it no narrower than it is (its min-content, unwrapped): `wrap = true` (in a box with a width) lets it wrap down to its longest word, or `min_w = 0, truncate = true` ends it with "…" in a row.
 - Span options are plain values, read once: a state or function there is not followed (its value at build time is used). Only the run's text follows state. To restyle a run, build the paragraph in a function, or use two texts.
 - A span's `font` only knows `"mono"`; any other family is ignored (`ui.text`'s `font` takes names).

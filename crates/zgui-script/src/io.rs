@@ -38,7 +38,7 @@ fn denied(what: &str, capability: &str) -> mlua::Error {
 }
 
 /// `{ path, name }`, as dialogs give files to scripts.
-fn file_value(path: &Path) -> Value {
+pub(crate) fn file_value(path: &Path) -> Value {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

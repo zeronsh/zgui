@@ -539,6 +539,14 @@ declare extern type Element with
 	function set_selection(self, a: number, b: number?): boolean
 	-- The anchor and the focus (where the caret is).
 	function selection(self): (number?, number?)
+	-- The same in bytes from 0, as `string.find` counts them (its match `s,
+	-- e` is `s - 1, e`): a code editor's search. A selection set this way
+	-- scrolls into view, focused or not.
+	function set_selection_bytes(self, a: number, b: number?): boolean
+	function selection_bytes(self): (number?, number?)
+	-- The selection replaced by `text`, as typing it would (one step of
+	-- undo): a search's Replace.
+	function replace_selection(self, text: string): boolean
 	-- Clear keyboard focus if it is on the element or inside it.
 	function blur(self): ()
 end
@@ -4485,6 +4493,27 @@ export type InputProps = {
 	spellcheck: (boolean | Readable<boolean> | (() -> boolean))?,
 	-- Several lines only: numbered in a gutter at the left (a code editor).
 	line_numbers: boolean?,
+	-- Several lines only: a line's colours, asked for the lines in view and
+	-- again only for one that changes. Given the line and what the line
+	-- before left (0 before the first), it returns spans `{ from, to,
+	-- color }` (bytes counted from 1, as `string.find` gives them; `color`
+	-- a colour or `"$token"`) and what the line leaves the next (a block
+	-- comment or string running on: any number of the highlighter's). It
+	-- must depend on nothing but its arguments.
+	highlight: ((line: string, state: number) -> ({ { any } }?, number?))?,
+	-- Several lines only: ranges of the whole text marked behind it (a
+	-- search's matches), `{ { from, to, color? }, … }` in bytes counted
+	-- from 1; only those in view are drawn.
+	decorations: (State<any> | (() -> { { any } }))?,
+	-- Several lines only: the colour behind the caret's row.
+	current_line: Reactive<Color>?,
+	-- Several lines only: what Tab inserts (`"    "`), instead of moving
+	-- focus; with lines selected it indents each, Shift+Tab outdents.
+	tab: string?,
+	-- Where the caret is whenever it moves: its line and column from 1 (the
+	-- column in characters) and the selection's anchor and focus in bytes
+	-- from 0 (as `selection_bytes`).
+	on_caret: ((line: number, column: number, anchor: number, focus: number) -> ())?,
 }
 -- `value` from 0 to 1, or nil: indeterminate (work of unknown size), a
 -- stretch of the bar sweeping across.
@@ -13194,6 +13223,14 @@ declare ui: {
 	read_file: (file: File | string) -> Promise<string>,
 	-- Write `text` to a file the user picked (beside it, then over it).
 	write_file: (file: File | string, text: string) -> Promise<nil>,
+	-- What the app was launched with after its script (`zgui-run app/
+	-- notes.txt` gives `{ "notes.txt" }`).
+	args: { string },
+	-- Files and URLs the system asks the app to open (a file opened with it,
+	-- a link to it, a second launch's), the launch's included: the files
+	-- are the user's choice, as a dialog's are (`ui.read_file` takes them).
+	-- The app's only: a plugin's is an error.
+	on_open: (handler: (e: { files: { File }, urls: { string } }) -> ()) -> (),
 	-- `T` comes from the state's `set`, so a literal fits a state of a
 	-- union (`ui.set(density, "compact")` for `"comfortable" | "compact"`)
 	-- and anything else is still an error.

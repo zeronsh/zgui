@@ -914,12 +914,18 @@ impl UserData for RefUd {
         });
     }
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // The element while one is mounted, else nil; tracked.
-        methods.add_method("get", |_, r, ()| {
+        // The element while one is mounted, else nil; tracked. From a
+        // handler, what it set mounts first (a state switching what shows):
+        // the element is the one there now.
+        methods.add_method("get", |lua, r, ()| {
+            settle(lua);
             r.0.track();
             Ok(r.0.first().map(ElementUd))
         });
-        methods.add_method("peek", |_, r, ()| Ok(r.0.first().map(ElementUd)));
+        methods.add_method("peek", |lua, r, ()| {
+            settle(lua);
+            Ok(r.0.first().map(ElementUd))
+        });
         methods.add_method("elements", |lua, r, ()| {
             r.0.track();
             lua.create_sequence_from(r.0.elements().into_iter().map(ElementUd))
@@ -931,6 +937,26 @@ impl UserData for RefUd {
 /// their target as one.
 #[derive(Clone)]
 pub(crate) struct ElementUd(pub Rc<Element>);
+/// What a state just set is synced into (an input's text), and what an
+/// input just edited synced out to, before an input's selection is read or
+/// set: a handler setting the text, then selecting in it, selects in the
+/// new text (`Runtime::settle`).
+fn settle(lua: &mlua::Lua) {
+    off_clock(lua, |runtime| runtime.settle());
+}
+/// `work` with the runtime, off the calling script's clock: what an input's
+/// text changing updates (a long document laid out again) is not the
+/// script's to pay for, as what a state's write updates is not.
+fn off_clock<R>(lua: &mlua::Lua, work: impl FnOnce(&zgui::reactive::Runtime) -> R) -> Option<R> {
+    // Out of the app data first: what it runs may call scripts.
+    let (runtime, vm) = crate::node::env(lua)
+        .map(|env| (env.runtime.clone(), env.vm.upgrade()))
+        .ok()?;
+    Some(match vm {
+        Some(vm) => vm.off_clock(|| work(&runtime)),
+        None => work(&runtime),
+    })
+}
 impl UserData for ElementUd {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("id", |_, e| Ok(e.0.id.as_deref().map(str::to_owned)));
@@ -950,12 +976,14 @@ impl UserData for ElementUd {
         // 0, as `utf8.len` counts them): `el:select_all()`,
         // `el:set_selection(a, b)` (`b` defaults to `a`, a caret) and
         // `local a, b = el:selection()` (nil for other elements).
-        methods.add_method("select_all", |_, e, ()| {
+        methods.add_method("select_all", |lua, e, ()| {
+            settle(lua);
             Ok(e.0.handle.get().is_some_and(NodeHandle::select_all))
         });
         methods.add_method(
             "set_selection",
-            |_, e, (anchor, focus): (i64, Option<i64>)| {
+            |lua, e, (anchor, focus): (i64, Option<i64>)| {
+                settle(lua);
                 let Some(editor) = e.0.handle.get().and_then(NodeHandle::editor) else {
                     return Ok(false);
                 };
@@ -968,7 +996,8 @@ impl UserData for ElementUd {
                 Ok(true)
             },
         );
-        methods.add_method("selection", |_, e, ()| {
+        methods.add_method("selection", |lua, e, ()| {
+            settle(lua);
             let Some(editor) = e.0.handle.get().and_then(NodeHandle::editor) else {
                 return Ok((None, None));
             };
@@ -976,6 +1005,42 @@ impl UserData for ElementUd {
             let text = editor.editor.borrow();
             let chars = |byte: usize| text.text()[..byte].chars().count();
             Ok((Some(chars(anchor)), Some(chars(focus))))
+        });
+        // In bytes, as `string.find` counts them (a code editor's search):
+        // `el:set_selection_bytes(a, b)` (from 0: `string.find`'s match
+        // `s, e` is `s - 1, e`), `local a, b = el:selection_bytes()`. A
+        // selection set this way scrolls into view, focused or not.
+        methods.add_method(
+            "set_selection_bytes",
+            |lua, e, (anchor, focus): (i64, Option<i64>)| {
+                settle(lua);
+                let Some(editor) = e.0.handle.get().and_then(NodeHandle::editor) else {
+                    return Ok(false);
+                };
+                let byte = |b: i64| b.max(0) as usize;
+                editor.set_selection(byte(anchor), byte(focus.unwrap_or(anchor)));
+                Ok(true)
+            },
+        );
+        methods.add_method("selection_bytes", |lua, e, ()| {
+            settle(lua);
+            let Some(editor) = e.0.handle.get().and_then(NodeHandle::editor) else {
+                return Ok((None, None));
+            };
+            let (anchor, focus) = editor.selection();
+            Ok((Some(anchor), Some(focus)))
+        });
+        // The selection replaced by `text`, as typing it would (one step of
+        // undo): a search's Replace, a snippet.
+        methods.add_method("replace_selection", |lua, e, text: String| {
+            settle(lua);
+            let Some(editor) = e.0.handle.get().and_then(NodeHandle::editor) else {
+                return Ok(false);
+            };
+            off_clock(lua, |_| editor.paste(&text));
+            // The state it is bound to holds the new text when this returns.
+            settle(lua);
+            Ok(true)
         });
         methods.add_method("has_class", |_, e, class: String| {
             Ok(e.0.classes.iter().any(|c| **c == *class))
