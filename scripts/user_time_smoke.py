@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A window's last user input on X11 (Xvfb/Openbox): the vendored winit's
-`_NET_WM_USER_TIME` (vendor/winit/ZGUI_PATCH.md), which window managers
+`_NET_WM_USER_TIME` (vendor/winit/ZGX_PATCH.md), which window managers
 weigh against focus stealing, as GTK sets it.
 
 Checks, with window_probe opening Second 3 s after First:

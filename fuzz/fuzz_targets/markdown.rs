@@ -1,7 +1,7 @@
 //! Markdown as messages and documents show it (`ui.markdown`).
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use zgui_script::markdown::{Options, parse};
+use zgx_script::markdown::{Options, parse};
 
 fuzz_target!(|data: &[u8]| {
     let Some((&flags, text)) = data.split_first() else {

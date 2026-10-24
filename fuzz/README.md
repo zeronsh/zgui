@@ -1,6 +1,6 @@
 # Fuzzing
 
-Targets for what zgui reads from outside the app, run with
+Targets for what zgx reads from outside the app, run with
 [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) on nightly. They are
 not part of the workspace and CI does not run them.
 
@@ -9,7 +9,7 @@ not part of the workspace and CI does not run them.
 | `markdown` | Markdown, as `ui.markdown` shows messages and documents |
 | `json_value` | JSON a script receives (`ui.fetch` replies, web view messages), and written back |
 | `theme` | A theme file: JSON with comments and trailing commas |
-| `image` | PNG and JPEG (`zgui_gpu::assets::decode_image`) |
+| `image` | PNG and JPEG (`zgx_gpu::assets::decode_image`) |
 | `svg` | SVG, or a raster where one was asked for, drawn at a size |
 | `gif` | Animated GIF frames and disposal |
 
@@ -25,5 +25,5 @@ test there, as any bug.
 
 Not here, read by hand instead: the drop and portal URI lists
 (`wayland_data::decode_uris`, `portal_dialog::file_uri`) are Linux-only and
-small; `zgui.json` and `ui.persist` files go through serde_json, whose depth
+small; `zgx.json` and `ui.persist` files go through serde_json, whose depth
 limit bounds them.

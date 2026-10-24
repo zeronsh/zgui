@@ -4438,7 +4438,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zgui"
+name = "zgx"
 version = "0.1.0"
 dependencies = [
  "objc2-core-foundation",
@@ -4451,27 +4451,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "zgui-components"
+name = "zgx-components"
 version = "0.1.0"
 dependencies = [
- "zgui",
- "zgui-desktop",
+ "zgx",
+ "zgx-desktop",
 ]
 
 [[package]]
-name = "zgui-demo"
+name = "zgx-demo"
 version = "0.1.0"
 dependencies = [
  "softbuffer",
  "winit",
- "zgui",
- "zgui-desktop",
- "zgui-gpu",
- "zgui-workload",
+ "zgx",
+ "zgx-desktop",
+ "zgx-gpu",
+ "zgx-workload",
 ]
 
 [[package]]
-name = "zgui-desktop"
+name = "zgx-desktop"
 version = "0.1.0"
 dependencies = [
  "accesskit",
@@ -4518,21 +4518,21 @@ dependencies = [
  "winit",
  "x11-dl",
  "x11rb",
- "zgui",
- "zgui-components",
- "zgui-ghostty-sys",
- "zgui-gpu",
- "zgui-run",
- "zgui-script",
- "zgui-workload",
+ "zgx",
+ "zgx-components",
+ "zgx-ghostty-sys",
+ "zgx-gpu",
+ "zgx-run",
+ "zgx-script",
+ "zgx-workload",
 ]
 
 [[package]]
-name = "zgui-ghostty-sys"
+name = "zgx-ghostty-sys"
 version = "0.1.0"
 
 [[package]]
-name = "zgui-gpu"
+name = "zgx-gpu"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -4556,21 +4556,21 @@ dependencies = [
  "wgpu",
  "windows",
  "winit",
- "zgui",
+ "zgx",
 ]
 
 [[package]]
-name = "zgui-run"
+name = "zgx-run"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "zgui",
- "zgui-desktop",
- "zgui-script",
+ "zgx",
+ "zgx-desktop",
+ "zgx-script",
 ]
 
 [[package]]
-name = "zgui-script"
+name = "zgx-script"
 version = "0.1.0"
 dependencies = [
  "libc",
@@ -4580,14 +4580,14 @@ dependencies = [
  "serde_json",
  "smallvec",
  "windows",
- "zgui",
- "zgui-components",
- "zgui-desktop",
- "zgui-gpu",
+ "zgx",
+ "zgx-components",
+ "zgx-desktop",
+ "zgx-gpu",
 ]
 
 [[package]]
-name = "zgui-workload"
+name = "zgx-workload"
 version = "0.1.0"
 
 [[package]]

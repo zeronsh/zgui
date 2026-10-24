@@ -161,9 +161,9 @@ def main():
         stop(sway)
 
     try:
-        with tempfile.TemporaryDirectory(prefix="zgui-popups-") as private:
+        with tempfile.TemporaryDirectory(prefix="zgx-popups-") as private:
             os.chmod(private, 0o700)
-            base.update(os.environ, XDG_RUNTIME_DIR=private, ZGUI_PRESENT_LOG="1")
+            base.update(os.environ, XDG_RUNTIME_DIR=private, ZGX_PRESENT_LOG="1")
             for key in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
                 base.pop(key, None)
 
@@ -321,11 +321,11 @@ def main():
                 scaled(scale)
 
             # Weston: winit's title bar above the content.
-            env = dict(base, WAYLAND_DISPLAY="zgui-popups")
+            env = dict(base, WAYLAND_DISPLAY="zgx-popups")
             weston, _ = launch("weston", ["weston", "--backend=headless", "--renderer=pixman", "--width=%d" % OUTPUT[0],
                                           "--height=%d" % OUTPUT[1], "--idle-time=0", "--no-config", "--debug",
-                                          "--socket=zgui-popups"], env)
-            until("Weston's socket", lambda: pathlib.Path(private, "zgui-popups").exists(), 10)
+                                          "--socket=zgx-popups"], env)
+            until("Weston's socket", lambda: pathlib.Path(private, "zgx-popups").exists(), 10)
             app, log = launch("weston-app", [str(args.probe)], dict(env, POPUP_PROBE_OPEN="1"))
             until("the menu", lambda: "popup configured" in log.read_text())
             time.sleep(.5)

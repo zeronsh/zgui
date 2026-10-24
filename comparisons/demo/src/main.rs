@@ -9,15 +9,15 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
-use zgui::{
+use zgx::{
     collections::List,
     reactive::{Effect, Runtime, Signal},
     scene::{Color, Effects, Layout, NodeId, NodeKind, Scene, Style, Transform},
     task::{LocalExecutor, yield_now},
 };
-use zgui_desktop::{presentation::Presentation, raster::Raster};
-use zgui_gpu::GpuRenderer;
-use zgui_workload::{Mode, PERIOD, ROW_HEIGHT, Workload, row_label};
+use zgx_desktop::{presentation::Presentation, raster::Raster};
+use zgx_gpu::GpuRenderer;
+use zgx_workload::{Mode, PERIOD, ROW_HEIGHT, Workload, row_label};
 
 const FG: Color = Color(229, 237, 247, 255);
 fn style(w: f32, h: f32) -> Style {
@@ -105,7 +105,7 @@ impl Demo {
         label(
             &mut scene,
             canvas,
-            "zgui performance lab",
+            "zgx performance lab",
             20.,
             20.,
             920.,
@@ -144,7 +144,7 @@ impl Demo {
         viewport.clip = true;
         let list_root = scene.append(canvas, NodeKind::Container(Layout::Overlay), viewport);
         scene.set_transform(list_root, Transform { x: 20., y: 290. });
-        if std::env::var_os("ZGUI_EFFECTS").is_some() {
+        if std::env::var_os("ZGX_EFFECTS").is_some() {
             let glass = place(
                 &mut scene,
                 canvas,
@@ -311,7 +311,7 @@ impl Demo {
                         for n in [1, 2, 3] {
                             list.append(n)?;
                         }
-                        Ok::<_, zgui::collections::ListError>(())
+                        Ok::<_, zgx::collections::ListError>(())
                     })(),
                     _ => (|| {
                         let row = list.at(0)?;
@@ -323,8 +323,8 @@ impl Demo {
                 done.set(match result {
                     Ok(()) => 0,
                     Err(
-                        zgui::collections::ListError::Exhausted
-                        | zgui::collections::ListError::RowRemoved,
+                        zgx::collections::ListError::Exhausted
+                        | zgx::collections::ListError::RowRemoved,
                     ) => -2,
                     Err(_) => -1,
                 });
@@ -355,7 +355,7 @@ impl Demo {
                 let physical_damage: Vec<_> = damage
                     .iter()
                     .map(|rect| {
-                        zgui::scene::Rect::new(
+                        zgx::scene::Rect::new(
                             rect.x * self.scale_factor,
                             rect.y * self.scale_factor,
                             rect.width * self.scale_factor,
@@ -416,7 +416,7 @@ impl Demo {
     }
     fn report(&self) {
         if self.window.is_some()
-            && let Some(path) = std::env::var_os("ZGUI_SCREENSHOT")
+            && let Some(path) = std::env::var_os("ZGX_SCREENSHOT")
         {
             if let Some(gpu) = &self.gpu {
                 use std::io::Write;
@@ -441,7 +441,7 @@ impl Demo {
         }
         let caches = self.gpu.as_ref().map(GpuRenderer::debug_cache_stats);
         println!(
-            "{{\"framework\":\"zgui\",\"renderer\":\"{}\",\"gpu_atlas_bytes\":{},\"gpu_shaped_bytes\":{},\"gpu_vertex_bytes\":{},\"ticks\":{},\"frames\":{},\"layout_nodes\":{},\"paint_nodes\":{},\"composite_nodes\":{},\"mounted_rows\":{},\"elapsed_seconds\":{:.3}}}",
+            "{{\"framework\":\"zgx\",\"renderer\":\"{}\",\"gpu_atlas_bytes\":{},\"gpu_shaped_bytes\":{},\"gpu_vertex_bytes\":{},\"ticks\":{},\"frames\":{},\"layout_nodes\":{},\"paint_nodes\":{},\"composite_nodes\":{},\"mounted_rows\":{},\"elapsed_seconds\":{:.3}}}",
             if self.gpu.is_some() {
                 "gpu"
             } else if self.window.is_some() {
@@ -471,7 +471,7 @@ impl ApplicationHandler for Demo {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("zgui performance lab")
+                        .with_title("zgx performance lab")
                         .with_inner_size(LogicalSize::new(960, 720))
                         .with_resizable(false),
                 )
@@ -480,7 +480,7 @@ impl ApplicationHandler for Demo {
         let physical = window.inner_size();
         self.physical_size = (physical.width.max(1), physical.height.max(1));
         self.scale_factor = window.scale_factor() as f32;
-        if std::env::var("ZGUI_RENDERER").is_ok_and(|renderer| renderer == "software") {
+        if std::env::var("ZGX_RENDERER").is_ok_and(|renderer| renderer == "software") {
             let context = Context::new(window.clone()).expect("display context");
             let mut surface = Surface::new(&context, window.clone()).expect("surface");
             surface
@@ -493,16 +493,16 @@ impl ApplicationHandler for Demo {
             self.raster = Some(Raster::new(960, 720));
         } else {
             let mut gpu = GpuRenderer::for_window(window.clone())
-                .expect("GPU renderer (select ZGUI_RENDERER=software for the reference renderer)");
+                .expect("GPU renderer (select ZGX_RENDERER=software for the reference renderer)");
             gpu.set_scale_factor(self.scale_factor);
             gpu.set_background(Color(16, 20, 28, 255));
             let fonts = gpu.text_system();
             self.scene
                 .borrow_mut()
                 .set_text_measurer(move |text: &str, size, width| {
-                    zgui_gpu::measure_text(&mut fonts.borrow_mut(), text, size, width)
+                    zgx_gpu::measure_text(&mut fonts.borrow_mut(), text, size, width)
                 });
-            eprintln!("zgui GPU adapter: {:?}", gpu.adapter_info());
+            eprintln!("zgx GPU adapter: {:?}", gpu.adapter_info());
             self.gpu = Some(gpu);
         }
         self.window = Some(window.clone());
@@ -603,7 +603,7 @@ fn main() {
     let mut app = Demo::new();
     if std::env::args().any(|arg| arg == "--headless") {
         app.draw(true);
-        let ticks = std::env::var("ZGUI_TICKS")
+        let ticks = std::env::var("ZGX_TICKS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(600);
@@ -613,7 +613,7 @@ fn main() {
             }
             app.draw(false);
         }
-        if let Some(path) = std::env::var_os("ZGUI_SCREENSHOT") {
+        if let Some(path) = std::env::var_os("ZGX_SCREENSHOT") {
             app.raster
                 .as_ref()
                 .unwrap()

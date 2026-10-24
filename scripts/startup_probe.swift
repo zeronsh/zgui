@@ -10,7 +10,7 @@ import CoreGraphics
 // Screen Recording permission. The capture is CGWindowListCreateImage,
 // looked up at run time (newer SDKs no longer declare it): it is quick
 // enough to poll, as ScreenCaptureKit's setup is not.
-// Build: swiftc -O scripts/startup_probe.swift -o /tmp/zgui-startup-probe
+// Build: swiftc -O scripts/startup_probe.swift -o /tmp/zgx-startup-probe
 typealias Capture = @convention(c) (CGRect, CGWindowListOption, CGWindowID, CGWindowImageOption) -> Unmanaged<CGImage>?
 let capture = unsafeBitCast(dlsym(dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW), "CGWindowListCreateImage"), to: Capture.self)
 var tb = mach_timebase_info_data_t(); mach_timebase_info(&tb)

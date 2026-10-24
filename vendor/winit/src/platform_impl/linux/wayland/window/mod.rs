@@ -236,13 +236,13 @@ impl Window {
         NonNull::new(self.window.xdg_toplevel().id().as_ptr().cast())
     }
 
-    // zgui patch: the window's `xdg_surface`, the parent of popups.
+    // zgx patch: the window's `xdg_surface`, the parent of popups.
     pub(crate) fn xdg_surface(&self) -> Option<NonNull<c_void>> {
         use sctk::shell::xdg::XdgSurface;
         NonNull::new(self.window.xdg_surface().id().as_ptr().cast())
     }
 
-    // zgui patch: where the window geometry starts on the surface.
+    // zgx patch: where the window geometry starts on the surface.
     pub(crate) fn window_geometry_origin(&self) -> (i32, i32) {
         self.window_state.lock().unwrap().window_geometry_origin()
     }

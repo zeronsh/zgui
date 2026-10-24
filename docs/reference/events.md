@@ -209,7 +209,7 @@ return ui.row {
 }
 ```
 
-Query a box whose size does not depend on what the query changes (here the window's row): a box sized by its content that hid content below a width could go back and forth (zgui stops after a few rounds).
+Query a box whose size does not depend on what the query changes (here the window's row): a box sized by its content that hid content below a width could go back and forth (zgx stops after a few rounds).
 
 ## Gotchas
 

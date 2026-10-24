@@ -1,16 +1,16 @@
 [package]
-name = "zgui-compare-gpui"
+name = "zgx-compare-gpui"
 version = "0.1.0"
 edition = "2021"
 [workspace]
 [dependencies]
 gpui = "=0.2.2"
-zgui-workload = { path = "../workload" }
+zgx-workload = { path = "../workload" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
 
-# As zgui's: the comparison tables build every framework with it.
+# As zgx's: the comparison tables build every framework with it.
 [profile.dist]
 inherits = "release"
 lto = "fat"

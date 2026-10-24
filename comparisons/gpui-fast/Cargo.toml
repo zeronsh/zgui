@@ -1,5 +1,5 @@
 [package]
-name = "zgui-compare-gpui-fast"
+name = "zgx-compare-gpui-fast"
 version = "0.1.0"
 edition = "2024"
 [workspace]
@@ -8,12 +8,12 @@ edition = "2024"
 gpui = { package = "gpui-fast", version = "=0.1.4" }
 # font-kit: the macOS text system; without it no text draws.
 gpui_platform = { package = "gpui-fast-platform", version = "=0.1.4", features = ["font-kit"] }
-zgui-workload = { path = "../workload" }
+zgx-workload = { path = "../workload" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
 
-# As zgui's: the comparison tables build every framework with it.
+# As zgx's: the comparison tables build every framework with it.
 [profile.dist]
 inherits = "release"
 lto = "fat"

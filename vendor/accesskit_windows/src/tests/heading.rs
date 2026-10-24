@@ -1,4 +1,4 @@
-// zgui patch: UIA's HeadingLevel follows a heading's level.
+// zgx patch: UIA's HeadingLevel follows a heading's level.
 
 use accesskit::{ActivationHandler, Node, NodeId, Role, Tree, TreeId, TreeUpdate};
 use windows::Win32::System::Variant::VARIANT;

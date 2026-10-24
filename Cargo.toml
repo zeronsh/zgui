@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/zgui", "crates/zgui-components", "crates/zgui-desktop", "crates/zgui-ghostty-sys", "crates/zgui-gpu", "crates/zgui-script", "crates/zgui-run", "comparisons/workload", "comparisons/demo"]
+members = ["crates/zgx", "crates/zgx-components", "crates/zgx-desktop", "crates/zgx-ghostty-sys", "crates/zgx-gpu", "crates/zgx-script", "crates/zgx-run", "comparisons/workload", "comparisons/demo"]
 exclude = [
     "comparisons/gpui",
     "comparisons/quickgui",
@@ -19,7 +19,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/zeronsh/zgui"
+repository = "https://github.com/zeronsh/zgx"
 readme = "README.md"
 # The oldest Rust that builds the workspace (CI checks it).
 rust-version = "1.95"
@@ -61,32 +61,32 @@ codegen-units = 1
 # empty ones are never committed. Upstream opens several per submission; each
 # costs a commit, a completion callback and Core Animation frame-pacing IPC.
 # On Windows, a Direct3D 12 adapter can be exposed without opening a device on
-# every other adapter. See vendor/wgpu-hal/ZGUI_PATCH.md.
+# every other adapter. See vendor/wgpu-hal/ZGX_PATCH.md.
 #
 # cosmic-text with a shaping patch: cached words are looked up without building
 # a key per word, and plain ASCII lines skip bidi analysis. Text shaping is the
-# largest share of CPU when text streams. See vendor/cosmic-text/ZGUI_PATCH.md.
+# largest share of CPU when text streams. See vendor/cosmic-text/ZGX_PATCH.md.
 [patch.crates-io]
 wgpu-hal = { path = "vendor/wgpu-hal" }
 cosmic-text = { path = "vendor/cosmic-text" }
 # taffy 0.9.0 with auto margins keeping a flex line's gaps (see
-# vendor/taffy/src/compute/flexbox.rs, "zgui:").
+# vendor/taffy/src/compute/flexbox.rs, "zgx:").
 taffy = { path = "vendor/taffy" }
 # AccessKit 0.26 on macOS with headings VoiceOver finds: see
-# vendor/accesskit_macos/ZGUI_PATCH.md.
+# vendor/accesskit_macos/ZGX_PATCH.md.
 accesskit_macos = { path = "vendor/accesskit_macos" }
 # AccessKit's Linux adapter (accesskit_unix 0.22, accesskit_atspi_common 0.19)
 # with tables Orca reads and tree items that say they are open: see
-# vendor/accesskit_unix/ZGUI_PATCH.md.
+# vendor/accesskit_unix/ZGX_PATCH.md.
 accesskit_atspi_common = { path = "vendor/accesskit_atspi_common" }
 accesskit_unix = { path = "vendor/accesskit_unix" }
 # AccessKit 0.34 on Windows with headings Narrator navigates by: see
-# vendor/accesskit_windows/ZGUI_PATCH.md.
+# vendor/accesskit_windows/ZGX_PATCH.md.
 accesskit_windows = { path = "vendor/accesskit_windows" }
 # winit 0.30.13 with a window's `xdg_surface`, the parent of Wayland popups:
-# see vendor/winit/ZGUI_PATCH.md.
+# see vendor/winit/ZGX_PATCH.md.
 winit = { path = "vendor/winit" }
 # mlua 0.12.2 with a table walk that borrows keys and values from the stack
 # and userdata made without a protected call: building a script's interface
-# converted and referenced every key it read. See vendor/mlua/ZGUI_PATCH.md.
+# converted and referenced every key it read. See vendor/mlua/ZGX_PATCH.md.
 mlua = { path = "vendor/mlua" }

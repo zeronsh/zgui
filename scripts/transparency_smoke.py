@@ -71,7 +71,7 @@ def main():
     backdrop = None
     processes = []
     logs = []
-    with tempfile.TemporaryDirectory(prefix="zgui-transparency-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-transparency-") as runtime:
         def launch(name, command, **kwargs):
             log = (args.output / (name + ".log")).open("w")
             logs.append(log)

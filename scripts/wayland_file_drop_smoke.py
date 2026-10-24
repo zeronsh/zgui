@@ -9,7 +9,7 @@ def main():
     p.add_argument('binary',type=pathlib.Path);p.add_argument('--output',type=pathlib.Path,required=True)
     p.set_defaults(wayland=True);a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
     processes=[]
-    with tempfile.TemporaryDirectory(prefix='zgui-platform-') as private:
+    with tempfile.TemporaryDirectory(prefix='zgx-platform-') as private:
         env=dict(os.environ,XDG_RUNTIME_DIR=private,XDG_CONFIG_HOME=private+'/config',XDG_DATA_HOME=private+'/data',XDG_CACHE_HOME=private+'/cache')
         for key in ('DISPLAY','WAYLAND_DISPLAY','SWAYSOCK','DBUS_SESSION_BUS_ADDRESS','AT_SPI_BUS_ADDRESS'):env.pop(key,None)
         def launch(name,cmd,environment=None,**kw):
@@ -27,7 +27,7 @@ def main():
             host=None
             if a.wayland:
                 env.update(WLR_BACKENDS='x11',WLR_X11_OUTPUTS='1',WLR_RENDERER='pixman')
-                config=pathlib.Path(private,'sway.conf');config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgui typed drag"] floating enable\nfor_window [title="zgui file source"] floating enable\n')
+                config=pathlib.Path(private,'sway.conf');config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgx typed drag"] floating enable\nfor_window [title="zgx file source"] floating enable\n')
                 (a.output/'sway.conf').write_text(config.read_text());sway=launch('sway',['sway','--unsupported-gpu','--config',str(config)])
                 host=wait_for_sway_host(env,a.output,sway)
                 deadline=time.monotonic()+10
@@ -49,15 +49,15 @@ def main():
                         if item.get('name')==title:return item
                     if time.monotonic()>deadline:raise RuntimeError('Missing '+title)
                     time.sleep(.05)
-            node('zgui typed drag')
+            node('zgx typed drag')
             files=[a.output.resolve()/'first.txt',a.output.resolve()/'second file.txt']
             for path in files:path.write_text('owned native Wayland file drag fixture\n')
             source_env=dict(native,GDK_BACKEND='wayland')
             source=launch('source',['/usr/bin/python3',str(pathlib.Path(__file__).with_name('native_file_source.py')),*map(str,files)],source_env)
-            node('zgui file source')
-            for title,x in [('zgui typed drag',400),('zgui file source',20)]:subprocess.run(['swaymsg','[title="^'+title+'$"]','move','position',str(x),'100'],env=env,check=True,stdout=subprocess.DEVNULL)
+            node('zgx file source')
+            for title,x in [('zgx typed drag',400),('zgx file source',20)]:subprocess.run(['swaymsg','[title="^'+title+'$"]','move','position',str(x),'100'],env=env,check=True,stdout=subprocess.DEVNULL)
             time.sleep(.2)
-            target=node('zgui typed drag')['rect'];origin=node('zgui file source')['rect']
+            target=node('zgx typed drag')['rect'];origin=node('zgx file source')['rect']
             def xdo(*args):subprocess.run(['xdotool',*map(str,args)],env=env,check=True)
             xdo('windowactivate','--sync',host)
             def move(x,y):xdo('mousemove','--window',host,x,y)

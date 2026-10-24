@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""A `Titlebar::Inset` window's chrome on Windows: the caption buttons zgui
+"""A `Titlebar::Inset` window's chrome on Windows: the caption buttons zgx
 draws (hover, maximize, restore, minimize, close through the system's own
 commands) and the resize bands of the frameless window, driven by SendInput.
 
-    cargo build -p zgui-desktop --example kitchen_sink
+    cargo build -p zgx-desktop --example kitchen_sink
     python scripts/windows_chrome_smoke.py target/debug/examples/kitchen_sink.exe
 
 Windows 11 also shows snap layouts on the maximize button (the window reports

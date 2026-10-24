@@ -5,7 +5,7 @@ from pathlib import Path
 import gi
 gi.require_version('Gtk','3.0')
 from gi.repository import Gtk,Gdk
-window=Gtk.Window(title='zgui file source');window.set_default_size(240,120)
+window=Gtk.Window(title='zgx file source');window.set_default_size(240,120)
 button=Gtk.Button(label='Drag two fixture files');window.add(button)
 button.drag_source_set(Gdk.ModifierType.BUTTON1_MASK,[Gtk.TargetEntry.new('text/uri-list',0,0)],Gdk.DragAction.COPY)
 uris=[Path(value).resolve().as_uri() for value in sys.argv[1:]]

@@ -51,7 +51,7 @@ with (a.output / 'application.log').open('w') as log:
     app = subprocess.Popen([str(a.binary)], env=env, stdout=log, stderr=subprocess.STDOUT)
 try:
     for _ in range(150):
-        found = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^zgui cursor styles$'], capture_output=True, text=True)
+        found = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '^zgx cursor styles$'], capture_output=True, text=True)
         if found.returncode == 0:
             window = found.stdout.splitlines()[-1]
             break

@@ -193,7 +193,7 @@ impl super::Instance {
         )
     }
 
-    /// zgui patch: the first adapter in DXGI's order for `power` that has
+    /// zgx patch: the first adapter in DXGI's order for `power` that has
     /// Direct3D 12, a GPU before software (WARP) whatever that order.
     /// Unlike `enumerate_adapters`, it creates no device on the adapters
     /// after it: each one a process ever opens keeps its driver's memory

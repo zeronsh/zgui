@@ -1,4 +1,4 @@
-// zgui patch: AT-SPI's Table and TableCell interfaces (see ZGUI_PATCH.md),
+// zgx patch: AT-SPI's Table and TableCell interfaces (see ZGX_PATCH.md),
 // over `accesskit_atspi_common`'s table methods. Selecting rows or columns
 // through them is refused: a table's rows are selected through its
 // Selection interface, or the keyboard.

@@ -1,0 +1,10 @@
+{
+  "pen_file": "ask/designs/ask.pen",
+  "frames": {
+    "MvwFD": "zgx · Frame profiler",
+    "kZfcb": "zgx · Frame profiler · Popovers",
+    "XFJTT": "zgx · Frame profiler · States & menus",
+    "Mz4wa": "zgx · Frame profiler · Export menu open"
+  },
+  "icons": "lucide 1.8.0, via scripts/import_profiler_icons.mjs"
+}

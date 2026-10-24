@@ -32,7 +32,7 @@ BUSY_ONLY = {'mds_stores': 20.0, 'mds': 20.0, 'mdworker_shared': 20.0}
 # Never counted against the threshold: what a GUI measurement measures, and
 # the desktop's own residents (a live wallpaper: recorded by `state`, and in
 # the desktop-alone baseline every run measures).
-EXEMPT = ['WindowServer', 'kernel_task', 'zgui-macsample', 'zgui-framepace']
+EXEMPT = ['WindowServer', 'kernel_task', 'zgx-macsample', 'zgx-framepace']
 RESIDENTS = ['Wallspace', 'Wallpaper Engine', 'Plash']
 
 

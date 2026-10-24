@@ -1,6 +1,6 @@
 # App structure
 
-A small app is one file. A large one is a handful of modules, each about one thing, sharing the app's state through one module that holds it. This page gives a layout that scales, how modules share state, how to type component props, and how hot reload treats modules. The terminal example (`crates/zgui-desktop/examples/terminal`) is built this way.
+A small app is one file. A large one is a handful of modules, each about one thing, sharing the app's state through one module that holds it. This page gives a layout that scales, how modules share state, how to type component props, and how hot reload treats modules. The terminal example (`crates/zgx-desktop/examples/terminal`) is built this way.
 
 ## Layout
 
@@ -27,7 +27,7 @@ my-app/
 }
 ```
 
-zgui resolves `require` as Luau does, from this `.luaurc` (beside the script) and the requiring file: `require("./state")` and `require("../theme")` relative to the requiring file, `require("@components/card")` through an alias, `require("@self/x")` from the requiring file's own directory, a directory as its `init.luau`. luau-lsp reads the same file, so editors and `zgui check` follow the same requires and check every module strictly. Modules stay inside the script's directory, run once per load, and return what they return.
+zgx resolves `require` as Luau does, from this `.luaurc` (beside the script) and the requiring file: `require("./state")` and `require("../theme")` relative to the requiring file, `require("@components/card")` through an alias, `require("@self/x")` from the requiring file's own directory, a directory as its `init.luau`. luau-lsp reads the same file, so editors and `zgx check` follow the same requires and check every module strictly. Modules stay inside the script's directory, run once per load, and return what they return.
 
 ## Sharing state
 
@@ -308,7 +308,7 @@ sessions.close_pane = M.close_pane
 
 ## The terminal example
 
-`crates/zgui-desktop/examples/terminal` is a 2,000-line app in nineteen modules:
+`crates/zgx-desktop/examples/terminal` is a 2,000-line app in nineteen modules:
 
 | Module | |
 | --- | --- |
@@ -323,4 +323,4 @@ sessions.close_pane = M.close_pane
 | `lib/` | `layout.luau` (the split tree as plain data), `names.luau` (what a pane is called) |
 | `theme.luau`, `icons.luau` | colors and sizes; SVG icons by name |
 
-Its headless test (`crates/zgui-script/tests/terminal_example.rs`) drives it through its commands and pointer, and `zgui check crates/zgui-desktop/examples/terminal` checks every module.
+Its headless test (`crates/zgx-script/tests/terminal_example.rs`) drives it through its commands and pointer, and `zgx check crates/zgx-desktop/examples/terminal` checks every module.

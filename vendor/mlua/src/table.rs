@@ -937,7 +937,7 @@ impl Table {
     /// asks for it (`to_value`, `get`), so reading a key's string bytes, its
     /// identity or a number costs no reference slot.
     ///
-    /// zgui patch: not in upstream mlua (see `vendor/mlua/ZGUI_PATCH.md`).
+    /// zgx patch: not in upstream mlua (see `vendor/mlua/ZGX_PATCH.md`).
     #[cfg(feature = "luau")]
     #[cfg_attr(docsrs, doc(cfg(feature = "luau")))]
     pub fn for_each_borrowed(
@@ -1624,7 +1624,7 @@ impl<V: FromLua> Iterator for TableSequence<'_, V> {
 /// (soundly, but the wrong value). `type_name` and `as_bytes` were read
 /// with the pair.
 ///
-/// zgui patch: not in upstream mlua (see `vendor/mlua/ZGUI_PATCH.md`).
+/// zgx patch: not in upstream mlua (see `vendor/mlua/ZGX_PATCH.md`).
 #[cfg(feature = "luau")]
 #[cfg_attr(docsrs, doc(cfg(feature = "luau")))]
 pub struct StackValue<'a> {

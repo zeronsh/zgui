@@ -1,4 +1,4 @@
-Command: CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/zgui-target CARGO_PROFILE_DEV_DEBUG=0 cargo test -p zgui --test editor_shape_reuse -- --nocapture
+Command: CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/zgx-target CARGO_PROFILE_DEV_DEBUG=0 cargo test -p zgx --test editor_shape_reuse -- --nocapture
 Baseline measured before the editor geometry reuse implementation.
 The source in before.rs was the complete integration test used for this run.
 Counters reset after initial allocation, wrapping, typography, and focus settle.

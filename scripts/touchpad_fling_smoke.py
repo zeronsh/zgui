@@ -34,7 +34,7 @@ def main():
         processes.append(subprocess.Popen(command, env=env, stdout=log, stderr=log))
         return processes[-1]
 
-    with tempfile.TemporaryDirectory(prefix="zgui-touchpad-") as private:
+    with tempfile.TemporaryDirectory(prefix="zgx-touchpad-") as private:
         os.chmod(private, 0o700)
         env = dict(os.environ, XDG_RUNTIME_DIR=private, WLR_BACKENDS="headless", WLR_RENDERER="pixman",
                    WLR_LIBINPUT_NO_DEVICES="1")

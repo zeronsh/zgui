@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise declarative editors on an existing X11 DISPLAY with a window manager.
 
-Build with `cargo build -p zgui-desktop --example form` first. The script owns
+Build with `cargo build -p zgx-desktop --example form` first. The script owns
 only its form process; it does not start or stop the caller's display server.
 """
 import argparse

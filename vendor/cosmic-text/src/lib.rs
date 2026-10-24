@@ -91,7 +91,7 @@ extern crate alloc;
 #[cfg(not(any(feature = "std", feature = "no_std")))]
 compile_error!("Either the `std` or `no_std` feature must be enabled");
 
-/// zgui: `value` clamped to a font's variation axis. A font file can give an
+/// zgx: `value` clamped to a font's variation axis. A font file can give an
 /// axis a minimum above its maximum, where `f32::clamp` would panic; this
 /// never does (it gives `max` then), as `read-fonts` guards its own clamp.
 pub(crate) fn clamp_to_axis(value: f32, min: f32, max: f32) -> f32 {

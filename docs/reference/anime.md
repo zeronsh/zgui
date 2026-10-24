@@ -25,7 +25,7 @@ ui.loop(opts: LoopOptions?) -> Binding
 
 ## Parameters
 
-`ElementParams` are an element's [animatable properties](#element-properties) and these `Timing` parameters (anime.js's names; the engine also takes snake_case, `on_complete`, `loop_delay`, but the types and `zgui check` know only these):
+`ElementParams` are an element's [animatable properties](#element-properties) and these `Timing` parameters (anime.js's names; the engine also takes snake_case, `on_complete`, `loop_delay`, but the types and `zgx check` know only these):
 
 | Parameter | Type | Default | |
 | --- | --- | --- | --- |

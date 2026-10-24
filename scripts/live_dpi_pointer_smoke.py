@@ -85,7 +85,7 @@ def main():
         deadline = time.monotonic() + 20
         window = None
         while time.monotonic() < deadline and app.poll() is None:
-            found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^zgui live DPI pointer$"], env=env, capture_output=True, text=True)
+            found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^zgx live DPI pointer$"], env=env, capture_output=True, text=True)
             if found.returncode == 0 and found.stdout.strip():
                 window = found.stdout.splitlines()[0]
                 break

@@ -698,7 +698,7 @@ impl NodeWrapper<'_> {
             .and_then(|level| level.try_into().ok())
     }
 
-    // zgui patch: a heading's level as UIA's HeadingLevel1..9, which
+    // zgx patch: a heading's level as UIA's HeadingLevel1..9, which
     // Narrator's heading navigation (scan mode H) and heading list read.
     fn heading_level(&self) -> Option<i32> {
         if self.node.role() != Role::Heading {
@@ -1334,7 +1334,7 @@ properties! {
     (UIA_IsRequiredForFormPropertyId, is_required),
     (UIA_IsPasswordPropertyId, is_password),
     (UIA_LevelPropertyId, level),
-    // zgui patch: see heading_level.
+    // zgx patch: see heading_level.
     (UIA_HeadingLevelPropertyId, heading_level),
     (UIA_PositionInSetPropertyId, position_in_set),
     (UIA_SizeOfSetPropertyId, size_of_set),

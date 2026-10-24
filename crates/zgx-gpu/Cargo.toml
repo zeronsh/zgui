@@ -1,0 +1,88 @@
+[package]
+name = "zgx-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+rust-version.workspace = true
+description = "The GPU renderer for zgx scenes, on wgpu: Metal, Direct3D 12 and Vulkan, repainting only what changed."
+keywords = ["gui", "renderer", "wgpu", "gpu", "text"]
+categories = ["gui", "rendering"]
+
+# Image formats, each on by default. An app that never shows one can leave
+# it out (`default-features = false`) and save its decoder in the binary: a
+# source in a missing format fails to decode, with an error naming the
+# feature. Canvases, gradients and shadows need none of them.
+[features]
+default = ["svg", "png", "jpeg", "gif"]
+svg = ["dep:resvg"]
+png = ["image/png"]
+jpeg = ["image/jpeg"]
+gif = ["dep:gif"]
+# Windows: presentation into DirectComposition visuals of the caller's
+# (composition.rs), with native views composited between the planes.
+composition = ["windows/Win32_Graphics_DirectComposition"]
+# Windows: Vulkan where Direct3D 12 has no adapter. Every Windows 10 and 11
+# machine has a Direct3D 12 adapter (WARP, in software, where the GPU's
+# driver has none), so it is off there: 1.1 MiB of every binary. Linux
+# always has it.
+vulkan = ["wgpu/vulkan"]
+
+[dependencies]
+smallvec = "1.16"
+zgx = { path = "../zgx", version = "0.1.0" }
+# wgpu's defaults less WebGPU (the browser's), and Vulkan and GL, which only
+# Linux and its kind always build (below).
+wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "wgsl"] }
+winit = "0.30.13"
+cosmic-text = { version = "0.19.0", features = ["shape-run-cache"] }
+pollster = "0.4"
+bytemuck = { version = "1.25", features = ["derive"] }
+image = { version = "0.25.10", default-features = false }
+resvg = { version = "0.46.0", default-features = false, optional = true }
+# Canvas, decoration and image rasterization (what resvg draws with).
+tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"] }
+unicode-segmentation = "1.12"
+# Per-glyph and per-node lookups every frame; already in the tree via cosmic-text.
+rustc-hash = "2.1"
+
+gif = { version = "=0.14.2", default-features = false, features = ["std"], optional = true }
+
+# GL (EGL), where no Vulkan driver is: VMs and GPUs without one, and
+# systems that ship none. Never loaded where Vulkan is (`GpuContext::create`).
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { version = "29.0.4", default-features = false, features = ["gles"] }
+
+[target.'cfg(not(any(windows, target_vendor = "apple")))'.dependencies]
+wgpu = { version = "29.0.4", default-features = false, features = ["vulkan"] }
+
+# DXGI frame statistics for ZGX_PRESENT_LOG (dxgi.rs); the version wgpu-hal uses.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Dwm", "Win32_System_Performance"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-foundation = "0.3.2"
+objc2-core-video = "0.3.2"
+objc2-metal = { version = "0.3.2", features = ["objc2-io-surface"] }
+# Shader sources and function names for frames encoded directly (metal_frame.rs).
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSError"] }
+# Presentation through IOSurfaces shown as a layer's contents (layer_present.rs).
+objc2-io-surface = "0.3.2"
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"] }
+
+# `d3d12_device_churn`, an example on Direct3D 12 without wgpu (see
+# docs/validation.md); only examples and tests build these.
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D12", "Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
+
+# Tests of a format need its feature.
+[[test]]
+name = "gif"
+required-features = ["gif"]
+
+[[test]]
+name = "svg"
+required-features = ["svg"]

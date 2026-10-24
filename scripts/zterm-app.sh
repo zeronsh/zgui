@@ -2,12 +2,12 @@
 # Build the terminal example as zterm.app (the dist profile), its interface
 # compiled in (terminal-bundle), and install it: ./scripts/zterm-app.sh [destination]
 # (default /Applications). Needs Zig 0.16 for Ghostty (see
-# crates/zgui-ghostty-sys).
+# crates/zgx-ghostty-sys).
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 dest=${1:-/Applications}
 cd "$root"
-cargo build --profile dist -p zgui-desktop --features ghostty,terminal-bundle --example terminal
+cargo build --profile dist -p zgx-desktop --features ghostty,terminal-bundle --example terminal
 
 app="$dest/zterm.app"
 staging=$(mktemp -d)/zterm.app

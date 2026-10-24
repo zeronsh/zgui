@@ -1,16 +1,16 @@
 [package]
-name = "zgui-compare-quickgui"
+name = "zgx-compare-quickgui"
 version = "0.1.0"
 edition = "2024"
 [workspace]
 [dependencies]
 quickgui = { git = "https://github.com/egoist/quickgui", rev = "811d6e2816d5229711f59683c4c9dfbb6fc74133", default-features = false }
-zgui-workload = { path = "../workload" }
+zgx-workload = { path = "../workload" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
 
-# As zgui's: the comparison tables build every framework with it.
+# As zgx's: the comparison tables build every framework with it.
 [profile.dist]
 inherits = "release"
 lto = "fat"

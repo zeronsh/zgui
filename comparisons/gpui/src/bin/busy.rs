@@ -1,8 +1,8 @@
-//! Busy window + one spinner (see zgui_workload::busy). GPUI's best case:
+//! Busy window + one spinner (see zgx_workload::busy). GPUI's best case:
 //! the static content is a cached view; only the spinner view re-renders.
 use gpui::{prelude::*, *};
 use std::time::Instant;
-use zgui_workload::{busy::*, Workload};
+use zgx_workload::{busy::*, Workload};
 struct Content;
 impl Render for Content {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {

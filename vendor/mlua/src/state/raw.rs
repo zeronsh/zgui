@@ -1132,7 +1132,7 @@ impl RawLua {
     }
 
     /// `make_userdata`, allocated with the memory limit set aside instead of
-    /// in a protected call (`Lua::create_userdata_relaxed`). zgui patch.
+    /// in a protected call (`Lua::create_userdata_relaxed`). zgx patch.
     ///
     /// # Safety
     ///
@@ -1173,7 +1173,7 @@ impl RawLua {
             // `T` comes near Luau's 2 GiB object size. Its collection step
             // runs userdata destructors (Rust drops, which do not unwind)
             // and the interrupt with `gc >= 0`, at which no hook mlua or
-            // zgui sets raises an error. `relax_limit_with` sets the flag
+            // zgx sets raises an error. `relax_limit_with` sets the flag
             // back on return, which this always reaches.
             let mut pushed = Ok(ptr::null_mut());
             MemoryState::relax_limit_with(state, || pushed = push_userdata(state, data, false));

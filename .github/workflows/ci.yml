@@ -79,7 +79,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 2.6.0
-          args: --check crates/zgui-script
+          args: --check crates/zgx-script
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # Feature gating stays honest: the crates build without their defaults,
       # on the oldest Rust they claim (`rust-version`): a check this job
@@ -88,12 +88,12 @@ jobs:
         run: |
           msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
           rustup toolchain install "$msrv" --profile minimal --no-self-update
-          cargo "+$msrv" check -p zgui-components -p zgui-desktop -p zgui-script --no-default-features --locked
-      # zgui-script's best-practice lint over every example script.
+          cargo "+$msrv" check -p zgx-components -p zgx-desktop -p zgx-script --no-default-features --locked
+      # zgx-script's best-practice lint over every example script.
       - name: Script lint
-        run: cargo run -q -p zgui-script --bin zgui --locked -- lint crates/zgui-script/examples crates/zgui-desktop/examples
+        run: cargo run -q -p zgx-script --bin zgx --locked -- lint crates/zgx-script/examples crates/zgx-desktop/examples
       # Every example script type checks (luau-lsp, the shipped ui/anime
-      # types); zgui-script's check tests run with it too.
+      # types); zgx-script's check tests run with it too.
       - name: Script type check
         run: |
           dir="$RUNNER_TEMP/luau-lsp-1.70.1"
@@ -101,8 +101,8 @@ jobs:
           curl -fsSL https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip -o "$dir.zip"
           unzip -q -o "$dir.zip" -d "$dir"
           echo "LUAU_LSP=$dir/luau-lsp" >> "$GITHUB_ENV"
-          LUAU_LSP="$dir/luau-lsp" cargo run -q -p zgui-script --bin zgui --locked -- check crates/zgui-script/examples crates/zgui-desktop/examples
-      - run: cargo test -p zgui -p zgui-components -p zgui-desktop -p zgui-workload -p zgui-script --all-targets --locked
+          LUAU_LSP="$dir/luau-lsp" cargo run -q -p zgx-script --bin zgx --locked -- check crates/zgx-script/examples crates/zgx-desktop/examples
+      - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --locked
       - run: cargo test --workspace --doc --locked
       # The API docs build without a warning (a broken link, a name collision).
       - run: cargo doc --workspace --no-deps --locked
@@ -116,21 +116,21 @@ jobs:
         id: vulkan-loader
         if: ${{ !cancelled() }}
         with:
-          path: ~/zgui-vulkan-loader/build/loader
+          path: ~/zgx-vulkan-loader/build/loader
           key: vulkan-loader-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_vulkan_loader.sh') }}
       - name: Build private patched Vulkan loader
         if: ${{ !cancelled() && steps.vulkan-loader.outputs.cache-hit != 'true' }}
-        run: scripts/build_vulkan_loader.sh ~/zgui-vulkan-loader
+        run: scripts/build_vulkan_loader.sh ~/zgx-vulkan-loader
       - name: Use the private Vulkan loader
         if: ${{ !cancelled() }}
-        run: printf 'LD_LIBRARY_PATH=%s/zgui-vulkan-loader/build/loader\n' "$HOME" >> "$GITHUB_ENV"
+        run: printf 'LD_LIBRARY_PATH=%s/zgx-vulkan-loader/build/loader\n' "$HOME" >> "$GITHUB_ENV"
       - name: Vulkan rendering and damage readback
         if: ${{ !cancelled() }}
         env:
           XDG_RUNTIME_DIR: /tmp
         run: |
           set -o pipefail
-          cargo test -p zgui-gpu --locked 2>&1 | tee "$RUNNER_TEMP/zgui-vulkan-tests.log"
+          cargo test -p zgx-gpu --locked 2>&1 | tee "$RUNNER_TEMP/zgx-vulkan-tests.log"
       - name: Build native fixtures
         id: native-fixtures
         if: ${{ !cancelled() }}
@@ -138,8 +138,8 @@ jobs:
         # already compiled every one, as a test).
         run: |
           fixtures=$(python3 scripts/linux_smokes.py --fixtures)
-          cargo build -p zgui-desktop $fixtures --locked
-          cargo test -p zgui-desktop --lib --no-run --locked
+          cargo build -p zgx-desktop $fixtures --locked
+          cargo test -p zgx-desktop --lib --no-run --locked
       # X11, Wayland, IME, clipboard, DPI, accessibility and input probes. Each
       # owns its display or compositor, so they run side by side; every probe
       # runs and reports even after another fails.
@@ -155,8 +155,8 @@ jobs:
           retention-days: 3
           name: linux-evidence
           path: |
-            ${{ runner.temp }}/zgui-vulkan-tests.log
-            /tmp/zgui-*
+            ${{ runner.temp }}/zgx-vulkan-tests.log
+            /tmp/zgx-*
   # Exact instruction counts (cachegrind) of the CPU-only headless scenes
   # against the PR's base, as a PR comment; more than +1% fails. On main,
   # against the commit before (no failure), which also keeps its cache.
@@ -178,7 +178,7 @@ jobs:
           sudo apt-get update -qq -o Acquire::Retries=3
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends valgrind cmake pkg-config fonts-dejavu-core libdbus-1-dev libfontconfig1-dev libwayland-dev libxcb1-dev libxkbcommon-dev libxrandr-dev
       # The gate's target directory sits in the workspace's, so this keeps
-      # its release dependencies (not zgui's crates, rebuilt either side):
+      # its release dependencies (not zgx's crates, rebuilt either side):
       # about a minute and a half of each build.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -187,7 +187,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Instruction counts
         env:
-          ZGUI_GATE_TARGET: target/perf-gate
+          ZGX_GATE_TARGET: target/perf-gate
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
           status=0
@@ -216,21 +216,21 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test -p zgui -p zgui-components -p zgui-desktop -p zgui-workload --all-targets --locked
+      - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload --all-targets --locked
       # The soak (an app used for a while holds what it did), on Metal.
-      - run: cargo test -p zgui-script --test soak --locked
+      - run: cargo test -p zgx-script --test soak --locked
       - run: cargo test --workspace --doc --locked
       - name: Metal rendering and damage readback
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -o pipefail
-          python3 scripts/macos_native_validation.py --target-dir target --output "$RUNNER_TEMP/zgui-macos-parity" 2>&1 | tee "$RUNNER_TEMP/zgui-metal-tests.log"
+          python3 scripts/macos_native_validation.py --target-dir target --output "$RUNNER_TEMP/zgx-macos-parity" 2>&1 | tee "$RUNNER_TEMP/zgx-metal-tests.log"
       - name: Native component window lifecycle
         if: ${{ !cancelled() }}
         run: |
-          cargo build -p zgui-desktop --example component_workload --locked
-          python3 scripts/component_host_smoke.py target/debug/examples/component_workload --output "$RUNNER_TEMP/zgui-macos-host"
+          cargo build -p zgx-desktop --example component_workload --locked
+          python3 scripts/component_host_smoke.py target/debug/examples/component_workload --output "$RUNNER_TEMP/zgx-macos-host"
       # Keep textual diagnostics even if account artifact storage is exhausted.
       - name: Print Metal validation diagnostics
         if: always()
@@ -240,7 +240,7 @@ jobs:
           import os
           from pathlib import Path
           root = Path(os.environ["RUNNER_TEMP"])
-          paths = sorted(path for directory in ("zgui-macos-parity", "zgui-macos-host")
+          paths = sorted(path for directory in ("zgx-macos-parity", "zgx-macos-host")
                          for path in (root / directory).rglob("*"))
           for path in paths:
               if path.is_file() and path.suffix in (".log", ".json") and path.name not in ("source-diff.log", "source-files.json"):
@@ -257,9 +257,9 @@ jobs:
           retention-days: 3
           name: macos-gpu-evidence
           path: |
-            ${{ runner.temp }}/zgui-metal-tests.log
-            ${{ runner.temp }}/zgui-macos-host
-            ${{ runner.temp }}/zgui-macos-parity
+            ${{ runner.temp }}/zgx-metal-tests.log
+            ${{ runner.temp }}/zgx-macos-host
+            ${{ runner.temp }}/zgx-macos-parity
       - name: Report incomplete Metal artifact upload
         if: always() && steps.macos-evidence-upload.outcome == 'failure'
         run: echo "::warning::Metal artifact upload failed. Text diagnostics remain in job logs; downloadable evidence preservation is incomplete (check artifact quota). This is not native validation completion."
@@ -277,17 +277,17 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Clippy compiles what `cargo check` would, and lints the Windows-only
       # code Linux and macOS never build; WebView2 (off by default) with it.
-      - run: cargo clippy --workspace --all-targets --features zgui-desktop/webview2 --locked -- -D warnings
-      # zgui-script's unit tests (its file events wait on Windows' own
+      - run: cargo clippy --workspace --all-targets --features zgx-desktop/webview2 --locked -- -D warnings
+      # zgx-script's unit tests (its file events wait on Windows' own
       # notifications) and its bundled script paths (caught a Windows
       # separator bug), in one run.
-      - run: cargo test -p zgui -p zgui-components -p zgui-desktop -p zgui-script --lib --test components --test bundle --locked
-      # The vendored accesskit_windows' test of zgui's patch (UIA's
-      # HeadingLevel, vendor/accesskit_windows/ZGUI_PATCH.md), alone: its
+      - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-script --lib --test components --test bundle --locked
+      # The vendored accesskit_windows' test of zgx's patch (UIA's
+      # HeadingLevel, vendor/accesskit_windows/ZGX_PATCH.md), alone: its
       # other tests move the foreground window. Built in the workspace's
       # target, which shares what it can of the build above.
       - run: cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target --locked heading
       # Direct3D 12 on WARP (no GPU on the runner): pixel tests of what the
       # D3D shader compiler alone gets wrong (coarse derivatives, #38), and
       # the device on DXGI's first low-power adapter (`adapter`, #217).
-      - run: cargo test -p zgui-gpu --test borders --test transforms --test rounded_clip --test adapter --locked
+      - run: cargo test -p zgx-gpu --test borders --test transforms --test rounded_clip --test adapter --locked

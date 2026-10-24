@@ -5292,15 +5292,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "zgui-compare-quickgui"
+name = "zgx-compare-quickgui"
 version = "0.1.0"
 dependencies = [
  "quickgui",
- "zgui-workload",
+ "zgx-workload",
 ]
 
 [[package]]
-name = "zgui-workload"
+name = "zgx-workload"
 version = "0.1.0"
 
 [[package]]

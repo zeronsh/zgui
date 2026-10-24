@@ -1,4 +1,4 @@
-const names={zgui:'zgui',gpui:'GPUI',quickgui:'QuickGUI'},colors={zgui:'#588547',gpui:'#7d8daa',quickgui:'#caa572'};
+const names={zgx:'zgx',gpui:'GPUI',quickgui:'QuickGUI'},colors={zgx:'#588547',gpui:'#7d8daa',quickgui:'#caa572'};
 const descriptions={idle:'The interface is visible and unchanged. No streaming or scrolling updates.',stream:'Text arrives continuously while the virtualized list stays still.',scroll:'The 100,000-row virtualized list scrolls while the text stays unchanged.',both:'Text streams while the virtualized list scrolls — both update paths working together.'};
 // Each platform's accepted results, and how its memory is measured.
 const platforms={
@@ -29,11 +29,11 @@ function render(){
  document.getElementById('mean-memory-heading').textContent=`Mean ${p.heading}, MiB`;document.getElementById('peak-memory-heading').textContent=`Peak ${p.heading}, MiB`;
  graph('cpu_percent_one_core',1,'cpu-chart');graph(p.memory,1048576,'memory-chart');
  const groups=groupsFor();
- document.getElementById('results-table').innerHTML=groups.map(g=>{let cells=['cpu_percent_one_core',p.memory,p.peak].map((key,i)=>{let s=i?1048576:1,v=g[key];return `<td>${fmt(v.median/s)}<small>${fmt(v.min/s)}–${fmt(v.max/s)}</small></td>`;}).join('');return `<tr class="${g.framework==='zgui'?'highlight':''}"><td>${names[g.framework]}</td>${cells}<td>${mode==='idle'?'—':`${fmt(g.workload_ticks.min/20)}–${fmt(g.workload_ticks.max/20)}`}</td></tr>`;}).join('');
- const z=groups.find(g=>g.framework==='zgui').cpu_percent_one_core.median;
+ document.getElementById('results-table').innerHTML=groups.map(g=>{let cells=['cpu_percent_one_core',p.memory,p.peak].map((key,i)=>{let s=i?1048576:1,v=g[key];return `<td>${fmt(v.median/s)}<small>${fmt(v.min/s)}–${fmt(v.max/s)}</small></td>`;}).join('');return `<tr class="${g.framework==='zgx'?'highlight':''}"><td>${names[g.framework]}</td>${cells}<td>${mode==='idle'?'—':`${fmt(g.workload_ticks.min/20)}–${fmt(g.workload_ticks.max/20)}`}</td></tr>`;}).join('');
+ const z=groups.find(g=>g.framework==='zgx').cpu_percent_one_core.median;
  const compare=(v,n)=>v>0?`<strong>${fmt(Math.abs(100*(1-z/v)),1)}% ${z<=v?'less':'more'} CPU</strong> than ${n}`:`${z===0?'ties':'exceeds'} ${n} at the sampler’s zero-tick floor`;
  const insight=document.getElementById('insight');
- insight.innerHTML=mode==='idle'?`zgui recorded <strong>${fmt(z)}% CPU</strong> while idle. Zero means no CPU-tick increase at the sampler’s resolution, not literally zero work.`:`In this workload, zgui uses ${groups.filter(g=>g.framework!=='zgui').map(g=>compare(g.cpu_percent_one_core.median,names[g.framework])).join(' and ')} by median. These comparisons apply to ${p.scope}.`;
+ insight.innerHTML=mode==='idle'?`zgx recorded <strong>${fmt(z)}% CPU</strong> while idle. Zero means no CPU-tick increase at the sampler’s resolution, not literally zero work.`:`In this workload, zgx uses ${groups.filter(g=>g.framework!=='zgx').map(g=>compare(g.cpu_percent_one_core.median,names[g.framework])).join(' and ')} by median. These comparisons apply to ${p.scope}.`;
  const rangesOverlap=(a,b)=>a.min<=b.max&&b.min<=a.max;
  const close=groups.slice(1).filter(other=>Math.abs(z-other.cpu_percent_one_core.median)/Math.max(z,other.cpu_percent_one_core.median,0.0001)<0.02&&rangesOverlap(groups[0].cpu_percent_one_core,other.cpu_percent_one_core));
  if(mode!=='idle'&&close.length)insight.innerHTML+=` <strong>CPU is close to ${close.map(g=>names[g.framework]).join(' and ')}</strong> (within 2% by median, with overlapping observed ranges).`;
@@ -44,7 +44,7 @@ function render(){
 function describe(){
  const p=platforms[platform],m=metadata,heavy=platform==='macos-heavy';
  const revision=m.source_dirty?`parent commit ${m.commit.slice(0,7)} + dirty source`:`accepted commit ${m.commit.slice(0,7)}`;
- document.getElementById('scene-intro').textContent=heavy?'A live dashboard with 30 service cards, 780 sparkline bars, a 100,000-row table and streaming log. zgui and GPUI on the same Mac.':'The same streaming text and 100,000-row virtual list. Three Rust GUI frameworks. CPU and memory, side by side.';
+ document.getElementById('scene-intro').textContent=heavy?'A live dashboard with 30 service cards, 780 sparkline bars, a 100,000-row table and streaming log. zgx and GPUI on the same Mac.':'The same streaming text and 100,000-row virtual list. Three Rust GUI frameworks. CPU and memory, side by side.';
  document.getElementById('scene-title').textContent=heavy?'Heavy dashboard · two frameworks':'Streaming and list lab · three frameworks';
  document.getElementById('scene-note').textContent=heavy?'This is a separate, heavier scene; do not compare its bars directly with the lab scene. QuickGUI is excluded because its heavy adapter panics at startup when its text renderer exceeds 32 batches. It is not a zero measurement.':'Matched lab scene within each platform. Linux software rendering and macOS Metal use different machines and memory metrics.';
  document.getElementById('same-work').textContent=heavy?'1280 × 800 dashboard: 6 stat tiles, 30 service cards with 780 sparkline bars, a virtualized 100,000-row, five-column table and a five-line log. Stream updates all live data; scroll moves only the table.':'100,000 fixed-height rows, viewport virtualization and deterministic streaming text. Each framework runs idle, streaming, scrolling and combined modes.';

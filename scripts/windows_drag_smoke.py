@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drags out of zgui on Windows (`native_drag/win32.rs`): `drag_probe`'s chip
+"""Drags out of zgx on Windows (`native_drag/win32.rs`): `drag_probe`'s chip
 (exporting its text) dragged by real input out of its window onto
 `drop_target_probe`, a test-owned window in another process registered as an
 OLE drop target, placed against the probe's right edge. It never drops on
@@ -11,7 +11,7 @@ Checks that:
 - the drop target receives the chip's text, and the source hears its drag
   accepted (`DRAG_END accepted=true`);
 - dragged out and back into its own window and let go there, the drag stays
-  zgui's: Windows drops nothing, and the source hears it not accepted;
+  zgx's: Windows drops nothing, and the source hears it not accepted;
 - Escape over the target cancels: nothing is dropped, not accepted;
 - the target's description of the drop (`CFSTR_DROPDESCRIPTION`, "Copy to
   …", as Explorer gives) shows under the drag's image: Windows draws it, in
@@ -19,7 +19,7 @@ Checks that:
 
 It takes the pointer and keyboard while it runs.
 
-    cargo build -p zgui-desktop --example drag_probe --example drop_target_probe
+    cargo build -p zgx-desktop --example drag_probe --example drop_target_probe
     python scripts/windows_drag_smoke.py target/debug/examples
 """
 import argparse
@@ -122,7 +122,7 @@ def drag(window, start, path, release_on=None, hold=None):
 
 def presents(log, span):
     """Presents DXGI reports shown within `span` (perf_counter seconds, the
-    present log's clock), from `ZGUI_PRESENT_LOG` lines."""
+    present log's clock), from `ZGX_PRESENT_LOG` lines."""
     began, ended = span
     total = 0
     for line in list(log):
@@ -152,7 +152,7 @@ def main():
     parser.add_argument("examples", type=pathlib.Path)
     args = parser.parse_args()
     # Its bar moves every display frame; its presents are logged.
-    env = dict(os.environ, DRAG_PROBE_ANIMATE="1", ZGUI_PRESENT_LOG="1")
+    env = dict(os.environ, DRAG_PROBE_ANIMATE="1", ZGX_PRESENT_LOG="1")
     source = subprocess.Popen([str(args.examples / "drag_probe.exe")], stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, env=env)
     source_lines = reader(source)
@@ -216,7 +216,7 @@ def main():
         assert held[1] > 300 * scale * scale, f"no drop description under the drag image ({held[1]} white pixels)"
         print(f"ok: the target's drop description shows under the drag image ({held[1]} white label pixels)")
 
-        # Out and back in, let go in its own window: zgui's, not Windows'.
+        # Out and back in, let go in its own window: zgx's, not Windows'.
         front()
         drops = sum(line.startswith("DROPPED") for line in target_lines)
         drag(window, chip, steps(start, inside, 10) + steps(inside, back, 10), release_on=window)
@@ -258,7 +258,7 @@ def main():
         print(f"ok: the preview slid back from {first} to {last} (the chip at {chip_screen}) in "
               f"{len(set(slid))} steps, then went")
 
-        # A tab carries nothing to other apps: it stays zgui's, between the
+        # A tab carries nothing to other apps: it stays zgx's, between the
         # app's windows (the source holds the pointer, so the gap between
         # them reaches no other app). Dropped onto the other window's strip,
         # it lands there.

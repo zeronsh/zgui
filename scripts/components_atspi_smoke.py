@@ -34,16 +34,16 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     if not args.session:
         (args.output / "results.json").unlink(missing_ok=True)
-        env = dict(os.environ, ZGUI_PRIVATE_ATSPI="1")
+        env = dict(os.environ, ZGX_PRIVATE_ATSPI="1")
         for name in ("AT_SPI_BUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "I3SOCK"):
             env.pop(name, None)
         result = subprocess.run(["dbus-run-session", "--", sys.executable, str(pathlib.Path(__file__).resolve()),
                                  str(args.binary), "--output", str(args.output), "--session"], env=env)
         raise SystemExit(result.returncode)
-    if os.environ.get("ZGUI_PRIVATE_ATSPI") != "1":
+    if os.environ.get("ZGX_PRIVATE_ATSPI") != "1":
         raise RuntimeError("the private session must be created by this runner")
     xvfb = wm = launcher = app = None
-    with tempfile.TemporaryDirectory(prefix="zgui-components-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-components-") as runtime:
         os.chmod(runtime, 0o700)
         try:
             with (args.output / "xvfb.log").open("w") as log:

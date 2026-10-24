@@ -13,9 +13,9 @@ A scene is a headless example run with a fixed workload: its whole run's
 retired instructions (the kernel's count, every thread) vary by well under
 0.5% between runs, where its time varies by several percent. Disturbances
 only add instructions, so the least of a scene's runs is the one reported. A/B mode builds
-each revision in a worktree of its own under /tmp/zgui-perf (kept, so the
+each revision in a worktree of its own under /tmp/zgx-perf (kept, so the
 next comparison builds incrementally), runs the scenes alternately, and marks
-a difference larger than both sides' spread. With ZGUI_PROFILE=1 set, a
+a difference larger than both sides' spread. With ZGX_PROFILE=1 set, a
 scene's own phase report (style, layout, text, damage, paint, encode,
 submit) is shown too. macOS (`/usr/bin/time -l`) and Linux (`perf stat`).
 """
@@ -31,32 +31,32 @@ import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORK = pathlib.Path(os.environ.get('ZGUI_PERF_DIR', '/tmp/zgui-perf'))
+WORK = pathlib.Path(os.environ.get('ZGX_PERF_DIR', '/tmp/zgx-perf'))
 
 # name, package, example, environment (and 'slow': only with --all).
 SCENES = [
-    ('heavy-both', 'zgui-desktop', 'heavy_headless', {'ZGUI_MODE': 'both', 'TICKS': '600'}),
-    ('heavy-stream', 'zgui-desktop', 'heavy_headless', {'ZGUI_MODE': 'stream', 'TICKS': '600'}),
-    ('heavy-scroll', 'zgui-desktop', 'heavy_headless', {'ZGUI_MODE': 'scroll', 'TICKS': '600'}),
-    ('lab-stream', 'zgui-desktop', 'workload_headless', {'ZGUI_MODE': 'stream'}),
-    ('lab-scroll', 'zgui-desktop', 'workload_headless', {'ZGUI_MODE': 'scroll'}),
-    ('animate', 'zgui-desktop', 'animation_headless', {'FRAMES': '1200'}),
-    ('mount', 'zgui-script', 'mount_bench', {}),
-    ('script-update', 'zgui-script', 'update_bench', {}),
-    ('anime', 'zgui-script', 'anime_bench', {}),
-    ('script-layout', 'zgui-script', 'script_layout_bench', {}),
-    ('list-state', 'zgui-script', 'list_state_bench', {}),
-    ('state', 'zgui-script', 'state_bench', {}, 'slow'),
-    ('layout', 'zgui-gpu', 'layout_bench', {}),
-    ('frame', 'zgui-gpu', 'frame_bench', {}),
-    ('text', 'zgui-gpu', 'text_bench', {}),
-    ('core', 'zgui', 'core_bench', {}, 'slow'),
-    ('style', 'zgui', 'style_bench', {}),
-    ('widgets', 'zgui', 'widget_bench', {}),
-    ('app-mail', 'zgui-script', 'apps_bench', {'APP': 'mail'}),
-    ('app-dashboard', 'zgui-script', 'apps_bench', {'APP': 'dashboard', 'REPS': '5'}),
-    ('app-sketch', 'zgui-script', 'apps_bench', {'APP': 'sketch'}),
-    ('app-code', 'zgui-script', 'apps_bench', {'APP': 'code'}),
+    ('heavy-both', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'both', 'TICKS': '600'}),
+    ('heavy-stream', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'stream', 'TICKS': '600'}),
+    ('heavy-scroll', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'scroll', 'TICKS': '600'}),
+    ('lab-stream', 'zgx-desktop', 'workload_headless', {'ZGX_MODE': 'stream'}),
+    ('lab-scroll', 'zgx-desktop', 'workload_headless', {'ZGX_MODE': 'scroll'}),
+    ('animate', 'zgx-desktop', 'animation_headless', {'FRAMES': '1200'}),
+    ('mount', 'zgx-script', 'mount_bench', {}),
+    ('script-update', 'zgx-script', 'update_bench', {}),
+    ('anime', 'zgx-script', 'anime_bench', {}),
+    ('script-layout', 'zgx-script', 'script_layout_bench', {}),
+    ('list-state', 'zgx-script', 'list_state_bench', {}),
+    ('state', 'zgx-script', 'state_bench', {}, 'slow'),
+    ('layout', 'zgx-gpu', 'layout_bench', {}),
+    ('frame', 'zgx-gpu', 'frame_bench', {}),
+    ('text', 'zgx-gpu', 'text_bench', {}),
+    ('core', 'zgx', 'core_bench', {}, 'slow'),
+    ('style', 'zgx', 'style_bench', {}),
+    ('widgets', 'zgx', 'widget_bench', {}),
+    ('app-mail', 'zgx-script', 'apps_bench', {'APP': 'mail'}),
+    ('app-dashboard', 'zgx-script', 'apps_bench', {'APP': 'dashboard', 'REPS': '5'}),
+    ('app-sketch', 'zgx-script', 'apps_bench', {'APP': 'sketch'}),
+    ('app-code', 'zgx-script', 'apps_bench', {'APP': 'code'}),
 ]
 
 

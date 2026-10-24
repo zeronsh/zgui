@@ -19,7 +19,7 @@ and other apps are never touched). Checks that:
 `--idle` also waits through the probe's idle spans (about a minute) and
 reports its CPU time before any popup and after one closed.
 
-    cargo build -p zgui-desktop --example popup_probe
+    cargo build -p zgx-desktop --example popup_probe
     python scripts/windows_popup_smoke.py target/debug/examples
 """
 import argparse

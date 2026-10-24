@@ -179,7 +179,7 @@ Each cell shows its row's field named by the column's `id` (or what `cell` makes
 | `on_activate` | `(row: number) -> ()` | none | Enter on a cell that doesn't edit, or a double click |
 | `label` | `string` | `""` | its accessible name |
 
-In Rust (`zgui-components`), `data_grid(label, columns, sort, current, GridSource::new(rows, cell).on_edit(…).on_activate(…))`: `cell(row, column)` gives each cell's text, and the app gives its rows in the order `sort` asks.
+In Rust (`zgx-components`), `data_grid(label, columns, sort, current, GridSource::new(rows, cell).on_edit(…).on_activate(…))`: `cell(row, column)` gives each cell's text, and the app gives its rows in the order `sort` asks.
 
 ## disclosure, accordion, separator
 
@@ -259,6 +259,6 @@ return ui.row {
 - Children stretch across a column or row by default (`items = "stretch"`, as CSS): `items = "start"` keeps each as wide (or tall) as it is.
 - Children shrink in a row too narrow for them (`shrink = 1`, as CSS), but a text no narrower than its longest word, and a box no narrower than its content needs. `shrink = 0` holds a child at its size; `min_w = 0` lets one shrink past its content (with `truncate = true` on text to end it with "…").
 - Text does not wrap by default: `wrap = true` on the text, inside a box with a width.
-- A percentage size inside a box sized by its content falls back to the content's size (`ZGUI_LAYOUT_WARNINGS=1` reports it).
+- A percentage size inside a box sized by its content falls back to the content's size (`ZGX_LAYOUT_WARNINGS=1` reports it).
 - `show`, `switch` and `presence` lay out as what they show, as if it stood in their place; `each` and `slot` are a box of their own that lays its rows out as its parent would. Absolute positioning searches for a `relative` ancestor, so mark the one you mean rather than relying on being its direct child ([properties](properties.md#position)).
 - A container returned by a function is built once, when the function runs: to make a part of the tree follow state, use [`show`, `switch`, `each`](dynamic.md) or a function property.

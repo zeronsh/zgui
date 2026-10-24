@@ -2,10 +2,10 @@
 
 Build children with `div`, `row`, `column`, and reusable functions or components. Layout is a style refinement; it does not require appending scene commands.
 
-**Children stretch across their container, as in CSS's flexbox.** A `column`'s children are as wide as the column and a `row`'s as tall as the row, unless a child sizes itself on that axis (`w`, `h`, `w_percent`, `aspect_ratio`), which it keeps. `div` is a column and does the same, and so do zgui-script's `ui.column`, `ui.row` and `ui.div`. `.items_start()` (`items = "start"`) keeps each child as wide or tall as it is, and `.items_center()` and `.items_end()` align them. Until October 2026 the default was `start`: an app written for that which shows buttons or chips spanning a column, or boxes taller than their content in a row, states `.items_start()` where it relied on it.
+**Children stretch across their container, as in CSS's flexbox.** A `column`'s children are as wide as the column and a `row`'s as tall as the row, unless a child sizes itself on that axis (`w`, `h`, `w_percent`, `aspect_ratio`), which it keeps. `div` is a column and does the same, and so do zgx-script's `ui.column`, `ui.row` and `ui.div`. `.items_start()` (`items = "start"`) keeps each child as wide or tall as it is, and `.items_center()` and `.items_end()` align them. Until October 2026 the default was `start`: an app written for that which shows buttons or chips spanning a column, or boxes taller than their content in a row, states `.items_start()` where it relied on it.
 
 ```rust
-use zgui::compose::prelude::*;
+use zgx::compose::prelude::*;
 // The button spans the column; the chip keeps its own width.
 let stretched = column().w(240.).child(button().child(text("Save"))).child(div().w(60.).h(20.));
 // Each child as wide as it is.
@@ -17,7 +17,7 @@ let hugging = column().items_start().child(button().child(text("Save")));
 **A child that shrinks stops at its content's narrowest, as CSS's `min-width: auto` does.** In a row too narrow for its children, a child gives way only down to its min-content width: the longest word of a text, an unwrappable label's whole width, a box's children's needs plus its padding. Its siblings shrink further. A child that clips (`scroll`, `overflow_hidden`) may shrink to nothing, as a CSS scroll container does. A minimum the child sets is its own: `.min_w(0.)` (`min_w = 0`) lets a truncated label or a pane shrink past its content, as CSS needs `min-width: 0`. Columns do the same with heights.
 
 ```rust
-use zgui::compose::prelude::*;
+use zgx::compose::prelude::*;
 // The empty box gives way; the title keeps its words whole.
 let bar = row().w(200.).child(div().w(180.)).child(text("Unbreakable"));
 // A fixed icon holds; a truncated title shrinks past its text.
@@ -30,10 +30,10 @@ let truncated = row().w(200.).child(div().w(24.).shrink_0()).child(text("A long 
 - text starts at the right;
 - wrapping rows mirror their lines.
 
-Padding, margins and insets given as left and right (`pl`, `ml`, `left`) stay on that side, as CSS keeps them. The logical ones follow the direction: `ps`/`pe` (padding at a line's start and end), `ms`/`me` and `.start()`/`.end()` insets (`inset_start`/`inset_end` in scripts; CSS's `*-inline-start` and `*-inline-end`). Write the start and end ones for anything that should mirror. A subtree inherits its parent's direction; `.direction(Direction::Ltr)` (`dir = "ltr"`) turns part of it back (a phone number, code). A desktop window starts the way the user's language runs: right to left under Arabic, Hebrew, Persian or Urdu (macOS's first preferred language, Windows' display locale, Linux's `LANG`; `ZGUI_DIRECTION=rtl` or `ltr` overrides it to try a layout). A layout that sets no direction pays nothing.
+Padding, margins and insets given as left and right (`pl`, `ml`, `left`) stay on that side, as CSS keeps them. The logical ones follow the direction: `ps`/`pe` (padding at a line's start and end), `ms`/`me` and `.start()`/`.end()` insets (`inset_start`/`inset_end` in scripts; CSS's `*-inline-start` and `*-inline-end`). Write the start and end ones for anything that should mirror. A subtree inherits its parent's direction; `.direction(Direction::Ltr)` (`dir = "ltr"`) turns part of it back (a phone number, code). A desktop window starts the way the user's language runs: right to left under Arabic, Hebrew, Persian or Urdu (macOS's first preferred language, Windows' display locale, Linux's `LANG`; `ZGX_DIRECTION=rtl` or `ltr` overrides it to try a layout). A layout that sets no direction pays nothing.
 
 ```rust
-use zgui::compose::prelude::*;
+use zgx::compose::prelude::*;
 // "مرحبا" at the right, the avatar at the start (the right), 12 points in.
 let header = row().rtl().gap(8.).ps(12.).child(div().size(32., 32.)).child(text("مرحبا"));
 ```
@@ -41,7 +41,7 @@ let header = row().rtl().gap(8.).ps(12.).child(div().size(32., 32.)).child(text(
 Grids and wrapping rows:
 
 ```rust
-use zgui::{compose::prelude::*, layout::ContentAlign};
+use zgx::{compose::prelude::*, layout::ContentAlign};
 let dashboard = div().grid().grid_cols(4).grid_rows(3)
     .gap_x(12.).gap_y(8.).w_full().h(240.)
     .child(div().col_span_full().child(text("Header")))
@@ -64,4 +64,4 @@ Scrollable views forward container layout to their retained content, so `scroll(
 
 Ordinary row/column/overlay layouts keep the existing small cached layout path. Advanced containers allocate one retained Taffy 0.9 tree for their immediate children. Stable child IDs and Taffy caches survive resize and content updates; removed children release cache entries. Layout options use an optional shared allocation, so default styles do not allocate an extended options block. An unchanged scene performs no layout work. See [the feature cost audit](performance-feature-audit.md) for default-path and cache bounds.
 
-Run `cargo run -p zgui-desktop --example layout` for the resizable gallery. `cargo test -p zgui --test layout advanced_layout::` covers geometry, refinement precedence, visibility and scrolling; the core retained-cache regression checks allocation reuse and stale-child removal. These tests establish the documented cases, not universal browser CSS conformance.
+Run `cargo run -p zgx-desktop --example layout` for the resizable gallery. `cargo test -p zgx --test layout advanced_layout::` covers geometry, refinement precedence, visibility and scrolling; the core retained-cache regression checks allocation reuse and stale-child removal. These tests establish the documented cases, not universal browser CSS conformance.

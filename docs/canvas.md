@@ -29,7 +29,7 @@ canvas content. `GpuStats::canvas_rasterizations` and
 their scene nodes are removed; least-recently-used pixel entries are evicted
 under pressure. Existing renderer texture limits apply separately.
 
-Run `cargo run -p zgui-desktop --example canvas` for a resizable gradient,
+Run `cargo run -p zgx-desktop --example canvas` for a resizable gradient,
 quadratic/cubic curve and patterned rectangle. Regression tests compare changed
 content against a fresh frame, exercise isolated layers, verify cache reuse and
 check reactive callback disposal.

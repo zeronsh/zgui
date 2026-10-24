@@ -1,7 +1,7 @@
 {
   "groups": [
     {
-      "framework": "zgui",
+      "framework": "zgx",
       "mode": "idle",
       "repeats": 3,
       "cpu_percent_one_core": {
@@ -91,7 +91,7 @@
       }
     },
     {
-      "framework": "zgui",
+      "framework": "zgx",
       "mode": "stream",
       "repeats": 3,
       "cpu_percent_one_core": {
@@ -181,7 +181,7 @@
       }
     },
     {
-      "framework": "zgui",
+      "framework": "zgx",
       "mode": "scroll",
       "repeats": 3,
       "cpu_percent_one_core": {
@@ -271,7 +271,7 @@
       }
     },
     {
-      "framework": "zgui",
+      "framework": "zgx",
       "mode": "both",
       "repeats": 3,
       "cpu_percent_one_core": {

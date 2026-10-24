@@ -45,7 +45,7 @@ def main():
         processes.append(child)
         return child
 
-    with tempfile.TemporaryDirectory(prefix="zgui-portal-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-portal-") as runtime:
         os.chmod(runtime, 0o700)
         try:
             env = dict(os.environ, WINIT_X11_SCALE_FACTOR="1", XDG_RUNTIME_DIR=runtime, GSK_RENDERER="cairo",
@@ -60,7 +60,7 @@ def main():
                 raise RuntimeError("Xvfb startup timed out")
             env["DISPLAY"] = ":" + xvfb.stdout.readline().strip()
             # A session bus of the probe's own, which starts the portal (and
-            # its GTK backend, on this display) when zgui asks for it.
+            # its GTK backend, on this display) when zgx asks for it.
             bus = launch("dbus", ["dbus-daemon", "--session", "--nofork", "--print-address=1"], env,
                          stdout=subprocess.PIPE, text=True)
             if not select.select([bus.stdout], [], [], 10)[0]:
@@ -92,7 +92,7 @@ def main():
             def app(name, action):
                 log = output / (name + ".log")
                 child = launch(name + "-app", [str(args.binary.resolve()), "--smoke"],
-                               dict(env, ZGUI_DIALOG_ACTION=action, ZGUI_DIALOG_DIRECTORY=str(folder)),
+                               dict(env, ZGX_DIALOG_ACTION=action, ZGX_DIALOG_DIRECTORY=str(folder)),
                                stdout=log.open("w"))
                 return child, log
 
@@ -107,7 +107,7 @@ def main():
             # the app. The first request starts the portal and GTK: slower.
             child, log = app("open", "open")
             chooser = until("the portal's chooser", lambda: window("Open fixture"), 40)
-            owner = until("the app's window", lambda: window("zgui platform services"))
+            owner = until("the app's window", lambda: window("zgx platform services"))
             transient = run("xprop", "-id", chooser, "WM_TRANSIENT_FOR").stdout
             result["transient for the app's window"] = "#" in transient and int(transient.split("#")[-1], 16) == int(owner)
             result["modal"] = "_NET_WM_STATE_MODAL" in run("xprop", "-id", chooser, "_NET_WM_STATE").stdout

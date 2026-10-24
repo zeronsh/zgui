@@ -1,0 +1,28 @@
+[package]
+name = "zgx-run"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords = ["gui", "luau", "hot-reload", "desktop"]
+categories = ["gui", "command-line-utilities"]
+description = "Run a zgx Luau script as a desktop app, with hot reload: `zgx-run app/`."
+
+[features]
+# mimalloc as the runner's allocator (zgx-desktop's `mimalloc`): 6-10%
+# less CPU for script, text and layout work, for about 2 MB more memory.
+# `--no-default-features` keeps the system's.
+default = ["mimalloc"]
+mimalloc = ["zgx-desktop/mimalloc"]
+
+[dependencies]
+zgx = { path = "../zgx", version = "0.1.0" }
+zgx-desktop = { path = "../zgx-desktop", version = "0.1.0" }
+zgx-script = { path = "../zgx-script", version = "0.1.0" }
+serde_json = "1"
+
+[[bin]]
+name = "zgx-run"
+path = "src/main.rs"

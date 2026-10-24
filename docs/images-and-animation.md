@@ -11,7 +11,7 @@ cannot allow an older in-flight generation to replace a newer request.
 owned component with loading, success and error children. Use a shared cache
 through a provider when multiple components load the same resources. Transport
 and credentials belong to the application; the framework does not start hidden
-network requests. Image decoding is available through `zgui_gpu::assets`.
+network requests. Image decoding is available through `zgx_gpu::assets`.
 
 `decode_gif` composites GIF offsets and Keep/Background/Previous disposal into
 bounded immutable full frames. Background disposal clears to transparent for
@@ -30,7 +30,7 @@ ordinary sibling is not an occlusion test. Removal cancels the owned task.
 
 Frames remain decoded, but GPU textures follow the renderer's live-image policy:
 it need not retain every animation frame on the GPU. The
-[animation example](../crates/zgui-desktop/examples/animated_image.rs) accepts a
+[animation example](../crates/zgx-desktop/examples/animated_image.rs) accepts a
 GIF path and includes a pause/resume control. A `TaskRunner` provider is required
 for asynchronous loading/playback; the desktop host supplies one.
 
@@ -38,12 +38,12 @@ For code-driven animation (spinners, transitions, springs), await the window's d
 
 ## Image formats are features
 
-SVG, PNG, JPEG and GIF decoding are cargo features of `zgui-gpu`, `zgui-desktop`
-and `zgui-script` (`svg`, `png`, `jpeg`, `gif`), all on by default. An app that
+SVG, PNG, JPEG and GIF decoding are cargo features of `zgx-gpu`, `zgx-desktop`
+and `zgx-script` (`svg`, `png`, `jpeg`, `gif`), all on by default. An app that
 never shows a format can leave its decoder out of the binary:
 
 ```toml
-zgui-desktop = { version = "…", default-features = false, features = ["png"] }
+zgx-desktop = { version = "…", default-features = false, features = ["png"] }
 ```
 
 A source in a format left out fails to decode, with an error naming the feature,

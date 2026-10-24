@@ -6414,16 +6414,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "zgui-compare-gpui-fast"
+name = "zgx-compare-gpui-fast"
 version = "0.1.0"
 dependencies = [
  "gpui-fast",
  "gpui-fast-platform",
- "zgui-workload",
+ "zgx-workload",
 ]
 
 [[package]]
-name = "zgui-workload"
+name = "zgx-workload"
 version = "0.1.0"
 
 [[package]]

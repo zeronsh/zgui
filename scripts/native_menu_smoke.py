@@ -9,7 +9,7 @@ def main():
     p.add_argument('binary',type=pathlib.Path);p.add_argument('--output',type=pathlib.Path,required=True)
     p.add_argument('--wayland',action='store_true');p.add_argument('--overlap-debug',action='store_true');a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
     processes=[]
-    with tempfile.TemporaryDirectory(prefix='zgui-platform-') as private:
+    with tempfile.TemporaryDirectory(prefix='zgx-platform-') as private:
         env=dict(os.environ,XDG_RUNTIME_DIR=private,XDG_CONFIG_HOME=private+'/config',XDG_DATA_HOME=private+'/data',XDG_CACHE_HOME=private+'/cache')
         for key in ('DISPLAY','WAYLAND_DISPLAY','SWAYSOCK','DBUS_SESSION_BUS_ADDRESS','AT_SPI_BUS_ADDRESS'):env.pop(key,None)
         def launch(name,cmd,environment=None,**kw):
@@ -27,7 +27,7 @@ def main():
             host=None
             if a.wayland:
                 env.update(WLR_BACKENDS='x11',WLR_X11_OUTPUTS='1',WLR_RENDERER='pixman')
-                config=pathlib.Path(private,'sway.conf');config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgui dynamic menus.*"] floating enable\n')
+                config=pathlib.Path(private,'sway.conf');config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgx dynamic menus.*"] floating enable\n')
                 (a.output/'sway.conf').write_text(config.read_text());sway=launch('sway',['sway','--unsupported-gpu','--config',str(config)])
                 host=wait_for_sway_host(env,a.output,sway)
                 deadline=time.monotonic()+10
@@ -67,28 +67,28 @@ def main():
                     xdo('windowactivate','--sync',target)
                 time.sleep(.12)
             def key(name):xdo('key','--clearmodifiers',name)
-            wait('READY');focus('zgui dynamic menus secondary')
+            wait('READY');focus('zgx dynamic menus secondary')
             if a.wayland and not a.overlap_debug:
-                subprocess.run(['swaymsg','[title="^zgui dynamic menus$"]','move','position','20','40'],env=env,check=True,stdout=subprocess.DEVNULL)
-                subprocess.run(['swaymsg','[title="^zgui dynamic menus secondary$"]','move','position','600','40'],env=env,check=True,stdout=subprocess.DEVNULL)
+                subprocess.run(['swaymsg','[title="^zgx dynamic menus$"]','move','position','20','40'],env=env,check=True,stdout=subprocess.DEVNULL)
+                subprocess.run(['swaymsg','[title="^zgx dynamic menus secondary$"]','move','position','600','40'],env=env,check=True,stdout=subprocess.DEVNULL)
             elif not a.overlap_debug:
-                for title,x in [('zgui dynamic menus',20),('zgui dynamic menus secondary',600)]:
+                for title,x in [('zgx dynamic menus',20),('zgx dynamic menus secondary',600)]:
                     target=subprocess.check_output(['xdotool','search','--name','^'+title+'$'],env=env,text=True).strip().splitlines()[0];xdo('windowmove',target,x,40)
-            focus('zgui dynamic menus')
+            focus('zgx dynamic menus')
             key('ctrl+s');time.sleep(.15);assert 'ACTION save' not in (a.output/'application.log').read_text()
             key('ctrl+b');wait('CHECKED true');key('ctrl+s');wait('ACTION save')
-            focus('zgui dynamic menus secondary');key('ctrl+s');wait('SECOND save')
-            focus('zgui dynamic menus');key('ctrl+b');wait('CHECKED false');key('ctrl+s');time.sleep(.2)
+            focus('zgx dynamic menus secondary');key('ctrl+s');wait('SECOND save')
+            focus('zgx dynamic menus');key('ctrl+b');wait('CHECKED false');key('ctrl+s');time.sleep(.2)
             assert (a.output/'application.log').read_text().count('ACTION save')==1
             key('ctrl+r');wait('REPLACED');key('ctrl+s');time.sleep(.2)
             assert (a.output/'application.log').read_text().count('ACTION save')==1
             key('ctrl+d');wait('ACTION new')
-            focus('zgui dynamic menus secondary');key('ctrl+d');wait('SECOND new')
+            focus('zgx dynamic menus secondary');key('ctrl+d');wait('SECOND new')
             if a.wayland:
                 subprocess.run(['grim',str(a.output.resolve()/'replaced.png')],env=env,check=True)
                 subprocess.run(['swaymsg','[pid='+str(app.pid)+']','kill'],env=env,check=True,stdout=subprocess.DEVNULL)
             else:
-                for title in ['zgui dynamic menus','zgui dynamic menus secondary']:
+                for title in ['zgx dynamic menus','zgx dynamic menus secondary']:
                     focus(title);key('alt+F4')
             app.wait(timeout=5);assert app.returncode==0
             (a.output/'result.json').write_text(json.dumps(dict(result='pass',backend='wayland' if a.wayland else 'x11',disabled_shortcut_suppressed=True,checked_state_updated=True,replacement_removed_old_shortcut=True,existing_windows_updated=True),indent=2)+'\n')

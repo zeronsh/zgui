@@ -397,7 +397,7 @@ struct AdapterShared {
     private_texture_format_caps: PrivateTextureFormatCapabilities,
     settings: Settings,
     presentation_timer: time::PresentationTimer,
-    /// zgui patch: built on first use, see `buffer_writes`.
+    /// zgx patch: built on first use, see `buffer_writes`.
     buffer_writes: std::sync::OnceLock<Option<buffer_writes::BufferWrites>>,
 }
 
@@ -499,12 +499,12 @@ pub struct QueueShared {
     // to create command buffers for internal purposes. In those cases we always
     // commit the buffer immediately, so we don't adjust the counter for them.)
     command_buffer_created_not_submitted: atomic::AtomicUsize,
-    /// zgui patch: presentation handoff for the most recent submission, so
+    /// zgx patch: presentation handoff for the most recent submission, so
     /// `present` needs neither an extra command buffer nor a blocking wait.
     last_committed: Mutex<Option<Arc<PresentHandoff>>>,
 }
 
-/// zgui patch: whichever happens second, the submission being scheduled or
+/// zgx patch: whichever happens second, the submission being scheduled or
 /// `present` being called, presents the drawable. `presentDrawable:` does the
 /// same thing from a scheduled handler.
 #[derive(Default)]
@@ -608,7 +608,7 @@ impl crate::Queue for Queue {
                     completed_value.store(signal_value, atomic::Ordering::Release);
                 });
 
-                // zgui patch: empty command buffers are never committed.
+                // zgx patch: empty command buffers are never committed.
                 let last = command_buffers.iter().rev().find_map(|cmd_buf| cmd_buf.raw.clone());
                 let has_last = last.is_some();
                 let raw = match last {
@@ -637,7 +637,7 @@ impl crate::Queue for Queue {
                 if has_last { None } else { Some(raw) }
             };
 
-            // zgui patch: hand presentation off to the last buffer's
+            // zgx patch: hand presentation off to the last buffer's
             // scheduled handler (registered before commit, as Metal requires).
             // Only submissions that draw to a drawable present one: others
             // skip the handler and its callback.
@@ -687,7 +687,7 @@ impl crate::Queue for Queue {
         texture: SurfaceTexture,
     ) -> Result<(), crate::SurfaceError> {
         autoreleasepool(|_| {
-            // zgui patch: `presentDrawable:` on a command buffer presents once
+            // zgx patch: `presentDrawable:` on a command buffer presents once
             // that buffer is scheduled. Queue order means the last committed
             // buffer being scheduled covers all rendering to this drawable, so
             // present directly rather than committing an empty buffer (each
@@ -1210,7 +1210,7 @@ pub struct CommandEncoder {
     shared: Arc<AdapterShared>,
     queue_shared: Arc<QueueShared>,
     raw_cmd_buf: Option<Retained<ProtocolObject<dyn MTLCommandBuffer>>>,
-    /// zgui patch: set by `begin_encoding`; the Metal command buffer is only
+    /// zgx patch: set by `begin_encoding`; the Metal command buffer is only
     /// created when something is recorded, so empty encoders cost nothing.
     pending_label: Option<Option<String>>,
     state: CommandState,
@@ -1231,7 +1231,7 @@ unsafe impl Sync for CommandEncoder {}
 
 #[derive(Debug)]
 pub struct CommandBuffer {
-    /// zgui patch: `None` for an encoder that recorded nothing.
+    /// zgx patch: `None` for an encoder that recorded nothing.
     raw: Option<Retained<ProtocolObject<dyn MTLCommandBuffer>>>,
     queue_shared: Arc<QueueShared>,
 }

@@ -31,14 +31,14 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output/'result.json').unlink(missing_ok=True)
     app = portal = gtk_portal = compositor = wm = xvfb = bus = monitor = None
-    with tempfile.TemporaryDirectory(prefix='zgui-wayland-ime-') as private:
+    with tempfile.TemporaryDirectory(prefix='zgx-wayland-ime-') as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, XDG_CONFIG_HOME=private+'/config',
                    XDG_CACHE_HOME=private+'/cache', XDG_DATA_HOME=private+'/data',
                    WLR_BACKENDS='x11', WLR_X11_OUTPUTS='1', WLR_RENDERER='pixman', LANG='C.UTF-8')
         for name in ('DISPLAY', 'WAYLAND_DISPLAY', 'SWAYSOCK', 'I3SOCK', 'IBUS_ADDRESS', 'XMODIFIERS', 'GTK_IM_MODULE', 'QT_IM_MODULE', 'QT_IM_MODULES', 'SDL_IM_MODULE', 'AT_SPI_BUS_ADDRESS', 'FCITX_DBUS_ADDRESS'):
             env.pop(name, None)
         config = pathlib.Path(private, 'sway.conf')
-        config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgui platform services"] floating enable\n')
+        config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgx platform services"] floating enable\n')
         (args.output/'sway.conf').write_text(config.read_text())
         bus_config = pathlib.Path(private, 'dbus.conf')
         # No activation directories: desktop portals must not mount into this
@@ -90,10 +90,10 @@ def main():
                 handler=pathlib.Path(private,'record-url')
                 handler.write_text("#!/bin/sh\nprintf '%s\\n' \"$1\" >> "+str(args.output.resolve()/'url-handler.log')+'\n')
                 handler.chmod(0o700)
-                (applications/'zgui-url.desktop').write_text('[Desktop Entry]\nType=Application\nName=zgui URL test\nExec='+str(handler)+' %u\nMimeType=x-scheme-handler/zgui-smoke;\nNoDisplay=true\n')
+                (applications/'zgx-url.desktop').write_text('[Desktop Entry]\nType=Application\nName=zgx URL test\nExec='+str(handler)+' %u\nMimeType=x-scheme-handler/zgx-smoke;\nNoDisplay=true\n')
                 pathlib.Path(private,'config').mkdir(exist_ok=True)
-                pathlib.Path(private,'config/mimeapps.list').write_text('[Default Applications]\nx-scheme-handler/zgui-smoke=zgui-url.desktop\n')
-                (applications/'mimeinfo.cache').write_text('[MIME Cache]\nx-scheme-handler/zgui-smoke=zgui-url.desktop;\n')
+                pathlib.Path(private,'config/mimeapps.list').write_text('[Default Applications]\nx-scheme-handler/zgx-smoke=zgx-url.desktop\n')
+                (applications/'mimeinfo.cache').write_text('[MIME Cache]\nx-scheme-handler/zgx-smoke=zgx-url.desktop;\n')
             portals = pathlib.Path(private, 'config/xdg-desktop-portal')
             portals.mkdir(parents=True, exist_ok=True)
             (portals/'portals.conf').write_text('[preferred]\ndefault=gtk\n')
@@ -102,7 +102,7 @@ def main():
             fixture = args.output.resolve()/'fixture.txt'
             fixture.write_text('native portal selection fixture\n')
             folder=args.output.resolve()/'chosen-folder'; folder.mkdir(exist_ok=True)
-            native['ZGUI_DIALOG_DIRECTORY']=str(folder)
+            native['ZGX_DIALOG_DIRECTORY']=str(folder)
             with (args.output/'protocol.log').open('w') as protocol, (args.output/'application.log').open('w') as log:
                 monitor = launch('request-monitor', ['dbus-monitor', '--session', "interface='org.freedesktop.portal.Request'"], process_env=native)
                 app = subprocess.Popen([str(args.binary.resolve()), '--smoke'] + (['--close-picker'] if args.close_picker else []), env=native, stdout=log, stderr=protocol)
@@ -129,17 +129,17 @@ def main():
                 dialog=find_dialog()
                 (args.output/'dialog.json').write_text(json.dumps(dialog,indent=2)+'\n')
                 if args.close_picker:
-                    subprocess.run(['swaymsg','[title="^zgui platform services$"]','kill'],env=env,check=True,stdout=subprocess.DEVNULL)
+                    subprocess.run(['swaymsg','[title="^zgx platform services$"]','kill'],env=env,check=True,stdout=subprocess.DEVNULL)
                     wait_log('CLOSED')
                     deadline=time.monotonic()+5
                     while True:
                         tree=json.loads(subprocess.check_output(['swaymsg','-t','get_tree','-r'],env=env,text=True));pending=[tree];names=[]
                         while pending:
                             node=pending.pop();pending.extend(node.get('nodes',[])+node.get('floating_nodes',[]));names.append(node.get('name'))
-                        if 'Open fixture' not in names and 'zgui platform services' not in names:break
+                        if 'Open fixture' not in names and 'zgx platform services' not in names:break
                         if time.monotonic()>deadline:raise RuntimeError('Closing owner retained native parent or portal picker')
                         time.sleep(.05)
-                    assert 'zgui dialog ownership keeper' in names
+                    assert 'zgx dialog ownership keeper' in names
                     assert app.poll() is None, 'App exited instead of releasing the dialog owner'
                     assert 'DIALOG open ' not in (args.output/'application.log').read_text(), 'Closed owner received picker result'
                     assert 'member=Close' in (args.output/'request-monitor.log').read_text(), 'No portal Request.Close observed'
@@ -168,7 +168,7 @@ def main():
                     pending=[tree]
                     while pending:
                         node=pending.pop(); pending.extend(node.get('nodes',[])+node.get('floating_nodes',[]))
-                        if node.get('pid')==app.pid and node.get('name')=='zgui platform services':
+                        if node.get('pid')==app.pid and node.get('name')=='zgx platform services':
                             rect=node['rect']; xdo('mousemove','--window',window,rect['x']+x,rect['y']+y,'click',1); return
                     raise RuntimeError('Application window missing')
                 # Select an actual folder through the same native portal.
@@ -219,7 +219,7 @@ def main():
                     while not (args.output/'url-handler.log').exists():
                         if time.monotonic()>deadline:raise RuntimeError('URL handler never received URI')
                         time.sleep(.05)
-                    assert (args.output/'url-handler.log').read_text().strip()=='zgui-smoke:accepted'
+                    assert (args.output/'url-handler.log').read_text().strip()=='zgx-smoke:accepted'
                 subprocess.run(['swaymsg','[pid='+str(app.pid)+']','kill'],env=env,check=True,stdout=subprocess.DEVNULL)
                 app.wait(timeout=5)
                 assert app.returncode==0

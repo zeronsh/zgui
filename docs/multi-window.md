@@ -1,6 +1,6 @@
 # Popups, drags and windows across the screen
 
-On macOS a zgui app's menus, drags and windows behave as AppKit's do, past the edges of their window and between windows. Nothing here costs an app that doesn't use it: no popup window exists before the pointer first reaches something that opens one, and an idle window does no work.
+On macOS a zgx app's menus, drags and windows behave as AppKit's do, past the edges of their window and between windows. Nothing here costs an app that doesn't use it: no popup window exists before the pointer first reaches something that opens one, and an idle window does no work.
 
 | What | API | Where |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ A window opened with no position cascades from the front one. `frame_autosave` r
 
 ## Rust
 
-Tabs that move between windows and tear off (the whole program is `cargo run -p zgui-desktop --example tab_windows`):
+Tabs that move between windows and tear off (the whole program is `cargo run -p zgx-desktop --example tab_windows`):
 
 ```rust
 #[derive(Clone)]
@@ -77,14 +77,14 @@ let strip = row().on_drop(move |drag: &TabDrag, _| {
 
 // A chip Finder, Mail or Safari take.
 let link = div()
-    .child(text("zgui on GitHub"))
-    .on_drag(|| "https://github.com/zeronsh/zgui")
+    .child(text("zgx on GitHub"))
+    .on_drag(|| "https://github.com/zeronsh/zgx")
     .drag_export(|url: &&str| vec![DragItem::Url(url.to_string())]);
 ```
 
 ## Luau
 
-Popups, drag-out and windows (`cargo run -p zgui-script --example popups` shows the first two):
+Popups, drag-out and windows (`cargo run -p zgx-script --example popups` shows the first two):
 
 ```luau
 local size = ui.state("size", false)
@@ -113,12 +113,12 @@ local link = ui.column {
 	h = 28,
 	justify = "center",
 	on_drag = function()
-		return "https://github.com/zeronsh/zgui"
+		return "https://github.com/zeronsh/zgx"
 	end,
 	drag_export = function(url)
 		return { url = url, text = url }
 	end,
-	ui.text("zgui on GitHub"),
+	ui.text("zgx on GitHub"),
 }
 
 -- A window that reopens where it was left, out of AppKit's tabs.

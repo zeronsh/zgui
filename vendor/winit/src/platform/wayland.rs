@@ -82,11 +82,11 @@ pub trait WindowExtWayland {
     /// Returns `xdg_toplevel` of the window or [`None`] if the window is X11 window.
     fn xdg_toplevel(&self) -> Option<NonNull<c_void>>;
 
-    /// zgui patch: returns `xdg_surface` of the window (the parent of its
+    /// zgx patch: returns `xdg_surface` of the window (the parent of its
     /// `xdg_popup`s) or [`None`] if the window is X11 window.
     fn xdg_surface(&self) -> Option<NonNull<c_void>>;
 
-    /// zgui patch: where the window geometry (`xdg_surface.set_window_geometry`,
+    /// zgx patch: where the window geometry (`xdg_surface.set_window_geometry`,
     /// what `xdg_positioner` rectangles are relative to) starts on the window's
     /// surface, in logical pixels: negative by the decorations winit draws when
     /// it draws them; [`None`] if the window is X11 window.

@@ -122,7 +122,7 @@ fn ns_role(node: &Node) -> &'static NSAccessibilityRole {
             Role::Grid => NSAccessibilityTableRole,
             Role::Group => NSAccessibilityGroupRole,
             Role::Header => NSAccessibilityGroupRole,
-            // zgui patch: VoiceOver finds headings (its rotor, VO-Command-H)
+            // zgx patch: VoiceOver finds headings (its rotor, VO-Command-H)
             // by the AXHeading role, as WebKit exposes them.
             Role::Heading => ns_string!("AXHeading"),
             Role::Iframe => NSAccessibilityGroupRole,
@@ -331,7 +331,7 @@ impl NodeWrapper<'_> {
             // Also, `Node::is_selected` is mapped to checked via `accessibilityValue`.
             return Some(Value::Bool(self.0.is_selected().unwrap_or(false)));
         }
-        // zgui patch: a heading's value is its level, as WebKit gives it,
+        // zgx patch: a heading's value is its level, as WebKit gives it,
         // which VoiceOver reads ("heading level 2").
         if self.0.role() == Role::Heading
             && let Some(level) = self.0.level()

@@ -155,7 +155,7 @@ impl Bus {
             )
             .await?;
         }
-        // zgui patch: Table and TableCell (ZGUI_PATCH.md).
+        // zgx patch: Table and TableCell (ZGX_PATCH.md).
         if new_interfaces.contains(Interface::Table) {
             self.register_interface(&path, TableInterface::new(bus_name.clone(), node.clone()))
                 .await?;

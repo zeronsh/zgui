@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drags out of zgui on Wayland (`native_drag.rs`, `wayland_data.rs`): under a
+"""Drags out of zgx on Wayland (`native_drag.rs`, `wayland_data.rs`): under a
 headless sway, drag_probe's chip, exporting its text, dragged with a virtual
 pointer (`wayland_pointer.py`) out of its window onto test-owned GTK drop
 targets (`xdnd_target.py`, GTK's Wayland drag and drop) below it. The
@@ -11,7 +11,7 @@ Checks that:
   source hears it accepted (`DRAG_END accepted=true`); the drag's icon, the
   chip's preview, shows under the pointer over the target;
 - dragged out over the target and back into its own window and let go
-  there, the drag stays zgui's: the target gets nothing, and the source
+  there, the drag stays zgx's: the target gets nothing, and the source
   hears it not accepted;
 - over a target that refuses it (and hears it move), let go there, nothing
   is dropped, not accepted;
@@ -46,7 +46,7 @@ PREVIEW = (61, 126, 247)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("binaries", type=pathlib.Path, help="the zgui-desktop examples' directory")
+    parser.add_argument("binaries", type=pathlib.Path, help="the zgx-desktop examples' directory")
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -69,11 +69,11 @@ def main():
             time.sleep(.05)
 
     try:
-        with tempfile.TemporaryDirectory(prefix="zgui-drag-out-") as private:
+        with tempfile.TemporaryDirectory(prefix="zgx-drag-out-") as private:
             os.chmod(private, 0o700)
             env = dict(os.environ, XDG_RUNTIME_DIR=private, WLR_BACKENDS="headless", WLR_RENDERER="pixman",
                        WLR_LIBINPUT_NO_DEVICES="1", GDK_BACKEND="wayland", NO_AT_BRIDGE="1",
-                       ZGUI_PRESENT_LOG="1")
+                       ZGX_PRESENT_LOG="1")
             for key in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
                 env.pop(key, None)
             config = pathlib.Path(private, "sway.conf")
@@ -128,7 +128,7 @@ def main():
             checks["the target takes the text"] = bool(received) and received.group(2) == "Some text"
             checks["accepted"] = "DRAG_END accepted=true" in app_log.read_text()
 
-            # Out over the target and back home: zgui's.
+            # Out over the target and back home: zgx's.
             time.sleep(.5)
             grab()
             glide(CHIP, TAKES)
@@ -211,7 +211,7 @@ def main():
         (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
-        print("PASS: Wayland drags out of zgui: a GTK target takes the text under its icon; back home and over "
+        print("PASS: Wayland drags out of zgx: a GTK target takes the text under its icon; back home and over "
               "a refusing target nothing drops; tabs go between windows and tear off; a window's only tab "
               "moves its window")
     finally:

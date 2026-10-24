@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate zgui on isolated X11 HiDPI and headless Weston Wayland desktops.
+"""Validate zgx on isolated X11 HiDPI and headless Weston Wayland desktops.
 
 Uses already-built gallery/windows examples. Each private compositor is stopped
 on exit. This checks native behavior, not hardware GPU performance.
@@ -30,7 +30,7 @@ def release_mounts(runtime):
     """Unmount the FUSE filesystems session services mounted in the private
     `runtime` directory.
 
-    On a stock session bus zgui's settings read starts xdg-desktop-portal,
+    On a stock session bus zgx's settings read starts xdg-desktop-portal,
     which mounts xdg-document-portal's at `runtime`/doc, and GTK (IBus's
     panel) starts gvfs, which mounts its own at `runtime`/gvfs. A killed bus
     leaves them disconnected, and the directory can't be removed past them.
@@ -73,7 +73,7 @@ def dump_display(env, output, pid=None):
     report = run("xwininfo", "-root", "-tree") + run("xprop", "-root")
     if pid:
         report += run("xdotool", "search", "--pid", str(pid))
-        # Where a window that never showed is stuck (zgui shows a window once
+        # Where a window that never showed is stuck (zgx shows a window once
         # its renderer exists). Runners restrict ptrace to descendants.
         report += run("sudo", "-n", "gdb", "-q", "-batch", "-p", str(pid),
                       "-ex", "thread apply all bt 25")
@@ -170,8 +170,8 @@ def wayland(args, output):
         if not shutil.which(tool):
             raise RuntimeError(f"missing native validation tool: {tool}")
     compositor = gallery = None
-    with tempfile.TemporaryDirectory(prefix="zgui-wayland-") as runtime:
-        env = dict(os.environ, XDG_RUNTIME_DIR=runtime, WAYLAND_DISPLAY="zgui-test",
+    with tempfile.TemporaryDirectory(prefix="zgx-wayland-") as runtime:
+        env = dict(os.environ, XDG_RUNTIME_DIR=runtime, WAYLAND_DISPLAY="zgx-test",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         env.pop("DISPLAY", None)
         env.pop("WINIT_X11_SCALE_FACTOR", None)
@@ -179,14 +179,14 @@ def wayland(args, output):
             try:
                 compositor = subprocess.Popen(["weston", "--backend=headless", "--renderer=pixman",
                     "--width=1280", "--height=960", "--idle-time=0", "--no-config", "--debug",
-                    "--socket=zgui-test", f"--log={output / 'weston.log'}"], env=env,
+                    "--socket=zgx-test", f"--log={output / 'weston.log'}"], env=env,
                     stdout=log, stderr=log)
                 deadline = time.monotonic() + 10
-                while not pathlib.Path(runtime, "zgui-test").exists():
+                while not pathlib.Path(runtime, "zgx-test").exists():
                     if compositor.poll() is not None or time.monotonic() > deadline:
                         raise RuntimeError("Weston failed to create its Wayland socket")
                     time.sleep(.05)
-                gallery_env = dict(env, ZGUI_SECONDS="5", ZGUI_SNAPSHOT="1")
+                gallery_env = dict(env, ZGX_SECONDS="5", ZGX_SNAPSHOT="1")
                 gallery = subprocess.Popen([str(args.gallery)], env=gallery_env,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 time.sleep(2)
@@ -232,7 +232,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gallery", type=pathlib.Path)
     parser.add_argument("--windows", type=pathlib.Path)
-    parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("/tmp/zgui-platform-validation"))
+    parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("/tmp/zgx-platform-validation"))
     parser.add_argument("--backend", choices=("all", "x11", "wayland"), default="all")
     args = parser.parse_args()
     args.gallery = args.gallery.resolve()

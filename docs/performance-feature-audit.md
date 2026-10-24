@@ -30,13 +30,13 @@ The integrated regression suite and final benchmark packet record the tested rev
 
 ## The window server's cost of heavy content (macOS)
 
-Separate trials first put the window server's CPU for zgui's heavy dashboard
+Separate trials first put the window server's CPU for zgx's heavy dashboard
 above GPUI Fast's in `both` and `stream`: 7.4 points over the desktop alone
 against 3.6 in `both` (October 2026). Paired measurements on a quiet desktop
 (below) settle it. With two apps' windows side by side taking turns,
 `stream` and `scroll` cost the same as GPUI Fast's (−1.4 ± 0.8, −1.0 ± 0.7),
 and `both` costs at most about 2 points more (+1.8 ± 0.9, +3.8 ± 0.5,
-+1.6 ± 0.3). The same pairing of zgui against itself reads ±1.5, so that is
++1.6 ± 0.3). The same pairing of zgx against itself reads ±1.5, so that is
 the method's own spread.
 
 What the window server's cost depends on, from a synthetic app swapping
@@ -50,13 +50,13 @@ IOSurfaces as a layer's contents at 60 Hz:
 - What changed in it: nothing. A whole window changed costs the same as a
   256-point square changed (−0.4 ± 0.35).
 
-What zgui does, and what was checked in `both` against `stream` (no
+What zgx does, and what was checked in `both` against `stream` (no
 difference):
 
 - One layer change a frame. Counting every CALayer, NSView and NSWindow
   change, and cursor and input-context calls, between 3 and 8 seconds of
   either mode finds exactly 60 `setContents:` a second and nothing else.
-- No frame without damage. zgui presents only when a flush reports damage;
+- No frame without damage. zgx presents only when a flush reports damage;
   with nothing drawn, the shown surface stands (`present_layer`).
 - Handing a frame over as soon as it is done instead of at its point in the
   refresh: −0.7 ± 0.6.
@@ -88,7 +88,7 @@ single runs:
 
 ```sh
 # Two apps, side by side, taking turns (the heavy workload honours
-# ZGUI_PARITY=even|odd; unset, it always runs). Self-pairing first:
+# ZGX_PARITY=even|odd; unset, it always runs). Self-pairing first:
 python3 scripts/windowserver_pair.py 60 both target/dist/examples/heavy_workload target/dist/examples/heavy_workload
 python3 scripts/windowserver_pair.py 60 both target/dist/examples/heavy_workload comparisons/gpui-fast/target/dist/heavy
 # One app switching its own configuration by the second (a scratch toggle

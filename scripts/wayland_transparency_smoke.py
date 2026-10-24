@@ -23,7 +23,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "results.json").unlink(missing_ok=True)
     processes, logs, stages = [], [], []
-    with tempfile.TemporaryDirectory(prefix="zgui-wayland-alpha-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-wayland-alpha-") as runtime:
         os.chmod(runtime, 0o700)
 
         def launch(name, command, **kwargs):
@@ -38,7 +38,7 @@ def main():
             config = Path(runtime, "sway.conf")
             config.write_text('xwayland disable\nseat seat0 fallback true\n'
                               'output * mode 1200x800\ndefault_border none\n'
-                              'for_window [title="zgui transparency"] floating enable, '
+                              'for_window [title="zgx transparency"] floating enable, '
                               'border none, resize set width 320 px height 240 px, '
                               'move position 160 px 140 px\n')
             (args.output / "sway.conf").write_text(config.read_text())
@@ -110,7 +110,7 @@ def main():
 
             def client_node():
                 def walk(node):
-                    if node.get("pid") == app.pid and node.get("name") == "zgui transparency":
+                    if node.get("pid") == app.pid and node.get("name") == "zgx transparency":
                         return node
                     for child in node.get("nodes", []) + node.get("floating_nodes", []):
                         found = walk(child)
@@ -188,7 +188,7 @@ def main():
             assert app.returncode == 0, app.returncode
             assert compositor.poll() is None, "compositor exited"
             protocol = (args.output / "protocol.log").read_text()
-            for proof in ("wl_compositor", "xdg_wm_base", "get_xdg_surface", "set_title(\"zgui transparency\")", "attach("):
+            for proof in ("wl_compositor", "xdg_wm_base", "get_xdg_surface", "set_title(\"zgx transparency\")", "attach("):
                 assert proof in protocol, ("missing native protocol evidence", proof)
             application = (args.output / "application.log").read_text()
             assert "TRANSPARENCY blue=true visible=true" in application, application

@@ -1,10 +1,10 @@
 # Styling retained views
 
-zgui's Rust API combines GPUI/QuickGUI-style fluent methods with owned component children. Import `Styled` to use the methods on a `View` or reusable `Styles` patch. Values are logical pixels except explicit percentage dimensions; spacing methods take pixel values directly, not a numbered spacing scale.
+zgx's Rust API combines GPUI/QuickGUI-style fluent methods with owned component children. Import `Styled` to use the methods on a `View` or reusable `Styles` patch. Values are logical pixels except explicit percentage dimensions; spacing methods take pixel values directly, not a numbered spacing scale.
 
 ```rust
-use zgui::compose::{button, column, text};
-use zgui::style::{rgb, StrokeAlign, Styled, Styles};
+use zgx::compose::{button, column, text};
+use zgx::style::{rgb, StrokeAlign, Styled, Styles};
 
 let card = column()
     .w(320.)
@@ -58,7 +58,7 @@ A `scroll(..)` or `scroll_x(..)` view is 320 by 240 when nothing else sizes it, 
 `Styles::new()` is an empty patch. `.style(patch)` changes only fields supplied by that patch. Later writes win, including individual edges: `.p(8.).px(12.).pt(3.)` produces top 3, right 12, bottom 8, left 12. A later `.pl(20.)` preserves the other three edges. Per-edge padding participates in intrinsic sizing, flex allocation, and resizing.
 
 ```rust
-use zgui::style::{rgb, Styled, Styles};
+use zgx::style::{rgb, Styled, Styles};
 let surface = Styles::new().p(12.).bg(rgb(0x202838)).rounded(8.);
 let compact = surface.clone().py(6.); // retains horizontal padding and surface
 ```
@@ -66,8 +66,8 @@ let compact = surface.clone().py(6.); // retains horizontal padding and surface
 Use `.apply(...)` for reusable style functions, `.when(...)` for a conditional transformation, and `.when_some(...)` for an optional value. These helpers work on both views and sparse `Styles` patches; skipped closures are never called.
 
 ```rust
-use zgui::compose::{column, text};
-use zgui::style::{rgb, Styled, Styles};
+use zgx::compose::{column, text};
+use zgx::style::{rgb, Styled, Styles};
 
 fn card_surface<S: Styled>(style: S) -> S {
     style.p(16.).bg(rgb(0x202838)).rounded(10.)
@@ -98,7 +98,7 @@ are separate, so two 50-percent children plus a gap can overflow unless flex
 shrink is enabled.
 
 ```rust
-use zgui::compose::prelude::*;
+use zgx::compose::prelude::*;
 let content = row().w_full().h(240.).p(16.)
     .child(column().w_percent(40.).h_full().child("Navigation"))
     .child(column().w_percent(60.).h_full().child("Content"));
@@ -148,7 +148,7 @@ rounded. These modes change placement, not the image's intrinsic size contributi
 
 ```rust
 use std::sync::Arc;
-use zgui::{compose::prelude::*, image::ImageData};
+use zgx::{compose::prelude::*, image::ImageData};
 let pixels = Arc::new(ImageData::new(2, 1, vec![255; 8]).unwrap());
 let thumbnail = image("Preview", pixels)
     .size(160., 120.).p(8.).bg(rgb(0x202838)).object_contain();
@@ -164,7 +164,7 @@ font size. Omitting the field from a `Styles` patch preserves inheritance; remov
 a dynamic override restores the underlying base or inherited value.
 
 ```rust
-use zgui::compose::prelude::*;
+use zgx::compose::prelude::*;
 let content = column().text_size(16.).line_height(24.)
     .child(text("First line\nSecond line"))
     .child(text("Compact caption").text_size(12.).line_height_normal());
@@ -190,7 +190,7 @@ editors. `.letter_spacing(0.)` explicitly resets inherited tracking; omitting th
 field preserves inheritance. Signed values allow tighter or looser text.
 
 ```rust
-use zgui::compose::prelude::*;
+use zgx::compose::prelude::*;
 let heading = column().letter_spacing(2.)
     .child(text("STATUS"))
     .child(text("Normal caption").letter_spacing(0.));
@@ -229,7 +229,7 @@ A view is hovered while the pointer is over it or anything inside it, as the DOM
 `text_input` and `text_area` take `.placeholder("Search")` (or `.placeholder_when(|| …)`, reactive): text shown while the value is empty, in the editor's own typography and coloured the theme's `muted`, or `.placeholder_color(color)` (`placeholder_color_when` for a reactive one). The editor's text node shows it in place of the empty text, so it adds no node, is laid out as the empty value it stands for and never changes the editor's size; it is never part of the value, and accessibility exposes it as the input's placeholder. `.select_on_focus(true)` selects the whole text whenever the editor takes focus, as a browser's address bar does: the first click selects everything, the next places the caret, and a window coming back to the front keeps the selection it had. The selection is also the editor's to set: `EditorHandle::selection()`, `set_selection(anchor, focus)` and `select_all()` take UTF-8 byte offsets (moved back to a grapheme boundary), as do `NodeHandle`'s (from `View::on_mount`) and `Ui::editor(node)`.
 
 ```rust
-use zgui::{compose::prelude::*, widgets::Ui};
+use zgx::{compose::prelude::*, widgets::Ui};
 let mut ui = Ui::new(640., 480.);
 let address = ui.signal(String::new());
 ui.mount(
@@ -242,7 +242,7 @@ ui.mount(
 ```
 
 ```rust
-use zgui::{compose::column, style::{rgb, Styled, Styles}, widgets::Ui};
+use zgx::{compose::column, style::{rgb, Styled, Styles}, widgets::Ui};
 let mut ui = Ui::new(640., 480.);
 let highlighted = ui.signal(false);
 let read = highlighted.clone();
@@ -274,15 +274,15 @@ the same normalized effect does not add scene damage or invalidation.
 
 `.scale(factor)`, `.scale_xy(x, y)`, `.rotate(radians)` and `.skew(x, y)` (radians, CSS `skew`) transform a view after layout, about `.transform_origin(x, y)` (fractions of its own size, centre by default), on top of its translation: CSS order translate, rotate, skew, scale. Each sets only its component, so a `.hover(|s| s.scale(1.05))` keeps a base rotation. Layout never sees them. A transformed view composites as a cached layer: its subtree is painted once into a texture (group opacity applies once, overflow clips to the rotated box), and a transform change only redraws the texture under the new matrix, damaging the old and new transformed bounds. Magnifying past about 1.3× (or shrinking below about 0.77×) re-renders the layer at a raster scale in √2 steps, with hysteresis, so a zoom repaints a few times rather than looking blurry or repainting every frame. Hit testing maps the pointer through each transform; a zero scale is hit nowhere. Nonfinite components resolve to their identity value. See `Scene::set_local_transform` for the scene API.
 
-`.blur(radius)` is backdrop blur, not a generic image or text blur. It samples content painted behind the view. GPU backdrop updates reconstruct the affected filter outputs and their sampling halos in paint order. Unrelated damage stays local; connected filters can still require the full target. The software reference backend conservatively repaints the full target when blur is present. The GPU blur implementation caps sigma at 64 physical pixels. For blurring a view's own content (CSS `filter: blur()`), use `.filter_blur(sigma)` instead. `.brightness(x)`, `.contrast(x)` and `.saturate(x)` (CSS `filter`, 1 changes nothing) filter the view and its subtree's colours as a group: being affine maps of colour, they are applied as the GPU writes each colour, exactly as to the group, with no layer and no extra pass, composing with ancestors' filters and with opacity; animating them (a button brightening on hover) repaints only the view's area, and a layer's cached pixels are filtered at its composite. `.edge_fade(length)` fades the top and bottom edges. `.fade_edges(top, bottom)` on a clipping view fades its descendants out over bands at its clip's edges, per pixel and without a layer; `.fade_edges_x(left, right)` does the left and right edges (a horizontally scrolling row fading its overflow), `.fade_sides(top, right, bottom, left)` all four, each band independent, and `.fade_insets(..)`/`.fade_insets_x(..)` end the bands that far inside the clip. `.clip_inset(top, right, bottom, left)` (CSS `clip-path: inset(..)`) clips the view and its descendants to its box inset by those pixels; negative values reach past it so shadows and rings aren't cut, `.clip_inset_percent(..)` takes percentages of its live size (`clip_inset_percent(0., 0., 100., 0.)` closes it to its top edge) and `.clip_inset_lengths(ClipInset { .. })` mixes them. With `overflow_hidden` and rounded corners, the inset box is rounded alike. Animating it composites again without layout; a blurred, masked or isolated view's cached pixels are cut at composite, a transformed view's layer repaints. See `Scene::set_clip_inset`. `.overflow_hidden()` clips descendants to the layout box, and with `.rounded(r)` or `.rounded_corners(..)` to its rounded corners too (CSS `overflow: hidden` with `border-radius`): every descendant (quads, text, images, SVGs, nested and transformed layers, blurred or masked ones) is cut along the curve, antialiased, in the GPU fragment shader, following the box's laid-out size every frame. Nested rounded clips intersect (the innermost two per item; further out, their corners). Radii are held to half the box's shorter side. The clip is the box's outer edge, as the rectangular clip is. Solid borders (`.border(w)`, or per side with `.border_edges(Insets {..})`, under uniform or `.rounded_corners(..)` radii) are drawn analytically by the quad shader, so an animating box keeps them without re-rasterizing; dashed borders and gradient fills rasterize. `.border_over(true)` paints the border after the view's descendants (an inset stroke, a CSS outline drawn inside): a photo filling a framed thumbnail stays under its frame. A dashed border still paints with the fill. `.outline(width, color)` and `.outline_offset(offset)` (CSS `outline`, `outline-offset`) ring the box outside its border edge, `offset` past it (negative reaches inside), its corners the box's radii grown by `offset + width` (square corners stay square). It paints after the view's descendants, is not cut by the view's own `overflow_hidden` (an ancestor's clip still cuts it), takes no layout, and is drawn analytically by the quad shader, so changing its width, colour or offset repaints only where it was and where it lands. `.outline_none()` removes it. `.stroke(width, color, StrokeAlign::Inside | Center | Outside)` is a design tool's stroke alignment: `Inside` is `.border(width).border_color(color).border_over(true)` (inside the box, over its content), `Center` an outline at offset `-width / 2`, `Outside` one at offset 0. `.bg_image(image, fit)` fills the view with an image placed as `fit` has it, centred (`ObjectFit::Fill`, `Cover`, `Contain`, `None`, `ScaleDown`, as CSS `background-size`/`object-fit`), over its `.bg(..)` colour (set `bg` first: it clears the image), cut to its rounded corners, under its border and children. It is drawn as a textured quad following the box's size every frame, with no raster. A dashed border over a background image rasterizes without the image. `.bg_shader(FillShader::new(wgsl, fps))` fills the view with a WGSL function run per pixel on the GPU, `fn fill(input: FillInput) -> vec4<f32>` returning a straight-alpha colour, where `FillInput` has `p` (logical position in the box), `size`, `time`, `scale` (device pixels per logical pixel) and `params` (four `vec4`s of user values). It paints over the `bg` colour, cut to the rounded corners, under the border and children. `.shader_uniforms(ShaderUniforms { time, params })` or `Scene::set_shader_uniforms` sets them; changing them repaints that view alone, and the shader's `fps` quantizes time so a 30 fps effect repaints at 30 fps however often it is set. On direct Metal the same module is translated by naga. A shader that does not compile fills with the `bg` colour. The quad shader's names (`Vertex`, `Out`, `Region`, `shade`, `rounded`, `region`, `viewport`, `regions`, `atlas`, `basic`, `vs`, `fs`) and those starting `zgui_` are reserved.
+`.blur(radius)` is backdrop blur, not a generic image or text blur. It samples content painted behind the view. GPU backdrop updates reconstruct the affected filter outputs and their sampling halos in paint order. Unrelated damage stays local; connected filters can still require the full target. The software reference backend conservatively repaints the full target when blur is present. The GPU blur implementation caps sigma at 64 physical pixels. For blurring a view's own content (CSS `filter: blur()`), use `.filter_blur(sigma)` instead. `.brightness(x)`, `.contrast(x)` and `.saturate(x)` (CSS `filter`, 1 changes nothing) filter the view and its subtree's colours as a group: being affine maps of colour, they are applied as the GPU writes each colour, exactly as to the group, with no layer and no extra pass, composing with ancestors' filters and with opacity; animating them (a button brightening on hover) repaints only the view's area, and a layer's cached pixels are filtered at its composite. `.edge_fade(length)` fades the top and bottom edges. `.fade_edges(top, bottom)` on a clipping view fades its descendants out over bands at its clip's edges, per pixel and without a layer; `.fade_edges_x(left, right)` does the left and right edges (a horizontally scrolling row fading its overflow), `.fade_sides(top, right, bottom, left)` all four, each band independent, and `.fade_insets(..)`/`.fade_insets_x(..)` end the bands that far inside the clip. `.clip_inset(top, right, bottom, left)` (CSS `clip-path: inset(..)`) clips the view and its descendants to its box inset by those pixels; negative values reach past it so shadows and rings aren't cut, `.clip_inset_percent(..)` takes percentages of its live size (`clip_inset_percent(0., 0., 100., 0.)` closes it to its top edge) and `.clip_inset_lengths(ClipInset { .. })` mixes them. With `overflow_hidden` and rounded corners, the inset box is rounded alike. Animating it composites again without layout; a blurred, masked or isolated view's cached pixels are cut at composite, a transformed view's layer repaints. See `Scene::set_clip_inset`. `.overflow_hidden()` clips descendants to the layout box, and with `.rounded(r)` or `.rounded_corners(..)` to its rounded corners too (CSS `overflow: hidden` with `border-radius`): every descendant (quads, text, images, SVGs, nested and transformed layers, blurred or masked ones) is cut along the curve, antialiased, in the GPU fragment shader, following the box's laid-out size every frame. Nested rounded clips intersect (the innermost two per item; further out, their corners). Radii are held to half the box's shorter side. The clip is the box's outer edge, as the rectangular clip is. Solid borders (`.border(w)`, or per side with `.border_edges(Insets {..})`, under uniform or `.rounded_corners(..)` radii) are drawn analytically by the quad shader, so an animating box keeps them without re-rasterizing; dashed borders and gradient fills rasterize. `.border_over(true)` paints the border after the view's descendants (an inset stroke, a CSS outline drawn inside): a photo filling a framed thumbnail stays under its frame. A dashed border still paints with the fill. `.outline(width, color)` and `.outline_offset(offset)` (CSS `outline`, `outline-offset`) ring the box outside its border edge, `offset` past it (negative reaches inside), its corners the box's radii grown by `offset + width` (square corners stay square). It paints after the view's descendants, is not cut by the view's own `overflow_hidden` (an ancestor's clip still cuts it), takes no layout, and is drawn analytically by the quad shader, so changing its width, colour or offset repaints only where it was and where it lands. `.outline_none()` removes it. `.stroke(width, color, StrokeAlign::Inside | Center | Outside)` is a design tool's stroke alignment: `Inside` is `.border(width).border_color(color).border_over(true)` (inside the box, over its content), `Center` an outline at offset `-width / 2`, `Outside` one at offset 0. `.bg_image(image, fit)` fills the view with an image placed as `fit` has it, centred (`ObjectFit::Fill`, `Cover`, `Contain`, `None`, `ScaleDown`, as CSS `background-size`/`object-fit`), over its `.bg(..)` colour (set `bg` first: it clears the image), cut to its rounded corners, under its border and children. It is drawn as a textured quad following the box's size every frame, with no raster. A dashed border over a background image rasterizes without the image. `.bg_shader(FillShader::new(wgsl, fps))` fills the view with a WGSL function run per pixel on the GPU, `fn fill(input: FillInput) -> vec4<f32>` returning a straight-alpha colour, where `FillInput` has `p` (logical position in the box), `size`, `time`, `scale` (device pixels per logical pixel) and `params` (four `vec4`s of user values). It paints over the `bg` colour, cut to the rounded corners, under the border and children. `.shader_uniforms(ShaderUniforms { time, params })` or `Scene::set_shader_uniforms` sets them; changing them repaints that view alone, and the shader's `fps` quantizes time so a 30 fps effect repaints at 30 fps however often it is set. On direct Metal the same module is translated by naga. A shader that does not compile fills with the `bg` colour. The quad shader's names (`Vertex`, `Out`, `Region`, `shade`, `rounded`, `region`, `viewport`, `regions`, `atlas`, `basic`, `vs`, `fs`) and those starting `zgx_` are reserved.
 
 `.filter_blur(sigma)` blurs the view and its subtree by a Gaussian of `sigma` logical pixels, spreading three sigma past its bounds (it is clipped by its ancestors' clips, not its own), with opacity applied to the blurred result. `.mask(image, (width, height))` shows the view through the image's alpha (CSS `mask-image`, no repeat, nearest sampling), drawn at that size and at `.mask_offset(x, y)` from the view's origin; outside the image nothing shows. Blur applies before the mask, the mask before opacity, all in the view's own space under any scale, rotation or skew. Either makes the view a cached layer: its subtree is painted once, and animating the sigma or the mask offset (a fade in from blurred text, a shimmer band, a progress fill) only blurs and masks the cached pixels again and composites them, without layout or repainting the subtree. On the GPU every layer blurred or masked anew in a frame shares two passes (a wide blur runs on a copy averaged down by a power of two, so its cost stays flat); at sigma 0 and without a mask the view paints as any other. See `Scene::set_filter_blur`, `Scene::set_mask` and `Scene::set_mask_offset`. The software reference backend approximates the blur with three box passes.
 
-The [native effects example](../crates/zgui-desktop/examples/effects.rs) builds its glass card and controls with component children, `.reactive_style(...)`, and these fluent effect methods. Component-owned tasks animate a translation signal; the application does not append or mutate scene nodes. Run it with `cargo run -p zgui-desktop --example effects`.
+The [native effects example](../crates/zgx-desktop/examples/effects.rs) builds its glass card and controls with component children, `.reactive_style(...)`, and these fluent effect methods. Component-owned tasks animate a translation signal; the application does not append or mutate scene nodes. Run it with `cargo run -p zgx-desktop --example effects`.
 
 `.shadow(BoxShadow { ... })` adds an outer shadow without changing layout dimensions. Shadow extents participate in damage tracking. `.shadow_none()` explicitly clears an inherited patch's shadow setting (shadows do not inherit down the view tree).
 
-The native GPU renderer shapes text and provides fallback fonts. Font family, weight and italic inherit through components and slots alongside color, size and wrapping. Use `.font_family("DejaVu Serif").font_weight(700).italic(true)`, or the portable `FontFamily::{SansSerif, Serif, Monospace}` choices. Weight is clamped to 1–1000; named families and unavailable faces use platform fallback. A variable font (one file with a `wght` axis, such as the design system's Geist and Geist Mono) serves every weight from that one file: register it once and `font_weight(500)` measures, shapes and draws the 500 instance, the same advances and outlines as a static 500 file cut from it, on every path. Native measurement, caret shaping and GPU glyph selection share font attributes; changing them invalidates layout and retained glyph geometry. The software reference backend also renders styled fonts, using a lazy platform font database. Letter spacing and custom line height use the shared inherited metrics described above. It does not yet expose the full CSS layout or styling surface of the inspiration projects. GPU cache and effect limits are documented in [the renderer notes](../crates/zgui-gpu/README.md).
+The native GPU renderer shapes text and provides fallback fonts. Font family, weight and italic inherit through components and slots alongside color, size and wrapping. Use `.font_family("DejaVu Serif").font_weight(700).italic(true)`, or the portable `FontFamily::{SansSerif, Serif, Monospace}` choices. Weight is clamped to 1–1000; named families and unavailable faces use platform fallback. A variable font (one file with a `wght` axis, such as the design system's Geist and Geist Mono) serves every weight from that one file: register it once and `font_weight(500)` measures, shapes and draws the 500 instance, the same advances and outlines as a static 500 file cut from it, on every path. Native measurement, caret shaping and GPU glyph selection share font attributes; changing them invalidates layout and retained glyph geometry. The software reference backend also renders styled fonts, using a lazy platform font database. Letter spacing and custom line height use the shared inherited metrics described above. It does not yet expose the full CSS layout or styling surface of the inspiration projects. GPU cache and effect limits are documented in [the renderer notes](../crates/zgx-gpu/README.md).
 
 The software styled-font cache retains at most 128 entries and 8 MiB of text keys/glyph images; oversized runs render without being retained. Its platform font database is created on first styled text and shared with software layer renderers. Headless core-only scenes use approximate metrics until a `Scene::set_font_text_shaper` backend is installed.
 
@@ -312,7 +312,7 @@ regions are ordinary wrappers here: mark the intended ancestor `.relative()`
 rather than relying on the wrapper being the parent.
 
 ```rust
-use zgui::compose::prelude::*;
+use zgx::compose::prelude::*;
 let card = column().relative().w(300.).h(200.)
     .child(column().p(12.).child(div().absolute().right(8.).bottom(8.).size(16., 16.)));
 ```
@@ -333,16 +333,16 @@ inheritance rules above.
 
 ## Theming
 
-Every zgui app and widget can style itself from a standard set of semantic
+Every zgx app and widget can style itself from a standard set of semantic
 tokens, and any theme gives them values, as any VS Code theme styles any
 extension. Themes are data (JSON files, Luau tables or Rust values) and switch
-live. zgui's own widgets (buttons, inputs, menus, sliders, progress bars,
+live. zgx's own widgets (buttons, inputs, menus, sliders, progress bars,
 scrollbars, modals and popovers) style themselves only from tokens.
 
 ```rust
-use zgui::compose::prelude::*;
-use zgui::theme::{LIGHT, tok, token};
-use zgui::widgets::Ui;
+use zgx::compose::prelude::*;
+use zgx::theme::{LIGHT, tok, token};
+use zgx::widgets::Ui;
 
 let mut ui = Ui::new(400., 300.);
 // An app's own token, declared with a default written in standard tokens.
@@ -381,7 +381,7 @@ semantic colours share: surfaces by elevation, text by emphasis, washes
 rather than fixed hover colours (so they work on any surface), and scales for
 size, radius and space. `tok::*` are typed constants (`ColorToken`,
 `NumberToken`, `FontToken`, `ShadowToken`, `TextToken`), so a colour token
-cannot be passed for a length. zgui's widgets declare tokens of their own in
+cannot be passed for a length. zgx's widgets declare tokens of their own in
 standard terms, which a theme may set: `button.bg` (`{surface.raised}`),
 `button.hover` (`over({button.bg}, {hover})`), `button.pressed`, `input.bg`,
 `menu.bg` (`{surface.overlay}`), `menu.hover`, and `popover.bg`
@@ -391,9 +391,9 @@ sets `menu.bg` and `popover.bg` clear and `menu.hover` to the accent, as an
 app theme setting them overrides.
 
 Text shows `text.primary`, `font.size.md` and `font.sans` unless a view sets
-its own. The built-in `zgui-dark` theme, the default, keeps zgui's original
+its own. The built-in `zgx-dark` theme, the default, keeps zgx's original
 palette and metrics, so apps written before themes look as they did;
-`zgui-light` is its light counterpart.
+`zgx-light` is its light counterpart.
 
 ### Theme files
 
@@ -401,7 +401,7 @@ palette and metrics, so apps written before themes look as they did;
 {
 	"name": "Solarized Dark",
 	"type": "dark",
-	"extends": "zgui-dark",
+	"extends": "zgx-dark",
 	"tokens": {
 		"background": "#002b36",
 		"surface": { "base": "#073642", "raised": "{surface.base}" },
@@ -428,7 +428,7 @@ per token when it is applied, never while styling. A reference cycle
 resolves to nothing.
 
 `ui.theme()` (or `Themes::of(&runtime)`: every `Ui` and script host on a
-runtime shares it) holds the themes: `register(theme)`, `load(path)` (a zgui
+runtime shares it) holds the themes: `register(theme)`, `load(path)` (a zgx
 theme file, or a VS Code colour theme, below), `set(name)`,
 `set_default(name)` (applies unless the app chose one), `current()`
 (tracked), `names()`, `declare(token, default)` and
@@ -462,8 +462,8 @@ each such token is read. Declare tokens before mounting what uses them.
 ### Scoped overrides
 
 ```rust
-use zgui::compose::prelude::*;
-use zgui::theme::LIGHT;
+use zgx::compose::prelude::*;
+use zgx::theme::LIGHT;
 
 let card = column().bg(tok::SURFACE_RAISED).child(text("A light card in a dark app"));
 let light_card = theme_scope(ThemeOverride::new().theme(LIGHT), card);
@@ -511,7 +511,7 @@ and maps its workbench colours onto tokens: `editor.background` to
 `focus.ring`, `button.background` to `accent`,
 `list.activeSelectionBackground` to `selection.item`, `input.background` to
 `input.bg`, `menu.background` to `menu.bg`, and so on. What it does not set
-comes from zgui's theme of its type. `Theme::from_vscode` converts one in
-memory and `Theme::to_json` writes the result as a zgui theme file (the
+comes from zgx's theme of its type. `Theme::from_vscode` converts one in
+memory and `Theme::to_json` writes the result as a zgx theme file (the
 `vscode_theme` example converts a file). Syntax colours (`tokenColors`) are
 ignored.

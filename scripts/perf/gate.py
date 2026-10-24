@@ -4,17 +4,17 @@
     python3 scripts/perf/gate.py BASE [--threshold 1.0] [--markdown out.md]
 
 Builds this checkout and BASE (a revision, checked out in a worktree under
-/tmp/zgui-perf/gate-base) into one target directory, runs each scene under
+/tmp/zgx-perf/gate-base) into one target directory, runs each scene under
 valgrind's cachegrind without cache simulation, and compares the counted
 instructions (`I refs`): exact, and the same on any machine of the
 architecture, where hardware counters and time are not. Prints a table (and
 writes it as Markdown); exits 1 when a scene costs more than THRESHOLD
 percent over BASE (a scene the base does not have yet shows as new). A run
 that fails (a script's time budget, a missing GPU) is reported as the
-gate's failure, never as a result; benches run with ZGUI_GATE=1, which
+gate's failure, never as a result; benches run with ZGX_GATE=1, which
 the script benches take for budgets long enough for cachegrind. Linux
 (CI's `perf` job). Nothing renders: under valgrind a software rasterizer's
-instructions would swamp zgui's, so heavy, lab and animate run with
+instructions would swamp zgx's, so heavy, lab and animate run with
 RENDER=0 (update, layout and damage, text measured as a renderer would).
 """
 import argparse
@@ -26,33 +26,33 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORK = pathlib.Path(os.environ.get('ZGUI_PERF_DIR', '/tmp/zgui-perf'))
+WORK = pathlib.Path(os.environ.get('ZGX_PERF_DIR', '/tmp/zgx-perf'))
 
 # name, package, example, environment: sized to a few billion instructions.
 # The windowed scenes' headless twins run with RENDER=0: update, layout and
 # damage, with text measured as a renderer would, and nothing drawn.
 SCENES = [
-    ('heavy-both', 'zgui-desktop', 'heavy_headless', {'ZGUI_MODE': 'both', 'TICKS': '300', 'RENDER': '0'}),
-    ('heavy-stream', 'zgui-desktop', 'heavy_headless', {'ZGUI_MODE': 'stream', 'TICKS': '300', 'RENDER': '0'}),
-    ('heavy-scroll', 'zgui-desktop', 'heavy_headless', {'ZGUI_MODE': 'scroll', 'TICKS': '300', 'RENDER': '0'}),
-    ('lab-stream', 'zgui-desktop', 'workload_headless', {'ZGUI_MODE': 'stream', 'RENDER': '0'}),
-    ('lab-scroll', 'zgui-desktop', 'workload_headless', {'ZGUI_MODE': 'scroll', 'RENDER': '0'}),
-    ('animate', 'zgui-desktop', 'animation_headless', {'FRAMES': '1200', 'RENDER': '0'}),
-    ('mount', 'zgui-script', 'mount_bench', {}),
-    ('script-update', 'zgui-script', 'update_bench', {'TICKS': '200'}),
-    ('anime', 'zgui-script', 'anime_bench', {}),
-    ('script-layout', 'zgui-script', 'script_layout_bench', {}),
-    ('list-state', 'zgui-script', 'list_state_bench', {}),
-    ('style', 'zgui', 'style_bench', {}),
-    ('widgets', 'zgui', 'widget_bench', {}),
+    ('heavy-both', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'both', 'TICKS': '300', 'RENDER': '0'}),
+    ('heavy-stream', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'stream', 'TICKS': '300', 'RENDER': '0'}),
+    ('heavy-scroll', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'scroll', 'TICKS': '300', 'RENDER': '0'}),
+    ('lab-stream', 'zgx-desktop', 'workload_headless', {'ZGX_MODE': 'stream', 'RENDER': '0'}),
+    ('lab-scroll', 'zgx-desktop', 'workload_headless', {'ZGX_MODE': 'scroll', 'RENDER': '0'}),
+    ('animate', 'zgx-desktop', 'animation_headless', {'FRAMES': '1200', 'RENDER': '0'}),
+    ('mount', 'zgx-script', 'mount_bench', {}),
+    ('script-update', 'zgx-script', 'update_bench', {'TICKS': '200'}),
+    ('anime', 'zgx-script', 'anime_bench', {}),
+    ('script-layout', 'zgx-script', 'script_layout_bench', {}),
+    ('list-state', 'zgx-script', 'list_state_bench', {}),
+    ('style', 'zgx', 'style_bench', {}),
+    ('widgets', 'zgx', 'widget_bench', {}),
     # The example apps' common interactions (`support/apps.rs`), small and
     # undrawn, run by list_state_bench (no binary of their own to link): the
     # same paths at a sixth of the work (`suite.py` runs `apps_bench` full
     # size).
-    ('app-mail', 'zgui-script', 'list_state_bench', {'APP': 'mail', 'REPS': '2'}),
-    ('app-dashboard', 'zgui-script', 'list_state_bench', {'APP': 'dashboard', 'ROWS': '2000', 'REPS': '2'}),
-    ('app-sketch', 'zgui-script', 'list_state_bench', {'APP': 'sketch', 'SHAPES': '50', 'REPS': '3'}),
-    ('app-code', 'zgui-script', 'list_state_bench', {'APP': 'code', 'LINES': '5000', 'REPS': '2'}),
+    ('app-mail', 'zgx-script', 'list_state_bench', {'APP': 'mail', 'REPS': '2'}),
+    ('app-dashboard', 'zgx-script', 'list_state_bench', {'APP': 'dashboard', 'ROWS': '2000', 'REPS': '2'}),
+    ('app-sketch', 'zgx-script', 'list_state_bench', {'APP': 'sketch', 'SHAPES': '50', 'REPS': '3'}),
+    ('app-code', 'zgx-script', 'list_state_bench', {'APP': 'code', 'LINES': '5000', 'REPS': '2'}),
 ]
 
 
@@ -67,7 +67,7 @@ def runs_scene(checkout, env):
     """Whether `checkout`'s binary runs the scene `env` asks for: the app
     scenes (`APP`) are `support/apps.rs`'s, which an older base lacks (its
     binary would count its own bench under their name)."""
-    return 'APP' not in env or (checkout / 'crates/zgui-script/examples/support/apps.rs').exists()
+    return 'APP' not in env or (checkout / 'crates/zgx-script/examples/support/apps.rs').exists()
 
 
 def build(checkout, target, into):
@@ -93,12 +93,12 @@ class Infra(Exception):
 
 def count(binary, env):
     """The run's instructions. A run that fails is the gate's failure, not
-    the change's: under cachegrind a script's time budget (`ZGUI_GATE`
+    the change's: under cachegrind a script's time budget (`ZGX_GATE`
     lifts it in the benches) or a missing GPU would otherwise look like a
     result."""
     result = subprocess.run(
         ['valgrind', '--tool=cachegrind', '--cache-sim=no', '--cachegrind-out-file=/dev/null', str(binary)],
-        env=dict(os.environ, ZGUI_GATE='1', **env), capture_output=True, text=True)
+        env=dict(os.environ, ZGX_GATE='1', **env), capture_output=True, text=True)
     found = re.search(r'I\s+refs:\s+([\d,]+)', result.stderr)
     if result.returncode or not found:
         why = 'a script hit its time budget' if 'time budget' in result.stdout + result.stderr else 'it failed'
@@ -112,9 +112,9 @@ def main():
     parser.add_argument('--threshold', type=float, default=1.0, help='percent a scene may grow')
     parser.add_argument('--markdown', type=pathlib.Path)
     args = parser.parse_args()
-    # Both sides build into one target directory: CI's (ZGUI_GATE_TARGET)
+    # Both sides build into one target directory: CI's (ZGX_GATE_TARGET)
     # sits in the workspace's, where its cache keeps the dependencies.
-    target = pathlib.Path(os.environ.get('ZGUI_GATE_TARGET', WORK / 'gate-target')).resolve()
+    target = pathlib.Path(os.environ.get('ZGX_GATE_TARGET', WORK / 'gate-target')).resolve()
     base = WORK / 'gate-base'
     if base.exists():
         subprocess.run(['git', 'worktree', 'remove', '--force', str(base)], cwd=ROOT)

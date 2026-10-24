@@ -1,6 +1,6 @@
 # Design systems: variants and the design lint
 
-A design system in zgui is three layers: theme tokens hold the values (`"$accent"`, `"$space.3"`; see [theming](../scripting.md#theming)), `ui.variants` turns them into each component's styles, and the design lint keeps code from going around them.
+A design system in zgx is three layers: theme tokens hold the values (`"$accent"`, `"$space.3"`; see [theming](../scripting.md#theming)), `ui.variants` turns them into each component's styles, and the design lint keeps code from going around them.
 
 ```luau
 ui.variants<D>(definition: D) -> (choice: VariantChoice<D, …>) -> Variants
@@ -61,7 +61,7 @@ return ui.column {
 }
 ```
 
-**Types.** The recipe's choice is typed from the definition: an option that does not exist (`tone = "loud"`) and an axis that does not (`tnoe = …`) are errors in the editor and in `zgui check`. `VariantProps<typeof(button)>` is the axes as props, to merge into a component's own props type. Pass each axis through by name (`button { tone = props.tone }`), as shadcn does with `cva`: passing a whole props table does not check. The definition's style tables are checked as the script loads (`unknown style \`bgg\` in \`variants.tone.solid\``).
+**Types.** The recipe's choice is typed from the definition: an option that does not exist (`tone = "loud"`) and an axis that does not (`tnoe = …`) are errors in the editor and in `zgx check`. `VariantProps<typeof(button)>` is the axes as props, to merge into a component's own props type. Pass each axis through by name (`button { tone = props.tone }`), as shadcn does with `cva`: passing a whole props table does not check. The definition's style tables are checked as the script loads (`unknown style \`bgg\` in \`variants.tone.solid\``).
 
 **Cost.** The definition's tables are parsed once, as `ui.variants` runs (a module runs once). A choice of names resolves as the element is built, into the element's literal styles: the same as writing them out. A choice by state or function resolves in Rust each time it changes, cached per combination, and restyles the node in place: its properties and its interaction styles swap without calling the script (a function choosing an option runs when what it reads changes, as `ui.computed` does). A colour change repaints; a size change lays out.
 
@@ -83,7 +83,7 @@ current theme: `bg = "$surface.raised"`. If no token fits, declare one for the a
 | `ui.theme.strict("error")` | each is an error: the script fails to load (shown over the window), or a function property's value is not applied |
 | `ui.theme.strict("off")` (or `false`) | no check; the default |
 
-`ZGUI_DESIGN_LINT=off|warn|error` overrides the script (for a CI run, or an agent's), and a Rust host may call `ScriptHost::design_lint`. The mode is the host's: call `ui.theme.strict` first thing in `app.luau`, before modules build anything.
+`ZGX_DESIGN_LINT=off|warn|error` overrides the script (for a CI run, or an agent's), and a Rust host may call `ScriptHost::design_lint`. The mode is the host's: call `ui.theme.strict` first thing in `app.luau`, before modules build anything.
 
 | Checked | Not checked |
 | --- | --- |
@@ -103,6 +103,6 @@ return ui.row {
 	gap = "$space.2",
 	p = "$space.3",
 	ui.div { w = 16, h = 16, rounded = "$radius.full", bg = ui.raw("#e5484d", "the brand mark's red, not a theme colour") },
-	ui.text { "zgui", color = "$text.primary", text_size = "$font.size.lg" },
+	ui.text { "zgx", color = "$text.primary", text_size = "$font.size.lg" },
 }
 ```

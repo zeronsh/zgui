@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="zgui against GPUI, GPUI Fast and QuickGUI on macOS with Metal: CPU, GPU, memory and frame pacing across three workloads.">
-<title>zgui on macOS — measured against GPUI and GPUI Fast</title>
+<meta name="description" content="zgx against GPUI, GPUI Fast and QuickGUI on macOS with Metal: CPU, GPU, memory and frame pacing across three workloads.">
+<title>zgx on macOS — measured against GPUI and GPUI Fast</title>
 <link rel="stylesheet" href="compare.css">
 </head>
 <body>
@@ -21,7 +21,7 @@
       CPU, GPU and memory for every framework, medians of three runs.
       Lower is better unless a chart says otherwise.</p>
     <p class="run" id="run"></p>
-    <p class="correction"><strong>Correction, 2026-10-24:</strong> the results first published here on 2026-10-23/24 (zgui at 51a669c) built zgui with mimalloc, unintentionally, while the other frameworks used the system allocator. These charts are the re-run with the system allocator for zgui too; <a href="https://github.com/zeronsh/zgui/blob/main/docs/results/README.md">old and new numbers side by side</a>.</p>
+    <p class="correction"><strong>Correction, 2026-10-24:</strong> the results first published here on 2026-10-23/24 (zgx at 51a669c) built zgx with mimalloc, unintentionally, while the other frameworks used the system allocator. These charts are the re-run with the system allocator for zgx too; <a href="https://github.com/zeronsh/zgx/blob/main/docs/results/README.md">old and new numbers side by side</a>.</p>
   </section>
 
   <section class="controls" aria-label="Choose a workload">
@@ -54,7 +54,7 @@
     </div>
   </section>
 </main>
-<footer><span>zgui / retained Rust interfaces</span><a href="data.json" download>Download the data ↓</a></footer>
+<footer><span>zgx / retained Rust interfaces</span><a href="data.json" download>Download the data ↓</a></footer>
 <div class="tooltip" id="tooltip" role="status" hidden></div>
 </div>
 <script src="compare.js"></script>

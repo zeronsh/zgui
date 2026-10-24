@@ -51,13 +51,13 @@ Platform-specific behavior is not considered validated merely because it compile
 
 Completed checkboxes describe implemented, tested capabilities, not complete platform coverage or a stable API release. The following work remains explicit:
 
-- Shared GPU/font resources and demand-sized glyph storage are implemented. The latest parity-expansion 36-trial comparison reports zgui mean RSS medians of 103.35–108.39 MiB on llvmpipe, with lower active CPU medians than both pinned references in this condition. Scrolling RSS is nearly tied with GPUI. These shared-host software-renderer results do not establish universal resource minima or hardware-GPU rankings. See [the full report](results/gpui-parity-workers4/README.md).
+- Shared GPU/font resources and demand-sized glyph storage are implemented. The latest parity-expansion 36-trial comparison reports zgx mean RSS medians of 103.35–108.39 MiB on llvmpipe, with lower active CPU medians than both pinned references in this condition. Scrolling RSS is nearly tied with GPUI. These shared-host software-renderer results do not establish universal resource minima or hardware-GPU rankings. See [the full report](results/gpui-parity-workers4/README.md).
 - Surface acquisition recovery and desktop retry/focus policies have deterministic regression tests. Live X11 and Wayland DPI transitions now pass; real driver surface recreation remains unverified. Winit 0.30.13 emits formal suspension callbacks on Android/iOS/Web, not Linux/macOS; callback teardown/recreation is defensive portability coverage. Machine sleep/wake is a separate desktop scenario and remains unverified.
 - Real macOS 26.4 / Apple M5 Max execution now passes the complete Metal suite, including imported CoreVideo BGRA/NV12 pixels, reuse and teardown, plus component/multiwindow probes. Native AX tree/actions/selection, Unicode clipboard exchange with TextEdit, AppKit dialogs and substantial menu/layout/painting behavior were observed. See [the Mac continuation packet](platform-validation/macos-continuation/README.md) for source-specific checks and preserved failures.
 - Native Canadian dead-key composition now records marked `´` followed by exactly one `é` commit. A focus-transfer defect initially delivered stale `é` to the second editor; discarding AppKit's input-context state now yields plain `e`, followed by successful fresh `é` composition. Escape under this source commits a literal accent, so it does not validate candidate-based cancellation. Complete Pinyin commit/cancel/focus/candidate placement after explicit input-source permission is resolved.
 - Independently verify cursor shape, Insert delivery, held drag/Escape, Finder multi-file drop and custom-titlebar movement. Native two-file dialog selection/cancel now passes. Direct NSMenuItem reads verify checked/unchecked and enabled/disabled transitions, alongside native menu actions/replacement; checkmark pixels were not captured. Direct AppKit queries verify minimized/restored/hidden/shown visibility and key-window state; AX recovers after show. Native reopen and OS URL launch/delivery pass with a registered test receiver bundle. No unavailable check is counted as passed.
 - GPU-default matched measurements, raw logs, renderer configuration and source archive are recorded in `docs/results`. The [Mac packet](platform-validation/macos-continuation/README.md) adds native release process CPU, RSS and physical-footprint smoke measurements. Repeat matched workloads on real target GPUs with longer trials and independent presentation/latency/energy evidence; no matched Mac ranking or measured presentation/energy result is claimed.
-- Run the matched GPUI/QuickGUI/zgui comparison on the final stabilized source. The historical post-parity Linux series remains valid, but later shared RGBA iteration changes, although equivalent, have not received a final-source matched measurement. Native decoded-GIF playback/pause integration now has current-source evidence; complex disposal/loop-limit decoder tests remain separate from that simple native GIF observation.
+- Run the matched GPUI/QuickGUI/zgx comparison on the final stabilized source. The historical post-parity Linux series remains valid, but later shared RGBA iteration changes, although equivalent, have not received a final-source matched measurement. Native decoded-GIF playback/pause integration now has current-source evidence; complex disposal/loop-limit decoder tests remain separate from that simple native GIF observation.
 - Historical pre-parity integrated checks passed: 600 workspace tests, 31 doctests, strict Clippy, formatting, macOS ARM64 all-target checking, native effects and host recreation. Source and binary evidence is frozen in `docs/platform-validation/retained-blur-batching`.
 
 The parity expansion now adds rich styled labels and inline links, affine images/SVGs/paths, grid and extended flex layout, canvas/gradient/decorative painting, animated and async images, typed drag/drop, contextual actions, native menus/dialogs and macOS CoreVideo surfaces. The capability matrix records corresponding tests and the remaining Mac runtime checks. A full rich-text document editor and template parser remain separate application/language work; the public component/children API supports later lowering. CSS compatibility and a stable binary ABI are not objectives.
@@ -374,11 +374,11 @@ The macOS CI now includes mandatory Metal pixel/damage tests and bounded native
 component-window lifecycle checks with preserved logs. The portable lifecycle
 harness passes on Linux; no remote macOS execution is claimed.
 
-Compositor-side burst traces now reproduce stuck final preedit in both zgui and
+Compositor-side burst traces now reproduce stuck final preedit in both zgx and
 an independent winit/softbuffer program under zero-delay injection. The tested
 Sway/wlroots/Fcitx stack rejects the final transaction with an obsolete serial;
 all subsequent Unicode commits still succeed. This establishes an external
-input-stack compatibility issue rather than a proven zgui rendering defect.
+input-stack compatibility issue rather than a proven zgx rendering defect.
 No speculative workaround was added. The exact reproducer and unsent upstream
 report are linked from [validation](validation.md#wayland-burst-input-serial-diagnosis).
 
@@ -386,7 +386,7 @@ A private Fcitx frontend patch now demonstrates recovery of rejected final
 preedit at the new input-method serial, with all four rapid-input observations
 and eight cancellation/focus stages passing. It is retained as an upstream
 candidate with exact source and binary proof; it is not installed, bundled into
-zgui or claimed as a general input-method fix. See the
+zgx or claimed as a general input-method fix. See the
 [experiment](platform-validation/wayland-ime-fcitx-private-refresh/README.md).
 
 Clean blur panels no longer force distant streaming updates into separate

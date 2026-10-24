@@ -11,7 +11,7 @@
   pointer;
 - nothing is left in the registry (the probe removes the frame it saved).
 
-    cargo build -p zgui-desktop --example window_probe
+    cargo build -p zgx-desktop --example window_probe
     python scripts/windows_window_smoke.py target/debug/examples
 """
 import argparse
@@ -49,7 +49,7 @@ def main():
     need(r"^AUTOSAVE_OFFSCREEN on_a_monitor=true$", "a saved frame no monitor shows")
     need(r"^UNDER_POINTER off_by=\(0, 0\)$", "the point under the pointer")
     try:
-        winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\zgui\window_probe")
+        winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\zgx\window_probe")
         raise AssertionError("the probe left its frames key in the registry")
     except FileNotFoundError:
         pass

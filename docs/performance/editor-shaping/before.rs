@@ -1,5 +1,5 @@
 use std::{cell::Cell, rc::Rc};
-use zgui::{input::{InputEvent, Key, Modifiers}, text_layout::{FallbackTextLayout, FontStyle, TextLayout}, widgets::{EditorHandle, Ui}};
+use zgx::{input::{InputEvent, Key, Modifiers}, text_layout::{FallbackTextLayout, FontStyle, TextLayout}, widgets::{EditorHandle, Ui}};
 
 fn fixture() -> (Ui, EditorHandle, Rc<Cell<usize>>) {
     let mut ui = Ui::new(400., 300.);

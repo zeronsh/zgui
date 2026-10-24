@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Native IME composition on Windows (native_ime_smoke.py's twin), through the
-Microsoft Korean IME: real keystrokes compose hangul syllables in zgui's
+Microsoft Korean IME: real keystrokes compose hangul syllables in zgx's
 editor, commit, and a click into the other editor mid-composition leaves
 nothing of it behind there.
 
@@ -9,7 +9,7 @@ install. It must be in the user's input methods; `--install-korean` adds it
 for the run and restores the user's list after. native_ime --open-ime opens it
 (input methods ignore a synthesized on/off key); the keystrokes are real.
 
-    cargo build -p zgui-desktop --example native_ime
+    cargo build -p zgx-desktop --example native_ime
     python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean
 """
 import argparse
@@ -65,7 +65,7 @@ def main():
         powershell("$l = Get-WinUserLanguageList; $l.Add('ko-KR'); $k = $l[$l.Count - 1]; "
                    f"$k.InputMethodTips.Clear(); $k.InputMethodTips.Add('{KOREAN_TIP}'); "
                    "Set-WinUserLanguageList $l -Force -WarningAction SilentlyContinue")
-    env = dict(os.environ, ZGUI_SECONDS="30")
+    env = dict(os.environ, ZGX_SECONDS="30")
     proc = subprocess.Popen([str(args.binary.resolve()), "--open-ime"], env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8")
     lines = []

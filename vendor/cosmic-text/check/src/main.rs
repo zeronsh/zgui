@@ -1,10 +1,10 @@
-//! Checks the zgui patch to cosmic-text (see ../ZGUI_PATCH.md) against
+//! Checks the zgx patch to cosmic-text (see ../ZGX_PATCH.md) against
 //! upstream 0.19.0. `cargo run --release` lays out thousands of random lines
 //! with both at several widths and wrap modes and requires identical glyphs,
 //! upstream shaping every run afresh (no word cache: the patched one, kept
 //! however long, must not change what is drawn);
 //! `cargo run --release -- bench` times shaping a streaming transcript, as
-//! zgui's lab workload does, with each.
+//! zgx's lab workload does, with each.
 //!
 //!     cargo run --release --manifest-path vendor/cosmic-text/check/Cargo.toml
 use std::{

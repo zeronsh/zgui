@@ -1,8 +1,8 @@
 'use strict';
-// zgui on macOS: grouped bar charts of every accepted scene (data.json, built
+// zgx on macOS: grouped bar charts of every accepted scene (data.json, built
 // by scripts/build_compare_site.py). Plain SVG; labels go in via textContent.
 const SVG = 'http://www.w3.org/2000/svg';
-const SERIES = { zgui: '--series-1', gpui: '--series-2', 'gpui-fast': '--series-3', quickgui: '--series-4' };
+const SERIES = { zgx: '--series-1', gpui: '--series-2', 'gpui-fast': '--series-3', quickgui: '--series-4' };
 const MODES = { idle: 'Idle', stream: 'Streaming', scroll: 'Scrolling', both: 'Both', animate: 'Animating' };
 const SCENES = {
   lab: {
@@ -153,7 +153,7 @@ function chart(metric) {
     const name = svgEl('text', { class: 'row', x: left - 10, y: y + h / 2 + 4, 'text-anchor': 'end' });
     name.textContent = MODES[row.mode] || row.mode;
     svg.append(name);
-    const zgui = row.bars.find((b) => b.framework === 'zgui');
+    const zgx = row.bars.find((b) => b.framework === 'zgx');
     for (const b of row.bars) {
       const { median, min, max: high } = b.value;
       const x0 = x(0), x1 = Math.max(x(median), x0 + 1);
@@ -174,14 +174,14 @@ function chart(metric) {
         svgEl('line', { x1: x(high), x2: x(high), y1: whiskerY - 3, y2: whiskerY + 3 }),
       );
       svg.append(hit, shape, whisker);
-      // Direct labels on zgui only; the rest are in the tooltip and table.
-      if (b.framework === 'zgui') {
+      // Direct labels on zgx only; the rest are in the tooltip and table.
+      if (b.framework === 'zgx') {
         const value = svgEl('text', { class: 'value', x: Math.max(x(high), x1) + 6, y: y + bar - 2 });
         value.textContent = format(median, metric.digits);
         value.style.pointerEvents = 'none';
         svg.append(value);
       }
-      const show = (event) => showTooltip(event, metric, row.mode, b, zgui, shape);
+      const show = (event) => showTooltip(event, metric, row.mode, b, zgx, shape);
       hit.addEventListener('pointermove', show);
       hit.addEventListener('focus', show);
       hit.addEventListener('pointerleave', () => hideTooltip(shape));
@@ -194,7 +194,7 @@ function chart(metric) {
   return card;
 }
 
-function showTooltip(event, metric, mode, b, zgui, shape) {
+function showTooltip(event, metric, mode, b, zgx, shape) {
   shape.style.opacity = 0.75;
   tooltip.replaceChildren();
   tooltip.append(el('div', { class: 'value' }, `${format(b.value.median, metric.digits)}`));
@@ -204,9 +204,9 @@ function showTooltip(event, metric, mode, b, zgui, shape) {
   who.append(key, document.createTextNode(`${data.names[b.framework]} · ${MODES[mode] || mode}`));
   tooltip.append(who);
   tooltip.append(el('div', { class: 'muted' }, `${metric.unit}, range ${format(b.value.min, metric.digits)}–${format(b.value.max, metric.digits)}`));
-  if (zgui && b.framework !== 'zgui' && zgui.value.median > 0) {
-    const ratio = b.value.median / zgui.value.median - 1;
-    tooltip.append(el('div', { class: 'muted' }, `${percent(ratio)} vs zgui`));
+  if (zgx && b.framework !== 'zgx' && zgx.value.median > 0) {
+    const ratio = b.value.median / zgx.value.median - 1;
+    tooltip.append(el('div', { class: 'muted' }, `${percent(ratio)} vs zgx`));
   }
   tooltip.hidden = false;
   const rect = event.clientX !== undefined && event.type === 'pointermove'
@@ -221,7 +221,7 @@ function hideTooltip(shape) {
   tooltip.hidden = true;
 }
 
-// Headline tiles: zgui against each rival in the scene's lead mode.
+// Headline tiles: zgx against each rival in the scene's lead mode.
 function tiles() {
   const box = document.getElementById('tiles');
   box.replaceChildren();
@@ -230,16 +230,16 @@ function tiles() {
   for (const id of ['cpu', scene.gpu_trace ? 'gpu-work' : 'gpu', 'memory']) {
     const metric = METRICS.find((m) => m.id === id);
     const row = entries(metric).find((r) => r.mode === lead);
-    const zgui = row && row.bars.find((b) => b.framework === 'zgui');
-    if (!zgui) continue;
+    const zgx = row && row.bars.find((b) => b.framework === 'zgx');
+    if (!zgx) continue;
     const tile = el('div', { class: 'tile' });
     tile.append(el('p', { class: 'label' }, `${metric.title} · ${MODES[lead] || lead}`));
-    tile.append(el('p', { class: 'value' }, `${format(zgui.value.median, metric.digits)}`));
-    const rivals = row.bars.filter((b) => b.framework !== 'zgui').map((b) => {
-      const ratio = zgui.value.median / b.value.median - 1;
+    tile.append(el('p', { class: 'value' }, `${format(zgx.value.median, metric.digits)}`));
+    const rivals = row.bars.filter((b) => b.framework !== 'zgx').map((b) => {
+      const ratio = zgx.value.median / b.value.median - 1;
       return `${percent(ratio)} vs ${data.names[b.framework]}`;
     });
-    tile.append(el('p', { class: 'detail' }, `${metric.unit} · zgui ${rivals.join(' · ')}`));
+    tile.append(el('p', { class: 'detail' }, `${metric.unit} · zgx ${rivals.join(' · ')}`));
     box.append(tile);
   }
 }
@@ -260,7 +260,7 @@ function table() {
       const pacing = scene.pacing.find((p) => p.framework === framework && p.mode === mode);
       const trace = (scene.gpu_trace || []).find((t) => t.framework === framework && t.mode === mode);
       if (!group) continue;
-      const tr = el('tr', { class: framework === 'zgui' ? 'zgui' : '' });
+      const tr = el('tr', { class: framework === 'zgx' ? 'zgx' : '' });
       tr.append(el('td', {}, MODES[mode] || mode));
       const name = el('td');
       const key = el('span', { class: 'key' });
@@ -309,8 +309,8 @@ function render() {
     `${env.chip} (${env.machine}), macOS ${env.macos}, ${env.power} · measured ${run.started_utc.slice(0, 10)} · ` +
     `${run.trials} timed trials, ${run.pacing_trials} pacing trials in this workload`;
   document.getElementById('source').textContent =
-    `zgui at ${run.commit.slice(0, 7)}${run.source_dirty ? ` with uncommitted changes (diff sha256 ${run.source_diff_sha256.slice(0, 12)}…)` : ''}. ` +
-    'GPUI and GPUI Fast (longbridge/gpui-fast 0.1.4) run the same workloads through adapters in the zgui repository’s comparisons directory.';
+    `zgx at ${run.commit.slice(0, 7)}${run.source_dirty ? ` with uncommitted changes (diff sha256 ${run.source_diff_sha256.slice(0, 12)}…)` : ''}. ` +
+    'GPUI and GPUI Fast (longbridge/gpui-fast 0.1.4) run the same workloads through adapters in the zgx repository’s comparisons directory.';
 }
 
 async function main() {

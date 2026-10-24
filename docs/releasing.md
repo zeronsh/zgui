@@ -15,10 +15,10 @@ Nothing is published yet. This is how a release would go, and what has to be set
 
 Locally, the same without the build (a minute): `cargo publish --workspace --dry-run --no-verify`.
 
-Published: `zgui`, `zgui-components`, `zgui-gpu`, `zgui-desktop`, `zgui-script`, `zgui-run` and `zgui-ghostty-sys` (its declarations only; its `link` feature builds Ghostty from a pinned source with Zig). Not published (`publish = false`): `zgui-demo` and `zgui-workload`, the benchmarks in `comparisons/`.
+Published: `zgx`, `zgx-components`, `zgx-gpu`, `zgx-desktop`, `zgx-script`, `zgx-run` and `zgx-ghostty-sys` (its declarations only; its `link` feature builds Ghostty from a pinned source with Zig). Not published (`publish = false`): `zgx-demo` and `zgx-workload`, the benchmarks in `comparisons/`.
 
 ## Before the first publish
 
-- **The `zgui` name is taken on crates.io** (by an unrelated project, `zortax/zgui`). The core crate needs another name (`zgui-core`, say: a rename of the package, its dependents' `zgui = { package = … }`, and the docs), or the name from its owner. `zgui-components`, `zgui-gpu`, `zgui-desktop`, `zgui-script`, `zgui-run` and `zgui-ghostty-sys` are free.
-- **Vendored dependencies.** The workspace patches crates from crates.io (`[patch.crates-io]`: taffy, cosmic-text, the AccessKit adapters for macOS and Windows, wgpu-hal, winit, mlua), each with a fix zgui relies on (see their `ZGUI_PATCH.md` and the comments in `Cargo.toml`). A published crate builds against crates.io's versions, without them. Each fix has to land upstream, or ship as a published fork, before a release behaves as the repository does.
+- **The `zgx` name is taken on crates.io** (by an unrelated project, `zortax/zgx`). The core crate needs another name (`zgx-core`, say: a rename of the package, its dependents' `zgx = { package = … }`, and the docs), or the name from its owner. `zgx-components`, `zgx-gpu`, `zgx-desktop`, `zgx-script`, `zgx-run` and `zgx-ghostty-sys` are free.
+- **Vendored dependencies.** The workspace patches crates from crates.io (`[patch.crates-io]`: taffy, cosmic-text, the AccessKit adapters for macOS and Windows, wgpu-hal, winit, mlua), each with a fix zgx relies on (see their `ZGX_PATCH.md` and the comments in `Cargo.toml`). A published crate builds against crates.io's versions, without them. Each fix has to land upstream, or ship as a published fork, before a release behaves as the repository does.
 - **Credentials.** Publishing needs a crates.io token as a repository secret, and a publish step after the dry run, run by hand the first time. Neither exists yet, on purpose.

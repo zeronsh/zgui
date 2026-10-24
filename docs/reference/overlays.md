@@ -143,5 +143,5 @@ return ui.button { "Delete", on_click = function()
 end }
 ```
 
-In Rust (`zgui-components`), `Toaster::of(&runtime).show(Toast::new("Saved").kind(ToastKind::Success))`, with one `toast_host()` in the window.
+In Rust (`zgx-components`), `Toaster::of(&runtime).show(Toast::new("Saved").kind(ToastKind::Success))`, with one `toast_host()` in the window.
 

@@ -103,6 +103,6 @@ version = "5.5"
 features = ["async-io"]
 default-features = false
 
-# zgui patch: built alone, the vendored adapter (ZGUI_PATCH.md).
+# zgx patch: built alone, the vendored adapter (ZGX_PATCH.md).
 [patch.crates-io]
 accesskit_atspi_common = { path = "../accesskit_atspi_common" }

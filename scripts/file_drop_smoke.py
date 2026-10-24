@@ -7,7 +7,7 @@ from platform_smoke import stop, wait_for_wm
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary',type=Path)
-    parser.add_argument('--output',type=Path,default=Path('/tmp/zgui-files-smoke'))
+    parser.add_argument('--output',type=Path,default=Path('/tmp/zgx-files-smoke'))
     args=parser.parse_args();args.output.mkdir(parents=True,exist_ok=True)
     xvfb=wm=app=source=None
     logs=[]
@@ -22,7 +22,7 @@ def main():
         def xdo(*args): return subprocess.run(['xdotool',*map(str,args)],env=env,check=True,capture_output=True,text=True).stdout.strip()
         deadline=time.monotonic()+20;window=None
         while time.monotonic()<deadline:
-            result=subprocess.run(['xdotool','search','--name','^zgui typed drag$'],env=env,capture_output=True,text=True)
+            result=subprocess.run(['xdotool','search','--name','^zgx typed drag$'],env=env,capture_output=True,text=True)
             if result.returncode==0: window=result.stdout.splitlines()[0];break
             assert app.poll() is None, 'Gallery exited during startup'
             time.sleep(.1)
@@ -33,7 +33,7 @@ def main():
         source=subprocess.Popen(['python3',str(Path(__file__).with_name('native_file_source.py')),*map(str,files)],env=env,stdout=source_log,stderr=source_log)
         deadline=time.monotonic()+10;source_window=None
         while time.monotonic()<deadline:
-            result=subprocess.run(['xdotool','search','--name','^zgui file source$'],env=env,capture_output=True,text=True)
+            result=subprocess.run(['xdotool','search','--name','^zgx file source$'],env=env,capture_output=True,text=True)
             if result.returncode==0:source_window=result.stdout.splitlines()[0];break
             time.sleep(.1)
         assert source_window,'GTK source missing'

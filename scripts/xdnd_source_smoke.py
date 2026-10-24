@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drags out of zgui on X11 (Xvfb/Openbox, `native_drag/x11.rs`): drag_probe's
+"""Drags out of zgx on X11 (Xvfb/Openbox, `native_drag/x11.rs`): drag_probe's
 chip, exporting its text, dragged with real input out of its window onto
 test-owned GTK drop targets (`xdnd_target.py`) below it. It never drops on
 anything else: the display is the probe's own, and before letting go it
@@ -11,7 +11,7 @@ Checks that:
   accepted (`DRAG_END accepted=true`); out of the window the preview follows
   the pointer pixel for pixel, and neither it nor the window draws a frame;
 - dragged out over the target and back into its own window and let go
-  there, the drag stays zgui's: the target gets nothing, and the source
+  there, the drag stays zgx's: the target gets nothing, and the source
   hears it not accepted;
 - Escape over the target cancels: nothing is dropped, not accepted;
 - over a target that refuses it (and hears its positions), let go there,
@@ -34,7 +34,7 @@ CHIP = (10 + 60, 10 + 14)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("binaries", type=pathlib.Path, help="the zgui-desktop examples' directory")
+    parser.add_argument("binaries", type=pathlib.Path, help="the zgx-desktop examples' directory")
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ def main():
         def count(pattern, log):
             return len(re.findall(pattern, log.read_text(), re.M))
 
-        app, app_log = launch("drag_probe", [str(args.binaries / "drag_probe")], dict(env, ZGUI_PRESENT_LOG="1"))
+        app, app_log = launch("drag_probe", [str(args.binaries / "drag_probe")], dict(env, ZGX_PRESENT_LOG="1"))
 
         def draws():
             lines = app_log.read_text().splitlines()
@@ -157,7 +157,7 @@ def main():
         checks["the target takes the text"] = bool(received) and received.group(2) == "Some text"
         checks["accepted"] = count(r"^DRAG_END accepted=true$", app_log) == 1
 
-        # Out over the target and back home: zgui's, nothing dropped.
+        # Out over the target and back home: zgx's, nothing dropped.
         time.sleep(.5)
         chip = grab()
         glide(chip, centre(target))
@@ -200,7 +200,7 @@ def main():
         failed = [key for key, value in checks.items() if value is False]
         failed += [key for key in ("window renders as it moves out", "preview draws as it moves out") if checks[key]]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
-        print("PASS: X11 drags out of zgui: a GTK target takes the text; back home, Escape and a refusing "
+        print("PASS: X11 drags out of zgx: a GTK target takes the text; back home, Escape and a refusing "
               "target drop nothing")
     finally:
         for process in reversed(processes):

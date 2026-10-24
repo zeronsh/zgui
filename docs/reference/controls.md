@@ -67,7 +67,7 @@ A text editor bound to a string state: selection, undo, clipboard and IME includ
 
 Its element (`on_mount`, a [ref](state.md#refs)) selects text: `el:select_all()`, `el:set_selection(a, b)`, `local a, b = el:selection()`, in characters, or in bytes from 0 as `string.find` counts them, `el:set_selection_bytes(a, b)` and `el:selection_bytes()` (a selection set so scrolls into view, focused or not); `el:replace_selection(text)` types `text` over the selection, one step of undo ([events](events.md#elements)). Each sees the text a handler just set, and leaves its state holding what it changed.
 
-A long text (more than 64 KiB, or 2,000 lines), or one with `highlight`, is laid out by its lines: the lines in view are shaped and drawn, a line keeps its shape until it changes, and where each line starts is a few bytes a line, so a file of 100,000 lines opens in about 20 ms and a keystroke costs about a millisecond ([the code editor example](../../crates/zgui-script/examples/code_editor), `code_editor_bench`). A string over 64 KiB in state is held in chunks of a few kilobytes: the state, the textarea bound to it, its layout and its accessibility value share one copy, and a keystroke's new value shares every chunk but the one it changed (a script reading the state still reads a string). Assistive technology reads such a text a page at a time, as browsers' code editors give it: the lines in view and a page each side (or around the caret, scrolled away), a text run a line, so a keystroke sends the runs of the line it changed.
+A long text (more than 64 KiB, or 2,000 lines), or one with `highlight`, is laid out by its lines: the lines in view are shaped and drawn, a line keeps its shape until it changes, and where each line starts is a few bytes a line, so a file of 100,000 lines opens in about 20 ms and a keystroke costs about a millisecond ([the code editor example](../../crates/zgx-script/examples/code_editor), `code_editor_bench`). A string over 64 KiB in state is held in chunks of a few kilobytes: the state, the textarea bound to it, its layout and its accessibility value share one copy, and a keystroke's new value shares every chunk but the one it changed (a script reading the state still reads a string). Assistive technology reads such a text a page at a time, as browsers' code editors give it: the lines in view and a page each side (or around the caret, scrolled away), a text run a line, so a keystroke sends the runs of the line it changed.
 
 ## checkbox
 
@@ -182,7 +182,7 @@ Dates are strings in ISO 8601's form, `"2026-10-23"`, and times are 24-hour `"09
 
 `calendar` is a month of days, as WAI-ARIA's date picker grid. It is one Tab stop and keeps focus; its current day is its active descendant, which assistive technology reads as "Friday, 23 October 2026". Left and Right move a day (mirrored right to left), Up and Down a week, and Home and End go to the week's ends. Page Up and Down go a month, with Shift a year; Enter or Space chooses. Its arrows change the month too. Today has a ring; days outside `min` and `max`, or `unavailable`, are dimmed and can't be chosen. `date_picker` is a button showing the date that opens a calendar (so does Down); choosing a day closes it and puts focus back on the button, and Escape closes it without choosing.
 
-`time_field` holds an hour and a minute segment (with `hour12`, also AM/PM). Each segment is a spin button: Up and Down step it (the minutes by `minute_step`), Page Up and Down step further, digits type into it and focus moves on once no more digits can follow, Left and Right move between segments, and Backspace clears one. "Today" and "now" are local where the host says what the local time is (zgui-desktop does), otherwise UTC.
+`time_field` holds an hour and a minute segment (with `hour12`, also AM/PM). Each segment is a spin button: Up and Down step it (the minutes by `minute_step`), Page Up and Down step further, digits type into it and focus moves on once no more digits can follow, Left and Right move between segments, and Backspace clears one. "Today" and "now" are local where the host says what the local time is (zgx-desktop does), otherwise UTC.
 
 ```lua
 local due = ui.state("due", nil :: string?)
@@ -212,7 +212,7 @@ return ui.row {
 | `minute_step` | `number` | `1` | `time_field`: what Up and Down step the minutes by |
 | `label` | `string` | `""` | its accessible name |
 
-In Rust (`zgui-components`): `calendar(label, value, CalendarOptions { … })`, `date_picker(…)` and `time_field(label, value, TimeOptions { … })`, with `CalendarDate` and `TimeOfDay` values (`CalendarDate::today()`, `add_days`, `add_months`, `weekday`, `parse`). `CalendarOptions` also takes month and weekday names for other languages.
+In Rust (`zgx-components`): `calendar(label, value, CalendarOptions { … })`, `date_picker(…)` and `time_field(label, value, TimeOptions { … })`, with `CalendarDate` and `TimeOfDay` values (`CalendarDate::today()`, `add_days`, `add_months`, `weekday`, `parse`). `CalendarOptions` also takes month and weekday names for other languages.
 
 ## progress
 

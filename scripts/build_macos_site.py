@@ -14,9 +14,9 @@ scene = audit.get('scene', 'lab')
 assert scene in ('lab', 'heavy')
 # Newer runs add GPUI Fast (shown on the compare page) and the desktop
 # baseline; this site shows the original frameworks.
-frameworks = [f for f in audit['protocol'].get('frameworks', ['zgui', 'gpui', 'quickgui']) if f in ('zgui', 'gpui', 'quickgui')]
+frameworks = [f for f in audit['protocol'].get('frameworks', ['zgx', 'gpui', 'quickgui']) if f in ('zgx', 'gpui', 'quickgui')]
 # QuickGUI is optional in lab (`--quickgui`) and absent from heavy.
-assert frameworks[:2] == ['zgui', 'gpui'] and (scene == 'lab' or frameworks == ['zgui', 'gpui'])
+assert frameworks[:2] == ['zgx', 'gpui'] and (scene == 'lab' or frameworks == ['zgx', 'gpui'])
 modes = ['idle', 'stream', 'scroll', 'both']
 assert audit['protocol']['requested_seconds'] == 20 and audit['protocol']['repeats'] == 3
 assert not audit['protocol'].get('quick'), 'quick runs are for iterating, not publishing'
@@ -64,7 +64,7 @@ metadata = {
     'host_note': 'A personal Mac in use: other applications kept running, so this host was not isolated.',
     'memory': 'Physical footprint (as Activity Monitor reports it: resident memory plus GPU memory the process owns on unified memory); resident size also recorded.',
     'protocol': audit['protocol'],
-    'frameworks': {f: {'gpui': '0.2.2', 'quickgui': '811d6e2816d5229711f59683c4c9dfbb6fc74133', 'zgui': audit['commit']}[f] for f in frameworks},
+    'frameworks': {f: {'gpui': '0.2.2', 'quickgui': '811d6e2816d5229711f59683c4c9dfbb6fc74133', 'zgx': audit['commit']}[f] for f in frameworks},
     'csv_sha256': hashlib.sha256((a.output / 'data.csv').read_bytes()).hexdigest(),
     'source_csv_sha256': hashlib.sha256((r / 'current.csv').read_bytes()).hexdigest(),
     'binaries': audit['binaries'],

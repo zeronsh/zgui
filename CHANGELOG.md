@@ -1,12 +1,12 @@
 # Changes
 
-zgui is 0.1 and used from git; this lists what changed for apps, newest first.
+zgx is 0.1 and used from git; this lists what changed for apps, newest first.
 
 ## Unreleased (October 2026)
 
 ### Changed defaults: what to check in an existing app
 
-**Children stretch across their container**, as in CSS's flexbox (`align-items: stretch`). A `column`'s children are as wide as it, a `row`'s as tall, unless they size themselves on that axis. `div` and zgui-script's `ui.column`, `ui.row` and `ui.div` do the same.
+**Children stretch across their container**, as in CSS's flexbox (`align-items: stretch`). A `column`'s children are as wide as it, a `row`'s as tall, unless they size themselves on that axis. `div` and zgx-script's `ui.column`, `ui.row` and `ui.div` do the same.
 - *Migrate:* where buttons, chips or labels now span a column, or boxes in a row are taller than their content, state `.items_start()` (`items = "start"`) on the container, or give the child a size.
 
 **Children shrink to fit**, as CSS's `flex-shrink: 1`, each no further than its content's narrowest (`min-width: auto`: a text's longest word, a box's content). A box that clips (a scroll view, `overflow_hidden`) may shrink to nothing. Before, nothing shrank and a too-wide row overflowed.
@@ -16,14 +16,14 @@ zgui is 0.1 and used from git; this lists what changed for apps, newest first.
 - *Migrate:* nothing for menus written for macOS; a shortcut that meant the Windows key writes `super`.
 
 **A window runs the way the user's language does:** right to left under Arabic, Hebrew, Persian or Urdu.
-- *Migrate:* an app whose interface is not translated can set `.direction(Direction::Ltr)` (`dir = "ltr"`) on its root to keep it left to right. `ZGUI_DIRECTION=rtl` tries a layout either way.
+- *Migrate:* an app whose interface is not translated can set `.direction(Direction::Ltr)` (`dir = "ltr"`) on its root to keep it left to right. `ZGX_DIRECTION=rtl` tries a layout either way.
 
 **Focus moves on when what has it leaves** (a toolbar's button unmounting with its message): to the nearest focusable ancestor, else the next Tab stop, else the one before, rather than to the window.
 
 **Escape in a text field** with no composition to cancel goes to the dialog or menu around it, which closes.
 
-**The component library is a crate of its own, `zgui-components`.** The data grid, tree, calendar, date picker and time field, combobox, select, tabs, toasts, command palette, segmented control, stepper, disclosure, accordion and separator moved out of `zgui::compose`; the primitives they are made of (text, editors, buttons, checkboxes, sliders, progress, scroll views and virtual lists, menus, popovers, modals and tooltips, selection, drag) stay. zgui-script's `ui.*` for them is unchanged, through its `components` feature (on by default).
-- *Migrate:* add `zgui-components` beside `zgui` and import them from it (`use zgui_components::prelude::*;` beside `zgui::compose::prelude::*`). The local-time hook is `zgui::local_time::set_offset` (zgui-desktop sets it). A component's own semantics are set with the new `NodeHandle::update_semantics`.
+**The component library is a crate of its own, `zgx-components`.** The data grid, tree, calendar, date picker and time field, combobox, select, tabs, toasts, command palette, segmented control, stepper, disclosure, accordion and separator moved out of `zgx::compose`; the primitives they are made of (text, editors, buttons, checkboxes, sliders, progress, scroll views and virtual lists, menus, popovers, modals and tooltips, selection, drag) stay. zgx-script's `ui.*` for them is unchanged, through its `components` feature (on by default).
+- *Migrate:* add `zgx-components` beside `zgx` and import them from it (`use zgx_components::prelude::*;` beside `zgx::compose::prelude::*`). The local-time hook is `zgx::local_time::set_offset` (zgx-desktop sets it). A component's own semantics are set with the new `NodeHandle::update_semantics`.
 
 ### Layout
 
@@ -46,19 +46,19 @@ zgui is 0.1 and used from git; this lists what changed for apps, newest first.
 
 ### Controls and platforms
 
-- A component library, `zgui-components`: a data grid (virtual rows, sorting, moving and resizing columns, cell editing, row selection, copying as a spreadsheet's), a tree view (lazy children), a calendar, a date picker and a time field, a combobox (async, virtual suggestions), a select with typeahead, tabs (closable, reorderable, overflowing), toasts, a command palette, a segmented control, a stepper, a disclosure, an accordion and a separator, each keyboard complete, accessible and right-to-left aware.
+- A component library, `zgx-components`: a data grid (virtual rows, sorting, moving and resizing columns, cell editing, row selection, copying as a spreadsheet's), a tree view (lazy children), a calendar, a date picker and a time field, a combobox (async, virtual suggestions), a select with typeahead, tabs (closable, reorderable, overflowing), toasts, a command palette, a segmented control, a stepper, a disclosure, an accordion and a separator, each keyboard complete, accessible and right-to-left aware.
 
 - Checkboxes drawn as the platform draws them, with a mixed state and a disabled look.
-- zgui's own tooltips (`View::tooltip`), and scrollbars that hide at rest where the system's do.
+- zgx's own tooltips (`View::tooltip`), and scrollbars that hide at rest where the system's do.
 - Touch and pen: a finger taps, holds, drags and pans; a long press on text selects its word.
 - macOS: rubber-band overscroll; Reduce motion, Increase contrast and Reduce transparency reach the themes; popups reach past their window.
-- Windows: Inset and Hidden title bars with snap layouts, Acrylic and Mica glass, WebView2 web views, the system's text size and accent, one instance per application ID, and [shipping notes](docs/windows.md#shipping-a-zgui-app-on-windows).
+- Windows: Inset and Hidden title bars with snap layouts, Acrylic and Mica glass, WebView2 web views, the system's text size and accent, one instance per application ID, and [shipping notes](docs/windows.md#shipping-a-zgx-app-on-windows).
 - Linux: the desktop's dark or light, high contrast, reduced motion, text size, accent and interface font; KDE's wheel speed; app IDs on Wayland and X11; zenity file dialogs without a portal.
 
 ### Scripting
 
-- `zgui-run` runs a Luau app (`app.luau`, and a `zgui.json` for its window), and `ui.window` declares more windows.
-- `zgui lint` finds slow or wrong patterns, and runs on every reload in debug builds.
+- `zgx-run` runs a Luau app (`app.luau`, and a `zgx.json` for its window), and `ui.window` declares more windows.
+- `zgx lint` finds slow or wrong patterns, and runs on every reload in debug builds.
 - Long list states are cheap to filter: a filter's rows come back as the state's own.
 - A `ui.computed` read in a handler or `ui.batch`, right after a write it depends on, has the new value (it had its old one until the handler returned).
 

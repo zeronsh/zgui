@@ -339,8 +339,8 @@ impl NodeWrapper<'_> {
         if state.is_modal() {
             atspi_state.insert(State::Modal);
         }
-        // zgui patch: whether what it opens is open, as Chromium's ATK
-        // states say (ZGUI_PATCH.md).
+        // zgx patch: whether what it opens is open, as Chromium's ATK
+        // states say (ZGX_PATCH.md).
         if let Some(expanded) = state.data().is_expanded() {
             atspi_state.insert(State::Expandable);
             atspi_state.insert(if expanded {
@@ -484,7 +484,7 @@ impl NodeWrapper<'_> {
         if self.supports_value() {
             interfaces.insert(Interface::Value);
         }
-        // zgui patch: Table and TableCell (ZGUI_PATCH.md).
+        // zgx patch: Table and TableCell (ZGX_PATCH.md).
         if crate::table::is_table(self.0) {
             interfaces.insert(Interface::Table);
         }
@@ -769,7 +769,7 @@ impl PlatformNode {
         })
     }
 
-    // zgui patch: Table and TableCell (ZGUI_PATCH.md).
+    // zgx patch: Table and TableCell (ZGX_PATCH.md).
     fn resolve_for_table<F, T>(&self, f: F) -> Result<T>
     where
         for<'a> F: FnOnce(Node<'a>) -> Result<T>,
@@ -1289,7 +1289,7 @@ impl PlatformNode {
         })
     }
 
-    // zgui patch: Table and TableCell (ZGUI_PATCH.md). Rows and columns
+    // zgx patch: Table and TableCell (ZGX_PATCH.md). Rows and columns
     // count from 0; a cell's index is its row times the table's columns,
     // plus its column.
 
@@ -2117,7 +2117,7 @@ pub struct CacheNode {
     pub states: StateSet,
 }
 
-// zgui patch: Table and TableCell (ZGUI_PATCH.md).
+// zgx patch: Table and TableCell (ZGX_PATCH.md).
 
 /// A table cell's row, column, rows and columns spanned, and whether it is
 /// selected.

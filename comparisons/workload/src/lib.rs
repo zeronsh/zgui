@@ -16,7 +16,7 @@ pub enum Mode {
 }
 impl Mode {
     pub fn from_env() -> Self {
-        match std::env::var("ZGUI_MODE").as_deref() {
+        match std::env::var("ZGX_MODE").as_deref() {
             Ok("idle") => Self::Idle,
             Ok("stream") => Self::Stream,
             Ok("scroll") => Self::Scroll,
@@ -43,13 +43,13 @@ impl Workload {
             scroll_offset: 0.,
             frames: 0,
             mode: Mode::from_env(),
-            seconds: std::env::var("ZGUI_SECONDS")
+            seconds: std::env::var("ZGX_SECONDS")
                 .ok()
                 .and_then(|v| v.parse::<f64>().ok())
                 .filter(|v| v.is_finite() && *v >= 0.)
                 .unwrap_or(30.),
         };
-        let initial_ticks = std::env::var("ZGUI_INITIAL_TICKS")
+        let initial_ticks = std::env::var("ZGX_INITIAL_TICKS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(0)
@@ -323,13 +323,13 @@ pub mod heavy {
         pub fn period() -> std::time::Duration {
             PERIOD
         }
-        /// Whether the workload runs now. With `ZGUI_PARITY` set to `even`
+        /// Whether the workload runs now. With `ZGX_PARITY` set to `even`
         /// or `odd`, only in Unix seconds of that parity, so two apps take
         /// turns and WindowServer's CPU in each second is one app's
         /// (`scripts/windowserver_pair.py`); otherwise always.
         pub fn turn() -> bool {
             static PARITY: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
-            let parity = PARITY.get_or_init(|| match std::env::var("ZGUI_PARITY").as_deref() {
+            let parity = PARITY.get_or_init(|| match std::env::var("ZGX_PARITY").as_deref() {
                 Ok("even") => Some(0),
                 Ok("odd") => Some(1),
                 _ => None,

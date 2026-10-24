@@ -8,7 +8,7 @@ pixels, and take typing at the scaled position. The display's own scale is
 restored afterwards, whatever happens; the script changes it the way
 Settings does, for the signed-in user only.
 
-    cargo build -p zgui-desktop --example dpi_transition
+    cargo build -p zgx-desktop --example dpi_transition
     python scripts/windows_dpi_smoke.py target/debug/examples/dpi_transition.exe
 """
 import argparse

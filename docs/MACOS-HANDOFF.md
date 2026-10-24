@@ -1,14 +1,14 @@
-# Continue zgui on macOS
+# Continue zgx on macOS
 
-Continue in the private `zeronsh/zgui` checkout on a logged-in Mac desktop.
+Continue in the private `zeronsh/zgx` checkout on a logged-in Mac desktop.
 Read repository instructions, then inspect the **current** GitHub Actions results
 before starting builds or changing code. Earlier failures and later source fixes
 are not interchangeable evidence:
 
 ```sh
-rtk proxy gh run list --repo zeronsh/zgui --limit 10
-rtk proxy gh run view RUN_ID --repo zeronsh/zgui
-rtk proxy gh run view RUN_ID --repo zeronsh/zgui --log-failed
+rtk proxy gh run list --repo zeronsh/zgx --limit 10
+rtk proxy gh run view RUN_ID --repo zeronsh/zgx
+rtk proxy gh run view RUN_ID --repo zeronsh/zgx --log-failed
 ```
 
 Download relevant failure artifacts into a fresh directory. Match each run to its
@@ -112,7 +112,7 @@ The remaining native qualification work is concrete:
    output directory, for example:
 
    ```sh
-   rtk proxy python3 scripts/macos_native_validation.py --output /tmp/zgui-macos-validation-NEXT
+   rtk proxy python3 scripts/macos_native_validation.py --output /tmp/zgx-macos-validation-NEXT
    ```
 
    `--interactive` launches individual checklist cases; pending/skipped cases
@@ -128,9 +128,9 @@ The remaining native qualification work is concrete:
 
 Linux X11/XIM has a recorded IBus 1.5.29 default synchronous-bridge
 interoperability limit: post-commit preedit and Escape lifecycle signals are
-omitted before zgui receives them. The [diagnostic packet](platform-validation/macos-continuation/zgui-linux-native-ime-followup.tar.gz)
+omitted before zgx receives them. The [diagnostic packet](platform-validation/macos-continuation/zgui-linux-native-ime-followup.tar.gz)
 preserves the failure, raw boundary traces and rejected private winit experiment.
-Original, unpatched zgui/winit passes Pinyin commit/cancel/editor transfer and
+Original, unpatched zgx/winit passes Pinyin commit/cancel/editor transfer and
 candidate placement with task-owned `IBUS_ENABLE_SYNC_MODE=0`, plus external-model/
 read-only cancellation and ordinary key recovery. The [official IBus fix](https://github.com/ibus/ibus/commit/719792d300579c1bfdf43251a83c6ed4e5594c07)
 addresses missing show/hide preedit handling. The smoke harness now selects and
@@ -139,15 +139,15 @@ synchronous configuration. No winit production patch was adopted.
 
 The Linux implementation and its historical evidence remain intact. The latest
 matched Linux performance packet is docs/results/gpui-parity-workers4/README.md:
-36 GPUI 0.2.2 / QuickGUI / zgui trials, 10,808 audited samples and active model
+36 GPUI 0.2.2 / QuickGUI / zgx trials, 10,808 audited samples and active model
 updates at 59.6–59.95/s. It measures software Vulkan on a shared Linux host, not
 Mac hardware rankings or presented frames. Keep historical evidence immutable.
 
-A matched GPUI/QuickGUI/zgui rerun for the final stabilized source remains a
+A matched GPUI/QuickGUI/zgx rerun for the final stabilized source remains a
 completion gate. Most continuation changes are native Mac behavior or validation,
 but shared RGBA iteration also changed from `chunks_exact` to equivalent typed
 chunks. The prior result remains valid for its own source; semantic equivalence
-and the newer zgui-only Mac resource probes are not a new matched measurement.
+and the newer zgx-only Mac resource probes are not a new matched measurement.
 Use an equivalent recorded comparison environment and fresh result directory;
 do not relabel historical Linux rankings as measurements of the final source.
 
@@ -156,8 +156,8 @@ build `component_workload` in release mode, stop all builds and other validation
 keep its window visible, and use a fresh directory:
 
 ```sh
-rtk cargo build -p zgui-desktop --release --example component_workload --locked
-rtk proxy python3 scripts/macos_resource_probe.py --binary target/release/examples/component_workload --output /tmp/zgui-macos-resources-NEXT
+rtk cargo build -p zgx-desktop --release --example component_workload --locked
+rtk proxy python3 scripts/macos_resource_probe.py --binary target/release/examples/component_workload --output /tmp/zgx-macos-resources-NEXT
 ```
 
 This probe preserves Mach-time CPU counters, RSS/physical-footprint samples,

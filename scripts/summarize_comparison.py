@@ -15,7 +15,7 @@ def main():
     rows = list(csv.DictReader(args.csv.open()))
     summary = []
     for mode in ("idle", "stream", "scroll", "both"):
-        for framework in ("zgui", "gpui", "quickgui"):
+        for framework in ("zgx", "gpui", "quickgui"):
             trials = [r for r in rows if r["mode"] == mode and r["framework"] == framework]
             if not trials or any(int(r["exit_code"]) for r in trials):
                 parser.error(f"missing or failed trial: {framework}/{mode}")

@@ -1,8 +1,8 @@
-# Fuzz targets for what zgui reads from outside: markdown, JSON, theme files,
+# Fuzz targets for what zgx reads from outside: markdown, JSON, theme files,
 # images, SVG and GIF. Not part of the workspace (it needs nightly and
 # cargo-fuzz) and not run by CI; see README.md here.
 [package]
-name = "zgui-fuzz"
+name = "zgx-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -12,9 +12,9 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-zgui = { path = "../crates/zgui" }
-zgui-gpu = { path = "../crates/zgui-gpu" }
-zgui-script = { path = "../crates/zgui-script", default-features = false, features = ["svg", "png", "jpeg", "gif"] }
+zgx = { path = "../crates/zgx" }
+zgx-gpu = { path = "../crates/zgx-gpu" }
+zgx-script = { path = "../crates/zgx-script", default-features = false, features = ["svg", "png", "jpeg", "gif"] }
 
 # Its own workspace: the fuzz build's sanitizer flags stay out of the main one.
 [workspace]

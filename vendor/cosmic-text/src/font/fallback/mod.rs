@@ -194,7 +194,7 @@ pub struct FontFallbackIter<'a> {
     other_i: usize,
     end: bool,
     ideal_weight: fontdb::Weight,
-    /// zgui: the optical size fonts are instanced at (0: their default).
+    /// zgx: the optical size fonts are instanced at (0: their default).
     optical: u16,
 }
 

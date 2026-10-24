@@ -17,7 +17,7 @@ import time
 from platform_smoke import stop, wait_for_wm
 from sway_host import wait_for_sway_host
 
-TITLE = "zgui cursor styles"
+TITLE = "zgx cursor styles"
 # wp_cursor_shape_device_v1.shape
 SHAPES = {1: "default", 5: "progress", 6: "wait", 8: "crosshair", 13: "move", 15: "not-allowed"}
 
@@ -37,7 +37,7 @@ def main():
         processes.append(child)
         return child
 
-    with tempfile.TemporaryDirectory(prefix="zgui-wayland-cursors-") as private:
+    with tempfile.TemporaryDirectory(prefix="zgx-wayland-cursors-") as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, XDG_CONFIG_HOME=private + "/config",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         for key in ("DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "I3SOCK"):

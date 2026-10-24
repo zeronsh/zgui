@@ -93,7 +93,7 @@ def main():
         processes.append(child)
         return child
 
-    with tempfile.TemporaryDirectory(prefix="zgui-portal-appearance-") as private:
+    with tempfile.TemporaryDirectory(prefix="zgx-portal-appearance-") as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, WINIT_X11_SCALE_FACTOR="1")
         for key in ("WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
             env.pop(key, None)

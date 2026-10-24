@@ -10,7 +10,7 @@ mod cache;
 mod component;
 mod hyperlink;
 mod selection;
-// zgui patch: Table and TableCell (ZGUI_PATCH.md).
+// zgx patch: Table and TableCell (ZGX_PATCH.md).
 mod table;
 mod text;
 mod value;

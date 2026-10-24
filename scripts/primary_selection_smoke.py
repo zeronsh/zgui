@@ -36,7 +36,7 @@ def main():
         processes.append(child)
         return child
 
-    with tempfile.TemporaryDirectory(prefix="zgui-primary-") as private:
+    with tempfile.TemporaryDirectory(prefix="zgx-primary-") as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, XDG_CONFIG_HOME=private + "/config",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         for key in ("DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "I3SOCK"):
@@ -57,7 +57,7 @@ def main():
                 env.update(WLR_BACKENDS="x11", WLR_X11_OUTPUTS="1", WLR_RENDERER="pixman")
                 config = pathlib.Path(private, "sway.conf")
                 config.write_text("xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\n"
-                                  "default_border none\nfor_window [title=\"zgui primary selection\"] floating enable\n")
+                                  "default_border none\nfor_window [title=\"zgx primary selection\"] floating enable\n")
                 sway = launch("sway", ["sway", "--unsupported-gpu", "--config", str(config)], env)
                 host = wait_for_sway_host(env, args.output, sway)
                 deadline = time.monotonic() + 10
@@ -91,7 +91,7 @@ def main():
                     while pending:
                         node = pending.pop()
                         pending.extend(node.get("nodes", []) + node.get("floating_nodes", []))
-                        if node.get("name") == "zgui primary selection":
+                        if node.get("name") == "zgx primary selection":
                             rect = node["rect"]
                     if rect:
                         window, origin = host, (rect["x"], rect["y"])

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """An undecorated window's title bar on X11 (Xvfb/Openbox): a
 `Titlebar::Inset` window has no frame of the window manager's; the window
-buttons zgui draws maximize and restore it, minimize it and close it, a
+buttons zgx draws maximize and restore it, minimize it and close it, a
 press on its corner resizes it, and its drag strip maximizes and restores it
 with a double click and moves it with a drag (through the window manager,
 as a GTK header bar's window does).
@@ -87,7 +87,7 @@ def main():
         processes.append(child)
         return child
 
-    with tempfile.TemporaryDirectory(prefix="zgui-window-buttons-") as private:
+    with tempfile.TemporaryDirectory(prefix="zgx-window-buttons-") as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, WINIT_X11_SCALE_FACTOR="1",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         env.pop("WAYLAND_DISPLAY", None)

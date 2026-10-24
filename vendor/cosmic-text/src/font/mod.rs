@@ -55,7 +55,7 @@ pub struct Font {
     id: fontdb::ID,
     monospace_fallback: Option<FontMonospaceFallback>,
     pub(crate) italic_or_oblique: bool,
-    /// zgui: whether it has an optical size axis (`opsz`).
+    /// zgx: whether it has an optical size axis (`opsz`).
     optical: bool,
 }
 
@@ -96,7 +96,7 @@ impl Font {
         self.harfrust.borrow_dependent()
     }
 
-    /// zgui: whether it has an optical size axis (`opsz`), so its shapes
+    /// zgx: whether it has an optical size axis (`opsz`), so its shapes
     /// and advances follow the size.
     pub fn has_optical(&self) -> bool {
         self.optical
@@ -131,7 +131,7 @@ impl Font {
         Self::new_at(db, id, weight, 0)
     }
 
-    /// zgui: instanced at an optical size too (pixels, the `opsz` axis; 0
+    /// zgx: instanced at an optical size too (pixels, the `opsz` axis; 0
     /// leaves the font's default), for fonts that have one.
     pub fn new_at(
         db: &fontdb::Database,

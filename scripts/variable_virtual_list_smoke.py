@@ -32,7 +32,7 @@ def main():
             result.append(result[-1] + height)
         return result
 
-    with tempfile.TemporaryDirectory(prefix="zgui-variable-list-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-variable-list-") as runtime:
         def launch(name, command, **kwargs):
             log = (args.output / (name + ".log")).open("w")
             logs.append(log)

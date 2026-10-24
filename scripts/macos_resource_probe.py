@@ -88,8 +88,8 @@ def trial(binary, mode, repeat, args, sample):
     started = time.monotonic()
     process = None
     try:
-        env = dict(os.environ, ZGUI_MODE=mode, ZGUI_SECONDS=str(args.seconds),
-                   ZGUI_INITIAL_TICKS='0')
+        env = dict(os.environ, ZGX_MODE=mode, ZGX_SECONDS=str(args.seconds),
+                   ZGX_INITIAL_TICKS='0')
         with path.with_suffix('.log').open('w') as log:
             process = subprocess.Popen([str(binary)], env=env, stdout=log, stderr=log)
             raw['pid'] = process.pid
@@ -108,7 +108,7 @@ def trial(binary, mode, repeat, args, sample):
                 value = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(value, dict) and value.get('framework') == 'zgui':
+            if isinstance(value, dict) and value.get('framework') == 'zgx':
                 reports.append(value)
         raw['application_reports'] = reports
         if raw['exit_code'] != 0 or len(reports) != 1:

@@ -40,7 +40,7 @@ def main():
         windows = {}
         while time.monotonic() < deadline and app.poll() is None:
             for name in ("source", "target"):
-                found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^zgui held keys " + name + "$"], env=env, capture_output=True, text=True)
+                found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^zgx held keys " + name + "$"], env=env, capture_output=True, text=True)
                 if found.returncode == 0 and found.stdout.strip():
                     windows[name] = found.stdout.splitlines()[0]
             if len(windows) == 2:

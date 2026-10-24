@@ -8,5 +8,5 @@ fuzz_target!(|data: &[u8]| {
     };
     // Small sizes keep runs fast; 1 to 64 pixels a side.
     let side = u32::from(size % 64) + 1;
-    let _ = zgui_gpu::assets::decode_svg(svg, side, side.max(u32::from(size >> 2)));
+    let _ = zgx_gpu::assets::decode_svg(svg, side, side.max(u32::from(size >> 2)));
 });

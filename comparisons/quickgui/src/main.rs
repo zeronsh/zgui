@@ -3,7 +3,7 @@ use quickgui::{
     button, div, text,
 };
 use std::time::Instant;
-use zgui_workload::{Mode, PERIOD, ROW_HEIGHT, Workload, row_label};
+use zgx_workload::{Mode, PERIOD, ROW_HEIGHT, Workload, row_label};
 struct Lab {
     work: Workload,
     items: Vec<i32>,
@@ -71,7 +71,7 @@ impl View for Lab {
             .font_family("DejaVu Sans")
             .child(
                 box_at(20., 20., 920., 28.)
-                    .child(text("zgui performance lab").text_size(20.).line_height(28.)),
+                    .child(text("zgx performance lab").text_size(20.).line_height(28.)),
             );
         for (id, label, x) in [
             (0, "+".to_owned(), 20.),
@@ -153,7 +153,7 @@ impl View for Lab {
             this.work.scroll_offset =
                 (this.work.scroll_offset - event.delta.pixel_delta(ROW_HEIGHT).y).clamp(
                     0.,
-                    zgui_workload::ROW_COUNT as f32 * ROW_HEIGHT - zgui_workload::VIEWPORT_HEIGHT,
+                    zgx_workload::ROW_COUNT as f32 * ROW_HEIGHT - zgx_workload::VIEWPORT_HEIGHT,
                 );
             cx.invalidate();
         });
@@ -163,7 +163,7 @@ impl View for Lab {
 fn main() -> Result<(), quickgui::AppError> {
     Application::new().run(|cx| {
         cx.open_window(
-            WindowOptions::new("zgui performance lab").size(960., 720.),
+            WindowOptions::new("zgx performance lab").size(960., 720.),
             Lab {
                 work: Workload::from_env(),
                 items: Vec::with_capacity(4),

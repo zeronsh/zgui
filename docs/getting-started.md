@@ -1,30 +1,30 @@
 # Getting started
 
-From nothing to a window, then a list, selectable text, a settings window and a shipped app: first in Rust, then in Luau with `zgui-run`. Every snippet here is compiled (Rust) or run headless (Luau) by the repository's tests, so they work as written.
+From nothing to a window, then a list, selectable text, a settings window and a shipped app: first in Rust, then in Luau with `zgx-run`. Every snippet here is compiled (Rust) or run headless (Luau) by the repository's tests, so they work as written.
 
-zgui runs on macOS, Windows and Linux. On Linux, install the fontconfig, xkbcommon and D-Bus development packages and `pkg-config`; on Windows, use the MSVC toolchain ([notes](windows.md)).
+zgx runs on macOS, Windows and Linux. On Linux, install the fontconfig, xkbcommon and D-Bus development packages and `pkg-config`; on Windows, use the MSVC toolchain ([notes](windows.md)).
 
 ## In Rust
 
-Add the crates (they are not on crates.io yet), and the fixes zgui builds its dependencies with: it carries forks of nine of them (`vendor/` in its repository), and a git dependency doesn't bring its `[patch]` with it, so without these zgui doesn't compile (cosmic-text; winit, which gives zgui-desktop the window's `xdg_surface` for Wayland popups) or behaves differently (layout margins, VoiceOver headings, Orca's tables, Metal's command buffers, slower Luau scripts):
+Add the crates (they are not on crates.io yet), and the fixes zgx builds its dependencies with: it carries forks of nine of them (`vendor/` in its repository), and a git dependency doesn't bring its `[patch]` with it, so without these zgx doesn't compile (cosmic-text; winit, which gives zgx-desktop the window's `xdg_surface` for Wayland popups) or behaves differently (layout margins, VoiceOver headings, Orca's tables, Metal's command buffers, slower Luau scripts):
 
 ```toml
 [dependencies]
-zgui = { git = "https://github.com/zeronsh/zgui" }
-zgui-desktop = { git = "https://github.com/zeronsh/zgui" }
+zgx = { git = "https://github.com/zeronsh/zgx" }
+zgx-desktop = { git = "https://github.com/zeronsh/zgx" }
 # The component library (a data grid, a tree, tabs, toasts…), if you use it.
-zgui-components = { git = "https://github.com/zeronsh/zgui" }
+zgx-components = { git = "https://github.com/zeronsh/zgx" }
 
 [patch.crates-io]
-cosmic-text = { git = "https://github.com/zeronsh/zgui" }
-taffy = { git = "https://github.com/zeronsh/zgui" }
-wgpu-hal = { git = "https://github.com/zeronsh/zgui" }
-accesskit_macos = { git = "https://github.com/zeronsh/zgui" }
-accesskit_windows = { git = "https://github.com/zeronsh/zgui" }
-accesskit_unix = { git = "https://github.com/zeronsh/zgui" }
-accesskit_atspi_common = { git = "https://github.com/zeronsh/zgui" }
-winit = { git = "https://github.com/zeronsh/zgui" }
-mlua = { git = "https://github.com/zeronsh/zgui" }
+cosmic-text = { git = "https://github.com/zeronsh/zgx" }
+taffy = { git = "https://github.com/zeronsh/zgx" }
+wgpu-hal = { git = "https://github.com/zeronsh/zgx" }
+accesskit_macos = { git = "https://github.com/zeronsh/zgx" }
+accesskit_windows = { git = "https://github.com/zeronsh/zgx" }
+accesskit_unix = { git = "https://github.com/zeronsh/zgx" }
+accesskit_atspi_common = { git = "https://github.com/zeronsh/zgx" }
+winit = { git = "https://github.com/zeronsh/zgx" }
+mlua = { git = "https://github.com/zeronsh/zgx" }
 ```
 
 The first build compiles the stack once (about a minute on an Apple M-series Mac, release); later ones take seconds.
@@ -34,8 +34,8 @@ The first build compiles the stack once (about a minute on an Apple M-series Mac
 `Application` opens windows; `render` mounts a view in one. Views are built once: `column`, `row` and `div` lay out their children as CSS's flexbox does (children stretch across and shrink to fit), and styles are methods.
 
 ```rust,no_run
-use zgui::compose::prelude::*;
-use zgui_desktop::{Application, WindowOptions};
+use zgx::compose::prelude::*;
+use zgx_desktop::{Application, WindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::new()
@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         })
         .run(|cx| {
-            cx.render(column().p(24.).gap(12.).child(text("Hello, zgui")));
+            cx.render(column().p(24.).gap(12.).child(text("Hello, zgx")));
         })
 }
 ```
@@ -56,8 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 A signal holds a value; what reads it updates when it changes, and nothing else does. `text_signal` follows the signals it reads; a button's `on_click` writes one.
 
 ```rust,no_run
-use zgui::compose::prelude::*;
-use zgui_desktop::{Application, WindowOptions};
+use zgx::compose::prelude::*;
+use zgx_desktop::{Application, WindowOptions};
 
 fn counter() -> View {
     component(|cx| {
@@ -88,8 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `virtual_list` mounts only the rows in view, so ten thousand cost what twenty do. `keyboard_navigation(true)` makes it one Tab stop that the arrows, Page Up and Down, Home and End move through.
 
 ```rust,no_run
-use zgui::compose::prelude::*;
-use zgui_desktop::{Application, WindowOptions};
+use zgx::compose::prelude::*;
+use zgx_desktop::{Application, WindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::new()
@@ -118,8 +118,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Text is not selectable unless asked, as in an app; `selectable(true)` makes a subtree a document you drag across, double-press for words and copy from, as on a web page.
 
 ```rust,no_run
-use zgui::compose::prelude::*;
-use zgui_desktop::{Application, WindowOptions};
+use zgx::compose::prelude::*;
+use zgx_desktop::{Application, WindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::new()
@@ -142,8 +142,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `cx.windows.open` opens another window. An application's windows share one reactive runtime: a signal changed in the settings window updates the main one.
 
 ```rust,no_run
-use zgui::compose::prelude::*;
-use zgui_desktop::{Application, WindowOptions};
+use zgx::compose::prelude::*;
+use zgx_desktop::{Application, WindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::new()
@@ -192,7 +192,7 @@ lto = "fat"
 codegen-units = 1
 ```
 
-Profile-guided optimization is a further, optional step: build the app instrumented, run what it does, and build it again with what the run recorded. On zgui's headless scenes it saves 2–19% of the instructions (the heavy dashboard 12%, Luau animation 19%), in scenes it was not trained on as much as in those it was. The profile fits the source it was recorded from, so record again after changes. Inside this repository, `python3 scripts/perf/pgo.py -p zgui-run --bin zgui-run` does all three builds, training on zgui's headless scenes and on any command you give it (`'{bin} …'`), and writes `target/dist-pgo/zgui-run`. For an app of your own (`rustup component add llvm-tools` first):
+Profile-guided optimization is a further, optional step: build the app instrumented, run what it does, and build it again with what the run recorded. On zgx's headless scenes it saves 2–19% of the instructions (the heavy dashboard 12%, Luau animation 19%), in scenes it was not trained on as much as in those it was. The profile fits the source it was recorded from, so record again after changes. Inside this repository, `python3 scripts/perf/pgo.py -p zgx-run --bin zgx-run` does all three builds, training on zgx's headless scenes and on any command you give it (`'{bin} …'`), and writes `target/dist-pgo/zgx-run`. For an app of your own (`rustup component add llvm-tools` first):
 
 ```sh
 RUSTFLAGS="-Cprofile-generate=/tmp/pgo" cargo build --profile dist
@@ -201,36 +201,36 @@ RUSTFLAGS="-Cprofile-generate=/tmp/pgo" cargo build --profile dist
 RUSTFLAGS="-Cprofile-use=/tmp/app.profdata" cargo build --profile dist
 ```
 
-zgui-desktop's `mimalloc` feature makes mimalloc the program's allocator: 1–10% fewer cycles in zgui's headless scenes (text 7%, layout 6%, animation 9%, the heavy dashboard 2%) for about 2–3 MB more memory. It also smooths the frames after a large removal: a large subtree leaves the scene at once and zgui frees its nodes a millisecond's worth per frame, but the system allocator on macOS can take 6–9 ms over the first chunk it frees (it hands pages back), where with mimalloc it stays within the millisecond. Turn it on with `features = ["mimalloc"]` on the dependency, unless your program declares a `#[global_allocator]` of its own.
+zgx-desktop's `mimalloc` feature makes mimalloc the program's allocator: 1–10% fewer cycles in zgx's headless scenes (text 7%, layout 6%, animation 9%, the heavy dashboard 2%) for about 2–3 MB more memory. It also smooths the frames after a large removal: a large subtree leaves the scene at once and zgx frees its nodes a millisecond's worth per frame, but the system allocator on macOS can take 6–9 ms over the first chunk it frees (it hands pages back), where with mimalloc it stays within the millisecond. Turn it on with `features = ["mimalloc"]` on the dependency, unless your program declares a `#[global_allocator]` of its own.
 
 Release binaries keep their symbol table, so backtraces and crash reports name functions. Stripping it saves about another 1.4 MB, and is your choice to make: add `strip = "symbols"` to `[profile.dist]` and keep the symbols apart, in a dSYM, to read crash reports with. On macOS that is `split-debuginfo = "packed"` with `debug = "line-tables-only"` in the profile; Cargo writes `<binary>.dSYM` beside the binary. Keep it with each release you ship, so crash reports from it can be symbolicated (`atos`, or Xcode's Organizer).
 
-To ship it on Windows (an icon, a manifest, one instance per user, an installer), see [shipping on Windows](windows.md#shipping-a-zgui-app-on-windows); on macOS, bundle the binary in an `.app` with an `Info.plist` (the terminal example's `scripts/zterm-app.sh` does).
+To ship it on Windows (an icon, a manifest, one instance per user, an installer), see [shipping on Windows](windows.md#shipping-a-zgx-app-on-windows); on macOS, bundle the binary in an `.app` with an `Info.plist` (the terminal example's `scripts/zterm-app.sh` does).
 
 ## In Luau
 
 The same interface as a script, hot reloaded as you save it, without a Rust host of your own. Install the runner and the checker:
 
 ```sh
-LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgui zgui-run
-LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgui zgui-script --bin zgui
+LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgx zgx-run
+LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgx zgx-script --bin zgx
 ```
 
-(`zgui-run` uses mimalloc as its allocator, for 6–10% less CPU on script, text and layout work at about 2 MB more memory; add `--no-default-features` to keep the system's. `LUAU_CXXFLAGS=-DNDEBUG` builds Luau without its asserts, a fifth faster: the repository's own builds set it in `.cargo/config.toml`, which an install doesn't read. Without it, `zgui-run` says so as it starts.)
+(`zgx-run` uses mimalloc as its allocator, for 6–10% less CPU on script, text and layout work at about 2 MB more memory; add `--no-default-features` to keep the system's. `LUAU_CXXFLAGS=-DNDEBUG` builds Luau without its asserts, a fifth faster: the repository's own builds set it in `.cargo/config.toml`, which an install doesn't read. Without it, `zgx-run` says so as it starts.)
 
 ### A window
 
-An app is a directory with an `app.luau` returning its interface, and optionally a `zgui.json` for its window:
+An app is a directory with an `app.luau` returning its interface, and optionally a `zgx.json` for its window:
 
 ```json
 { "title": "Hello", "width": 480, "height": 320, "app_id": "com.example.hello" }
 ```
 
 ```lua
-return ui.column { p = 24, gap = 12, ui.text { "Hello, zgui" } }
+return ui.column { p = 24, gap = 12, ui.text { "Hello, zgx" } }
 ```
 
-`zgui-run hello/` opens it; saving `app.luau` updates the window and keeps its state. `zgui check hello/app.luau` type checks it (with luau-lsp installed), and `zgui lint` finds what is slow or wrong though it runs.
+`zgx-run hello/` opens it; saving `app.luau` updates the window and keeps its state. `zgx check hello/app.luau` type checks it (with luau-lsp installed), and `zgx lint` finds what is slow or wrong though it runs.
 
 ### State
 
@@ -310,7 +310,7 @@ return ui.text {
 
 ### Shipping
 
-A shipped app carries its scripts compiled into the binary: a build script bundles the directory, and a small Rust host runs it from the bundle ([shipping an app](scripting.md#shipping-an-app)). Build it with the `dist` profile, as a Rust app (above), and set `LUAU_CXXFLAGS=-DNDEBUG` for it ([cost](scripting.md#cost)). The mail example (`crates/zgui-script/examples/mail`) is a whole app written this way.
+A shipped app carries its scripts compiled into the binary: a build script bundles the directory, and a small Rust host runs it from the bundle ([shipping an app](scripting.md#shipping-an-app)). Build it with the `dist` profile, as a Rust app (above), and set `LUAU_CXXFLAGS=-DNDEBUG` for it ([cost](scripting.md#cost)). The mail example (`crates/zgx-script/examples/mail`) is a whole app written this way.
 
 ## Next
 

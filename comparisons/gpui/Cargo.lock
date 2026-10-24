@@ -7141,15 +7141,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "zgui-compare-gpui"
+name = "zgx-compare-gpui"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "zgui-workload",
+ "zgx-workload",
 ]
 
 [[package]]
-name = "zgui-workload"
+name = "zgx-workload"
 version = "0.1.0"
 
 [[package]]

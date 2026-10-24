@@ -23,10 +23,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "results.json").unlink(missing_ok=True)
     compositor = app = xvfb = wm = None
-    with tempfile.TemporaryDirectory(prefix="zgui-live-dpi-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-live-dpi-") as runtime:
         os.chmod(runtime, 0o700)
         config = pathlib.Path(runtime, "sway.conf")
-        config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgui live DPI probe"] fullscreen enable\n')
+        config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgx live DPI probe"] fullscreen enable\n')
         (args.output / "sway.conf").write_text(config.read_text())
         env = dict(os.environ, XDG_RUNTIME_DIR=runtime, WLR_BACKENDS="x11", WLR_X11_OUTPUTS="1", WLR_RENDERER="pixman")
         for name in ("DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "I3SOCK"):

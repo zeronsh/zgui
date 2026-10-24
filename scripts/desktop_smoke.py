@@ -19,7 +19,7 @@ def main():
         parser.error("--scale must be finite and positive")
     if not args.display:
         parser.error("--display must name an X11 test display with a window manager")
-    env = dict(os.environ, DISPLAY=args.display, ZGUI_SECONDS="15", ZGUI_SNAPSHOT="1")
+    env = dict(os.environ, DISPLAY=args.display, ZGX_SECONDS="15", ZGX_SNAPSHOT="1")
     env.pop("WAYLAND_DISPLAY", None)
     env["WINIT_X11_SCALE_FACTOR"] = str(args.scale)
     # An isolated test display need not inherit a potentially unrelated portal bus.

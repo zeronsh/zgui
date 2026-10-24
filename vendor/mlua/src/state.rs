@@ -1653,7 +1653,7 @@ impl Lua {
     /// For a function that makes many small objects, called often (an
     /// interface built from many nodes).
     ///
-    /// zgui patch: not in upstream mlua (see `vendor/mlua/ZGUI_PATCH.md`).
+    /// zgx patch: not in upstream mlua (see `vendor/mlua/ZGX_PATCH.md`).
     pub fn create_userdata_relaxed<T>(&self, data: T) -> Result<AnyUserData>
     where
         T: UserData + MaybeSend + MaybeSync + 'static,

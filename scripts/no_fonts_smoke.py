@@ -15,7 +15,7 @@ import time
 
 from platform_smoke import stop
 
-WARNING = "zgui: no font to draw text with"
+WARNING = "zgx: no font to draw text with"
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     from PIL import Image
     processes, checks = [], {}
-    with tempfile.TemporaryDirectory(prefix="zgui-no-fonts-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-no-fonts-") as runtime:
         try:
             empty = pathlib.Path(runtime, "fonts")
             empty.mkdir()

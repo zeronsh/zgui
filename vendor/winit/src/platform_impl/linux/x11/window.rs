@@ -124,7 +124,7 @@ pub struct UnownedWindow {
     pub shared_state: Mutex<SharedState>,
     redraw_sender: WakeSender<WindowId>,
     activation_sender: WakeSender<super::ActivationToken>,
-    // zgui patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER`, and the value
+    // zgx patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER`, and the value
     // the window manager last asked for, set once the frame for its resize
     // is presented (`pre_present_notify`).
     sync_counter: Option<u32>,
@@ -481,13 +481,13 @@ impl UnownedWindow {
                 leap!(window.set_icon_inner(icon.inner)).ignore_error();
             }
 
-            // zgui patch: the last user input before this window (EWMH's
+            // zgx patch: the last user input before this window (EWMH's
             // `_NET_WM_USER_TIME`, as GTK sets it): window managers focus a
             // window opened after it rather than one the app opens later on
             // its own, while the user works in another. None before any.
             window.set_user_time(xconn.user_time());
 
-            // zgui patch: a counter the window manager waits on as it resizes the
+            // zgx patch: a counter the window manager waits on as it resizes the
             // window, so each frame is drawn at the size it gave
             // (`_NET_WM_SYNC_REQUEST`, as GTK and Chromium do).
             window.sync_counter = window.create_sync_counter();
@@ -1867,11 +1867,11 @@ impl UnownedWindow {
     #[inline]
     pub fn pre_present_notify(&self) {
         // TODO timer
-        // zgui patch: the frame for the window manager's resize is drawn.
+        // zgx patch: the frame for the window manager's resize is drawn.
         self.answer_sync();
     }
 
-    // zgui patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER` (the SYNC
+    // zgx patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER` (the SYNC
     // extension), at 0; none if the server has no SYNC.
     fn create_sync_counter(&self) -> Option<u32> {
         use x11rb::{
@@ -1895,7 +1895,7 @@ impl UnownedWindow {
         Some(counter)
     }
 
-    // zgui patch: `_NET_WM_USER_TIME`, the window's last user input (none
+    // zgx patch: `_NET_WM_USER_TIME`, the window's last user input (none
     // for 0).
     pub(crate) fn set_user_time(&self, time: u32) {
         use x11rb::wrapper::ConnectionExt as _;
@@ -1914,18 +1914,18 @@ impl UnownedWindow {
         }
     }
 
-    // zgui patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER`.
+    // zgx patch: the window's `_NET_WM_SYNC_REQUEST_COUNTER`.
     pub(crate) fn sync_counter(&self) -> Option<u32> {
         self.sync_counter
     }
 
-    // zgui patch: the window manager asks for `value` once the window is
+    // zgx patch: the window manager asks for `value` once the window is
     // drawn at the size it is about to give.
     pub(crate) fn sync_request(&self, value: i64) {
         *self.sync_pending.lock().unwrap() = Some(value);
     }
 
-    // zgui patch: tell the window manager the frame it waited for is there.
+    // zgx patch: tell the window manager the frame it waited for is there.
     pub(crate) fn answer_sync(&self) {
         use x11rb::protocol::sync::{self, ConnectionExt as _};
         let (Some(counter), Some(value)) = (self.sync_counter, self.sync_pending.lock().unwrap().take())

@@ -10,10 +10,10 @@ import ScreenCaptureKit
 // --hid posts through the HID tap, as a keyboard does, and only while the app is
 // frontmost (so a key never lands elsewhere); otherwise keys go to the process alone.
 // --tab presses Tab first to focus the field. Needs Accessibility and Screen Recording.
-//   swiftc -O scripts/macos_latency_probe.swift -o /tmp/zgui-latency-probe
-//   swiftc -O scripts/macos_native_field.swift -o /tmp/zgui-native-field   # AppKit baseline
-//   cargo build --release -p zgui-desktop --example input_latency
-//   target/release/examples/input_latency & /tmp/zgui-latency-probe $! 60 64 72 24 52 520 40 --hid --tab
+//   swiftc -O scripts/macos_latency_probe.swift -o /tmp/zgx-latency-probe
+//   swiftc -O scripts/macos_native_field.swift -o /tmp/zgx-native-field   # AppKit baseline
+//   cargo build --release -p zgx-desktop --example input_latency
+//   target/release/examples/input_latency & /tmp/zgx-latency-probe $! 60 64 72 24 52 520 40 --hid --tab
 _ = NSApplication.shared  // a window-server connection for AppKit and CGEvent
 let a = CommandLine.arguments
 let pid = pid_t(a[1])!, samples = Int(a[2])!

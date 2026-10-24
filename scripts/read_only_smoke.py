@@ -20,7 +20,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "results.json").unlink(missing_ok=True)
     xvfb = wm = app = None
-    with tempfile.TemporaryDirectory(prefix="zgui-read-only-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-read-only-") as runtime:
         try:
             with (args.output / "xvfb.log").open("w") as log:
                 xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "800x600x24", "-ac"], stdout=subprocess.PIPE, stderr=log, text=True)

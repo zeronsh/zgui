@@ -61,7 +61,7 @@ def main():
         ('window_controls', 'Observe resize, maximize and restore through controls. Separately observe minimize/restore, hide/show and focus during --smoke-test. Its log proves resize acknowledgements but only requests the other states; record actual window behavior.'),
         ('native_platform', 'Check initial bounds/display and minimum size, custom-titlebar dragging, fullscreen and restoration (the --smoke launch requests these). Close the root then use native application reopen and registered open-URL delivery. Preserve APPLICATION logs. URL scheme registration is application packaging; unsupported setup stays pending.'),
         ('drag_drop', 'Drag each colored card onto target; verify preview, accepted payload, outside-drop and Escape cancellation. From Finder drop two files and verify complete grouped paths, then cancel and leave the region; hover must clear.'),
-        ('actions', 'Focus the editor: F5 and F1 then F2 must save; x then y must save without insertion, while x followed by timeout must replay x. Check Escape cancellation and F1/F5/F12/Insert with ZGUI_ACTION_EVENTS=1; use ZGUI_ACTION_TRACE=1 for model logs. Multiple-context precedence and application fallback remain separate behavior tests.'),
+        ('actions', 'Focus the editor: F5 and F1 then F2 must save; x then y must save without insertion, while x followed by timeout must replay x. Check Escape cancellation and F1/F5/F12/Insert with ZGX_ACTION_EVENTS=1; use ZGX_ACTION_TRACE=1 for model logs. Multiple-context precedence and application fallback remain separate behavior tests.'),
         ('cursors', 'Move over cursor regions and disabled regions, then exit. Observe the native pointer shape and restoration.'),
     ]
     for index, (example, instruction) in enumerate(checks):
@@ -106,12 +106,12 @@ def main():
                         if key in allowed or isinstance(item, (dict, list))}
             return value
         results['displays'] = display_summary(display_data)
-        run('metal-rendering-tests', ['cargo', 'test', '-p', 'zgui-gpu', '--locked', '--', '--test-threads=1'], 1800)
-        run('accessibility-projection-tests', ['cargo', 'test', '-p', 'zgui-desktop', '--lib', 'accessibility::', '--locked'])
+        run('metal-rendering-tests', ['cargo', 'test', '-p', 'zgx-gpu', '--locked', '--', '--test-threads=1'], 1800)
+        run('accessibility-projection-tests', ['cargo', 'test', '-p', 'zgx-desktop', '--lib', 'accessibility::', '--locked'])
         examples = ['native_surfaces', 'rich_text', 'platform_services', 'dynamic_menus', 'atspi',
                     'form', 'native_ime', 'layout', 'paint_styles', 'canvas', 'svg_transform', 'animated_image',
                     'component_workload', 'windows', 'window_controls', 'native_platform', 'drag_drop', 'actions', 'cursors']
-        command = ['cargo', 'build', '-p', 'zgui-desktop', '--locked']
+        command = ['cargo', 'build', '-p', 'zgx-desktop', '--locked']
         for example in examples:
             command += ['--example', example]
         run('build-fixtures', command)

@@ -6,10 +6,10 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('results',type=Path)
 p.add_argument('--output',type=Path,default=Path('site'))
 a=p.parse_args();r=a.results
-summary=json.loads((r/'summary.json').read_text());audit=json.loads((r/'audit.json').read_text());proof=json.loads((r/'zgui-build-manifest.json').read_text())
+summary=json.loads((r/'summary.json').read_text());audit=json.loads((r/'audit.json').read_text());proof=json.loads((r/'zgx-build-manifest.json').read_text())
 trials=list(csv.DictReader((r/'current.csv').open()))
 assert len(trials)==36 and len(summary['groups'])==12
-frameworks=['zgui','gpui','quickgui'];modes=['idle','stream','scroll','both']
+frameworks=['zgx','gpui','quickgui'];modes=['idle','stream','scroll','both']
 assert {(t['framework'],t['mode'],int(t['repeat'])) for t in trials} == {(f,m,n) for f in frameworks for m in modes for n in range(3)}
 assert {(g['framework'],g['mode']) for g in summary['groups']} == {(f,m) for f in frameworks for m in modes}
 for group in summary['groups']:
@@ -32,8 +32,8 @@ public={'groups':summary['groups']}
 fields=['framework','mode','repeat','wall_seconds','cpu_seconds','cpu_percent_one_core','mean_rss_bytes','peak_rss_bytes','samples','workload_ticks','exit_code']
 with (a.output/'data.csv').open('w',newline='') as output:
  writer=csv.DictWriter(output,fieldnames=fields,extrasaction='ignore');writer.writeheader();writer.writerows(trials)
-metadata={'date':proof['captured_at_utc'][:10],'commit':proof['commit'],'trials':audit['trials'],'samples':audit['samples'],'updates':audit['active_ticks_per_requested_second'],'environment':'Linux Xvfb, Mesa llvmpipe software Vulkan; LP_NUM_THREADS=4 per pool','host_note':'Shared host; no CPU affinity or thermal isolation. See methodology for limits.','protocol':{'requested_seconds':20,'warmup_seconds':5,'repeats':3,'acceptance_updates_per_second':[58,61]},'frameworks':{'gpui':'0.2.2','quickgui':'811d6e2816d5229711f59683c4c9dfbb6fc74133','zgui':proof['commit']},'csv_sha256':hashlib.sha256((a.output/'data.csv').read_bytes()).hexdigest(),'source_csv_sha256':hashlib.sha256((r/'current.csv').read_bytes()).hexdigest(),'binaries':{}}
-for file in ['zgui-build-manifest.json','reference-build-manifest.json']:
+metadata={'date':proof['captured_at_utc'][:10],'commit':proof['commit'],'trials':audit['trials'],'samples':audit['samples'],'updates':audit['active_ticks_per_requested_second'],'environment':'Linux Xvfb, Mesa llvmpipe software Vulkan; LP_NUM_THREADS=4 per pool','host_note':'Shared host; no CPU affinity or thermal isolation. See methodology for limits.','protocol':{'requested_seconds':20,'warmup_seconds':5,'repeats':3,'acceptance_updates_per_second':[58,61]},'frameworks':{'gpui':'0.2.2','quickgui':'811d6e2816d5229711f59683c4c9dfbb6fc74133','zgx':proof['commit']},'csv_sha256':hashlib.sha256((a.output/'data.csv').read_bytes()).hexdigest(),'source_csv_sha256':hashlib.sha256((r/'current.csv').read_bytes()).hexdigest(),'binaries':{}}
+for file in ['zgx-build-manifest.json','reference-build-manifest.json']:
  for name,b in json.loads((r/file).read_text())['binaries'].items():metadata['binaries'][name]={'sha256':b['sha256'],'bytes':b['bytes']}
 independent=r/'independent-audit.json'
 if independent.exists():

@@ -14,7 +14,7 @@ scripts/trace_macos_gpu.py if it ran, and the run's identity.
 import argparse, json
 from pathlib import Path
 
-NAMES = {'zgui': 'zgui', 'gpui': 'GPUI', 'gpui-fast': 'GPUI Fast', 'quickgui': 'QuickGUI'}
+NAMES = {'zgx': 'zgx', 'gpui': 'GPUI', 'gpui-fast': 'GPUI Fast', 'quickgui': 'QuickGUI'}
 METRICS = ['cpu_percent_one_core', 'gpu_mcycles_per_second', 'gpu_percent', 'mean_footprint_bytes',
            'peak_footprint_bytes', 'reported_fps', 'windowserver_cpu_percent', 'cpu_watts']
 PACING = ['frames_per_second', 'interval_p50_ms', 'interval_p95_ms', 'interval_p99_ms', 'long_interval_fraction']

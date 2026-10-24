@@ -1,6 +1,6 @@
 # Web views, terminals, commands: webview, web, terminal, term, command
 
-Native content laid out as nodes, and the app's menu commands. A web view is a WebKit page (macOS) or a WebView2 page (Windows, the desktop host's `webview2` feature; Linux has none yet, see [the Linux notes](../linux.md#web-views)), and a terminal a Ghostty surface (macOS, the `ghostty` feature); each is placed, sized, rounded and clipped like any node, and zgui draws over it (a frosted popover over a page works). Without a native host (headless, other platforms) each shows a labelled placeholder box and its controller still answers. Pages and sessions belong to the host, not to a run, so a reload keeps them.
+Native content laid out as nodes, and the app's menu commands. A web view is a WebKit page (macOS) or a WebView2 page (Windows, the desktop host's `webview2` feature; Linux has none yet, see [the Linux notes](../linux.md#web-views)), and a terminal a Ghostty surface (macOS, the `ghostty` feature); each is placed, sized, rounded and clipped like any node, and zgx draws over it (a frosted popover over a page works). Without a native host (headless, other platforms) each shows a labelled placeholder box and its controller still answers. Pages and sessions belong to the host, not to a run, so a reload keeps them.
 
 ```luau
 ui.webview(props: WebViewProps) -> Node
@@ -29,7 +29,7 @@ ui.command(opts: CommandOptions) -> ()
 | `profile` | `string` | `"default"` | `"default"` shares cookies and storage, `"ephemeral"` keeps nothing, any other name is a persistent store of its own |
 | `inspectable` | `boolean` | `true` in debug builds | Web Inspector (`web:devtools()`) |
 | `user_agent` | `string` | WebKit's | |
-| `messages` | `boolean` | `true` | the page's `window.zgui.postMessage(value)` reaches `on_message` |
+| `messages` | `boolean` | `true` | the page's `window.zgx.postMessage(value)` reaches `on_message` |
 | `new_windows` | `boolean` | `true` | `window.open` and `target=_blank` reach `on_new_window` (and open nothing) |
 | `web` | `Web` | a page for the node | a controller, so the page outlives the node (a tab switched away and back) |
 | `src` | `Reactive<string>` | none | the URL; the page navigates when it changes |
@@ -82,7 +82,7 @@ A `Term`'s `id`, `title`, `pwd`, `process`, `pid`, `focused`, `bell` (it rang si
 ui.window(opts: WindowOptions) -> ()
 ```
 
-`ui.window { id, open = state, node }` declares a window of the app's own, a settings window say: it is open while `open` is true, closing it sets `open` false, and its node is its content. Declared at a script's top level, as commands are, each load declares them again; what a window shows follows reloads. The windows share the app's state: a switch in the settings window changes what the main window shows (and `ui.theme.set` restyles every window). `zgui-run` opens them, and a Rust host opens them from `ScriptHost::windows()` with `ScriptHost::window_view(id)` (`zgui_run::follow_windows` does both).
+`ui.window { id, open = state, node }` declares a window of the app's own, a settings window say: it is open while `open` is true, closing it sets `open` false, and its node is its content. Declared at a script's top level, as commands are, each load declares them again; what a window shows follows reloads. The windows share the app's state: a switch in the settings window changes what the main window shows (and `ui.theme.set` restyles every window). `zgx-run` opens them, and a Rust host opens them from `ScriptHost::windows()` with `ScriptHost::window_view(id)` (`zgx_run::follow_windows` does both).
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
@@ -123,7 +123,7 @@ ui.window.titlebar_area: State<WindowRect?>
 ui.window.controls: State<WindowRect?>
 ```
 
-Content under an inset or hidden title bar stays clear of the window's own buttons by reading where it may draw, as the web's Window Controls Overlay gives it. `ui.window.titlebar_area` is the strip the title bar leaves, less the window's buttons. `ui.window.controls` is the buttons. Each is `{ x, y, width, height }` in points from the window's top left, or nil for a standard title bar, in fullscreen, and where the platform does not say (macOS and Linux, for now). Both follow resizes, scale and fullscreen. `zgui run` keeps them; a Rust host passes its window's with `ScriptHost::window_chrome`.
+Content under an inset or hidden title bar stays clear of the window's own buttons by reading where it may draw, as the web's Window Controls Overlay gives it. `ui.window.titlebar_area` is the strip the title bar leaves, less the window's buttons. `ui.window.controls` is the buttons. Each is `{ x, y, width, height }` in points from the window's top left, or nil for a standard title bar, in fullscreen, and where the platform does not say (macOS and Linux, for now). Both follow resizes, scale and fullscreen. `zgx run` keeps them; a Rust host passes its window's with `ScriptHost::window_chrome`.
 
 ```lua
 return ui.row {
@@ -224,7 +224,7 @@ return ui.row {
 - Sessions outlive reloads and the nodes that show them: a reload keeps every shell running, and moving the `terminal` node (another split, another tab) moves the terminal with its process. End one with `term:close()`, usually from `on_close`.
 - `ui.term` rejects an unknown option. The `on_*` options are a session's events, not a node's: give them to `ui.term`, not `ui.terminal`.
 - A page from `ui.web(id)` is kept until `web:close()`; `ui.web(opts)` and a `webview` without `web` make a page for the run (a reload makes a new one).
-- Over a page or a terminal that takes input, zgui's nodes hear no pointer moves (they had their leave): follow `web.pointer` or `term.pointer` instead. The terminal reads its own keyboard, IME and mouse; app shortcuts reach the app through its commands, whose keys work wherever focus is.
+- Over a page or a terminal that takes input, zgx's nodes hear no pointer moves (they had their leave): follow `web.pointer` or `term.pointer` instead. The terminal reads its own keyboard, IME and mouse; app shortcuts reach the app through its commands, whose keys work wherever focus is.
 - Terminals hand the right clicks their program does not use to the node, so a `context_menu` on the `terminal` node opens over it.
 - Each successful load declares its commands afresh, replacing the last; a failed reload keeps them. Declaring an id twice in one run is an error.
 - `on_message` and `eval` get the page's JSON as Luau data, typed `any`: check its shape before using it.

@@ -17,14 +17,14 @@ GPU time by clock is the megacycles a second the app used.
 Active trials must deliver 58-61 logical updates per requested second.
 
 Scenes (`--scene`):
-- `lab` (default): streaming text and a 100,000-row virtual list, for zgui,
+- `lab` (default): streaming text and a 100,000-row virtual list, for zgx,
   GPUI, GPUI Fast (longbridge/gpui-fast, a GPUI fork that retains unchanged
   views, layout and text) and QuickGUI.
 - `heavy`: a 1280x800 dashboard where most content changes every tick
-  (zgui_workload::heavy), for zgui, GPUI and GPUI Fast (QuickGUI's text
+  (zgx_workload::heavy), for zgx, GPUI and GPUI Fast (QuickGUI's text
   renderer panics past 32 text batches on it).
 - `animate`: dots and text animated at the display's rate
-  (zgui_workload::animation), for zgui, GPUI and GPUI Fast; no update gate,
+  (zgx_workload::animation), for zgx, GPUI and GPUI Fast; no update gate,
   each reports the frames it drew.
 
 Each repeat also measures the desktop alone (`desktop`/`baseline`: a sleeping
@@ -42,7 +42,7 @@ captures, for every framework.
 (run `sudo -v` first in the same terminal; without cached credentials the
 columns stay empty).
 
-`--quick` is for iterating, not publishing: zgui and GPUI Fast only, two
+`--quick` is for iterating, not publishing: zgx and GPUI Fast only, two
 repeats, and pacing captured during the sampling trials instead
 of apart (capturing costs the window server work: its numbers then read
 high for every framework). About 10 minutes for heavy. The full run measures
@@ -84,16 +84,16 @@ SCENES = {
     'lab': {
         'modes': MODES,
         'binaries': {
-            'zgui': ROOT / 'target/dist/examples/component_workload',
-            'gpui': ROOT / 'comparisons/gpui/target/dist/zgui-compare-gpui',
-            'gpui-fast': ROOT / 'comparisons/gpui-fast/target/dist/zgui-compare-gpui-fast',
-            'quickgui': ROOT / 'comparisons/quickgui/target/dist/zgui-compare-quickgui',
+            'zgx': ROOT / 'target/dist/examples/component_workload',
+            'gpui': ROOT / 'comparisons/gpui/target/dist/zgx-compare-gpui',
+            'gpui-fast': ROOT / 'comparisons/gpui-fast/target/dist/zgx-compare-gpui-fast',
+            'quickgui': ROOT / 'comparisons/quickgui/target/dist/zgx-compare-quickgui',
         },
     },
     'heavy': {
         'modes': MODES,
         'binaries': {
-            'zgui': ROOT / 'target/dist/examples/heavy_workload',
+            'zgx': ROOT / 'target/dist/examples/heavy_workload',
             'gpui': ROOT / 'comparisons/gpui/target/dist/heavy',
             'gpui-fast': ROOT / 'comparisons/gpui-fast/target/dist/heavy',
         },
@@ -101,13 +101,13 @@ SCENES = {
     'animate': {
         'modes': ['animate'],
         'binaries': {
-            'zgui': ROOT / 'target/dist/examples/animation_workload',
+            'zgx': ROOT / 'target/dist/examples/animation_workload',
             'gpui': ROOT / 'comparisons/gpui/target/dist/animate',
             'gpui-fast': ROOT / 'comparisons/gpui-fast/target/dist/animate',
         },
     },
 }
-SAMPLER, PACER = Path('/tmp/zgui-macsample'), Path('/tmp/zgui-framepace')
+SAMPLER, PACER = Path('/tmp/zgx-macsample'), Path('/tmp/zgx-framepace')
 # What the binaries are built from, including vendored patches.
 SOURCES = ['crates', 'comparisons', 'scripts', 'vendor', 'Cargo.toml', 'Cargo.lock']
 METRICS = ['cpu_percent_one_core', 'cpu_watts', 'instructions', 'cycles', 'gpu_percent',
@@ -131,9 +131,9 @@ def run(cmd, **kw):
 
 
 def build(scene, frameworks):
-    example = SCENES[scene]['binaries']['zgui'].name
-    run(['cargo', 'build', '--profile', 'dist', '--locked', '-p', 'zgui-desktop', '--example', example], cwd=ROOT)
-    for name in [f for f in frameworks if f != 'zgui']:
+    example = SCENES[scene]['binaries']['zgx'].name
+    run(['cargo', 'build', '--profile', 'dist', '--locked', '-p', 'zgx-desktop', '--example', example], cwd=ROOT)
+    for name in [f for f in frameworks if f != 'zgx']:
         run(['cargo', 'build', '--profile', 'dist', '--locked'], cwd=ROOT / 'comparisons' / name)
     run(['swiftc', '-O', str(ROOT / 'scripts/macsample.swift'), '-o', str(SAMPLER), '-lIOReport'])
     run(['swiftc', '-O', str(ROOT / 'scripts/framepace.swift'), '-o', str(PACER)])
@@ -155,7 +155,7 @@ def environment():
 
 
 def launch(binary, mode, seconds, log):
-    env = dict(os.environ, ZGUI_MODE=mode, ZGUI_SECONDS=str(seconds))
+    env = dict(os.environ, ZGX_MODE=mode, ZGX_SECONDS=str(seconds))
     with log.open('w') as handle:
         process = subprocess.Popen([str(binary)], stdout=handle, stderr=subprocess.STDOUT, env=env)
     time.sleep(0.5)
@@ -283,7 +283,7 @@ def main():
     parser.add_argument('--skip-build', action='store_true')
     parser.add_argument('--scene', choices=sorted(SCENES), default='lab')
     parser.add_argument('--powermetrics', action='store_true')
-    parser.add_argument('--quick', action='store_true', help='zgui and GPUI Fast, 2 repeats, pacing in the trials')
+    parser.add_argument('--quick', action='store_true', help='zgx and GPUI Fast, 2 repeats, pacing in the trials')
     parser.add_argument('--frameworks', help='comma-separated, from the scene\'s')
     parser.add_argument('--repeats', type=int, help='repeats of each active mode (3; --quick 2)')
     parser.add_argument('--quickgui', action='store_true', help='QuickGUI too (lab)')
@@ -303,7 +303,7 @@ def main():
     if not args.quickgui:
         frameworks = [f for f in frameworks if f != 'quickgui']
     if args.quick:
-        frameworks = [f for f in frameworks if f in ('zgui', 'gpui-fast')]
+        frameworks = [f for f in frameworks if f in ('zgx', 'gpui-fast')]
     if args.frameworks:
         frameworks = [f for f in args.frameworks.split(',') if f in SCENES[args.scene]['binaries']]
     if args.modes:

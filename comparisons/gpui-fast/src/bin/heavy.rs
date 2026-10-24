@@ -1,9 +1,9 @@
-//! The heavy dashboard (see zgui_workload::heavy). GPUI's best case: tiles and
+//! The heavy dashboard (see zgx_workload::heavy). GPUI's best case: tiles and
 //! cards, the table and the log are separately cached views, and each tick
 //! notifies only the views whose data changed.
 use gpui::{prelude::*, *};
 use std::time::Instant;
-use zgui_workload::{heavy::*, Mode};
+use zgx_workload::{heavy::*, Mode};
 
 fn at((x, y): (f32, f32), w: f32, h: f32) -> Div {
     div().absolute().left(px(x)).top(px(y)).w(px(w)).h(px(h))

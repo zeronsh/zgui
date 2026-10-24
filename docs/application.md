@@ -1,6 +1,6 @@
 # Building a desktop application
 
-macOS, Windows and Linux are the target platforms. `zgui` contains retained state, layout, input, editing, semantics, and widgets; `zgui-gpu` supplies wgpu rendering and shaped text; `zgui-desktop` hosts native windows, IME, clipboard, and accessibility. Linux native smoke tests run in this repository's development environment. A Linux build does not prove macOS runtime behavior: run the same examples and platform CI on macOS before shipping there.
+macOS, Windows and Linux are the target platforms. `zgx` contains retained state, layout, input, editing, semantics, and widgets; `zgx-gpu` supplies wgpu rendering and shaped text; `zgx-desktop` hosts native windows, IME, clipboard, and accessibility. Linux native smoke tests run in this repository's development environment. A Linux build does not prove macOS runtime behavior: run the same examples and platform CI on macOS before shipping there.
 
 Dynamic window title, size, visibility and window-manager requests are documented in [native window controls](window-controls.md).
 
@@ -9,9 +9,9 @@ For application code, start with [components, children, providers and slots](com
 Run the component example, widget gallery or notes workspace:
 
 ```sh
-cargo run -p zgui-desktop --example components
-cargo run -p zgui-desktop --example gallery
-cargo run -p zgui-desktop --example workbench
+cargo run -p zgx-desktop --example components
+cargo run -p zgx-desktop --example gallery
+cargo run -p zgx-desktop --example workbench
 ```
 
 ![Notes workspace](images/workbench.png)
@@ -21,8 +21,8 @@ The workbench has a 10,000-row virtual library, a selection-driven detail form, 
 ## A window and reactive widgets
 
 ```rust,no_run
-use zgui::compose::prelude::*;
-use zgui_desktop::{Application, WindowOptions};
+use zgx::compose::prelude::*;
+use zgx_desktop::{Application, WindowOptions};
 
 fn greeting() -> View {
     component(|cx| {
@@ -70,7 +70,7 @@ Rows and columns support fixed/intrinsic sizing, min/max constraints, margin ins
 
 Use `.w_full()`, `.h_full()`, flex styles and `.reactive_style(...)` for responsive component geometry. `WindowContext.viewport` supplies logical `(width, height)` when application policy depends on the window size. Low-level integrations can bind it to an owner and update retained styles or call `ScrollView::resize`. Release any `RefCell<Scene>` borrow before setting signals, because a signal can synchronously run code that borrows the scene. The host performs physical-pixel surface resizing and DPI conversion separately. `Scene::prepare_layout` makes geometry current for hit testing without discarding pending damage; `flush` is the renderer's frame-consumption boundary.
 
-To see what layout did, press Ctrl+Option+Cmd+I (Ctrl+Alt+Shift+I on Linux and Windows) in a window, run with `ZGUI_INSPECT=1`, or call `cx.inspector.set_enabled(true)`: the layout inspector (`zgui::inspect`) outlines every box and describes the one under the pointer (kind, size, position, padding, margin, border, flex properties, clip). `ZGUI_LAYOUT_WARNINGS=1` alone reports suspicious results to stderr once per node: a collapsed box with content, content cut off by a clip that does not scroll, a percentage inside a parent sized by its content. Off, neither costs anything per frame. Other hosts call `Inspector::update(&ui, pointer)` after `Ui::prepare_frame` while `Inspector::active()`; `zgui::inspect::layout_warnings(&ui)` checks once.
+To see what layout did, press Ctrl+Option+Cmd+I (Ctrl+Alt+Shift+I on Linux and Windows) in a window, run with `ZGX_INSPECT=1`, or call `cx.inspector.set_enabled(true)`: the layout inspector (`zgx::inspect`) outlines every box and describes the one under the pointer (kind, size, position, padding, margin, border, flex properties, clip). `ZGX_LAYOUT_WARNINGS=1` alone reports suspicious results to stderr once per node: a collapsed box with content, content cut off by a clip that does not scroll, a percentage inside a parent sized by its content. Off, neither costs anything per frame. Other hosts call `Inspector::update(&ui, pointer)` after `Ui::prepare_frame` while `Inspector::active()`; `zgx::inspect::layout_warnings(&ui)` checks once.
 
 ## Scrolling and virtual rows
 
@@ -153,19 +153,19 @@ Closed popup windows are kept, hidden, to reuse; a hidden one draws nothing
 and never wakes. Windows shows popups in owned popup windows, X11 in
 override-redirect windows, and Wayland in `xdg_popup`s of the window, which the
 compositor places and keeps on its outputs ([Linux](linux.md#popups-on-wayland)).
-`ZGUI_POPUP_WINDOWS=0` keeps popups inside the window.
+`ZGX_POPUP_WINDOWS=0` keeps popups inside the window.
 
 ## Windows as AppKit keeps them
 
-On macOS every zgui app has a Window menu: the app's own if it has a menu titled "Window", else a standard one (Minimize, Zoom, Bring All to Front) after its menus. AppKit lists the app's windows in it, adds its tab and tiling commands, and ⌘` cycles through them.
+On macOS every zgx app has a Window menu: the app's own if it has a menu titled "Window", else a standard one (Minimize, Zoom, Bring All to Front) after its menus. AppKit lists the app's windows in it, adds its tab and tiling commands, and ⌘` cycles through them.
 
 A window opened with no position (`WindowOptions::bounds` without one, and no `display`) cascades from the app's front window, as AppKit's document windows do, rather than opening over it. `WindowOptions::frame_autosave = Some(name)` saves its frame under that name as it moves and resizes, and opens it where it was left. `WindowOptions::tabbing` joins AppKit's window tabs as the user's setting says (`Tabbing::Automatic`), always (`Preferred`), or never (`Disallowed`, for windows with tabs of their own, as Safari's), and `tabbing_identifier` keeps windows of different kinds apart. `WindowOptions::under_pointer` opens a window with a point of its content under the pointer, for a tab torn off its window ([drag and drop](drag-drop.md)).
 
-`cargo run --release -p zgui-desktop --example window_probe` checks the Window menu, the cascade and the autosave with events posted to its own windows. ⌘` is a system hotkey AppKit hears from the window server, not a key event an app can post itself, so it is checked by hand: it cycles `tab_windows`' windows (macOS 26).
+`cargo run --release -p zgx-desktop --example window_probe` checks the Window menu, the cascade and the autosave with events posted to its own windows. ⌘` is a system hotkey AppKit hears from the window server, not a key event an app can post itself, so it is checked by hand: it cycles `tab_windows`' windows (macOS 26).
 
-On Windows a window opened with no position opens where Windows puts it (`CW_USEDEFAULT`: each new window a step on from the last, as Notepad's). `frame_autosave` keeps the window's placement (its restored frame, and whether it was maximized) in the registry under `HKCU\Software\zgui\<executable>\Frames`, as it moves, resizes, snaps and closes, and reopens it there, maximized if it was left so, unless no monitor still shows its title bar (a monitor since unplugged): then it opens where Windows puts it. `under_pointer` works as on macOS. Windows has no window tabs: `tabbing` and `tabbing_identifier` do nothing there, and there is no Window menu. `python scripts/windows_window_smoke.py target/debug/examples` runs `window_probe` there.
+On Windows a window opened with no position opens where Windows puts it (`CW_USEDEFAULT`: each new window a step on from the last, as Notepad's). `frame_autosave` keeps the window's placement (its restored frame, and whether it was maximized) in the registry under `HKCU\Software\zgx\<executable>\Frames`, as it moves, resizes, snaps and closes, and reopens it there, maximized if it was left so, unless no monitor still shows its title bar (a monitor since unplugged): then it opens where Windows puts it. `under_pointer` works as on macOS. Windows has no window tabs: `tabbing` and `tabbing_identifier` do nothing there, and there is no Window menu. `python scripts/windows_window_smoke.py target/debug/examples` runs `window_probe` there.
 
-On X11 a window opened with no position opens a step on from the app's front window (the active window if it is the app's, else the last one opened), down and right by its title bar's height, back at the work area's top-left when that would take it past the work area; with no window of the app's shown, it opens where the window manager puts it. It asks for the position as the program's (`PPosition`), so window managers that place every window still may. `frame_autosave` keeps the window's frame (where it was, its size, and whether it was maximized, the frame being the one from before it was maximized) in `$XDG_STATE_HOME/zgui/<executable>/frames` (by default `~/.local/state`), saved half a second after the window last moved or resized, and as it closes. It reopens there, maximized if it was left so; at a frame no monitor still shows, it opens where the window manager puts it, at the saved size. On Wayland the compositor places every window and the app cannot know where: a saved frame keeps its size and whether it was maximized. `under_pointer` works on X11 as on macOS. There are no window tabs: `tabbing` and `tabbing_identifier` do nothing. `python3 scripts/window_frames_smoke.py target/debug/examples/window_probe --output <dir>` checks all of it under Xvfb and Openbox, and the Wayland part under Weston.
+On X11 a window opened with no position opens a step on from the app's front window (the active window if it is the app's, else the last one opened), down and right by its title bar's height, back at the work area's top-left when that would take it past the work area; with no window of the app's shown, it opens where the window manager puts it. It asks for the position as the program's (`PPosition`), so window managers that place every window still may. `frame_autosave` keeps the window's frame (where it was, its size, and whether it was maximized, the frame being the one from before it was maximized) in `$XDG_STATE_HOME/zgx/<executable>/frames` (by default `~/.local/state`), saved half a second after the window last moved or resized, and as it closes. It reopens there, maximized if it was left so; at a frame no monitor still shows, it opens where the window manager puts it, at the saved size. On Wayland the compositor places every window and the app cannot know where: a saved frame keeps its size and whether it was maximized. `under_pointer` works on X11 as on macOS. There are no window tabs: `tabbing` and `tabbing_identifier` do nothing. `python3 scripts/window_frames_smoke.py target/debug/examples/window_probe --output <dir>` checks all of it under Xvfb and Openbox, and the Wayland part under Weston.
 
 ## Ownership, tasks, and disposal
 
@@ -179,11 +179,11 @@ For low-level integration, `Ui` owns widget bindings and subscriptions. Returned
 
 `ViewScope` provides a smaller RAII owner for template-generated or custom subtrees. It owns descendants, effects, inherited typed services, and resources retained with `retain`. Dropping it disposes resources and subscriptions before removing its scene root. `KeyedChildren` adds key validation, retained reorder, and keyed disposal. Duplicate input keys are rejected before mutation. Scopes share their scene through `Rc<RefCell<_>>`; do not keep a scene borrow across a scope drop, a signal write, or a user callback.
 
-`cx.tasks.spawn(async move { ... })` schedules local futures and wakes the native loop when work becomes ready. `zgui::timer::sleep` is an awaitable timer; `yield_now` yields to another executor turn. Do not hold a reactive batch guard or scene borrow across `.await`. UI objects stay on the UI thread; use the host's thread-safe request interfaces and channels for background work instead of moving `Rc`-backed state between threads. Window tasks are dropped when that window closes. For native view-owned work, use `scope.retain(cx.tasks.spawn_scoped(async move { ... }))`. Its `ScopedTask` guard releases future captures when canceled, even before the host drains its pending queue, and wakes sleeping executor entries for cleanup. See [scoped native tasks](scoped-tasks.md) for a complete example. `ViewScope::spawn` and `LocalExecutor::spawn_scoped` remain available when you own the executor directly; their cancellation releases the future on its next ready turn. Plain `cx.tasks.spawn` is window-owned, so removing a widget does not cancel it.
+`cx.tasks.spawn(async move { ... })` schedules local futures and wakes the native loop when work becomes ready. `zgx::timer::sleep` is an awaitable timer; `yield_now` yields to another executor turn. Do not hold a reactive batch guard or scene borrow across `.await`. UI objects stay on the UI thread; use the host's thread-safe request interfaces and channels for background work instead of moving `Rc`-backed state between threads. Window tasks are dropped when that window closes. For native view-owned work, use `scope.retain(cx.tasks.spawn_scoped(async move { ... }))`. Its `ScopedTask` guard releases future captures when canceled, even before the host drains its pending queue, and wakes sleeping executor entries for cleanup. See [scoped native tasks](scoped-tasks.md) for a complete example. `ViewScope::spawn` and `LocalExecutor::spawn_scoped` remain available when you own the executor directly; their cancellation releases the future on its next ready turn. Plain `cx.tasks.spawn` is window-owned, so removing a widget does not cancel it.
 
 ## Animation frames
 
-Animate from the window's frame clock rather than a timer. `cx.frames()` in a component (or `WindowContext::frames`) returns a `zgui::frame::FrameClock`; awaiting `frames.next()` resolves once per display refresh with a `Frame` whose `time` is the expected presentation time. Drive animations from that value, not `Instant::now()`, so they advance by whole refreshes even when the UI thread runs late. The host only ticks while a request is waiting, so an idle window does no work, and hidden, minimized or occluded windows pause until they are shown again.
+Animate from the window's frame clock rather than a timer. `cx.frames()` in a component (or `WindowContext::frames`) returns a `zgx::frame::FrameClock`; awaiting `frames.next()` resolves once per display refresh with a `Frame` whose `time` is the expected presentation time. Drive animations from that value, not `Instant::now()`, so they advance by whole refreshes even when the UI thread runs late. The host only ticks while a request is waiting, so an idle window does no work, and hidden, minimized or occluded windows pause until they are shown again.
 
 ```rust,ignore
 let frames = cx.frames();
@@ -199,14 +199,14 @@ cx.tasks().spawn(async move {
 });
 ```
 
-`max_rate(hz)` limits one request. Limited requests are spaced by whole refreshes (30 Hz on a 120 Hz display is every fourth refresh; a limit that does not divide the display rate rounds down, never exceeding it), and requests with the same effective rate tick together. `WindowOptions::max_frame_rate` and `WindowHandle::set_max_frame_rate` cap every animation in a window, for example to save power; input-driven redraws are not limited. On macOS the frames come from a `CADisplayLink` on the window's view, which follows the window across displays and lets ProMotion panels lower their rate when every waiting request accepts fewer frames. Wayland paces through compositor frame callbacks. X11 and other platforms tick on event-loop deadlines at the display's reported refresh rate (`DisplayInfo::refresh_rate_hz`, 60 Hz when unknown). A native source that stops ticking while frames are wanted is backed by the same timer after 250 ms. The [frame clock example](../crates/zgui-desktop/examples/frame_clock.rs) shows the cap and a limited request; `--smoke-test` measures the delivered rates.
+`max_rate(hz)` limits one request. Limited requests are spaced by whole refreshes (30 Hz on a 120 Hz display is every fourth refresh; a limit that does not divide the display rate rounds down, never exceeding it), and requests with the same effective rate tick together. `WindowOptions::max_frame_rate` and `WindowHandle::set_max_frame_rate` cap every animation in a window, for example to save power; input-driven redraws are not limited. On macOS the frames come from a `CADisplayLink` on the window's view, which follows the window across displays and lets ProMotion panels lower their rate when every waiting request accepts fewer frames. Wayland paces through compositor frame callbacks. X11 and other platforms tick on event-loop deadlines at the display's reported refresh rate (`DisplayInfo::refresh_rate_hz`, 60 Hz when unknown). A native source that stops ticking while frames are wanted is backed by the same timer after 250 ms. The [frame clock example](../crates/zgx-desktop/examples/frame_clock.rs) shows the cap and a limited request; `--smoke-test` measures the delivered rates.
 
 ## Background work and window lifecycle
 
 `BackgroundPool::new(workers, queue_capacity)` creates an explicitly bounded worker pool. Its `spawn` method returns either a result future or `SpawnError::QueueFull`; it never grows an unbounded work queue. Await the future from a UI task, then update local signals. A panic in a job becomes `TaskError::Panicked`; a worker continues accepting work. Dropping a result skips queued work or discards a running result. Running closures cannot be forcibly interrupted. Dropping the last pool cancels queued jobs and lets running jobs finish without blocking the UI.
 
 ```rust,ignore
-let pool = zgui::background::BackgroundPool::new(2, 16)?;
+let pool = zgx::background::BackgroundPool::new(2, 16)?;
 let job = pool.spawn(move || std::fs::read(path))?;
 cx.tasks.spawn(async move {
     match job.await {
@@ -226,7 +226,7 @@ Use `cx.windows.open(options, builder)` to create another window. An application
 
 An app keeps running through what goes wrong while it runs, where that is safe:
 
-- **A panic** in an event handler, an effect or a task is contained by the desktop host: the panic hook logs it as usual, the window shows a banner saying what went wrong (a click dismisses it; assistive technology reads it out), and the app goes on. zgui keeps its state consistent across the unwind: borrows, subscriptions and focus recover. Panics that keep coming (20 within a second) end the app with the last one's message, rather than spin.
+- **A panic** in an event handler, an effect or a task is contained by the desktop host: the panic hook logs it as usual, the window shows a banner saying what went wrong (a click dismisses it; assistive technology reads it out), and the app goes on. zgx keeps its state consistent across the unwind: borrows, subscriptions and focus recover. Panics that keep coming (20 within a second) end the app with the last one's message, rather than spin.
 - **A lost GPU device** (a driver reset, an external GPU removed) fails the window's frames with `GpuError::is_device_lost`; the window makes a renderer on a new device and draws again in full, with its state as it was. Until one can be made it tries again each second. `WindowHandle::debug_lose_gpu()` loses it on purpose, for tests. A lost or outdated surface is recreated without either.
 - **A script's runtime error** is logged and shown over the window in debug builds (`ScriptHost::error`); the rest of the script keeps working.
 - **A missing image** draws empty in its place, its error reported as a script error is; a font that isn't installed falls back to the system's.

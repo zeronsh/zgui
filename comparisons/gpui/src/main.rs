@@ -1,6 +1,6 @@
 use gpui::{prelude::*, *};
 use std::time::Instant;
-use zgui_workload::{row_label, Mode, Workload, PERIOD, ROW_HEIGHT};
+use zgx_workload::{row_label, Mode, Workload, PERIOD, ROW_HEIGHT};
 struct Lab {
     work: Workload,
     items: Vec<i32>,
@@ -23,7 +23,7 @@ impl Render for Lab {
                 box_at(20., 20., 920., 28.)
                     .text_size(px(20.))
                     .line_height(px(28.))
-                    .child("zgui performance lab"),
+                    .child("zgx performance lab"),
             );
         for (id, label, x) in [
             (0, "+".to_owned(), 20.),
@@ -100,7 +100,7 @@ impl Render for Lab {
                 let delta: f32 = event.delta.pixel_delta(px(ROW_HEIGHT)).y.into();
                 this.work.scroll_offset = (this.work.scroll_offset - delta).clamp(
                     0.,
-                    zgui_workload::ROW_COUNT as f32 * ROW_HEIGHT - zgui_workload::VIEWPORT_HEIGHT,
+                    zgx_workload::ROW_COUNT as f32 * ROW_HEIGHT - zgx_workload::VIEWPORT_HEIGHT,
                 );
                 cx.notify();
             })),

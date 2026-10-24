@@ -24,11 +24,11 @@ class TrialEvidence(unittest.TestCase):
             times = [0., 1., 1., 2., 2., 30., 31.] if timeout else [0., 1., 1., 2., 2., 3.]
             with patch.object(compare.subprocess, "Popen", side_effect=launch), patch.object(compare, "sample", side_effect=[(.1, 100), (.2, 200)]), patch.object(compare.time, "monotonic", side_effect=times), patch.object(compare.time, "sleep"):
                 try:
-                    row = compare.run_trial(Path("fixture"), "zgui", "stream", 0, 3., .5, output)
+                    row = compare.run_trial(Path("fixture"), "zgx", "stream", 0, 3., .5, output)
                     error = None
                 except RuntimeError as caught:
                     row, error = None, caught
-            raw = json.loads(Path(output + ".zgui.stream.0.json").read_text())
+            raw = json.loads(Path(output + ".zgx.stream.0.json").read_text())
             self.assertEqual(raw["samples"], [dict(elapsed_seconds=1., cpu_seconds=.1, rss_bytes=100), dict(elapsed_seconds=2., cpu_seconds=.2, rss_bytes=200)])
             self.assertEqual((raw["requested_seconds"], raw["warmup_seconds"]), (3., .5))
             self.assertFalse(Path(output).exists(), "trial helper never emits a CSV row")
@@ -70,8 +70,8 @@ class TrialEvidence(unittest.TestCase):
             output = str(Path(directory) / "comparison.csv")
             with patch.object(compare.subprocess, "Popen", side_effect=OSError("launch failed")):
                 with self.assertRaisesRegex(OSError, "launch failed"):
-                    compare.run_trial(Path("missing"), "zgui", "idle", 0, 3., 1., output)
-            raw = json.loads(Path(output + ".zgui.idle.0.json").read_text())
+                    compare.run_trial(Path("missing"), "zgx", "idle", 0, 3., 1., output)
+            raw = json.loads(Path(output + ".zgx.idle.0.json").read_text())
             self.assertIsNone(raw["exit_code"])
             self.assertEqual(raw["samples"], [])
             self.assertIn("launch failed", raw["failure_reason"])
@@ -80,7 +80,7 @@ class TrialEvidence(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/tmp") as directory:
             with patch.object(compare.subprocess, "Popen", side_effect=OSError("launch failed")), patch.object(compare.pathlib.Path, "write_text", side_effect=OSError("disk full")):
                 with self.assertRaisesRegex(OSError, "disk full") as caught:
-                    compare.run_trial(Path("missing"), "zgui", "idle", 0, 3., 1., str(Path(directory) / "out"))
+                    compare.run_trial(Path("missing"), "zgx", "idle", 0, 3., 1., str(Path(directory) / "out"))
             self.assertIn("launch failed", str(caught.exception.__context__))
 
 

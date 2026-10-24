@@ -50,7 +50,7 @@ pub type WinitFrame = sctk_adwaita::AdwaitaFrame<WinitState>;
 pub type WinitFrame = sctk::shell::xdg::fallback_frame::FallbackFrame<WinitState>;
 
 impl WindowState {
-    // zgui patch: where `set_window_geometry` puts the window's geometry on
+    // zgx patch: where `set_window_geometry` puts the window's geometry on
     // its surface, in logical pixels: above and left of it by the frame
     // winit draws, if it shows one.
     pub fn window_geometry_origin(&self) -> (i32, i32) {

@@ -4,7 +4,7 @@ the process holds levels off: after a warm-up (the first third), its
 footprint, file descriptors, Mach ports and threads must stay within the
 warm-up's maximum (plus a margin for the allocator and the window server).
 
-    cargo build --release -p zgui-desktop --example desktop_soak
+    cargo build --release -p zgx-desktop --example desktop_soak
     python3 scripts/desktop_soak.py target/release/examples/desktop_soak --cycles 300
 
 It opens and closes real windows (with menus, popovers, tooltips and prompt

@@ -38,7 +38,7 @@ fn swash_image(
     if let Some(variation) = variable_width {
         let wght = (
             swash::Tag::from_be_bytes(*b"wght"),
-            // zgui: upstream's `f32::clamp` panicked on an axis whose minimum
+            // zgx: upstream's `f32::clamp` panicked on an axis whose minimum
             // is above its maximum.
             crate::clamp_to_axis(
                 f32::from(cache_key.font_weight.0),
@@ -46,7 +46,7 @@ fn swash_image(
                 variation.max_value(),
             ),
         );
-        // zgui: and the optical size it was shaped at.
+        // zgx: and the optical size it was shaped at.
         let opsz = (cache_key.font_optical > 0).then(|| {
             (swash::Tag::from_be_bytes(*b"opsz"), f32::from(cache_key.font_optical))
         });
@@ -124,7 +124,7 @@ fn swash_outline_commands(
     if let Some(variation) = variable_width {
         let wght = (
             swash::Tag::from_be_bytes(*b"wght"),
-            // zgui: upstream's `f32::clamp` panicked on an axis whose minimum
+            // zgx: upstream's `f32::clamp` panicked on an axis whose minimum
             // is above its maximum.
             crate::clamp_to_axis(
                 f32::from(cache_key.font_weight.0),
@@ -132,7 +132,7 @@ fn swash_outline_commands(
                 variation.max_value(),
             ),
         );
-        // zgui: and the optical size it was shaped at.
+        // zgx: and the optical size it was shaped at.
         let opsz = (cache_key.font_optical > 0).then(|| {
             (swash::Tag::from_be_bytes(*b"opsz"), f32::from(cache_key.font_optical))
         });

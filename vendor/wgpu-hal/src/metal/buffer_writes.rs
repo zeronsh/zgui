@@ -1,4 +1,4 @@
-//! zgui patch: buffer fills and copies without a blit encoder.
+//! zgx patch: buffer fills and copies without a blit encoder.
 //!
 //! On Apple silicon the first blit encoder a process uses leaves the driver
 //! holding roughly 110 MB for about eight seconds, and part of it for good

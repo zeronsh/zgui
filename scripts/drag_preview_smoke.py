@@ -54,7 +54,7 @@ def main():
         time.sleep(.5)
         assert compositor.poll() is None, "picom exited"
         log = args.output / "application.log"
-        app = launch("application", [str(args.binary.resolve())], dict(env, ZGUI_PRESENT_LOG="1"),
+        app = launch("application", [str(args.binary.resolve())], dict(env, ZGX_PRESENT_LOG="1"),
                      stdout=log.open("w"), stderr=subprocess.STDOUT)
 
         def run(*argv):
@@ -83,7 +83,7 @@ def main():
             lines = log.read_text().splitlines()
             return (sum(" render " in line for line in lines), sum(" popup draw " in line for line in lines))
 
-        main_window = until("the window", lambda: run("xdotool", "search", "--name", "^zgui typed drag$").split())[0]
+        main_window = until("the window", lambda: run("xdotool", "search", "--name", "^zgx typed drag$").split())[0]
         run("xdotool", "windowactivate", "--sync", main_window)
         time.sleep(.5)
         x, y, w, h = geometry(main_window)

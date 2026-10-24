@@ -7,7 +7,7 @@ on its own runs, for the macOS comparison's PGO supplement
     python3 scripts/perf/pgo_compare.py train      # each app's own scene, windowed
     python3 scripts/perf/pgo_compare.py use        # optimized builds, to target/pgo-compare/
 
-zgui's heavy, lab and animate workloads, and GPUI's and GPUI Fast's: built
+zgx's heavy, lab and animate workloads, and GPUI's and GPUI Fast's: built
 with the `dist` profile instrumented, each app run in a window on its own
 scene (`both`; `animate`) for 15 s, the profiles of a framework's apps
 merged, and the apps built again with that. Training opens windows: run it
@@ -16,17 +16,17 @@ on a quiet desktop. Needs `rustup component add llvm-tools`.
 import argparse, glob, os, pathlib, shutil, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORK = pathlib.Path(os.environ.get('ZGUI_PGO_DIR', '/tmp/zgui-pgo-compare'))
+WORK = pathlib.Path(os.environ.get('ZGX_PGO_DIR', '/tmp/zgx-pgo-compare'))
 OUT = ROOT / 'target' / 'pgo-compare'
 # framework: (cargo checkout, cargo arguments, {binary: training mode}).
 APPS = {
-    'zgui': (ROOT, ['-p', 'zgui-desktop', '--example', 'heavy_workload', '--example', 'component_workload',
+    'zgx': (ROOT, ['-p', 'zgx-desktop', '--example', 'heavy_workload', '--example', 'component_workload',
                     '--example', 'animation_workload'],
              {'examples/heavy_workload': 'both', 'examples/component_workload': 'both',
               'examples/animation_workload': 'animate'}),
-    'gpui': (ROOT / 'comparisons/gpui', [], {'heavy': 'both', 'zgui-compare-gpui': 'both', 'animate': 'animate'}),
+    'gpui': (ROOT / 'comparisons/gpui', [], {'heavy': 'both', 'zgx-compare-gpui': 'both', 'animate': 'animate'}),
     'gpui-fast': (ROOT / 'comparisons/gpui-fast', [],
-                  {'heavy': 'both', 'zgui-compare-gpui-fast': 'both', 'animate': 'animate'}),
+                  {'heavy': 'both', 'zgx-compare-gpui-fast': 'both', 'animate': 'animate'}),
 }
 
 
@@ -57,7 +57,7 @@ def train():
         for framework, (_, _, binaries) in APPS.items():
             for binary, mode in binaries.items():
                 print(f'training {framework} {binary} ({mode})', file=sys.stderr)
-                env = {'HOME': os.environ['HOME'], 'PATH': os.environ['PATH'], 'ZGUI_MODE': mode, 'ZGUI_SECONDS': '15'}
+                env = {'HOME': os.environ['HOME'], 'PATH': os.environ['PATH'], 'ZGX_MODE': mode, 'ZGX_SECONDS': '15'}
                 app = subprocess.Popen([str(WORK / framework / 'generate' / 'dist' / binary)], env=env,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 try:

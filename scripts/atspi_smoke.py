@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise zgui through a private live AT-SPI bus, not a simulated tree."""
+"""Exercise zgx through a private live AT-SPI bus, not a simulated tree."""
 import argparse
 import json
 import os
@@ -26,16 +26,16 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     if not args.session:
         (args.output / "results.json").unlink(missing_ok=True)
-        env = dict(os.environ, ZGUI_PRIVATE_ATSPI="1")
+        env = dict(os.environ, ZGX_PRIVATE_ATSPI="1")
         for name in ("AT_SPI_BUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "I3SOCK"):
             env.pop(name, None)
         result = subprocess.run(["dbus-run-session", "--", sys.executable, str(pathlib.Path(__file__).resolve()), str(args.binary), "--output", str(args.output), "--session"], env=env)
         raise SystemExit(result.returncode)
-    if os.environ.get("ZGUI_PRIVATE_ATSPI") != "1":
+    if os.environ.get("ZGX_PRIVATE_ATSPI") != "1":
         raise RuntimeError("the private session must be created by this runner")
     xvfb = wm = launcher = app = None
     events = []
-    with tempfile.TemporaryDirectory(prefix="zgui-atspi-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-atspi-") as runtime:
         os.chmod(runtime, 0o700)
         try:
             with (args.output / "xvfb.log").open("w") as log:
@@ -114,7 +114,7 @@ def main():
                     return result
                 def find(name):
                     return next((node for node, _ in tree() if node.get_name() == name), None)
-                wait_for(lambda: any(node.get_process_id() == app.pid for node, _ in tree()), "zgui application on private AT-SPI desktop")
+                wait_for(lambda: any(node.get_process_id() == app.pid for node, _ in tree()), "zgx application on private AT-SPI desktop")
                 entry = wait_for(lambda: find("AT-SPI name"), "named text input")
                 count = wait_for(lambda: find("AT-SPI count"), "count button")
                 slider = wait_for(lambda: find("AT-SPI amount"), "numeric slider")

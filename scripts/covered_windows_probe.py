@@ -9,7 +9,7 @@ def main():
     p.add_argument('binary',type=pathlib.Path);p.add_argument('--output',type=pathlib.Path,required=True)
     p.add_argument('--wayland',action='store_true');a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
     processes=[]
-    with tempfile.TemporaryDirectory(prefix='zgui-platform-') as private:
+    with tempfile.TemporaryDirectory(prefix='zgx-platform-') as private:
         env=dict(os.environ,XDG_RUNTIME_DIR=private,XDG_CONFIG_HOME=private+'/config',XDG_DATA_HOME=private+'/data',XDG_CACHE_HOME=private+'/cache')
         for key in ('DISPLAY','WAYLAND_DISPLAY','SWAYSOCK','DBUS_SESSION_BUS_ADDRESS','AT_SPI_BUS_ADDRESS'):env.pop(key,None)
         def launch(name,cmd,environment=None,**kw):
@@ -27,7 +27,7 @@ def main():
             host=None
             if a.wayland:
                 env.update(WLR_BACKENDS='x11',WLR_X11_OUTPUTS='1',WLR_RENDERER='pixman')
-                config=pathlib.Path(private,'sway.conf');config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgui cover.* window"] floating enable\n')
+                config=pathlib.Path(private,'sway.conf');config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgx cover.* window"] floating enable\n')
                 (a.output/'sway.conf').write_text(config.read_text());sway=launch('sway',['sway','--unsupported-gpu','--config',str(config)])
                 host=wait_for_sway_host(env,a.output,sway)
                 deadline=time.monotonic()+10

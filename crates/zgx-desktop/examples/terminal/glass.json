@@ -1,0 +1,86 @@
+{
+	// Dark glass, as the browser example: the window's blur shows through the
+	// tint, and foregrounds are translucent white so they take the colour of
+	// what is behind the glass, as AppKit's vibrant labels do.
+	"name": "terminal-glass",
+	"type": "dark",
+	"extends": "zgx-dark",
+	"tokens": {
+		"glass.tint": "#13141873",
+		"text": {
+			"primary": "#ffffffeb",
+			"secondary": "#ffffffa6",
+			"tertiary": "#ffffff66",
+			"disabled": "#ffffff38"
+		},
+		"hover": "#ffffff0a",
+		"border.subtle": "#ffffff0d",
+		"border.strong": "#ffffff26",
+		"accent": "#a99cff",
+		"warning": "#f5c46b",
+		"danger": "#ff7a6b",
+		// The interface's typeface (the host registers it).
+		"font.sans": "Geist",
+		// Each terminal's card: a little darker than the window, still glass.
+		"terminal.pane": "#0a0b0e4d",
+		"terminal.wash": "#ffffff0f",
+		// Frosted glass under the active tab and agent, clearer than the
+		// wash; a faint one under the pointer.
+		"terminal.glass": "#ffffff1c",
+		"terminal.glass_hover": "#ffffff0d",
+		// A tab's icon tiles, and the strip's drop and slot highlights.
+		"terminal.tile_bg": "#ffffff17",
+		"terminal.tile_dim": "#ffffff0d",
+		"terminal.tile_line": "#ffffff0f",
+		"terminal.drop": "#ffffff1f",
+		"terminal.slot": "#ffffff0f",
+		"terminal.slot_line": "#ffffff29",
+		// Context menus: a darker frost than the window's.
+		"terminal.menu.bg": "#24252a99",
+		"terminal.menu.line": "#ffffff14",
+		"terminal.menu.hover": "#ffffff12",
+		"terminal.menu.separator": "#ffffff0f",
+		"terminal.menu.shadow": "0 6 18 0 #00000040",
+		// Buttons, switches, sheets and labels (components/kit.luau).
+		"terminal.bright": "#ffffff",
+		"terminal.on_fill": "#ffffff",
+		"terminal.error_text": "#ff8f87",
+		"terminal.control_hover": "#ffffff14",
+		"terminal.button.hover": "#ffffff1f",
+		"terminal.button.line": "#ffffff0d",
+		"terminal.primary.bg": "#3d7cf0e6",
+		"terminal.primary.hover": "#5a90f5",
+		"terminal.primary.solid": "#3d7cf0",
+		"terminal.danger.bg": "#e5534bd9",
+		"terminal.danger.hover": "#f0645c",
+		"terminal.switch.off": "#ffffff1f",
+		"terminal.switch.off_hover": "#ffffff29",
+		"terminal.switch.knob": "#ffffff",
+		"terminal.switch.knob_shadow": "0 1 3 0 #00000059",
+		"terminal.scrim": "#0000004d",
+		"terminal.scrim_light": "#0000002e",
+		"terminal.sheet.bg": "#1d1e22e6",
+		"terminal.sheet.line": "#ffffff1f",
+		"terminal.sheet.shadow": "0 18 48 0 #00000080",
+		"terminal.palette.bg": "#1b1c20eb",
+		"terminal.palette.line": "#ffffff1c",
+		"terminal.palette.shadow": "0 24 64 0 #00000099",
+		"terminal.key.bg": "#ffffff12",
+		"terminal.key.line": "#ffffff0d",
+		"terminal.chip.bg": "#ffffff0a",
+		"terminal.chip.line": "#ffffff0d",
+		"terminal.card.bg": "#ffffff08",
+		"terminal.card.line": "#ffffff0f",
+		"terminal.grip.bg": "#5a5c6440",
+		"terminal.grip.line": "#ffffff1a",
+		"terminal.grip.shadow": "0 2 8 0 #00000033",
+		"terminal.grip.dot": "#ffffff99",
+		"terminal.moving": "#ffffff59",
+		"terminal.footer": "#ffffff05",
+		"terminal.field.bg": "#ffffff0b",
+		"terminal.field.line": "#ffffff0a",
+		"terminal.field.editing": "#00000033",
+		"terminal.field.ring": "#ffffff40",
+		"terminal.progress": "#ffffff8c"
+	}
+}

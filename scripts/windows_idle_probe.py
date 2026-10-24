@@ -2,7 +2,7 @@
 """Measure what an example costs at rest on Windows: CPU cycles and time while
 its window sits untouched, then while the pointer rests over it.
 
-    cargo build --release -p zgui-desktop --example gallery
+    cargo build --release -p zgx-desktop --example gallery
     python scripts/windows_idle_probe.py target/release/examples/gallery.exe
 
 Cycles (QueryProcessCycleTime) resolve what CPU time (a 15.6 ms scheduler

@@ -7,7 +7,7 @@ that path. `on_action` receives target/bubble events; call `prevent_default()` t
 mark the action handled, and `stop_propagation()` to stop ancestor handlers.
 
 ```rust
-use zgui::{
+use zgx::{
     actions::{Action, ContextPredicate, KeyBinding, KeyContext, Keymap, Keystroke},
     compose::prelude::*,
     input::{Key, Modifiers},
@@ -79,7 +79,7 @@ Keymaps retain action values and unregister with their owning subtree. Ordinary
 component wrappers merge their keymaps with their inner component. Callback
 execution and captured-value destruction occur outside keymap registry borrows.
 
-Run `cargo run -p zgui-desktop --example actions` for the editor/F5/chord example.
+Run `cargo run -p zgx-desktop --example actions` for the editor/F5/chord example.
 It also accepts native file drops. `InputEvent::FileHover`, `FileDrop` and
 `FileHoverCancelled` route to the region under the host's last logical pointer
 position. Paths remain `PathBuf`; the native host sends one event per path,
@@ -89,7 +89,7 @@ backends that do not report a current pointer position during external drags
 can limit precise region targeting; synthetic routing tests are not native
 cross-desktop validation.
 
-Validation: `crates/zgui/tests/actions.rs` covers scoped commands before editor
+Validation: `crates/zgx/tests/actions.rs` covers scoped commands before editor
 mutation, bubbling and native dispatch, chord cancellation, reentrant unmount,
 file payload routing and context predicates. Unit tests cover expiry, malformed
 configuration and captured-action destructor reentry. The native X11 harness

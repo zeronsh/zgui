@@ -3222,7 +3222,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zgui"
+name = "zgx"
 version = "0.1.0"
 dependencies = [
  "objc2-core-foundation",
@@ -3235,17 +3235,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "zgui-fuzz"
+name = "zgx-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "zgui",
- "zgui-gpu",
- "zgui-script",
+ "zgx",
+ "zgx-gpu",
+ "zgx-script",
 ]
 
 [[package]]
-name = "zgui-gpu"
+name = "zgx-gpu"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -3268,11 +3268,11 @@ dependencies = [
  "wgpu",
  "windows",
  "winit",
- "zgui",
+ "zgx",
 ]
 
 [[package]]
-name = "zgui-script"
+name = "zgx-script"
 version = "0.1.0"
 dependencies = [
  "libc",
@@ -3281,8 +3281,8 @@ dependencies = [
  "serde_json",
  "smallvec",
  "windows",
- "zgui",
- "zgui-gpu",
+ "zgx",
+ "zgx-gpu",
 ]
 
 [[package]]

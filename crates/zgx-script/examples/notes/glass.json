@@ -1,0 +1,34 @@
+{
+	// Dark glass, as in the web view example: translucent whites take on the
+	// colour of what's behind the window.
+	"name": "notes-glass",
+	"type": "dark",
+	"extends": "zgx-dark",
+	"tokens": {
+		"glass.tint": "#1214166b",
+		"text": {
+			"primary": "#ffffffeb",
+			"secondary": "#ffffffa6",
+			"tertiary": "#ffffff66"
+		},
+		"border": "#ffffff1f",
+		"border.subtle": "#ffffff14",
+		"accent": "#f5b70a",
+		"success": "#3fb950",
+		"danger": "#e5484d",
+		"hover": "#ffffff14",
+		"pressed": "#ffffff1f",
+		"surface.overlay": "#24252bf0",
+		"menu.bg": "#1c1c2099",
+		"shadow.lg": "0 12 32 0 #00000066",
+		"notes": {
+			"wash": "#ffffff10",
+			"button": "#ffffff1a",
+			"code": "#ffd27a",
+			"alert.text": "#5fd27a",
+			"editor": "#1b1c20d9",
+			"preview": "#1b1c20f0",
+			"header": "#1b1c2099"
+		}
+	}
+}

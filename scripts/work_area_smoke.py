@@ -35,7 +35,7 @@ Gtk.main()
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("binaries", type=pathlib.Path, help="the zgui-desktop examples directory")
+    parser.add_argument("binaries", type=pathlib.Path, help="the zgx-desktop examples directory")
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)

@@ -1,14 +1,14 @@
-// Zed project settings: Luau scripts get zgui's types (completion, hover and
-// errors as `zgui check` reports them). Needs the Luau extension
+// Zed project settings: Luau scripts get zgx's types (completion, hover and
+// errors as `zgx check` reports them). Needs the Luau extension
 // (4teapo/zed-luau). See docs/scripting.md#types.
 {
   "lsp": {
     "luau-lsp": {
       "settings": {
         "roblox": { "enabled": false },
-        // zgui's types need Luau's new type solver; Roblox's flags do not apply.
+        // zgx's types need Luau's new type solver; Roblox's flags do not apply.
         "fflags": { "enable_new_solver": true, "sync": false },
-        "definitions": ["crates/zgui-script/types/zgui.d.luau"],
+        "definitions": ["crates/zgx-script/types/zgx.d.luau"],
         "luau-lsp": {
           "platform": { "type": "standard" },
           "sourcemap": { "enabled": false }

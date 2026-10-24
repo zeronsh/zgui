@@ -28,7 +28,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output/'result.json').unlink(missing_ok=True)
     app = ime = compositor = wm = xvfb = bus = None
-    with tempfile.TemporaryDirectory(prefix='zgui-wayland-external-ime-') as private:
+    with tempfile.TemporaryDirectory(prefix='zgx-wayland-external-ime-') as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, XDG_CONFIG_HOME=private+'/config',
                    XDG_CACHE_HOME=private+'/cache', XDG_DATA_HOME=private+'/data',
                    WLR_BACKENDS='x11', WLR_X11_OUTPUTS='1', WLR_RENDERER='pixman', LANG='C.UTF-8')
@@ -38,7 +38,7 @@ def main():
         profile.parent.mkdir(parents=True)
         profile.write_text('[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=pinyin\nLayout=\n\n[GroupOrder]\n0=Default\n')
         config = pathlib.Path(private, 'sway.conf')
-        config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgui external IME model"] fullscreen enable\n')
+        config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgx external IME model"] fullscreen enable\n')
         (args.output/'profile').write_text(profile.read_text())
         (args.output/'sway.conf').write_text(config.read_text())
         bus_config = pathlib.Path(private, 'dbus.conf')

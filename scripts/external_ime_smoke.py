@@ -31,7 +31,7 @@ def main():
     (args.output / 'result.json').unlink(missing_ok=True)
     xvfb = wm = bus = ime = app = None
     snapshots = []
-    with tempfile.TemporaryDirectory(prefix='zgui-external-ime-') as private:
+    with tempfile.TemporaryDirectory(prefix='zgx-external-ime-') as private:
         try:
             with (args.output / 'xvfb.log').open('w') as log:
                 xvfb = subprocess.Popen(['Xvfb', '-displayfd', '1', '-screen', '0', '1024x768x24', '-ac'], stdout=subprocess.PIPE, stderr=log, text=True)

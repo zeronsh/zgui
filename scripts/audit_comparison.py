@@ -26,7 +26,7 @@ def main():
     rows = list(csv.DictReader(args.csv.open()))
     metadata = json.loads(Path(str(args.csv) + '.metadata.json').read_text())
     repeats = int(metadata['arguments']['repeats'])
-    expected = {(framework, mode, repeat) for framework in ['zgui', 'gpui', 'quickgui']
+    expected = {(framework, mode, repeat) for framework in ['zgx', 'gpui', 'quickgui']
                 for mode in ['idle', 'stream', 'scroll', 'both'] for repeat in range(repeats)}
     actual = [(r['framework'], r['mode'], int(r['repeat'])) for r in rows]
     require(len(actual) == len(expected) and set(actual) == expected, 'missing, duplicate or unexpected trials')
@@ -68,7 +68,7 @@ def main():
                 require(hashlib.sha256(archive.extractfile(files[name]).read()).hexdigest() == sha, 'archive hash: ' + name)
         archived = len(hashes)
     if args.binaries:
-        for framework, filename in [('zgui', 'component_workload'), ('gpui', 'zgui-compare-gpui'), ('quickgui', 'zgui-compare-quickgui')]:
+        for framework, filename in [('zgx', 'component_workload'), ('gpui', 'zgx-compare-gpui'), ('quickgui', 'zgx-compare-quickgui')]:
             require(hashlib.sha256((args.binaries / filename).read_bytes()).hexdigest() == metadata['binary_sha256'][framework], 'binary hash: ' + framework)
     args.output.write_text(json.dumps(dict(trials=len(rows), samples=samples_total, archived_sources=archived,
         active_ticks_per_requested_second=dict(min=min(rates), max=max(rates)),

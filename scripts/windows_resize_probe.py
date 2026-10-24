@@ -7,7 +7,7 @@ new right and bottom edges, blue just inside). Each capture before that is
 classed as black (nothing drawn there: the window's background) or stale (an
 earlier frame, at its old size or stretched).
 
-    cargo build --release -p zgui-desktop --example resize_probe
+    cargo build --release -p zgx-desktop --example resize_probe
     python scripts/windows_resize_probe.py target/release/examples/resize_probe.exe
 
 It reports, per kind of change, how long the new size took to show and how

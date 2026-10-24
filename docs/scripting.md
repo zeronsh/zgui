@@ -1,6 +1,6 @@
-# Scripting zgui with Luau
+# Scripting zgx with Luau
 
-`zgui-script` builds interfaces from [Luau](https://luau.org) scripts. A script runs once per load and returns a description of components, state bindings and animations; Rust lowers it to ordinary retained views. Layout, drawing, state and animation all stay in Rust. The script is called again only for event handlers, components as they mount, and properties it explicitly computes with a function. Text templates (`"Count: {count}"`) and every animation run without calling the script.
+`zgx-script` builds interfaces from [Luau](https://luau.org) scripts. A script runs once per load and returns a description of components, state bindings and animations; Rust lowers it to ordinary retained views. Layout, drawing, state and animation all stay in Rust. The script is called again only for event handlers, components as they mount, and properties it explicitly computes with a function. Text templates (`"Count: {count}"`) and every animation run without calling the script.
 
 ```lua
 local count = ui.state("count", 0)
@@ -19,22 +19,22 @@ cx.tasks.spawn(host.watch(Duration::from_millis(250))); // hot reload in develop
 cx.render(host.view());
 ```
 
-Or run a script with no host of your own: `cargo run -p zgui-run -- path/to/app/` (`zgui-run app.luau`, once installed with `cargo install --path crates/zgui-run`) opens it in a window and reloads it as its files change. A `zgui.json` beside the script sets the window (`title`, `width`, `height`, `min_width`, `min_height`, `titlebar`: `"standard"`, `"inset"` or `"hidden"`, `glass`) and `app_id` (where `ui.persist` keeps its data, and on Linux its windows' desktop file ID, `app_id.desktop`, which docks match them to), and `application_id` (reverse-DNS: the system then hands the app the files and URLs it opens, `ui.on_open`); what follows the script on its command line is its `ui.args`, and the files among them open with it; `ui.command` entries are its menu bar and `ui.window` declarations its other windows. The mail example (`examples/mail`) runs this way.
+Or run a script with no host of your own: `cargo run -p zgx-run -- path/to/app/` (`zgx-run app.luau`, once installed with `cargo install --path crates/zgx-run`) opens it in a window and reloads it as its files change. A `zgx.json` beside the script sets the window (`title`, `width`, `height`, `min_width`, `min_height`, `titlebar`: `"standard"`, `"inset"` or `"hidden"`, `glass`) and `app_id` (where `ui.persist` keeps its data, and on Linux its windows' desktop file ID, `app_id.desktop`, which docks match them to), and `application_id` (reverse-DNS: the system then hands the app the files and URLs it opens, `ui.on_open`); what follows the script on its command line is its `ui.args`, and the files among them open with it; `ui.command` entries are its menu bar and `ui.window` declarations its other windows. The mail example (`examples/mail`) runs this way.
 
 State is Rust-owned and keyed, so a reload keeps it, as React's Fast Refresh keeps a component's state: a save shows new code with the values you had, not the ones your code starts from. So changing a state's initial value (`ui.state("messages", sample(4000))` to `sample(100)`) does not apply to a running app; change its key (`ui.state("messages_v2", …)`), which makes it a new state from its initial value, or restart. `ui.persist` keeps its value across launches the same way. Each script gets its own sandboxed VM (read-only globals, a heap limit, 1 GiB for the app's own scripts, which hold its data, and 32 MiB for a plugin's, its state's values (which Rust holds) counted with its VM, and a time budget per call, 50 ms of the CPU time the script uses, so a busy machine does not fail it, and ten times that in a debug build, which runs scripts several times slower; it counts from a CPU-time reading up to 1 ms old, so a script may be stopped up to 1 ms short of its budget, never past it), which makes plugins safe to load next to the application. A host changes them with `ScriptHost::limits`; a script that reaches one says which. A failed reload keeps the last good interface running and shows the error, with file and line, until a good save.
 
 The [Luau reference](reference/index.md) has a page per element and API group: signatures, every option with its type and default, an example and the gotchas. [App structure](reference/app-structure.md) shows how to split a large app across modules that share its state.
 
-Examples: `hot_reload` (an app and two plugins), `frame_profiler` (a profiler window with sample data, menus, popovers and tooltips), `stream_luau` / `stream_rust` (the same window in Luau and Rust, compared by `examples/stream/measure.sh`), `anime_showcase` (the animation API), `anime_bench` (per-frame engine cost), `state_bench` (what a state update costs), `notes` (an app that saves with `ui.persist`), `mail` (a mail client in modules: a virtualized list, a selectable message, a spellchecked compose sheet, menus, tooltips and a settings window; run it with `zgui-run`), and in zgui-desktop `terminal` and `zgui_monitor` (multi-module apps whose panes split, resize and move by dragging; the monitor's host samples processes and publishes them as shared state).
+Examples: `hot_reload` (an app and two plugins), `frame_profiler` (a profiler window with sample data, menus, popovers and tooltips), `stream_luau` / `stream_rust` (the same window in Luau and Rust, compared by `examples/stream/measure.sh`), `anime_showcase` (the animation API), `anime_bench` (per-frame engine cost), `state_bench` (what a state update costs), `notes` (an app that saves with `ui.persist`), `mail` (a mail client in modules: a virtualized list, a selectable message, a spellchecked compose sheet, menus, tooltips and a settings window; run it with `zgx-run`), and in zgx-desktop `terminal` and `zgx_monitor` (multi-module apps whose panes split, resize and move by dragging; the monitor's host samples processes and publishes them as shared state).
 
 ## Types
 
-`crates/zgui-script/types/zgui.d.luau` types the `ui` and `anime` globals for [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp): editors complete property names, events and API calls, and report misspelled ones (`bgg`, `durtion`, `on_clik`, `state:sett`) before the script runs. In VS Code, list the file under `luau-lsp.types.definitionFiles` and turn on Luau's new type solver, which the types need:
+`crates/zgx-script/types/zgx.d.luau` types the `ui` and `anime` globals for [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp): editors complete property names, events and API calls, and report misspelled ones (`bgg`, `durtion`, `on_clik`, `state:sett`) before the script runs. In VS Code, list the file under `luau-lsp.types.definitionFiles` and turn on Luau's new type solver, which the types need:
 
 ```json
 {
     "luau-lsp.platform.type": "standard",
-    "luau-lsp.types.definitionFiles": ["crates/zgui-script/types/zgui.d.luau"],
+    "luau-lsp.types.definitionFiles": ["crates/zgx-script/types/zgx.d.luau"],
     "luau-lsp.fflags.override": { "LuauSolverV2": "true" }
 }
 ```
@@ -47,17 +47,17 @@ The types say what the engine accepts. Each element function takes its own props
 
 The file's `export type`s are global type names for a script's own annotations: `Node`, `Child`, `State<T>`, `Props`, `ContainerProps`, each element's props type, `Styles`, `Color`, `Element`, `Ref`, and `Merge<A, B>` to make a props type of your own ([reference](reference/index.md#reading-the-signatures)). Where an argument is the script's own data Luau cannot infer well, it is `any` (`each`'s row and `presence`'s value, drag payloads, a page's messages): annotate the callback's parameter, `function(task: Task)`, to check it.
 
-The definitions are written in `types/zgui.d.luau.in`, where element props are `Merge<Props, { … }>`; `zgui.d.luau` is that file with each `Merge` written out (luau-lsp finds that many type function calls too complex). `tests/types.rs` regenerates it (`ZGUI_BLESS=1 cargo test -p zgui-script --test tooling types::`) and fails when it is stale, and fails when the engine accepts a style property, element option, event, `ui` or `anime` function, State, Element, Ref, Web, Term, Canvas or Animation method or field, or animatable key the types do not have. At run time an unknown property or animation property is an error too, shown over the window.
+The definitions are written in `types/zgx.d.luau.in`, where element props are `Merge<Props, { … }>`; `zgx.d.luau` is that file with each `Merge` written out (luau-lsp finds that many type function calls too complex). `tests/types.rs` regenerates it (`ZGX_BLESS=1 cargo test -p zgx-script --test tooling types::`) and fails when it is stale, and fails when the engine accepts a style property, element option, event, `ui` or `anime` function, State, Element, Ref, Web, Term, Canvas or Animation method or field, or animatable key the types do not have. At run time an unknown property or animation property is an error too, shown over the window.
 
-### Checking before running: `zgui check`
+### Checking before running: `zgx check`
 
 ```sh
-cargo install --path crates/zgui-script --bin zgui   # or: cargo run -p zgui-script --bin zgui --
-zgui check app.luau          # a file
-zgui check examples/notes    # every .luau file under a directory
+cargo install --path crates/zgx-script --bin zgx   # or: cargo run -p zgx-script --bin zgx --
+zgx check app.luau          # a file
+zgx check examples/notes    # every .luau file under a directory
 ```
 
-`zgui check` runs `luau-lsp analyze` with the definitions above built into the binary, the `standard` platform, the new solver (`--flag:LuauSolverV2=true`) and strict mode, unless a `.luaurc` (`languageMode`) or a `--!nonstrict` comment picks another mode (`--nonstrict` changes the default). It prints `file:line:col: error[TypeError]: …` and lint warnings, and exits 1 when there are errors (2 for usage errors, 3 when luau-lsp is missing). It catches what otherwise appears only at run time, such as a local function used before its definition, which is `nil` until called:
+`zgx check` runs `luau-lsp analyze` with the definitions above built into the binary, the `standard` platform, the new solver (`--flag:LuauSolverV2=true`) and strict mode, unless a `.luaurc` (`languageMode`) or a `--!nonstrict` comment picks another mode (`--nonstrict` changes the default). It prints `file:line:col: error[TypeError]: …` and lint warnings, and exits 1 when there are errors (2 for usage errors, 3 when luau-lsp is missing). It catches what otherwise appears only at run time, such as a local function used before its definition, which is `nil` until called:
 
 ```lua
 local function render()
@@ -66,17 +66,17 @@ end
 local function helper() return ui.text "hi" end
 ```
 
-An unused local that a text template uses (`local count = ui.state("count", 0)` shown as `"{count}"`) is not reported. luau-lsp comes from its [releases](https://github.com/JohnnyMorganz/luau-lsp/releases) (put it on the `PATH`, or set `LUAU_LSP` to it); without it, `zgui check` says how to install it. A hot-reloading host runs the same check after every reload and shows the errors in the window's banner: in a debug build `host.watch` turns it on when luau-lsp is installed (a release build, or a machine without luau-lsp, does nothing). `host.check_on_reload(true | false)` or `ZGUI_CHECK=1` / `0` decides instead. The check runs luau-lsp in its own process from another thread, after a reload rather than per frame, and costs about 0.1 s of that process's CPU for a twenty-module app; results arrive through `host.watch`.
+An unused local that a text template uses (`local count = ui.state("count", 0)` shown as `"{count}"`) is not reported. luau-lsp comes from its [releases](https://github.com/JohnnyMorganz/luau-lsp/releases) (put it on the `PATH`, or set `LUAU_LSP` to it); without it, `zgx check` says how to install it. A hot-reloading host runs the same check after every reload and shows the errors in the window's banner: in a debug build `host.watch` turns it on when luau-lsp is installed (a release build, or a machine without luau-lsp, does nothing). `host.check_on_reload(true | false)` or `ZGX_CHECK=1` / `0` decides instead. The check runs luau-lsp in its own process from another thread, after a reload rather than per frame, and costs about 0.1 s of that process's CPU for a twenty-module app; results arrive through `host.watch`.
 
-### Best practice: `zgui lint`
+### Best practice: `zgx lint`
 
 ```sh
-zgui lint app.luau           # a file
-zgui lint examples/notes     # every .luau file under a directory
-zgui lint --rules            # what it looks for
+zgx lint app.luau           # a file
+zgx lint examples/notes     # every .luau file under a directory
+zgx lint --rules            # what it looks for
 ```
 
-`zgui check` asks whether a script is right; `zgui lint` asks whether it is written the way zgui runs fast. It reads the source only (no luau-lsp, nothing run), takes milliseconds for a large app, prints `file:line:col: warning[rule]: …` with the cheaper way to say the same thing, and exits 1 when it finds anything. CI lints every example with it. Run it, with `zgui check`, before handing a script over:
+`zgx check` asks whether a script is right; `zgx lint` asks whether it is written the way zgx runs fast. It reads the source only (no luau-lsp, nothing run), takes milliseconds for a large app, prints `file:line:col: warning[rule]: …` with the cheaper way to say the same thing, and exits 1 when it finds anything. CI lints every example with it. Run it, with `zgx check`, before handing a script over:
 
 | Rule | What it finds | Instead |
 | --- | --- | --- |
@@ -89,9 +89,9 @@ zgui lint --rules            # what it looks for
 | `update-copy` | `state:update(fn)` that only inserts, removes or sets one path: it copies the whole value through Luau | `push`, `insert`, `remove`, `set_key(path, v)`, `patch` |
 | `computed-sort` | `ui.sort` in a `ui.computed`: every change to what it reads (a row written, a tick) sorts the whole list again | `ui.sorted(list, { by, filter })`, which re-places only the rows written |
 
-`-- zgui-lint: allow(rule)` on the finding's line or the line above accepts a deliberate exception (`allow(rule-a, rule-b)` for several).
+`-- zgx-lint: allow(rule)` on the finding's line or the line above accepts a deliberate exception (`allow(rule-a, rule-b)` for several).
 
-A debug build lints the scripts itself after every load and reload, so a findings list needs no one to remember to ask: each finding is printed once to stderr, kept in `ScriptHost::warnings()`, and shown over the interface (`ScriptHost::lint_findings()`) while there is no error. It costs milliseconds per reload, a release build or a bundled app does nothing, and `ZGUI_LINT=0` turns it off. For tools, `zgui lint --format json` prints `{ "files": n, "findings": [{ "file", "line", "column", "rule", "message" }] }`; like the text form, it exits 1 when it finds anything.
+A debug build lints the scripts itself after every load and reload, so a findings list needs no one to remember to ask: each finding is printed once to stderr, kept in `ScriptHost::warnings()`, and shown over the interface (`ScriptHost::lint_findings()`) while there is no error. It costs milliseconds per reload, a release build or a bundled app does nothing, and `ZGX_LINT=0` turns it off. For tools, `zgx lint --format json` prints `{ "files": n, "findings": [{ "file", "line", "column", "rule", "message" }] }`; like the text form, it exits 1 when it finds anything.
 
 Some costs the engine removes instead of asking scripts to avoid them: `ui.tween`, `ui.spring`, `ui.loop`, text templates and animations of states or elements run without calling the script at all.
 
@@ -99,15 +99,15 @@ Some costs the engine removes instead of asking scripts to avoid them: `ui.tween
 
 **Errors in the window.** When a script fails to load or reload, or a handler, computed property or effect raises, a banner over the bottom of the window shows the file and line (`app.luau:12`, in monospace), the message and as much of the traceback as fits. A failed reload keeps the previous interface running under it; the next good reload clears it, and × dismisses it. The banner is mounted only while there is an error (`View::child_when`), so without one it costs no nodes and no per-frame work. `host.error()` is the same message as a signal.
 
-**Layout inspector.** Ctrl+Option+Cmd+I in a desktop window (Ctrl+Alt+Shift+I on Linux and Windows) toggles it, as does `ZGUI_INSPECT=1`, `cx.inspector.set_enabled(true)` on a `WindowContext`, or `host.inspect(true)`. It outlines every box and describes the one under the pointer: its kind, `#id` and `.class`es, the script line that created it (`created at app.luau:42`; inner nodes say `created inside`), size and position, explicit sizes and limits, padding, margin, border and gap, flex grow, shrink, alignment and justification, and its clip. It follows the pointer only; it never synthesizes input, and input and cursors pass through it. It is drawn as an overlay of ordinary scene nodes appended last under the window's root, absolutely positioned with a fixed size: it takes no room in the interface's layout and its own updates lay out only itself, and it renders through the same renderer (GPU, software, native-view planes) rather than a special pass. While it is on, scripts record where they create nodes (turning it on reloads them, keeping state); off, nothing is recorded and it holds no nodes.
+**Layout inspector.** Ctrl+Option+Cmd+I in a desktop window (Ctrl+Alt+Shift+I on Linux and Windows) toggles it, as does `ZGX_INSPECT=1`, `cx.inspector.set_enabled(true)` on a `WindowContext`, or `host.inspect(true)`. It outlines every box and describes the one under the pointer: its kind, `#id` and `.class`es, the script line that created it (`created at app.luau:42`; inner nodes say `created inside`), size and position, explicit sizes and limits, padding, margin, border and gap, flex grow, shrink, alignment and justification, and its clip. It follows the pointer only; it never synthesizes input, and input and cursors pass through it. It is drawn as an overlay of ordinary scene nodes appended last under the window's root, absolutely positioned with a fixed size: it takes no room in the interface's layout and its own updates lay out only itself, and it renders through the same renderer (GPU, software, native-view planes) rather than a special pass. While it is on, scripts record where they create nodes (turning it on reloads them, keeping state); off, nothing is recorded and it holds no nodes.
 
-**Layout warnings.** While the inspector is on, or with `ZGUI_LAYOUT_WARNINGS=1`, each layout is checked for: a zero-width or zero-height box with children or text (not one collapsed on purpose with `w = 0` or `max_h = 0`); in-flow content past the edges of a clipping box that does not scroll; a percentage width or height inside a parent sized by its content, which falls back to its content size. Each is reported once per node to stderr (`zgui layout warning: app.luau:12: column #list: zero height (380 × 0) with 3 children; …`) and listed by the inspector, which outlines the box in orange. Debug builds do not check by default: the walk is linear in the scene on every layout, which animations repeat each frame.
+**Layout warnings.** While the inspector is on, or with `ZGX_LAYOUT_WARNINGS=1`, each layout is checked for: a zero-width or zero-height box with children or text (not one collapsed on purpose with `w = 0` or `max_h = 0`); in-flow content past the edges of a clipping box that does not scroll; a percentage width or height inside a parent sized by its content, which falls back to its content size. Each is reported once per node to stderr (`zgx layout warning: app.luau:12: column #list: zero height (380 × 0) with 3 children; …`) and listed by the inspector, which outlines the box in orange. Debug builds do not check by default: the walk is linear in the scene on every layout, which animations repeat each frame.
 
 ## Elements
 
 Elements take one table: string keys are properties, events and options; array entries are children (nodes, strings as text, functions as computed text, nested arrays, which flatten). `nil` and `false` entries are skipped, so `cond and node or nil` works anywhere in the list.
 
-The component library's elements (`ui.data_grid`, `ui.tree`, `ui.calendar`, `ui.date_picker`, `ui.time_field`, `ui.combobox`, `ui.select`, `ui.tabs`, `ui.command_palette`, `ui.segmented`, `ui.stepper`, `ui.disclosure`, `ui.accordion` and `ui.separator`, and `ui.toast`) are `zgui-components`', through zgui-script's `components` feature, on by default: a host built without it (`default-features = false`) has the rest of `ui`.
+The component library's elements (`ui.data_grid`, `ui.tree`, `ui.calendar`, `ui.date_picker`, `ui.time_field`, `ui.combobox`, `ui.select`, `ui.tabs`, `ui.command_palette`, `ui.segmented`, `ui.stepper`, `ui.disclosure`, `ui.accordion` and `ui.separator`, and `ui.toast`) are `zgx-components`', through zgx-script's `components` feature, on by default: a host built without it (`default-features = false`) has the rest of `ui`.
 
 | Function | |
 | --- | --- |
@@ -119,7 +119,7 @@ The component library's elements (`ui.data_grid`, `ui.tree`, `ui.calendar`, `ui.
 | `image { src = "a.png", fit = "cover" }` | PNG or JPEG, relative to the script; `src` may be state |
 | `svg { src = "icon.svg" }`, `svg { code = "<svg…>" }` | `tint = color` (a state or function re-tints it); `tint = "currentColor"` follows the text color it inherits (a button's, hover included) |
 | `canvas { draw = function(c, w, h) … end }` | runs again when its size or the state it reads changes |
-| `webview { src = "https://…", … }` | a native web page (WKWebView on macOS) laid out, rounded, clipped and faded like any node, with zgui content (frosted popovers too) drawn over it; see [Web views](#web-views) |
+| `webview { src = "https://…", … }` | a native web page (WKWebView on macOS) laid out, rounded, clipped and faded like any node, with zgx content (frosted popovers too) drawn over it; see [Web views](#web-views) |
 | `terminal { term = ui.term(id) }` | a terminal session (a Ghostty surface, with the desktop host's `ghostty` feature) placed like a web view; see [Terminals](#terminals) |
 | `checkbox`, `input`, `textarea`, `progress`, `slider` | `{ label, value = state }`; `slider` takes `min`, `max`; `input` and `textarea` take `placeholder` (text shown while the value is empty: a string, state or function), `placeholder_color` and `select_on_focus = true` (focus selects all the text: an address bar) |
 | `show(cond, node, else)` | `cond`: state, function or boolean. What it shows lays out as if it stood in its place (its `grow`, `self`, percentages and `absolute` insets reach the parent), as for `switch` and `presence` |
@@ -144,12 +144,12 @@ return ui.column {
     ui.webview {
         web = web, src = url, grow = 1, rounded = 12,
         on_navigate = function(e) print(e.kind, e.url) end,   -- started, committed, finished, failed, changed
-        on_message = function(value) print(value.kind) end,   -- window.zgui.postMessage({ kind = … }) from the page
+        on_message = function(value) print(value.kind) end,   -- window.zgx.postMessage({ kind = … }) from the page
     },
 }
 ```
 
-The controller's `url`, `title`, `loading`, `progress`, `can_go_back`, `can_go_forward`, `focused`, `error` and `pointer` are tracked like state. `pointer` is `{ x, y }` in points from the page's top left while the pointer is over the page's visible box (zgui content drawn over it included), nil otherwise: over a page that takes input zgui's nodes have had their leave and hear no moves (as over a terminal, whose `term.pointer` is the same), so a page's own edge affordances follow `web.pointer`. Its methods: `load(url)`, `html(html, base_url)`, `back()`, `forward()`, `reload()`, `stop()`, `focus()`, `blur()`, `devtools()`, `zoom(z)`, `run(js)` and `eval(js, function(value, err) … end)`, which gets the script's value as Luau data. Events: `on_navigate({ kind, url })`, `on_load(url)`, `on_title(title)`, `on_message(value)`, `on_error(url, err)` and `on_new_window(url)`. Without a native host (headless, other platforms) the node shows a labelled box.
+The controller's `url`, `title`, `loading`, `progress`, `can_go_back`, `can_go_forward`, `focused`, `error` and `pointer` are tracked like state. `pointer` is `{ x, y }` in points from the page's top left while the pointer is over the page's visible box (zgx content drawn over it included), nil otherwise: over a page that takes input zgx's nodes have had their leave and hear no moves (as over a terminal, whose `term.pointer` is the same), so a page's own edge affordances follow `web.pointer`. Its methods: `load(url)`, `html(html, base_url)`, `back()`, `forward()`, `reload()`, `stop()`, `focus()`, `blur()`, `devtools()`, `zoom(z)`, `run(js)` and `eval(js, function(value, err) … end)`, which gets the script's value as Luau data. Events: `on_navigate({ kind, url })`, `on_load(url)`, `on_title(title)`, `on_message(value)`, `on_error(url, err)` and `on_new_window(url)`. Without a native host (headless, other platforms) the node shows a labelled box.
 
 ### Terminals
 
@@ -164,7 +164,7 @@ local term = ui.term("p1", {
 return ui.terminal { term = term, grow = 1, rounded = 10, on_focus = function() print("typing here") end }
 ```
 
-The session's `title` (what the program set), `pwd` (the shell's directory), `process` (the foreground program's name), `pid`, `focused`, `bell`, `progress`, `exited`, `columns` and `rows` are tracked like state. Methods: `focus()`, `blur()`, `input(text)` (as typed), `paste(text)`, `binding(action)` (a Ghostty binding action: `"copy_to_clipboard"`, `"clear_screen"`, `"increase_font_size:1"`), `needs_confirm()` (whether closing ends something other than an idle shell) and `close()`. Events, as options: `on_title`, `on_pwd`, `on_process`, `on_exit(code)`, `on_close(alive)`, `on_bell`, `on_command(exit_code, ms)` (shell integration) and `on_notify(title, body)`. `progress_error` says the last progress report (OSC 9;4) was an error. `status` is what the program reports of itself through the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status) (OSC 7501), when it does: `state` (`"idle"`, `"working"`, `"done"`, `"blocked"`, `"error"`), `kind` (what a blocked program waits for: `"permission"`, `"question"`, `"auth"`), `progress`, `app`, `title`, `msg`, `child_blocked` (a sub-task is blocked) and `since` (Unix seconds); `nil` otherwise. A terminal host fills it in; zgui-desktop's terminal example keeps a session's reports in its session server. The terminal reads its own keyboard, IME and mouse; app shortcuts reach the app through its menus (see [Commands](#commands-and-host-actions)). `zgui-desktop/examples/terminal` is a multiplexer written this way.
+The session's `title` (what the program set), `pwd` (the shell's directory), `process` (the foreground program's name), `pid`, `focused`, `bell`, `progress`, `exited`, `columns` and `rows` are tracked like state. Methods: `focus()`, `blur()`, `input(text)` (as typed), `paste(text)`, `binding(action)` (a Ghostty binding action: `"copy_to_clipboard"`, `"clear_screen"`, `"increase_font_size:1"`), `needs_confirm()` (whether closing ends something other than an idle shell) and `close()`. Events, as options: `on_title`, `on_pwd`, `on_process`, `on_exit(code)`, `on_close(alive)`, `on_bell`, `on_command(exit_code, ms)` (shell integration) and `on_notify(title, body)`. `progress_error` says the last progress report (OSC 9;4) was an error. `status` is what the program reports of itself through the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status) (OSC 7501), when it does: `state` (`"idle"`, `"working"`, `"done"`, `"blocked"`, `"error"`), `kind` (what a blocked program waits for: `"permission"`, `"question"`, `"auth"`), `progress`, `app`, `title`, `msg`, `child_blocked` (a sub-task is blocked) and `since` (Unix seconds); `nil` otherwise. A terminal host fills it in; zgx-desktop's terminal example keeps a session's reports in its session server. The terminal reads its own keyboard, IME and mouse; app shortcuts reach the app through its menus (see [Commands](#commands-and-host-actions)). `zgx-desktop/examples/terminal` is a multiplexer written this way.
 
 ### Commands and host actions
 
@@ -243,7 +243,7 @@ return ui.row {
 }
 ```
 
-Query a box whose size does not depend on what the query changes, such as the window's root row: a box sized by its content that hid content below a width would go back and forth (zgui stops after a few rounds). Within a layout, flex does the rest: children shrink to fit (`shrink = 1`) down to their content's narrowest, text wraps with `wrap = true`, rows with `flex_wrap = true`, and `min_w = 0` lets a truncated label go narrower still. The mail example (`examples/mail`) folds a three-pane window this way, into a drawer and then one pane at a time.
+Query a box whose size does not depend on what the query changes, such as the window's root row: a box sized by its content that hid content below a width would go back and forth (zgx stops after a few rounds). Within a layout, flex does the rest: children shrink to fit (`shrink = 1`) down to their content's narrowest, text wraps with `wrap = true`, rows with `flex_wrap = true`, and `min_w = 0` lets a truncated label go narrower still. The mail example (`examples/mail`) folds a three-pane window this way, into a drawer and then one pane at a time.
 
 ### Layout animation
 
@@ -303,7 +303,7 @@ return Card { title = "Saved" }   -- `Card { titel = … }` is a type error in t
 
 ### Saved state
 
-`ui.persist(key, initial)` returns state that the next run of the app starts from. Each key is a JSON file (`Value::to_json`) in the host's storage: `ScriptHost::app_id("my-app")` puts it in the platform's data directory for the app (`~/Library/Application Support/my-app/script-state` on macOS, `%APPDATA%\my-app\script-state` on Windows, `$XDG_DATA_HOME/my-app/script-state` elsewhere; `zgui_script::app_data_dir`), and `ScriptHost::storage(dir)` puts it anywhere else. Without either, it is kept only until the app quits, with a warning.
+`ui.persist(key, initial)` returns state that the next run of the app starts from. Each key is a JSON file (`Value::to_json`) in the host's storage: `ScriptHost::app_id("my-app")` puts it in the platform's data directory for the app (`~/Library/Application Support/my-app/script-state` on macOS, `%APPDATA%\my-app\script-state` on Windows, `$XDG_DATA_HOME/my-app/script-state` elsewhere; `zgx_script::app_data_dir`), and `ScriptHost::storage(dir)` puts it anywhere else. Without either, it is kept only until the app quits, with a warning.
 
 ```lua
 local notes = ui.persist("notes", {})
@@ -337,10 +337,10 @@ Reaching for something it was not given is an error that names what it needs; a 
 
 ### Testing an app
 
-`zgui_script::testing::TestApp` mounts a host headless, with the task executor and frame clock a window has, and drives it as a person would. Set up actions, the fetcher and shared state on the host before returning it; `TestApp::wrapped` provides what a window does, and `TestApp::with_desktop` a clipboard and file dialogs (`testing::FakeDesktop`) that answer as the test queues (`desktop.pick([path])`, `desktop.save_to(path)`), so open and save run as in a window.
+`zgx_script::testing::TestApp` mounts a host headless, with the task executor and frame clock a window has, and drives it as a person would. Set up actions, the fetcher and shared state on the host before returning it; `TestApp::wrapped` provides what a window does, and `TestApp::with_desktop` a clipboard and file dialogs (`testing::FakeDesktop`) that answer as the test queues (`desktop.pick([path])`, `desktop.save_to(path)`), so open and save run as in a window.
 
 ```rust
-use zgui_script::{ScriptHost, testing::TestApp};
+use zgx_script::{ScriptHost, testing::TestApp};
 
 #[test]
 fn signing_in_greets_the_user() {
@@ -358,25 +358,25 @@ fn signing_in_greets_the_user() {
 }
 ```
 
-It has `click`, `type_text`, `key` and `key_with`, `frame` and `frames`, `settle` (run what is ready), `wait_until` (for host calls, fetches and timers, up to five seconds), `find`, `bounds`, `text`, `texts`, `opacity`, `error` and `calls` (calls into scripts: a hot path holds at zero). zgui-script's own tests use it.
+It has `click`, `type_text`, `key` and `key_with`, `frame` and `frames`, `settle` (run what is ready), `wait_until` (for host calls, fetches and timers, up to five seconds), `find`, `bounds`, `text`, `texts`, `opacity`, `error` and `calls` (calls into scripts: a hot path holds at zero). zgx-script's own tests use it.
 
 ### Shipping an app
 
 In development a host reads its scripts from the disk and reloads them as they change (`ScriptHost::new` and `watch`). What ships carries them compiled into the binary instead: a build script bundles the directory, and the host runs from the bundle.
 
 ```rust
-// build.rs (zgui-script as a build-dependency)
+// build.rs (zgx-script as a build-dependency)
 fn main() {
-    zgui_script::build::bundle("ui", "app").unwrap();
+    zgx_script::build::bundle("ui", "app").unwrap();
 }
 // the app
-static UI: zgui_script::Bundle = zgui_script::include_bundle!("app");
+static UI: zgx_script::Bundle = zgx_script::include_bundle!("app");
 let host = ScriptHost::bundled(&cx.ui.runtime, &UI, "app.luau");
 ```
 
 `bundle` compiles every `.luau` file to Luau bytecode (a script that does not parse fails the build, with its file and line) and keeps `.luaurc`, theme `.json` files and images as they are; Rust sources and other dotfiles stay out. A bundled host reads nothing from the disk: `require`, `@self`, `.luaurc` aliases, `ui.theme.load`, `ui.image` and `ScriptHost::plugins` all resolve inside the bundle, and a module it does not have is an error, not a read elsewhere. The plugins an app sets (`set_plugins`) are its users', read from the disk; `watch` on a bundled host watches only those.
 
-Errors are for the developer: `error_banner(true)` shows each over the interface with where it happened, and is the default in debug builds. In release builds the banner is off: a failed load or a handler's error leaves the last good interface running, and `host.on_error(|message| ...)` hears it, for the app's log or crash reports. The terminal example builds either way: with `--features terminal-bundle` it runs from its bundle (`ZGUI_SCRIPTS=source` reads the source tree instead), without it from the source tree, reloading as it is edited; `scripts/zterm-app.sh` packages the bundled build.
+Errors are for the developer: `error_banner(true)` shows each over the interface with where it happened, and is the default in debug builds. In release builds the banner is off: a failed load or a handler's error leaves the last good interface running, and `host.on_error(|message| ...)` hears it, for the app's log or crash reports. The terminal example builds either way: with `--features terminal-bundle` it runs from its bundle (`ZGX_SCRIPTS=source` reads the source tree instead), without it from the source tree, reloading as it is edited; `scripts/zterm-app.sh` packages the bundled build.
 
 ### Warnings
 
@@ -393,8 +393,8 @@ return ui.column {
     bg = "$background", p = "$space.4", gap = "$space.2",
     ui.text { "Settings", text_size = "$font.size.xl" },
     ui.div { bg = "$app.card", rounded = "$radius.lg", h = 80 },
-    ui.button { "Light", on_click = function() ui.theme.set("zgui-light") end },
-    ui.column { theme = "zgui-light", bg = "$surface.raised", ui.text { "A light card" } },
+    ui.button { "Light", on_click = function() ui.theme.set("zgx-light") end },
+    ui.column { theme = "zgx-light", bg = "$surface.raised", ui.text { "A light card" } },
 }
 ```
 
@@ -403,16 +403,16 @@ Tokens are `"$name"` strings rather than values read from a `theme` table (`them
 - `ui.theme.set(name)` applies a theme (and stops following the system); `ui.theme.default(name)` applies it unless the app has chosen one, so a reload does not undo a choice.
 - `ui.theme.current` is state holding the applied theme's name: `ui.theme.current:get()` (tracked, so text or a computed property reading it follows) and `ui.theme.current:set(name)`. `ui.theme.kind()` is `"dark"`, `"light"`, `"high-contrast"` or `"high-contrast-light"`; `ui.theme.names()` lists the themes.
 - `ui.prefers` is the system's display settings, as CSS's media queries read them. Each is a tracked state that follows the system: `ui.prefers.reduced_motion:get()` (`prefers-reduced-motion`; macOS's Reduce motion, Windows' animation effects off), `ui.prefers.more_contrast:get()` (`prefers-contrast: more`; macOS's Increase contrast, Windows' contrast themes) and `ui.prefers.reduced_transparency:get()` (`prefers-reduced-transparency`; macOS's Reduce transparency). The themes' tokens already take them: motion durations of zero, borders as strong as secondary text, and opaque, unblurred glass. A view with a backdrop blur paints its background solid then. Read them for what tokens do not cover, such as an `anime` timeline to skip.
-- `ui.theme.load(path)` reads a theme file beside the script (a zgui theme, or a VS Code colour theme) and returns its name. The host watches it: saving it restyles the window in place, keeping state and without reloading the scripts; a file that stops reading shows its error until it reads again.
+- `ui.theme.load(path)` reads a theme file beside the script (a zgx theme, or a VS Code colour theme) and returns its name. The host watches it: saving it restyles the window in place, keeping state and without reloading the scripts; a file that stops reading shows its error until it reads again.
 - `ui.theme.register(table)` registers a theme written in Luau (`{ name, type, extends, tokens }`, as a theme file); a module returning one reloads like any module.
 - `ui.theme.tokens(table)` declares the app's tokens, each with a default written in standard tokens (`terminal = { pane = "{surface.sunken}" }`, nested or dotted), so that any theme styles the app; a theme may set them by name.
 - `ui.theme.get(name)` returns a token's value (tracked): colours as `"#rrggbbaa"`, numbers, font names, shadows as `{ x, y, blur, spread, color }` lists. Canvas drawing and layout arithmetic use it.
 - `ui.theme.follow_system({ dark = "…", light = "…" })` follows the system's appearance; `false` stops.
 - `theme = …` on any element scopes its subtree: a theme's name (a light card in a dark app), or a table of tokens to override, with `theme = name` (or `extends`) to start from (`theme = { accent = "#e5484d" }`). It may be a state or a function; the scope follows it. Tokens derived from an overridden one follow, and inherited text takes the scope's colour.
 
-**The design lint.** `ui.theme.strict("warn")` (or `"error"`, or `ZGUI_DESIGN_LINT=warn`) reports every style that hard-codes a colour, spacing, corner radius, type size, weight, font or shadow, with the token to use: `` `bg = "#232e40"` hard-codes a colour … "$surface.raised" is exactly this in the current theme ``. `ui.raw(value, "reason")` lets a deliberate exception through. Sizes, `0`, `"auto"`, percentages, state values and theme definitions are not checked. See [Design systems](reference/design.md#the-design-lint).
+**The design lint.** `ui.theme.strict("warn")` (or `"error"`, or `ZGX_DESIGN_LINT=warn`) reports every style that hard-codes a colour, spacing, corner radius, type size, weight, font or shadow, with the token to use: `` `bg = "#232e40"` hard-codes a colour … "$surface.raised" is exactly this in the current theme ``. `ui.raw(value, "reason")` lets a deliberate exception through. Sizes, `0`, `"auto"`, percentages, state values and theme definitions are not checked. See [Design systems](reference/design.md#the-design-lint).
 
-A token nothing defines resolves to nothing (transparent, 0), and a debug build warns once. The terminal (`zgui-desktop/examples/terminal`: `theme.luau`, `glass.json`) and notes (`examples/notes`: `glass.json`) examples are written this way: their own themes reproduce their palettes, and `ui.theme.set("zgui-light")` restyles them whole.
+A token nothing defines resolves to nothing (transparent, 0), and a debug build warns once. The terminal (`zgx-desktop/examples/terminal`: `theme.luau`, `glass.json`) and notes (`examples/notes`: `glass.json`) examples are written this way: their own themes reproduce their palettes, and `ui.theme.set("zgx-light")` restyles them whole.
 
 ## Animation: anime.js v4
 
@@ -478,7 +478,7 @@ A release build without it says so once on stderr and in `ScriptHost::warnings()
 
 Writing to the scene directly is the floor for the work itself; the engine is below it because it skips values that did not change and writes a moving, fading element's translation and opacity together, damaging each look once. What remains is the scene's own invalidation.
 
-`script_layout_bench` (`cargo run --release -p zgui-script --example script_layout_bench`) reverses 1,000 rows of three heights in a scroll view (same machine, release, mean of 20):
+`script_layout_bench` (`cargo run --release -p zgx-script --example script_layout_bench`) reverses 1,000 rows of three heights in a scroll view (same machine, release, mean of 20):
 
 | | the change | its layout frame | each moving frame |
 | --- | --- | --- | --- |

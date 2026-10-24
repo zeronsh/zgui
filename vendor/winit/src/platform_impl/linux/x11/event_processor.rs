@@ -425,7 +425,7 @@ impl EventProcessor {
             return;
         }
 
-        // zgui patch: the window manager is about to resize the window, and
+        // zgx patch: the window manager is about to resize the window, and
         // waits for the frame at its new size (`answer_sync`).
         if xev.data.get_long(0) as xproto::Atom == atoms[_NET_WM_SYNC_REQUEST] {
             let value = (xev.data.get_long(2) as u32 as i64) | ((xev.data.get_long(3) as i32 as i64) << 32);
@@ -794,7 +794,7 @@ impl EventProcessor {
                 event: WindowEvent::Resized(new_inner_size.into()),
             });
         } else {
-            // zgui patch: no new size, no new frame: the window manager waits
+            // zgx patch: no new size, no new frame: the window manager waits
             // for none.
             window.answer_sync();
         }
@@ -923,7 +923,7 @@ impl EventProcessor {
             None => return,
         };
 
-        // zgui patch: the user's input, against focus stealing.
+        // zgx patch: the user's input, against focus stealing.
         if state == ElementState::Pressed {
             wt.xconn.set_user_time(xev.time as xproto::Timestamp);
             self.with_window(window, |w| w.set_user_time(xev.time as xproto::Timestamp));
@@ -1077,7 +1077,7 @@ impl EventProcessor {
         // Set the timestamp.
         wt.xconn.set_timestamp(event.time as xproto::Timestamp);
 
-        // zgui patch: the user's input, against focus stealing.
+        // zgx patch: the user's input, against focus stealing.
         if state == ElementState::Pressed {
             wt.xconn.set_user_time(event.time as xproto::Timestamp);
             self.with_window(event.event as xproto::Window, |w| {

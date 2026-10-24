@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Windows' settings reaching a zgui window, driven by SendInput: the window
+"""Windows' settings reaching a zgx window, driven by SendInput: the window
 menu (Alt+Space) is dark in dark mode and light in light mode, and with
 "Always show scrollbars" off a scrollbar hides at rest, shows while the user
 scrolls and hides again after; with it on it shows at rest.
 
-    cargo build -p zgui-desktop --example scrollbars
+    cargo build -p zgx-desktop --example scrollbars
     python scripts/windows_settings_smoke.py target/debug/examples/scrollbars.exe
 
 Checks the user's current settings. `--both` also runs with each setting the

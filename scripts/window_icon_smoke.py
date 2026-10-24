@@ -4,7 +4,7 @@ window_probe, which names no application id, takes its executable's icon
 from the hicolor theme in a private `XDG_DATA_HOME` (a 48 pixel PNG of one
 colour), and its window carries it as `_NET_WM_ICON`: 48 by 48, of that
 colour. Run again with a desktop file ID (`Application::desktop_id`, as
-zgui-run gives each script's `app_id`), its window's class is that ID and
+zgx-run gives each script's `app_id`), its window's class is that ID and
 its icon the one of that name (another colour)."""
 import argparse
 import json
@@ -20,8 +20,8 @@ from PIL import Image
 from platform_smoke import stop, wait_for_wm
 
 COLOUR = (10, 120, 230, 255)
-# A desktop file ID, as zgui-run gives a script's `app_id`, and its icon's.
-DESKTOP_ID, DESKTOP_COLOUR = "zgui-probe-app", (200, 60, 30, 255)
+# A desktop file ID, as zgx-run gives a script's `app_id`, and its icon's.
+DESKTOP_ID, DESKTOP_COLOUR = "zgx-probe-app", (200, 60, 30, 255)
 
 
 def main():

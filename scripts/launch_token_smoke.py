@@ -57,15 +57,15 @@ def main():
             app = subprocess.Popen([str(args.relaunched.resolve())], env=env, stdout=out, stderr=out)
         try:
             deadline = time.monotonic() + 15
-            while subprocess.run(["gdbus", "call", "--session", "--dest", "org.zgui.NativePlatform",
-                                  "--object-path", "/org/zgui/NativePlatform", "--method",
+            while subprocess.run(["gdbus", "call", "--session", "--dest", "org.zgx.NativePlatform",
+                                  "--object-path", "/org/zgx/NativePlatform", "--method",
                                   "org.freedesktop.DBus.Peer.Ping"], env=env, capture_output=True).returncode:
                 if time.monotonic() > deadline or app.poll() is not None:
                     raise RuntimeError("native_platform's D-Bus service did not start; see " + log.name)
                 time.sleep(.1)
             time.sleep(1)
-            subprocess.check_call(["gdbus", "call", "--session", "--dest", "org.zgui.NativePlatform",
-                                   "--object-path", "/org/zgui/NativePlatform", "--method",
+            subprocess.check_call(["gdbus", "call", "--session", "--dest", "org.zgx.NativePlatform",
+                                   "--object-path", "/org/zgx/NativePlatform", "--method",
                                    "org.freedesktop.Application.Activate", platform_data],
                                   env=env, stdout=subprocess.DEVNULL)
             deadline = time.monotonic() + 10
@@ -92,7 +92,7 @@ def main():
             processes.append(subprocess.Popen(["xev", "-root", "-event", "property"], env=env,
                                               stdout=out, stderr=subprocess.STDOUT))
         time.sleep(.5)
-        announced = run_until([str(args.binary.resolve())], dict(env, DESKTOP_STARTUP_ID="zgui-probe_TIME0"),
+        announced = run_until([str(args.binary.resolve())], dict(env, DESKTOP_STARTUP_ID="zgx-probe_TIME0"),
                               args.output / "x11.log", lambda: "_NET_STARTUP_INFO" in xev_log.read_text())
         result["x11_startup_notification"] = announced
         bus, address = private_bus(env)
@@ -100,14 +100,14 @@ def main():
         before = xev_log.read_text().count("_NET_STARTUP_INFO_BEGIN")
         result["x11_relaunch_completed"] = relaunch(
             dict(env, DBUS_SESSION_BUS_ADDRESS=address), args.output / "x11-relaunch.log",
-            "{'desktop-startup-id': <'zgui-relaunch_TIME0'>}",
+            "{'desktop-startup-id': <'zgx-relaunch_TIME0'>}",
             lambda: xev_log.read_text().count("_NET_STARTUP_INFO_BEGIN") > before)
     finally:
         for process in reversed(processes):
             stop(process)
 
     # Wayland: the token activates the window's surface.
-    with tempfile.TemporaryDirectory(prefix="zgui-launch-token-") as private:
+    with tempfile.TemporaryDirectory(prefix="zgx-launch-token-") as private:
         os.chmod(private, 0o700)
         env = dict(os.environ, XDG_RUNTIME_DIR=private, WLR_BACKENDS="headless", WLR_RENDERER="pixman",
                    WLR_LIBINPUT_NO_DEVICES="1")
@@ -127,16 +127,16 @@ def main():
             log = args.output / "wayland.log"
             activated = run_until(
                 [str(args.binary.resolve())],
-                dict(env, WAYLAND_DISPLAY=display, WAYLAND_DEBUG="1", XDG_ACTIVATION_TOKEN="zgui-probe-token"),
-                log, lambda: 'activate("zgui-probe-token"' in log.read_text(errors="replace"))
+                dict(env, WAYLAND_DISPLAY=display, WAYLAND_DEBUG="1", XDG_ACTIVATION_TOKEN="zgx-probe-token"),
+                log, lambda: 'activate("zgx-probe-token"' in log.read_text(errors="replace"))
             result["wayland_activation"] = activated
             bus, address = private_bus(env)
             try:
                 log = args.output / "wayland-relaunch.log"
                 result["wayland_relaunch_activation"] = relaunch(
                     dict(env, WAYLAND_DISPLAY=display, WAYLAND_DEBUG="1", DBUS_SESSION_BUS_ADDRESS=address),
-                    log, "{'activation-token': <'zgui-relaunch-token'>}",
-                    lambda: 'activate("zgui-relaunch-token"' in log.read_text(errors="replace"))
+                    log, "{'activation-token': <'zgx-relaunch-token'>}",
+                    lambda: 'activate("zgx-relaunch-token"' in log.read_text(errors="replace"))
             finally:
                 stop(bus)
         finally:

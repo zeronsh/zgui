@@ -1665,7 +1665,7 @@ fn distribute_remaining_free_space(flex_lines: &mut [FlexLine], constants: &Algo
 
         if free_space > 0.0 && num_auto_margins > 0 {
             let margin = free_space / num_auto_margins as f32;
-            // zgui: the gaps still separate the items (upstream left them
+            // zgx: the gaps still separate the items (upstream left them
             // out here, so a row with an auto margin lost its gaps).
             let gap = constants.gap.main(constants.dir);
             let first = if constants.dir.is_reverse() { line.items.len().saturating_sub(1) } else { 0 };

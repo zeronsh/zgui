@@ -12,7 +12,7 @@ typed text competes with frames already in flight. It also reports the
 intervals between the animation's commits, and how often the idle client
 wakes (protocol traffic and CPU time while nothing changes).
 
-    cargo build --release -p zgui-desktop --example input_latency
+    cargo build --release -p zgx-desktop --example input_latency
     python3 scripts/wayland_latency_probe.py target/release/examples/input_latency
     python3 scripts/wayland_latency_probe.py target/release/examples/input_latency --animate
 
@@ -55,7 +55,7 @@ def summary(values):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
-    parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("/tmp/zgui-wayland-latency"))
+    parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("/tmp/zgx-wayland-latency"))
     parser.add_argument("--samples", type=int, default=40)
     parser.add_argument("--animate", action="store_true")
     parser.add_argument("--idle-seconds", type=float, default=5)
@@ -69,7 +69,7 @@ def main():
         processes.append(child)
         return child
 
-    with tempfile.TemporaryDirectory(prefix="zgui-wayland-latency-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-wayland-latency-") as runtime:
         os.chmod(runtime, 0o700)
         try:
             xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1280x960x24", "-ac"],
@@ -83,7 +83,7 @@ def main():
             launch("openbox", ["openbox"], env)
             wait_for_wm(env)
             launch("weston", ["weston", "--backend=x11", "--renderer=pixman", "--shell=kiosk-shell.so",
-                              "--no-config", "--socket=zgui-latency", "--width=640", "--height=280",
+                              "--no-config", "--socket=zgx-latency", "--width=640", "--height=280",
                               "--idle-time=0"], env)
             deadline = time.monotonic() + 10
             window = None
@@ -98,10 +98,10 @@ def main():
                 subprocess.check_call(["xdotool", *map(str, parts)], env=env)
 
             xdo("windowactivate", "--sync", window)
-            client = dict(env, WAYLAND_DISPLAY="zgui-latency", WAYLAND_DEBUG="1", WINIT_UNIX_BACKEND="wayland")
+            client = dict(env, WAYLAND_DISPLAY="zgx-latency", WAYLAND_DEBUG="1", WINIT_UNIX_BACKEND="wayland")
             client.pop("DISPLAY", None)
             if args.animate:
-                client["ZGUI_ANIMATE"] = "1"
+                client["ZGX_ANIMATE"] = "1"
             protocol = args.output / "protocol.log"
             with protocol.open("w") as log:
                 app = launch("application", [str(args.binary.resolve())], client, stderr=log)

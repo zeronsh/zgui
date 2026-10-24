@@ -1,0 +1,510 @@
+diff --git a/build.zig b/build.zig
+index 41ac5f0..274a29d 100644
+--- a/build.zig
++++ b/build.zig
+@@ -203,20 +203,16 @@ pub fn build(b: *std.Build) !void {
+         // This is NOT libghostty (even though its named that for historical
+         // reasons). It is just the glue between Ghostty GUI on macOS and
+         // the full Ghostty GUI core.
+-        const lib_shared = try buildpkg.GhosttyLib.initShared(b, &deps);
+         const lib_static = try buildpkg.GhosttyLib.initStatic(b, &deps);
+-
+-        // We shouldn't have this guard but we don't currently
+-        // build on macOS this way ironically so we need to fix that.
+-        if (!config.target.result.os.tag.isDarwin()) {
+-            lib_shared.installHeader(); // Only need one header
+-            if (config.target.result.os.tag == .windows) {
+-                lib_shared.install("ghostty-internal.dll");
+-                lib_static.install("ghostty-internal-static.lib");
+-            } else {
+-                lib_shared.install("ghostty-internal.so");
+-                lib_static.install("ghostty-internal.a");
+-            }
++        lib_static.installHeader();
++        if (config.target.result.os.tag == .windows) {
++            const lib_shared = try buildpkg.GhosttyLib.initShared(b, &deps);
++            lib_shared.install("ghostty-internal.dll");
++            lib_static.install("ghostty-internal-static.lib");
++        } else if (config.target.result.os.tag.isDarwin()) {
++            lib_static.install("libghostty-internal.a");
++        } else {
++            lib_static.install("ghostty-internal.a");
+         }
+     }
+ 
+diff --git a/src/build/SharedDeps.zig b/src/build/SharedDeps.zig
+index 86cfecc..29ee06b 100644
+--- a/src/build/SharedDeps.zig
++++ b/src/build/SharedDeps.zig
+@@ -128,12 +128,16 @@ fn initTarget(
+     b: *std.Build,
+     target: std.Build.ResolvedTarget,
+ ) !void {
+-    // Update our metallib
+-    self.metallib = .create(b, .{
+-        .name = "Ghostty",
+-        .target = target,
+-        .sources = &.{b.path("src/renderer/shaders/shaders.metal")},
+-    });
++    // Embedded runtimes compile the Metal source at runtime so consumers do
++    // not need Xcode's optional Metal toolchain merely to build libghostty.
++    self.metallib = if (self.config.app_runtime == .none)
++        null
++    else
++        .create(b, .{
++            .name = "Ghostty",
++            .target = target,
++            .sources = &.{b.path("src/renderer/shaders/shaders.metal")},
++        });
+ 
+     // Change our config
+     const config = try b.allocator.create(Config);
+@@ -192,16 +196,21 @@ pub fn add(
+             .optimize = optimize,
+         });
+         if (target.result.os.tag.isDarwin()) {
+-            const libc = try std.zig.LibCInstallation.findNative(
+-                b.allocator,
+-                b.graph.io,
+-                .{
+-                    .environ_map = &b.graph.environ_map,
+-                    .target = &target.result,
+-                    .verbose = false,
+-                },
+-            );
+-            c.addSystemIncludePath(.{ .cwd_relative = libc.sys_include_dir.? });
++            const sys_include_dir = if (b.graph.environ_map.get("SDKROOT")) |sdk|
++                try std.fs.path.join(b.allocator, &.{ sdk, "usr", "include" })
++            else blk: {
++                const libc = try std.zig.LibCInstallation.findNative(
++                    b.allocator,
++                    b.graph.io,
++                    .{
++                        .environ_map = &b.graph.environ_map,
++                        .target = &target.result,
++                        .verbose = false,
++                    },
++                );
++                break :blk libc.sys_include_dir.?;
++            };
++            c.addSystemIncludePath(.{ .cwd_relative = sys_include_dir });
+         }
+         step.root_module.addImport("locale-c", c.createModule());
+     }
+@@ -219,16 +228,21 @@ pub fn add(
+             });
+             switch (target.result.os.tag) {
+                 .macos => {
+-                    const libc = try std.zig.LibCInstallation.findNative(
+-                        b.allocator,
+-                        b.graph.io,
+-                        .{
+-                            .environ_map = &b.graph.environ_map,
+-                            .target = &target.result,
+-                            .verbose = false,
+-                        },
+-                    );
+-                    c.addSystemIncludePath(.{ .cwd_relative = libc.sys_include_dir.? });
++                    const sys_include_dir = if (b.graph.environ_map.get("SDKROOT")) |sdk|
++                        try std.fs.path.join(b.allocator, &.{ sdk, "usr", "include" })
++                    else blk: {
++                        const libc = try std.zig.LibCInstallation.findNative(
++                            b.allocator,
++                            b.graph.io,
++                            .{
++                                .environ_map = &b.graph.environ_map,
++                                .target = &target.result,
++                                .verbose = false,
++                            },
++                        );
++                        break :blk libc.sys_include_dir.?;
++                    };
++                    c.addSystemIncludePath(.{ .cwd_relative = sys_include_dir });
+                 },
+                 else => {},
+             }
+@@ -498,11 +512,16 @@ pub fn add(
+     if (step.rootModuleTarget().os.tag.isDarwin()) {
+         try @import("apple_sdk").addPaths(b, step);
+ 
+-        const metallib = self.metallib.?;
+-        metallib.output.addStepDependencies(&step.step);
+-        step.root_module.addAnonymousImport("ghostty_metallib", .{
+-            .root_source_file = metallib.output,
+-        });
++        if (self.metallib) |metallib| {
++            metallib.output.addStepDependencies(&step.step);
++            step.root_module.addAnonymousImport("ghostty_metallib", .{
++                .root_source_file = metallib.output,
++            });
++        } else {
++            step.root_module.addAnonymousImport("ghostty_metallib", .{
++                .root_source_file = b.path("src/renderer/shaders/shaders.metal"),
++            });
++        }
+     }
+ 
+     // Other dependencies, mostly pure Zig
+@@ -651,15 +670,18 @@ pub fn add(
+         }
+     }
+ 
+-    // If we're building an exe then we have additional dependencies.
+-    if (step.kind != .lib) {
+-        // We always statically compile glad
++    // OpenGL libraries need their own GLAD implementation because the host
++    // supplies only a context and procedure lookup callback.
++    if (step.kind != .lib or self.config.renderer == .opengl) {
+         step.root_module.addIncludePath(b.path("vendor/glad/include/"));
+         step.root_module.addCSourceFile(.{
+             .file = b.path("vendor/glad/src/gl.c"),
+             .flags = &.{},
+         });
++    }
+ 
++    // If we're building an exe then we have additional dependencies.
++    if (step.kind != .lib) {
+         // When we're targeting flatpak we ALWAYS link GTK so we
+         // get access to glib for dbus.
+         if (self.config.flatpak) {
+diff --git a/src/renderer/metal/shaders.zig b/src/renderer/metal/shaders.zig
+index 6ae3210..7af9f90 100644
+--- a/src/renderer/metal/shaders.zig
++++ b/src/renderer/metal/shaders.zig
+@@ -1,5 +1,6 @@
+ const std = @import("std");
+ const Allocator = std.mem.Allocator;
++const build_options = @import("build_options");
+ const macos = @import("macos");
+ const objc = @import("objc");
+ const math = @import("../../math.zig");
+@@ -328,23 +329,33 @@ pub const BgImage = extern struct {
+ /// Initialize the MTLLibrary. A MTLLibrary is a collection of shaders.
+ fn initLibrary(device: objc.Object) !objc.Object {
+     const start: std.Io.Timestamp = .now(global.io(), .awake);
+-
+-    const data = try macos.dispatch.Data.create(
+-        @embedFile("ghostty_metallib"),
+-        macos.dispatch.queue.getMain(),
+-        macos.dispatch.Data.DESTRUCTOR_DEFAULT,
+-    );
+-    defer data.release();
+-
+     var err: ?*anyopaque = null;
+-    const library = device.msgSend(
+-        objc.Object,
+-        objc.sel("newLibraryWithData:error:"),
+-        .{
+-            data,
+-            &err,
+-        },
+-    );
++
++    const library = if (build_options.app_runtime == .none) library: {
++        const source = try macos.foundation.String.createWithBytes(
++            @embedFile("ghostty_metallib"),
++            .utf8,
++            false,
++        );
++        defer source.release();
++        break :library device.msgSend(
++            objc.Object,
++            objc.sel("newLibraryWithSource:options:error:"),
++            .{ source, @as(?*anyopaque, null), &err },
++        );
++    } else library: {
++        const data = try macos.dispatch.Data.create(
++            @embedFile("ghostty_metallib"),
++            macos.dispatch.queue.getMain(),
++            macos.dispatch.Data.DESTRUCTOR_DEFAULT,
++        );
++        defer data.release();
++        break :library device.msgSend(
++            objc.Object,
++            objc.sel("newLibraryWithData:error:"),
++            .{ data, &err },
++        );
++    };
+     try checkError(err);
+ 
+     log.debug("shader library loaded time={}us", .{start.untilNow(global.io(), .awake).toMicroseconds()});
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+index f380bd4..0fbe313 100644
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -1658,6 +1658,24 @@ const ReflowCursor = struct {
+             // If the row has a semantic prompt then the blank row is meaningful
+             // so we just consider pretend the first cell of the row isn't empty.
+             if (cols_len == 0 and src_row.semantic_prompt != .none) cols_len = 1;
++
++            // zgx: blank cells that only carry a background (the spaces a
++            // TUI fills its rows with, an erase in a color) are cut at the
++            // new edge rather than wrapped when the row's text fits: a
++            // narrowed full-width band stays one row instead of leaving a
++            // stub of background on the next. A row continuing a wrapped
++            // one starts where that one ended.
++            const room: @TypeOf(cols_len) = if (!src_row.wrap_continuation)
++                self.page.size.cols
++            else if (self.pending_wrap)
++                0
++            else
++                @intCast(self.page.size.cols - self.x);
++            if (cols_len > room) {
++                var text_len = cols_len;
++                while (text_len > 0 and blankLooking(cells[text_len - 1])) text_len -= 1;
++                if (text_len <= room) cols_len = room;
++            }
+         }
+ 
+         // Handle tracked pin adjustments. We also note whether any
+@@ -1924,6 +1942,17 @@ const ReflowCursor = struct {
+         "content.codepoint.data",
+     }, bulk_group_len);
+ 
++    /// zgx: a cell that shows no text: empty, a narrow space, or a
++    /// background color alone (whatever its style).
++    fn blankLooking(cell: pagepkg.Cell) bool {
++        return switch (cell.content_tag) {
++            .codepoint => cell.wide == .narrow and !cell.hyperlink and
++                (cell.content.codepoint.data == 0 or cell.content.codepoint.data == ' '),
++            .codepoint_grapheme => false,
++            .bg_color_palette, .bg_color_rgb => true,
++        };
++    }
++
+     /// The length of the prefix of cells that can be copied at once
+     /// with copyRun: bulk-copyable cells sharing a single style. The
+     /// scan uses masked compares of the raw cell bits (see
+@@ -17460,6 +17489,47 @@ test "PageList resize reflow less cols no wrapped rows" {
+     }
+ }
+ 
++test "PageList resize reflow less cols cuts background-only tails" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++
++    var s = try init(alloc, .{ .cols = 10, .rows = 3 });
++    defer s.deinit();
++    const page = s.pages.first.?.page();
++    // Rows 0 and 1: four letters, then spaces to the edge (a TUI's band).
++    // Row 2: seven letters, then background-only cells.
++    for (0..s.rows) |y| {
++        const text: usize = if (y == 2) 7 else 4;
++        for (0..s.cols) |x| {
++            const rac = page.getRowAndCell(x, y);
++            rac.cell.* = if (x < text) .{
++                .content_tag = .codepoint,
++                .content = .{ .codepoint = .{ .data = 'A' + @as(u21, @intCast(x)) } },
++            } else if (y == 2) .{
++                .content_tag = .bg_color_rgb,
++                .content = .{ .color_rgb = .{ .r = 1, .g = 2, .b = 3 } },
++            } else .{
++                .content_tag = .codepoint,
++                .content = .{ .codepoint = .{ .data = ' ' } },
++            };
++        }
++    }
++
++    try s.resize(.{ .cols = 5, .reflow = true });
++    // The bands fit: a row each. The long row wraps once, its tail cut.
++    try testing.expectEqual(@as(usize, 4), s.totalRows());
++    var it = s.rowIterator(.right_down, .{ .screen = .{} }, null);
++    const firsts = [_]u21{ 'A', 'A', 'A', 'F' };
++    var y: usize = 0;
++    while (it.next()) |offset| : (y += 1) {
++        const rac = offset.rowAndCell();
++        const cells = offset.node.page().getCells(rac.row);
++        try testing.expectEqual(firsts[y], cells[0].content.codepoint.data);
++        try testing.expectEqual(y == 2, rac.row.wrap);
++    }
++    try testing.expectEqual(@as(usize, 4), y);
++}
++
+ test "PageList resize reflow less cols wrapped rows" {
+     const testing = std.testing;
+     const alloc = testing.allocator;
+diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
+index 0162917..b430d3e 100644
+--- a/src/termio/Exec.zig
++++ b/src/termio/Exec.zig
+@@ -35,6 +35,10 @@ const log = std.log.scoped(.io_exec);
+ /// The termios poll rate in milliseconds.
+ const TERMIOS_POLL_MS = 200;
+ 
++/// Environment variable a surface sets to ask that its login(1) invocation
++/// be quiet, so the command's own output is the first thing on screen.
++const QUIET_LOGIN_ENV = "GHOSTTY_QUIET_LOGIN";
++
+ /// If we build with flatpak support then we have to keep track of
+ /// a potential execution on the host.
+ const FlatpakHostCommand = if (!build_config.flatpak) struct {
+@@ -825,11 +829,17 @@ const Subprocess = struct {
+             );
+         }
+ 
++        // Our marker for a quiet login is for this process only, so it
++        // doesn't leak to the command we're about to run.
++        const quiet_login = env.contains(QUIET_LOGIN_ENV);
++        _ = env.orderedRemove(QUIET_LOGIN_ENV);
++
+         // Build our args list
+         const args: []const [:0]const u8 = execCommand(
+             alloc,
+             shell_command,
+             internal_os.passwd,
++            quiet_login,
+         ) catch |err| switch (err) {
+             // If we fail to allocate space for the command we want to
+             // execute, we'd still like to try to run something so
+@@ -1844,10 +1854,10 @@ fn execCommand(
+     alloc: Allocator,
+     command: configpkg.Command,
+     comptime passwdpkg: type,
++    quiet_login: bool,
+ ) (Allocator.Error || error{SystemError})![]const [:0]const u8 {
+     // If we're on macOS, we have to use `login(1)` to get all of
+-    // the proper environment variables set, a login shell, and proper
+-    // hushlogin behavior.
++    // the proper environment variables set and a login shell.
+     if (comptime builtin.target.os.tag.isDarwin()) darwin: {
+         const passwd = passwdpkg.get(alloc) catch |err| {
+             log.warn("failed to read passwd, not using a login shell err={}", .{err});
+@@ -1914,6 +1924,10 @@ fn execCommand(
+         // around this, we check for hushlogin ourselves and if present
+         // specify the "-q" flag to login(1).
+         //
++        // A surface may also ask for that same quiet banner without a
++        // hushlogin file, because it runs a command whose own output should
++        // be the first thing on screen. It does so with QUIET_LOGIN_ENV.
++        //
+         // So to get all the behaviors we want, we specify "-l" but
+         // execute "bash" (which is built-in to macOS). We then use
+         // the bash builtin "exec" to replace the process with a login
+@@ -1930,7 +1944,7 @@ fn execCommand(
+         //
+         // Awesome.
+         try args.append(alloc, "/usr/bin/login");
+-        if (hush) try args.append(alloc, "-q");
++        if (quiet_login or hush) try args.append(alloc, "-q");
+         try args.append(alloc, "-flp");
+         try args.append(alloc, username);
+ 
+@@ -2077,7 +2091,7 @@ test "execCommand darwin: shell command" {
+                 .name = "testuser",
+             };
+         }
+-    });
++    }, false);
+ 
+     try testing.expectEqual(8, result.len);
+     try testing.expectEqualStrings(result[0], "/usr/bin/login");
+@@ -2090,6 +2104,30 @@ test "execCommand darwin: shell command" {
+     try testing.expectEqualStrings(result[7], "exec -l foo bar baz");
+ }
+ 
++test "execCommand darwin: quiet login" {
++    if (comptime !builtin.os.tag.isDarwin()) return error.SkipZigTest;
++
++    const testing = std.testing;
++    var arena = ArenaAllocator.init(testing.allocator);
++    defer arena.deinit();
++    const alloc = arena.allocator();
++
++    const result = try execCommand(alloc, .{ .shell = "foo bar baz" }, struct {
++        fn get(_: Allocator) !PasswdEntry {
++            return .{
++                .name = "testuser",
++            };
++        }
++    }, true);
++
++    try testing.expectEqual(9, result.len);
++    try testing.expectEqualStrings(result[0], "/usr/bin/login");
++    try testing.expectEqualStrings(result[1], "-q");
++    try testing.expectEqualStrings(result[2], "-flp");
++    try testing.expectEqualStrings(result[3], "testuser");
++    try testing.expectEqualStrings(result[8], "exec -l foo bar baz");
++}
++
+ test "execCommand darwin: direct command" {
+     if (comptime !builtin.os.tag.isDarwin()) return error.SkipZigTest;
+ 
+@@ -2107,7 +2145,7 @@ test "execCommand darwin: direct command" {
+                 .name = "testuser",
+             };
+         }
+-    });
++    }, false);
+ 
+     try testing.expectEqual(5, result.len);
+     try testing.expectEqualStrings(result[0], "/usr/bin/login");
+@@ -2135,6 +2173,7 @@ test "execCommand: shell command, empty passwd" {
+                 return .{};
+             }
+         },
++        false,
+     );
+ 
+     try testing.expectEqual(3, result.len);
+@@ -2161,6 +2200,7 @@ test "execCommand: shell command, error passwd" {
+                 return error.Fail;
+             }
+         },
++        false,
+     );
+ 
+     try testing.expectEqual(3, result.len);
+@@ -2188,7 +2228,7 @@ test "execCommand: direct command, error passwd" {
+             // login command and falls back to POSIX behavior.
+             return error.Fail;
+         }
+-    });
++    }, false);
+ 
+     try testing.expectEqual(2, result.len);
+     try testing.expectEqualStrings(result[0], "foo");
+@@ -2218,7 +2258,7 @@ test "execCommand: direct command, config freed" {
+             // login command and falls back to POSIX behavior.
+             return error.Fail;
+         }
+-    });
++    }, false);
+ 
+     command_arena.deinit();
+ 
+@@ -2239,7 +2279,7 @@ test "execCommand windows: bare cmd.exe resolves via COMSPEC" {
+         fn get(_: Allocator) !PasswdEntry {
+             return .{};
+         }
+-    });
++    }, false);
+ 
+     try testing.expectEqual(1, result.len);
+ 
+@@ -2261,7 +2301,7 @@ test "execCommand windows: bare non-cmd shell is passed through" {
+         fn get(_: Allocator) !PasswdEntry {
+             return .{};
+         }
+-    });
++    }, false);
+ 
+     try testing.expectEqual(1, result.len);
+     try testing.expectEqualStrings("pwsh.exe", result[0]);
+@@ -2279,7 +2319,7 @@ test "execCommand windows: shell with args is split on whitespace" {
+         fn get(_: Allocator) !PasswdEntry {
+             return .{};
+         }
+-    });
++    }, false);
+ 
+     try testing.expectEqual(2, result.len);
+     try testing.expectEqualStrings("wsl", result[0]);
+@@ -2301,7 +2341,7 @@ test "execCommand windows: direct command is passed through unchanged" {
+         fn get(_: Allocator) !PasswdEntry {
+             return .{};
+         }
+-    });
++    }, false);
+ 
+     try testing.expectEqual(2, result.len);
+     try testing.expectEqualStrings("C:\\tools\\foo.exe", result[0]);

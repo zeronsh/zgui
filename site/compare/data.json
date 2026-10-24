@@ -1,6 +1,6 @@
 {
  "names": {
-  "zgui": "zgui",
+  "zgx": "zgx",
   "gpui": "GPUI",
   "gpui-fast": "GPUI Fast",
   "quickgui": "QuickGUI"
@@ -9,7 +9,7 @@
   {
    "scene": "lab",
    "frameworks": [
-    "zgui",
+    "zgx",
     "gpui",
     "gpui-fast",
     "quickgui"
@@ -22,7 +22,7 @@
    ],
    "groups": [
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "idle",
      "cpu_percent_one_core": {
       "median": 0.0021,
@@ -61,7 +61,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "stream",
      "cpu_percent_one_core": {
       "median": 3.2414,
@@ -100,7 +100,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "scroll",
      "cpu_percent_one_core": {
       "median": 2.7284,
@@ -139,7 +139,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "both",
      "cpu_percent_one_core": {
       "median": 3.681,
@@ -648,7 +648,7 @@
    ],
    "pacing": [
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "stream",
      "frames_per_second": {
       "median": 62.25,
@@ -677,7 +677,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "scroll",
      "frames_per_second": {
       "median": 61.875,
@@ -706,7 +706,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "both",
      "frames_per_second": {
       "median": 61.0625,
@@ -1036,7 +1036,7 @@
   {
    "scene": "heavy",
    "frameworks": [
-    "zgui",
+    "zgx",
     "gpui",
     "gpui-fast"
    ],
@@ -1048,7 +1048,7 @@
    ],
    "groups": [
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "idle",
      "cpu_percent_one_core": {
       "median": 0.0022,
@@ -1087,7 +1087,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "stream",
      "cpu_percent_one_core": {
       "median": 8.7814,
@@ -1126,7 +1126,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "scroll",
      "cpu_percent_one_core": {
       "median": 3.2207,
@@ -1165,7 +1165,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "both",
      "cpu_percent_one_core": {
       "median": 9.2725,
@@ -1518,7 +1518,7 @@
    ],
    "pacing": [
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "stream",
      "frames_per_second": {
       "median": 60.5625,
@@ -1547,7 +1547,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "scroll",
      "frames_per_second": {
       "median": 61.5625,
@@ -1576,7 +1576,7 @@
      }
     },
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "both",
      "frames_per_second": {
       "median": 61.0625,
@@ -1819,7 +1819,7 @@
   {
    "scene": "animate",
    "frameworks": [
-    "zgui",
+    "zgx",
     "gpui",
     "gpui-fast"
    ],
@@ -1828,7 +1828,7 @@
    ],
    "groups": [
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "animate",
      "cpu_percent_one_core": {
       "median": 5.0169,
@@ -1962,7 +1962,7 @@
    ],
    "pacing": [
     {
-     "framework": "zgui",
+     "framework": "zgx",
      "mode": "animate",
      "frames_per_second": {
       "median": 109.0,

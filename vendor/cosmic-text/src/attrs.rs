@@ -295,14 +295,14 @@ pub struct Attrs<'a> {
     pub metrics_opt: Option<CacheMetrics>,
     /// Letter spacing (tracking) in EM
     pub letter_spacing_opt: Option<LetterSpacing>,
-    /// zgui: room added before a span's first glyph and after its last, in
+    /// zgx: room added before a span's first glyph and after its last, in
     /// EM (CSS's inline padding: an inline code chip's)
     pub padding_opt: Option<LetterSpacing>,
-    /// zgui: the optical size variable fonts shape and draw at (their
+    /// zgx: the optical size variable fonts shape and draw at (their
     /// `opsz` axis), in pixels: CSS's `font-optical-sizing: auto` sets it to
     /// the font size. 0 leaves the font's default.
     pub optical: u16,
-    /// zgui: shown masked, a bullet for each character (a password), each
+    /// zgx: shown masked, a bullet for each character (a password), each
     /// bullet keeping its character's place in the text.
     pub masked: bool,
     pub font_features: FontFeatures,
@@ -386,19 +386,19 @@ impl<'a> Attrs<'a> {
         self
     }
 
-    /// zgui: show the text masked (see `masked`)
+    /// zgx: show the text masked (see `masked`)
     pub const fn masked(mut self, masked: bool) -> Self {
         self.masked = masked;
         self
     }
 
-    /// zgui: set the optical size (pixels; 0 for the font's default)
+    /// zgx: set the optical size (pixels; 0 for the font's default)
     pub const fn optical(mut self, optical: u16) -> Self {
         self.optical = optical;
         self
     }
 
-    /// zgui: set the span's inline padding (in EM)
+    /// zgx: set the span's inline padding (in EM)
     pub const fn padding(mut self, padding: f32) -> Self {
         self.padding_opt = Some(LetterSpacing(padding));
         self
@@ -577,13 +577,13 @@ impl AttrsList {
         self.spans.insert(range, AttrsOwned::new(attrs));
     }
 
-    /// zgui: whether the defaults or any span set padding.
+    /// zgx: whether the defaults or any span set padding.
     pub fn has_padding(&self) -> bool {
         self.defaults.padding_opt.is_some()
             || self.spans.iter().any(|(_, attrs)| attrs.padding_opt.is_some())
     }
 
-    /// zgui: the defaults, borrowed (`defaults` copies them out).
+    /// zgx: the defaults, borrowed (`defaults` copies them out).
     pub(crate) fn defaults_owned(&self) -> &AttrsOwned {
         &self.defaults
     }
@@ -592,7 +592,7 @@ impl AttrsList {
     ///
     /// This returns a span that contains the index
     pub fn get_span(&self, index: usize) -> Attrs<'_> {
-        // zgui patch: the defaults are copied out only when no span holds
+        // zgx patch: the defaults are copied out only when no span holds
         // the index (they were copied out for every lookup).
         self.spans
             .get(&index)

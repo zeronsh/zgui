@@ -19,7 +19,7 @@ quads, with per-corner radii and at most 32 shadows per panel. The software
 reference follows the same geometry. Gradients and dashed borders are validated
 by the renderer; malformed values return a GPU rendering error.
 
-The [paint styles example](../crates/zgui-desktop/examples/paint_styles.rs) shows
+The [paint styles example](../crates/zgx-desktop/examples/paint_styles.rs) shows
 asymmetric corners and borders, two shadows, a resizable gradient, and a dashed
 patterned card. GPU tests compare partial and fresh full frames through style
 changes and shadow removal, including isolated layers and cache release.

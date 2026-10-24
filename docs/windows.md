@@ -4,8 +4,8 @@ Use stable Rust with the `x86_64-pc-windows-msvc` target and Visual Studio Build
 Tools (Desktop development with C++, including the Windows SDK). From PowerShell:
 
 ```powershell
-cargo run -p zgui-desktop --example components --locked
-cargo run -p zgui-desktop --example platform_services --locked
+cargo run -p zgx-desktop --example components --locked
+cargo run -p zgx-desktop --example platform_services --locked
 ```
 
 Windows uses the existing winit event loop and wgpu renderer (DX12/Vulkan),
@@ -31,8 +31,8 @@ cargo build --release --target aarch64-pc-windows-msvc
 
 ### Allocator
 
-zgui leaves the global allocator to the application. Windows' default heap
-is slower than mimalloc under zgui's allocation patterns. On an
+zgx leaves the global allocator to the application. Windows' default heap
+is slower than mimalloc under zgx's allocation patterns. On an
 i7-12700KF, release builds, with mimalloc as `#[global_allocator]`:
 - `heavy_headless` takes 13% less time a tick: 1.77–1.97 ms down to
   1.51–1.54 ms;
@@ -55,7 +55,7 @@ backends built in). Every Windows 10 and 11 machine has a Direct3D 12
 adapter: where the GPU's driver has no Direct3D 12, Windows' WARP renders in
 software. GPUs that old (Intel before Skylake, AMD before GCN, NVIDIA before
 Kepler) have no Windows Vulkan driver either, so Vulkan is a feature
-(`vulkan`, on zgui-desktop, zgui-script or zgui-gpu), off by default, for a
+(`vulkan`, on zgx-desktop, zgx-script or zgx-gpu), off by default, for a
 driver whose Direct3D 12 fails: with it, Vulkan stands in where Direct3D 12
 has no adapter. Swap chains use DXGI's flip model
 at sync interval 0: a present replaces one the compositor has not taken yet,
@@ -73,13 +73,13 @@ Measured on an RTX 4090 at 60 Hz:
 | Keystroke to composed screen, animating | 47 ms median | 12 ms median |
 | Animation at the display's rate | 57.7–60 fps, timer drifting against refreshes | every refresh, none repeated or dropped |
 
-`ZGUI_PRESENT_LOG=1` logs each shown present as DXGI reports it. The probes
+`ZGX_PRESENT_LOG=1` logs each shown present as DXGI reports it. The probes
 measure the same things on any machine:
 
 ```powershell
-cargo build --release -p zgui-desktop --example gallery --example input_latency --example animation_workload
+cargo build --release -p zgx-desktop --example gallery --example input_latency --example animation_workload
 python scripts/windows_idle_probe.py target/release/examples/gallery.exe
-python scripts/windows_latency_probe.py target/release/examples/input_latency.exe --click 100,44 --region 24,24,520,40 --env ZGUI_ANIMATE=1
+python scripts/windows_latency_probe.py target/release/examples/input_latency.exe --click 100,44 --region 24,24,520,40 --env ZGX_ANIMATE=1
 python scripts/windows_pacing_probe.py target/release/examples/animation_workload.exe
 ```
 
@@ -91,7 +91,7 @@ captures it until that frame shows. `--reference` measures a plain GDI window
 painting the same thing in `WM_PAINT`. Measured on an RTX 4090 at 60 Hz, at
 100%:
 
-| Change | GDI window | zgui | zgui, 3000 labels |
+| Change | GDI window | zgx | zgx, 3000 labels |
 | --- | --- | --- | --- |
 | `SetWindowPos` from another process | 33 ms; 10 black and 9 stale captures first | 16 ms; 1 stale | 22 ms; 1 black, 3 stale |
 | Live resize, the right edge dragged (`--drag`) | 34 ms a step, none | 34 ms, none | 34 ms, none |
@@ -99,7 +99,7 @@ painting the same thing in `WM_PAINT`. Measured on an RTX 4090 at 60 Hz, at
 | Snap (Win+Left) | 297 ms (Windows' animation) | 298 ms | 308 ms |
 
 ```powershell
-cargo build --release -p zgui-desktop --example resize_probe
+cargo build --release -p zgx-desktop --example resize_probe
 python scripts/windows_resize_probe.py target/release/examples/resize_probe.exe --drag
 python scripts/windows_resize_probe.py --reference --drag
 ```
@@ -109,19 +109,19 @@ python scripts/windows_resize_probe.py --reference --drag
 `Titlebar::Inset` and `Titlebar::Hidden` are frameless windows that keep the
 system shadow and Windows 11's rounded corners, resizing from bands 5 points in
 from their edges. `Inset` adds Windows 11's caption buttons over the content's
-top right, drawn by zgui and reported to Windows as its own (`WM_NCHITTEST`),
+top right, drawn by zgx and reported to Windows as its own (`WM_NCHITTEST`),
 so they get the system's tooltips and the maximize button's snap layouts; the
 buttons minimize, maximize, restore and close through the system's commands.
 The title bar and the window menu (Alt+Space) follow the system's light or
 dark mode. Where windows run right to left (the user's language, or
-`ZGUI_DIRECTION=rtl`), `Inset`'s buttons sit at the top left, Close outermost,
+`ZGX_DIRECTION=rtl`), `Inset`'s buttons sit at the top left, Close outermost,
 as Windows lays out a mirrored window's, and `WindowInfo::titlebar_area` and
 `controls` mirror with them. A `Standard` title bar keeps the system's own
 layout, its buttons at the right: winit makes its windows unmirrored, and
 Windows mirrors a caption only for a window made so (`WS_EX_LAYOUTRTL`).
 
 Windows present through a DirectComposition visual, so `WindowOptions::transparent`
-windows are transparent where zgui paints nothing, and `WindowOptions::glass`
+windows are transparent where zgx paints nothing, and `WindowOptions::glass`
 puts the Windows 11 system backdrop behind them: Acrylic for the heads-up and
 transient materials, Mica for window and page backgrounds, Mica Alt for title
 bars (see [window controls](window-controls.md)). Presentation through the visual
@@ -147,7 +147,7 @@ of the monitor their trigger is on, not to the window. Each shows in a window
 of its own (`popup_window/win32.rs`): owned by its window (above it, minimized
 with it, never on the taskbar) and never activated, so the window keeps the
 keyboard and typing reaches a popover's field. A popup draws at its window's
-scale, on whichever monitor it lands: zgui keeps it on its trigger's screen,
+scale, on whichever monitor it lands: zgx keeps it on its trigger's screen,
 so on a monitor of another scale it sits beside a trigger the window draws
 there at its own, the same size. It moves with its window, and closes as the app deactivates, when the
 title bar is pressed, on Escape and on a press outside it.
@@ -164,7 +164,7 @@ acrylic is not used.
 
 No popup window exists before the pointer first reaches something that opens
 one, and a closed one is kept hidden for the next: an app that never opens a
-popup has none. `ZGUI_POPUP_WINDOWS=0` keeps popups inside their window, as
+popup has none. `ZGX_POPUP_WINDOWS=0` keeps popups inside their window, as
 they are where Direct3D 12 is not available.
 
 ## Drags
@@ -184,8 +184,8 @@ Explorer and browsers do. A target that describes the drop ("Copy to
 Documents", Explorer's) has its description shown under the image, in
 Windows' label: the source allows it (`DSH_ALLOWDROPDESCRIPTIONTEXT`). The
 source hears `on_drag_end` accepted when an app
-takes it. Back over the app's windows the drag is zgui's again: let go there,
-zgui's destinations take it and Windows drops nothing. Escape, or letting go
+takes it. Back over the app's windows the drag is zgx's again: let go there,
+zgx's destinations take it and Windows drops nothing. Escape, or letting go
 where nothing takes it, slides the preview back to its source.
 
 `DoDragDrop` runs a modal loop of its own, in place of winit's: windows go on
@@ -221,29 +221,29 @@ keeps its own value; the text size scales the font tokens of every theme.
 
 ## Web views
 
-`zgui::web_view` pages are WebView2, with the `webview2` feature of
-`zgui-desktop` (off by default; without it nothing below is compiled and web
+`zgx::web_view` pages are WebView2, with the `webview2` feature of
+`zgx-desktop` (off by default; without it nothing below is compiled and web
 views render placeholders):
 
 ```powershell
-cargo run -p zgui-desktop --features webview2 --example web_view
+cargo run -p zgx-desktop --features webview2 --example web_view
 ```
 
 With the feature, each window owns its DirectComposition tree: the window
 renderer presents into its bottom visual, each page's visual sits above it in
 paint order inside visuals clipping it to its node (rounded corners included,
-antialiased), and zgui paint over a page (a popover, a composer) goes on an
+antialiased), and zgx paint over a page (a popover, a composer) goes on an
 overlay plane presenting into the top visual. A frame's presents and the pages'
-geometry commit together, so pages move with zgui content. Presentation is
+geometry commit together, so pages move with zgx content. Presentation is
 otherwise unchanged; the probes above measured the same with and without the
 feature (every frame shown, 12.7 against 12.8 ms keystroke latency, the same
 idle cost).
 
 Pages are visual-hosted (`ICoreWebView2CompositionController`): the window's
-procedure routes the pointer as `PlaneSplit::route` decides, so zgui content
-drawn over a page takes its clicks, and a click on zgui content takes the
+procedure routes the pointer as `PlaneSplit::route` decides, so zgx content
+drawn over a page takes its clicks, and a click on zgx content takes the
 keyboard back from a page. Navigation, its state and events, script evaluation,
-messages (`window.zgui.postMessage`), user scripts, app schemes, the navigation
+messages (`window.zgx.postMessage`), user scripts, app schemes, the navigation
 policy, new-window requests, profiles, zoom and DevTools work as on macOS. The
 loader is linked in; the runtime is the system's (Windows 11 ships it, Windows
 10 gets it with Edge). Without one, web views render placeholders and say so
@@ -261,19 +261,19 @@ Unlike macOS:
   views serve different sets of schemes keep their profiles in separate data
   folders.
 - `load_html` with a `file:` base serves the page from
-  `https://zgui-file.invalid/` along with the files of its folder (WebView2
+  `https://zgx-file.invalid/` along with the files of its folder (WebView2
   asks the app for no `file:` request), so its origin is that host.
 
 As with WebKit without delegates for them, pages save no downloads and get no
 permission (camera, microphone, location, notifications, clipboard reads).
 
-`scripts/windows_webview_smoke.py` checks the page against zgui content
+`scripts/windows_webview_smoke.py` checks the page against zgx content
 around and over it.
 
 ## Touch and pen
 
 Windows gives a window touch and pen as pointer messages, not a mouse's, and
-zgui takes them as its pointer. A pen is a mouse. A finger presses where it
+zgx takes them as its pointer. A pen is a mouse. A finger presses where it
 lands; lifted there it clicks, and held there first (0.6 s) it right-clicks,
 as Windows' press-and-hold does; held on selectable text it selects the
 word, moving on extends the selection by words, and lifting opens its menu
@@ -290,10 +290,10 @@ and URLs to the running one as `ApplicationEvent::OpenUrls`, or with none an
 `ApplicationEvent::Reopen`, and exits. The ID is also the AppUserModelID the
 taskbar groups windows under. See [platform services](platform-services.md).
 
-## Shipping a zgui app on Windows
+## Shipping a zgx app on Windows
 
-zgui adds no packaging tooling; these are the pieces a Windows build needs,
-and how they fit what zgui does at run time.
+zgx adds no packaging tooling; these are the pieces a Windows build needs,
+and how they fit what zgx does at run time.
 
 **The executable.**
 - Build with `cargo build --release`.
@@ -309,34 +309,34 @@ and how they fit what zgui does at run time.
 - ARM64 machines run x64 builds emulated. Build `aarch64-pc-windows-msvc`
   as well for native speed (see ARM64 above).
 
-**Size.** zgui's comparison app (`component_workload`, every image format)
+**Size.** zgx's comparison app (`component_workload`, every image format)
 is 12.1 MiB x64 built as it ships: `lto = "fat"` and `codegen-units = 1`,
 the workspace's `dist` profile, which an app sets in its own `[profile.release]`
 or a profile like it (thin LTO is 0.7 MiB larger). What else changes it,
 measured on that app:
-- Image formats (zgui-desktop's features, see
+- Image formats (zgx-desktop's features, see
   [images-and-animation.md](images-and-animation.md)): SVG is 0.75 MiB,
   JPEG 0.22, PNG 0.13. GIF's decoder is linked only into an app that shows a
   GIF.
 - The `vulkan` feature adds 1.1 MiB (see Presentation).
 - `panic = "abort"` saves 3.2 MiB, a quarter. It is the app's choice, not
-  zgui's default: zgui contains a panic in an event handler, an effect or a
+  zgx's default: zgx contains a panic in an event handler, an effect or a
   task by unwinding it ([application.md](application.md)), and with abort
   such a panic ends the app instead.
 - `opt-level = "s"` saves 3.0 MiB; measure the app's own frames before
-  shipping it, since zgui's hot paths are measured at `opt-level = 3`.
+  shipping it, since zgx's hot paths are measured at `opt-level = 3`.
 - `strip` saves nothing on Windows: MSVC writes symbols to the `.pdb` beside
   the executable, which you keep for crash dumps rather than ship.
 
 **Resources.** Embed them from a build script, for example with
 `winresource`:
-- An icon: zgui's windows take the executable's first icon group for the
+- An icon: zgx's windows take the executable's first icon group for the
   title bar, taskbar and Alt+Tab. Without one, Windows' default shows.
 - Version information (product name, company, version): Explorer's
   Properties and Task Manager show it.
 - An application manifest that declares the Common Controls 6 dependency.
-  Without it, the system message boxes zgui's prompts use draw in the old
-  style. zgui sets per-monitor DPI awareness itself at startup, so the
+  Without it, the system message boxes zgx's prompts use draw in the old
+  style. zgx sets per-monitor DPI awareness itself at startup, so the
   manifest needn't, though declaring `PerMonitorV2` there does no harm.
 
 **Identity and single instance.** Give the app an
@@ -349,7 +349,7 @@ measured on that app:
 - It also makes the app one instance a session: a second launch hands its
   files and URLs to the first (`ApplicationEvent::OpenUrls`) and exits.
   Register file associations and URL schemes to launch the executable with
-  the file or URL as an argument (`"C:\…\app.exe" "%1"`). zgui reads existing
+  the file or URL as an argument (`"C:\…\app.exe" "%1"`). zgx reads existing
   paths and URLs from the arguments and leaves the rest to the app.
 - Persisted script state (`ui.persist`) lives in `%APPDATA%\<app_id>`.
 
@@ -383,9 +383,9 @@ runtime:
 - MSIX gives a clean install and uninstall, updates through App Installer or
   the Store, and declares associations and schemes in its manifest
   (`uap:FileTypeAssociation`, `uap:Protocol`). The package gives the app an
-  identity of its own. zgui still sets the application ID as the process's
+  identity of its own. zgx still sets the application ID as the process's
   explicit AppUserModelID, so check that pinning and the taskbar behave as
-  you expect in your package; zgui's CI does not build MSIX packages.
+  you expect in your package; zgx's CI does not build MSIX packages.
 
 ## Limitations
 
@@ -406,7 +406,7 @@ what it reports. They need only Python's standard library and an unlocked,
 interactive desktop, and take the pointer and keyboard while they run:
 
 ```powershell
-cargo build -p zgui-desktop --example gallery --example dpi_transition --example native_ime --example selectable_text --example platform_services --example drag_drop --example scrollbars --example workbench --example form --example selectable_text --example popup_probe --example drag_probe --example drop_target_probe --example window_probe
+cargo build -p zgx-desktop --example gallery --example dpi_transition --example native_ime --example selectable_text --example platform_services --example drag_drop --example scrollbars --example workbench --example form --example selectable_text --example popup_probe --example drag_probe --example drop_target_probe --example window_probe
 python scripts/windows_desktop_smoke.py target/debug/examples/gallery.exe
 python scripts/windows_dpi_smoke.py target/debug/examples/dpi_transition.exe
 python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean
@@ -440,7 +440,7 @@ python scripts/windows_window_smoke.py target/debug/examples
   through OLE drag and drop, as from Explorer.
 - `windows_webview_smoke.py` (`web_view` built with `--features webview2`):
   the page loads and its title reaches the state, a click in the page reaches
-  it, zgui's composer over the page takes clicks and typing and its script
+  it, zgx's composer over the page takes clicks and typing and its script
   changes the page, the menu popover draws above the page and takes its
   clicks, the wheel scrolls the page, and after a resize the page still fills
   its node.

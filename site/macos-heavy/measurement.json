@@ -21,7 +21,7 @@
     "idle_repeats": 5,
     "quick": false,
     "frameworks": [
-      "zgui",
+      "zgx",
       "gpui",
       "gpui-fast"
     ],
@@ -45,13 +45,13 @@
     "idle_requested_seconds": 36
   },
   "frameworks": {
-    "zgui": "7d559add0724ec67a7a7875148f9123f10fcf9ae",
+    "zgx": "7d559add0724ec67a7a7875148f9123f10fcf9ae",
     "gpui": "0.2.2"
   },
   "csv_sha256": "107c1dc766cde1fcddaa76637fa5e0a6eec9fc67e5eb99999cd3c31c590cd5a2",
   "source_csv_sha256": "30d62be2842acbea0e5077e90566c2c64bc369aefa4e7631c4ee27a7e92297d7",
   "binaries": {
-    "zgui": {
+    "zgx": {
       "sha256": "15f498518eb612d215c1c34b7596e4197e416ddb87239e1301ba438d898c22e6",
       "bytes": 11692880
     },

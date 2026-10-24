@@ -807,7 +807,7 @@ impl Drop for Window {
         if let Ok(c) = xconn.xcb_connection().destroy_window(window.id().0 as xproto::Window) {
             c.ignore_error();
         }
-        // zgui patch: its `_NET_WM_SYNC_REQUEST_COUNTER`.
+        // zgx patch: its `_NET_WM_SYNC_REQUEST_COUNTER`.
         if let Some(counter) = window.sync_counter() {
             use x11rb::protocol::sync::ConnectionExt as _;
             if let Ok(c) = xconn.xcb_connection().sync_destroy_counter(counter) {

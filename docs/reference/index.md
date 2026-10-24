@@ -1,6 +1,6 @@
 # Luau reference
 
-One page per element and API group of [zgui-script](../scripting.md). Each gives the signature, every option with its type and default, a short example and the gotchas. The examples are complete scripts: `cargo test -p zgui-script --test reference_docs` runs every one headless and type checks it in strict mode.
+One page per element and API group of [zgx-script](../scripting.md). Each gives the signature, every option with its type and default, a short example and the gotchas. The examples are complete scripts: `cargo test -p zgx-script --test reference_docs` runs every one headless and type checks it in strict mode.
 
 | Page | |
 | --- | --- |
@@ -21,7 +21,7 @@ One page per element and API group of [zgui-script](../scripting.md). Each gives
 
 ## Reading the signatures
 
-Signatures are Luau types from [`zgui.d.luau`](../../crates/zgui-script/types/zgui.d.luau), the file editors and `zgui check` use. Its `export type`s are global type names a script can use in its own annotations:
+Signatures are Luau types from [`zgx.d.luau`](../../crates/zgx-script/types/zgx.d.luau), the file editors and `zgx check` use. Its `export type`s are global type names a script can use in its own annotations:
 
 | Type | |
 | --- | --- |
@@ -41,7 +41,7 @@ Each element function also has its own props type (`InputProps`, `ListProps`, `E
 
 ## Checking
 
-`zgui check app.luau` (or a directory) runs luau-lsp in strict mode with these types; [scripting](../scripting.md#types) has the editor setup. In a debug build a hot-reloading host runs the same check after every save and shows the errors in the window's banner, when luau-lsp is installed.
+`zgx check app.luau` (or a directory) runs luau-lsp in strict mode with these types; [scripting](../scripting.md#types) has the editor setup. In a debug build a hot-reloading host runs the same check after every save and shows the errors in the window's banner, when luau-lsp is installed.
 
 Luau infers a callback's parameters from how its body uses them when the callback is passed to a generic function, which misfires, so the few callbacks whose argument is the script's own data take it as `any`: `each`'s row function, `presence`'s content function, drag payloads, a web page's messages. Annotate those parameters to have them checked:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise native Wayland form input through an owned Weston X11 seat.
 
-Build the zgui-desktop form example first. Requires Weston 13+ with kiosk-shell,
+Build the zgx-desktop form example first. Requires Weston 13+ with kiosk-shell,
 Xvfb, Openbox, xdotool, and Pillow. The application has no DISPLAY and therefore
 cannot silently fall back to X11; protocol evidence is retained separately.
 """
@@ -26,7 +26,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "result.json").unlink(missing_ok=True)
     xvfb = wm = compositor = app = None
-    with tempfile.TemporaryDirectory(prefix="zgui-wayland-seat-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-wayland-seat-") as runtime:
         os.chmod(runtime, 0o700)
         try:
             with (args.output / "xvfb.log").open("w") as log:
@@ -42,9 +42,9 @@ def main():
                 wm = subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log)
             wait_for_wm(env)
             with (args.output / "weston.log").open("w") as log:
-                compositor = subprocess.Popen(["weston", "--backend=x11", "--renderer=pixman", "--shell=kiosk-shell.so", "--no-config", "--socket=zgui-input", "--width=900", "--height=650", "--idle-time=0"], env=env, stdout=log, stderr=log)
+                compositor = subprocess.Popen(["weston", "--backend=x11", "--renderer=pixman", "--shell=kiosk-shell.so", "--no-config", "--socket=zgx-input", "--width=900", "--height=650", "--idle-time=0"], env=env, stdout=log, stderr=log)
             deadline = time.monotonic() + 10
-            while not pathlib.Path(runtime, "zgui-input").exists():
+            while not pathlib.Path(runtime, "zgx-input").exists():
                 if time.monotonic() > deadline or compositor.poll() is not None:
                     raise RuntimeError("Weston startup failed; see weston.log")
                 time.sleep(.05)
@@ -63,7 +63,7 @@ def main():
                 time.sleep(.05)
             time.sleep(.3)
             xdo("windowactivate", "--sync", window)
-            client_env = dict(env, WAYLAND_DISPLAY="zgui-input", WAYLAND_DEBUG="1", WINIT_UNIX_BACKEND="wayland")
+            client_env = dict(env, WAYLAND_DISPLAY="zgx-input", WAYLAND_DEBUG="1", WINIT_UNIX_BACKEND="wayland")
             client_env.pop("DISPLAY", None)
             with (args.output / "protocol.log").open("w") as protocol, (args.output / "form.log").open("w") as output:
                 app = subprocess.Popen([str(args.binary.resolve()), "--smoke-test"], env=client_env, stdout=output, stderr=protocol)

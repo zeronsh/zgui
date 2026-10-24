@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const lucide = process.argv[2];
 if (!lucide) throw new Error("pass the lucide package directory");
-const target = join(dirname(fileURLToPath(import.meta.url)), "../crates/zgui-script/examples/frame_profiler");
+const target = join(dirname(fileURLToPath(import.meta.url)), "../crates/zgx-script/examples/frame_profiler");
 // The design's Feather names, mapped to the Lucide icon that draws them.
 const names = {
   activity: "activity", layout: "panels-top-left", cpu: "cpu", database: "database", list: "list",

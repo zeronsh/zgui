@@ -31,7 +31,7 @@ def sample(pid):
 
 def run_trial(path, name, mode, repeat, seconds, warmup, output):
     """Return validated summary; preserve raw evidence even on a failed trial."""
-    env = dict(os.environ, ZGUI_MODE=mode, ZGUI_SECONDS=str(seconds), ZGUI_INITIAL_TICKS="0")
+    env = dict(os.environ, ZGX_MODE=mode, ZGX_SECONDS=str(seconds), ZGX_INITIAL_TICKS="0")
     start = time.monotonic()
     samples = []
     code = None
@@ -98,7 +98,7 @@ def run_trial(path, name, mode, repeat, seconds, warmup, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--zgui", required=True, type=pathlib.Path)
+    parser.add_argument("--zgx", required=True, type=pathlib.Path)
     parser.add_argument("--gpui", required=True, type=pathlib.Path)
     parser.add_argument("--quickgui", required=True, type=pathlib.Path)
     parser.add_argument("--seconds", default=30., type=float)
@@ -112,11 +112,11 @@ def main():
         parser.error("a real desktop display is required; no GUI performance claims from headless runs")
     if args.seconds <= args.warmup or args.warmup < 0 or args.repeats < 1:
         parser.error("require seconds > warmup >= 0 and repeats >= 1")
-    binaries = [(name, getattr(args, name).resolve()) for name in ("zgui", "gpui", "quickgui")]
+    binaries = [(name, getattr(args, name).resolve()) for name in ("zgx", "gpui", "quickgui")]
     for name, path in binaries:
         if not path.is_file() or not os.access(path, os.X_OK):
             parser.error(f"missing executable: {name}: {path}")
-    metadata = {"platform": platform.platform(), "machine": platform.machine(), "python": platform.python_version(), "arguments": {k: str(v) for k, v in vars(args).items()}, "display": {k: os.environ.get(k) for k in ("DISPLAY", "WAYLAND_DISPLAY", "WGPU_BACKEND", "WINIT_UNIX_BACKEND", "ZGUI_RENDERER", "ZGUI_EFFECTS", "DBUS_SESSION_BUS_ADDRESS", "VK_ICD_FILENAMES", "LIBGL_ALWAYS_SOFTWARE")}, "gpui_version": "0.2.2", "quickgui_revision": "811d6e2816d5229711f59683c4c9dfbb6fc74133"}
+    metadata = {"platform": platform.platform(), "machine": platform.machine(), "python": platform.python_version(), "arguments": {k: str(v) for k, v in vars(args).items()}, "display": {k: os.environ.get(k) for k in ("DISPLAY", "WAYLAND_DISPLAY", "WGPU_BACKEND", "WINIT_UNIX_BACKEND", "ZGX_RENDERER", "ZGX_EFFECTS", "DBUS_SESSION_BUS_ADDRESS", "VK_ICD_FILENAMES", "LIBGL_ALWAYS_SOFTWARE")}, "gpui_version": "0.2.2", "quickgui_revision": "811d6e2816d5229711f59683c4c9dfbb6fc74133"}
     for key, command in (("rustc", ["rustc", "--version"]), ("commit", ["git", "rev-parse", "HEAD"]), ("cpu", ["lscpu"])):
         result = subprocess.run(command, text=True, capture_output=True, check=False)
         metadata[key] = result.stdout.strip() if result.returncode == 0 else "unavailable (command failed)"

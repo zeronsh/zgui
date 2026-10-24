@@ -3,7 +3,7 @@
 private session bus gives GNOME's `double-click`, and an editor's double
 click (a word selected, readable as the PRIMARY selection) follows it, as
 GTK's does. At 1000 ms two presses 700 ms apart select a word; at 300 ms
-two presses 450 ms apart do not (zgui's own default is 500 ms)."""
+two presses 450 ms apart do not (zgx's own default is 500 ms)."""
 import argparse
 import json
 import os
@@ -62,7 +62,7 @@ def main():
             processes.append(child)
             return child
 
-        with tempfile.TemporaryDirectory(prefix="zgui-double-click-") as private:
+        with tempfile.TemporaryDirectory(prefix="zgx-double-click-") as private:
             env = dict(os.environ, XDG_RUNTIME_DIR=private, WINIT_X11_SCALE_FACTOR="1")
             for key in ("WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
                 env.pop(key, None)

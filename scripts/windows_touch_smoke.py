@@ -2,7 +2,7 @@
 """Touch and pen on Windows, through synthetic touch (InjectTouchInput) and a
 synthetic pen (InjectSyntheticPointerInput): no touchscreen needed. Windows
 gives touch and pen to the window as pointer messages, not a mouse's, so
-this checks what zgui makes of them:
+this checks what zgx makes of them:
 
 - a tap clicks (the gallery's Increment);
 - a finger dragged along a slider drags it;
@@ -14,7 +14,7 @@ this checks what zgui makes of them:
   text, it selects and does not press it;
 - a pen is a mouse: its stroke over the list does not pan it.
 
-    cargo build -p zgui-desktop --example gallery --example workbench --example form --example selectable_text
+    cargo build -p zgx-desktop --example gallery --example workbench --example form --example selectable_text
     python scripts/windows_touch_smoke.py target/debug/examples
 """
 import argparse

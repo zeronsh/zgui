@@ -21,36 +21,36 @@ Surface acquisition uses the same bounded recovery policy exercised by injected 
 
 ## Soak and failure checks
 
-`crates/zgui-script/tests/soak.rs` uses an app for a while, headless: each cycle mounts a large tree (rows with tooltips and context menus), opens a menu, a popover and a modal, streams markdown, switches theme and direction, draws on the GPU where there is one, and every few cycles hot-reloads its script, then closes everything. After a warm-up, scene nodes, effects and semantic nodes must be what they were a reload period earlier, and the Luau heap, the GPU's caches and allocations, file descriptors, Mach ports and the physical footprint must stay within what the warm-up reached. CI runs 12 cycles (two seconds) on Linux and macOS. A long run:
+`crates/zgx-script/tests/soak.rs` uses an app for a while, headless: each cycle mounts a large tree (rows with tooltips and context menus), opens a menu, a popover and a modal, streams markdown, switches theme and direction, draws on the GPU where there is one, and every few cycles hot-reloads its script, then closes everything. After a warm-up, scene nodes, effects and semantic nodes must be what they were a reload period earlier, and the Luau heap, the GPU's caches and allocations, file descriptors, Mach ports and the physical footprint must stay within what the warm-up reached. CI runs 12 cycles (two seconds) on Linux and macOS. A long run:
 
 ```sh
-ZGUI_SOAK_CYCLES=600 cargo test --release -p zgui-script --test soak -- --nocapture
+ZGX_SOAK_CYCLES=600 cargo test --release -p zgx-script --test soak -- --nocapture
 ```
 
-Measured on macOS (M-series, Metal), 600 cycles: everything zgui holds is flat from the first cycles; the footprint grows 8 MB over the first 300 cycles (the allocator and the driver warming up) and then not at all.
+Measured on macOS (M-series, Metal), 600 cycles: everything zgx holds is flat from the first cycles; the footprint grows 8 MB over the first 300 cycles (the allocator and the driver warming up) and then not at all.
 
 `examples/desktop_soak.rs` does the same with real windows: each cycle opens three (a large tree each, a menu and a popover open, which macOS shows in popup windows, a tooltip, a prompt sheet), closes them, and prints the process's footprint, descriptors, ports and threads; `scripts/desktop_soak.py` judges that they level off:
 
 ```sh
-cargo build --release -p zgui-desktop --example desktop_soak
+cargo build --release -p zgx-desktop --example desktop_soak
 python3 scripts/desktop_soak.py target/release/examples/desktop_soak --cycles 300
 ```
 
 It opens windows for the whole run (a cycle a second); leave the machine to it. `desktop_soak 400 --pause 100` pauses with its windows closed every 100 cycles, a still moment to compare the heap (`heap -s`, or with `MallocStackLogging=1` and a binary signed with `get-task-allow`, `malloc_history -allBySize`). That found two leaks per closed window, both fixed: its popup host stayed registered with the popup windows' watcher when it closed with a menu open, and its Metal layer, freed after the view it observes, left AppKit's records of the observation behind. Measured after the fixes on macOS, 600 cycles: descriptors, ports and threads flat, the footprint's quarter means 290.5, 303.7, 303.9 and 305.6 MB (warm-up, then within 2 MB); the live heap, paused, 17.4 MB at cycles 100, 200 and 300 within 0.3 MB, what grows being libdispatch's own cached blocks.
 
-`examples/failures.rs` fails twice while it animates, for `scripts/failures_smoke.py` (a Linux native smoke): a task panics, which the host contains and shows in a banner, then its GPU device is lost (`WindowHandle::debug_lose_gpu`), and it makes a new renderer and draws on. `crates/zgui-gpu/tests/device_loss.rs` checks the renderer's side; `crates/zgui-script/tests/failures.rs` a script's runtime error, a missing image and a missing font.
+`examples/failures.rs` fails twice while it animates, for `scripts/failures_smoke.py` (a Linux native smoke): a task panics, which the host contains and shows in a banner, then its GPU device is lost (`WindowHandle::debug_lose_gpu`), and it makes a new renderer and draws on. `crates/zgx-gpu/tests/device_loss.rs` checks the renderer's side; `crates/zgx-script/tests/failures.rs` a script's runtime error, a missing image and a missing font.
 
 ### NVIDIA on Windows: devices made and released concurrently
 
-On an RTX 4090 with NVIDIA's driver 32.0.16.1742 (Windows 11), Direct3D 12 devices made and released on many threads at once can hang the process or crash it. This is the driver's, not zgui's:
-- **The crash.** The pixels tests, four processes at a time, crashed once in eight runs: an access violation reading freed memory on one of the driver's own threads (`nvwgf2umx!OpenAdapter10+0xfe306`). No zgui, wgpu or Direct3D frame is on that stack.
-- **The hang.** `independent_device_lifecycle_stress` (opt-in, 24 threads) sometimes hangs. Every blocked thread is in the driver, on its own locks, or in the kernel releasing an allocation (`NtGdiDdDDIDestroyAllocation2`); no zgui or wgpu lock is held.
-- **Without zgui or wgpu.** `crates/zgui-gpu/examples/d3d12_device_churn.rs` uses Direct3D 12 alone: 24 threads each make a device, a queue, a target and a readback buffer, draw, wait and release, ten times. It hangs within a few runs, with the same stacks, and one driver thread waits in the routine the crash was in.
+On an RTX 4090 with NVIDIA's driver 32.0.16.1742 (Windows 11), Direct3D 12 devices made and released on many threads at once can hang the process or crash it. This is the driver's, not zgx's:
+- **The crash.** The pixels tests, four processes at a time, crashed once in eight runs: an access violation reading freed memory on one of the driver's own threads (`nvwgf2umx!OpenAdapter10+0xfe306`). No zgx, wgpu or Direct3D frame is on that stack.
+- **The hang.** `independent_device_lifecycle_stress` (opt-in, 24 threads) sometimes hangs. Every blocked thread is in the driver, on its own locks, or in the kernel releasing an allocation (`NtGdiDdDDIDestroyAllocation2`); no zgx or wgpu lock is held.
+- **Without zgx or wgpu.** `crates/zgx-gpu/examples/d3d12_device_churn.rs` uses Direct3D 12 alone: 24 threads each make a device, a queue, a target and a readback buffer, draw, wait and release, ten times. It hangs within a few runs, with the same stacks, and one driver thread waits in the routine the crash was in.
 
-Apps never do this: a zgui process shares one device among its windows (`GpuContext`). Only tests make devices on many threads (`independent_devices_render_concurrently_with_bounded_workers`, four of them, and the opt-in stress), and CI's Windows runners draw with WARP, which is unaffected. To check a newer driver:
+Apps never do this: a zgx process shares one device among its windows (`GpuContext`). Only tests make devices on many threads (`independent_devices_render_concurrently_with_bounded_workers`, four of them, and the opt-in stress), and CI's Windows runners draw with WARP, which is unaffected. To check a newer driver:
 
 ```powershell
-cargo run --release -p zgui-gpu --example d3d12_device_churn
+cargo run --release -p zgx-gpu --example d3d12_device_churn
 ```
 
 It prints the GPU and driver, then each run's time; a run that hangs is reported and the process exits with 2.
@@ -63,7 +63,7 @@ Native examples run under Xvfb with Openbox, using llvmpipe Vulkan:
 - The widget gallery passes pointer activation, Unicode model rendering, typed text, Ctrl+A selection, clipboard copy/paste between fields, Tab focus, native resizing and timed close. `scripts/desktop_smoke.py` verifies final model/semantic values rather than only checking that a window opened.
 - The multi-window smoke verifies independent child/grandchild lifetime, a rejected first close request, an accepted second request, exactly-once close cleanup, and cancellation of a pending window before its builder executes.
 - The workbench passes virtual-row selection, note editing/autosave across selection changes, menu opening/dismissal, modal confirmation and viewport resizing. See [workbench](images/workbench.png) and [dialog](images/workbench-dialog.png). Its draft storage is session-only memory.
-- GPUI, QuickGUI and zgui render the same frozen deterministic workload using their actual pinned frameworks. Geometry/content/colors match; native text rasterization/baseline differences remain. See the [comparison protocol](benchmarking.md) and [raw results](results/README.md).
+- GPUI, QuickGUI and zgx render the same frozen deterministic workload using their actual pinned frameworks. Geometry/content/colors match; native text rasterization/baseline differences remain. See the [comparison protocol](benchmarking.md) and [raw results](results/README.md).
 
 Further native Linux probes, each on a private Xvfb/Openbox desktop or a nested Sway or Weston compositor:
 
@@ -89,8 +89,8 @@ Further native Linux probes, each on a private Xvfb/Openbox desktop or a nested 
 - GL where no Vulkan driver is: the gallery on Xvfb with no Vulkan driver to find starts and draws the same pixels as through lavapipe, with Mesa's GL loaded; with Vulkan, no GL driver is mapped (`gl_fallback_smoke.py`).
 - Popups past the window on Wayland: under sway, popup_probe's menu clicked open with a virtual pointer shows as an `xdg_popup` past the window's bottom edge, exactly where the scene placed it, drawn; its last item, below the window, clicked, is chosen and the popup goes; opened again, a press in the window closes it; the window moved near the output's bottom, the menu flips above its trigger, 4 points off it, and its first item takes a click there. The submenus example's submenu, a popup of its menu, opens beside that menu where the compositor flipped it (48 points down it, at its right edge). A menu of 60 items, taller than the 960-point output, is cut to it by the compositor, laid out 960 high, and scrolled to its last item, which takes a click. A popover with an arrow, flipped above its trigger by the compositor near the output's bottom, is placed there by the scene, its arrow's tip on its bottom edge, centred on the trigger. On outputs scaled 2× and 1.5× (fractional, through the viewporter), the menu's buffer is its size in the output's pixels (400 × 404, 300 × 303), it shows where the scene put it in those pixels, within one, and its last item takes a click. Under Weston, the menu opened by the app sits the same on the content, below the title bar winit draws (`wayland_popups_smoke.py`).
 - Drags out to other apps on Wayland: under sway, drag_probe's chip dragged with a virtual pointer onto a GTK window of the probe's own (`GDK_BACKEND=wayland`) is taken as `UTF8_STRING`, under its icon, and the source hears it accepted; back over its own window, or over a GTK target that refuses it and hears it move, nothing is dropped and the source hears it not taken; drag_probe's tab, carrying nothing to other apps, drops on the Other window's strip (accepted) and, let go on the bare desktop, is torn off; a window's only tab moves its window with the pointer, by the compositor's move (`wayland_drag_out_smoke.py`).
-- A window manager's resize waits for zgui's frames on X11: window_probe's window names `_NET_WM_SYNC_REQUEST` and its counter, and through an Openbox Alt and right button resize of 12 steps the counter goes from 0 to Openbox's last request, the window takes the pointer's size and a frame is drawn for each step (`resize_sync_smoke.py`).
-- A window's icon and class on X11: window_probe, with no application id, finds its executable's icon in a private icon theme (`XDG_DATA_HOME`, a 48 pixel PNG of one colour), and its window carries it as `_NET_WM_ICON`, 48 by 48 of that colour, classed by its executable; given a desktop file ID (`Application::desktop_id`, as zgui-run gives a script's `app_id`), its class is that ID and its icon the one of that name (`window_icon_smoke.py`).
+- A window manager's resize waits for zgx's frames on X11: window_probe's window names `_NET_WM_SYNC_REQUEST` and its counter, and through an Openbox Alt and right button resize of 12 steps the counter goes from 0 to Openbox's last request, the window takes the pointer's size and a frame is drawn for each step (`resize_sync_smoke.py`).
+- A window's icon and class on X11: window_probe, with no application id, finds its executable's icon in a private icon theme (`XDG_DATA_HOME`, a 48 pixel PNG of one colour), and its window carries it as `_NET_WM_ICON`, 48 by 48 of that colour, classed by its executable; given a desktop file ID (`Application::desktop_id`, as zgx-run gives a script's `app_id`), its class is that ID and its icon the one of that name (`window_icon_smoke.py`).
 - A window's last user input on X11: window_probe's First carries no `_NET_WM_USER_TIME` before any input, a click sets it and a later key moves it on, and Second, opened 3 s after First, carries the time of that key (`user_time_smoke.py`).
 - Shortcuts on a Russian layout on X11: Ctrl and the A key (ф) select an editor's text, Ctrl and the C key (с) copy it, and the same keys without Ctrl type Russian (`keyboard_layout_smoke.py`).
 - An application ID's D-Bus service (`org.freedesktop.Application`): a later launch's `Open` URLs and `Activate` reach the running app, which reopens a window after its last one closed, besides fullscreen, minimum size and a custom title bar's drag (`native_platform_smoke.py`). Its thread and the portal settings' sleep until a message arrives (`linux_dbus.rs`).
@@ -99,15 +99,15 @@ Further native Linux probes, each on a private Xvfb/Openbox desktop or a nested 
 Every probe is listed in `scripts/linux_smokes.py`, which runs them side by side (each owns its display or compositor) and reports each one:
 
 ```sh
-cargo build -p zgui-desktop --examples --locked
-cargo test -p zgui-desktop --lib --no-run --locked
+cargo build -p zgx-desktop --examples --locked
+cargo test -p zgx-desktop --lib --no-run --locked
 python3 scripts/linux_smokes.py --jobs 4              # all of them
 python3 scripts/linux_smokes.py --only wayland --only primary
 ```
 
 CI builds only the examples the probes run (`linux_smokes.py --fixtures` prints them as `cargo build` flags: every `{bin}/name` in a probe's command, and `FIXTURES`, those a probe runs by name from the examples directory). A probe that starts another example by name adds it to `FIXTURES`.
 
-CI runs on every push to main and every pull request (`.github/workflows/ci.yml`): a Linux job (fmt, stylua, clippy, `zgui lint` and `zgui check` over every example script, unit and doc tests (zgui-script's included), Vulkan rendering tests on llvmpipe, then every native probe above, four at a time), a macOS job (clippy, tests, Metal rendering and readback, component window lifecycle) and a Windows job (check, core and bundle tests, Direct3D 12 border and transform pixel tests on WARP). Probes wait for what they drive (the window manager, IBus's XIM server and engine, a mapped window) rather than sleeping, so a loaded runner slows them without failing them.
+CI runs on every push to main and every pull request (`.github/workflows/ci.yml`): a Linux job (fmt, stylua, clippy, `zgx lint` and `zgx check` over every example script, unit and doc tests (zgx-script's included), Vulkan rendering tests on llvmpipe, then every native probe above, four at a time), a macOS job (clippy, tests, Metal rendering and readback, component window lifecycle) and a Windows job (check, core and bundle tests, Direct3D 12 border and transform pixel tests on WARP). Probes wait for what they drive (the window manager, IBus's XIM server and engine, a mapped window) rather than sleeping, so a loaded runner slows them without failing them.
 
 ## Platform coverage
 
@@ -124,9 +124,9 @@ Recorded native runs use `scripts/platform_smoke.py`, which creates and cleans u
 All native rendering above uses llvmpipe, not a hardware GPU. Reproduce the isolated runs with:
 
 ```sh
-cargo build -p zgui-desktop --examples --locked
+cargo build -p zgx-desktop --examples --locked
 python3 scripts/platform_smoke.py target/debug/examples/gallery \
-  --windows target/debug/examples/windows --output /tmp/zgui-platform-validation
+  --windows target/debug/examples/windows --output /tmp/zgx-platform-validation
 ```
 
 The script requires Xvfb, Openbox, xdotool, Weston, weston-screenshooter and Python Pillow. It writes screenshots, compositor logs and `results.json`; the Wayland screenshot check rejects an absent gallery surface. X11 checks assert actual native window dimensions and the model's final logical viewport, so merely issuing a resize command cannot pass validation.
@@ -139,13 +139,13 @@ Use a real display and equivalent hardware renderer configurations for performan
 
 The surface/focus lifecycle changes also pass a fresh full native smoke run: X11 at 1.5× and 2× and Wayland presentation/multiwindow lifecycle. Its separate [result inventory](platform-validation/lifecycle/results.json) and screenshots preserve the earlier platform evidence. That historical Wayland run had no input seat; the newer nested-seat run below covers input separately.
 
-The declarative [form example](../crates/zgui-desktop/examples/form.rs) passes native X11 pointer focus, selection replacement, cross-editor clipboard, Tab focus, multiline entry, disabled editing and reactive/native resize via `scripts/form_smoke.py`. Its [model report](platform-validation/form/form.log) and [screenshot](platform-validation/form/form.png) are retained. GPU editor tests compare incremental and full frames after font changes, selection, text replacement and shrink/grow cycles; they also check glyph/caret colors and scroll restoration.
+The declarative [form example](../crates/zgx-desktop/examples/form.rs) passes native X11 pointer focus, selection replacement, cross-editor clipboard, Tab focus, multiline entry, disabled editing and reactive/native resize via `scripts/form_smoke.py`. Its [model report](platform-validation/form/form.log) and [screenshot](platform-validation/form/form.png) are retained. GPU editor tests compare incremental and full frames after font changes, selection, text replacement and shrink/grow cycles; they also check glyph/caret colors and scroll restoration.
 
 The public component virtual list has bounded-work tests on 100,000 rows, keyed state/index retention, resize and count clamping, constructor failure cleanup, wheel chaining and zero-layout scrolling within the same range. Numeric tests cover extreme counts and finite output geometry; observer tests cover reentrant mounting and removal during size notification. GPU tests verify padded viewport clipping and incremental/full equality across large scroll offsets and allocation changes.
 
 The component workload native debug smoke runs all four modes successfully and visually verifies +, = and done controls. [Reports](platform-validation/component-workload/results.json) and [screenshot](platform-validation/component-workload/idle-done.png) are preserved. Debug llvmpipe delivered 179 scroll ticks and 57–59 streaming ticks in three seconds; this is correctness evidence, not release performance evidence. Existing benchmark numbers still describe the earlier direct-scene adapter.
 
-A fresh [normalized public-component release comparison](results/component-comparison/README.md) completed all 24 runs. Its 3,395 raw samples, 70-file source archive and frozen binary hashes were audited. Active runs delivered 594–599 updates per ten seconds; all zgui active runs delivered 599. The series shows lower sampled active CPU for zgui than both references on llvmpipe, while GPUI has lower RSS. Native screenshots of the same seeded workload were inspected. These are software-GPU measurements, not hardware or macOS performance evidence.
+A fresh [normalized public-component release comparison](results/component-comparison/README.md) completed all 24 runs. Its 3,395 raw samples, 70-file source archive and frozen binary hashes were audited. Active runs delivered 594–599 updates per ten seconds; all zgx active runs delivered 599. The series shows lower sampled active CPU for zgx than both references on llvmpipe, while GPUI has lower RSS. Native screenshots of the same seeded workload were inspected. These are software-GPU measurements, not hardware or macOS performance evidence.
 
 Dynamic native window controls pass title, client resize, minimization/restoration, maximization and visibility checks on X11/Openbox; [external state observations](platform-validation/window-controls-x11.json) supplement the example's viewport assertions. Pending/suspended request-state unit tests do not replace native OS suspension validation. Five allocation-feedback regressions cover oscillation, growth, reentrant preparation, panic cleanup and recovery; fallible native frame/input preparation reports errors rather than hanging.
 
@@ -157,7 +157,7 @@ Rendering now stops before layout preparation/scene flushing for native-confirme
 
 Keyed constructor recovery regressions cover both public components and low-level scopes: a late failure after an earlier new child has mounted releases all staged subscriptions/resources, preserves the original child order/identity/local state and permits successful retry. The complete workspace passes 214 tests, 15 doctests, strict Clippy, formatting and macOS ARM64 all-target cross-check after this change.
 
-Declarative checkboxes share fluent styles and inherited typography with other components, including indicators that expand for large fonts. Four component regressions cover input, model/semantics synchronization, disabled state styles, cleanup and sizing. An AccessKit consumer regression verifies checked-state updates, disabled activation rejection and unmount cleanup. The [native checkbox example](../crates/zgui-desktop/examples/checkbox.rs) passes label clicks, Space activation, disabled behavior and external writes under an owned Xvfb window; [results and screenshot](platform-validation/checkbox/result.json) accompany `scripts/checkbox_smoke.py`. Linux CI runs this smoke. Reusable `Styled::apply`, `when` and `when_some` transformations preserve sparse patches; dynamic signal styles continue to use `reactive_style`.
+Declarative checkboxes share fluent styles and inherited typography with other components, including indicators that expand for large fonts. Four component regressions cover input, model/semantics synchronization, disabled state styles, cleanup and sizing. An AccessKit consumer regression verifies checked-state updates, disabled activation rejection and unmount cleanup. The [native checkbox example](../crates/zgx-desktop/examples/checkbox.rs) passes label clicks, Space activation, disabled behavior and external writes under an owned Xvfb window; [results and screenshot](platform-validation/checkbox/result.json) accompany `scripts/checkbox_smoke.py`. Linux CI runs this smoke. Reusable `Styled::apply`, `when` and `when_some` transformations preserve sparse patches; dynamic signal styles continue to use `reactive_style`.
 
 Declarative sliders use allocated content dimensions and padding for thumb/rail drawing and pointer mapping. Four component tests cover resize, capture, keyboard, extreme finite ranges, external normalization, initial/reactive disabled semantics, inherited colors and cleanup. An AccessKit consumer verifies range/value/action updates; GPU readback compares partial/full frames after value, width and color changes. The [native slider run](platform-validation/slider/result.json) validates drag, Home/End/arrows, reactive width, disabled suppression and external values via `scripts/slider_smoke.py`; Linux CI runs this check. Legacy slider and progress geometry also responds to allocation changes, with two regressions. The integrated run passes 228 tests, 17 doctests, formatting, strict Clippy and macOS ARM64 all-target cross-check.
 
@@ -246,7 +246,7 @@ checks; native macOS and live input-method-service validation are separate.
 Winit 0.30.13 documents formal application suspension for Android, iOS and Web;
 it does not emit equivalent callbacks on Linux/macOS. See the
 [upstream lifecycle contract](https://docs.rs/winit/0.30.13/winit/application/trait.ApplicationHandler.html#method.suspended),
-also verified in the installed dependency source. zgui's callback teardown and
+also verified in the installed dependency source. zgx's callback teardown and
 recreation path is defensive portability support. It does not constitute a native
 desktop machine-sleep/wake or real driver-loss test; those remain separate gaps.
 
@@ -350,11 +350,11 @@ input and fresh-state reactivation. Static labels now use the AccessKit text
 value contract; editors publish cached Unicode TextRuns and route selection
 actions through guarded core input. The evidence records the pinned bridge
 limitations, source hashes, native trees/events and integrated checks. The
-bridge is AccessKit's, patched (`vendor/accesskit_unix/ZGUI_PATCH.md`) with
+bridge is AccessKit's, patched (`vendor/accesskit_unix/ZGX_PATCH.md`) with
 AT-SPI's Table and TableCell interfaces and the expandable, expanded and
 collapsed states: a data grid reads as a table of all its rows, its cells
 with their row, column and header, and a tree item as open or closed
-(zgui-desktop's `atspi_tests`).
+(zgx-desktop's `atspi_tests`).
 
 [Image fitting](platform-validation/image-fit/README.md) now supports local fluent
 Fill/Contain/Cover/None/ScaleDown styles with centered padded clipping. Core
@@ -737,7 +737,7 @@ Native macOS IME and candidate popup placement also remain unverified.
 The [direct winit diagnostic](platform-validation/wayland-ime-burst/README.md)
 delivered final preedit and Unicode commit for all 22 tested bursts across fixed,
 moving and delayed candidate geometry. It narrows the investigation but does
-not reproduce or resolve the original zgui burst failures.
+not reproduce or resolve the original zgx burst failures.
 
 ## Refreshed comparison acceptance checks
 
@@ -749,7 +749,7 @@ by six Python regression tests and CI.
 The [retry](results/refined-framework-retry/README.md) completed all 36 GUI
 processes and preserved 10,793 samples. Independent recomputation verified all
 220 archived inputs and measured binary hashes, but the runner correctly rejected
-update parity: zgui scrolling repeat 1 delivered 1,099 updates in 20 seconds,
+update parity: zgx scrolling repeat 1 delivered 1,099 updates in 20 seconds,
 below the 1,160 minimum. Unrelated builds restarted on the shared host during
 sampling. The cause is not isolated, and no new performance ranking is accepted.
 Fresh seeded captures were reviewed for all three applications. Both attempts
@@ -784,16 +784,16 @@ evidence or convert rejected process benchmarks into valid comparisons.
 
 A standalone winit/softbuffer test with synchronous 80 ms blocking delivered all
 12 final preedit/Unicode commit pairs. Four additional unsynchronized bursts in
-the actual zgui editor also delivered final state. Compositor-side traces in
+the actual zgx editor also delivered final state. Compositor-side traces in
 both tests show some intermediate preedits rejected with stale input-method
 serials; these successes do not invalidate the earlier persistent failure.
 
 A separate zero-delay condition reproduced the persistent final-preedit failure
-in both zgui and the independent program: two warm failures, two cold successes.
+in both zgx and the independent program: two warm failures, two cold successes.
 In each failure the compositor advanced its input-method serial after the first
 preedit, then rejected the final preedit carrying the previous serial. Space
 subsequently committed the correct Unicode text with the current serial in all
-four observations. This demonstrates the symptom outside zgui and its GPU
+four observations. This demonstrates the symptom outside zgx and its GPU
 renderer on the tested Sway/wlroots/Fcitx stack; it does not establish failure
 rates on other input stacks or lost committed text. No timing workaround or
 text replay was added to the framework.
@@ -825,12 +825,12 @@ See the [source-frozen checks and native log](platform-validation/surface-recove
 A private Fcitx5 5.1.19 frontend patch republishes only the current nonempty
 preedit after an ordinary input-method serial change, excluding activation and
 deactivation transitions. All four zero-delay observations delivered final
-preedit and exactly one Unicode commit. In the zgui warm run, the trace still
+preedit and exactly one Unicode commit. In the zgx warm run, the trace still
 shows the original final transaction rejected, followed by an accepted refresh
 at the new serial: this directly demonstrates recovery rather than mere absence
 of the race. The eight-stage Escape/focus-switch composition smoke also passes.
 
-No installed plugin, global service or zgui production code was changed. This
+No installed plugin, global service or zgx production code was changed. This
 is an upstream patch candidate, not a shipped fix: empty-preedit cancellation,
 stale commit/deletion transactions and broader surrounding-text/lifecycle cases
 need upstream testing. Exact patch/source/build provenance, private plugin

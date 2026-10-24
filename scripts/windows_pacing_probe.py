@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """How evenly an animating example's frames reach the display on Windows.
 
-Runs the example with ZGUI_PRESENT_LOG=1 and reads DXGI's account of each shown
-present (crates/zgui-gpu/src/dxgi.rs): the refresh it went up on. Animating at
+Runs the example with ZGX_PRESENT_LOG=1 and reads DXGI's account of each shown
+present (crates/zgx-gpu/src/dxgi.rs): the refresh it went up on. Animating at
 the display's rate, each shown present should follow the last by exactly one
 refresh; a gap of two is a refresh that repeated the previous frame (a hitch).
 
-    cargo build --release -p zgui-desktop --example animation_workload
+    cargo build --release -p zgx-desktop --example animation_workload
     python scripts/windows_pacing_probe.py target/release/examples/animation_workload.exe
 """
 import argparse
@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
     parser.add_argument("--max-hitch-percent", type=float)
     args = parser.parse_args()
-    env = dict(os.environ, ZGUI_PRESENT_LOG="1", ZGUI_SECONDS=str(args.seconds),
+    env = dict(os.environ, ZGX_PRESENT_LOG="1", ZGX_SECONDS=str(args.seconds),
                **dict(pair.split("=", 1) for pair in args.env))
     proc = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, text=True)

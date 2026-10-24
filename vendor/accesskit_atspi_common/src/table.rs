@@ -1,5 +1,5 @@
-// zgui patch: AT-SPI's Table and TableCell interfaces, which AccessKit's
-// Unix adapter leaves out (see ZGUI_PATCH.md). Orca reads a table's size, a
+// zgx patch: AT-SPI's Table and TableCell interfaces, which AccessKit's
+// Unix adapter leaves out (see ZGX_PATCH.md). Orca reads a table's size, a
 // cell's row and column, and the headers over a cell through them.
 //
 // Positions come from the AccessKit properties a toolkit sets: a table's

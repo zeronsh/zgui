@@ -15,7 +15,7 @@ from platform_smoke import stop, wait_for_wm
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
-    parser.add_argument("--output", type=Path, default=Path("/tmp/zgui-actions-smoke"))
+    parser.add_argument("--output", type=Path, default=Path("/tmp/zgx-actions-smoke"))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     xvfb = wm = app = None
@@ -26,7 +26,7 @@ def main():
         xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1000x700x24", "-ac", "-noreset"], stdout=subprocess.PIPE, stderr=logs[0], text=True)
         if not select.select([xvfb.stdout], [], [], 10)[0]:
             raise RuntimeError("Xvfb startup timeout")
-        env = dict(os.environ, DISPLAY=":" + xvfb.stdout.readline().strip(), ZGUI_ACTION_TRACE="1", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
+        env = dict(os.environ, DISPLAY=":" + xvfb.stdout.readline().strip(), ZGX_ACTION_TRACE="1", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("WINIT_X11_SCALE_FACTOR", None)
         # Xvfb can inherit a mapping where xdotool chooses Alt+Fn for the
@@ -61,7 +61,7 @@ def main():
         deadline = time.monotonic() + 20
         window = None
         while time.monotonic() < deadline:
-            result = subprocess.run(["xdotool", "search", "--name", "^zgui actions$"], env=env, text=True, capture_output=True)
+            result = subprocess.run(["xdotool", "search", "--name", "^zgx actions$"], env=env, text=True, capture_output=True)
             if result.returncode == 0:
                 window = result.stdout.splitlines()[0]
                 break

@@ -2,7 +2,7 @@
 """Exercise the gallery's native Win32 input/clipboard bridge (desktop_smoke.py's Windows twin).
 
 Run on an unlocked interactive desktop; it takes the keyboard and pointer for a few seconds:
-    cargo build -p zgui-desktop --example gallery
+    cargo build -p zgx-desktop --example gallery
     python scripts/windows_desktop_smoke.py target/debug/examples/gallery.exe
 """
 import argparse
@@ -19,7 +19,7 @@ def main():
     parser.add_argument("binary", type=pathlib.Path)
     parser.add_argument("--screenshot", type=pathlib.Path)
     args = parser.parse_args()
-    env = dict(os.environ, ZGUI_SECONDS="15", ZGUI_SNAPSHOT="1")
+    env = dict(os.environ, ZGX_SECONDS="15", ZGX_SNAPSHOT="1")
     proc = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8")
     try:

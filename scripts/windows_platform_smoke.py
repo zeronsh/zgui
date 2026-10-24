@@ -4,7 +4,7 @@ dialogs: the clipboard (selected display text copied as text and as HTML,
 text from another process pasted in), the file picker and the message box
 (each owned by its window), and a file dragged in from another process.
 
-    cargo build -p zgui-desktop --example selectable_text --example gallery --example platform_services --example drag_drop
+    cargo build -p zgx-desktop --example selectable_text --example gallery --example platform_services --example drag_drop
     python scripts/windows_platform_smoke.py target/debug/examples
 """
 import argparse
@@ -126,7 +126,7 @@ def check_clipboard(examples):
         stop(proc)
     # Text in: set by another process, pasted into an editor.
     powershell("Set-Clipboard -Value 'pasted from another process'")
-    proc, lines = launch(examples / "gallery.exe", env={"ZGUI_SNAPSHOT": "1"})
+    proc, lines = launch(examples / "gallery.exe", env={"ZGX_SNAPSHOT": "1"})
     try:
         window = win.wait_window(proc)
         time.sleep(1)
@@ -145,11 +145,11 @@ def check_clipboard(examples):
 
 
 def check_dialogs(examples):
-    with tempfile.TemporaryDirectory(prefix="zgui-dialogs-") as directory:
+    with tempfile.TemporaryDirectory(prefix="zgx-dialogs-") as directory:
         fixture = pathlib.Path(directory, "fixture.txt")
-        fixture.write_text("zgui")
+        fixture.write_text("zgx")
         proc, lines = launch(examples / "platform_services.exe", "--smoke",
-                             env={"ZGUI_DIALOG_DIRECTORY": directory})
+                             env={"ZGX_DIALOG_DIRECTORY": directory})
         try:
             window = win.wait_window(proc)
             # --smoke opens the file picker after a second.
@@ -192,11 +192,11 @@ $form.StartPosition = 'Manual'
 $form.Location = New-Object Drawing.Point(40, 40)
 $form.Size = New-Object Drawing.Size(240, 140)
 $form.TopMost = $true
-$form.Text = 'zgui drag source'
+$form.Text = 'zgx drag source'
 $form.Add_MouseDown({
     $data = New-Object Windows.Forms.DataObject
     $files = New-Object Collections.Specialized.StringCollection
-    [void]$files.Add($env:ZGUI_DRAG_FILE)
+    [void]$files.Add($env:ZGX_DRAG_FILE)
     $data.SetFileDropList($files)
     $result = $form.DoDragDrop($data, [Windows.Forms.DragDropEffects]::Copy)
     [Console]::WriteLine("DRAG_RESULT $result")
@@ -210,9 +210,9 @@ $form.Add_Shown({ [Console]::WriteLine("SOURCE_READY") })
 def check_file_drop(examples):
     """A file dragged in from another process (OLE drag and drop, as from
     Explorer) onto drag_drop's drop zone."""
-    with tempfile.TemporaryDirectory(prefix="zgui-drop-") as directory:
+    with tempfile.TemporaryDirectory(prefix="zgx-drop-") as directory:
         dropped = pathlib.Path(directory, "dropped.txt")
-        dropped.write_text("zgui")
+        dropped.write_text("zgx")
         proc, lines = launch(examples / "drag_drop.exe")
         source, source_lines = None, []
         try:
@@ -221,11 +221,11 @@ def check_file_drop(examples):
             win.activate(window)
             source = subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command",
                                        DRAG_SOURCE], stdout=subprocess.PIPE, text=True,
-                                      env=dict(os.environ, ZGUI_DRAG_FILE=str(dropped)))
+                                      env=dict(os.environ, ZGX_DRAG_FILE=str(dropped)))
             threading.Thread(target=lambda: source_lines.extend(source.stdout), daemon=True).start()
             wait_for(lambda: any(l.strip() == "SOURCE_READY" for l in source_lines), "the drag source", timeout=20)
             form = wait_for(lambda: next((w for w in win.windows_of(source.pid)
-                                          if win.title(w) == "zgui drag source"), None), "its window")
+                                          if win.title(w) == "zgx drag source"), None), "its window")
             win.activate(form)
             scale = win.dpi(window) / 96
             win.drag(form, (60, 40), win.to_client(form, *win.to_screen(window, 190 * scale, 240 * scale)),

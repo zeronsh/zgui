@@ -9,7 +9,7 @@ def main():
     p.add_argument('binary',type=pathlib.Path);p.add_argument('--output',type=pathlib.Path,required=True)
     p.add_argument('--wayland',action='store_true');a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
     processes=[]
-    with tempfile.TemporaryDirectory(prefix='zgui-platform-') as private:
+    with tempfile.TemporaryDirectory(prefix='zgx-platform-') as private:
         env=dict(os.environ,XDG_RUNTIME_DIR=private,XDG_CONFIG_HOME=private+'/config',XDG_DATA_HOME=private+'/data',XDG_CACHE_HOME=private+'/cache')
         for key in ('DISPLAY','WAYLAND_DISPLAY','SWAYSOCK','DBUS_SESSION_BUS_ADDRESS','AT_SPI_BUS_ADDRESS'):env.pop(key,None)
         def launch(name,cmd,environment=None,**kw):
@@ -27,7 +27,7 @@ def main():
             host=None
             if a.wayland:
                 env.update(WLR_BACKENDS='x11',WLR_X11_OUTPUTS='1',WLR_RENDERER='pixman')
-                config=pathlib.Path(private,'sway.conf');config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgui native platform"] floating enable\n')
+                config=pathlib.Path(private,'sway.conf');config.write_text('xwayland disable\nseat seat0 fallback true\noutput * mode 1200x800\ndefault_border none\nfor_window [title="zgx native platform"] floating enable\n')
                 (a.output/'sway.conf').write_text(config.read_text());sway=launch('sway',['sway','--unsupported-gpu','--config',str(config)])
                 host=wait_for_sway_host(env,a.output,sway)
                 deadline=time.monotonic()+10
@@ -51,10 +51,10 @@ def main():
                 tree=json.loads(subprocess.check_output(['swaymsg','-t','get_tree','-r'],env=env,text=True));pending=[tree]
                 while pending:
                     node=pending.pop();pending.extend(node.get('nodes',[])+node.get('floating_nodes',[]))
-                    if node.get('name')=='zgui native platform':rect=node['rect'];break
+                    if node.get('name')=='zgx native platform':rect=node['rect'];break
                 xdo('windowactivate','--sync',host);xdo('mousemove','--window',host,rect['x']+90,rect['y']+16)
             else:
-                host=subprocess.check_output(['xdotool','search','--name','^zgui native platform$'],env=env,text=True).strip().splitlines()[0]
+                host=subprocess.check_output(['xdotool','search','--name','^zgx native platform$'],env=env,text=True).strip().splitlines()[0]
                 xdo('windowactivate','--sync',host);xdo('mousemove','--window',host,90,16)
             xdo('mousedown',1);time.sleep(.15);xdo('mousemove_relative','--sync',80,55);time.sleep(.15);xdo('mouseup',1)
             if a.wayland:
@@ -62,16 +62,16 @@ def main():
                 tree=json.loads(subprocess.check_output(['swaymsg','-t','get_tree','-r'],env=env,text=True));pending=[tree]
                 while pending:
                     node=pending.pop();pending.extend(node.get('nodes',[])+node.get('floating_nodes',[]))
-                    if node.get('name')=='zgui native platform':
+                    if node.get('name')=='zgx native platform':
                         assert (rect['x'],rect['y']) != (node['rect']['x'],node['rect']['y']), 'Custom titlebar drag did not move Wayland surface'
                         break
                 else:raise RuntimeError('Dragged surface disappeared')
             wait('ROOT_CLOSED')
             def call(method,*args):
-                return subprocess.check_output(['gdbus','call','--session','--dest','org.zgui.NativePlatform','--object-path','/org/zgui/NativePlatform','--method','org.freedesktop.Application.'+method,*args],env=env,text=True)
-            call('Open',"['zgui-test:hello', 'https://example.invalid/path']",'{}');wait('zgui-test:hello')
+                return subprocess.check_output(['gdbus','call','--session','--dest','org.zgx.NativePlatform','--object-path','/org/zgx/NativePlatform','--method','org.freedesktop.Application.'+method,*args],env=env,text=True)
+            call('Open',"['zgx-test:hello', 'https://example.invalid/path']",'{}');wait('zgx-test:hello')
             call('Activate','{}');wait('REOPENED')
-            call('Open',"['zgui-test:quit']",'{}');app.wait(timeout=5);assert app.returncode==0
+            call('Open',"['zgx-test:quit']",'{}');app.wait(timeout=5);assert app.returncode==0
             log=(a.output/'application.log').read_text()
             assert 'FULLSCREEN true ' in log and 'RESTORED false ' in log,log
             minimum=re.search(r'MINIMUM WindowBounds \{ position: (.*?), size: \((\d+), (\d+)\)',log);assert minimum,log

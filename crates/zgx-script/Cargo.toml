@@ -1,0 +1,96 @@
+[package]
+# Integration tests build as a few binaries by area (see AGENTS.md).
+autotests = false
+name = "zgx-script"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords = ["gui", "luau", "scripting", "hot-reload", "ui"]
+categories = ["gui", "development-tools"]
+description = "Luau scripts that describe zgx component trees, with hot reload."
+
+[features]
+# Image formats (see zgx-gpu): all by default.
+default = ["components", "svg", "png", "jpeg", "gif"]
+# The component library's `ui.*` (zgx-components): the data grid, tree,
+# dates and times, combobox, select, tabs, toasts, command palette and
+# controls.
+components = ["dep:zgx-components"]
+svg = ["zgx-gpu/svg"]
+png = ["zgx-gpu/png"]
+jpeg = ["zgx-gpu/jpeg"]
+gif = ["zgx-gpu/gif"]
+# Windows: Vulkan where Direct3D 12 has no adapter (see zgx-gpu).
+vulkan = ["zgx-gpu/vulkan"]
+
+[dependencies]
+zgx = { path = "../zgx", version = "0.1.0" }
+zgx-components = { path = "../zgx-components", version = "0.1.0", optional = true }
+# Image decoding for `ui.image` (PNG, JPEG).
+zgx-gpu = { path = "../zgx-gpu", version = "0.1.0", default-features = false }
+mlua = { version = "0.12.2", features = ["luau"] }
+memchr = "2.7"
+# `.luaurc` aliases for `require("@alias/...")`.
+serde_json = "1"
+# Markdown for `ui.markdown` and `zgx_script::markdown`.
+pulldown-cmark = { version = "0.13", default-features = false }
+smallvec = "1.16"
+
+# The script time budget counts the thread's CPU time (clock_gettime).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
+[[bin]]
+# `zgx check app.luau`: type checks scripts with luau-lsp (src/check.rs).
+name = "zgx"
+path = "src/bin/zgx.rs"
+# Its docs would land where the zgx library's do.
+doc = false
+
+# Named apart from zgx-gpu's `layout_bench` and zgx-desktop's `web_view`:
+# examples share one output directory, and Windows cannot link two
+# executables (and their .pdb) to one path at once.
+[[example]]
+name = "script_layout_bench"
+path = "examples/layout_bench.rs"
+
+[[example]]
+name = "script_web_view"
+path = "examples/web_view.rs"
+
+[dev-dependencies]
+zgx-desktop = { path = "../zgx-desktop" }
+
+[[test]]
+name = "anime"
+path = "tests/anime/main.rs"
+
+[[test]]
+name = "examples"
+path = "tests/examples/main.rs"
+
+[[test]]
+name = "state"
+path = "tests/state/main.rs"
+
+[[test]]
+name = "tooling"
+path = "tests/tooling/main.rs"
+
+[[test]]
+name = "ui"
+path = "tests/ui/main.rs"
+
+[[test]]
+name = "soak"
+path = "tests/soak.rs"
+
+[[test]]
+name = "bundle"
+path = "tests/bundle.rs"

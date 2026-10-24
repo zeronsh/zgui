@@ -1,11 +1,11 @@
-//! The heavy dashboard (see zgui_workload::heavy): one view, rendered again
+//! The heavy dashboard (see zgx_workload::heavy): one view, rendered again
 //! whenever a tick changes it.
 use quickgui::{
     Application, AsyncContextError, Color, Element, IntoElement, View, ViewContext, WindowOptions,
     div, text,
 };
 use std::time::Instant;
-use zgui_workload::{Mode, heavy::*};
+use zgx_workload::{Mode, heavy::*};
 
 fn color(hex: u32) -> Color {
     Color::rgb8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)

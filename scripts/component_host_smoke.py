@@ -2,7 +2,7 @@
 """Bounded native component-host lifecycle smoke; requires a desktop session.
 
 This verifies model progress and clean window shutdown, not presentation cadence
-or native input. GPU pixel correctness is exercised separately by zgui-gpu tests.
+or native input. GPU pixel correctness is exercised separately by zgx-gpu tests.
 """
 import argparse
 import json
@@ -19,8 +19,8 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     results = []
     for mode in ("idle", "both"):
-        env = dict(os.environ, ZGUI_MODE=mode, ZGUI_SECONDS="2")
-        env.pop("ZGUI_INITIAL_TICKS", None)
+        env = dict(os.environ, ZGX_MODE=mode, ZGX_SECONDS="2")
+        env.pop("ZGX_INITIAL_TICKS", None)
         with (args.output / f"{mode}.log").open("w") as log:
             process = subprocess.run(
                 [str(args.binary.resolve())], env=env, stdout=log,
@@ -31,7 +31,7 @@ def main():
         assert process.returncode == 0, (mode, process.returncode)
         assert len(records) == 1, (mode, records)
         record = records[0]
-        assert record["framework"] == "zgui" and record["renderer"] == "gpu", record
+        assert record["framework"] == "zgx" and record["renderer"] == "gpu", record
         assert record["adapter"] == "components", record
         if mode == "idle":
             assert record["ticks"] == 0, record

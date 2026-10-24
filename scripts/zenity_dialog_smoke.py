@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A file dialog where no portal answers, on X11 (Xvfb/Openbox, a session
-bus with nothing on it): zgui shows zenity's chooser, and the path typed
+bus with nothing on it): zgx shows zenity's chooser, and the path typed
 into it reaches the app. Then, with the chooser open again, closing its
 window ends the chooser and leaves the app running (its other window)."""
 import argparse
@@ -98,7 +98,7 @@ def main():
         app = launch("close", [str(args.binary.resolve()), "--smoke", "--close-picker"], env, stdout=log.open("w"))
         until("zenity's chooser", chooser)
         owner = until("the app's window", lambda: (run("xdotool", "search", "--onlyvisible", "--name",
-                                                       "^zgui platform services$").stdout.split() or [None])[0])
+                                                       "^zgx platform services$").stdout.split() or [None])[0])
         run("xdotool", "windowclose", owner)
         until("the chooser ending with its window", lambda: not zenities(), 10)
         result["chooser_ends_with_owner"] = True

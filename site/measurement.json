@@ -21,12 +21,12 @@
   "frameworks": {
     "gpui": "0.2.2",
     "quickgui": "811d6e2816d5229711f59683c4c9dfbb6fc74133",
-    "zgui": "10b90de10aada565dd598605f7e6902a4c83ce88"
+    "zgx": "10b90de10aada565dd598605f7e6902a4c83ce88"
   },
   "csv_sha256": "8fcb6a935b93d2f4bd312a8658cae1d7d5e007d1fa9ee444fd1923738dd16a8d",
   "source_csv_sha256": "8fcb6a935b93d2f4bd312a8658cae1d7d5e007d1fa9ee444fd1923738dd16a8d",
   "binaries": {
-    "zgui": {
+    "zgx": {
       "sha256": "3f9368668dd0c1389ba94d3a7fb4ad7da202adbb8f0a0d4aaeb6f18b7737e835",
       "bytes": 21558432
     },

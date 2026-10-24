@@ -2,7 +2,7 @@
 """Keystroke to screen on Windows: how long after SendInput types a character
 into a focused text field its pixels change in what the compositor shows.
 
-    cargo build --release -p zgui-desktop --example gallery
+    cargo build --release -p zgx-desktop --example gallery
     python scripts/windows_latency_probe.py target/release/examples/gallery.exe
     python scripts/windows_latency_probe.py notepad.exe --click 200,200 --region 0,0,400,60
 

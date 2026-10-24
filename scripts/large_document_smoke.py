@@ -41,7 +41,7 @@ def main():
     document = args.output / "document.rs"
     document.write_text("\n".join(lines))
     xvfb = wm = bus = ime = app = None
-    with tempfile.TemporaryDirectory(prefix="zgui-large-document-") as private:
+    with tempfile.TemporaryDirectory(prefix="zgx-large-document-") as private:
         try:
             with (args.output / "xvfb.log").open("w") as log:
                 xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1200x900x24", "-ac"], stdout=subprocess.PIPE, stderr=log, text=True)

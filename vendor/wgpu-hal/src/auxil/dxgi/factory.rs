@@ -84,7 +84,7 @@ pub fn enumerate_adapters(factory: DxgiFactory) -> Vec<DxgiAdapter> {
     enumerate_adapters_by(factory, None)
 }
 
-/// zgui patch: the adapters in DXGI's order for `preference` (DXGI 1.6,
+/// zgx patch: the adapters in DXGI's order for `preference` (DXGI 1.6,
 /// Windows 10 1803), or `EnumAdapters1`'s without it.
 pub fn enumerate_adapters_by(
     factory: DxgiFactory,

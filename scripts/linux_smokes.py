@@ -3,8 +3,8 @@
 
 Every probe owns its display or compositor session, so independent probes run
 side by side. Probes that expect an ambient X11 desktop get a private
-Xvfb/Openbox pair. Build the zgui-desktop examples (and, for the ignored host
-tests, `cargo test -p zgui-desktop --lib --no-run`) first. A failed or
+Xvfb/Openbox pair. Build the zgx-desktop examples (and, for the ignored host
+tests, `cargo test -p zgx-desktop --lib --no-run`) first. A failed or
 timed-out probe fails the run after all the others finish; nothing is retried.
 """
 import argparse
@@ -20,7 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # (name, command, ambient X11 desktop). `{bin}` is the examples directory and
-# `{out}` the probe's evidence directory, /tmp/zgui-<name> by default.
+# `{out}` the probe's evidence directory, /tmp/zgx-<name> by default.
 SMOKES = [
     ("component-host", "python3 scripts/component_host_smoke.py {bin}/component_workload --output {out}", True),
     ("gallery", "python3 scripts/desktop_smoke.py {bin}/gallery", True),
@@ -101,9 +101,9 @@ SMOKES = [
     ("line-height", "python3 scripts/line_height_smoke.py {bin}/line_height --output {out}", False),
     ("percent-sizes", "python3 scripts/percent_sizes_smoke.py {bin}/percent_sizes --output {out}", False),
     ("letter-spacing", "python3 scripts/letter_spacing_smoke.py {bin}/letter_spacing --output {out}", False),
-    ("clipboard-shutdown", "cargo test -p zgui-desktop --lib retained_window_factory_releases_native_clipboard_after_manager_shutdown --locked -- --ignored --test-threads=1", True),
-    ("host-suspend", "cargo test -p zgui-desktop --lib host_suspend_recreates_native_resources_and_retains_editor_state --locked -- --ignored --test-threads=1", True),
-    ("exit-closes-windows", "cargo test -p zgui-desktop --lib windows_still_open_close_before_the_event_loop_ends --locked -- --ignored --test-threads=1", True),
+    ("clipboard-shutdown", "cargo test -p zgx-desktop --lib retained_window_factory_releases_native_clipboard_after_manager_shutdown --locked -- --ignored --test-threads=1", True),
+    ("host-suspend", "cargo test -p zgx-desktop --lib host_suspend_recreates_native_resources_and_retains_editor_state --locked -- --ignored --test-threads=1", True),
+    ("exit-closes-windows", "cargo test -p zgx-desktop --lib windows_still_open_close_before_the_event_loop_ends --locked -- --ignored --test-threads=1", True),
     ("atspi", "/usr/bin/python3 scripts/atspi_smoke.py {bin}/atspi --output {out}", False),
     ("components-atspi", "/usr/bin/python3 scripts/components_atspi_smoke.py {bin}/components_probe --output {out}", False),
     ("image-fit", "python3 scripts/image_fit_smoke.py {bin}/image_fit --output {out}", False),
@@ -125,12 +125,12 @@ FIXTURES = ("windows", "drag_probe", "tab_windows", "submenus", "gallery", "kitc
 
 
 def fixtures():
-    """Every zgui-desktop example a probe runs: what CI builds for them, as
+    """Every zgx-desktop example a probe runs: what CI builds for them, as
     `cargo build` flags. Each must be an example."""
     names = set(FIXTURES)
     for _, command, _ in SMOKES:
         names.update(re.findall(r"\{bin\}/([a-z_0-9]+)", command))
-    examples = pathlib.Path(__file__).resolve().parent.parent / "crates/zgui-desktop/examples"
+    examples = pathlib.Path(__file__).resolve().parent.parent / "crates/zgx-desktop/examples"
     missing = [name for name in names if not (examples / f"{name}.rs").exists() and not (examples / name).is_dir()]
     if missing:
         raise SystemExit(f"probes run examples that do not exist: {sorted(missing)}")
@@ -168,13 +168,13 @@ def desktop(log):
 def run(smoke, args):
     name, command, ambient = smoke
     # Probes create their own evidence directory; logs sit beside it.
-    output = args.output / f"zgui-{name}"
+    output = args.output / f"zgx-{name}"
     shutil.rmtree(output, ignore_errors=True)
-    probe_log = args.output / f"zgui-{name}.log"
+    probe_log = args.output / f"zgx-{name}.log"
     argv = [part.format(bin=args.binaries, out=output) for part in command.split()]
     started = time.monotonic()
     helpers, env = [], dict(os.environ)
-    with probe_log.open("w") as log, (args.output / f"zgui-{name}-desktop.log").open("w") as desktop_log:
+    with probe_log.open("w") as log, (args.output / f"zgx-{name}-desktop.log").open("w") as desktop_log:
         try:
             if ambient:
                 helpers, env = desktop(desktop_log)
@@ -226,12 +226,12 @@ def main():
     # A fresh runner builds font caches on first use: once, here, rather
     # than in every probe of the first wave at the same time.
     subprocess.run(["fc-cache"], check=False)
-    # Likewise shaders: zgui shows a window once its renderer exists, and on
+    # Likewise shaders: zgx shows a window once its renderer exists, and on
     # the software Vulkan driver a cold shader cache in each of the first
     # probes at once took longer than their wait for the window. Every probe
     # shares one cache, warmed by one window first.
-    os.environ.setdefault("MESA_SHADER_CACHE_DIR", str(args.output / "zgui-mesa-shader-cache"))
-    warm = args.output / "zgui-warm-shaders"
+    os.environ.setdefault("MESA_SHADER_CACHE_DIR", str(args.output / "zgx-mesa-shader-cache"))
+    warm = args.output / "zgx-warm-shaders"
     warm.mkdir(exist_ok=True)
     with (warm / "desktop.log").open("w") as log:
         try:
@@ -265,7 +265,7 @@ def main():
                 print(f"{header}\n{text}", flush=True)
             if not ok:
                 failures.append(name)
-                for path in sorted((args.output / f"zgui-{name}").rglob("*")):
+                for path in sorted((args.output / f"zgx-{name}").rglob("*")):
                     if path.is_file() and path.suffix in (".log", ".json"):
                         body = path.read_text(errors="replace")
                         print(f"::group::{path}\n{body}::endgroup::" if group else f"--- {path}\n{body}", flush=True)

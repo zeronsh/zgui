@@ -1,6 +1,6 @@
 # Linux desktop support
 
-zgui runs natively on Wayland and on X11 (winit picks Wayland when
+zgx runs natively on Wayland and on X11 (winit picks Wayland when
 `WAYLAND_DISPLAY` is set). [Validation](validation.md) lists what the native
 Linux probes check on both: input, IME, clipboard and the primary selection,
 scaling, cursors, accessibility (AT-SPI) and the desktop's settings.
@@ -38,7 +38,7 @@ Text in the theme's generic family (`sans-serif`, which the default themes
 use, and `system-ui`) takes the desktop's interface face, as GTK and Qt apps
 do: GNOME's `font-name` (`Cantarell 11`, `Adwaita Sans 11`) or KDE's `font`,
 read through the settings portal before the first window and given to the
-renderer (`zgui_gpu::set_desktop_sans_serif`); a family the system lacks is
+renderer (`zgx_gpu::set_desktop_sans_serif`); a family the system lacks is
 passed over. Without one, cosmic-text's default stands (Open Sans, else its
 fallback list). A theme or view naming a family keeps it. The size in
 `font-name` is not taken; GNOME's text scaling factor is (`text_scale`).
@@ -49,7 +49,7 @@ fallback list). A theme or view naming a family keeps it. The size in
 A window manager shows a new window as large as it asks, past the screen's
 edge (Openbox does; Mutter maximizes one near the screen's size), and a size
 in points can be more pixels than the screen has at a high scale. Chromium
-and GTK fit theirs first, and so does zgui: on X11, before a window first
+and GTK fit theirs first, and so does zgx: on X11, before a window first
 shows and unless the app gave its bounds, its size shrinks to its monitor's
 work area (the current desktop's `_NET_WORKAREA`, the screen less its panels),
 its frame included (`_NET_REQUEST_FRAME_EXTENTS`, asked only of a window
@@ -86,7 +86,7 @@ request's `parent_window`). A chooser dismissed any way is no choice
 (`Ok(None)`): its Cancel button, and Escape or its window's close button,
 which GTK's portal answers as "ended another way". `portal_dialog_smoke.py`
 checks it through xdg-desktop-portal and its GTK backend. Where no portal answers (a window
-manager alone: Openbox, i3, a sway without xdg-desktop-portal), zgui shows
+manager alone: Openbox, i3, a sway without xdg-desktop-portal), zgx shows
 zenity's chooser, GTK's, as rfd and Chromium fall back to GTK's own: modal,
 attached to its window on X11 with zenity 3, and ended when its window closes
 or its request is dropped (the waiting thread sleeps on the process and the
@@ -123,7 +123,7 @@ or in the window it came from. Its input shape is empty, so the pointer goes
 through it to what is under it. When nothing takes the drag, a thread with
 its own connection slides it back to its source over 200 ms, easing out, then
 hides it. Without a compositor, the X server asks each window that a moving
-preview uncovers to repaint (Expose), and zgui repaints the whole window (winit
+preview uncovers to repaint (Expose), and zgx repaints the whole window (winit
 does not say which part). `drag_preview_smoke.py` checks the preview
 under picom: it follows the pointer past the window with nothing drawn, and
 slides back.
@@ -141,7 +141,7 @@ on the session's connection hands the target the data it asks for and ends
 the drag when the target says it finished (taken, or after 3 s, taken if
 it asked for the data). Released elsewhere, or with Escape, the target
 hears `XdndLeave`. The app's own windows are never targets (winit's say
-they take files): over them the drag is zgui's. The preview stays its own
+they take files): over them the drag is zgx's. The preview stays its own
 window, moved as the pointer moves and never drawn again. A conversion
 larger than one X request (with BIG-REQUESTS, usually 16 MB) is refused;
 there is no INCR transfer. `xdnd_source_smoke.py` drags text onto GTK
@@ -167,7 +167,7 @@ past the moving window and override-redirect ones, as Chromium finds it.
 A window with no position opens a step on from the app's front window, as
 on macOS and Windows: down and right by its title bar's height, as the
 program's position (`PPosition`). A window's frame is kept under its
-`frame_autosave` name in `$XDG_STATE_HOME/zgui/<executable>/frames`, half a
+`frame_autosave` name in `$XDG_STATE_HOME/zgx/<executable>/frames`, half a
 second after it last moved or resized and as it closes, and reopened there,
 maximized if it was left so. A window opened maximized, saved so or asked
 to, has `_NET_WM_STATE` set before it maps: winit asks the window manager
@@ -177,7 +177,7 @@ maximized state alone. `window_frames_smoke.py` checks both.
 
 ## Graphics
 
-zgui draws through Vulkan. Where no Vulkan driver is (VMs and older GPUs
+zgx draws through Vulkan. Where no Vulkan driver is (VMs and older GPUs
 without one, systems that ship none), it draws through GL over EGL instead,
 asking only for what older GPUs give (wgpu's downlevel limits); before, such
 an app did not start ("Failed to create surface for any enabled backend").
@@ -196,8 +196,8 @@ A window's Wayland app_id and X11 class are its app's desktop file ID:
 what docks and task switchers match to `id.desktop` for its name and icon,
 and how they group its windows. It is `Application::desktop_id`, else the
 application id (`Application::application_id`), else the executable's
-name. zgui-run gives each script its `zgui.json`'s `app_id`, so two script
-apps are two apps, not one "zgui-run".
+name. zgx-run gives each script its `zgx.json`'s `app_id`, so two script
+apps are two apps, not one "zgx-run".
 
 On X11 a window carries its app's icon (`_NET_WM_ICON`, which taskbars,
 docks and window switchers show), from the icon theme by that desktop file
@@ -213,10 +213,10 @@ icon, by the executable's name and by a desktop file ID.
 
 ## Resizing on X11
 
-A window manager resizing a zgui window waits for each frame
+A window manager resizing a zgx window waits for each frame
 (`_NET_WM_SYNC_REQUEST`, as GTK, Chromium and Qt): the vendored winit names
 the protocol and a SYNC counter on the window, keeps the window manager's
-request, and sets the counter as zgui presents the frame at the new size
+request, and sets the counter as zgx presents the frame at the new size
 (`Window::pre_present_notify`), or at once when no new size comes. Without
 it the window manager resized as fast as the pointer moved, ahead of the
 frames. `resize_sync_smoke.py` resizes window_probe's window with Openbox's
@@ -270,7 +270,7 @@ the compositor's refresh phase, from `wp_presentation` feedback.
 
 ## Input method candidates while scrolling
 
-zgui gives the input method the caret's rectangle on every frame the caret
+zgx gives the input method the caret's rectangle on every frame the caret
 moves, scrolling included, so the candidate window opens at the caret
 wherever it has scrolled to. Checked with IBus (libpinyin) over XIM on
 2026-10-23: composing in a field inside a scroll view, then scrolling the
@@ -311,12 +311,12 @@ target of another app taking it finishes it (`dnd_finished`), and the
 source hears it accepted; a drag nothing takes is cancelled. Windows have no
 place on screen on Wayland, so a drag leaving its window becomes the
 compositor's even carrying nothing to other apps (a tab), offered only as
-`application/x-zgui-drag`, which no other app takes: that is how it reaches
+`application/x-zgx-drag`, which no other app takes: that is how it reaches
 the app's other windows, and let go past every window it is torn off, as on
 X11. A window's only
 tab (`drag_moves_window`) has the compositor move its window, as a title
 bar's drag does (`xdg_toplevel.move`): the compositor holds the pointer from
-there until it is let go, so zgui's drag ends as the move begins, and the
+there until it is let go, so zgx's drag ends as the move begins, and the
 tab cannot merge into another window's strip (where that is, only the
 compositor knows). `wayland_drag_out_smoke.py` drags onto GTK windows of its
 own under sway, drags a tab onto the other window's strip and off past every
@@ -327,14 +327,14 @@ window, and drags a window's only tab.
 Menus, popovers, selects and tooltips show past the window as `xdg_popup`s of
 it (`popup_window/wayland.rs`), as GTK's and Chromium's do. winit gives a
 window's `xdg_toplevel`, not the `xdg_surface` a popup's parent must be, so
-zgui vendors winit 0.30.13 with one method more, `WindowExtWayland::xdg_surface`,
+zgx vendors winit 0.30.13 with one method more, `WindowExtWayland::xdg_surface`,
 and where the window geometry starts (`xdg_window_geometry_origin`, above the
 content by the title bar winit draws where the compositor draws none, as
-Weston): see `vendor/winit/ZGUI_PATCH.md`.
+Weston): see `vendor/winit/ZGX_PATCH.md`.
 
-zgui's objects live on an event queue of its own on winit's display: its own
+zgx's objects live on an event queue of its own on winit's display: its own
 `wl_compositor`, `xdg_wm_base`, `wp_viewporter` and a `wl_pointer` per seat.
-winit reads the socket for both queues, and zgui's is dispatched where the
+winit reads the socket for both queues, and zgx's is dispatched where the
 event loop turns, so it costs no wakeup. A popup is a `wl_surface` with an
 `xdg_surface` and `xdg_popup`, made as it shows and destroyed as it hides,
 drawn by a renderer of its own on the window's device
@@ -382,21 +382,21 @@ shows anew there. Menus, which have no arrow, are left where the compositor
 put them.
 
 Not yet: the grab (`xdg_popup.grab`, which moves the keyboard to the popup,
-so keys must come through a `wl_keyboard` of zgui's own with winit's
+so keys must come through a `wl_keyboard` of zgx's own with winit's
 keymap).
 
 ## Web views
 
-`zgui::web_view` has no Linux implementation: a web view shows its labelled
+`zgx::web_view` has no Linux implementation: a web view shows its labelled
 placeholder and its controller still answers, as headless. This is a
 deliberate gap, not an oversight. Here is why, and what an implementation
 would take.
 
 On macOS and Windows a page is a surface of the window's own compositor tree:
-zgui renders a base plane under it and an overlay plane over it (a popover, a
+zgx renders a base plane under it and an overlay plane over it (a popover, a
 composer), and the frame's presents and the page's geometry commit in one
-transaction (Core Animation, DirectComposition), so the page moves with zgui
-content. Linux needs the page as a surface zgui's own window controls, and
+transaction (Core Animation, DirectComposition), so the page moves with zgx
+content. Linux needs the page as a surface zgx's own window controls, and
 WebKitGTK cannot be one:
 
 - WebKitGTK (`webkit2gtk-4.1` on GTK 3, `webkitgtk-6.0` on GTK 4) is a GTK
@@ -405,23 +405,23 @@ WebKitGTK cannot be one:
   client that made its parent), and GTK cannot draw into a surface another
   connection made. So a WebKitGTK page cannot sit inside a winit window on
   Wayland, which is the default session on GNOME and KDE.
-- On X11, GTK 3 can embed by reparenting a GTK window into the zgui window
+- On X11, GTK 3 can embed by reparenting a GTK window into the zgx window
   (XEmbed). GTK 4 removed `GtkSocket` and `GtkPlug`. wry's child web views do
   this, and are X11-only for this reason. It would make web views X11-only in
-  zgui too, so an app would have to run under XWayland on Wayland desktops.
-  zgui paint over a page would have to be a separate child window, which X
+  zgx too, so an app would have to run under XWayland on Wayland desktops.
+  zgx paint over a page would have to be a separate child window, which X
   cannot commit together with the page, so it would trail the page by a frame
   while scrolling. GTK's main loop would also need to run alongside winit's.
 
 The route that works on both is WPE WebKit, WebKit's port for hosts without a
 toolkit. Its fdo backend hands the host each rendered frame as a dmabuf:
-- On Wayland, zgui would attach those frames to a subsurface of its window,
+- On Wayland, zgx would attach those frames to a subsurface of its window,
   between a base and an overlay subsurface, and commit the three together, as
   macOS and Windows commit theirs.
 - On X11, the renderer would import them as textures.
 
 The costs:
-- zgui on Linux renders a single surface today, so the plane split would come
+- zgx on Linux renders a single surface today, so the plane split would come
   first. It would serve any native view, terminals included.
 - The host would forward pointer, keyboard, IME and touch input into the page,
   as WebView2's visual hosting does on Windows.

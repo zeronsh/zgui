@@ -46,7 +46,7 @@ def main():
                     time.sleep(.03)
 
             wait_marker("HIDDEN updated 20")
-            ids = subprocess.check_output(["xdotool", "search", "--name", "^zgui hidden updates$"], env=env, text=True).splitlines()
+            ids = subprocess.check_output(["xdotool", "search", "--name", "^zgx hidden updates$"], env=env, text=True).splitlines()
             if len(ids) != 1:
                 raise RuntimeError(f"expected one native window, got {ids}")
             window = ids[0]

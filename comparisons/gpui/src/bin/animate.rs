@@ -1,7 +1,7 @@
-//! Display-rate animation workload (see zgui_workload::animation).
+//! Display-rate animation workload (see zgx_workload::animation).
 use gpui::{prelude::*, *};
 use std::time::Instant;
-use zgui_workload::{animation::*, Workload};
+use zgx_workload::{animation::*, Workload};
 struct Scene {
     start: Instant,
     frames: u64,

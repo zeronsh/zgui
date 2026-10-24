@@ -178,7 +178,7 @@ def popups_of(pid):
 
     def popup(hwnd):
         user32.GetClassNameW(hwnd, buffer, 64)
-        return buffer.value == "ZguiPopup"
+        return buffer.value == "ZgxPopup"
 
     return [hwnd for hwnd in windows_of(pid) if popup(hwnd)]
 

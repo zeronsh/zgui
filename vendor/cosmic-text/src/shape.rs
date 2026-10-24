@@ -106,17 +106,17 @@ pub struct ShapeBuffer {
     visual_lines: Vec<VisualLine>,
     cached_visual_lines: Vec<VisualLine>,
 
-    /// zgui patch: the shape run cache's key, kept to look runs up without
+    /// zgx patch: the shape run cache's key, kept to look runs up without
     /// allocating one per word.
     #[cfg(feature = "shape-run-cache")]
     run_key: Option<crate::ShapeRunKey>,
-    /// zgui patch: the attribute list `run_key`'s defaults were last found
+    /// zgx patch: the attribute list `run_key`'s defaults were last found
     /// to be (its address) while one line is shaped: its words need not
     /// compare them again. 0 outside `ShapeLine::build`.
     #[cfg(feature = "shape-run-cache")]
     run_key_line: usize,
 
-    /// zgui patch: a visual line's ranges in display order (`reorder`).
+    /// zgx patch: a visual line's ranges in display order (`reorder`).
     order: Vec<Range<usize>>,
 
     /// Buffer for sets of layout glyphs.
@@ -218,7 +218,7 @@ fn shape_fallback(
     let mut missing = Vec::new();
     glyphs.reserve(glyph_infos.len());
     let glyph_start = glyphs.len();
-    // zgui patch: without spans every glyph has the run's attributes, looked
+    // zgx patch: without spans every glyph has the run's attributes, looked
     // up once rather than for each glyph.
     let one = attrs_list.spans.is_empty();
     let mut glyph_attrs;
@@ -309,7 +309,7 @@ fn shape_run(
         scripts.clear();
         scripts
     };
-    // zgui patch: ASCII is all Common or Latin; only other text is looked up.
+    // zgx patch: ASCII is all Common or Latin; only other text is looked up.
     let run = &line[start_run..end_run];
     for c in run.chars().filter(|_| !run.is_ascii()) {
         match c.script() {
@@ -339,7 +339,7 @@ fn shape_run(
         attrs.optical,
     );
 
-    // zgui patch: no font at all (none installed, or none fontconfig
+    // zgx patch: no font at all (none installed, or none fontconfig
     // finds): the run shapes to nothing, rather than panicking each frame.
     let Some(font) = font_iter.next() else {
         drop(font_iter);
@@ -348,7 +348,7 @@ fn shape_run(
         return;
     };
 
-    // zgui: masked text (a password) is a bullet for each character, each
+    // zgx: masked text (a password) is a bullet for each character, each
     // keeping its character's bytes, so carets and selections are unchanged.
     #[cfg(feature = "swash")]
     if attrs.masked {
@@ -446,7 +446,7 @@ fn shape_run(
     // Debug missing font fallbacks
     font_iter.check_missing(&line[start_run..end_run]);
 
-    // zgui: a span's padding widens its first glyph (before it) and its
+    // zgx: a span's padding widens its first glyph (before it) and its
     // last (after it), so wrapping, hit testing and backgrounds all count it.
     // Most text has none: then no glyph's attributes are looked up again.
     let padded = attrs_list.has_padding();
@@ -487,7 +487,7 @@ fn shape_run_cached(
     use crate::ShapeRunKey;
 
     let run_range = start_run..end_run;
-    // zgui patch: reuse the last lookup's key; its default attributes are
+    // zgx patch: reuse the last lookup's key; its default attributes are
     // usually this run's too (one line, one paragraph's attributes).
     let defaults = attrs_list.defaults_owned();
     let mut key = match font_system.shape_buffer.run_key.take() {
@@ -512,7 +512,7 @@ fn shape_run_cached(
         ),
     };
     key.rtl = span_rtl;
-    // zgui patch: most text has no spans: no range query to find none.
+    // zgx patch: most text has no spans: no range query to find none.
     let spans = (!attrs_list.spans.is_empty())
         .then(|| attrs_list.spans.overlapping(&run_range))
         .into_iter()
@@ -530,7 +530,7 @@ fn shape_run_cached(
         }
     }
     if let Some(cache_glyphs) = font_system.shape_run_cache.get(&key) {
-        // zgui patch: room for them at once, not a glyph at a time.
+        // zgx patch: room for them at once, not a glyph at a time.
         glyphs.reserve(cache_glyphs.len());
         for mut glyph in cache_glyphs.iter().cloned() {
             // Adjust glyph start and end to match run position
@@ -564,7 +564,7 @@ fn shape_run_cached(
 }
 
 #[cfg(feature = "swash")]
-/// zgui patch: says once a process why its text does not show.
+/// zgx patch: says once a process why its text does not show.
 fn no_font() {
     static SAID: std::sync::Once = std::sync::Once::new();
     SAID.call_once(|| {
@@ -597,7 +597,7 @@ fn shape_skip(
         attrs.optical,
     );
 
-    // zgui patch: no font at all shapes to nothing (as `shape_run`).
+    // zgx patch: no font at all shapes to nothing (as `shape_run`).
     let Some(font) = font_iter.next() else {
         no_font();
         return;
@@ -677,7 +677,7 @@ fn shape_skip_glyphs(
     shape_skip_glyphs_as(glyphs, font, line, attrs_list, start_run, end_run, None);
 }
 
-/// zgui: as `shape_skip_glyphs`, every character drawn as `mask` if given.
+/// zgx: as `shape_skip_glyphs`, every character drawn as `mask` if given.
 #[cfg(feature = "swash")]
 fn shape_skip_glyphs_as(
     glyphs: &mut Vec<ShapeGlyph>,
@@ -766,7 +766,7 @@ pub struct ShapeGlyph {
     pub font_monospace_em_width: Option<f32>,
     pub font_id: fontdb::ID,
     pub font_weight: fontdb::Weight,
-    /// zgui: the optical size its font was instanced at (0: the default).
+    /// zgx: the optical size its font was instanced at (0: the default).
     pub font_optical: u16,
     pub glyph_id: u16,
     pub color_opt: Option<Color>,
@@ -951,7 +951,7 @@ impl ShapeWord {
         let is_simple_ascii =
             word.is_ascii() && !word.chars().any(|c| c.is_ascii_control() && c != '\t');
 
-        // zgui patch: no spans, no attributes to compare.
+        // zgx patch: no spans, no attributes to compare.
         if is_simple_ascii && !word.is_empty() && (attrs_list.spans.is_empty() || {
             let attrs_start = attrs_list.get_span(word_range.start);
             attrs_list.spans_iter().all(|(other_range, other_attrs)| {
@@ -1481,7 +1481,7 @@ impl ShapeLine {
         cached_spans.clear();
         cached_spans.extend(spans.drain(..).rev());
 
-        // zgui patch: ASCII without paragraph separators is one left-to-right
+        // zgx patch: ASCII without paragraph separators is one left-to-right
         // paragraph at one level, as the bidi analysis would find: one span.
         let simple = line
             .bytes()
@@ -1563,7 +1563,7 @@ impl ShapeLine {
         }
 
         // Adjust for tabs
-        // zgui patch: only in a line that has one (most have none, and the
+        // zgx patch: only in a line that has one (most have none, and the
         // check sliced and compared every glyph's text).
         let mut x = 0.0;
         let tabs = line.as_bytes().contains(&b'\t');
@@ -1593,7 +1593,7 @@ impl ShapeLine {
         }
     }
 
-    /// zgui patch: the ellipsis is shaped when a layout ellipsizes
+    /// zgx patch: the ellipsis is shaped when a layout ellipsizes
     /// (`BufferLine::layout`), not for every line shaped: most never are,
     /// and shaping it cost each a font lookup and allocations.
     pub fn ensure_ellipsis(
@@ -1689,11 +1689,11 @@ impl ShapeLine {
     }
 
     // A modified version of second part of unicode_bidi::bidi_info::visual run
-    /// zgui patch: into `order`, a scratch list, rather than a new one for
+    /// zgx patch: into `order`, a scratch list, rather than a new one for
     /// every visual line laid out.
     fn reorder(&self, line_range: &[VlRange], order: &mut Vec<Range<usize>>) {
         order.clear();
-        // zgui patch: a line all at one left-to-right level stays in order
+        // zgx patch: a line all at one left-to-right level stays in order
         // (L2 reverses only odd levels), without collecting its levels.
         let level = line_range.first().map(|range| range.level);
         if level.is_some_and(|level| {

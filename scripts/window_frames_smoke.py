@@ -27,7 +27,7 @@ import time
 from platform_smoke import stop, wait_for_wm
 
 SCREEN = (1600, 1000)
-NAME = "zgui window_probe"
+NAME = "zgx window_probe"
 
 
 def main():
@@ -37,7 +37,7 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     state = args.output / "state"
-    frames = state / "zgui" / "window_probe" / "frames"
+    frames = state / "zgx" / "window_probe" / "frames"
     if frames.exists():
         frames.unlink()
     processes, checks = [], {}
@@ -172,11 +172,11 @@ def main():
         # keeps its size and whether it was maximized alone.
         runtime = args.output / "wayland-runtime"
         runtime.mkdir(mode=0o700, exist_ok=True)
-        wayland = dict(env, XDG_RUNTIME_DIR=str(runtime.resolve()), WAYLAND_DISPLAY="zgui-frames")
+        wayland = dict(env, XDG_RUNTIME_DIR=str(runtime.resolve()), WAYLAND_DISPLAY="zgx-frames")
         wayland.pop("DISPLAY")
         weston = launch("weston", ["weston", "--backend=headless", "--renderer=pixman", "--width=1280",
-                                   "--height=960", "--idle-time=0", "--no-config", "--socket=zgui-frames"], wayland)
-        until("Weston's socket", lambda: (runtime / "zgui-frames").exists(), weston, seconds=10)
+                                   "--height=960", "--idle-time=0", "--no-config", "--socket=zgx-frames"], wayland)
+        until("Weston's socket", lambda: (runtime / "zgx-frames").exists(), weston, seconds=10)
 
         def wayland_size(frame):
             frames.write_text(f"{NAME}\t{frame}\n")

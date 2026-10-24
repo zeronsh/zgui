@@ -27,10 +27,10 @@ def click(window, x, y):
                     'mousemove', '990', '690'], check=True)
 
 
-cases = [('paint_styles', 'zgui detailed paint styles', (120, 195)),
-         ('canvas', 'zgui retained canvas', (85, 95)),
-         ('svg_transform', 'zgui SVG transformations', (85, 112)),
-         ('animated_image', 'zgui animated image', (85, 105))]
+cases = [('paint_styles', 'zgx detailed paint styles', (120, 195)),
+         ('canvas', 'zgx retained canvas', (85, 95)),
+         ('svg_transform', 'zgx SVG transformations', (85, 112)),
+         ('animated_image', 'zgx animated image', (85, 105))]
 for name, title, position in cases:
     binary = args.binaries / name
     env = dict(os.environ, WINIT_UNIX_BACKEND='x11', LP_NUM_THREADS='4')

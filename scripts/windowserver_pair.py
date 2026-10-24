@@ -4,10 +4,10 @@
     python3 scripts/windowserver_pair.py SECONDS MODE APP_A APP_B
 
 Runs both apps' windows side by side, A's workload in even Unix seconds and
-B's in odd (`ZGUI_PARITY`, read by `Heavy::turn`), credits the window
+B's in odd (`ZGX_PARITY`, read by `Heavy::turn`), credits the window
 server's CPU time in each whole second to the app whose turn it was, then
 repeats with the windows' places swapped so a place on screen favours
-neither. MODE is the heavy workload's `ZGUI_MODE` (stream, scroll, both); an
+neither. MODE is the heavy workload's `ZGX_MODE` (stream, scroll, both); an
 app given as `mode:path` runs in a mode of its own. Prints A - B over all
 paired seconds with its standard error. Pair an app with itself first: that
 spread is the method's own. macOS only; the terminal needs Accessibility
@@ -54,8 +54,8 @@ def window(pid, action):
 
 def launch(app, mode, parity, seconds):
     own, path = app.split(':', 1) if ':' in app else (mode, app)
-    env = {'HOME': os.environ['HOME'], 'PATH': os.environ['PATH'], 'ZGUI_MODE': own,
-           'ZGUI_SECONDS': str(seconds + 12), 'ZGUI_PARITY': parity}
+    env = {'HOME': os.environ['HOME'], 'PATH': os.environ['PATH'], 'ZGX_MODE': own,
+           'ZGX_SECONDS': str(seconds + 12), 'ZGX_PARITY': parity}
     return subprocess.Popen([path], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

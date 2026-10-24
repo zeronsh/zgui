@@ -29,7 +29,7 @@ pub struct CacheKey {
     pub y_bin: SubpixelBin,
     /// Font weight
     pub font_weight: fontdb::Weight,
-    /// zgui: optical size (pixels; 0 for the font's default)
+    /// zgx: optical size (pixels; 0 for the font's default)
     pub font_optical: u16,
     /// [`CacheKeyFlags`]
     pub flags: CacheKeyFlags,

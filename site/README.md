@@ -30,7 +30,7 @@ The builder publishes only accepted runs and recomputes every aggregate.
 ## macOS heavy dashboard
 
 `site/macos-heavy` is a separate dataset, selected with `#macos-heavy`. It
-contains 24 accepted trials of zgui and GPUI on the heavy dashboard, not the
+contains 24 accepted trials of zgx and GPUI on the heavy dashboard, not the
 three-framework lab scene. QuickGUI's heavy adapter panicked at startup and
 is excluded rather than represented by zero. The UI uses physical footprint
 and derives its chart and table frameworks from the selected data.

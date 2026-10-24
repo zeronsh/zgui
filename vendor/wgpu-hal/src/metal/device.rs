@@ -1847,7 +1847,7 @@ impl crate::Device for super::Device {
 
     unsafe fn create_fence(&self) -> DeviceResult<super::Fence> {
         self.counters.fences.add(1);
-        // zgui patch: no shared event. Only `Fence::raw_shared_event` interop
+        // zgx patch: no shared event. Only `Fence::raw_shared_event` interop
         // reads it, and signalling it costs every submission kernel work.
         Ok(super::Fence {
             completed_value: Arc::new(atomic::AtomicU64::new(0)),
@@ -1891,7 +1891,7 @@ impl crate::Device for super::Device {
             }
         };
 
-        // zgui patch: without a timeout, block until the command buffer
+        // zgx patch: without a timeout, block until the command buffer
         // completes rather than polling it every millisecond: a caller waiting
         // to present wakes as the GPU finishes, not up to 1 ms later.
         if timeout.is_none() {

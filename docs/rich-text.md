@@ -4,8 +4,8 @@ A rich paragraph shapes all inline spans together. Font changes and Unicode bidi
 runs share one wrapping layout rather than separate row/column text boxes:
 
 ```rust
-use zgui::compose::prelude::*;
-use zgui::scene::Color;
+use zgx::compose::prelude::*;
+use zgx::scene::Color;
 let paragraph = rich_text().w(320.).text_wrap(true).text_size(18.)
     .child(text_span("Hello "))
     .child(text_span("world").font_bold().text_color(Color(80, 190, 255, 255)))
@@ -35,7 +35,7 @@ most 128 entries within an 8 MiB accounted budget; an oversized entry is used
 for the current call and then discarded. Driver and font database allocations
 are outside these cache budgets.
 
-Run the native example with `cargo run -p zgui-desktop --example rich_text`.
+Run the native example with `cargo run -p zgx-desktop --example rich_text`.
 This API is display text, not a rich-text editor. `text_span("Action").on_click(callback)` creates an accessible Link with one Tab stop, Enter/Space activation, pointer hit fragments derived from shaped selection geometry, and hover/focus outlines. Wrapped fragments do not make intervening gaps clickable. Disabled ancestors suppress activation. The accessible location is the first visible fragment; the name covers the whole span. Native shaping changes refresh hit geometry even when the allocated bounds stay equal. Wavy underlines are not yet supported.
 
 A link shows the pointing hand. `text_span("Docs").href("https://…")` is a link to a URL: a click (after `on_click`'s, if it has one) opens it with the system's handler through `Platform::open_url` (the desktop host checks it has a scheme and no control characters, and launches it detached), if it is a web or mail link (`http:`, `https:`, `mailto:`): text often isn't the app's own, and a `file:` link or another scheme's handler can run what it names, so those don't open (an app's own schemes it handles in `on_click`); and a secondary click (Control-click on macOS) opens a context menu with Open Link and Copy Link. A link without an `href` has no menu of its own, so the press goes on to the views it is in. `on_click_with(|keys| …)` is `on_click` told the keys held, so a ⌘-click (Control elsewhere) can open a link aside; a middle click passes as one, as a browser opens a background tab.
@@ -45,7 +45,7 @@ Typography also supports inherited `.font_features(FontFeatures::new([(*b"liga",
 Register bundled TTF/OTF font data or collections before opening windows:
 
 ```rust,no_run
-# use zgui_desktop::{Application, FontData};
+# use zgx_desktop::{Application, FontData};
 # fn example(bytes: std::sync::Arc<[u8]>) -> Result<(), Box<dyn std::error::Error>> {
 let font = FontData::new(bytes)?;
 let app = Application::new().font(font);

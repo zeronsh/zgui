@@ -43,7 +43,7 @@ pub struct XConnection {
     /// The last timestamp received by this connection.
     timestamp: AtomicU32,
 
-    /// zgui patch: the last key or button press's timestamp
+    /// zgx patch: the last key or button press's timestamp
     /// (`_NET_WM_USER_TIME`).
     user_time: AtomicU32,
 
@@ -233,13 +233,13 @@ impl XConnection {
         self.timestamp.load(Ordering::Relaxed)
     }
 
-    /// zgui patch: the last key or button press's timestamp, 0 before one.
+    /// zgx patch: the last key or button press's timestamp, 0 before one.
     #[inline]
     pub fn user_time(&self) -> u32 {
         self.user_time.load(Ordering::Relaxed)
     }
 
-    /// zgui patch: a key or button was pressed at `timestamp`.
+    /// zgx patch: a key or button was pressed at `timestamp`.
     #[inline]
     pub fn set_user_time(&self, timestamp: u32) {
         let last = self.user_time.load(Ordering::Relaxed);

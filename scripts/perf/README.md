@@ -19,15 +19,15 @@ stream and scroll, animate, script mount, anime, layout, list state, GPU
 layout, frame, text, style, widgets; `--all` adds the 10-second state and
 core benches) a few times and reports the least disturbed run's
 instructions with the spread above it. `ab` builds each revision in a
-worktree of its own under `/tmp/zgui-perf` (kept: the next comparison
+worktree of its own under `/tmp/zgx-perf` (kept: the next comparison
 builds incrementally), interleaves the runs, and marks differences larger
 than either side's spread. `suite.py dirs A B` compares two directories of
 examples built otherwise from the same source (other `RUSTFLAGS`, a
 profile, an allocator). `suite.py clean` removes the worktrees.
 
-## Where a frame's work goes: `ZGUI_PROFILE=1`
+## Where a frame's work goes: `ZGX_PROFILE=1`
 
-Any zgui app or bench run with `ZGUI_PROFILE=1` prints, every 120 frames,
+Any zgx app or bench run with `ZGX_PROFILE=1` prints, every 120 frames,
 what each phase cost per frame:
 
 ```text
@@ -38,13 +38,13 @@ Each phase's numbers leave out the phases it encloses (text shaping during
 damage resolution counts as damage). Instructions are the calling thread's.
 Unset, a phase boundary costs one relaxed load, and the suite shows no
 scene moving (`docs/benchmarking.md`). Building with
-`--features zgui/profile-nested` also times styles and text within their
+`--features zgx/profile-nested` also times styles and text within their
 phases (a check in every style and text run, so never in normal builds).
-On macOS the phases are `os_signpost` intervals (subsystem `dev.zgui`):
+On macOS the phases are `os_signpost` intervals (subsystem `dev.zgx`):
 record with Instruments' os_signpost instrument to see them on a timeline
 beside a Time Profiler. At startup it also prints a line per milestone
 (window created, renderer made, first frame presented, ...) with the
-process's instructions and time so far (`zgui::profile::mark`).
+process's instructions and time so far (`zgx::profile::mark`).
 
 ## Where a phase's work goes: samples
 
@@ -55,7 +55,7 @@ python3 scripts/perf/samples.py /tmp/heavy.xml --children=render_once
 python3 scripts/perf/samples.py /tmp/heavy.xml --under=Host::draw --incl
 python3 scripts/perf/samples.py /tmp/app.xml --threads
 python3 scripts/perf/lines.py /tmp/heavy.xml target/release/examples/heavy_headless render_flat
-python3 scripts/perf/frames.py target/release/examples/heavy_headless zgui::scene
+python3 scripts/perf/frames.py target/release/examples/heavy_headless zgx::scene
 ```
 
 `record.sh` wraps xctrace's Time Profiler and exports the samples.
@@ -68,17 +68,17 @@ frame sizes, which finds functions paying for large values on the stack.
 ## Profile-guided builds
 
 `python3 scripts/perf/pgo.py -p PACKAGE --bin NAME [TRAINING COMMAND ...]`
-builds a `dist` binary trained on zgui's headless scenes (and the commands,
+builds a `dist` binary trained on zgx's headless scenes (and the commands,
 `{bin}` being the instrumented binary) into `target/dist-pgo/`.
 `docs/getting-started.md` has the recipe for an app outside the repository.
-The published comparison builds neither zgui nor GPUI this way.
+The published comparison builds neither zgx nor GPUI this way.
 
 ## The real window path, quickly
 
 ```sh
 python3 scripts/perf/preflight.py           # is the machine quiet? what runs?
 python3 scripts/perf/preflight.py --state   # displays, wallpaper, power mode, build, uptime
-python3 scripts/run_macos_comparison.py --scene heavy --quick   # ~10 min, zgui vs GPUI Fast
+python3 scripts/run_macos_comparison.py --scene heavy --quick   # ~10 min, zgx vs GPUI Fast
 ```
 
 The comparison waits for the preflight, hides Zeron, and records both in

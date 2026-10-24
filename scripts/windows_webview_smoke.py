@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""A WebView2 page in zgui on Windows (the `web_view` example, built with the
+"""A WebView2 page in zgx on Windows (the `web_view` example, built with the
 `webview2` feature), driven by SendInput: the page loads and its title reaches
-`WebViewState`; a click in the page reaches it (its message comes back); zgui
+`WebViewState`; a click in the page reaches it (its message comes back); zgx
 content over the page takes clicks and the keyboard back from it; script
 evaluation changes the page; the menu popover draws above the page and takes
 its clicks; the wheel scrolls the page; and after a resize the page still
 fills its node, edge to edge.
 
-    cargo build -p zgui-desktop --features webview2 --example web_view
+    cargo build -p zgx-desktop --features webview2 --example web_view
     python scripts/windows_webview_smoke.py target/debug/examples/web_view.exe
 """
 import argparse
@@ -78,8 +78,8 @@ def main():
         at = lambda x, y: (round(x * scale), round(y * scale))
         box = lambda l, t, r, b: (*at(l, t), *at(r, b))
 
-        wait_for(lambda: heard("FINISHED https://zgui.example/"), "the page to load", 30)
-        wait_for(lambda: heard("TITLE zgui web view"), "the page's title")
+        wait_for(lambda: heard("FINISHED https://zgx.example/"), "the page to load", 30)
+        wait_for(lambda: heard("TITLE zgx web view"), "the page's title")
         time.sleep(0.5)
         print("ok: the page loaded and its title reached the state")
 
@@ -91,7 +91,7 @@ def main():
         wait_for(lambda: heard("MESSAGE"), "the page's message after a click in it")
         print("ok: a click in the page reaches it")
 
-        # zgui's composer over the page: the click and the keyboard are zgui's.
+        # zgx's composer over the page: the click and the keyboard are zgx's.
         win.click(window, *at(400, 700))
         time.sleep(0.3)
         win.type_text("Hi")
@@ -101,7 +101,7 @@ def main():
             lambda: white_pixels(shot("evaluated"), box(180, 110, 620, 170)) < 40,
             "the page's heading to change (Send to page)",
         )
-        print("ok: zgui content over the page takes clicks and keys; script runs in the page")
+        print("ok: zgx content over the page takes clicks and keys; script runs in the page")
 
         # The menu shows in a window of its own: over the page, and past the
         # window's right edge where the screen has room (else inside it).
@@ -115,10 +115,10 @@ def main():
         if args.shots:
             win.save_png(strip(), args.shots / "menu.png")
         print("ok: the popover draws above the page")
-        # Zoom to 125%, where the menu lies either way: zgui's, over the page.
+        # Zoom to 125%, where the menu lies either way: zgx's, over the page.
         win.click(window, *at(1070, 138))
-        wait_for(lambda: not win.popups_of(proc.pid), "the menu to close (its click was zgui's)")
-        print("ok: a click on the popover over the page is zgui's")
+        wait_for(lambda: not win.popups_of(proc.pid), "the menu to close (its click was zgx's)")
+        print("ok: a click on the popover over the page is zgx's")
 
         before = shot("before-scroll")
         win.wheel(window, *at(500, 400), -3)

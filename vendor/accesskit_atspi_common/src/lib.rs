@@ -14,7 +14,7 @@ mod node;
 mod rect;
 #[cfg(feature = "simplified-api")]
 pub mod simplified;
-mod table; // zgui patch: Table and TableCell (ZGUI_PATCH.md).
+mod table; // zgx patch: Table and TableCell (ZGX_PATCH.md).
 mod text_attributes;
 mod util;
 

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Build a binary with profile-guided optimization, trained on zgui's headless scenes.
+"""Build a binary with profile-guided optimization, trained on zgx's headless scenes.
 
-    python3 scripts/perf/pgo.py -p zgui-run --bin zgui-run
+    python3 scripts/perf/pgo.py -p zgx-run --bin zgx-run
     python3 scripts/perf/pgo.py -p my-app --bin my-app -- '{bin} --some-run'
-    python3 scripts/perf/pgo.py -p zgui-desktop --example heavy_workload
+    python3 scripts/perf/pgo.py -p zgx-desktop --example heavy_workload
 
 Three builds with the `dist` profile, in a target directory of their own:
-the binary and zgui's headless scenes instrumented; the scenes run (heavy
+the binary and zgx's headless scenes instrumented; the scenes run (heavy
 dashboard, lab stream, animate, script mount, anime, text shaping, list
 state: the engine's hot paths), and so does each training command given
 (`{bin}` is the instrumented binary: run what the app does, so its own code
 is profiled too); then the binary built again with what they recorded. The
 binary lands in target/dist-pgo/. Trained on these seven scenes, every one
-of zgui's headless scenes runs 2-19% fewer instructions (2026-10-24: heavy
+of zgx's headless scenes runs 2-19% fewer instructions (2026-10-24: heavy
 -10%, anime -19%, style -18%, script layout -14%, text -10%, list state
 -6%). Without the text and list-state scenes, those two ran 5% and 2% more
 instructions than without PGO: what a profile never ran is laid out as
@@ -30,13 +30,13 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 # The training scenes: (package, example, environment).
 TRAINING = [
-    ('zgui-desktop', 'heavy_headless', {'ZGUI_MODE': 'both', 'TICKS': '600'}),
-    ('zgui-desktop', 'workload_headless', {'ZGUI_MODE': 'stream'}),
-    ('zgui-desktop', 'animation_headless', {'FRAMES': '1200'}),
-    ('zgui-script', 'mount_bench', {}),
-    ('zgui-script', 'anime_bench', {}),
-    ('zgui-gpu', 'text_bench', {}),
-    ('zgui-script', 'list_state_bench', {}),
+    ('zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'both', 'TICKS': '600'}),
+    ('zgx-desktop', 'workload_headless', {'ZGX_MODE': 'stream'}),
+    ('zgx-desktop', 'animation_headless', {'FRAMES': '1200'}),
+    ('zgx-script', 'mount_bench', {}),
+    ('zgx-script', 'anime_bench', {}),
+    ('zgx-gpu', 'text_bench', {}),
+    ('zgx-script', 'list_state_bench', {}),
 ]
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""A window manager's resize waits for zgui's frames on X11 (Xvfb/Openbox): the
-vendored winit's `_NET_WM_SYNC_REQUEST` (vendor/winit/ZGUI_PATCH.md), as GTK
+"""A window manager's resize waits for zgx's frames on X11 (Xvfb/Openbox): the
+vendored winit's `_NET_WM_SYNC_REQUEST` (vendor/winit/ZGX_PATCH.md), as GTK
 and Chromium do.
 
 Checks that window_probe's window takes part in the protocol
@@ -57,7 +57,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     processes, checks = [], {}
     try:
-        env = dict(os.environ, WINIT_X11_SCALE_FACTOR="1", XDG_RUNTIME_DIR="/tmp", ZGUI_PRESENT_LOG="1",
+        env = dict(os.environ, WINIT_X11_SCALE_FACTOR="1", XDG_RUNTIME_DIR="/tmp", ZGX_PRESENT_LOG="1",
                    XDG_STATE_HOME=str((args.output / "state").resolve()),
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         env.pop("WAYLAND_DISPLAY", None)
@@ -118,7 +118,7 @@ def main():
         (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
-        print("PASS: an X11 window manager's resize waits for zgui's frames (_NET_WM_SYNC_REQUEST)")
+        print("PASS: an X11 window manager's resize waits for zgx's frames (_NET_WM_SYNC_REQUEST)")
     finally:
         for process in reversed(processes):
             stop(process)

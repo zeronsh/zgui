@@ -266,7 +266,7 @@ features = [
     "resource_manager",
     "xinput",
     "xkb",
-    # zgui patch: _NET_WM_SYNC_REQUEST's counter.
+    # zgx patch: _NET_WM_SYNC_REQUEST's counter.
     "sync",
 ]
 optional = true

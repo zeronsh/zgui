@@ -41,7 +41,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "results.json").unlink(missing_ok=True)
     processes, logs, samples = [], [], []
-    with tempfile.TemporaryDirectory(prefix="zgui-measured-list-") as runtime:
+    with tempfile.TemporaryDirectory(prefix="zgx-measured-list-") as runtime:
         def launch(name, command, **kwargs):
             log = (args.output / (name + ".log")).open("w")
             logs.append(log)

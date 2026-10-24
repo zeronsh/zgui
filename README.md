@@ -1,6 +1,6 @@
-# zgui
+# zgx
 
-zgui is a retained-mode GUI framework in Rust for macOS, Windows and Linux. Components mount once and fine-grained signals update only the nodes that depend on them, so an idle window does no work and a busy one repaints only what changed. Interfaces are written in Rust or in Luau scripts that hot reload without losing state. It is young (0.1, used from git) and its API still changes.
+zgx is a retained-mode GUI framework in Rust for macOS, Windows and Linux. Components mount once and fine-grained signals update only the nodes that depend on them, so an idle window does no work and a busy one repaints only what changed. Interfaces are written in Rust or in Luau scripts that hot reload without losing state. It is young (0.1, used from git) and its API still changes.
 
 ## What it has
 
@@ -8,18 +8,18 @@ zgui is a retained-mode GUI framework in Rust for macOS, Windows and Linux. Comp
 - **Text:** shaped rich text with font fallbacks, selectable documents (drag, double and triple press, copy as HTML), editors with undo, clipboard, spellchecking, IME (Japanese, Chinese, Korean) and bidirectional text.
 - **Paint:** a wgpu renderer (Metal, Direct3D 12, Vulkan; GL on Linux where no Vulkan driver is) that redraws only damaged regions, with rounded borders, gradients, shadows, backdrop blur, SVG, images, canvas drawing and custom WGSL fills.
 - **Controls:** buttons, inputs, checkboxes, sliders, progress, virtual lists, scroll views with native scrollbars and rubber-banding, menus, popovers, modals, tooltips, web views (WebKit on macOS, WebView2 on Windows) and terminals (Ghostty, on macOS).
-- **Components** (`zgui-components`): a data grid, a tree view, a calendar, a date picker and a time field, a combobox, a select, tabs, toasts, a command palette, a segmented control, a stepper, a disclosure and an accordion, built on the controls above, keyboard complete and accessible.
+- **Components** (`zgx-components`): a data grid, a tree view, a calendar, a date picker and a time field, a combobox, a select, tabs, toasts, a command palette, a segmented control, a stepper, a disclosure and an accordion, built on the controls above, keyboard complete and accessible.
 - **The platform:** native menus and dialogs, multiple windows, the clipboard and primary selection, drag and drop, touch and pen, the system's accent, appearance, text size, reduced motion, contrast and transparency, and the user's language direction.
 - **Accessibility** through AccessKit (VoiceOver, Narrator, Orca): roles, headings, live regions, selection and keyboard-only use, with focus groups as ARIA's composite widgets.
-- **Scripting:** Luau with types, a linter, hot reload that keeps state, anime.js-style animation, sandboxed plugins, and `zgui-run` to run a script as an app. Release builds carry scripts compiled into the binary.
+- **Scripting:** Luau with types, a linter, hot reload that keeps state, anime.js-style animation, sandboxed plugins, and `zgx-run` to run a script as an app. Release builds carry scripts compiled into the binary.
 
 ## Quick start
 
-In Rust, with the dependencies [getting started](docs/getting-started.md#in-rust) lists (zgui's crates from git, and the forks it builds with):
+In Rust, with the dependencies [getting started](docs/getting-started.md#in-rust) lists (zgx's crates from git, and the forks it builds with):
 
 ```rust,no_run
-use zgui::compose::prelude::*;
-use zgui_desktop::{Application, WindowOptions};
+use zgx::compose::prelude::*;
+use zgx_desktop::{Application, WindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::new()
@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-In Luau: put this in `hello/app.luau` and run `zgui-run hello/` (`LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgui zgui-run`). Saving the file updates the window and keeps the count.
+In Luau: put this in `hello/app.luau` and run `zgx-run hello/` (`LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgx zgx-run`). Saving the file updates the window and keeps the count.
 
 ```lua
 local count = ui.state("count", 0)
@@ -55,36 +55,36 @@ return ui.row {
 The examples run from a checkout:
 
 ```sh
-cargo run --release -p zgui-desktop --example gallery
-cargo run --release -p zgui-run -- crates/zgui-script/examples/mail
-cargo run --release -p zgui-run -- crates/zgui-script/examples/code_editor path/to/file.rs
-cargo run -p zgui-script --bin zgui -- check crates/zgui-script/examples/mail
+cargo run --release -p zgx-desktop --example gallery
+cargo run --release -p zgx-run -- crates/zgx-script/examples/mail
+cargo run --release -p zgx-run -- crates/zgx-script/examples/code_editor path/to/file.rs
+cargo run -p zgx-script --bin zgx -- check crates/zgx-script/examples/mail
 ```
 
-`zgui check` type checks scripts with [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp/releases), which it needs on the `PATH`; `zgui lint` needs nothing. On Linux, install the fontconfig, xkbcommon and D-Bus development packages and `pkg-config`. On Windows, use the MSVC toolchain ([notes](docs/windows.md)).
+`zgx check` type checks scripts with [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp/releases), which it needs on the `PATH`; `zgx lint` needs nothing. On Linux, install the fontconfig, xkbcommon and D-Bus development packages and `pkg-config`. On Windows, use the MSVC toolchain ([notes](docs/windows.md)).
 
 ## Performance
 
-The [macOS dashboard comparison](docs/results/latest-macos-heavy-2026-10-24-7d559ad/) runs the same heavy scene in zgui and GPUI (with and without its fast path) on an Apple Silicon Mac, three runs each of builds made with each framework's `dist` profile, medians:
+The [macOS dashboard comparison](docs/results/latest-macos-heavy-2026-10-24-7d559ad/) runs the same heavy scene in zgx and GPUI (with and without its fast path) on an Apple Silicon Mac, three runs each of builds made with each framework's `dist` profile, medians:
 
-| Mode | CPU (% of a core) zgui / GPUI / GPUI fast | GPU (Mcycles/s) zgui / GPUI / GPUI fast | Memory (MB) zgui / GPUI / GPUI fast |
+| Mode | CPU (% of a core) zgx / GPUI / GPUI fast | GPU (Mcycles/s) zgx / GPUI / GPUI fast | Memory (MB) zgx / GPUI / GPUI fast |
 | --- | --- | --- | --- |
 | idle | 0.00 / 0.38 / 0.41 | 0 / 0 / 0 | 78 / 113 / 70 |
 | scroll | 3.2 / 14.8 / 8.5 | 12.1 / 21.6 / 21.9 | 254 / 273 / 272 |
 | stream | 8.8 / 22.3 / 14.8 | 17.6 / 22.3 / 21.6 | 259 / 272 / 274 |
 | both | 9.3 / 22.7 / 16.1 | 19.5 / 22.3 / 21.6 | 260 / 273 / 275 |
 
-Idle is sampled 20–35 s after launch, once the Metal driver has given its memory back, the median of five launches ([why](docs/benchmarking.md#why-idle-is-sampled-2035-s-after-launch)). An idle window settles at one of two levels about 25 MB apart, launch to launch: zgui's (63 or 78 MB) are below GPUI fast's (70 or 95) in either, but three of zgui's five heavy launches settled on its upper level and four of GPUI fast's on its lower. zgui also paces every mode's frames more evenly (99th-percentile interval 17.5–17.6 ms against 24.4–25.3 ms, with no frame late). The active cells are a re-run of 2026-10-24 with zgui at `81c73a7` (the same GPUI builds): GPUI fast's memory in `stream` and `scroll` varies by about 15 MB between sessions (259 and 261 MB in the first run that day, 274 and 272 in this one), so read its memory cells with that spread. The window server's own CPU is too noisy between separate trials to rank here. Measured in paired seconds, with the two windows taking turns, zgui's costs the same as GPUI fast's in `stream` and `scroll`, and at most about 2 points more in `both` ([how, and what it depends on](docs/performance-feature-audit.md#the-window-servers-cost-of-heavy-content-macos)).
+Idle is sampled 20–35 s after launch, once the Metal driver has given its memory back, the median of five launches ([why](docs/benchmarking.md#why-idle-is-sampled-2035-s-after-launch)). An idle window settles at one of two levels about 25 MB apart, launch to launch: zgx's (63 or 78 MB) are below GPUI fast's (70 or 95) in either, but three of zgx's five heavy launches settled on its upper level and four of GPUI fast's on its lower. zgx also paces every mode's frames more evenly (99th-percentile interval 17.5–17.6 ms against 24.4–25.3 ms, with no frame late). The active cells are a re-run of 2026-10-24 with zgx at `81c73a7` (the same GPUI builds): GPUI fast's memory in `stream` and `scroll` varies by about 15 MB between sessions (259 and 261 MB in the first run that day, 274 and 272 in this one), so read its memory cells with that spread. The window server's own CPU is too noisy between separate trials to rank here. Measured in paired seconds, with the two windows taking turns, zgx's costs the same as GPUI fast's in `stream` and `scroll`, and at most about 2 points more in `both` ([how, and what it depends on](docs/performance-feature-audit.md#the-window-servers-cost-of-heavy-content-macos)).
 
-With every framework built with profile-guided optimization, each trained on its own runs (a supplement: no pacing captures, idle not run; [`latest-macos-heavy-pgo-2026-10-24-c9975e1`](docs/results/latest-macos-heavy-pgo-2026-10-24-c9975e1/)), zgui still leads CPU and GPU in every mode:
+With every framework built with profile-guided optimization, each trained on its own runs (a supplement: no pacing captures, idle not run; [`latest-macos-heavy-pgo-2026-10-24-c9975e1`](docs/results/latest-macos-heavy-pgo-2026-10-24-c9975e1/)), zgx still leads CPU and GPU in every mode:
 
-| Mode, PGO | CPU (% of a core) zgui / GPUI / GPUI fast | GPU (Mcycles/s) zgui / GPUI / GPUI fast | Memory (MB) zgui / GPUI / GPUI fast |
+| Mode, PGO | CPU (% of a core) zgx / GPUI / GPUI fast | GPU (Mcycles/s) zgx / GPUI / GPUI fast | Memory (MB) zgx / GPUI / GPUI fast |
 | --- | --- | --- | --- |
 | scroll | 3.0 / 14.6 / 8.1 | 12.3 / 21.6 / 21.8 | 255 / 273 / 255 |
 | stream | 7.7 / 20.6 / 13.9 | 17.6 / 22.2 / 21.7 | 259 / 273 / 275 |
 | both | 8.6 / 21.5 / 14.4 | 19.2 / 22.3 / 21.6 | 260 / 274 / 276 |
 
-**Correction:** the comparison published here on 2026-10-23/24 (zgui at `51a669c`) built zgui with mimalloc, unintentionally, while GPUI used the system allocator. The table above is the re-run with the system allocator for zgui too; [old and new numbers side by side](docs/results/README.md#correction-2026-10-24-macos-runs-of-2026-1023-24-built-zgui-with-mimalloc).
+**Correction:** the comparison published here on 2026-10-23/24 (zgx at `51a669c`) built zgx with mimalloc, unintentionally, while GPUI used the system allocator. The table above is the re-run with the system allocator for zgx too; [old and new numbers side by side](docs/results/README.md#correction-2026-10-24-macos-runs-of-2026-1023-24-built-zgui-with-mimalloc).
 
 These are one scene on one machine; Windows and Linux are not measured against GPUI yet. How the runs are made, and the other series, are in [benchmarking](docs/benchmarking.md).
 
