@@ -26,7 +26,16 @@ const DEBOUNCE: Duration = Duration::from_millis(250);
 /// The platform's directory for an application's data: `~/Library/Application
 /// Support/<app_id>` on macOS, `%APPDATA%\<app_id>` on Windows,
 /// `$XDG_DATA_HOME/<app_id>` (or `~/.local/share/<app_id>`) elsewhere.
+/// `None` for an id that is not one name (`..`, `a/b`, an absolute path),
+/// which would put the data elsewhere.
 pub fn app_data_dir(app_id: &str) -> Option<PathBuf> {
+    let mut parts = Path::new(app_id).components();
+    if !matches!(
+        (parts.next(), parts.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    ) {
+        return None;
+    }
     let var = |name: &str| {
         std::env::var_os(name)
             .filter(|v| !v.is_empty())
@@ -323,5 +332,14 @@ mod tests {
         );
         assert_eq!(super::file_name(".hidden"), "%2Ehidden");
         assert_eq!(super::file_name(""), "%00");
+    }
+    #[test]
+    fn an_app_id_names_one_directory_inside_the_platforms() {
+        if let Some(dir) = super::app_data_dir("mail") {
+            assert!(dir.ends_with("mail"));
+        }
+        for id in ["", "..", ".", "a/b", "/etc", "../elsewhere"] {
+            assert_eq!(super::app_data_dir(id), None, "{id}");
+        }
     }
 }
