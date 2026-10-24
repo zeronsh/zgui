@@ -1000,6 +1000,64 @@ mod tests {
             assert!(!Key::of(&plain(&text, 13., &font), false).is_plain(&text, 13., &font));
         }
     }
+    /// Plain text prepared from its text (`Source::Plain`) lays out as the
+    /// one-run rich text it was prepared from before, line breaks, a final
+    /// one's caret row and tabs included, at every width.
+    #[test]
+    fn plain_text_lays_out_as_its_one_run_rich_text() {
+        let mut fonts = FontSystem::new();
+        let font = FontStyle::default();
+        let texts = [
+            "a\nb",
+            "line one\nline two\n",
+            "\n\nthree\r\nlines",
+            "tab\there\n  indented",
+            "one line only",
+        ];
+        let laid = |cache: &mut TextCache, fonts: &mut FontSystem, hash, width| {
+            let laid = cache.laid_out(fonts, hash, width);
+            laid.runs(None)
+                .map(|run| {
+                    let glyphs: Vec<_> = run
+                        .glyphs
+                        .iter()
+                        .map(|g| (g.glyph_id, g.start, g.end, g.x.to_bits(), g.w.to_bits()))
+                        .collect();
+                    (
+                        run.line_i,
+                        run.line_y.to_bits(),
+                        run.line_w.to_bits(),
+                        glyphs,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        for text in texts {
+            let text: Arc<str> = text.into();
+            for width in [None, Some(40.), Some(500.)] {
+                let mut plain_cache = TextCache::default();
+                let source = Source::Plain {
+                    text: &text,
+                    font_size: 15.,
+                    font: &font,
+                };
+                let hash = plain_cache.entry(&mut fonts, source, true, Need::Layout);
+                let from_plain = laid(&mut plain_cache, &mut fonts, hash, width);
+                let mut rich_cache = TextCache::default();
+                let rich = plain(&text, 15., &font);
+                let hash = rich_cache.entry(&mut fonts, Source::Rich(&rich), true, Need::Layout);
+                let from_rich = laid(&mut rich_cache, &mut fonts, hash, width);
+                assert!(from_plain == from_rich, "{text:?} at {width:?}");
+                let lines: std::collections::BTreeSet<_> =
+                    from_plain.iter().map(|run| run.0).collect();
+                assert_eq!(
+                    lines.len(),
+                    text.split('\n').count(),
+                    "{text:?}: a line per line break and the caret row"
+                );
+            }
+        }
+    }
     #[test]
     fn sizes_match_shaped_text_at_every_width() {
         let mut fonts = FontSystem::new();
