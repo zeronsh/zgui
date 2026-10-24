@@ -1112,7 +1112,13 @@ struct Batch {
 /// Device pixels a batch may draw with a costlier shader than they need, to
 /// join neighbours of another shading into one draw call: a draw costs the
 /// driver thousands of instructions, shading a small area costs little.
+/// Blending opaque quads costs the GPU little more.
 const PROMOTED_PIXELS: f32 = 16_384.;
+/// As `PROMOTED_PIXELS`, into the full shader, whose cost per pixel is a
+/// multiple of the basic one's: at 16K a batch, text promoted beside its
+/// rounded panels raised the heavy dashboard's GPU cycles 5 to 8%. Icons,
+/// dots and chips still join.
+const PROMOTED_FULL_PIXELS: f32 = 1024.;
 /// The shading drawing both `a` and `b`, if one can: the full shader draws
 /// every basic quad, and blending every opaque one, to the same bytes (see
 /// `shading`). Shader fills keep their own pipeline.
@@ -4797,7 +4803,11 @@ impl GpuRenderer {
                         } else {
                             open.pixels
                         } + if merged == shading { 0. } else { pixels };
-                        (promoted <= PROMOTED_PIXELS).then_some((merged, promoted))
+                        let budget = match merged {
+                            Shading::Full => PROMOTED_FULL_PIXELS,
+                            _ => PROMOTED_PIXELS,
+                        };
+                        (promoted <= budget).then_some((merged, promoted))
                     }
                     None => None,
                 };

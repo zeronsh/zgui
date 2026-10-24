@@ -289,6 +289,7 @@ impl MetalFrame {
             buffer,
             encoder,
             current: None,
+            scissor: None,
             vertices: {
                 use objc2::Message;
                 vertices.retain()
@@ -347,6 +348,9 @@ pub(crate) struct Frame {
     buffer: CommandBuffer,
     encoder: Encoder,
     current: Option<Bound>,
+    /// The scissor last set on `encoder`: setting it again costs the
+    /// driver as much as a change (most batches share their region's).
+    scissor: Option<(u32, u32, u32, u32)>,
     vertices: Retained<ProtocolObject<dyn objc2_metal::MTLBuffer>>,
     viewport: [f32; 4],
     regions: Regions,
@@ -473,6 +477,7 @@ impl Frame {
         self.encoder.endEncoding();
         self.encoder = pass(&self.buffer, target, MTLLoadAction::Load);
         self.current = None;
+        self.scissor = None;
         self.quad_state();
     }
     /// Draw a batch of filters back over the target, mixed by dual-source
@@ -539,7 +544,12 @@ impl Frame {
             self.encoder.setFragmentTexture_atIndex(Some(texture), 0);
         }
     }
-    pub(crate) fn scissor(&mut self, (x, y, width, height): (u32, u32, u32, u32)) {
+    pub(crate) fn scissor(&mut self, rect: (u32, u32, u32, u32)) {
+        if self.scissor == Some(rect) {
+            return;
+        }
+        self.scissor = Some(rect);
+        let (x, y, width, height) = rect;
         self.encoder.setScissorRect(MTLScissorRect {
             x: x as usize,
             y: y as usize,

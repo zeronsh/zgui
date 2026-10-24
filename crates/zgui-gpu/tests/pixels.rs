@@ -5181,26 +5181,38 @@ fn split_shading_matches_the_full_shader() {
 }
 
 /// Small neighbours of different shading (a rounded chip, then a plain bar)
-/// join one draw call, the full shader drawing the plain ones: a draw costs
-/// the driver more than shading their few pixels.
+/// join draw calls, the full shader drawing the plain ones: a draw costs
+/// the driver more than shading their few pixels. A plain box beside a
+/// rounded one keeps its own draw: the full shader would cost the GPU more
+/// over its thousands of pixels than the draw call saves.
 #[test]
 fn small_quads_of_different_shading_share_a_draw() {
     let _gpu_fixture = gpu_fixture();
     use zgui::{compose::prelude::*, widgets::Ui};
-    let mut gpu = GpuRenderer::new(600, 200).unwrap();
-    gpu.set_scale_factor(2.);
-    let mut ui = Ui::new(300., 100.);
-    gpu.install_text(&mut ui.scene.borrow_mut());
-    ui.mount(row().gap(2.).children((0..20).map(|i| {
+    let draws = |view: View| {
+        let mut gpu = GpuRenderer::new(600, 400).unwrap();
+        gpu.set_scale_factor(2.);
+        let mut ui = Ui::new(300., 200.);
+        gpu.install_text(&mut ui.scene.borrow_mut());
+        ui.mount(view);
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap().draw_calls
+    };
+    let small = draws(row().gap(2.).children((0..20).map(|i| {
         let chip = div().size(6., 6.).rounded(2.).bg(rgb(0x3366aa));
         let bar = div().size(4., 10. + i as f32).bg(rgb(0xaa6633));
         row().child(chip).child(bar)
     })));
-    ui.prepare_frame();
-    let damage = ui.scene.borrow_mut().flush().damage;
-    let stats = gpu.render(&ui.scene.borrow(), &damage).unwrap();
-    // The background, then the forty quads (alternating shaders) as one.
-    assert!(stats.draw_calls <= 3, "{} draw calls", stats.draw_calls);
+    // Forty alternating quads, one draw each before.
+    assert!(small <= 10, "{small} draw calls");
+    let large = draws(
+        column()
+            .child(div().size(40., 40.).rounded(6.).bg(rgb(0x3366aa)))
+            .child(div().size(40., 40.).bg(rgb(0xaa6633))),
+    );
+    // The background, the rounded box, the plain one (6,400 pixels).
+    assert_eq!(large, 3);
 }
 
 /// Opaque rounded and bordered panels draw a flat interior with the basic
