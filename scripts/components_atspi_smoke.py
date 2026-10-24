@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The catalogue's components on Linux, through a private live AT-SPI bus and
 real X11 keys: each one's role and name, the data grid's selection and
-header sort, a tree opening left to right and right to left (its child
-showing; AccessKit's bridge maps no expanded state), rows selected
+header sort and table size, a tree opening left to right and right to left
+(its item saying it is open, its child showing), rows selected
 and copied to the clipboard (text and HTML), and the segmented control,
 stepper, date picker, time field and tabs answering the keyboard. The
 example prints what each change reaches (`COMPONENTS …`); the probe checks
@@ -202,27 +202,35 @@ def main():
                         fail(f"`{name}` is a {node.get_role_name()!r}, not {roles}")
                 checks.append("roles and names")
 
-                # AccessKit's AT-SPI bridge has no Table interface (row and
-                # column counts reach macOS and Windows): the grid says that
-                # several rows can be selected, and its rows which are.
+                # The grid: a table of its rows (the header's too, and those
+                # not built) and columns, several of whose rows can be
+                # selected.
                 grid = find("Probe grid")
                 if not state(grid, Atspi.StateType.MULTISELECTABLE):
                     fail("the grid doesn't say several rows can be selected")
-                checks.append("grid multiselectable")
+                table = grid.get_table_iface()
+                if table is None:
+                    fail("the grid has no Table interface")
+                rows, columns = Atspi.Table.get_n_rows(table), Atspi.Table.get_n_columns(table)
+                if (rows, columns) != (21, 2):
+                    fail(f"the grid says {rows} rows and {columns} columns, not 21 (the header's too) and 2")
+                checks.append("grid multiselectable, table size with virtual rows")
 
                 # A tree opens with Right left to right, with Left right to left.
                 ltr = find("Probe files")
+                alpha = wait_for(lambda: find("Alpha", within=ltr, role="tree item"), "the tree's first item")
+                if not state(alpha, Atspi.StateType.EXPANDABLE) or state(alpha, Atspi.StateType.EXPANDED):
+                    fail("the closed item doesn't say it is expandable and closed")
                 focus(ltr, "the tree")
                 key("Right")
                 reached(r'open=\["a"\]', "Right opens the tree's first item")
-                # Its child shows in the tree. (AccessKit's AT-SPI bridge maps
-                # no expanded state: an item can't say it is open on Linux.)
+                wait_for(lambda: state(alpha, Atspi.StateType.EXPANDED), "the item says it is open")
                 wait_for(lambda: find("Apple", within=ltr, role="tree item"), "the opened item's child in the tree")
                 rtl = find("Probe files right to left")
                 focus(rtl, "the right-to-left tree")
                 key("Left")
                 reached(r'open_rtl=\["a"\]', "Left opens it right to left")
-                checks.append("tree keyboard, opened children, right to left")
+                checks.append("tree keyboard, expanded state, opened children, right to left")
 
                 # The grid: rows selected by the arrows, Shift extending; ⌘C
                 # (Ctrl+C here) copies them as text and HTML.
