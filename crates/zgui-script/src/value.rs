@@ -458,7 +458,7 @@ impl Value {
         }
     }
     /// What kind of value this is, for messages.
-    fn kind(&self) -> &'static str {
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             Value::Nil => "nil",
             Value::Bool(_) => "a boolean",
@@ -1194,7 +1194,7 @@ fn id_key(id: usize) -> mlua::Value {
 }
 /// As script data, read-only, its large parts shared with every other
 /// conversion of them.
-fn shared_lua(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
+pub(crate) fn shared_lua(value: &Value, lua: &Lua) -> mlua::Result<mlua::Value> {
     if !large(value) {
         return recent_lua(value, lua);
     }
@@ -1720,10 +1720,15 @@ impl From<Shared> for Signal<Value> {
 /// A handle to Rust-owned state. Scripts read it with `:get()`, which
 /// subscribes the reading text or style, and write it from event handlers.
 #[derive(Clone)]
-pub struct State(
-    pub Signal<Value>,
-    pub(crate) Option<zgui::reactive::Refresh>,
-);
+pub struct State(pub Signal<Value>, pub(crate) Option<Fresh>);
+/// What brings a derived state up to date before it is read: the effects
+/// that make it, run if a write queued them, the one it depends on first
+/// (a sorted view's spec, then its order).
+#[derive(Clone)]
+pub(crate) enum Fresh {
+    One(zgui::reactive::Refresh),
+    Two(zgui::reactive::Refresh, zgui::reactive::Refresh),
+}
 impl State {
     /// A state over `signal`.
     pub fn new(signal: Signal<Value>) -> Self {
@@ -1732,8 +1737,15 @@ impl State {
     /// A computed's value is current when read, even in a handler or a
     /// batch, where its effect would otherwise run only afterwards.
     fn fresh(&self) -> &Signal<Value> {
-        if let Some(refresh) = &self.1 {
-            refresh.refresh();
+        match &self.1 {
+            None => {}
+            Some(Fresh::One(refresh)) => {
+                refresh.refresh();
+            }
+            Some(Fresh::Two(first, then)) => {
+                first.refresh();
+                then.refresh();
+            }
         }
         &self.0
     }
@@ -1946,6 +1958,16 @@ impl UserData for State {
             Ok(removed)
         });
         methods.add_method("len", |_, s, ()| Ok(s.0.with(|v| v.list().len())));
+        // One item of a list (from 1), tracked as `get` is: read without
+        // converting the list (a long one's rows, as a list shows them).
+        methods.add_method("at", |_, s, index: usize| {
+            Ok(s.fresh().with(|v| {
+                index
+                    .checked_sub(1)
+                    .and_then(|i| v.list().get(i).cloned())
+                    .unwrap_or(Value::Nil)
+            }))
+        });
         // Where `query` is in the string held (tracked, as `get` is), read
         // where it is held: a long document is not copied into the script.
         methods.add_method(

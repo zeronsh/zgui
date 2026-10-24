@@ -3626,6 +3626,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(computed_state(lua, &env, f))
         })?,
     )?;
+    ui.set("sorted", lua.create_function(crate::sorted::sorted)?)?;
     ui.set("variants", lua.create_function(crate::variants::define)?)?;
     ui.set("raw", lua.create_function(crate::design::raw)?)?;
     ui.set("markdown", lua.create_function(crate::markdown::script)?)?;
@@ -4185,7 +4186,7 @@ pub(crate) fn computed_state(_: &Lua, env: &Env, f: Function) -> crate::value::S
     });
     let refresh = effect.refresher();
     retain(env, Box::new(effect));
-    crate::value::State(signal, Some(refresh))
+    crate::value::State(signal, Some(crate::value::Fresh::One(refresh)))
 }
 /// A node's interaction styles by slot (`variants::INTERACTION`'s order).
 pub(crate) fn interaction_of(pseudo: &[(Pseudo, Styles)]) -> [Vec<(Prop, Lit)>; 4] {
@@ -4212,7 +4213,7 @@ pub(crate) fn pseudo_of(slots: [Vec<(Prop, Lit)>; 4]) -> Vec<(Pseudo, Styles)> {
 }
 
 /// Keeps `resource` for the component being built, or for the script.
-fn retain(env: &Env, resource: Box<dyn Any>) {
+pub(crate) fn retain(env: &Env, resource: Box<dyn Any>) {
     match &*env.scope.borrow() {
         Some(scope) => scope.retained.borrow_mut().push(resource),
         None => env.retained.borrow_mut().push(resource),

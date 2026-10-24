@@ -248,3 +248,94 @@ fn ui_json_encodes_and_decodes_what_state_holds() {
     );
     assert!(h.text("fn").contains("ui.json.encode"), "{}", h.text("fn"));
 }
+
+/// `ui.sorted` keeps a list state's order as rows are written, always the
+/// order `ui.sort` gives the list as it is (stable, nil keys last), with a
+/// filter and a spec that changes; and a write re-judges the rows it wrote,
+/// not the list.
+#[test]
+fn ui_sorted_keeps_the_order_ui_sort_gives_and_judges_only_written_rows() {
+    let mut h = Harness::inline(
+        r#"
+        local seed = 7
+        local function random(n)
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            return seed % n
+        end
+        local initial = {}
+        for i = 1, 2000 do
+            initial[i] = { n = `r{i}`, v = if i % 97 == 0 then nil else random(500), sector = random(4) }
+        end
+        local rows = ui.state("rows", initial)
+        local key = ui.state("key", "v")
+        local descending = ui.state("descending", false)
+        local only = ui.state("only", -1)
+        local judged = 0
+        local view = ui.sorted(rows, function()
+            local sector, by = only:get(), key:get()
+            return {
+                by = if by == "fn" then function(r) judged += 1; return r.n end else by,
+                descending = descending:get(),
+                filter = if sector >= 0 then function(r) return r.sector == sector end else nil,
+            }
+        end)
+        local function names(list)
+            local out = table.create(#list)
+            for i, r in list do out[i] = r.n end
+            return table.concat(out, ",")
+        end
+        local function expected()
+            local list = {}
+            for _, r in rows:peek() do
+                if only:peek() < 0 or r.sector == only:peek() then table.insert(list, r) end
+            end
+            local by = key:peek()
+            local by = if by == "fn" then function(r) return r.n end else by
+            return names(ui.sort(list, by, descending:peek()))
+        end
+        local checks = ui.state("checks", "")
+        local function check(label)
+            local same = names(view:get()) == expected()
+            checks:set(checks:peek() .. (if same then "" else label .. " differs; "))
+        end
+        ui.command { id = "run", run = function()
+            check("initial")
+            for round = 1, 20 do
+                ui.batch(function()
+                    for _ = 1, 30 do
+                        local i = random(#rows:peek()) + 1
+                        rows:set_key({ i, "v" }, if random(10) == 0 then nil else random(500))
+                    end
+                end)
+                check(`round {round}`)
+            end
+            rows:push({ n = "new", v = 250, sector = 1 })
+            check("push")
+            descending:set(true)
+            check("descending")
+            only:set(2)
+            check("filtered")
+            ui.batch(function()
+                for _ = 1, 30 do
+                    local i = random(#rows:peek()) + 1
+                    rows:set_key({ i, "sector" }, random(4))
+                end
+            end)
+            check("filter changes")
+            only:set(-1)
+            key:set("fn")
+            check("by a function")
+            judged = 0
+            rows:set_key({ 5, "n" }, "zz")
+            check("renamed")
+            checks:set(checks:peek() .. `judged {judged}`)
+        end }
+        return ui.text { id = "checks", "{checks}" }
+        "#,
+    );
+    assert_eq!(h.error(), None);
+    run(&mut h, "run");
+    assert_eq!(h.error(), None);
+    // Every check the same as ui.sort, and the one write judged one row.
+    assert_eq!(h.text("checks"), "judged 1");
+}

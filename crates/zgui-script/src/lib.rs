@@ -54,6 +54,7 @@ mod motion;
 mod node;
 mod opens;
 mod persist;
+mod sorted;
 mod term;
 pub mod testing;
 mod theme;

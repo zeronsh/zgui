@@ -42,6 +42,7 @@ The interface is built once; Rust re-runs only what reads state that changed. `z
 | `anime.animate(el, { x = … })` or a state as its target | `onUpdate = function() state:set(…) end` (script every frame) |
 | `items:push(v)`, `:set_key({ 3, "title" }, v)`, `:patch` | `items:update(function(l) table.insert(l, v) end)` (copies all) |
 | `ui.list { count, row = … }` for thousands of rows | `ui.each` over thousands (builds every row) |
+| `ui.sorted(rows, { by = "price" })` for a list kept in order | a `ui.computed` re-sorting the whole list on each write |
 | percentages, `grow`, insets: layout without the script | `on_resize` writing sizes into state for layout |
 | `ui.every(1000, …)` at the rate a value changes | `ui.every(1, …)` (more calls than frames) |
 | keys of the item alone: `key = function(r) return r.id end` | a `key` reading other state (goes stale) |

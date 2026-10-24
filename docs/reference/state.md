@@ -46,6 +46,7 @@ ui.on_open(handler: (e: { files: { File }, urls: { string } }) -> ())
 | `ui.persist(key, initial)` | the script (or module) and `key`, on disk | as `ui.state`, and saved for the next run: each key a JSON file in the host's storage (`ScriptHost::app_id` or `storage`), written within 250 ms of a change, off the main thread. Without storage it lasts until the app quits, with a warning |
 | `ui.use_state(initial)` | the component instance | a new state per instance; only inside a component's function (or an `each` row, `presence` content, a `list` row) |
 | `ui.computed(f)` | what built it | derived: `f` runs now and again when what it reads changes; its value is the state's |
+| `ui.sorted(list, spec)` | what built it | a list state's items in order (and filtered), kept in order as the list is written: see [Large data](#large-data) |
 
 State holds `nil`, booleans, numbers, strings, lists, string-keyed tables and elements (`state:set(el)`; Rust sees `Value::Element`, `null` as JSON). Not functions, not refs (keep the ref itself, or store `ref:get()`), not a table that is both a list and has string keys, and nothing nesting more than 128 tables deep (or a table holding itself), which is an error.
 
@@ -136,39 +137,39 @@ Plugins reach the network, the clipboard and files only if the host grants each:
 
 ## Large data
 
-State converts what it holds between Luau and Rust, through Luau's C API: 100,000 plain rows go into `ui.state` in some 60 ms and come out the first time in about 110 ms, a list of 100,000 numbers in about a millisecond either way. For data the app changes in place every few hundred milliseconds (a market feed's rows), it costs less to keep the rows in a plain Luau table and keep a small state that says they changed:
+State converts what it holds between Luau and Rust, through Luau's C API: 100,000 plain rows go into `ui.state` in some 60 ms and come out the first time in about 110 ms, a list of 100,000 numbers in about a millisecond either way. For rows the app changes a few at a time (a market feed's), keep them in a list state, write the ones that change with `set_key` in a batch (a long list is written in place, not copied a write), and show them through `ui.sorted`, which keeps their order as they are written:
 
 ```lua
-local rows = {}
-for i = 1, 1000 do rows[i] = { id = i, price = i } end
-local tick = ui.state("tick", 0)
+local initial = {}
+for i = 1, 1000 do initial[i] = { id = i, price = i } end
+local rows = ui.state("rows", initial)
 ui.every(250, function()
-	rows[math.random(#rows)].price += 1
-	tick:set(tick:peek() + 1)
+	ui.batch(function()
+		for _ = 1, 10 do
+			local i = math.random(rows:len())
+			rows:set_key({ i, "price" }, (rows:at(i) :: any).price + 1)
+		end
+	end)
 end)
--- Indices, sorted by price: a list of numbers, cheap to hold in state.
-local order = ui.computed(function()
-	tick:get()
-	local shown: { number } = {}
-	for i = 1, #rows do shown[i] = i end
-	return ui.sort(shown, function(i) return rows[i].price end, true)
-end)
+-- By price, highest first: a write re-places the rows it wrote.
+local order = ui.sorted(rows, { by = "price", descending = true })
 return ui.list {
 	h = 300,
-	count = function() return #order:get() end,
+	count = function() return order:len() end,
 	height = 24,
 	row = function(i)
 		return ui.text { function()
-			tick:get()
-			local row = rows[order:get()[i]]
+			local row = order:at(i)
 			return if row then ui.number(row.price, { decimals = 2 }) else ""
 		end }
 	end,
 }
 ```
 
+- `ui.sorted(list, spec)` is a list state's items in order, kept in order as the list changes: an item a write leaves alone is the same value, so a write re-places the items it wrote (`by` and `filter` called for those alone), in one pass over the order. `spec` is `{ by, descending, filter }`: `by` a field's name (read in Rust, no script call per item) or a function of an item, `filter` a function keeping the items it is true for. Give a function returning the spec when the order follows state (a sort header, a search): it runs when what it reads changes, and a new spec sorts the whole list again. Ties keep the list's order and nil keys go last, as `ui.sort`'s. `state:at(i)` reads one item without making the list a table, and `state:len()` its length: a list shows its rows in view that way. The lint (`computed-sort`) points at a `ui.computed` that re-sorts a whole list.
 - `ui.sort(list, by, descending?)` sorts `list` in place, stably, by a field of each item (`"price"`) or a function of it, called once an item; it returns `list`, and puts nil keys last. `table.sort` with a comparator calls Luau some 1.7 million times for 100,000 rows (about 95 ms, over a call's 50 ms budget); `ui.sort` reads each key once and sorts in Rust (4 to 8 ms). A state's value is read-only: sort `table.clone(value)`.
-- A computed returning indices into the plain table (or ids) holds a list of numbers; one returning the row tables themselves converts every row each time it runs.
+- A computed returning row tables it builds converts every row each time it runs; `ui.sorted` hands on the rows the list holds.
+- Large payloads that don't drive updates don't belong in state: a row's chart history, a file's bytes, a decoded image. Everything in state is converted between Luau and Rust and kept on both sides, so 100,000 rows with 16 points of history each cost several times what their prices do. Keep such data in a plain table keyed by the row's id, and let state hold what changes and what reading it should follow: the row a feed writes is what redraws its sparkline, which then reads the history from the table.
 - Totals over every row (a sum, a count by group) cost a loop over all of them each time they run: keep them as the rows change (the feed adds what it changed) rather than summing in a chart's `draw` each tick.
 - `ui.number(n, opts)` formats numbers as `Intl.NumberFormat` does: `ui.number(1234.5)` is "1,234.50"; `decimals`, `style = "percent"` (`n` a fraction: 0.05 is "5%"), `notation = "compact"` ("1.2K", "3.4M", "5.6B", "7.8T"), `sign` (`"auto"`, `"always"`, `"except_zero"`, `"never"`), `grouping` (thousands separators, on) and `currency` (`"$"`, before the number).
 

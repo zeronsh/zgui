@@ -57,6 +57,10 @@ pub const RULES: &[(&str, &str)] = &[
         "update-copy",
         "state:update(fn) copying the whole value for one change",
     ),
+    (
+        "computed-sort",
+        "a computed that sorts a whole list again each time it runs",
+    ),
 ];
 
 /// `ui.*` calls that do not build interface (`ui.state`, `ui.set`,
@@ -70,6 +74,7 @@ const NOT_ELEMENTS: &[&str] = &[
     "persist",
     "use_state",
     "computed",
+    "sorted",
     "effect",
     "batch",
     "every",
@@ -741,6 +746,28 @@ impl Linter<'_> {
                 );
             }
         }
+        // `ui.computed(function() … ui.sort(…) … end)`: every change to
+        // what it reads sorts the whole list again.
+        let computes = parent
+            .and_then(|p| p.callee.as_deref())
+            .is_some_and(|c| c == "ui.computed");
+        if computes
+            && let Some(at) = body.clone().find(|&j| {
+                self.is(j, "ui")
+                    && self.is(j + 1, ".")
+                    && self.is(j + 2, "sort")
+                    && self.is(j + 3, "(")
+            })
+        {
+            self.report(
+                at,
+                "computed-sort",
+                "this computed sorts its whole list each time what it reads changes (a row \
+                 written, a tick): `ui.sorted(list, { by = …, filter = … })` keeps a list \
+                 state's order as it changes, re-placing only the rows written."
+                    .into(),
+            );
+        }
     }
 }
 
@@ -830,6 +857,19 @@ mod tests {
     }
     fn one(line: u32, rule: &str) -> Vec<(u32, String)> {
         vec![(line, rule.to_string())]
+    }
+
+    #[test]
+    fn a_computed_that_sorts_a_whole_list_is_reported() {
+        let source = r##"
+local rows = ui.state("rows", {})
+local view = ui.computed(function()
+    return ui.sort(table.clone(rows:get()), "price")
+end)
+local sorted = ui.sort({ 3, 1, 2 }, function(n) return n end) -- fine: once
+local live = ui.sorted(rows, { by = "price" })
+"##;
+        assert_eq!(rules(source), one(4, "computed-sort"));
     }
 
     #[test]

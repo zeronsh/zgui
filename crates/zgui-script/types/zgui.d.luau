@@ -433,6 +433,9 @@ export type State<T> = {
 	insert: (self: State<T>, index: number, item: Item<T>) -> (),
 	remove: (self: State<T>, index: number) -> Item<T>?,
 	len: (self: State<T>) -> number,
+	-- One item of a list (from 1), tracked as `get` is, without the list
+	-- made into a table (a long list's rows, as a list shows them).
+	at: (self: State<T>, index: number) -> Item<T>?,
 	-- Strings: where `query` is in the string held (tracked, as `get` is),
 	-- each match's first and last byte from 1 (as `string.find` gives them),
 	-- at most `limit`, and whether there were more. Read where the string is
@@ -442,6 +445,13 @@ export type State<T> = {
 	-- How many times `query` is in the string held (`find`'s matches, at
 	-- most `limit`, and whether there were more), with no list made.
 	count: (self: State<T>, query: string, options: { case: boolean?, limit: number? }?) -> (number, boolean),
+}
+-- How `ui.sorted` orders a list: by a field's name or a function of an
+-- item, nil keys last; equal keys keep the list's order.
+export type SortedSpec<T> = {
+	by: (string | ((item: T) -> any))?,
+	descending: boolean?,
+	filter: ((item: T) -> boolean)?,
 }
 -- What a property bound to state reads: any state whose value is a `T`.
 export type Readable<T> = { read get: (self: never) -> T }
@@ -13173,6 +13183,13 @@ declare ui: {
 	-- A component instance's own state.
 	use_state: <T>(initial: T) -> State<T>,
 	computed: <T>(f: () -> T) -> State<T>,
+	-- A list state's items in order, kept in order as it changes: a write
+	-- re-places the items it wrote (`by` and `filter` called for those
+	-- alone), and a new spec (a spec function's reads changed) sorts it all
+	-- again. `by` is a field's name (read in Rust) or a function of an
+	-- item; `filter` keeps the items it is true for. (Annotate the view's
+	-- type: `local view: State<{ Row }> = ui.sorted(rows, …)`.)
+	sorted: (list: State<any>, spec: SortedSpec<any> | (() -> SortedSpec<any>)) -> State<any>,
 	-- A component's styles by variant (shadcn's `cva`): `base`, then the
 	-- chosen option of each axis in `variants` (by name), then the matching
 	-- `compound` rules, then the element's own properties; each replaces
