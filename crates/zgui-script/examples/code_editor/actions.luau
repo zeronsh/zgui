@@ -116,21 +116,31 @@ function M.sample(lines: number?)
 	state.status:set(`A sample of {n} lines`)
 end
 
--- The search's matches, kept current as the text or query changes: what
--- the editor marks, and what Next and Previous step through.
-M.matches = ui.computed(function()
-	-- The text is read (a copy of a long file) only while there is a query.
+-- The search's matches, found where the text is held when Next, Previous
+-- and Replace need them: the editor marks them itself, and the find bar
+-- counts them (`M.count`), so typing a query makes no list of them.
+local function matches(): { { number } }
+	local query = state.query:peek()
+	if query == "" or not state.find_open:peek() then
+		return {}
+	end
+	return (state.text:find(query, { case = state.case:peek(), limit = search.LIMIT }))
+end
+
+-- How many matches there are (at most the limit), and whether there were
+-- more, kept current as the text or query changes.
+M.count = ui.computed(function()
 	local query = state.query:get()
 	if query == "" or not state.find_open:get() then
-		return { list = {}, more = false }
+		return { n = 0, more = false }
 	end
-	local matches, more = search.matches(state.text:get(), query, state.case:get())
-	return { list = matches, more = more }
+	local n, more = state.text:count(query, { case = state.case:get(), limit = search.LIMIT })
+	return { n = n, more = more }
 end)
 
 -- Select match `index` (from 1) in the editor, showing it.
 local function select(index: number)
-	local list = M.matches:peek().list
+	local list = matches()
 	if #list == 0 then
 		state.current:set(0)
 		return
@@ -157,7 +167,7 @@ end
 
 -- The next match after the caret (or the current match), or the one before.
 function M.find_next()
-	local list = M.matches:peek().list
+	local list = matches()
 	local current = state.current:peek()
 	if current > 0 and current <= #list then
 		select(current + 1)
@@ -166,7 +176,7 @@ function M.find_next()
 	end
 end
 function M.find_previous()
-	local list = M.matches:peek().list
+	local list = matches()
 	local current = state.current:peek()
 	if current > 0 and current <= #list then
 		select(current - 1)
@@ -178,7 +188,7 @@ end
 -- Replace the current match (choosing the next one first if none is), as
 -- typing would: one undo step each.
 function M.replace()
-	local list = M.matches:peek().list
+	local list = matches()
 	local current = state.current:peek()
 	if current == 0 or current > #list then
 		M.find_next()
@@ -190,13 +200,13 @@ function M.replace()
 		el:set_selection_bytes(match[1] - 1, match[2])
 		el:replace_selection(state.replacement:peek())
 		-- The matches after it moved; the one now at its place is next.
-		select(search.after(M.matches:peek().list, match[1] + #state.replacement:peek()))
+		select(search.after(matches(), match[1] + #state.replacement:peek()))
 	end
 end
 
 -- Every match replaced, in one edit (one undo step).
 function M.replace_all()
-	local list = M.matches:peek().list
+	local list = matches()
 	if #list == 0 then
 		return
 	end

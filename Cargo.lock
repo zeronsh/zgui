@@ -4574,6 +4574,7 @@ name = "zgui-script"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "memchr",
  "mlua",
  "pulldown-cmark",
  "serde_json",

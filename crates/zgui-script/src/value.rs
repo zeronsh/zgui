@@ -1946,7 +1946,128 @@ impl UserData for State {
             Ok(removed)
         });
         methods.add_method("len", |_, s, ()| Ok(s.0.with(|v| v.list().len())));
+        // Where `query` is in the string held (tracked, as `get` is), read
+        // where it is held: a long document is not copied into the script.
+        methods.add_method(
+            "find",
+            |lua, s, (query, options): (mlua::LuaString, Option<Table>)| {
+                let (case, limit) = search_options(options.as_ref())?;
+                let (found, more) = s
+                    .fresh()
+                    .with(|value| find_all(&string_pieces(value), &query.as_bytes(), case, limit));
+                let list = lua.create_table_with_capacity(found.len(), 0)?;
+                for (i, (start, end)) in found.into_iter().enumerate() {
+                    let pair = lua.create_table_with_capacity(2, 0)?;
+                    pair.raw_set(1, start + 1)?;
+                    pair.raw_set(2, end)?;
+                    list.raw_set(i + 1, pair)?;
+                }
+                Ok((list, more))
+            },
+        );
+        // How many times (`find`'s matches, at most `limit`, and whether
+        // there were more), with no list made of them.
+        methods.add_method(
+            "count",
+            |_, s, (query, options): (mlua::LuaString, Option<Table>)| {
+                let (case, limit) = search_options(options.as_ref())?;
+                Ok(s.fresh().with(|value| {
+                    let mut n = 0;
+                    let more = search(
+                        &string_pieces(value),
+                        &query.as_bytes(),
+                        case,
+                        limit,
+                        |_| n += 1,
+                    );
+                    (n, more)
+                }))
+            },
+        );
     }
+}
+/// `{ case, limit }`: with case unless `case = false`; no limit unless one.
+fn search_options(options: Option<&Table>) -> mlua::Result<(bool, usize)> {
+    Ok(match options {
+        Some(o) => (
+            o.get::<Option<bool>>("case")?.unwrap_or(true),
+            o.get::<Option<f64>>("limit")?
+                .map_or(usize::MAX, |n| n.max(0.) as usize),
+        ),
+        None => (true, usize::MAX),
+    })
+}
+/// The bytes of the string `value` holds, a piece at a time (a long text's
+/// chunks); none for anything else.
+pub(crate) fn string_pieces(value: &Value) -> Vec<&[u8]> {
+    match value {
+        Value::Str(text) => vec![text.as_bytes()],
+        Value::Text(text) => text.chunks().map(str::as_bytes).collect(),
+        _ => Vec::new(),
+    }
+}
+/// Where `needle` is in the text `pieces` make, as byte ranges, at most
+/// `limit` of them (and whether there were more), the next looked for after
+/// the last: plain bytes, as `string.find(text, needle, at, true)` finds
+/// them, or with ASCII letters' case folded, as `string.lower` folds it. A
+/// piece at a time, the end of the one before it carried over so a match
+/// across two is found.
+pub(crate) fn find_all(
+    pieces: &[&[u8]],
+    needle: &[u8],
+    case: bool,
+    limit: usize,
+) -> (Vec<(usize, usize)>, bool) {
+    let mut found = Vec::new();
+    let more = search(pieces, needle, case, limit, |range| found.push(range));
+    (found, more)
+}
+/// `find_all`, each match told to `on` as it is found: whether there were
+/// more than `limit`.
+fn search(
+    pieces: &[&[u8]],
+    needle: &[u8],
+    case: bool,
+    limit: usize,
+    mut on: impl FnMut((usize, usize)),
+) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let needle = if case {
+        needle.to_vec()
+    } else {
+        needle.to_ascii_lowercase()
+    };
+    let finder = memchr::memmem::Finder::new(&needle);
+    let carry = needle.len() - 1;
+    let mut window = Vec::new();
+    // Where the next match may start: after the last one.
+    let (mut next, mut offset, mut count) = (0_usize, 0_usize, 0_usize);
+    for piece in pieces {
+        // The window: the last `carry` bytes before this piece, then it.
+        let keep = window.len().min(carry);
+        window.drain(..window.len() - keep);
+        let window_start = offset - keep;
+        if case {
+            window.extend_from_slice(piece);
+        } else {
+            window.extend(piece.iter().map(u8::to_ascii_lowercase));
+        }
+        offset += piece.len();
+        let mut from = next.saturating_sub(window_start);
+        while let Some(at) = finder.find(&window[from.min(window.len())..]) {
+            let start = window_start + from + at;
+            if count == limit {
+                return true;
+            }
+            count += 1;
+            on((start, start + needle.len()));
+            next = start + needle.len();
+            from = next - window_start;
+        }
+    }
+    false
 }
 /// The list a list method works on (nil is an empty list).
 fn list_of<'a>(value: &'a Value, method: &str) -> mlua::Result<&'a [Value]> {
@@ -2120,6 +2241,41 @@ mod tests {
         let back = to_lua(&first, &lua, true).unwrap();
         assert!(*back.as_string().unwrap().as_bytes() == *long.as_bytes());
         assert!(matches!(set("short"), Value::Str(_)));
+    }
+
+    /// A search finds what `string.find` would, one match after another,
+    /// across the pieces a long text is held in.
+    #[test]
+    fn a_search_finds_matches_across_pieces() {
+        let whole = "abcABCabcabc";
+        let expect = |text: &str, needle: &str| {
+            let mut out = Vec::new();
+            let mut at = 0;
+            while let Some(i) = text[at..].find(needle) {
+                out.push((at + i, at + i + needle.len()));
+                at += i + needle.len();
+            }
+            out
+        };
+        for cut in 0..=whole.len() {
+            let pieces = [&whole.as_bytes()[..cut], &whole.as_bytes()[cut..]];
+            assert_eq!(
+                find_all(&pieces, b"bca", true, usize::MAX).0,
+                expect(whole, "bca")
+            );
+            let lower = whole.to_ascii_lowercase();
+            assert_eq!(
+                find_all(&pieces, b"BcA", false, usize::MAX).0,
+                expect(&lower, "bca")
+            );
+        }
+        // One after another, not overlapping: "aaaa" holds "aa" twice.
+        assert_eq!(
+            find_all(&[b"aa", b"aa"], b"aa", true, usize::MAX).0,
+            [(0, 2), (2, 4)]
+        );
+        assert_eq!(find_all(&[b"aaaa"], b"aa", true, 1), (vec![(0, 2)], true));
+        assert_eq!(find_all(&[b"aaaa"], b"", true, 9), (vec![], false));
     }
 
     #[test]

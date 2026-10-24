@@ -1140,6 +1140,11 @@ fn kind_view(
             spellcheck,
             code,
         } => {
+            // What `find` searches: the state the text is in.
+            let searched = match value {
+                crate::node::InputValue::State(state) => Some(state.clone()),
+                crate::node::InputValue::Shown { .. } => None,
+            };
             let (value, controlled): (zgui::widgets::EditorValue, _) = match value {
                 // A long document is shared with the editor, never copied
                 // on its way in or out.
@@ -1232,7 +1237,7 @@ fn kind_view(
                     Some(theme) => theme,
                     None => zgui::theme::Themes::of(&low.runtime).root().clone(),
                 };
-                view = code_editor(view, code, vm, theme);
+                view = code_editor(view, code, searched, vm, theme);
             }
             view
         }
@@ -3214,6 +3219,7 @@ fn resolve_style(source: &Owned, prop: Prop, scalar: Option<&Signal<f32>>, vm: &
 fn code_editor(
     mut view: View,
     code: &Rc<crate::node::CodeProps>,
+    searched: Option<Signal<Value>>,
     vm: &Rc<Vm>,
     theme: Rc<zgui::theme::ThemeScope>,
 ) -> View {
@@ -3277,10 +3283,12 @@ fn code_editor(
             }
         });
     }
-    if let Some(decorations) = &code.decorations {
-        let (decorations, vm) = (decorations.clone(), vm.clone());
+    // Ranges a script gives (`decorations`), and a search's matches
+    // (`find`), found where the text is held.
+    let given = code.decorations.clone().map(|decorations| {
+        let vm = vm.clone();
         let default = theme.clone();
-        view = view.decorations(move || {
+        move || {
             let fallback = Some(default.color(zgui::theme::tok::SELECTION));
             let list = match &decorations {
                 crate::node::Readable::State(state) => {
@@ -3292,7 +3300,72 @@ fn code_editor(
                 Some(mlua::Value::Table(list)) => ranges(&list, 0, fallback),
                 _ => Vec::new(),
             }
-        });
+        }
+    });
+    let found = code.find.as_ref().zip(searched).map(|(find, text)| {
+        let query = resolve_owned(&find.query);
+        let case = find.case.as_ref().map(resolve_owned);
+        let current = find.current.as_ref().map(resolve_owned);
+        let colors = (
+            find.color.as_ref().map(resolve_owned),
+            find.current_color.as_ref().map(resolve_owned),
+        );
+        let (limit, vm, theme) = (find.limit.unwrap_or(usize::MAX), vm.clone(), theme.clone());
+        move || {
+            let Some(Lit::Str(query)) = resolve(&query, Ty::Str, None, &vm) else {
+                return Vec::new();
+            };
+            if query.is_empty() {
+                return Vec::new();
+            }
+            let case = case
+                .as_ref()
+                .is_none_or(|c| resolve(c, Ty::Bool, None, &vm) != Some(Lit::Bool(false)));
+            let current = match current
+                .as_ref()
+                .and_then(|c| resolve(c, Ty::Num, None, &vm))
+            {
+                Some(Lit::Num(n)) if n >= 1. => n as usize,
+                _ => 0,
+            };
+            let color = |source: &Option<Owned>, token| match source
+                .as_ref()
+                .and_then(|c| resolve(c, Ty::Color, None, &vm))
+            {
+                Some(Lit::Color(color)) => color,
+                Some(Lit::Token(t)) => theme.get(t).color().unwrap_or_else(|| theme.color(token)),
+                _ => theme.color(token),
+            };
+            let (marked, strong) = (
+                color(&colors.0, zgui::theme::tok::SELECTION),
+                color(&colors.1, zgui::theme::tok::WARNING),
+            );
+            let (found, _) = text.with(|value| {
+                crate::value::find_all(
+                    &crate::value::string_pieces(value),
+                    query.as_bytes(),
+                    case,
+                    limit,
+                )
+            });
+            found
+                .into_iter()
+                .enumerate()
+                .map(|(i, (from, to))| (from..to, if i + 1 == current { strong } else { marked }))
+                .collect()
+        }
+    });
+    match (given, found) {
+        (Some(given), Some(found)) => {
+            view = view.decorations(move || {
+                let mut all = given();
+                all.extend(found());
+                all
+            });
+        }
+        (Some(given), None) => view = view.decorations(given),
+        (None, Some(found)) => view = view.decorations(found),
+        (None, None) => {}
     }
     if let Some(color) = &code.current_line {
         let (color, vm, theme) = (resolve_owned(color), vm.clone(), theme.clone());

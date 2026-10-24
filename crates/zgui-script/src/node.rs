@@ -976,6 +976,23 @@ pub(crate) struct CodeProps {
     /// `on_caret = function(line, column, anchor, focus)`: where the caret
     /// is, whenever it moves.
     pub on_caret: Option<Function>,
+    /// `find = { query, case, current, limit, color, current_color }`: a
+    /// search's matches marked behind the text, found where the text is
+    /// held (no list of them made in the script).
+    pub find: Option<FindProps>,
+}
+/// A textarea's `find`: what it searches for and how its matches show.
+pub(crate) struct FindProps {
+    /// The text looked for (empty: nothing marked).
+    pub query: Source,
+    /// Whether case matters (`true` by default).
+    pub case: Option<Source>,
+    /// Which match, from 1, is the current one (0: none).
+    pub current: Option<Source>,
+    /// At most this many marked.
+    pub limit: Option<usize>,
+    pub color: Option<Source>,
+    pub current_color: Option<Source>,
 }
 /// A state, or a function of states, read as a value.
 #[derive(Clone)]
@@ -1875,6 +1892,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "line_numbers",
     "highlight",
     "decorations",
+    "find",
     "current_line",
     "tab",
     "on_caret",
@@ -3035,11 +3053,35 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         let current_line = optional("current_line", Ty::Color)?;
                         let tab = table.get::<Option<String>>("tab")?;
                         let on_caret = table.get::<Option<Function>>("on_caret")?;
+                        let find = match table.get::<Option<Table>>("find")? {
+                            None => None,
+                            Some(find) => {
+                                let get = |key: &str, ty: Ty| -> mlua::Result<Option<Source>> {
+                                    match find.get::<mlua::Value>(key)? {
+                                        mlua::Value::Nil => Ok(None),
+                                        value => source(lua, ty, key, value).map(Some),
+                                    }
+                                };
+                                Some(FindProps {
+                                    query: get("query", Ty::Str)?.ok_or_else(|| {
+                                        mlua::Error::runtime("a textarea's `find` needs a `query`")
+                                    })?,
+                                    case: get("case", Ty::Bool)?,
+                                    current: get("current", Ty::Num)?,
+                                    limit: find
+                                        .get::<Option<f64>>("limit")?
+                                        .map(|n| n.max(0.) as usize),
+                                    color: get("color", Ty::Color)?,
+                                    current_color: get("current_color", Ty::Color)?,
+                                })
+                            }
+                        };
                         (highlight.is_some()
                             || decorations.is_some()
                             || current_line.is_some()
                             || tab.is_some()
-                            || on_caret.is_some())
+                            || on_caret.is_some()
+                            || find.is_some())
                         .then(|| {
                             Rc::new(CodeProps {
                                 highlight,
@@ -3047,6 +3089,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                                 current_line,
                                 tab,
                                 on_caret,
+                                find,
                             })
                         })
                     },

@@ -7,6 +7,7 @@
 local state = require("./state")
 local actions = require("./actions")
 local highlight = require("@lib/highlight")
+local search = require("@lib/search")
 local FindBar = require("@components/find_bar")
 local StatusBar = require("@components/status_bar")
 
@@ -37,20 +38,6 @@ ui.on_open(function(e)
 	end
 end)
 
--- The search's matches, marked behind the text; the current one stronger.
-local function decorations(): { { any } }
-	if not state.find_open:get() then
-		return {}
-	end
-	local list = actions.matches:get().list
-	local current = state.current:get()
-	local out: { { any } } = {}
-	for i, match in list do
-		out[i] = { match[1], match[2], if i == current then "$warning" else "$selection" }
-	end
-	return out
-end
-
 -- An editor for `language`, coloured by its tokenizer (none for plain
 -- text). A new language makes a new editor: its highlighter is its own.
 local function editor(language: string): Node
@@ -69,7 +56,16 @@ local function editor(language: string): Node
 		rounded = 0,
 		bg = "$background",
 		highlight = (highlight :: any)[language],
-		decorations = decorations,
+		-- The search's matches, marked behind the text (the current one
+		-- stronger): found by the editor, where the text is.
+		find = {
+			query = function()
+				return if state.find_open:get() then state.query:get() else ""
+			end,
+			case = state.case,
+			current = state.current,
+			limit = search.LIMIT,
+		},
 		current_line = "$hover",
 		tab = "    ",
 		on_caret = function(line, column, anchor, focus)

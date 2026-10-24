@@ -20,8 +20,8 @@ return function(): Node
 		return nil
 	end
 	local count = function(): string
-		local matches = actions.matches:get()
-		local n = #matches.list
+		local matches = actions.count:get()
+		local n = matches.n
 		if state.query:get() == "" then
 			return ""
 		elseif n == 0 then

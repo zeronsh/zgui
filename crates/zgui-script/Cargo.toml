@@ -32,6 +32,7 @@ zgui-components = { path = "../zgui-components", version = "0.1.0", optional = t
 # Image decoding for `ui.image` (PNG, JPEG).
 zgui-gpu = { path = "../zgui-gpu", version = "0.1.0", default-features = false }
 mlua = { version = "0.12.2", features = ["luau"] }
+memchr = "2.7"
 # `.luaurc` aliases for `require("@alias/...")`.
 serde_json = "1"
 # Markdown for `ui.markdown` and `zgui_script::markdown`.

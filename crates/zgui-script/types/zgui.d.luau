@@ -433,6 +433,15 @@ export type State<T> = {
 	insert: (self: State<T>, index: number, item: Item<T>) -> (),
 	remove: (self: State<T>, index: number) -> Item<T>?,
 	len: (self: State<T>) -> number,
+	-- Strings: where `query` is in the string held (tracked, as `get` is),
+	-- each match's first and last byte from 1 (as `string.find` gives them),
+	-- at most `limit`, and whether there were more. Read where the string is
+	-- held: a long document is not copied into the script. `case = false`
+	-- folds ASCII letters' case, as `string.lower` does.
+	find: (self: State<T>, query: string, options: { case: boolean?, limit: number? }?) -> ({ { number } }, boolean),
+	-- How many times `query` is in the string held (`find`'s matches, at
+	-- most `limit`, and whether there were more), with no list made.
+	count: (self: State<T>, query: string, options: { case: boolean?, limit: number? }?) -> (number, boolean),
 }
 -- What a property bound to state reads: any state whose value is a `T`.
 export type Readable<T> = { read get: (self: never) -> T }
@@ -4505,6 +4514,16 @@ export type InputProps = {
 	-- search's matches), `{ { from, to, color? }, … }` in bytes counted
 	-- from 1; only those in view are drawn.
 	decorations: (State<any> | (() -> { { any } }))?,
+	-- Several lines only: a search's matches marked behind the text, found
+	-- by the editor where the text is held; `current` (from 1) stronger.
+	find: {
+		query: Reactive<string>,
+		case: Reactive<boolean>?,
+		current: Reactive<number>?,
+		limit: number?,
+		color: Reactive<Color>?,
+		current_color: Reactive<Color>?,
+	}?,
 	-- Several lines only: the colour behind the caret's row.
 	current_line: Reactive<Color>?,
 	-- Several lines only: what Tab inserts (`"    "`), instead of moving
