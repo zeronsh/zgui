@@ -12,7 +12,9 @@ Under a headless sway, driven with a virtual pointer (`wayland_pointer.py`):
 - opened again, a click elsewhere in the window closes it;
 - moved near the output's bottom, the menu flips above its trigger (the
   compositor's doing: the positioner is anchored on the trigger), and its
-  first item takes a click there.
+  first item takes a click there;
+- the submenus example's submenu, a popup of its menu, opens beside that
+  menu where the compositor flipped it.
 
 Under a headless Weston, whose windows winit decorates itself (the window
 geometry starts at its title bar, above the content), the menu opened by the
@@ -37,6 +39,8 @@ from wayland_pointer import VirtualPointer  # noqa: E402
 OUTPUT = (1280, 960)
 CONTENT = (16, 20, 28)
 MENU = (35, 46, 64)
+# The submenus example's menu and its submenu.
+SUBMENU_PARENT, SUBMENU = (0x36, 0x51, 0x6e), (0x4a, 0x37, 0x68)
 # popup_probe's menu, in its window's points: the File button's centre, and
 # the menu's top-left as the scene places it.
 FILE = (16 + 60, 396 + 14)
@@ -154,6 +158,32 @@ def main():
             click(menu[0] - content[0] + 100, menu[1] - content[1] + 17)
             until("the choice", lambda: 'CHOSEN "Item 1"' in log.read_text())
             checks["sway: chosen in the flipped menu"] = True
+            stop(app)
+
+            # A submenu is a popup of its menu: near the output's bottom the
+            # menu flips, and the submenu opens beside it there.
+            sub_app, sub_log = launch("sway-submenus", [str(args.probe.with_name("submenus"))], env)
+            until("the submenus window", lambda: box(shot("submenus"), CONTENT))
+            subprocess.run(["swaymsg", "-s", sway_socket, "[app_id=submenus] move position 0 820"], env=env,
+                           check=True, capture_output=True)
+            time.sleep(.6)
+            content = until("the moved submenus window", lambda: (lambda b: b if b and b[1] == 820 else None)(
+                box(shot("submenus-moved"), CONTENT)))
+            click(260 + 90, 68 + 16)  # Open actions.
+            until("its menu", lambda: "popup configured" in sub_log.read_text())
+            time.sleep(.3)
+            menu = until("the flipped menu drawn", lambda: box(shot("submenus-open"), SUBMENU_PARENT))
+            # Over More, its second item, where the menu shows.
+            pointer.move_to(menu[0] + 100, menu[1] + 8 + 36 + 4 + 18, *OUTPUT)
+            until("the submenu", lambda: sub_log.read_text().count("popup configured") >= 2)
+            time.sleep(.3)
+            image = shot("submenu-open")
+            child = box(image, SUBMENU)
+            checks["sway: submenu"] = {"menu": menu, "submenu": child}
+            checks["sway: submenu beside its flipped menu"] = (
+                bool(child) and menu[3] <= content[1] + 68 and child[1] == menu[1] + 48
+                and abs(child[0] - menu[2]) <= 8)
+            stop(sub_app)
             pointer.close()
             stop(app)
             stop(sway)
@@ -181,7 +211,8 @@ def main():
         (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
         failed = [key for key, value in checks.items() if value is False]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
-        print("PASS: Wayland popups: past the window on sway and Weston, chosen from, closed, and flipped at the output's edge")
+        print("PASS: Wayland popups: past the window on sway and Weston, chosen from, closed, flipped at the output's "
+              "edge, and a submenu beside its flipped menu")
     finally:
         for process in reversed(processes):
             stop(process)

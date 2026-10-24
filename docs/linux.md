@@ -281,7 +281,10 @@ compositor flip it to the other side at the output's edge, or slide it on.
 The gap from the trigger widens the anchor rectangle rather than going in the
 offset, which wlroots keeps as it is through a flip. Pointer input over it
 reaches the window's host in the window's coordinates, by where the scene
-drew it, so a flipped menu's items take clicks as before. The scene places
+drew it, so a flipped menu's items take clicks as before. A submenu is a
+popup of its menu's popup (the one holding its item), placed against that
+menu's surface, so it opens beside the menu wherever the compositor put it;
+popups go children first, as the protocol requires. The scene places
 popups unbounded (the app cannot learn the outputs), so a menu past the
 window's bottom edge opens downward, past it, unless the output ends first. Opening one (configured, its surface
 made) took 3.8 to 5.8 ms and its first frame 2.2 to 4.5 ms, in a debug build
@@ -294,7 +297,8 @@ moved with the pointer needs the compositor's configure each move).
 `wayland_popups_smoke.py` clicks popup_probe's menu open under sway, past
 the window's edge where the scene put it, chooses its last item below the
 window, closes it with a press in the window, and, the window moved near the
-output's bottom, sees it flip above its trigger and take a click there; under
+output's bottom, sees it flip above its trigger and take a click there, and
+the submenus example's submenu open beside its flipped menu; under
 Weston, the menu sits the same on the content below winit's title bar.
 
 Not yet: the grab (`xdg_popup.grab`, which moves the keyboard to the popup,

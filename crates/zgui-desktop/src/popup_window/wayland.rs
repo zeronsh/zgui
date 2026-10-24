@@ -176,6 +176,8 @@ struct Shown {
     surface: WlSurface,
     rect: Rect,
     revision: Option<u64>,
+    /// The popup it is a popup of (a submenu's menu), if not the window's.
+    parent: Option<NodeId>,
 }
 impl Shown {
     fn destroy(self, client: &mut Client) {
@@ -251,15 +253,36 @@ impl Popups {
                     (send)(PopupInput::Dismiss);
                 }
             }
-            let mut kept = Vec::new();
-            for (root, popup) in shown {
-                // A popup that moved or resized shows anew.
-                let still = wanted
+            // What goes: popups no longer wanted, or moved or resized (to
+            // show anew), and the popups of those (a parent goes after its
+            // children, as the protocol has it).
+            let mut kept = shown;
+            let mut going: Vec<NodeId> = kept
+                .iter()
+                .filter(|(root, popup)| {
+                    !wanted
+                        .iter()
+                        .any(|(wanted, bounds)| wanted == root && rects_match(*bounds, popup.rect))
+                })
+                .map(|(root, _)| *root)
+                .collect();
+            loop {
+                let children: Vec<NodeId> = kept
                     .iter()
-                    .any(|(wanted, bounds)| *wanted == root && rects_match(*bounds, popup.rect));
-                if still {
-                    kept.push((root, popup));
-                } else {
+                    .filter(|(root, popup)| {
+                        !going.contains(root) && popup.parent.is_some_and(|p| going.contains(&p))
+                    })
+                    .map(|(root, _)| *root)
+                    .collect();
+                if children.is_empty() {
+                    break;
+                }
+                going.extend(children);
+            }
+            // The newest first: children before their parents.
+            for index in (0..kept.len()).rev() {
+                if going.contains(&kept[index].0) {
+                    let (root, popup) = kept.remove(index);
                     zgui_gpu::present_log::log(|| format!("popup hide {root:?}"));
                     popup.destroy(client);
                 }
@@ -268,9 +291,20 @@ impl Popups {
                 let index = match kept.iter().position(|(shown, _)| shown == root) {
                     Some(index) => index,
                     None => {
-                        let trigger = scene.popup_anchor(*root).map(|anchor| scene.bounds(anchor));
+                        let anchor = scene.popup_anchor(*root);
+                        let trigger = anchor.map(|anchor| scene.bounds(anchor));
+                        // A submenu is a popup of the menu holding its item,
+                        // placed against that menu's surface, wherever the
+                        // compositor put it.
+                        let holder = anchor.and_then(|anchor| {
+                            kept.iter().find(|(shown, _)| {
+                                scene.ancestors(anchor).any(|node| node == *shown)
+                            })
+                        });
+                        let of =
+                            holder.map(|(holder, popup)| (*holder, popup.xdg.clone(), popup.rect));
                         let Some(popup) =
-                            show(client, parent, *root, *bounds, trigger, scale, context)
+                            show(client, parent, of, *root, *bounds, trigger, scale, context)
                         else {
                             continue;
                         };
@@ -307,7 +341,8 @@ impl Popups {
     pub fn hide_all(&mut self, parent: &Window) {
         let shown = std::mem::take(&mut self.shown);
         with_client(parent, |client| {
-            for (_, popup) in shown {
+            // The newest first: children before their parents.
+            for (_, popup) in shown.into_iter().rev() {
                 popup.destroy(client);
             }
             Some(())
@@ -377,11 +412,14 @@ fn position(
 }
 
 /// Show popup `root` at `rect` (`parent`'s points), opened against
-/// `trigger` if it has one, in an `xdg_popup` of `parent`, configured and
+/// `trigger` if it has one, in an `xdg_popup` of `parent`'s, or of popup `of`
+/// (its root, `xdg_surface` and box) where it opens from one, configured and
 /// ready to draw.
+#[allow(clippy::too_many_arguments)]
 fn show(
     client: &mut Client,
     parent: &Window,
+    of: Option<(NodeId, XdgSurface, Rect)>,
     root: NodeId,
     rect: Rect,
     trigger: Option<Rect>,
@@ -393,16 +431,24 @@ fn show(
         client.state.compositor.clone()?,
         client.state.wm_base.clone()?,
     );
-    // SAFETY: winit's live xdg_surface on this display: `parent` holds it.
-    let parent_xdg = unsafe {
-        ObjectId::from_ptr(
-            XdgSurface::interface(),
-            parent.xdg_surface()?.as_ptr().cast(),
-        )
-    }
-    .ok()
-    .and_then(|id| XdgSurface::from_id(&client.connection, id).ok())?;
-    let (gx, gy) = parent.xdg_window_geometry_origin().unwrap_or((0, 0));
+    // Positions relative to the parent's window geometry: a popup's is its
+    // surface, which shows its box from the box's top-left.
+    let (parent_xdg, (gx, gy)) = match &of {
+        Some((_, xdg, rect)) => (xdg.clone(), (rect.x.round() as i32, rect.y.round() as i32)),
+        None => {
+            // SAFETY: winit's live xdg_surface on this display: `parent`
+            // holds it.
+            let xdg = unsafe {
+                ObjectId::from_ptr(
+                    XdgSurface::interface(),
+                    parent.xdg_surface()?.as_ptr().cast(),
+                )
+            }
+            .ok()
+            .and_then(|id| XdgSurface::from_id(&client.connection, id).ok())?;
+            (xdg, parent.xdg_window_geometry_origin().unwrap_or((0, 0)))
+        }
+    };
     let width = rect.width.ceil().max(1.) as i32;
     let height = rect.height.ceil().max(1.) as i32;
     let surface = compositor.create_surface(&qh, ());
@@ -486,6 +532,7 @@ fn show(
         surface,
         rect,
         revision: None,
+        parent: of.map(|(holder, ..)| holder),
     })
 }
 
