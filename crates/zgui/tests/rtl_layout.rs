@@ -353,3 +353,23 @@ fn a_progress_bar_fills_from_the_right_right_to_left() {
         assert_eq!(fill.x, expected, "{rtl}: {fill:?} in {bounds:?}");
     }
 }
+
+#[test]
+fn boxed_text_spans_its_box_so_it_aligns_in_it() {
+    // Padded (a box of its own): its line spans the box, so it sits at the
+    // box's end, as a number in a table's cell does.
+    let (ui, view) = mount(
+        column().w(300.).child(
+            text("12.50")
+                .id("cell")
+                .w(120.)
+                .px(8.)
+                .text_align(TextAlign::End),
+        ),
+    );
+    let cell = view.find("cell").unwrap();
+    let scene = ui.scene.borrow();
+    let label = scene.children(cell)[0];
+    assert_eq!(scene.bounds(label).width, 104., "the box less its padding");
+    assert_eq!(scene.font(label).align, TextAlign::Right);
+}

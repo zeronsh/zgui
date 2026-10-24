@@ -2729,6 +2729,11 @@ fn mount_element(
         if boxed {
             let label = View::new(kind);
             view.children.push(label);
+            // The label spans the box, so its lines align (`text_align`)
+            // and truncate at the box's edges, not its own.
+            let mut defaults = Styles::new().items_stretch();
+            defaults.merge(&view.styles);
+            view.styles = defaults;
             return mount_element(
                 ui,
                 parent,
