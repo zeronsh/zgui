@@ -63,19 +63,22 @@ const SPARE_TEXT: usize = 32;
 const SPARE_LONG_LINES: usize = 16;
 const SPARE_LONG_TEXT: usize = 256;
 
+/// A run as shaped: its range, font, size, and padding across.
+type Span = (Range<usize>, FontStyle, f32, f32);
 /// The spans that determine shapes: merged runs of one font and size.
 #[derive(Clone, PartialEq)]
 struct Key {
     text: Arc<str>,
-    /// Runs as shaped: range, font, size and padding across.
-    spans: Vec<(Range<usize>, FontStyle, f32, f32)>,
+    /// Runs as shaped: range, font, size and padding across (inline for
+    /// the usual one: a key is made for every new text).
+    spans: smallvec::SmallVec<[Span; 1]>,
     /// Plain text keeps a row after a final line break, for an editor's
     /// caret (as `ShapedText::with_font` lays it out); rich text does not.
     caret_row: bool,
 }
 impl Key {
     fn of(rich: &RichText, caret_row: bool) -> Self {
-        let mut spans: Vec<(Range<usize>, FontStyle, f32, f32)> = Vec::new();
+        let mut spans: smallvec::SmallVec<[Span; 1]> = smallvec::SmallVec::new();
         for run in rich.runs() {
             match spans.last_mut() {
                 Some((range, font, size, padding))
@@ -128,7 +131,7 @@ impl Key {
     fn plain(text: &Arc<str>, font_size: f32, font: &FontStyle, caret_row: bool) -> Self {
         Self {
             text: text.clone(),
-            spans: vec![(0..text.len(), font.clone(), font_size, 0.)],
+            spans: smallvec::smallvec![(0..text.len(), font.clone(), font_size, 0.)],
             caret_row,
         }
     }
@@ -177,7 +180,12 @@ impl Compact {
     /// The measurements of shaped `lines`, or None where arithmetic over them
     /// would not match cosmic-text: right-to-left or mixed-direction lines,
     /// justified lines, or a word whose glyphs set different line heights.
-    fn of(lines: &[BufferLine], font_size: f32) -> Option<Self> {
+    /// `spare` holds a retired compact's lists, to fill rather than allocate.
+    fn of(
+        lines: &[BufferLine],
+        font_size: f32,
+        spare: Option<(Vec<Word>, Vec<f32>)>,
+    ) -> Option<Self> {
         // Counted first, each list is allocated once at its size: a text
         // changing every frame (a stream's) is prepared every frame.
         let (mut spans, mut words, mut glyphs) = (0, 0, 0);
@@ -196,9 +204,12 @@ impl Compact {
                     .sum::<usize>();
             }
         }
+        let (mut spare_words, mut spare_glyphs) = spare.unwrap_or_default();
+        spare_words.reserve(words);
+        spare_glyphs.reserve(glyphs);
         let mut compact = Self {
-            words: Vec::with_capacity(words),
-            glyphs: Vec::with_capacity(glyphs),
+            words: spare_words,
+            glyphs: spare_glyphs,
             spans: smallvec::SmallVec::with_capacity(spans),
             lines: smallvec::SmallVec::with_capacity(lines.len()),
         };
@@ -501,6 +512,10 @@ pub struct TextCache {
     /// shaping a short value.
     spare: Vec<BufferLine>,
     spare_long: Vec<BufferLine>,
+    /// The emptied line lists and compact measurements of dropped texts,
+    /// filled again by new ones.
+    spare_lists: Vec<Vec<BufferLine>>,
+    spare_compacts: Vec<(Vec<Word>, Vec<f32>)>,
 }
 impl TextCache {
     /// Whether `rich` goes through the cache: clamped or ellipsized text is
@@ -652,7 +667,7 @@ impl TextCache {
             kept += entry.shaped_bytes();
             if kept > UNDRAWN_BUDGET {
                 let entry = self.remove(hash);
-                self.recycle(entry.lines);
+                self.retire(entry);
             }
         }
     }
@@ -713,7 +728,7 @@ impl TextCache {
             for line in &mut lines {
                 line.shape(fonts, TAB_WIDTH);
             }
-            let compact = Compact::of(&lines, metrics.font_size);
+            let compact = Compact::of(&lines, metrics.font_size, self.spare_compacts.pop());
             // Text that is not drawn keeps no glyphs it can be measured without.
             let detached = need == Need::Detached && compact.is_some();
             let entry = Entry {
@@ -731,7 +746,7 @@ impl TextCache {
                 // A hash collision: the newer text wins.
                 self.shaped_bytes -= old.shaped_bytes();
                 self.compact_bytes -= old.compact_bytes();
-                self.recycle(old.lines);
+                self.retire(old);
             }
             if detached {
                 return hash;
@@ -834,6 +849,7 @@ impl TextCache {
             .flatten();
         if let Some((shared, hash)) = donor {
             let entry = self.remove(hash);
+            self.retire_compact(entry.compact);
             let old = entry.lines.expect("donor lines");
             for (line, old) in lines.iter_mut().zip(old).take(shared) {
                 if old.shape_opt().is_some() {
@@ -861,7 +877,7 @@ impl TextCache {
         };
         for hash in extended {
             let entry = self.remove(hash);
-            self.recycle(entry.lines);
+            self.retire(entry);
         }
         (lines, metrics)
     }
@@ -872,9 +888,27 @@ impl TextCache {
         self.recent.retain(|recent| *recent != hash);
         entry
     }
+    /// Keep a dropped text's lines and measurements for new texts.
+    fn retire(&mut self, entry: Entry) {
+        self.recycle(entry.lines);
+        self.retire_compact(entry.compact);
+    }
+    fn retire_compact(&mut self, compact: Option<Compact>) {
+        if let Some(compact) = compact
+            && self.spare_compacts.len() < SPARE_LINES
+        {
+            let (mut words, mut glyphs) = (compact.words, compact.glyphs);
+            words.clear();
+            glyphs.clear();
+            self.spare_compacts.push((words, glyphs));
+        }
+    }
     /// Keep `lines` for new texts to shape into.
     fn recycle(&mut self, lines: Option<Vec<BufferLine>>) {
-        for line in lines.into_iter().flatten() {
+        let Some(mut lines) = lines else {
+            return;
+        };
+        for line in lines.drain(..) {
             let len = line.text().len();
             if len <= SPARE_TEXT && self.spare.len() < SPARE_LINES {
                 self.spare.push(line);
@@ -885,12 +919,20 @@ impl TextCache {
                 self.spare_long.push(line);
             }
         }
+        // A one-line text's list: most texts are one line.
+        if lines.capacity() == 1 && self.spare_lists.len() < SPARE_LINES {
+            self.spare_lists.push(lines);
+        }
     }
     /// Spare lines for a text of `text`'s lines: long ones for long lines.
     fn spare_for(&mut self, text: &str) -> Vec<BufferLine> {
         let lines = text.bytes().filter(|byte| *byte == b'\n').count() + 1;
         let long = text.len() > lines * SPARE_TEXT;
-        let mut taken = Vec::with_capacity(lines);
+        let mut taken = match lines {
+            1 => self.spare_lists.pop().unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        taken.reserve(lines);
         for pool in if long {
             [&mut self.spare_long, &mut self.spare]
         } else {
@@ -930,7 +972,7 @@ impl TextCache {
                 let entry = self.entries.remove(&hash).expect("listed");
                 self.shaped_bytes -= entry.shaped_bytes();
                 self.compact_bytes -= entry.compact_bytes();
-                self.recycle(entry.lines);
+                self.retire(entry);
             }
             self.recent.retain(|hash| self.entries.contains_key(hash));
         }
