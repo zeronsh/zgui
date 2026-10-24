@@ -3787,7 +3787,7 @@ impl Drop for Host {
 /// they go now, while what they observe is still there.
 #[cfg(target_os = "macos")]
 fn detach_metal_layers(window: &Window) {
-    use objc2::runtime::{AnyClass, NSObjectProtocol};
+    use objc2::runtime::AnyClass;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let Ok(handle) = window.window_handle() else {
         return;
@@ -3801,15 +3801,24 @@ fn detach_metal_layers(window: &Window) {
     // SAFETY: winit's handle names its window's live view, on the main
     // thread (hosts are dropped there).
     let view = unsafe { handle.ns_view.cast::<objc2_app_kit::NSView>().as_ref() };
-    let Some(layer) = view.layer() else {
-        return;
-    };
-    // SAFETY: CALayer's own sublayer list; removing one only detaches it.
-    let sublayers = unsafe { layer.sublayers() };
-    for sublayer in sublayers.iter().flat_map(|list| list.iter()) {
-        if sublayer.isKindOfClass(metal) {
-            sublayer.removeFromSuperlayer();
-        }
+    if let Some(layer) = view.layer() {
+        remove_sublayers(&layer, metal);
+    }
+}
+/// Take `layer`'s sublayers of `class` out of it.
+#[cfg(target_os = "macos")]
+fn remove_sublayers(layer: &objc2_quartz_core::CALayer, class: &objc2::runtime::AnyClass) {
+    use objc2::runtime::NSObjectProtocol;
+    // SAFETY: CALayer's own sublayer list. It is the layer's live list
+    // (each removal changes it, which its enumeration may not see), so
+    // those going are gathered first.
+    let going: Vec<_> = unsafe { layer.sublayers() }
+        .iter()
+        .flat_map(|list| list.iter())
+        .filter(|sublayer| sublayer.isKindOfClass(class))
+        .collect();
+    for sublayer in going {
+        sublayer.removeFromSuperlayer();
     }
 }
 struct WindowManager {
@@ -5718,6 +5727,34 @@ mod tests {
         };
         event_loop.run_app(&mut probe).unwrap();
         assert!(probe.completed);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_closing_windows_metal_layers_leave_its_view_alone() {
+        use objc2::{ClassType, msg_send, rc::Retained, runtime::AnyClass};
+        use objc2_quartz_core::CALayer;
+        let metal = AnyClass::get(c"CAMetalLayer").unwrap();
+        let host = CALayer::new();
+        let other = CALayer::new();
+        // Metal layers on both sides of another: each removal shifts the
+        // list under its enumeration.
+        for index in 0..3 {
+            let sublayer: Retained<CALayer> = if index == 1 {
+                other.clone()
+            } else {
+                // SAFETY: CAMetalLayer is a CALayer, made by `new`.
+                unsafe { msg_send![metal, new] }
+            };
+            host.addSublayer(&sublayer);
+        }
+        super::remove_sublayers(&host, metal);
+        let left: Vec<_> = unsafe { host.sublayers() }
+            .unwrap()
+            .iter()
+            .map(|layer| layer.class() == CALayer::class())
+            .collect();
+        assert_eq!(left, [true]);
     }
 
     #[test]
