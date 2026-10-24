@@ -157,6 +157,48 @@ jobs:
           path: |
             ${{ runner.temp }}/zgui-vulkan-tests.log
             /tmp/zgui-*
+  # Exact instruction counts (cachegrind) of the CPU-only headless scenes
+  # against the PR's base, as a PR comment; more than +1% fails. On main,
+  # against the commit before (no failure), which also keeps its cache.
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Packages
+        timeout-minutes: 10
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update -qq -o Acquire::Retries=3
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends valgrind cmake pkg-config fonts-dejavu-core libdbus-1-dev libfontconfig1-dev libwayland-dev libxcb1-dev libxkbcommon-dev libxrandr-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: perf
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Instruction counts
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          status=0
+          python3 scripts/perf/gate.py "$BASE" --markdown perf.md || status=$?
+          if [ "${{ github.event_name }}" != pull_request ]; then status=0; fi
+          cat perf.md >> "$GITHUB_STEP_SUMMARY" || true
+          echo "status=$status" >> "$GITHUB_ENV"
+      - name: Comment
+        if: github.event_name == 'pull_request' && hashFiles('perf.md') != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file perf.md
+      - name: Gate
+        run: exit "$status"
   macos:
     runs-on: macos-latest
     timeout-minutes: 30
