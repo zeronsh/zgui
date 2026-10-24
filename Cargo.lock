@@ -4465,6 +4465,7 @@ dependencies = [
  "dbus-crossroads",
  "dispatch2",
  "fontdue",
+ "image",
  "libc",
  "libloading",
  "muda",

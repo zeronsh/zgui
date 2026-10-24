@@ -126,6 +126,10 @@ tungstenite = { version = "0.30", default-features = false, features = ["handsha
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# The icon theme test's PNGs (linux_icon.rs); zgui-gpu's version.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 objc2-core-foundation = "0.3.2"
 objc2-core-video = "0.3.2"

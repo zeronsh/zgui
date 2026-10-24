@@ -177,6 +177,20 @@ an app did not start ("Failed to create surface for any enabled backend").
 The GL instance is made only once Vulkan finds no driver, so a Vulkan system
 loads no EGL. `gl_fallback_smoke.py` draws the gallery both ways.
 
+## Window icons
+
+On X11 a window carries its app's icon (`_NET_WM_ICON`, which taskbars,
+docks and window switchers show), from the icon theme by the app's
+application id (`Application::application_id`) or else its executable's
+name, as GTK takes a window's default icon from the program's name: the
+hicolor theme under `$XDG_DATA_HOME` and `$XDG_DATA_DIRS`, a 64 pixel PNG
+first, then other sizes, then the scalable SVG drawn at 64, then `pixmaps`.
+It is looked up and decoded once. Desktops that match windows to an
+installed desktop file by its class show that file's icon anyway; this one
+shows for an app run with none installed, and where a panel reads the
+window's own. On Wayland the compositor takes the desktop file's icon, and
+a window has none of its own. `window_icon_smoke.py` checks it.
+
 ## Resizing on X11
 
 A window manager resizing a zgui window waits for each frame

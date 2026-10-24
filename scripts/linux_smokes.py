@@ -65,6 +65,7 @@ SMOKES = [
     ("drag-windows", "python3 scripts/drag_windows_smoke.py {bin} --output {out}", False),
     ("window-frames", "python3 scripts/window_frames_smoke.py {bin}/window_probe --output {out}", False),
     ("resize-sync", "python3 scripts/resize_sync_smoke.py {bin}/window_probe --output {out}", False),
+    ("window-icon", "python3 scripts/window_icon_smoke.py {bin}/window_probe --output {out}", False),
     ("xdnd-source", "python3 scripts/xdnd_source_smoke.py {bin} --output {out}", False),
     ("wayland-drag-out", "python3 scripts/wayland_drag_out_smoke.py {bin} --output {out}", False),
     ("zenity-dialog", "python3 scripts/zenity_dialog_smoke.py {bin}/platform_services --output {out}", False),

@@ -682,6 +682,8 @@ impl Application {
     /// macOS owns GetURL, OpenDocuments, and Reopen AppleEvent routes for the
     /// event loop lifetime while preserving its NSApplication delegate. Do not
     /// install competing handlers for these routes while this service is active.
+    /// On Linux it is also the windows' Wayland app_id and X11 class, and on
+    /// X11 the name of their icon in the icon theme (else the executable's).
     pub fn application_id(
         mut self,
         id: impl Into<String>,
@@ -2158,6 +2160,17 @@ impl Host {
                 None => window
                     .request_inner_size(LogicalSize::new(self.options.width, self.options.height)),
             };
+        }
+        // X11: the app's icon from the icon theme (Wayland's compositor
+        // takes its desktop file's).
+        #[cfg(target_os = "linux")]
+        if window.display_handle().is_ok_and(|handle| {
+            matches!(
+                handle.as_raw(),
+                RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
+            )
+        }) {
+            crate::linux_icon::apply(&window, self.context.windows.application_id.as_deref());
         }
         // X11 shows a window past its screen; the app's own bounds stand.
         #[cfg(target_os = "linux")]

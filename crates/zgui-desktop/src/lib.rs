@@ -26,6 +26,8 @@ pub mod file_dialog;
 #[cfg(target_os = "linux")]
 mod linux_dbus;
 #[cfg(target_os = "linux")]
+mod linux_icon;
+#[cfg(target_os = "linux")]
 mod linux_spelling;
 #[cfg(target_os = "linux")]
 mod linux_zenity;
