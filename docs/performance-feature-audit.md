@@ -98,3 +98,30 @@ python3 scripts/windowserver_alternate.py 60 path/to/app
 
 Run them on a quiet desktop, with nothing else drawing. The terminal needs
 Accessibility access, so the pair script can place the windows.
+
+## The heavy dashboard's malloc fragmentation (macOS)
+
+What the heavy dashboard's malloc zones hold beyond their live allocations
+(`vmmap -summary`: dirty less allocated) is about 8 MiB, windowed and
+headless alike (2026-10-24). Investigated and closed:
+
+- About 2.5 MiB are holes in pages that still hold live objects: 135–160
+  pages under half full, as many before and after the memory work of
+  #354–#361 and #373. Survivors spread thin across many size classes keep
+  them resident (1,536, 768, 512, 384 and 3,584 bytes, and small blocks), so
+  no one allocator stands out.
+- The rest is the allocator's own resident slack: size-class rounding and
+  chunks kept for reuse. `malloc_zone_pressure_relief` after startup frees
+  nothing, and mimalloc holds about 1 MB more, not less.
+- Fewer live allocations do not bring footprint down one for one: #354–#361
+  cut the live heap by 3.3 MiB and fragmentation rose by 2.1, so footprint
+  fell by about 1 MB.
+- `heavy_headless` reads its frame back every 60 ticks to settle the GPU, a
+  15.6 MiB allocation per readback: a burst of the benchmark's own, which the
+  windowed app never makes and which the large-allocation path frees whole.
+
+Page occupancy came from `heap --addresses=all --noContent` (live blocks and
+their sizes, grouped by 16 KB page). Under `MallocStackLogging` macOS uses
+other size classes and `malloc_history -allBySize` lists VM mappings too
+(a fallback font's clean mapping once read as heap), so attribute sizes
+without it.
