@@ -93,3 +93,15 @@ there; the one-field change is all it needs.
 `ShapeLine::build` sliced every glyph's text to see whether it was a tab
 before laying out tab stops. It now looks only in a line that has a tab
 (one byte search); `check/` finds every layout identical.
+
+## A cached word is looked up without comparing attributes
+
+Every word shaped looked its run up in the shape run cache, and each
+lookup compared the line's default attributes with the reused key's (a
+whole `Attrs`, a family name among them), queried the attribute spans
+even when there were none, and on a hit compared the key's attributes
+again, whole; a miss cloned them, family string included. Now the cache
+gives each set of default attributes an id (`ShapeRunCache::intern`) that
+keys compare and hash, keeping the attributes behind an `Arc`; a line's
+words check its defaults once (`ShapeBuffer::run_key_line`); and an empty
+span map is not queried. `check/` finds every layout identical.

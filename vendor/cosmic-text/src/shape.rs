@@ -110,6 +110,11 @@ pub struct ShapeBuffer {
     /// allocating one per word.
     #[cfg(feature = "shape-run-cache")]
     run_key: Option<crate::ShapeRunKey>,
+    /// zgui patch: the attribute list `run_key`'s defaults were last found
+    /// to be (its address) while one line is shaped: its words need not
+    /// compare them again. 0 outside `ShapeLine::build`.
+    #[cfg(feature = "shape-run-cache")]
+    run_key_line: usize,
 
     /// Buffer for sets of layout glyphs.
     glyph_sets: Vec<Vec<LayoutGlyph>>,
@@ -468,17 +473,31 @@ fn shape_run_cached(
         Some(mut key) => {
             key.text.clear();
             key.text.push_str(&line[run_range.clone()]);
-            if key.default_attrs.as_attrs() != defaults {
-                key.set_defaults(AttrsOwned::new(&defaults));
+            // Checked once a line: its attribute list is the same for every word.
+            let list = core::ptr::from_ref(attrs_list) as usize;
+            if font_system.shape_buffer.run_key_line != list {
+                if key.default_attrs.as_attrs() != defaults {
+                    key.set_defaults(AttrsOwned::new(&defaults), &mut font_system.shape_run_cache);
+                }
+                font_system.shape_buffer.run_key_line = list;
             }
             key.attrs_spans.clear();
             key
         }
-        None => ShapeRunKey::new(line[run_range.clone()].to_string(), AttrsOwned::new(&defaults)),
+        None => ShapeRunKey::new(
+            line[run_range.clone()].to_string(),
+            AttrsOwned::new(&defaults),
+            &mut font_system.shape_run_cache,
+        ),
     };
     key.rtl = span_rtl;
-    for (attrs_range, attrs) in attrs_list.spans.overlapping(&run_range) {
-        if attrs == &key.default_attrs {
+    // zgui patch: most text has no spans: no range query to find none.
+    let spans = (!attrs_list.spans.is_empty())
+        .then(|| attrs_list.spans.overlapping(&run_range))
+        .into_iter()
+        .flatten();
+    for (attrs_range, attrs) in spans {
+        if attrs == &*key.default_attrs {
             // Skip if attrs matches default attrs
             continue;
         }
@@ -1413,6 +1432,10 @@ impl ShapeLine {
         // Without this, reusing a ShapeLine from a previous text (via Cached::Unused)
         // would keep an ellipsis shaped with the old attrs.
         self.ellipsis_span = None;
+        #[cfg(feature = "shape-run-cache")]
+        {
+            font_system.shape_buffer.run_key_line = 0;
+        }
 
         let mut spans = mem::take(&mut self.spans);
 
@@ -1527,6 +1550,10 @@ impl ShapeLine {
 
         // Return the buffer for later reuse.
         font_system.shape_buffer.spans = cached_spans;
+        #[cfg(feature = "shape-run-cache")]
+        {
+            font_system.shape_buffer.run_key_line = 0;
+        }
     }
 
     /// zgui patch: the ellipsis is shaped when a layout ellipsizes
