@@ -102,6 +102,8 @@ python3 scripts/linux_smokes.py --jobs 4              # all of them
 python3 scripts/linux_smokes.py --only wayland --only primary
 ```
 
+CI builds only the examples the probes run (`linux_smokes.py --fixtures` prints them as `cargo build` flags: every `{bin}/name` in a probe's command, and `FIXTURES`, those a probe runs by name from the examples directory). A probe that starts another example by name adds it to `FIXTURES`.
+
 CI runs on every push to main and every pull request (`.github/workflows/ci.yml`): a Linux job (fmt, stylua, clippy, `zgui lint` and `zgui check` over every example script, unit and doc tests (zgui-script's included), Vulkan rendering tests on llvmpipe, then every native probe above, four at a time), a macOS job (clippy, tests, Metal rendering and readback, component window lifecycle) and a Windows job (check, core and bundle tests, Direct3D 12 border and transform pixel tests on WARP). Probes wait for what they drive (the window manager, IBus's XIM server and engine, a mapped window) rather than sleeping, so a loaded runner slows them without failing them.
 
 ## Platform coverage

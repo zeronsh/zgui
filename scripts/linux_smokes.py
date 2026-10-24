@@ -10,6 +10,7 @@ timed-out probe fails the run after all the others finish; nothing is retried.
 import argparse
 import os
 import pathlib
+import re
 import select
 import shutil
 import signal
@@ -112,6 +113,25 @@ SMOKES = [
     ("readonly-ime", "python3 scripts/external_ime_smoke.py {bin}/external_ime --read-only-test --output {out}", False),
 ]
 
+# Examples probes run by name rather than as `{bin}/name` in their command
+# (the shader warm-up's, and those of probes given the examples directory).
+FIXTURES = ("windows", "drag_probe", "tab_windows", "submenus", "gallery", "kitchen_sink", "paint_styles",
+            "canvas", "svg_transform", "animated_image")
+
+
+def fixtures():
+    """Every zgui-desktop example a probe runs: what CI builds for them, as
+    `cargo build` flags. Each must be an example."""
+    names = set(FIXTURES)
+    for _, command, _ in SMOKES:
+        names.update(re.findall(r"\{bin\}/([a-z_0-9]+)", command))
+    examples = pathlib.Path(__file__).resolve().parent.parent / "crates/zgui-desktop/examples"
+    missing = [name for name in names if not (examples / f"{name}.rs").exists() and not (examples / name).is_dir()]
+    if missing:
+        raise SystemExit(f"probes run examples that do not exist: {sorted(missing)}")
+    return " ".join(f"--example {name}" for name in sorted(names))
+
+
 # Seconds each probe took on a 4-vCPU runner; the slowest start first so the
 # pool drains evenly. Unlisted probes count as 10.
 COST = {
@@ -183,7 +203,12 @@ def main():
     parser.add_argument("--timeout", type=float, default=180, help="seconds per probe")
     parser.add_argument("--only", action="append", help="run probes whose name contains this")
     parser.add_argument("--list", action="store_true")
+    parser.add_argument("--fixtures", action="store_true",
+                        help="print the cargo build flags for the examples the probes run, and exit")
     args = parser.parse_args()
+    if args.fixtures:
+        print(fixtures())
+        return
     smokes = [s for s in SMOKES if not args.only or any(part in s[0] for part in args.only)]
     if args.list:
         print("\n".join(name for name, _, _ in smokes))

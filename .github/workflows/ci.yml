@@ -134,8 +134,11 @@ jobs:
       - name: Build native fixtures
         id: native-fixtures
         if: ${{ !cancelled() }}
+        # The examples the probes run, not every example (the test step
+        # already compiled every one, as a test).
         run: |
-          cargo build -p zgui-desktop --examples --locked
+          fixtures=$(python3 scripts/linux_smokes.py --fixtures)
+          cargo build -p zgui-desktop $fixtures --locked
           cargo test -p zgui-desktop --lib --no-run --locked
       # X11, Wayland, IME, clipboard, DPI, accessibility and input probes. Each
       # owns its display or compositor, so they run side by side; every probe
