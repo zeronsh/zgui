@@ -1619,6 +1619,8 @@ pub struct GpuRenderer {
     direct_frames: u64,
     /// Frames encoded with Metal directly (`render_direct`).
     metal_frames: u64,
+    /// Of those, frames drawn through a stencil of their damage.
+    stamped_frames: u64,
     /// Work encoded at presentation (single-pass frames), reported with the
     /// next `render`'s statistics.
     present_stats: GpuStats,
@@ -1627,6 +1629,10 @@ pub struct GpuRenderer {
     /// A text partly in its clip makes quads for its visible lines alone
     /// (`debug_cull_glyphs`).
     cull_glyphs: bool,
+    /// Frames drawn directly may draw through a stencil of their damage
+    /// (`debug_stencil`).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    stencil: bool,
     bind: wgpu::BindGroup,
     blit: Option<wgpu::RenderPipeline>,
     blit_bind: Option<wgpu::BindGroup>,
@@ -1997,6 +2003,7 @@ impl GpuRenderer {
             view,
             split_shading,
             cull_glyphs: true,
+            stencil: true,
             bind,
             blit,
             blit_bind,
@@ -2022,6 +2029,7 @@ impl GpuRenderer {
             copy_present,
             single_pass_frames: 0,
             direct_frames: 0,
+            stamped_frames: 0,
             metal_frames: 0,
             present_stats: GpuStats::default(),
             atlas,
@@ -2769,6 +2777,9 @@ impl GpuRenderer {
         let has_blur = items
             .iter()
             .any(|item| item.effects.opacity > 0. && item.effects.blur_radius > 0.);
+        // The damage as reported, before regions group it (see `stamp`).
+        #[cfg(target_os = "macos")]
+        let reported = damage;
         // Reconstruct every sampled backdrop pixel before replaying filters. A
         // dependency can reach another filter, so expand to a fixed point.
         let damage = if self.fresh {
@@ -3925,6 +3936,23 @@ impl GpuRenderer {
         for (_, (_, _, w, h)) in &regions {
             stats.damaged_pixels += u64::from(*w) * u64::from(*h);
         }
+        // Regions group damage all over a window into a few around it, and
+        // redraw all of each: drawn directly, such a frame stamps the damage's
+        // own rectangles into a stencil and draws through it, so the GPU
+        // shades only what changed (`metal_frame::Stenciled`). Only where the
+        // rectangles leave much of the regions untouched: the stamp is a draw.
+        #[cfg(target_os = "macos")]
+        let stamp = if self.stencil && !self.fresh && !has_blur && reported.len() > 1 {
+            let area = |r: &Rect| r.width * r.height;
+            // Overlaps count twice, rounding not at all: about right.
+            let stamped: f32 = reported.iter().map(area).sum();
+            let grouped: f32 = regions.iter().map(|(region, _)| area(region)).sum();
+            (stamped < STAMP_SHARE * grouped
+                && (grouped - stamped) * self.scale * self.scale >= STAMP_PIXELS)
+                .then_some(reported)
+        } else {
+            None
+        };
         // What this frame changes in the retained target, for surfaces that
         // must catch up later (`begin_layer_frame`).
         #[cfg(target_os = "macos")]
@@ -4080,8 +4108,21 @@ impl GpuRenderer {
         {
             let catch_up = catch_up.map(|(_, instances)| instances);
             let effects = (&effect_jobs[..], effect_first);
+            // Through a stencil: no filters or shader fills (no pipelines
+            // of theirs take one).
+            let stamp = stamp.filter(|_| {
+                batches.is_empty()
+                    && !draws
+                        .iter()
+                        .any(|draw| matches!(draw.shading, Shading::Fill(_)))
+                    && self
+                        .metal_frame
+                        .get()
+                        .and_then(Option::as_ref)
+                        .is_some_and(metal_frame::MetalFrame::stencils)
+            });
             return Ok(self.render_direct(
-                quads, draws, &regions, &batches, catch_up, shown, effects, &clips, stats,
+                quads, draws, &regions, &batches, catch_up, shown, effects, &clips, stamp, stats,
             ));
         }
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -4343,9 +4384,19 @@ impl GpuRenderer {
         shown: Option<usize>,
         (effect_jobs, effect_first): (&[effects::Job], u32),
         clips: &[Region],
+        stamp: Option<&[Rect]>,
         mut stats: GpuStats,
     ) -> GpuStats {
         let _span = zgx::profile::span(zgx::profile::Phase::Encode);
+        // The stamp's rectangles after the quads, each with the background
+        // it clears to (its vertex shader rounds them out to whole pixels).
+        let background = quads[0].color;
+        let stamp: Option<Vec<[[f32; 4]; 2]>> = stamp.map(|rects| {
+            rects
+                .iter()
+                .map(|r| [[r.x, r.y, r.width, r.height], background])
+                .collect()
+        });
         let vertices = {
             use objc2::Message;
             let mapped = self
@@ -4353,7 +4404,11 @@ impl GpuRenderer {
                 .as_mut()
                 .expect("checked by the caller")
                 .get_mut();
-            let (_, allocated) = mapped.write(bytemuck::cast_slice(&quads));
+            let parts = [
+                bytemuck::cast_slice(&quads),
+                stamp.as_deref().map_or(&[][..], bytemuck::cast_slice),
+            ];
+            let (_, allocated) = mapped.write_parts(&parts);
             stats.vertex_buffer_allocations += usize::from(allocated);
             self.vertex_capacity = mapped.bytes();
             mapped.last_metal().retain()
@@ -4418,11 +4473,17 @@ impl GpuRenderer {
                 self.viewport_values,
                 bytemuck::cast_slice(clips),
                 &effect_passes,
+                stamp.is_some(),
             );
             let present = self.layer_present.as_ref();
             if let (Some(instances), Some(present), Some(shown)) = (catch_up, present, shown) {
                 pass.texture(&present.buffers[shown].0.metal);
                 pass.copies(frame, instances);
+                stats.draw_calls += 1;
+            }
+            if let Some(rects) = &stamp {
+                self.stamped_frames += 1;
+                pass.stamp(frame, quads.len() * size_of::<Quad>(), rects.len());
                 stats.draw_calls += 1;
             }
             pass.texture(&atlas);
@@ -4450,7 +4511,8 @@ impl GpuRenderer {
                 }
                 for (index, (region, region_scissor)) in regions.iter().enumerate() {
                     pass.scissor(*region_scissor);
-                    if segment == 0 && first[index] == 0 {
+                    // (A stamp cleared what the regions would.)
+                    if segment == 0 && first[index] == 0 && stamp.is_none() {
                         pass.quads(frame, clear, true, 0..1);
                         stats.draw_calls += 1;
                     }
@@ -6376,10 +6438,19 @@ impl GpuRenderer {
     pub fn debug_metal_frames(&self) -> u64 {
         self.metal_frames
     }
+    /// Of those, frames drawn through a stencil of their damage.
+    pub fn debug_stamped_frames(&self) -> u64 {
+        self.stamped_frames
+    }
     /// Test hook: draw plain quads with the basic shader, or every quad with
     /// the full shader.
     pub fn debug_split_shading(&mut self, split: bool) {
         self.split_shading = split;
+    }
+    /// Test hook: let frames drawn directly draw through a stencil of their
+    /// damage where it pays (the default), or never.
+    pub fn debug_stencil(&mut self, stencil: bool) {
+        self.stencil = stencil;
     }
     /// Test hook: make quads for the lines of a text partly in its clip
     /// alone (the default), or for all of them.
@@ -7598,6 +7669,16 @@ fn push_panel(quads: &mut Vec<Quad>, quad: Quad, scale: f32, split: bool) {
 /// Nodes `shaped_like` remembers at most by what they show: past it, it
 /// starts again.
 const SHAPED_LIKE: usize = 4096;
+
+/// A frame draws through a stencil of its damage (`stamp`) only when the
+/// damage's rectangles cover less than this share of its regions, and
+/// leave at least this many device pixels of them unshaded: the stamp and
+/// the stencil cost the CPU a draw's worth, which a small animation's few
+/// pixels don't repay.
+#[cfg(target_os = "macos")]
+const STAMP_SHARE: f32 = 0.8;
+#[cfg(target_os = "macos")]
+const STAMP_PIXELS: f32 = 100_000.;
 /// Panels split only with an interior of at least this many logical pixels:
 /// below, five quads cost more than shading one.
 const PANEL_INTERIOR: f32 = 1024.;

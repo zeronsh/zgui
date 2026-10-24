@@ -139,3 +139,14 @@ fn basic(v:Basic)->vec4<f32> {
 }
 @fragment fn fs_basic(v:Basic)->@location(0) vec4<f32> { return basic(v); }
 @fragment fn fs_basic_both(v:Basic)->Both { let c=basic(v); return Both(c,c); }
+// A frame's stencil stamp (metal_frame.rs): a damage rectangle (logical
+// units), its edges out to whole pixels, cleared to the frame's background
+// (the colour its regions' clears would write there).
+struct Stamp { @builtin(position) position:vec4<f32>, @location(0) @interpolate(flat) color:vec4<f32> }
+@vertex fn vs_stamp(@location(0) rect:vec4<f32>,@location(1) color:vec4<f32>,@builtin(vertex_index) i:u32)->Stamp {
+ let corner=vec2(f32(i&1u),f32(i>>1u));
+ let s=viewport.z; let low=floor(rect.xy*s)/s; let high=ceil((rect.xy+rect.zw)*s)/s;
+ let p=low+corner*(high-low);
+ var o:Stamp; o.position=vec4(p.x/viewport.x*2.-1.,1.-p.y/viewport.y*2.,0.,1.); o.color=color; return o;
+}
+@fragment fn fs_stamp(v:Stamp)->@location(0) vec4<f32> { return vec4(v.color.rgb*v.color.a,v.color.a); }

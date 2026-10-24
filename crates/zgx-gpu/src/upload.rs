@@ -53,13 +53,9 @@ impl MappedRing {
             last: 0,
         }
     }
-    /// Copy `bytes` into a CPU-written vertex buffer and return it, ready
-    /// for the GPU. The second value reports a new allocation.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn write(&mut self, bytes: &[u8]) -> (wgpu::Buffer, bool) {
-        self.write_parts(&[bytes])
-    }
-    /// `write` for bytes in parts, one after another.
+    /// Copy `parts`, one after another, into a CPU-written vertex buffer
+    /// and return it, ready for the GPU. The second value reports a new
+    /// allocation.
     pub(crate) fn write_parts(&mut self, parts: &[&[u8]]) -> (wgpu::Buffer, bool) {
         let len = parts.iter().map(|part| part.len() as u64).sum::<u64>();
         let mut index = self.ready(len);
