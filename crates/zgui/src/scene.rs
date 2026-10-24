@@ -900,6 +900,18 @@ impl Default for Style {
 /// than one branch each: restyles compare a node's whole style every time.
 impl PartialEq for Style {
     fn eq(&self, other: &Self) -> bool {
+        self.eq_except_box(other)
+            && self.width == other.width
+            && self.height == other.height
+            && self.width_percent == other.width_percent
+            && self.height_percent == other.height_percent
+            && self.margin == other.margin
+    }
+}
+impl Style {
+    /// Whether `self` and `other` are equal but for their box (width,
+    /// height, their percentages and margins: what a growing bar changes).
+    fn eq_except_box(&self, other: &Self) -> bool {
         // Destructured so that a new field cannot be left out.
         let Style {
             layout_options,
@@ -907,10 +919,10 @@ impl PartialEq for Style {
             relative,
             intrinsic_width,
             intrinsic_height,
-            width,
-            height,
-            width_percent,
-            height_percent,
+            width: _,
+            height: _,
+            width_percent: _,
+            height_percent: _,
             padding,
             padding_edges,
             gap,
@@ -925,7 +937,7 @@ impl PartialEq for Style {
             max_width,
             min_height,
             max_height,
-            margin,
+            margin: _,
             flex_grow,
             flex_shrink,
             align,
@@ -944,10 +956,6 @@ impl PartialEq for Style {
             & (*align == other.align)
             & (*justify == other.justify);
         flags
-            && *width == other.width
-            && *height == other.height
-            && *width_percent == other.width_percent
-            && *height_percent == other.height_percent
             && *padding == other.padding
             && *padding_edges == other.padding_edges
             && *gap == other.gap
@@ -959,7 +967,6 @@ impl PartialEq for Style {
             && *max_width == other.max_width
             && *min_height == other.min_height
             && *max_height == other.max_height
-            && *margin == other.margin
             && *flex_grow == other.flex_grow
             && *flex_shrink == other.flex_shrink
             && *text_options == other.text_options
@@ -3437,6 +3444,52 @@ impl Scene {
     /// Change `id`'s layout style, invalidating its layout.
     pub fn set_style(&mut self, id: NodeId, style: Style) {
         self.restyle(id, style, true);
+    }
+    /// `set_style` for a style that may differ from `id`'s only in its box
+    /// (width, height, their percentages and margins: a bar growing every
+    /// frame): those set and its layout redone, without the style copied
+    /// or each of its fields weighed for what it repaints. Any other
+    /// difference takes `set_style`.
+    pub(crate) fn set_box(&mut self, id: NodeId, style: &Style) {
+        let node = self.node(id);
+        let old = &node.style;
+        if (self.contents_count > 0 && node.contents)
+            || !laid_out_as_given(style, self.way(id))
+            || !match (&old.layout_options, &style.layout_options) {
+                (Some(old), Some(new)) => Arc::ptr_eq(old, new),
+                (old, new) => old.is_none() && new.is_none(),
+            }
+            || !old.eq_except_box(style)
+        {
+            self.set_style(id, style.clone());
+            return;
+        }
+        let same = old.width == style.width
+            && old.height == style.height
+            && old.width_percent == style.width_percent
+            && old.height_percent == style.height_percent
+            && old.margin == style.margin;
+        if !self.given_styles.is_empty() {
+            self.given_styles.remove(&id);
+        }
+        if same {
+            return;
+        }
+        let old = &mut self.node_mut(id).style;
+        old.width = style.width;
+        old.height = style.height;
+        old.width_percent = style.width_percent;
+        old.height_percent = style.height_percent;
+        old.margin = style.margin;
+        self.invalidate_layout(id);
+        // A contents parent lays out as its last child.
+        if self.contents_count > 0
+            && let Some(parent) = self.node(id).parent
+            && self.node(parent).contents
+            && self.node(parent).children.last() == Some(&id)
+        {
+            self.sync_contents(parent);
+        }
     }
     /// `set_style` for a contents node: keep `style` as its own, and lay it
     /// out as its last child in its place.
@@ -8354,6 +8407,63 @@ fn own_visible(style: &Style) -> bool {
     })
 }
 
+#[cfg(test)]
+mod set_box_tests {
+    use super::*;
+    /// Two scenes, one restyled by `set_style` and one by `set_box`: the
+    /// same styles, layout, damage and boxes.
+    fn both(change: impl Fn(&mut Style)) {
+        let style = Style {
+            width: Some(40.),
+            height: Some(10.),
+            padding: 2.,
+            ..Default::default()
+        };
+        let mut scenes = [Scene::new(200., 200.), Scene::new(200., 200.)];
+        let ids = scenes.each_mut().map(|scene| {
+            let column = scene.append(
+                scene.root(),
+                NodeKind::Container(Layout::Column),
+                Default::default(),
+            );
+            let bar = scene.append(column, NodeKind::Rect(Color(1, 2, 3, 255)), style.clone());
+            let after = scene.append(column, NodeKind::Rect(Color(1, 2, 3, 255)), style.clone());
+            scene.flush();
+            (bar, after)
+        });
+        let mut next = style.clone();
+        change(&mut next);
+        scenes[0].set_style(ids[0].0, next.clone());
+        scenes[1].set_box(ids[1].0, &next);
+        let laid = scenes.each_mut().map(|scene| scene.flush());
+        assert_eq!(laid[0].layout_nodes, laid[1].layout_nodes);
+        assert_eq!(laid[0].damage, laid[1].damage);
+        let [by_style, by_box] = [0, 1].map(|i| {
+            let (scene, (bar, after)) = (&scenes[i], ids[i]);
+            (scene.style(bar), scene.bounds(bar), scene.bounds(after))
+        });
+        assert_eq!(by_style, by_box);
+        assert_eq!(by_box.0, next);
+    }
+    #[test]
+    fn a_box_resized_by_set_box_lays_out_as_by_set_style() {
+        both(|style| style.height = Some(25.));
+        both(|style| {
+            style.margin = Insets {
+                top: 3.,
+                left: 4.,
+                ..Default::default()
+            }
+        });
+    }
+    #[test]
+    fn set_box_with_any_other_change_restyles_in_full() {
+        both(|style| {
+            style.height = Some(25.);
+            style.padding = 6.;
+        });
+    }
+}
 #[cfg(test)]
 mod cursor_count_tests {
     use super::*;

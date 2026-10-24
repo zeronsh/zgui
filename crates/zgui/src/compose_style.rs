@@ -806,7 +806,7 @@ pub(crate) fn mount_style_with_intrinsic(
                     }
                     set_sizes(then, sizes(now));
                     patch_sizes(style, next);
-                    ui.scene.borrow_mut().set_style(node, style.clone());
+                    ui.scene.borrow_mut().set_box(node, style);
                 }
                 // The paint written last time, from the same inputs.
                 // Resized with no dynamic paint, as last time: nothing to write.
