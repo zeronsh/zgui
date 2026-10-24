@@ -45,7 +45,7 @@ ui.write_file(file: File | string, text: string) -> Promise<nil>
 | `ui.use_state(initial)` | the component instance | a new state per instance; only inside a component's function (or an `each` row, `presence` content, a `list` row) |
 | `ui.computed(f)` | what built it | derived: `f` runs now and again when what it reads changes; its value is the state's |
 
-State holds `nil`, booleans, numbers, strings, lists, string-keyed tables and elements (`state:set(el)`; Rust sees `Value::Element`, `null` as JSON). Not functions, not refs (keep the ref itself, or store `ref:get()`), and not a table that is both a list and has string keys.
+State holds `nil`, booleans, numbers, strings, lists, string-keyed tables and elements (`state:set(el)`; Rust sees `Value::Element`, `null` as JSON). Not functions, not refs (keep the ref itself, or store `ref:get()`), not a table that is both a list and has string keys, and nothing nesting more than 128 tables deep (or a table holding itself), which is an error.
 
 ### Shared state from Rust
 

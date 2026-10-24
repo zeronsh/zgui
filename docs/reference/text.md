@@ -111,7 +111,7 @@ return ui.column {
 ui.markdown(text: string, opts: MarkdownOptions?) -> { MarkdownBlock }
 ```
 
-`ui.markdown` parses markdown (CommonMark with tables, strikethrough and task lists; raw HTML dropped) into blocks for a script to draw its own way. A block has `t`: `p` (`s`: runs), `h` (`l`: level, `s`), `code` (`lang`, `text`), `ul` and `ol` (`start`, `items`: each item a list of blocks), `quote` (`b`: blocks), `hr`, `table` (`head`: cells, `rows`: rows of cells, a cell being runs) and `img` (`src`, `alt`). A tight list item's text is a `p` with `tight`. A run is `{ x = text, b?, i?, c? (code), s? (strike), a? (link), f? (a file) }`.
+`ui.markdown` parses markdown (CommonMark with tables, strikethrough and task lists; raw HTML dropped) into blocks for a script to draw its own way. A block has `t`: `p` (`s`: runs), `h` (`l`: level, `s`), `code` (`lang`, `text`), `ul` and `ol` (`start`, `items`: each item a list of blocks), `quote` (`b`: blocks), `hr`, `table` (`head`: cells, `rows`: rows of cells, a cell being runs) and `img` (`src`, `alt`). A tight list item's text is a `p` with `tight`. Quotes and lists nest 64 levels at most (a list level counts two); deeper ones show as the deepest level's blocks. A run is `{ x = text, b?, i?, c? (code), s? (strike), a? (link), f? (a file) }`.
 
 | Option | Type | Default | |
 |---|---|---|---|

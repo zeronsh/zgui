@@ -510,6 +510,13 @@ fn is_object(t: &Table) -> bool {
         .is_some_and(|kind| kind.as_bytes() == &b"object"[..])
 }
 pub(crate) fn convert(value: mlua::Value, old: Option<&Value>) -> mlua::Result<Value> {
+    convert_in(value, old, 0)
+}
+/// How many tables deep state nests at most, as serde_json's limit: deeper
+/// (or a table holding itself) would overflow the stack converting it.
+const DEPTH: u32 = 128;
+/// `convert`, `depth` tables in.
+fn convert_in(value: mlua::Value, old: Option<&Value>, depth: u32) -> mlua::Result<Value> {
     Ok(match value {
         mlua::Value::Nil => Value::Nil,
         mlua::Value::LightUserData(p) if std::ptr::eq(p.0 as *const u8, &NULL) => Value::Nil,
@@ -529,7 +536,7 @@ pub(crate) fn convert(value: mlua::Value, old: Option<&Value>) -> mlua::Result<V
                 Some(old) if *old == value => old.clone(),
                 _ => value,
             },
-            None => table(&t, old)?,
+            None => table(&t, old, depth)?,
         },
         mlua::Value::UserData(ud) if ud.is::<State>() => ud.borrow::<State>()?.0.get(),
         // `ui.raw(value, reason)` is its value; only the design lint looks.
@@ -763,10 +770,16 @@ fn raw_table(t: &Table, old: Option<&Value>) -> Option<mlua::Result<Value>> {
         Err(Unread::Error(e)) => Some(Err(mlua::Error::runtime(e))),
     }
 }
-fn table(t: &Table, old: Option<&Value>) -> mlua::Result<Value> {
+fn table(t: &Table, old: Option<&Value>, depth: u32) -> mlua::Result<Value> {
+    if depth == DEPTH {
+        return Err(mlua::Error::runtime(
+            "state nests at most 128 tables deep (does a table hold itself?)",
+        ));
+    }
     if let Some(result) = raw_table(t, old) {
         return result;
     }
+    let convert = |value, old| convert_in(value, old, depth + 1);
     let len = t.raw_len();
     let mut keyed: Vec<(String, mlua::Value)> = Vec::new();
     // One walk, unprotected per step: a computed's list of thousands of

@@ -641,3 +641,33 @@ fn a_row_written_in_a_long_list_converts_the_row_not_the_list() {
     );
     assert!(short <= 8, "a write converts {short} items");
 }
+
+#[test]
+fn a_table_nesting_thousands_deep_or_holding_itself_is_an_error_not_a_crash() {
+    let mut h = Harness::inline(
+        r#"local deep = {}
+        for _ = 1, 100000 do deep = { deep } end
+        local looped = {}
+        looped[1] = looped
+        local s = ui.state("s", 0)
+        local function tried(value)
+            local ok, e = pcall(function() s:set(value) end)
+            return if ok then "set" else tostring(e)
+        end
+        local inner = {}
+        for _ = 1, 100 do inner = { inner } end
+        return ui.column {
+            ui.text { id = "deep", tried(deep) },
+            ui.text { id = "looped", tried(looped) },
+            ui.text { id = "inner", tried(inner) },
+        }"#,
+    );
+    for id in ["deep", "looped"] {
+        assert!(
+            h.text(id).contains("nests at most 128 tables deep"),
+            "{}",
+            h.text(id)
+        );
+    }
+    assert_eq!(h.text("inner"), "set");
+}

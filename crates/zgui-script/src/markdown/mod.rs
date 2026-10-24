@@ -315,6 +315,7 @@ fn parse_at(text: &str, offset: usize, options: &Options) -> Vec<Top> {
         heading: None,
         image: None,
         options,
+        deeper: 0,
     };
     let mut tops = Vec::new();
     let mut depth = 0usize;
@@ -578,7 +579,16 @@ struct Builder<'a> {
     heading: Option<u8>,
     image: Option<(String, String)>,
     options: &'a Options,
+    /// Quotes, lists and items open beyond `NESTING`: read into the deepest
+    /// container kept, as its blocks.
+    deeper: usize,
 }
+
+/// How deeply quotes and lists nest at most (in frames: a list level is
+/// two, its list and item). Text nesting thousands deep (`>>>>…`, `- - -
+/// …`) would make values whose drop, conversion and display overflow the
+/// stack; what nests deeper shows as the deepest level's blocks.
+const NESTING: usize = 64;
 
 impl Builder<'_> {
     fn style(&self) -> Style {
@@ -675,6 +685,26 @@ impl Builder<'_> {
         | Event::Rule = &event
         {
             self.flush_tight();
+        }
+        match &event {
+            Event::Start(Tag::BlockQuote(_) | Tag::List(_))
+                if self.deeper > 0 || self.frames.len() >= NESTING =>
+            {
+                self.deeper += 1;
+                return;
+            }
+            Event::Start(Tag::Item) if self.deeper > 0 => {
+                self.deeper += 1;
+                return;
+            }
+            Event::End(TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item)
+                if self.deeper > 0 =>
+            {
+                self.flush_tight();
+                self.deeper -= 1;
+                return;
+            }
+            _ => {}
         }
         match event {
             Event::Start(tag) => match tag {
@@ -897,6 +927,46 @@ mod tests {
         match (a, b) {
             (Value::Map(a), Value::Map(b)) => Rc::ptr_eq(a, b),
             _ => false,
+        }
+    }
+
+    #[test]
+    fn nesting_thousands_deep_shows_as_the_deepest_level_kept() {
+        /// How deeply blocks nest, and the text in them.
+        fn walk(value: &Value, depth: usize, text: &mut String) -> usize {
+            match value {
+                Value::List(items) => items
+                    .iter()
+                    .map(|v| walk(v, depth + 1, text))
+                    .max()
+                    .unwrap_or(depth),
+                Value::Map(fields) => fields
+                    .iter()
+                    .map(|(k, v)| {
+                        if &**k == "x"
+                            && let Value::Str(s) = v
+                        {
+                            text.push_str(s);
+                        }
+                        walk(v, depth + 1, text)
+                    })
+                    .max()
+                    .unwrap_or(depth),
+                _ => depth,
+            }
+        }
+        for source in [
+            format!("{} deep", ">".repeat(20_000)),
+            format!("{}deep", "- ".repeat(20_000)),
+            (0..300)
+                .map(|i| format!("{}- deep\n", "  ".repeat(i)))
+                .collect(),
+        ] {
+            let blocks = parse(&source, &plain());
+            let mut text = String::new();
+            let depth = walk(&Value::List(blocks.into()), 0, &mut text);
+            assert!(depth < 4 * NESTING, "{depth}");
+            assert!(text.contains("deep"), "{text}");
         }
     }
 
