@@ -211,25 +211,38 @@ function M.new()
 	state.status:set("")
 end
 
+-- Read `file` as the drawing.
+local function open_file(file: File)
+	local ok, text = pcall(function()
+		return ui.read_file(file):await()
+	end)
+	if not ok then
+		state.status:set(`Couldn't open {file.name}`)
+	elseif load(text) then
+		state.file:set(file)
+		state.status:set(`Opened {file.name}`)
+	end
+end
+
 function M.open()
 	ui.task(function()
 		local files =
 			ui.open_files({ title = "Open a Drawing", filters = { { "Sketch drawing", { "json" } } } }):await()
-		local file = files[1]
-		if not file then
-			return
-		end
-		local ok, text = pcall(function()
-			return ui.read_file(file):await()
-		end)
-		if not ok then
-			state.status:set(`Couldn't open {file.name}`)
-		elseif load(text) then
-			state.file:set(file)
-			state.status:set(`Opened {file.name}`)
+		if files[1] then
+			open_file(files[1])
 		end
 	end)
 end
+
+-- A drawing the system opens with the app (`zgx-run sketch drawing.json`).
+ui.on_open(function(event)
+	local file = event.files[1]
+	if file then
+		ui.task(function()
+			open_file(file)
+		end)
+	end
+end)
 
 local function write(file: File)
 	local ok = pcall(function()

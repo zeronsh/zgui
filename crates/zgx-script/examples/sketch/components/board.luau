@@ -288,36 +288,14 @@ local function release(_: PointerEvent)
 	end)
 end
 
+-- A rounded rectangle and an ellipse, as shapes: drawn as such (no raster
+-- to make as the view pans or zooms).
 local function rounded(x: number, y: number, w: number, h: number, r: number): Path
-	r = math.min(r, w / 2, h / 2)
-	if r <= 0 then
-		return ui.path():move(x, y):line(x + w, y):line(x + w, y + h):line(x, y + h):close()
-	end
-	return ui.path()
-		:move(x + r, y)
-		:line(x + w - r, y)
-		:arc(x + w - r, y + r, r, -90, 90)
-		:line(x + w, y + h - r)
-		:arc(x + w - r, y + h - r, r, 0, 90)
-		:line(x + r, y + h)
-		:arc(x + r, y + h - r, r, 90, 90)
-		:line(x, y + r)
-		:arc(x + r, y + r, r, 180, 90)
-		:close()
+	return ui.path():rect(x, y, w, h, r)
 end
 
--- An ellipse in four cubic arcs.
 local function ellipse(x: number, y: number, w: number, h: number): Path
-	local k = 0.5522848
-	local rx, ry = w / 2, h / 2
-	local cx, cy = x + rx, y + ry
-	return ui.path()
-		:move(cx + rx, cy)
-		:cubic(cx + rx, cy + ry * k, cx + rx * k, cy + ry, cx, cy + ry)
-		:cubic(cx - rx * k, cy + ry, cx - rx, cy + ry * k, cx - rx, cy)
-		:cubic(cx - rx, cy - ry * k, cx - rx * k, cy - ry, cx, cy - ry)
-		:cubic(cx + rx * k, cy - ry, cx + rx, cy - ry * k, cx + rx, cy)
-		:close()
+	return ui.path():ellipse(x, y, w, h)
 end
 
 local function outline(s: Shape, x: number, y: number, w: number, h: number, zoom: number): Path
