@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """An undecorated window's title bar on X11 (Xvfb/Openbox): a
 `Titlebar::Inset` window has no frame of the window manager's; the window
-buttons zgui draws maximize and restore it, minimize it and close it, and a
-press on its corner resizes it (through the window manager, as a GTK header
-bar's window does).
+buttons zgui draws maximize and restore it, minimize it and close it, a
+press on its corner resizes it, and its drag strip maximizes and restores it
+with a double click and moves it with a drag (through the window manager,
+as a GTK header bar's window does).
 
 Then the buttons follow the desktop: a stand-in settings portal on a private
 session bus gives GNOME's `button-layout` as `close,minimize,maximize:` (all
@@ -163,6 +164,30 @@ def main():
             resized = until("the resized size", lambda: geometry(window) if geometry(window)[2] >= w + 40 else None)
             checks["corner resize"] = [w, h, resized[2], resized[3]]
             assert resized[3] >= h + 20, checks
+
+            # Its drag strip, as a GTK header bar: a double click maximizes
+            # and restores it (a click is not a move), and a press moved
+            # while held moves it.
+            x, y, w, h = geometry(window)
+            title = (x + w // 2, y + STRIP // 2)
+            run("xdotool", "mousemove", *title, "click", "--repeat", "2", "--delay", "120", "1")
+            until("maximized from the title bar", lambda: "MAXIMIZED_HORZ" in state(window))
+            time.sleep(.6)
+            run("xdotool", "mousemove", *geometry(window)[:2])
+            run("xdotool", "mousemove_relative", "--", w // 2, STRIP // 2, "click", "--repeat", "2", "--delay", "120",
+                "1")
+            until("restored from the title bar", lambda: "MAXIMIZED" not in state(window))
+            checks["title bar double click"] = True
+            time.sleep(.6)
+            x, y, w, h = until("the restored place", lambda: geometry(window) if geometry(window)[2] == w else None)
+            run("xdotool", "mousemove", x + w // 2, y + STRIP // 2, "mousedown", "1")
+            for _ in range(6):
+                time.sleep(.08)
+                run("xdotool", "mousemove_relative", "--", 10, 8)
+            run("xdotool", "mouseup", "1")
+            moved = until("the moved window", lambda: geometry(window) if geometry(window)[0] >= x + 30 else None)
+            checks["title bar drag"] = [x, y, moved[0], moved[1]]
+            assert moved[1] >= y + 20, checks
 
             click_button(window, 2)
             until("minimized", lambda: "HIDDEN" in state(window))

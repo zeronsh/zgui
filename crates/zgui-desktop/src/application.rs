@@ -1080,6 +1080,10 @@ struct Host {
     /// The editor selection last published as the primary selection.
     #[cfg(target_os = "linux")]
     primary: Option<String>,
+    /// Where a press in a `window_drag` region was, until the pointer moves
+    /// far enough from it to move the window, or is let go: a click.
+    #[cfg(target_os = "linux")]
+    title_press: Option<(f32, f32)>,
     cursor: (f32, f32),
     pending_file_drops: crate::file_drop::FileDropBatch,
     modifiers: Modifiers,
@@ -1338,6 +1342,8 @@ impl Host {
             clipboard,
             #[cfg(target_os = "linux")]
             primary: None,
+            #[cfg(target_os = "linux")]
+            title_press: None,
             cursor: (0., 0.),
             scroll: Default::default(),
             touch: Default::default(),
@@ -2556,6 +2562,14 @@ impl Host {
         }
         #[cfg(not(target_os = "macos"))]
         match gesture {
+            // On Linux the window manager or compositor takes the pointer
+            // once asked to move the window, release and all: a click (the
+            // first of a double click) would become a move. As GTK's and
+            // Chromium's title bars, the move waits for the pointer to
+            // move away while held (`title_press_moved`).
+            #[cfg(target_os = "linux")]
+            WindowGesture::Drag => self.title_press = Some(self.cursor),
+            #[cfg(not(target_os = "linux"))]
             WindowGesture::Drag => {
                 self.context
                     .window_info
@@ -2569,6 +2583,28 @@ impl Host {
             ),
         }
         Ok(())
+    }
+    /// The pointer moved, held, from a press in a `window_drag` region: 4
+    /// points away (as far as a drag starts), the window manager moves the
+    /// window from here, holding the pointer until it is let go, so zgui's
+    /// press ends now.
+    #[cfg(target_os = "linux")]
+    fn title_press_moved(&mut self) {
+        let Some((x, y)) = self.title_press else {
+            return;
+        };
+        let (dx, dy) = (self.cursor.0 - x, self.cursor.1 - y);
+        if dx * dx + dy * dy < 16. {
+            return;
+        }
+        self.title_press = None;
+        if let Some(window) = self.window.clone() {
+            self.context
+                .window_info
+                .last_request_error
+                .set(window.drag_window().err().map(|e| e.to_string()));
+        }
+        self.context.ui.cancel_interactions();
     }
     fn deactivate(&mut self) {
         self.context.ui.cancel_interactions();
@@ -2805,6 +2841,11 @@ impl Host {
                 if self.resize_band(p.x, p.y)? {
                     return Ok(());
                 }
+                #[cfg(target_os = "linux")]
+                if self.title_press.is_some() {
+                    self.title_press_moved();
+                    return Ok(());
+                }
                 // Over a native view taking input zgui hears one leave, then
                 // nothing until the pointer is back (unless a press of
                 // zgui's follows it there).
@@ -2875,6 +2916,11 @@ impl Host {
                     MouseButton::Forward => PointerButton::Other(5),
                     MouseButton::Other(n) => PointerButton::Other(n),
                 };
+                // Let go before it moved: a click on the title bar.
+                #[cfg(target_os = "linux")]
+                if state == ElementState::Released {
+                    self.title_press = None;
+                }
                 // Back from a popup window, the pointer sends no move to
                 // where winit last saw it (X11; its enter does not count):
                 // a press in a window that had popups asks where it is.
