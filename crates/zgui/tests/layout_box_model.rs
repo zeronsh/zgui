@@ -755,3 +755,30 @@ fn a_tree_thousands_deep_lays_out_on_a_small_stack() {
         .join()
         .unwrap();
 }
+
+// Empty boxes ----------------------------------------------------------------
+
+/// An empty box is as large as its padding and border, within its limits,
+/// unless sized: a gap between nothing adds nothing, in a row, a column or
+/// an overlay, and resizing it lays out again.
+#[test]
+fn empty_boxes_are_their_padding_or_their_size() {
+    let (ui, handle) = mount(
+        column()
+            .items_start()
+            .child(row().id("row").gap(9.).p(3.))
+            .child(column().id("column").gap(9.).px(2.).py(5.).border(1.))
+            .child(overlay().id("overlay").p(4.).min_w(30.))
+            .child(div().id("sized").size(12., 7.).p(1.))
+            .child(row().id("capped").p(20.).max_h(25.)),
+    );
+    let size = |id: &str| {
+        let r = rect(&ui, &handle, id);
+        (r.width, r.height)
+    };
+    assert_eq!(size("row"), (6., 6.));
+    assert_eq!(size("column"), (6., 12.));
+    assert_eq!(size("overlay"), (30., 8.));
+    assert_eq!(size("sized"), (12., 7.));
+    assert_eq!(size("capped"), (40., 25.));
+}

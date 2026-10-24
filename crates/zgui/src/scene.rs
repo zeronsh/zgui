@@ -4555,6 +4555,16 @@ impl Scene {
         child_constraints.clear();
         let (mut width, mut height) = match layout {
             None => self.leaf_size(id, &style, available_w),
+            // An empty box (a bar, a swatch, a spacer): its padding and size,
+            // as the flex pass below works them out with nothing in it.
+            Some(layout) if self.node(id).children.is_empty() => {
+                let gaps = 0.0 + style.gap * 0.0;
+                match layout {
+                    Layout::Row => (gaps, 0.0),
+                    Layout::Column => (0.0, gaps),
+                    Layout::Overlay => (0.0, 0.0),
+                }
+            }
             Some(layout) => {
                 // One set per level of the recursion, back in the pool as
                 // this measure ends.
