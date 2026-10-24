@@ -204,17 +204,18 @@ fn a_feed_tick_costs_what_it_shows() {
         assert!(most < 300, "script calls a tick: {calls:?}");
         (most, (zgui_script::values_converted() - converted) / 10)
     };
-    // Sorted by symbol, a tick changes what the visible rows show and the
-    // charts: no filter or sort runs, and nothing of the 100,000 rows is
-    // converted.
+    // A tick writes 300 rows of the 100,000 (each its 6 fields; their
+    // sparklines' history is a plain table), and the sorted view re-places
+    // those alone: what is converted is the rows written, sorted by a
+    // column the feed leaves (symbol) or one it moves (price) alike, never
+    // the list.
     let (calls, converted) = tick(&mut h);
     assert!(calls < 300, "{calls} script calls a tick");
-    assert!(converted < 100, "{converted} values converted a tick");
-    // Sorted by price, each tick sorts again: one list of indices.
+    assert!(converted < 3_000, "{converted} values converted a tick");
     h.click("sort-price");
     let (calls, converted) = tick(&mut h);
     assert!(calls < 300, "{calls} script calls a tick");
-    assert!(converted < 250_000, "{converted} values converted a tick");
+    assert!(converted < 3_000, "{converted} values converted a tick");
 }
 
 #[test]

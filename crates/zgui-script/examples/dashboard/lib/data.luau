@@ -6,7 +6,6 @@ export type Row = {
 	price: number,
 	change: number,
 	volume: number,
-	history: { number },
 }
 
 local SECTORS = { "Tech", "Energy", "Health", "Finance", "Retail", "Industry", "Media", "Utilities" }
@@ -23,8 +22,10 @@ local function random(): number
 end
 M.random = random
 
-function M.rows(count: number): { Row }
+-- `count` rows, and each one's recent prices by its id (for its sparkline).
+function M.rows(count: number): ({ Row }, { [number]: { number } })
 	local rows: { Row } = {}
+	local histories: { [number]: { number } } = {}
 	for i = 1, count do
 		local a, b, c = (i % 26) + 1, (i // 26 % 26) + 1, (i // 676 % 26) + 1
 		local price = 5 + random() * 495
@@ -43,10 +44,10 @@ function M.rows(count: number): { Row }
 			price = price,
 			change = (random() - 0.5) * 10,
 			volume = math.floor(random() * 5_000_000),
-			history = history,
 		}
+		histories[i] = history
 	end
-	return rows
+	return rows, histories
 end
 
 function M.series(count: number): { number }

@@ -2,31 +2,23 @@
 -- sector, 100,000 rows in a virtual list, each with a sparkline.
 local state = require("../state")
 local actions = require("../actions")
+local data = require("@lib/data")
 
--- The rows the search and sector let through: indices into state.rows.
-local matching = ui.computed(function()
+-- The rows the search and sector let through, in the order the header
+-- chose: kept in order as the feed writes rows (those re-placed alone),
+-- filtered and sorted again only when the search, sector or order change.
+local view: State<{ data.Row }> = ui.sorted(state.rows, function()
+	local sort = state.sort:get()
 	local query = string.upper(state.query:get())
 	local sector = state.sector:get()
-	local shown = {}
-	for i, row in state.rows do
-		if (sector == "All" or row.sector == sector) and (query == "" or string.find(row.symbol, query, 1, true)) then
-			table.insert(shown, i)
+	local filter: ((row: data.Row) -> boolean)? = nil
+	if query ~= "" or sector ~= "All" then
+		filter = function(row: data.Row): boolean
+			return (sector == "All" or row.sector == sector)
+				and (query == "" or string.find(row.symbol, query, 1, true) ~= nil)
 		end
 	end
-	return shown
-end)
-
--- Those, in order. Sorted by a live column, the feed's ticks sort again;
--- the filter above doesn't run again for them.
-local view = ui.computed(function()
-	local sort = state.sort:get()
-	if sort.key == "price" or sort.key == "change" or sort.key == "volume" then
-		state.tick:get()
-	end
-	local rows, key = state.rows, sort.key
-	return ui.sort(table.clone(matching:get()), function(i: number)
-		return (rows[i] :: any)[key]
-	end, sort.descending)
+	return { by = sort.key, descending = sort.descending, filter = filter }
 end)
 
 local COLUMNS = {
@@ -64,9 +56,7 @@ end
 
 local function row(i: number): Node
 	local function data()
-		state.tick:get()
-		local index = view:get()[i]
-		return if index then state.rows[index] else nil
+		return view:at(i)
 	end
 	return ui.row {
 		id = `row-{i}`,
@@ -140,19 +130,21 @@ local function row(i: number): Node
 			w = 80,
 			h = 20,
 			draw = function(c, w, h)
+				-- The row (read, so its write redraws this) and its prices.
 				local d = data()
 				if not d then
 					return
 				end
+				local history = state.history[d.id]
 				local low, high = math.huge, -math.huge
-				for _, v in d.history do
+				for _, v in history do
 					low = math.min(low, v)
 					high = math.max(high, v)
 				end
 				local span = math.max(high - low, 0.0001)
 				local path = ui.path()
-				for k, v in d.history do
-					local x = (k - 1) / (#d.history - 1) * w
+				for k, v in history do
+					local x = (k - 1) / (#history - 1) * w
 					local y = h - (v - low) / span * h
 					path = if k == 1 then path:move(x, y) else path:line(x, y)
 				end
@@ -170,7 +162,7 @@ return function(): Node
 		ui.list {
 			id = "rows",
 			count = function()
-				return #view:get()
+				return view:len()
 			end,
 			height = 32,
 			row = row,
