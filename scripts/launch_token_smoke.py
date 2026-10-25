@@ -16,10 +16,9 @@ import os
 import pathlib
 import select
 import subprocess
-import tempfile
 import time
 
-from platform_smoke import stop
+from platform_smoke import private_runtime, stop
 
 
 def main():
@@ -107,7 +106,7 @@ def main():
             stop(process)
 
     # Wayland: the token activates the window's surface.
-    with tempfile.TemporaryDirectory(prefix="zgx-launch-token-") as private:
+    with private_runtime("zgx-launch-token-") as private:
         os.chmod(private, 0o700)
         env = dict(os.environ, XDG_RUNTIME_DIR=private, WLR_BACKENDS="headless", WLR_RENDERER="pixman",
                    WLR_LIBINPUT_NO_DEVICES="1")

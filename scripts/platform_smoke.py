@@ -5,6 +5,7 @@ Uses already-built gallery/windows examples. Each private compositor is stopped
 on exit. This checks native behavior, not hardware GPU performance.
 """
 import argparse
+import contextlib
 import json
 import os
 import pathlib
@@ -47,6 +48,20 @@ def release_mounts(runtime):
         if tool and point.startswith(prefix):
             subprocess.run([tool, '-u', '-z', point],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@contextlib.contextmanager
+def private_runtime(prefix):
+    """A private runtime directory (`XDG_RUNTIME_DIR`, mode 0700), removed
+    when done past the FUSE filesystems session services mounted in it
+    (`release_mounts`), which stopping their bus leaves disconnected: under
+    load, removing it before they are released fails the probe."""
+    runtime = tempfile.mkdtemp(prefix=prefix)
+    try:
+        yield runtime
+    finally:
+        release_mounts(runtime)
+        shutil.rmtree(runtime, ignore_errors=True)
 
 
 def wait_for_wm(env, seconds=20):

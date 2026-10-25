@@ -17,10 +17,9 @@ import pathlib
 import re
 import select
 import subprocess
-import tempfile
 import time
 
-from platform_smoke import stop, wait_for_wm
+from platform_smoke import private_runtime, stop, wait_for_wm
 
 # libadwaita's buttons as window_chrome.rs draws them: 24-point circles, 8
 # apart and 8 from the window's edge, centred in the 40-point strip.
@@ -87,7 +86,7 @@ def main():
         processes.append(child)
         return child
 
-    with tempfile.TemporaryDirectory(prefix="zgx-window-buttons-") as private:
+    with private_runtime("zgx-window-buttons-") as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, WINIT_X11_SCALE_FACTOR="1",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         env.pop("WAYLAND_DISPLAY", None)

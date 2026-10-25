@@ -10,10 +10,9 @@ import select
 import shutil
 import signal
 import subprocess
-import tempfile
 import time
 
-from platform_smoke import stop
+from platform_smoke import private_runtime, stop
 
 
 def main():
@@ -31,7 +30,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output/'result.json').unlink(missing_ok=True)
     app = portal = gtk_portal = compositor = wm = xvfb = bus = monitor = None
-    with tempfile.TemporaryDirectory(prefix='zgx-wayland-ime-') as private:
+    with private_runtime('zgx-wayland-ime-') as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, XDG_CONFIG_HOME=private+'/config',
                    XDG_CACHE_HOME=private+'/cache', XDG_DATA_HOME=private+'/data',
                    WLR_BACKENDS='x11', WLR_X11_OUTPUTS='1', WLR_RENDERER='pixman', LANG='C.UTF-8')

@@ -15,10 +15,9 @@ import select
 import shutil
 import signal
 import subprocess
-import tempfile
 import time
 
-from platform_smoke import stop
+from platform_smoke import private_runtime, stop
 
 
 def strings(trace, method):
@@ -30,7 +29,7 @@ def run_session(args, mode, index, cursor_delay_ms):
     output.mkdir(parents=True, exist_ok=True)
     (output/'result.json').unlink(missing_ok=True)
     app = ime = compositor = wm = xvfb = bus = None
-    with tempfile.TemporaryDirectory(prefix='zgx-wayland-ime-burst-') as private:
+    with private_runtime('zgx-wayland-ime-burst-') as private:
         env = dict(os.environ, XDG_RUNTIME_DIR=private, XDG_CONFIG_HOME=private+'/config',
                    XDG_CACHE_HOME=private+'/cache', XDG_DATA_HOME=private+'/data',
                    WLR_BACKENDS='x11', WLR_X11_OUTPUTS='1', WLR_RENDERER='pixman', LANG='C.UTF-8')

@@ -10,10 +10,9 @@ import os
 import pathlib
 import select
 import subprocess
-import tempfile
 import time
 
-from platform_smoke import stop, wait_for_wm
+from platform_smoke import private_runtime, stop, wait_for_wm
 
 PORTAL = r'''
 import sys
@@ -62,7 +61,7 @@ def main():
             processes.append(child)
             return child
 
-        with tempfile.TemporaryDirectory(prefix="zgx-desktop-font-") as private:
+        with private_runtime("zgx-desktop-font-") as private:
             env = dict(os.environ, XDG_RUNTIME_DIR=private, WINIT_X11_SCALE_FACTOR="1")
             for key in ("WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
                 env.pop(key, None)

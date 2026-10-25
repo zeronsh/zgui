@@ -141,12 +141,13 @@ jobs:
           cargo build -p zgx-desktop $fixtures --locked
           cargo test -p zgx-desktop --lib --no-run --locked
       # X11, Wayland, IME, clipboard, DPI, accessibility and input probes. Each
-      # owns its display or compositor, so they run side by side; every probe
-      # runs and reports even after another fails.
+      # owns its display or compositor, so they run side by side, eight at
+      # once on four cores (they mostly wait: 150 s at four, 80 at eight);
+      # every probe runs and reports even after another fails.
       - name: Native Linux probes
         if: ${{ !cancelled() && steps.native-fixtures.outcome == 'success' }}
         timeout-minutes: 15
-        run: python3 scripts/linux_smokes.py --jobs 4
+        run: python3 scripts/linux_smokes.py --jobs 8
       - name: Preserve Vulkan and native window evidence
         if: failure()
         continue-on-error: true

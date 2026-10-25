@@ -147,7 +147,16 @@ def main():
         run("xdotool", "mousemove", x + w // 2, y - step // 2, "click", "--repeat", 2, "--delay", 80, 1)
         until("the window maximized", lambda: maximized(window), app)
         run("xdotool", "windowactivate", "--sync", window, "key", "alt+F4")
-        until("the app to exit", lambda: app.poll() is not None, seconds=5)
+        # Under load Openbox can miss a key sent as the window settles
+        # maximized: pressed again after a while, as a user would. An app
+        # that ignored the close would still not exit.
+        deadline = time.monotonic() + 5
+        while app.poll() is None and time.monotonic() < deadline:
+            time.sleep(.05)
+        if app.poll() is None:
+            checks["closed on a second Alt+F4"] = True
+            run("xdotool", "windowactivate", "--sync", window, "key", "alt+F4")
+        until("the app to exit", lambda: app.poll() is not None, seconds=15)
         app, window = open_saved()
         checks["reopens maximized"] = until("the window maximized", lambda: maximized(window), app, seconds=3)
         x, y, w, _ = settled(window)

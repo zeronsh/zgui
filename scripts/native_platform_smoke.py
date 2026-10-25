@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Owned X11/Wayland desktop: window controls and native application D-Bus events."""
-import argparse, json, os, pathlib, re, select, shutil, subprocess, tempfile, time
-from platform_smoke import stop
+import argparse, json, os, pathlib, re, select, shutil, subprocess, time
+from platform_smoke import private_runtime, stop
 from sway_host import wait_for_openbox, wait_for_sway_host
 
 def main():
@@ -9,7 +9,7 @@ def main():
     p.add_argument('binary',type=pathlib.Path);p.add_argument('--output',type=pathlib.Path,required=True)
     p.add_argument('--wayland',action='store_true');a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
     processes=[]
-    with tempfile.TemporaryDirectory(prefix='zgx-platform-') as private:
+    with private_runtime('zgx-platform-') as private:
         env=dict(os.environ,XDG_RUNTIME_DIR=private,XDG_CONFIG_HOME=private+'/config',XDG_DATA_HOME=private+'/data',XDG_CACHE_HOME=private+'/cache')
         for key in ('DISPLAY','WAYLAND_DISPLAY','SWAYSOCK','DBUS_SESSION_BUS_ADDRESS','AT_SPI_BUS_ADDRESS'):env.pop(key,None)
         def launch(name,cmd,environment=None,**kw):
