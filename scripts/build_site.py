@@ -227,7 +227,7 @@ def page(by, verdict, cards):
     has_rune = any('rune' in by[n]['frameworks'] for n in ORDER)
     rune_lede = ' and Rune (Rust, wgpu, Taffy and Parley)' if has_rune else ''
     rune_build = (f"; Rune at <code>{e(rune.get('rune_rev', '?')[:8])}</code> ({e(rune.get('rune_branch', '?'))}, "
-                  f"{e(rune.get('rune_license', '?'))}) with its own <code>perf</code> profile and a 14-line patch "
+                  f"{e(rune.get('rune_license', '?'))}), profile {e(rune.get('profile', 'perf'))} (Rune's own bench scripts use perf), and a 14-line patch "
                   f"exposing its wheel path (see below)" if has_rune else '')
     rune_notes = RUNE_NOTES if has_rune else ''
     displays = env['displays']
