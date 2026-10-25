@@ -31,7 +31,9 @@ pub enum Value {
     Text(zgx::text::Text),
     /// A table used as a list (keys 1 to n).
     List(Rc<[Value]>),
-    /// A table with string keys, sorted by key so equal tables compare equal.
+    /// A table with string keys, sorted by key so equal tables compare equal
+    /// (and `field` finds them by halves): build one with
+    /// [`Value::record`], which sorts them.
     Map(Rc<[(Rc<str>, Value)]>),
     /// An element a script keeps (`ui.use_state(el)`): opaque to Rust, equal
     /// only to itself, and `null` as JSON.
@@ -266,6 +268,22 @@ impl Value {
             (new, old) if new == *old => old.clone(),
             (new, _) => new,
         }
+    }
+    /// A map of `fields`, in any order: sorted by key, the last of a key
+    /// given twice kept (`Value::record([("name", "Ada".into()), ("id", 7.0.into())])`).
+    pub fn record<K: Into<Rc<str>>>(fields: impl IntoIterator<Item = (K, Value)>) -> Value {
+        let mut fields: Vec<(Rc<str>, Value)> =
+            fields.into_iter().map(|(k, v)| (k.into(), v)).collect();
+        // Stable: of a key given twice, the later stays last, and is kept.
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut kept: Vec<(Rc<str>, Value)> = Vec::with_capacity(fields.len());
+        for field in fields {
+            match kept.last_mut() {
+                Some(last) if last.0 == field.0 => *last = field,
+                _ => kept.push(field),
+            }
+        }
+        Value::Map(kept.into())
     }
     /// Whether Luau counts it as true: anything but `nil` and `false`.
     pub fn truthy(&self) -> bool {
@@ -2190,15 +2208,26 @@ mod tests {
     use super::*;
 
     fn map(pairs: &[(&str, Value)]) -> Value {
-        let mut fields: Vec<(Rc<str>, Value)> = pairs
-            .iter()
-            .map(|(k, v)| ((*k).into(), v.clone()))
-            .collect();
-        fields.sort_by(|a, b| a.0.cmp(&b.0));
-        Value::Map(fields.into())
+        Value::record(pairs.iter().map(|(k, v)| (*k, v.clone())))
     }
     fn key(k: &str) -> PathKey {
         PathKey::Key(k.into())
+    }
+
+    #[test]
+    fn a_map_finds_its_fields_given_in_any_order() {
+        let value = Value::record([
+            ("name", "Ada".into()),
+            ("id", Value::Num(7.)),
+            ("name", "Grace".into()),
+        ]);
+        assert_eq!(value.field("id"), Some(&Value::Num(7.)));
+        assert_eq!(value.field("name"), Some(&"Grace".into()), "the last given");
+        assert_eq!(
+            value,
+            map(&[("id", Value::Num(7.)), ("name", "Grace".into())])
+        );
+        assert_eq!(value.to_json(), r#"{"id":7,"name":"Grace"}"#);
     }
 
     #[test]

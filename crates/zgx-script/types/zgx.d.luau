@@ -542,6 +542,23 @@ export type Promise<T = unknown> = {
 	await: (self: Promise<T>) -> T,
 }
 
+-- `ui.resource`'s data loaded in a task, and how its loading goes.
+export type Resource<T> = {
+	-- What the last load returned (`initial` until one has; nil without
+	-- it), kept while it loads again. Write it as any state (an added row,
+	-- an optimistic update); the next load replaces it.
+	data: State<T>,
+	-- A load is under way.
+	loading: State<boolean>,
+	-- What the last load raised, or nil.
+	error: State<string?>,
+	-- "loading" until a load has answered (and again while a failed one is
+	-- tried again), then "ready" or "failed".
+	status: State<"loading" | "ready" | "failed">,
+	-- Load again (a Reload button, a retry): an action, or call it.
+	reload: () -> (),
+}
+
 -- A mounted node a script reaches: through `on_mount`, `on_resize`, a ref
 -- or an animation's function values.
 declare extern type Element with
@@ -5451,7 +5468,9 @@ export type SegmentedProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	value: State<any>,
-	options: { SegmentedOption },
+	-- A list of strings or of numbers as it is (Luau's tables are
+	-- invariant: `{ string }` is not a `{ SegmentedOption }`).
+	options: { string } | { number } | { SegmentedOption },
 	label: string?,
 }
 -- A number field with buttons that step it; the arrows step it, Page Up
@@ -9535,7 +9554,7 @@ export type SelectProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	value: State<any>,
-	options: { SelectOption },
+	options: { string } | { number } | { SelectOption },
 	-- Shown while no option is chosen.
 	placeholder: string?,
 	label: string?,
@@ -10739,6 +10758,9 @@ export type ModalProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: Child,
 	open: State<boolean>,
+	-- Its content, built each time it opens (a form starting from what it
+	-- edits, its state new), and kept while it closes.
+	build: (() -> Node)?,
 	label: string?,
 	placement: ModalPlacement?,
 	autofocus: boolean?,
@@ -11035,6 +11057,8 @@ export type PopoverProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: Child,
 	open: State<boolean>,
+	-- Its content, built each time it opens, and kept while it closes.
+	build: (() -> Node)?,
 	-- The trigger, shown where the popover is written.
 	anchor: Node,
 	label: string?,
@@ -13275,7 +13299,8 @@ declare ui: {
 	effect: (f: () -> ...unknown) -> (),
 	-- One update for many writes; returns what `f` returns.
 	batch: <R...>(f: () -> R...) -> R...,
-	-- In a component: runs once it is mounted.
+	-- Runs once it is mounted: a component instance, or (outside one) the
+	-- app's interface, again after each reload.
 	on_mount: (f: () -> ...unknown) -> (),
 	ref: () -> Ref,
 	-- `Card { title = "…", child }`: `build(props)` runs as each instance
@@ -13310,6 +13335,11 @@ declare ui: {
 	-- Run `f(...)` as a task: `p:await()` inside it waits for a promise
 	-- without blocking anything else.
 	task: <A...>(f: (A...) -> (), A...) -> (),
+	-- What `load` returns, loaded in a task (it may await), as states:
+	-- `data`, `loading`, `error` and `status`. It loads again on `reload()`
+	-- and when a state it read before its first await changes; only the
+	-- last load's answer is kept. `initial`: `data` until one answers.
+	resource: <T>(load: () -> T, opts: { initial: T }?) -> Resource<T>,
 	-- An HTTP request through the host's transport (`ScriptHost::fetcher`):
 	-- a promise of a `Response`. A plugin needs the host's grant.
 	fetch: (url: string, opts: FetchOptions?) -> Promise<Response>,

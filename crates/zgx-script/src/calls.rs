@@ -425,6 +425,7 @@ pub(crate) fn install(
             Ok(PromiseUd(promise))
         })?,
     )?;
+    ui.set("resource", lua.create_function(resource)?)?;
     ui.set(
         "task",
         lua.create_function(|lua, (f, args): (Function, MultiValue)| {
@@ -439,6 +440,144 @@ pub(crate) fn install(
     )?;
     Ok(())
 }
+
+/// `ui.resource(load, { initial })`: what `load` returns, loaded in a
+/// task (it may await), as states: `data` (the last value it returned,
+/// kept while it loads again; writable, as an optimistic update writes
+/// it), `loading`, `error` (the last load's, or nil) and `status`
+/// (`"loading"` until a load has answered, then `"ready"` or `"failed"`).
+/// It loads again on `reload()` and when a state `load` read before its
+/// first await changes (its key: the person a page shows); an answer to a
+/// load since begun again, or to one whose owner has gone, is dropped.
+fn resource(lua: &Lua, (load, opts): (Function, Option<Table>)) -> mlua::Result<Table> {
+    let initial: Value = match &opts {
+        Some(opts) => opts.get("initial")?,
+        None => Value::Nil,
+    };
+    let env = env(lua)?;
+    let runtime = env.runtime.clone();
+    let data = runtime.signal(initial);
+    let loading = runtime.signal(Value::Bool(true));
+    let error = runtime.signal(Value::Nil);
+    let status = runtime.signal(Value::Str("loading".into()));
+    let reloads = runtime.signal(0u64);
+    // Which load answers: each begun again counts on, and its owner gone
+    // stops them all.
+    let current = Rc::new(Cell::new(0u64));
+    let wrap: Function = match lua.named_registry_value::<Function>(RESOURCE) {
+        Ok(wrap) => wrap,
+        Err(_) => {
+            let wrap: Function = lua.load(RESOURCE_SOURCE).set_name("=resource").eval()?;
+            lua.set_named_registry_value(RESOURCE, wrap.clone())?;
+            wrap
+        }
+    };
+    let vm = env.vm.clone();
+    let meter = env.meter.clone();
+    let (signals, counter) = ((data, loading, error, status), current.clone());
+    let effect = runtime.effect_now({
+        let (data, loading, error, status) = signals.clone();
+        let reloads = reloads.clone();
+        move || {
+            reloads.get();
+            let Some(vm) = vm.upgrade() else { return };
+            if counter.get() == u64::MAX {
+                return;
+            }
+            let mine = counter.get() + 1;
+            counter.set(mine);
+            loading.set(Value::Bool(true));
+            if !matches!(status.with_untracked(Clone::clone), Value::Str(s) if &*s == "ready") {
+                status.set(Value::Str("loading".into()));
+            }
+            let (data, loading, error, status) =
+                (data.clone(), loading.clone(), error.clone(), status.clone());
+            let (counter, meter) = (counter.clone(), meter.clone());
+            let done = vm
+                .lua
+                .create_function(move |_, (ok, value): (bool, mlua::Value)| {
+                    if counter.get() != mine {
+                        return Ok(());
+                    }
+                    let answer = if ok {
+                        let old = data.with_untracked(Clone::clone);
+                        crate::value::convert(value, Some(&old)).and_then(|value| {
+                            if let Some(meter) = &meter {
+                                meter.hold(&data, value.weight())?;
+                            }
+                            Ok(value)
+                        })
+                    } else {
+                        Err(mlua::Error::runtime(match &value {
+                            mlua::Value::String(s) => s.to_string_lossy(),
+                            other => format!("{other:?}"),
+                        }))
+                    };
+                    let (finished, failure) = match answer {
+                        Ok(value) => {
+                            data.set(value);
+                            ("ready", Value::Nil)
+                        }
+                        Err(e) => ("failed", Value::Str(error_text(&e).into())),
+                    };
+                    error.set(failure);
+                    status.set(Value::Str(finished.into()));
+                    loading.set(Value::Bool(false));
+                    Ok(())
+                });
+            let thread = done
+                .and_then(|done| wrap.call::<Function>((load.clone(), done)))
+                .and_then(|run| vm.lua.create_thread(run));
+            match thread {
+                Ok(thread) => drive(&vm, thread, ()),
+                Err(e) => vm.report(e),
+            }
+        }
+    });
+    // Its loads stop with its owner.
+    struct Owned(#[allow(dead_code)] zgx::reactive::Effect, Rc<Cell<u64>>);
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            self.1.set(u64::MAX);
+        }
+    }
+    crate::node::retain(&env, Box::new(Owned(effect, current)));
+    drop(env);
+    let (data, loading, error, status) = signals;
+    let out = lua.create_table()?;
+    out.set("data", crate::value::State::new(data))?;
+    out.set("loading", crate::value::State::new(loading))?;
+    out.set("error", crate::value::State::new(error))?;
+    out.set("status", crate::value::State::new(status))?;
+    out.set(
+        "reload",
+        lua.create_function(move |_, _: MultiValue| {
+            reloads.update(|n| *n += 1);
+            Ok(())
+        })?,
+    )?;
+    Ok(out)
+}
+/// A load's error as a person reads it: what was raised, without Luau's
+/// traceback.
+fn error_text(error: &mlua::Error) -> String {
+    match error {
+        mlua::Error::RuntimeError(message) => message.clone(),
+        mlua::Error::CallbackError { cause, .. } => error_text(cause),
+        other => other.to_string(),
+    }
+}
+
+const RESOURCE: &str = "zgx.resource";
+/// A resource's load, run as a task: `done(ok, value)` with what it
+/// returned or raised.
+const RESOURCE_SOURCE: &str = r#"
+return function(load, done)
+    return function()
+        done(pcall(load))
+    end
+end
+"#;
 
 fn batch(runtime: &Runtime, f: impl FnOnce()) {
     runtime.clone().batch(f);

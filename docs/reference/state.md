@@ -26,6 +26,7 @@ ui.action(name: string, arg: unknown?) -> Action
 ui.invoke(name: string, arg: unknown?) -> ()
 ui.call(name: string, arg: unknown?) -> Promise
 ui.task<A...>(f: (A...) -> (), A...) -> ()
+ui.resource<T>(load: () -> T, opts: { initial: T }?) -> Resource<T>
 ui.fetch(url: string, opts: FetchOptions?) -> Promise<Response>
 ui.clipboard.read() -> string?
 ui.clipboard.write(text: string) -> boolean
@@ -115,6 +116,43 @@ end)
 ```
 
 A rejection that nothing handles (no `on_error`, no read of `error`, no `await`) is reported as a script error with the action's name, so a failure is never silent. A script reloaded since a call hears nothing of it. A call costs about a microsecond on top of the host's work (`ui.call`, settling and an `:after` callback; `tests/calls.rs`), and the same however many are in flight.
+
+### Loading data
+
+`ui.resource(load, { initial })` loads what an interface shows (a list from the server, the open record) as states, so the interface follows how the load goes with no handler:
+
+| Field | |
+| --- | --- |
+| `data` | what the last load returned, `initial` (or nil) until one has; kept while it loads again. A plain state: write it (`push`, `set_key`) as a save or an optimistic update changes it, and the next load replaces it |
+| `loading` | a load is under way |
+| `error` | what the last load raised (the message, as `error(message, 0)` gives it), or nil |
+| `status` | `"loading"` until a load has answered (and again while a failed one is tried again), then `"ready"` or `"failed"`: `ui.switch(r.status, { loading = …, failed = …, ready = … })` |
+| `reload` | loads again: a handler (`on_click = r.reload`) or a function to call |
+
+`load` runs as a task, so it awaits (`ui.fetch(url):await()`, `ui.call(name):await()`) and raises what went wrong. The states it reads with `get` before its first await are its key: when one changes it loads again (the person a page shows, a search), and only the last load's answer is kept: an earlier one arriving after it is dropped, as is any answer once what made the resource has gone (a component unmounted). After its first await it reads untracked.
+
+```lua
+type Person = { name: string }
+local id = ui.state("id", 1)
+local person = ui.resource(function(): Person?
+    local response = ui.fetch(`https://api.example/people/{id:get()}`):await()
+    if not response.ok then error(`The server answered {response.status}`, 0) end
+    return response.json :: Person
+end)
+return ui.switch(person.status, {
+    loading = ui.text "Loading…",
+    failed = ui.column {
+        ui.text { function() return person.error:get() end },
+        ui.button { "Try again", on_click = person.reload },
+    },
+    ready = ui.text { function()
+        local found = person.data:get()
+        return if found then found.name else ""
+    end },
+})
+```
+
+[The team example](../../crates/zgx-script/examples/team) loads a list this way, and saves and removes people with `ui.task`s that write its `data`.
 
 ### The network
 
@@ -298,7 +336,8 @@ ui.contribute(
 
 - State values are read-only snapshots: `tasks:get()[1].done = true` fails with "attempt to modify a readonly table" and a hint naming `set_key`, `patch`, `update`, `insert` and `set`.
 - Reading state while the script builds the tree (`ui.text { count:get() }`) uses the value once: the text never changes. Pass the state, a template (`"{count}"`) or a function instead.
-- `ui.use_state` and `ui.on_mount` outside a component (or a row or presence content) are errors; use `ui.state`, or `on_mount` on a node.
+- `ui.use_state` outside a component (or a row or presence content) is an error; use `ui.state`. `ui.on_mount` outside one runs once the app's interface mounts (and again after a reload).
+- An error raised with `error("message")` carries where it was raised (`"api.luau:12: message"`); `error("message", 0)` raises the message alone, as a person should read it. Luau types what `pcall` returns on failure as the function's result: show it with `tostring(err)`.
 - A plugin's `ui.state` is its own; the application's is not visible to plugins.
 - `ui.persist` reads its file only the first time a run asks for the key; a hot reload keeps the live value. A file that is not JSON starts the key from `initial`, with a warning.
 - An effect reads with `get` what it should follow and with `peek` what it only uses: one that writes a state it also follows runs again after each write.

@@ -21,5 +21,7 @@ mod mail_example;
 mod monitor_example;
 #[path = "../sketch_example.rs"]
 mod sketch_example;
+#[path = "../team_example.rs"]
+mod team_example;
 #[path = "../terminal_example.rs"]
 mod terminal_example;

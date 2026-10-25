@@ -71,6 +71,70 @@ fn components_have_their_own_state_and_mount_hooks() {
 }
 
 #[test]
+fn a_scripts_own_mount_hook_runs_as_its_interface_mounts() {
+    let mut h = Harness::inline(
+        r##"local mounted = ui.state("mounted", 0)
+        local seen = ui.state("seen", "")
+        local late = ui.ref()
+        ui.on_mount(function()
+            mounted:add(1)
+            -- The interface is there: its nodes are mounted.
+            seen:set(if late:peek() then "found" else "missing")
+        end)
+        return ui.column {
+            ui.text { "{mounted}", id = "mounted" },
+            ui.text { "{seen}", id = "late", ref = late },
+        }"##,
+    );
+    assert_eq!(h.text("mounted"), "1");
+    assert_eq!(h.text("late"), "found");
+    h.frames(3);
+    assert_eq!(h.text("mounted"), "1", "once");
+    h.host.reload().unwrap();
+    h.frames(2);
+    assert_eq!(h.text("mounted"), "2", "again for a new load");
+}
+
+#[test]
+fn a_modal_builds_its_content_each_time_it_opens() {
+    let mut h = Harness::inline(
+        r##"local open = ui.state("open", false)
+        local builds = ui.state("builds", 0)
+        local Field = ui.component(function()
+            local typed = ui.use_state("")
+            return ui.input { id = "field", value = typed }
+        end)
+        return ui.column {
+            ui.button { id = "open", w = 30, h = 20, on_click = function() open:set(true) end },
+            ui.text { "{builds}", id = "builds" },
+            ui.modal {
+                open = open,
+                build = function()
+                    builds:add(1)
+                    return Field {}
+                end,
+            },
+        }"##,
+    );
+    assert_eq!(h.text("builds"), "0", "not until it opens");
+    h.click("open");
+    h.frames(1);
+    assert_eq!(h.text("builds"), "1");
+    h.type_text("field", "typed");
+    assert_eq!(h.text("field"), "typed");
+    h.key(zgx::input::Key::Escape);
+    h.frames(1);
+    assert!(!h.shown("field"), "closed, kept unseen");
+    assert_eq!(h.text("builds"), "1");
+    h.click("open");
+    h.frames(1);
+    assert_eq!(h.text("builds"), "2");
+    assert!(h.shown("field"));
+    assert_eq!(h.text("field"), "", "its state new");
+    assert_eq!(h.error(), None);
+}
+
+#[test]
 fn computed_state_follows_its_inputs() {
     let mut h = Harness::inline(
         r##"local a = ui.state("a", 2)

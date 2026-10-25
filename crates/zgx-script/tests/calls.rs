@@ -487,3 +487,91 @@ fn a_failed_remote_image_is_fetched_again_when_shown_after_a_backoff() {
     assert_eq!(fetched.get(), 2, "fetched again once the backoff passed");
     assert!(h.find("initials").is_none(), "the picture once it came");
 }
+
+const RESOURCE_APP: &str = r#"
+local id = ui.state("id", 1)
+local open = ui.state("open", true)
+local user = ui.resource(function()
+    local which = id:get()
+    return ui.call("user", which):await()
+end, { initial = "none" })
+local Card = ui.component(function()
+    local mine = ui.resource(function() return ui.call("user", 2):await() end)
+    return ui.text { id = "card", function() return mine.status:get() end }
+end)
+return ui.column {
+    ui.text { id = "shown", function()
+        return `{user.status:get()} {user.loading:get()} {user.data:get()} {user.error:get() or "-"}`
+    end },
+    ui.button { id = "next", w = 40, h = 20, "n", on_click = function() id:add(1) end },
+    ui.button { id = "reload", w = 40, h = 20, "r", on_click = user.reload },
+    ui.button { id = "close", w = 40, h = 20, "c", on_click = function() open:set(false) end },
+    ui.show(open, Card {}),
+}
+"#;
+
+fn resources() -> Harness {
+    Harness::new(|runtime| {
+        let host = ScriptHost::inline(runtime, "app", RESOURCE_APP);
+        // The second user is slow to answer, the fourth is gone.
+        host.async_action("user", |arg| async move {
+            let n = arg.as_f64().unwrap_or(0.);
+            let wait = if n == 2. { 40 } else { 2 };
+            zgx::timer::sleep(Duration::from_millis(wait)).await;
+            if n == 4. {
+                return Err("gone".into());
+            }
+            Ok(Value::Str(format!("user {n}").into()))
+        });
+        host
+    })
+}
+
+#[test]
+fn a_resource_loads_fails_and_loads_again() {
+    let mut h = resources();
+    assert_eq!(h.text("shown"), "loading true none -");
+    wait_for(&mut h, "shown", "ready false user 1 -");
+    // Reloading keeps what it has, loading.
+    h.click("reload");
+    assert_eq!(h.text("shown"), "ready true user 1 -");
+    wait_for(&mut h, "shown", "ready false user 1 -");
+    h.click("next");
+    h.click("next");
+    h.click("next");
+    wait_for(&mut h, "shown", "failed false user 1 gone");
+    // Trying again shows it loading, then what it answered.
+    h.click("reload");
+    assert_eq!(h.text("shown"), "loading true user 1 gone");
+    wait_for(&mut h, "shown", "failed false user 1 gone");
+    assert_eq!(h.error(), None);
+}
+
+#[test]
+fn a_resource_keyed_by_state_hears_only_its_last_load() {
+    let mut h = resources();
+    wait_for(&mut h, "shown", "ready false user 1 -");
+    // The slow second user is asked for, then the third: the second's
+    // answer, arriving last, is dropped.
+    h.click("next");
+    h.click("next");
+    wait_for(&mut h, "shown", "ready false user 3 -");
+    std::thread::sleep(Duration::from_millis(60));
+    h.frames(3);
+    assert_eq!(h.text("shown"), "ready false user 3 -");
+    assert_eq!(h.error(), None);
+}
+
+#[test]
+fn a_resource_whose_owner_has_gone_hears_nothing() {
+    let mut h = resources();
+    assert_eq!(h.text("card"), "loading");
+    h.click("close");
+    assert!(h.find("card").is_none());
+    std::thread::sleep(Duration::from_millis(60));
+    h.frames(3);
+    let calls = h.calls();
+    h.frames(10);
+    assert_eq!(h.calls(), calls, "nothing runs while nothing changes");
+    assert_eq!(h.error(), None);
+}

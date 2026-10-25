@@ -1239,6 +1239,8 @@ pub(crate) struct Env {
     pub scope: RefCell<Option<Rc<Scope>>>,
     /// Effects created outside components: they live as long as the script.
     pub retained: RefCell<Vec<Box<dyn Any>>>,
+    /// `ui.on_mount` outside components: run as the app's interface mounts.
+    pub mounted: RefCell<Vec<Function>>,
     /// The host's actions (`ui.action` binds them, `ui.invoke` calls them).
     pub actions: crate::Actions,
     /// The host's functions (`ui.call_sync`).
@@ -1915,6 +1917,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "src",
     "code",
     "draw",
+    "build",
     "each",
     "draw_item",
     "view",
@@ -3456,25 +3459,27 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set(
         "modal",
         lua.create_function(|lua, table: Table| {
-            let open = expect_state(&table.get("open")?, "`open`")?;
-            node_ud(
+            let open_value = table.get::<mlua::Value>("open")?;
+            let open = expect_state(&open_value, "`open`")?;
+            let mut node = fill(
                 lua,
-                fill(
-                    lua,
-                    Node::new(
-                        owner(lua)?,
-                        Kind::Modal {
-                            label: label(&table)?,
-                            open,
-                            placement: modal_placement_of(table.get("placement")?)?,
-                            autofocus: table.get::<Option<bool>>("autofocus")?.unwrap_or(true),
-                            layer: false,
-                            dismiss: table.get("dismiss_on_backdrop")?,
-                        },
-                    ),
-                    Some(&table),
-                )?,
-            )
+                Node::new(
+                    owner(lua)?,
+                    Kind::Modal {
+                        label: label(&table)?,
+                        open,
+                        placement: modal_placement_of(table.get("placement")?)?,
+                        autofocus: table.get::<Option<bool>>("autofocus")?.unwrap_or(true),
+                        layer: false,
+                        dismiss: table.get("dismiss_on_backdrop")?,
+                    },
+                ),
+                Some(&table),
+            )?;
+            if let Some(build) = table.get::<Option<Function>>("build")? {
+                node.children.push(built_on_open(lua, open_value, build)?);
+            }
+            node_ud(lua, node)
         })?,
     )?;
     // `ui.layer { open?, placement?, … }`: over the window, non-modal (toasts).
@@ -3539,7 +3544,12 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         match_anchor,
                     }
                 };
-                node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
+                let mut node = fill(lua, Node::new(owner(lua)?, kind), Some(&table))?;
+                if let Some(build) = table.get::<Option<Function>>("build")? {
+                    node.children
+                        .push(built_on_open(lua, table.get("open")?, build)?);
+                }
+                node_ud(lua, node)
             })?,
         )?;
     }
@@ -3744,11 +3754,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             let env = env(lua)?;
             match &*env.scope.borrow() {
                 Some(scope) => scope.mounted.borrow_mut().push(f),
-                None => {
-                    return Err(mlua::Error::runtime(
-                        "ui.on_mount is for components; give a node `on_mount`",
-                    ));
-                }
+                None => env.mounted.borrow_mut().push(f),
             }
             Ok(())
         })?,
@@ -4321,6 +4327,41 @@ pub(crate) fn pseudo_of(slots: [Vec<(Prop, Lit)>; 4]) -> Vec<(Pseudo, Styles)> {
 }
 
 /// Keeps `resource` for the component being built, or for the script.
+/// A panel's `build`: its content, built again each time `open` turns
+/// true (a form starting from what it edits, its own state new), and kept
+/// while it closes. A `ui.presence` keyed by how many times it has opened.
+fn built_on_open(lua: &Lua, open: mlua::Value, build: Function) -> mlua::Result<Rc<Node>> {
+    const SOURCE: &str = r#"
+local presence = ...
+return function(open, build)
+    local opened, was = 0, false
+    return presence(function()
+        local now = open:get()
+        if now and not was then
+            opened += 1
+        end
+        was = now
+        return opened
+    end, function()
+        return build()
+    end)
+end
+"#;
+    const KEY: &str = "zgx.built_on_open";
+    let make = match lua.named_registry_value::<Function>(KEY) {
+        Ok(make) => make,
+        Err(_) => {
+            let ui: Table = lua.globals().get("ui")?;
+            let presence: Function = ui.get("presence")?;
+            let make: Function = lua.load(SOURCE).set_name("=build").call(presence)?;
+            lua.set_named_registry_value(KEY, make.clone())?;
+            make
+        }
+    };
+    let built: mlua::AnyUserData = make.call((open, build))?;
+    Ok(built.borrow::<NodeUd>()?.0.clone())
+}
+
 pub(crate) fn retain(env: &Env, resource: Box<dyn Any>) {
     match &*env.scope.borrow() {
         Some(scope) => scope.retained.borrow_mut().push(resource),

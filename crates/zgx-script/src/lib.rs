@@ -787,6 +787,9 @@ impl Script {
 
 struct Loaded {
     _vms: Vec<Rc<Vm>>,
+    /// The scripts' `ui.on_mount`s outside components, run as the app's
+    /// interface mounts.
+    mounted: Vec<(Rc<Vm>, mlua::Function)>,
     /// Plugins left out because they failed, and why.
     broken: Vec<String>,
     root: Rc<node::Node>,
@@ -1706,7 +1709,18 @@ impl ScriptHost {
                 let current = host.current.borrow().clone();
                 // Its root's `on_key` hears what nothing focused takes.
                 current.map_or_else(div, |loaded| {
-                    lower::lower(&loaded.root, &loaded.lowering).takes_unfocused_keys()
+                    let view = lower::lower(&loaded.root, &loaded.lowering).takes_unfocused_keys();
+                    if loaded.mounted.is_empty() {
+                        return view;
+                    }
+                    let mounted = loaded.mounted.clone();
+                    view.on_mount(move |_| {
+                        for (vm, f) in mounted {
+                            if let Err(e) = vm.call::<()>(&f, ()) {
+                                vm.report(e);
+                            }
+                        }
+                    })
                 })
             },
         );
@@ -1876,8 +1890,20 @@ impl ScriptHost {
                 self.0.app.name()
             )
         })?;
+        let mounted = vms
+            .iter()
+            .flat_map(|vm| {
+                let mounted = vm
+                    .lua
+                    .app_data_ref::<node::Env>()
+                    .map(|env| env.mounted.take())
+                    .unwrap_or_default();
+                mounted.into_iter().map(|f| (vm.clone(), f))
+            })
+            .collect();
         Ok(Loaded {
             _vms: vms,
+            mounted,
             broken,
             root,
             lowering: Rc::new(lower::Lowering {
@@ -2078,6 +2104,7 @@ impl ScriptHost {
             runtime: self.0.runtime.clone(),
             scope: RefCell::default(),
             retained: RefCell::default(),
+            mounted: RefCell::default(),
             actions: self.0.actions.clone(),
             functions: self.0.functions.clone(),
             persist: self.0.persist.clone(),

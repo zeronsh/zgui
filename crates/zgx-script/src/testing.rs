@@ -310,6 +310,17 @@ impl TestApp {
         }
         out
     }
+    /// Whether node `id` is there and shows: neither it nor what holds it
+    /// is transparent (a closed modal's content is kept, unseen).
+    pub fn shown(&mut self, id: &str) -> bool {
+        let Some(node) = self.find(id) else {
+            return false;
+        };
+        let scene = self.ui.scene.borrow();
+        std::iter::once(node)
+            .chain(scene.ancestors(node))
+            .all(|n| scene.effects(n).opacity > 0.)
+    }
     /// Node `id`'s opacity.
     pub fn opacity(&mut self, id: &str) -> f32 {
         let node = self.node(id);

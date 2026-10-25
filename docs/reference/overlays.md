@@ -28,6 +28,7 @@ context_menu_below: boolean?
 | Option | Type | Default | |
 | --- | --- | --- | --- |
 | `open` | `State<boolean>` | required (not `menu_item`) | true while shown; written back as it closes |
+| `build` (`modal`, `popover`, `menu`) | `() -> Node` | none | its content, built each time it opens and kept while it closes: a form starts from what it edits, its components' state new (as React's conditionally rendered dialog). Children given as well come before it, built once |
 | `anchor` (`popover`, `menu`) | `Node` | required | the trigger, laid out where the popover is |
 | `autofocus` (`modal`, `popover`, `menu`) | `boolean` | `true` | focus its first control as it opens; `false` keeps the panel itself focused (keys still reach it) |
 | `open_over` (`menu`) | `() -> string?` | none | the `id` of its item to open over the trigger, highlighted, as a pop-up button's (a select's) menu opens with the chosen item over the button |

@@ -101,6 +101,7 @@ const NOT_ELEMENTS: &[&str] = &[
     "use_state",
     "computed",
     "sorted",
+    "resource",
     "effect",
     "batch",
     "every",
