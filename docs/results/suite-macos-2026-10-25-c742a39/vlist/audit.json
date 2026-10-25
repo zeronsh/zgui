@@ -1,0 +1,129 @@
+{
+ "accepted": true,
+ "trials": 43,
+ "samples": 6860,
+ "pacing_trials": 24,
+ "active_ticks_per_requested_second": {
+  "min": 59.8,
+  "max": 59.93333333333333
+ },
+ "powermetrics": false,
+ "scene": "vlist",
+ "commit": "c742a39c238c99fe2b49b36f97980f75a6a76e5f",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-25T16:04:00.360413+00:00",
+ "finished_utc": "2026-10-25T16:26:25.202869+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": true
+   },
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": false
+   }
+  ],
+  "display_count": 2,
+  "wallpaper_apps": [],
+  "power_mode": "powermode 2",
+  "on_battery": false,
+  "macos": "26.4 (25E246)",
+  "uptime_hours": 11.2,
+  "machine": "Mac17,6",
+  "chip": "Apple M5 Max",
+  "cores": 18,
+  "memory_bytes": 137438953472,
+  "power": "AC Power",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+ },
+ "preflight": null,
+ "binaries": {
+  "zgx": {
+   "sha256": "4684093e544567a946ea2ddf7d95a81b4116088fb7bf8a2ebd298e10bdc3b4f8",
+   "bytes": 11994224
+  },
+  "zgx-luau": {
+   "sha256": "a0bfb98040c8c3bbb9ad91105f843655dce2b29f766c5dacbc201a0a2abe70a1",
+   "bytes": 19770848
+  },
+  "gpui-fast": {
+   "sha256": "57a2a72bc88f399d46e7040709a298e1a69f9d78834f35a1528b2a1b504ab4f0",
+   "bytes": 6970000
+  },
+  "mygo": {
+   "sha256": "b1921eb27df185df8f402501e1ceb8fc32757b3c8e637431d9682a947dbfe080",
+   "bytes": 9503346
+  }
+ },
+ "toolchains": {
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "rust_profile": "dist (release, lto = \"fat\", codegen-units = 1)",
+  "go": "go version go1.27.3 darwin/arm64",
+  "mygo": {
+   "mygo_version": "v0.6.3",
+   "mygo_commit": "15242900157b77228d35ca071f43e94a11bc90a0",
+   "mygo_license": "MIT",
+   "mygo_source": "https://github.com/egoist/mygo",
+   "go": "go1.27.3 darwin/arm64",
+   "flags": "-trimpath -ldflags=-s -w",
+   "cgo": false,
+   "sinf": "workload/sinf.go: macOS libm sinf ported to Go, bit-identical for all 2^32 inputs",
+   "binaries": [
+    "bin/heavy",
+    "bin/lab",
+    "bin/animate",
+    "bin/vlist"
+   ],
+   "built_utc": "2026-10-25T15:00:43Z"
+  }
+ },
+ "invalid_trials": [],
+ "protocol": {
+  "requested_seconds": 15,
+  "warmup_seconds": 5,
+  "sampled_seconds": 10,
+  "interval_seconds": 0.05,
+  "repeats": 3,
+  "idle_repeats": 3,
+  "idle_window_seconds": [
+   20,
+   30
+  ],
+  "idle_requested_seconds": 31,
+  "quick": false,
+  "pgo": false,
+  "frameworks": [
+   "zgx",
+   "zgx-luau",
+   "gpui-fast",
+   "mygo"
+  ],
+  "modes": [
+   "scroll",
+   "fling",
+   "jump"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 2,
+  "pacing_during_trials": false,
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ],
+  "suite": true,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 2,
+  "extended_cells": [
+   "zgx-luau/jump",
+   "mygo/jump"
+  ],
+  "blank_seconds": 8,
+  "blank_rate": 10
+ }
+}

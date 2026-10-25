@@ -4,277 +4,510 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>zgx performance: the latest benchmark</title>
-<meta name="description" content="In every test, zgx uses less CPU and less GPU than GPUI and GPUI Fast, and none of its frames run long.">
+<meta name="description" content="zgx uses the least CPU in 10 of 10 tests and the least GPU power in 9, against GPUI Fast and MyGo.">
 <meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
 <p class="eyebrow">zgx performance · macOS · 2026-10-25</p>
-<h1>In every test, zgx uses less CPU and less GPU than GPUI and GPUI Fast, and none of its frames run long.</h1>
-<p class="lede">zgx against GPUI (0.2.2) and GPUI Fast, the same three scenes built from the same workload code, measured on one Mac. Lower is better throughout.</p>
+<h1>zgx uses the least CPU in 10 of 10 tests and the least GPU power in 9, against GPUI Fast and MyGo.</h1>
+<p class="lede">zgx against GPUI Fast (Zed's GPUI with its fast-path optimizations, as apps ship it) and MyGo (a Go desktop framework, through its GPU-drawn native UI): the same four scenes, built from the same workload code, measured on one Mac in one session. Lower is better throughout.</p>
 <dl class="cards">
-<div class="card"><dt>less CPU than GPUI / GPUI Fast</dt><dd><span class="big">61% / 43%</span><span class="note">heavy dashboard, both: 9.1% of a core against 23.0% and 15.9%</span></dd></div>
-<div class="card"><dt>less GPU work than either GPUI</dt><dd><span class="big">22–47%</span><span class="note">heavy dashboard, every active mode</span></dd></div>
-<div class="card"><dt>long frames (over 25 ms)</dt><dd><span class="big">0%</span><span class="note">median of 8 captures, every mode of every scene; GPUI and GPUI Fast: medians up to 3.8%</span></dd></div>
-<div class="card"><dt>CPU while idle</dt><dd><span class="big">0.00%</span><span class="note">GPUI 0.38%, GPUI Fast 0.40%</span></dd></div>
+<div class="card"><dt>CPU, heavy dashboard (both)</dt><dd><span class="big">9.7%</span><span class="note">41% less than GPUI Fast, 47% less than MyGo</span></dd></div>
+<div class="card"><dt>GPU power, heavy dashboard (both)</dt><dd><span class="big">154 mW</span><span class="note">7% less than GPUI Fast, 32% less than MyGo</span></dd></div>
+<div class="card"><dt>long frames (over 25 ms), at most</dt><dd><span class="big">1.0%</span><span class="note">median of each mode&#x27;s captures, every scene; GPUI Fast and MyGo: up to 2.4%</span></dd></div>
+<div class="card"><dt>CPU while idle</dt><dd><span class="big">0.00%</span><span class="note">GPUI Fast 0.37%, MyGo 0.00%</span></dd></div>
 </dl>
-<nav aria-label="Scenes"><a href="#heavy">Heavy dashboard</a> <a href="#lab">Text and list</a> <a href="#animate">Animation</a> <a href="#method">How this was measured</a></nav>
+<nav aria-label="Scenes"><a href="#heavy">Heavy dashboard</a> <a href="#lab">Text and a 100,000-row list</a> <a href="#animate">Animation</a> <a href="#vlist">Variable-height list</a> <a href="#method">How this was measured</a></nav>
 </header>
 <main>
-<section id="heavy" aria-labelledby="heavy-h"><h2 id="heavy-h">Heavy dashboard</h2><p class="scene-note">A 1280×800 dashboard: 6 tiles, 30 cards of 26 sparkline bars, a status table and a log. Most values change 60 times a second; the table scrolls. <a href="https://github.com/zeronsh/zgx/tree/main/docs/results/latest-macos-heavy-2026-10-25-282bfc0">Raw data</a></p><div class="charts"><figure class="chart"><table><caption><span class="title">CPU</span> <span class="unit">% of one core</span> <span class="better">lower is better</span></caption>
+<section id="heavy" aria-labelledby="heavy-h"><h2 id="heavy-h">Heavy dashboard</h2><p class="scene-note">A 1280×800 dashboard: 6 tiles, 30 cards of 26 sparkline bars, a status table and a log. Most values change 60 times a second; the table scrolls. <a href="https://github.com/zeronsh/zgx/tree/main/docs/results/suite-macos-2026-10-25-c742a39/heavy">Raw data</a></p><div class="charts"><figure class="chart"><table><caption><span class="title">CPU</span> <span class="unit">% of one core</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
 <tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Idle</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.00</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:1.7%"></span></span><span class="value">0.38</span> <span class="range">(0.37–0.39)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:1.7%"></span></span><span class="value">0.40</span> <span class="range">(0.38–0.40)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:2.0%"></span></span><span class="value">0.37</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.00</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:37.1%"></span></span><span class="value">8.5</span> <span class="range">(8.0–8.9)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:95.7%"></span></span><span class="value">22.0</span> <span class="range">(21.5–22.1)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:60.2%"></span></span><span class="value">13.9</span> <span class="range">(13.6–16.2)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:50.3%"></span></span><span class="value">9.3</span> <span class="range">(8.9–9.9)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:89.1%"></span></span><span class="value">16.4</span> <span class="range">(15.9–16.5)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:91.6%"></span></span><span class="value">16.9</span> <span class="range">(15.3–18.2)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:13.9%"></span></span><span class="value">3.2</span> <span class="range">(3.1–3.3)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:63.5%"></span></span><span class="value">14.6</span> <span class="range">(14.1–15.7)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:37.8%"></span></span><span class="value">8.7</span> <span class="range">(8.4–8.9)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:17.3%"></span></span><span class="value">3.2</span> <span class="range">(3.1–3.2)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:49.4%"></span></span><span class="value">9.1</span> <span class="range">(7.5–9.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:89.1%"></span></span><span class="value">16.4</span> <span class="range">(15.1–16.5)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:39.4%"></span></span><span class="value">9.1</span> <span class="range">(8.4–9.6)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">23.0</span> <span class="range">(21.5–23.4)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:69.1%"></span></span><span class="value">15.9</span> <span class="range">(15.7–15.9)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:53.0%"></span></span><span class="value">9.7</span> <span class="range">(9.3–10.1)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:90.0%"></span></span><span class="value">16.6</span> <span class="range">(16.1–17.2)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">18.4</span> <span class="range">(16.4–19.5)</span></td></tr>
 </tbody>
 </table></figure>
-<figure class="chart"><table><caption><span class="title">GPU work</span> <span class="unit">million GPU cycles a second</span> <span class="better">lower is better</span></caption>
+<figure class="chart"><table><caption><span class="title">WindowServer CPU</span> <span class="unit">% of one core: the system compositor, while the app runs (the desktop alone: 0.7)</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:75.7%"></span></span><span class="value">16.8</span> <span class="range">(16.2–17.0)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">22.1</span> <span class="range">(22.1–22.2)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.9%"></span></span><span class="value">21.7</span> <span class="range">(21.4–21.8)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Idle</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:2.2%"></span></span><span class="value">0.3</span> <span class="range">(0.2–0.4)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:2.9%"></span></span><span class="value">0.4</span> <span class="range">(0.2–0.6)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:7.4%"></span></span><span class="value">1.1</span> <span class="range">(0.7–1.2)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:52.1%"></span></span><span class="value">11.5</span> <span class="range">(11.3–12.1)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.4%"></span></span><span class="value">21.6</span> <span class="range">(21.5–21.6)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.8%"></span></span><span class="value">21.9</span> <span class="range">(21.8–21.9)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">14.4</span> <span class="range">(14.1–14.7)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:67.9%"></span></span><span class="value">9.8</span> <span class="range">(9.3–13.8)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:73.2%"></span></span><span class="value">10.5</span> <span class="range">(10.3–10.7)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:75.6%"></span></span><span class="value">16.7</span> <span class="range">(15.8–16.8)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.4%"></span></span><span class="value">22.0</span> <span class="range">(21.5–22.5)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.5%"></span></span><span class="value">21.6</span> <span class="range">(21.5–21.8)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:94.9%"></span></span><span class="value">13.6</span> <span class="range">(13.4–14.1)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:65.7%"></span></span><span class="value">9.4</span> <span class="range">(9.2–9.7)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.9%"></span></span><span class="value">10.5</span> <span class="range">(10.3–10.5)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.0%"></span></span><span class="value">14.2</span> <span class="range">(14.0–14.3)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:65.0%"></span></span><span class="value">9.3</span> <span class="range">(9.3–9.6)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.6%"></span></span><span class="value">10.4</span> <span class="range">(10.4–11.1)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">GPU power</span> <span class="unit">mW, the whole GPU (the window server's compositing included), less the desktop alone (0.6 mW)</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:57.1%"></span></span><span class="value">129.7</span> <span class="range">(129.0–135.9)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.9%"></span></span><span class="value">165.6</span> <span class="range">(165.5–165.7)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.5%"></span></span><span class="value">226.0</span> <span class="range">(225.6–228.9)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:35.9%"></span></span><span class="value">81.5</span> <span class="range">(81.4–82.1)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.8%"></span></span><span class="value">165.3</span> <span class="range">(164.9–165.8)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:49.6%"></span></span><span class="value">112.6</span> <span class="range">(112.5–113.3)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:67.9%"></span></span><span class="value">154.2</span> <span class="range">(153.8–154.7)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:73.1%"></span></span><span class="value">166.0</span> <span class="range">(165.7–166.6)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">227.1</span> <span class="range">(226.8–228.5)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">App GPU time</span> <span class="unit">million GPU cycles a second, the app's own; includes per-frame wake latency</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.4%"></span></span><span class="value">18.7</span> <span class="range">(18.3–18.8)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:84.6%"></span></span><span class="value">22.1</span> <span class="range">(21.8–22.2)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">26.2</span> <span class="range">(25.4–26.4)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:48.9%"></span></span><span class="value">12.8</span> <span class="range">(12.5–12.9)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:85.7%"></span></span><span class="value">22.4</span> <span class="range">(22.2–22.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:62.3%"></span></span><span class="value">16.3</span> <span class="range">(16.3–16.6)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:76.5%"></span></span><span class="value">20.0</span> <span class="range">(19.8–20.0)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:84.7%"></span></span><span class="value">22.1</span> <span class="range">(22.1–22.2)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.2%"></span></span><span class="value">25.9</span> <span class="range">(25.7–26.2)</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Frame time, 99th percentile</span> <span class="unit">ms between frames</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:69.2%"></span></span><span class="value">17.6</span> <span class="range">(17.4–17.7)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.4%"></span></span><span class="value">25.0</span> <span class="range">(23.5–25.2)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.5%"></span></span><span class="value">25.3</span> <span class="range">(25.2–25.4)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:69.8%"></span></span><span class="value">17.9</span> <span class="range">(17.8–18.0)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.0%"></span></span><span class="value">25.1</span> <span class="range">(25.0–25.2)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.1%"></span></span><span class="value">18.5</span> <span class="range">(17.8–19.2)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:69.2%"></span></span><span class="value">17.6</span> <span class="range">(17.5–17.7)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">25.4</span> <span class="range">(25.3–32.4)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.4%"></span></span><span class="value">25.3</span> <span class="range">(25.1–31.9)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.4%"></span></span><span class="value">18.0</span> <span class="range">(18.0–18.1)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">25.6</span> <span class="range">(25.2–26.0)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:84.7%"></span></span><span class="value">21.7</span> <span class="range">(18.3–25.1)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:69.2%"></span></span><span class="value">17.6</span> <span class="range">(17.5–24.7)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:96.1%"></span></span><span class="value">24.4</span> <span class="range">(23.7–25.3)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.3%"></span></span><span class="value">25.2</span> <span class="range">(25.1–25.4)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.6%"></span></span><span class="value">18.1</span> <span class="range">(18.0–18.2)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.3%"></span></span><span class="value">25.2</span> <span class="range">(25.0–25.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:73.6%"></span></span><span class="value">18.8</span> <span class="range">(18.7–19.0)</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Long frames</span> <span class="unit">% of frames over 25 ms</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
 <tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:24.4%"></span></span><span class="value">0.9</span> <span class="range">(0.0–2.3)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:77.5%"></span></span><span class="value">2.9</span> <span class="range">(2.4–3.9)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:52.4%"></span></span><span class="value">1.2</span> <span class="range">(1.0–1.5)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:4.4%"></span></span><span class="value">0.1</span> <span class="range">(0.0–0.2)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span> <span class="range">(0.0–0.2)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">3.8</span> <span class="range">(2.8–7.5)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:92.9%"></span></span><span class="value">3.5</span> <span class="range">(1.8–5.7)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">2.4</span> <span class="range">(2.0–2.7)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:39.8%"></span></span><span class="value">0.9</span> <span class="range">(0.2–1.7)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span> <span class="range">(0.0–0.4)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:20.8%"></span></span><span class="value">0.8</span> <span class="range">(0.2–1.9)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.2%"></span></span><span class="value">2.8</span> <span class="range">(2.1–4.0)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:73.5%"></span></span><span class="value">1.7</span> <span class="range">(1.0–2.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:8.8%"></span></span><span class="value">0.2</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Memory</span> <span class="unit">MB, physical footprint</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Idle</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:21.3%"></span></span><span class="value">59</span> <span class="range">(53–79)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:32.2%"></span></span><span class="value">88</span> <span class="range">(88–105)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:33.7%"></span></span><span class="value">93</span> <span class="range">(89–95)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Idle</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:18.4%"></span></span><span class="value">54</span> <span class="range">(54–55)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:24.0%"></span></span><span class="value">71</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:22.0%"></span></span><span class="value">65</span> <span class="range">(64–65)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:94.0%"></span></span><span class="value">259</span> <span class="range">(259–260)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.1%"></span></span><span class="value">272</span> <span class="range">(271–273)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">275</span> <span class="range">(257–276)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:87.4%"></span></span><span class="value">259</span> <span class="range">(257–260)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:91.5%"></span></span><span class="value">271</span> <span class="range">(270–272)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">297</span> <span class="range">(296–298)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:92.7%"></span></span><span class="value">255</span> <span class="range">(254–255)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.9%"></span></span><span class="value">272</span> <span class="range">(270–272)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:93.2%"></span></span><span class="value">256</span> <span class="range">(255–258)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:84.8%"></span></span><span class="value">252</span> <span class="range">(251–254)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:90.7%"></span></span><span class="value">269</span> <span class="range">(254–271)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:96.4%"></span></span><span class="value">286</span> <span class="range">(286–287)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:94.2%"></span></span><span class="value">259</span> <span class="range">(259–261)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.1%"></span></span><span class="value">272</span> <span class="range">(272–274)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.8%"></span></span><span class="value">274</span> <span class="range">(268–274)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:86.8%"></span></span><span class="value">257</span> <span class="range">(256–258)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:91.7%"></span></span><span class="value">272</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.7%"></span></span><span class="value">296</span> <span class="range">(294–297)</span></td></tr>
 </tbody>
-</table></figure></div></section><section id="lab" aria-labelledby="lab-h"><h2 id="lab-h">Text and a 100,000-row list</h2><p class="scene-note">A streaming transcript beside a 100,000-row virtual list, updated 60 times a second. QuickGUI runs this scene only. <a href="https://github.com/zeronsh/zgx/tree/main/docs/results/latest-macos-2026-10-25-282bfc0">Raw data</a></p><div class="charts"><figure class="chart"><table><caption><span class="title">CPU</span> <span class="unit">% of one core</span> <span class="better">lower is better</span></caption>
+</table></figure></div></section><section id="lab" aria-labelledby="lab-h"><h2 id="lab-h">Text and a 100,000-row list</h2><p class="scene-note">A streaming transcript beside a 100,000-row virtual list, updated 60 times a second. <a href="https://github.com/zeronsh/zgx/tree/main/docs/results/suite-macos-2026-10-25-c742a39/lab">Raw data</a></p><div class="charts"><figure class="chart"><table><caption><span class="title">CPU</span> <span class="unit">% of one core</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Idle</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.00</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:2.4%"></span></span><span class="value">0.38</span> <span class="range">(0.38–0.39)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:2.5%"></span></span><span class="value">0.40</span> <span class="range">(0.40–0.42)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.00</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:35.6%"></span></span><span class="value">3.2</span> <span class="range">(2.9–3.2)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:63.9%"></span></span><span class="value">5.7</span> <span class="range">(5.7–6.2)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.4%"></span></span><span class="value">8.9</span> <span class="range">(8.6–9.3)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:19.7%"></span></span><span class="value">3.2</span> <span class="range">(2.9–3.2)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:42.3%"></span></span><span class="value">6.8</span> <span class="range">(6.6–6.9)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:32.1%"></span></span><span class="value">5.1</span> <span class="range">(5.1–5.2)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:95.3%"></span></span><span class="value">15.3</span> <span class="range">(14.8–15.5)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:29.6%"></span></span><span class="value">2.6</span> <span class="range">(2.6–2.7)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:49.0%"></span></span><span class="value">4.4</span> <span class="range">(4.3–4.5)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:78.5%"></span></span><span class="value">7.0</span> <span class="range">(6.7–7.2)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:18.0%"></span></span><span class="value">2.9</span> <span class="range">(2.7–2.9)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:30.4%"></span></span><span class="value">4.9</span> <span class="range">(4.8–5.2)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:28.0%"></span></span><span class="value">4.5</span> <span class="range">(4.3–4.5)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:52.1%"></span></span><span class="value">8.4</span> <span class="range">(7.6–8.7)</span></td></tr>
-</tbody>
-<tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:22.6%"></span></span><span class="value">3.6</span> <span class="range">(3.4–3.7)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:43.7%"></span></span><span class="value">7.0</span> <span class="range">(6.2–7.2)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:36.9%"></span></span><span class="value">5.9</span> <span class="range">(5.6–6.1)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">16.0</span> <span class="range">(14.6–16.7)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:37.2%"></span></span><span class="value">3.3</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:65.2%"></span></span><span class="value">5.8</span> <span class="range">(5.8–6.0)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">8.9</span> <span class="range">(8.9–9.6)</span></td></tr>
 </tbody>
 </table></figure>
-<figure class="chart"><table><caption><span class="title">GPU work</span> <span class="unit">million GPU cycles a second</span> <span class="better">lower is better</span></caption>
+<figure class="chart"><table><caption><span class="title">WindowServer CPU</span> <span class="unit">% of one core: the system compositor, while the app runs (the desktop alone: 0.2)</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:46.4%"></span></span><span class="value">11.3</span> <span class="range">(10.7–11.5)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:75.2%"></span></span><span class="value">18.3</span> <span class="range">(18.1–18.3)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.9%"></span></span><span class="value">18.2</span> <span class="range">(18.0–18.3)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">24.4</span> <span class="range">(23.9–24.4)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.4%"></span></span><span class="value">12.6</span> <span class="range">(12.5–12.6)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.0%"></span></span><span class="value">9.5</span> <span class="range">(9.3–9.6)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:80.0%"></span></span><span class="value">10.2</span> <span class="range">(10.1–10.5)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:44.8%"></span></span><span class="value">10.9</span> <span class="range">(10.1–10.9)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.0%"></span></span><span class="value">18.0</span> <span class="range">(17.8–18.1)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.4%"></span></span><span class="value">18.1</span> <span class="range">(18.1–18.2)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.0%"></span></span><span class="value">23.9</span> <span class="range">(23.9–24.0)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.7%"></span></span><span class="value">12.8</span> <span class="range">(12.7–13.2)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.3%"></span></span><span class="value">9.1</span> <span class="range">(9.0–9.3)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:80.9%"></span></span><span class="value">10.4</span> <span class="range">(10.2–14.6)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:47.8%"></span></span><span class="value">11.6</span> <span class="range">(11.2–11.8)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.3%"></span></span><span class="value">18.1</span> <span class="range">(18.1–18.4)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.9%"></span></span><span class="value">18.2</span> <span class="range">(18.2–18.3)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.3%"></span></span><span class="value">24.2</span> <span class="range">(24.1–24.3)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">12.8</span> <span class="range">(12.8–13.1)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.8%"></span></span><span class="value">9.2</span> <span class="range">(9.1–12.0)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:79.2%"></span></span><span class="value">10.1</span> <span class="range">(10.0–10.4)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">GPU power</span> <span class="unit">mW, the whole GPU (the window server's compositing included), less the desktop alone (0.6 mW)</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:54.5%"></span></span><span class="value">58.5</span> <span class="range">(58.0–58.8)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.9%"></span></span><span class="value">107.3</span> <span class="range">(107.2–107.7)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:61.0%"></span></span><span class="value">65.5</span> <span class="range">(64.0–66.5)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:58.4%"></span></span><span class="value">62.7</span> <span class="range">(62.2–63.3)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.5%"></span></span><span class="value">104.7</span> <span class="range">(104.5–104.9)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:93.3%"></span></span><span class="value">100.2</span> <span class="range">(98.5–100.5)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:62.1%"></span></span><span class="value">66.7</span> <span class="range">(66.4–67.1)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">107.4</span> <span class="range">(107.2–107.6)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.5%"></span></span><span class="value">104.7</span> <span class="range">(103.3–104.8)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">App GPU time</span> <span class="unit">million GPU cycles a second, the app's own; includes per-frame wake latency</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:64.5%"></span></span><span class="value">12.1</span> <span class="range">(11.8–12.1)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.8%"></span></span><span class="value">18.7</span> <span class="range">(18.6–18.7)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:67.1%"></span></span><span class="value">12.6</span> <span class="range">(12.5–12.7)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:67.4%"></span></span><span class="value">12.6</span> <span class="range">(12.6–12.8)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.6%"></span></span><span class="value">18.7</span> <span class="range">(18.6–18.7)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:85.7%"></span></span><span class="value">16.1</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.6%"></span></span><span class="value">13.4</span> <span class="range">(13.4–13.5)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">18.8</span> <span class="range">(18.7–18.8)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:85.5%"></span></span><span class="value">16.0</span> <span class="range">(15.3–16.1)</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Frame time, 99th percentile</span> <span class="unit">ms between frames</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.1%"></span></span><span class="value">17.7</span> <span class="range">(17.6–18.1)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.9%"></span></span><span class="value">25.2</span> <span class="range">(25.0–25.3)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.0%"></span></span><span class="value">17.7</span> <span class="range">(17.6–17.9)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.3%"></span></span><span class="value">17.8</span> <span class="range">(17.5–25.1)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:77.1%"></span></span><span class="value">18.4</span> <span class="range">(18.0–18.8)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.6%"></span></span><span class="value">17.8</span> <span class="range">(17.6–18.1)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:83.4%"></span></span><span class="value">19.9</span> <span class="range">(18.3–21.6)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:69.8%"></span></span><span class="value">17.6</span> <span class="range">(17.4–17.9)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:69.9%"></span></span><span class="value">17.7</span> <span class="range">(17.6–17.8)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.2%"></span></span><span class="value">17.7</span> <span class="range">(17.6–24.1)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.3%"></span></span><span class="value">17.8</span> <span class="range">(17.5–25.4)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">23.9</span> <span class="range">(17.8–30.0)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.9%"></span></span><span class="value">17.9</span> <span class="range">(17.8–18.0)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:91.4%"></span></span><span class="value">21.8</span> <span class="range">(18.3–25.4)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:69.9%"></span></span><span class="value">17.6</span> <span class="range">(17.6–17.7)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">25.3</span> <span class="range">(25.1–25.5)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.0%"></span></span><span class="value">17.9</span> <span class="range">(17.6–25.2)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.3%"></span></span><span class="value">18.3</span> <span class="range">(17.6–25.3)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:76.4%"></span></span><span class="value">18.3</span> <span class="range">(18.1–18.4)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:76.8%"></span></span><span class="value">18.4</span> <span class="range">(17.8–18.9)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:76.4%"></span></span><span class="value">18.3</span> <span class="range">(18.2–18.4)</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Long frames</span> <span class="unit">% of frames over 25 ms</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span> <span class="range">(0.0–0.2)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.6%"></span></span><span class="value">2.7</span> <span class="range">(1.6–3.8)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span> <span class="range">(0.0–0.2)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span> <span class="range">(0.0–1.6)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:7.8%"></span></span><span class="value">0.1</span> <span class="range">(0.0–0.2)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:15.3%"></span></span><span class="value">0.2</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span> <span class="range">(0.0–0.2)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:3.6%"></span></span><span class="value">0.1</span> <span class="range">(0.0–0.4)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span> <span class="range">(0.0–2.7)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.8%"></span></span><span class="value">1.0</span> <span class="range">(0.0–1.9)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:15.5%"></span></span><span class="value">0.2</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">1.3</span> <span class="range">(0.4–2.2)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span> <span class="range">(0.0–0.2)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">2.7</span> <span class="range">(2.0–4.8)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:15.3%"></span></span><span class="value">0.4</span> <span class="range">(0.0–1.9)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:3.6%"></span></span><span class="value">0.1</span> <span class="range">(0.0–2.3)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:7.8%"></span></span><span class="value">0.1</span> <span class="range">(0.0–0.2)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:23.3%"></span></span><span class="value">0.3</span> <span class="range">(0.2–0.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:15.5%"></span></span><span class="value">0.2</span> <span class="range">(0.0–0.4)</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Memory</span> <span class="unit">MB, physical footprint</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Idle</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:16.0%"></span></span><span class="value">67</span> <span class="range">(55–67)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:21.3%"></span></span><span class="value">89</span> <span class="range">(64–96)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:12.8%"></span></span><span class="value">53</span> <span class="range">(53–79)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:15.8%"></span></span><span class="value">65</span> <span class="range">(57–116)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:89.9%"></span></span><span class="value">236</span> <span class="range">(234–244)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:90.1%"></span></span><span class="value">236</span> <span class="range">(235–242)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">262</span> <span class="range">(260–270)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Streaming</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:56.9%"></span></span><span class="value">236</span> <span class="range">(236–237)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:59.6%"></span></span><span class="value">247</span> <span class="range">(247–248)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:57.5%"></span></span><span class="value">239</span> <span class="range">(239–244)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.9%"></span></span><span class="value">411</span> <span class="range">(410–411)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:88.6%"></span></span><span class="value">232</span> <span class="range">(232–234)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:89.3%"></span></span><span class="value">234</span> <span class="range">(234–236)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:96.6%"></span></span><span class="value">253</span> <span class="range">(251–253)</span></td></tr>
 </tbody>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:56.8%"></span></span><span class="value">236</span> <span class="range">(235–236)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:59.3%"></span></span><span class="value">246</span> <span class="range">(244–247)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:56.8%"></span></span><span class="value">236</span> <span class="range">(235–237)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.4%"></span></span><span class="value">413</span> <span class="range">(413–416)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:89.5%"></span></span><span class="value">235</span> <span class="range">(234–236)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:94.2%"></span></span><span class="value">247</span> <span class="range">(236–249)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.8%"></span></span><span class="value">262</span> <span class="range">(262–263)</span></td></tr>
 </tbody>
-<tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Both</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:57.1%"></span></span><span class="value">237</span> <span class="range">(236–238)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:59.7%"></span></span><span class="value">248</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:57.6%"></span></span><span class="value">239</span> <span class="range">(238–239)</span></td></tr>
-<tr class="fw-quickgui"><th scope="row">QuickGUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">415</span> <span class="range">(415–419)</span></td></tr>
-</tbody>
-</table></figure></div></section><section id="animate" aria-labelledby="animate-h"><h2 id="animate-h">Animation</h2><p class="scene-note">48 blinking dots and a shimmering line of text, animated on every refresh of a 120 Hz display. <a href="https://github.com/zeronsh/zgx/tree/main/docs/results/latest-macos-animate-2026-10-25-282bfc0">Raw data</a></p><div class="charts"><figure class="chart"><table><caption><span class="title">CPU</span> <span class="unit">% of one core</span> <span class="better">lower is better</span></caption>
+</table></figure></div></section><section id="animate" aria-labelledby="animate-h"><h2 id="animate-h">Animation</h2><p class="scene-note">48 blinking dots and a shimmering line of text, animated on every refresh of a 120 Hz display. <a href="https://github.com/zeronsh/zgx/tree/main/docs/results/suite-macos-2026-10-25-c742a39/animate">Raw data</a></p><div class="charts"><figure class="chart"><table><caption><span class="title">CPU</span> <span class="unit">% of one core</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:64.8%"></span></span><span class="value">5.1</span> <span class="range">(5.0–5.1)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">7.8</span> <span class="range">(7.6–8.4)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:73.5%"></span></span><span class="value">5.8</span> <span class="range">(5.6–6.1)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:57.4%"></span></span><span class="value">4.8</span> <span class="range">(4.7–4.8)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:77.6%"></span></span><span class="value">6.5</span> <span class="range">(5.6–6.9)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">8.3</span> <span class="range">(8.1–8.7)</span></td></tr>
 </tbody>
 </table></figure>
-<figure class="chart"><table><caption><span class="title">GPU work</span> <span class="unit">million GPU cycles a second</span> <span class="better">lower is better</span></caption>
+<figure class="chart"><table><caption><span class="title">WindowServer CPU</span> <span class="unit">% of one core: the system compositor, while the app runs (the desktop alone: 0.8)</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:73.2%"></span></span><span class="value">20.5</span> <span class="range">(20.5–20.6)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">28.0</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.1%"></span></span><span class="value">27.5</span> <span class="range">(27.4–27.7)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:90.4%"></span></span><span class="value">19.1</span> <span class="range">(18.8–19.7)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:92.4%"></span></span><span class="value">19.5</span> <span class="range">(19.4–19.7)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">21.2</span> <span class="range">(20.7–21.8)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">GPU power</span> <span class="unit">mW, the whole GPU (the window server's compositing included), less the desktop alone (0.6 mW)</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:91.4%"></span></span><span class="value">117.0</span> <span class="range">(114.5–118.8)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">128.0</span> <span class="range">(111.5–134.3)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:85.2%"></span></span><span class="value">109.1</span> <span class="range">(90.0–121.4)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">App GPU time</span> <span class="unit">million GPU cycles a second, the app's own; includes per-frame wake latency</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.0%"></span></span><span class="value">22.9</span> <span class="range">(22.8–23.0)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:74.2%"></span></span><span class="value">17.5</span> <span class="range">(15.2–17.7)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">23.6</span> <span class="range">(19.1–23.6)</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Frame time, 99th percentile</span> <span class="unit">ms between frames</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:86.7%"></span></span><span class="value">13.9</span> <span class="range">(13.6–16.5)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">16.1</span> <span class="range">(14.7–18.4)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.5%"></span></span><span class="value">16.0</span> <span class="range">(13.6–20.3)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">18.8</span> <span class="range">(18.2–19.5)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:80.1%"></span></span><span class="value">15.1</span> <span class="range">(12.8–17.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:92.1%"></span></span><span class="value">17.4</span> <span class="range">(16.9–17.8)</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Long frames</span> <span class="unit">% of frames over 25 ms</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
 <tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
 <tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
 </tbody>
 </table></figure>
 <figure class="chart"><table><caption><span class="title">Memory</span> <span class="unit">MB, physical footprint</span> <span class="better">lower is better</span></caption>
 <colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
 <tbody>
-<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.1%"></span></span><span class="value">247</span> <span class="range">(245–252)</span></td></tr>
-<tr class="fw-gpui"><th scope="row">GPUI</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">249</span> <span class="range">(248–260)</span></td></tr>
-<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.8%"></span></span><span class="value">248</span> <span class="range">(248–253)</span></td></tr>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="3" class="mode">Animating</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.0%"></span></span><span class="value">246</span> <span class="range">(244–254)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.5%"></span></span><span class="value">247</span> <span class="range">(245–247)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">253</span> <span class="range">(252–262)</span></td></tr>
+</tbody>
+</table></figure></div></section><section id="vlist" aria-labelledby="vlist-h"><h2 id="vlist-h">Variable-height list</h2><p class="scene-note">100,000 chat rows of wrapped text, 1 to 8 lines each, about one in four with an image, in each framework&#x27;s own list widget, which measures the rows: scrolled steadily, flung, and scrolled with a jump to a far row every half second. <a href="https://github.com/zeronsh/zgx/tree/main/docs/results/suite-macos-2026-10-25-c742a39/vlist">Raw data</a></p><div class="charts"><figure class="chart"><table><caption><span class="title">CPU</span> <span class="unit">% of one core</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:24.7%"></span></span><span class="value">2.8</span> <span class="range">(2.8–2.9)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:25.9%"></span></span><span class="value">2.9</span> <span class="range">(2.9–3.0)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:48.3%"></span></span><span class="value">5.4</span> <span class="range">(5.4–5.5)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:96.5%"></span></span><span class="value">10.9</span> <span class="range">(10.3–11.0)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Flinging</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:29.7%"></span></span><span class="value">3.3</span> <span class="range">(3.3–3.4)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:30.4%"></span></span><span class="value">3.4</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:46.7%"></span></span><span class="value">5.3</span> <span class="range">(5.2–5.5)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:93.3%"></span></span><span class="value">10.5</span> <span class="range">(10.4–10.6)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Jumping</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:26.5%"></span></span><span class="value">3.0</span> <span class="range">(2.9–3.0)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:28.1%"></span></span><span class="value">3.2</span> <span class="range">(3.1–3.2)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:49.3%"></span></span><span class="value">5.6</span> <span class="range">(5.5–5.9)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">11.3</span> <span class="range">(10.7–12.1)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">WindowServer CPU</span> <span class="unit">% of one core: the system compositor, while the app runs (the desktop alone: 0.2)</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">12.6</span> <span class="range">(12.4–12.9)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.6%"></span></span><span class="value">12.4</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:73.0%"></span></span><span class="value">9.2</span> <span class="range">(8.7–11.0)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:86.0%"></span></span><span class="value">10.8</span> <span class="range">(10.4–11.0)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Flinging</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.9%"></span></span><span class="value">12.3</span> <span class="range">(11.9–16.6)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:97.6%"></span></span><span class="value">12.3</span> <span class="range">(12.2–12.5)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.5%"></span></span><span class="value">9.0</span> <span class="range">(8.9–9.1)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:88.5%"></span></span><span class="value">11.2</span> <span class="range">(10.6–12.1)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Jumping</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.4%"></span></span><span class="value">12.4</span> <span class="range">(12.4–12.7)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.7%"></span></span><span class="value">12.4</span> <span class="range">(12.2–17.7)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.8%"></span></span><span class="value">9.2</span> <span class="range">(8.7–9.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:84.6%"></span></span><span class="value">10.7</span> <span class="range">(10.4–10.8)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">GPU power</span> <span class="unit">mW, the whole GPU (the window server's compositing included), less the desktop alone (0.6 mW)</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:63.2%"></span></span><span class="value">59.6</span> <span class="range">(59.4–60.9)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:63.2%"></span></span><span class="value">59.6</span> <span class="range">(59.6–59.8)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:93.6%"></span></span><span class="value">88.3</span> <span class="range">(88.3–88.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.9%"></span></span><span class="value">94.2</span> <span class="range">(92.2–94.4)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Flinging</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.4%"></span></span><span class="value">66.4</span> <span class="range">(65.6–66.5)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.2%"></span></span><span class="value">66.2</span> <span class="range">(66.2–66.7)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:93.7%"></span></span><span class="value">88.4</span> <span class="range">(88.2–88.6)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.4%"></span></span><span class="value">93.7</span> <span class="range">(93.0–94.5)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Jumping</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:63.3%"></span></span><span class="value">59.7</span> <span class="range">(59.7–60.3)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:63.5%"></span></span><span class="value">59.9</span> <span class="range">(59.6–77.4)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:94.0%"></span></span><span class="value">88.6</span> <span class="range">(88.6–88.8)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">94.3</span> <span class="range">(93.1–95.0)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">App GPU time</span> <span class="unit">million GPU cycles a second, the app's own; includes per-frame wake latency</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:76.3%"></span></span><span class="value">13.3</span> <span class="range">(13.3–13.5)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:75.8%"></span></span><span class="value">13.2</span> <span class="range">(13.2–13.6)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.1%"></span></span><span class="value">17.3</span> <span class="range">(17.2–17.3)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:90.7%"></span></span><span class="value">15.8</span> <span class="range">(14.6–15.9)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Flinging</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:82.5%"></span></span><span class="value">14.4</span> <span class="range">(14.0–14.6)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:82.8%"></span></span><span class="value">14.4</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">17.4</span> <span class="range">(17.4–17.5)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:84.2%"></span></span><span class="value">14.7</span> <span class="range">(14.7–16.0)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Jumping</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:76.0%"></span></span><span class="value">13.3</span> <span class="range">(13.2–13.3)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:76.3%"></span></span><span class="value">13.3</span> <span class="range">(12.9–13.4)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:99.4%"></span></span><span class="value">17.3</span> <span class="range">(17.3–17.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:86.4%"></span></span><span class="value">15.1</span> <span class="range">(14.8–15.9)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">Frame time, 99th percentile</span> <span class="unit">ms between frames</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.9%"></span></span><span class="value">18.0</span> <span class="range">(17.9–18.1)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.0%"></span></span><span class="value">18.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.2%"></span></span><span class="value">17.8</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:72.1%"></span></span><span class="value">18.0</span> <span class="range">(17.9–18.2)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Flinging</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:70.9%"></span></span><span class="value">17.7</span> <span class="range">(17.6–17.8)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.6%"></span></span><span class="value">17.9</span> <span class="range">(17.7–18.1)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.3%"></span></span><span class="value">17.8</span> <span class="range">(17.6–18.1)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:73.1%"></span></span><span class="value">18.3</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Jumping</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.6%"></span></span><span class="value">17.9</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:71.8%"></span></span><span class="value">18.0</span> <span class="range">(17.9–18.0)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">25.0</span> <span class="range">(25.0–25.1)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:89.8%"></span></span><span class="value">22.5</span> <span class="range">(20.1–24.9)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">Long frames</span> <span class="unit">% of frames over 25 ms</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:20.2%"></span></span><span class="value">0.2</span> <span class="range">(0.0–0.4)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:20.3%"></span></span><span class="value">0.2</span> <span class="range">(0.0–0.4)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Flinging</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:30.4%"></span></span><span class="value">0.3</span> <span class="range">(0.2–0.4)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Jumping</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">1.0</span> <span class="range">(0.8–1.2)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:40.5%"></span></span><span class="value">0.4</span> <span class="range">(0.2–0.6)</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">Unfilled rows</span> <span class="unit">% of window captures showing a gap</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Flinging</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Jumping</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:0.0%"></span></span><span class="value">0.0</span></td></tr>
+</tbody>
+</table></figure>
+<figure class="chart"><table><caption><span class="title">Memory</span> <span class="unit">MB, physical footprint</span> <span class="better">lower is better</span></caption>
+<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup><thead><tr><th scope="col">Mode</th><th scope="col">Framework</th><th scope="col">Median <span class="range-head">(range)</span></th></tr></thead>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Scrolling</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:84.5%"></span></span><span class="value">237</span> <span class="range">(236–238)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:85.5%"></span></span><span class="value">240</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:96.4%"></span></span><span class="value">270</span> <span class="range">(270–274)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:90.4%"></span></span><span class="value">254</span> <span class="range">(253–254)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Flinging</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:85.4%"></span></span><span class="value">240</span> <span class="range">(238–240)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:86.0%"></span></span><span class="value">241</span> <span class="range">(241–243)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:98.0%"></span></span><span class="value">275</span> <span class="range">(274–284)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:90.3%"></span></span><span class="value">253</span> <span class="range">(253–255)</span></td></tr>
+</tbody>
+<tbody>
+<tr class="fw-zgx"><th scope="rowgroup" rowspan="4" class="mode">Jumping</th><th scope="row">zgx</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:84.8%"></span></span><span class="value">238</span> <span class="range">(238–241)</span></td></tr>
+<tr class="fw-zgx-luau"><th scope="row">zgx (Luau)</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:86.0%"></span></span><span class="value">241</span> <span class="range">(240–242)</span></td></tr>
+<tr class="fw-gpui-fast"><th scope="row">GPUI Fast</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:100.0%"></span></span><span class="value">281</span> <span class="range">(280–281)</span></td></tr>
+<tr class="fw-mygo"><th scope="row">MyGo</th><td><span class="track" aria-hidden="true"><span class="bar" style="width:92.3%"></span></span><span class="value">259</span> <span class="range">(257–267)</span></td></tr>
 </tbody>
 </table></figure></div></section>
 <section id="method" aria-labelledby="method-h">
@@ -282,29 +515,37 @@
 <ul class="facts">
 <li><strong>Machine:</strong> Apple M5 Max (Mac17,6, 18 cores, 128 GB), macOS 26.4 (25E246), AC Power.</li>
 <li><strong>Displays:</strong> 2 × Studio Display XDR (3200 x 1800 @ 120.00Hz); the window on the main display, nothing covering it.</li>
-<li><strong>Builds:</strong> every framework with its <code>dist</code> profile (release, fat LTO, one codegen unit) and the system allocator; rustc 1.96.0 (ac68faa20 2026-05-25). zgx at <a href="https://github.com/zeronsh/zgx/commit/282bfc072400fcb3612317ee9ca47950f46eb158"><code>282bfc0</code></a>.</li>
-<li><strong>Trials:</strong> each a fresh launch of 20 s, the first 5 s discarded, the next 15 s sampled every 50 ms; 3 trials of each active mode, 5 of idle, sampled 20–35 s after launch. Medians are shown, the trials' range beside them. Frame timing is 8 separate 8 s captures per mode.</li>
+<li><strong>Builds:</strong> zgx and GPUI Fast with their <code>dist</code> profile (release, fat LTO, one codegen unit), rustc 1.96.0 (ac68faa20 2026-05-25); MyGo v0.6.3 (<code>1524290</code>, MIT) built with go1.27.3 darwin/arm64, <code>go build -trimpath -ldflags=-s -w</code>, cgo off. Every framework uses the system allocator. zgx at <a href="https://github.com/zeronsh/zgx/commit/c742a39c238c99fe2b49b36f97980f75a6a76e5f"><code>c742a39</code></a>.</li>
+<li><strong>Trials:</strong> each a fresh launch, the first 5 s discarded and the next 10 s sampled every 50 ms; 3 trials of each mode, in alternating order, and 2 more of any whose CPU or GPU spread past 10% of its median; idle 3 times in the dashboard, 20–30 s after launch. Every trial had to run as long as asked, at 60 updates a second. Medians are shown, the trials' range beside them. Frame timing is 2 separate 8 s captures of each mode.</li>
 <li><strong>CPU:</strong> the app process's CPU time over the sample, as a percentage of one core (it can exceed 100).</li>
-<li><strong>GPU work:</strong> GPU cycles the app's process used per second, from the GPU's counters.</li>
+<li><strong>WindowServer CPU:</strong> the CPU of macOS's compositor, which puts every app's frames on screen, over the same sample: what showing the app costs the system beside the app's own CPU. It includes what WindowServer does anyway (the desktop alone, measured each repeat, is beside each chart's title).</li>
+<li><strong>GPU power:</strong> the whole GPU's energy over the sample, from the system's energy model (IOReport), in milliwatts, less the desktop alone (measured each repeat; beside each chart's title). It counts everything the GPU does for the app, the window server's compositing of its window included, so a framework is charged for how it presents its frames as well as for drawing them.</li>
+<li><strong>App GPU time</strong> (secondary): the GPU time macOS accounts to the app's process, as cycles at the GPU's mean clock. It includes the time from each submission to the GPU starting it, about half a millisecond after the GPU idles, so an app that draws small frames often reads high: measured with Metal System Trace, zgx's animation frames execute in 46 µs against GPUI Fast's 318 µs, yet this counter charges zgx more. It also moves with whatever else keeps the GPU awake. Kept for comparison with earlier runs.</li>
 <li><strong>Frame time:</strong> the 99th percentile of the intervals between frames shown on screen; at 60 updates a second, 16.7 ms is on time (8.3 ms for the animation, drawn at 120 Hz). <strong>Long frames</strong> are intervals over 25 ms.</li>
+<li><strong>Unfilled rows</strong> (the list): the window captured 10 times a second for 8 s per mode; a capture counts when a stretch of the rows' padding over 24 points shows the window's background, where no row was drawn.</li>
 <li><strong>Memory:</strong> the process's physical footprint (what Activity Monitor shows: resident memory plus GPU memory it owns), averaged over the sample.</li>
+<li><strong>The list widgets:</strong> zgx's measured virtual list, the same list from a Luau script (<code>ui.list {{ measured = true }}</code>), and GPUI Fast's <code>list</code> measure each row as they lay it out; MyGo's <code>ui.List</code> keeps its place by an anchor row and estimates unmeasured rows at the average height.</li>
 </ul>
 <h3>Caveats</h3>
 <ul class="facts">
+<li>Compare within this run only: the same binaries measured hours apart read differently (the machine's state changes), so a cell is not comparable across runs, while the frameworks in one run share its session.</li>
 <li>Idle memory is two-level: an idle window settles at one of two levels about 25 MB apart, launch to launch, as the Metal driver returns its startup memory. Which level a launch lands on is the driver's timing, not the app's, so read idle memory with its range.</li>
-<li>In the text-and-list scene, zgx's memory ties GPUI Fast's in the active modes.</li>
-<li>The window server's own CPU, which drawing to the screen adds, is level for all three frameworks; it is in the data, not charted.</li>
+<li>MyGo is immediate mode: each frame it draws builds and draws its whole window, which is how MyGo apps work.</li>
+
+<li>WindowServer spends more CPU on zgx&#8217;s window than on a rival&#8217;s in 9 of 10 tests (its chart follows CPU in each scene): showing zgx&#8217;s frames costs the system more than the others&#8217;, a cost zgx has yet to bring down.</li>
+<li>GPU power is within the trials&#8217; spread, or higher for zgx, in: animation (animating) against GPUI Fast, animation (animating) against MyGo.</li>
+<li>Until 2026-10-25 these pages' GPU figure was app GPU time; it is now GPU power, which measures what the GPU spends rather than how long it was held (see How this was measured). In the animation, zgx uses 31% more than GPUI Fast, 3% less than MyGo on app GPU time and 9% less than GPUI Fast, 7% more than MyGo on power.</li>
 <li>Binary size is not compared.</li>
-<li>One machine, one session per scene; a personal Mac in use, other applications kept running (each run waited until the machine was quiet). Windows and Linux are not compared here.</li>
+<li>One machine, one session; a personal Mac in use, other applications kept running (the run waited until the machine was quiet). Windows and Linux are not compared here.</li>
 </ul>
 <h3>Data</h3>
 <ul class="facts">
 <li>This page's numbers: <a href="data.csv">data.csv</a>, <a href="data.json">data.json</a>.</li>
-<li>Every trial, raw: <li><a href="https://github.com/zeronsh/zgx/tree/main/docs/results/latest-macos-heavy-2026-10-25-282bfc0"><code>docs/results/latest-macos-heavy-2026-10-25-282bfc0</code></a> (47 trials, 72 pacing captures)</li><li><a href="https://github.com/zeronsh/zgx/tree/main/docs/results/latest-macos-2026-10-25-282bfc0"><code>docs/results/latest-macos-2026-10-25-282bfc0</code></a> (61 trials, 96 pacing captures)</li><li><a href="https://github.com/zeronsh/zgx/tree/main/docs/results/latest-macos-animate-2026-10-25-282bfc0"><code>docs/results/latest-macos-animate-2026-10-25-282bfc0</code></a> (12 trials, 24 pacing captures)</li></li>
-<li>How the runs are made: <a href="https://github.com/zeronsh/zgx/blob/main/docs/benchmarking.md">benchmarking</a>; the code: <a href="https://github.com/zeronsh/zgx">github.com/zeronsh/zgx</a>.</li>
+<li>Every trial, raw:<ul><li><a href="https://github.com/zeronsh/zgx/tree/main/docs/results/suite-macos-2026-10-25-c742a39/heavy"><code>docs/results/suite-macos-2026-10-25-c742a39/heavy</code></a> (47 trials, 18 pacing captures)</li><li><a href="https://github.com/zeronsh/zgx/tree/main/docs/results/suite-macos-2026-10-25-c742a39/lab"><code>docs/results/suite-macos-2026-10-25-c742a39/lab</code></a> (30 trials, 18 pacing captures)</li><li><a href="https://github.com/zeronsh/zgx/tree/main/docs/results/suite-macos-2026-10-25-c742a39/animate"><code>docs/results/suite-macos-2026-10-25-c742a39/animate</code></a> (16 trials, 6 pacing captures)</li><li><a href="https://github.com/zeronsh/zgx/tree/main/docs/results/suite-macos-2026-10-25-c742a39/vlist"><code>docs/results/suite-macos-2026-10-25-c742a39/vlist</code></a> (43 trials, 24 pacing captures)</li></ul></li>
+<li>How the runs are made: <a href="https://github.com/zeronsh/zgx/blob/main/docs/benchmarking.md">benchmarking</a>; the adapters: <a href="https://github.com/zeronsh/zgx/tree/main/comparisons">comparisons</a>; the code: <a href="https://github.com/zeronsh/zgx">github.com/zeronsh/zgx</a>.</li>
 </ul>
 </section>
 </main>
-<footer><p>Built by <code>scripts/build_site.py</code> from the accepted runs; every number recomputed from their trials.</p></footer>
+<footer><p>Built by <code>scripts/build_site.py</code> from the accepted run; every number recomputed from its trials.</p></footer>
 </body>
 </html>

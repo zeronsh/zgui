@@ -1,0 +1,120 @@
+{
+ "accepted": true,
+ "trials": 16,
+ "samples": 2564,
+ "pacing_trials": 6,
+ "reported_fps": {
+  "min": 99.9,
+  "max": 119.8
+ },
+ "powermetrics": false,
+ "scene": "animate",
+ "commit": "c742a39c238c99fe2b49b36f97980f75a6a76e5f",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-25T15:57:43.534524+00:00",
+ "finished_utc": "2026-10-25T16:03:59.552766+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": true
+   },
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": false
+   }
+  ],
+  "display_count": 2,
+  "wallpaper_apps": [],
+  "power_mode": "powermode 2",
+  "on_battery": false,
+  "macos": "26.4 (25E246)",
+  "uptime_hours": 10.9,
+  "machine": "Mac17,6",
+  "chip": "Apple M5 Max",
+  "cores": 18,
+  "memory_bytes": 137438953472,
+  "power": "AC Power",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+ },
+ "preflight": null,
+ "binaries": {
+  "zgx": {
+   "sha256": "61a881689ca0c3d1fbd7618463691b1b535e0065b4c93b4a8eca24a81f7048a7",
+   "bytes": 11919168
+  },
+  "gpui-fast": {
+   "sha256": "8f96b3f93df7421438bd51bd1b796e37423df224bef3ecab7a6597ddccc0c677",
+   "bytes": 6710400
+  },
+  "mygo": {
+   "sha256": "2d08fc5c538cac0471c45862b437ea6a33891984418111c2451df48e4df6ed90",
+   "bytes": 9469730
+  }
+ },
+ "toolchains": {
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "rust_profile": "dist (release, lto = \"fat\", codegen-units = 1)",
+  "go": "go version go1.27.3 darwin/arm64",
+  "mygo": {
+   "mygo_version": "v0.6.3",
+   "mygo_commit": "15242900157b77228d35ca071f43e94a11bc90a0",
+   "mygo_license": "MIT",
+   "mygo_source": "https://github.com/egoist/mygo",
+   "go": "go1.27.3 darwin/arm64",
+   "flags": "-trimpath -ldflags=-s -w",
+   "cgo": false,
+   "sinf": "workload/sinf.go: macOS libm sinf ported to Go, bit-identical for all 2^32 inputs",
+   "binaries": [
+    "bin/heavy",
+    "bin/lab",
+    "bin/animate",
+    "bin/vlist"
+   ],
+   "built_utc": "2026-10-25T15:00:43Z"
+  }
+ },
+ "invalid_trials": [],
+ "protocol": {
+  "requested_seconds": 15,
+  "warmup_seconds": 5,
+  "sampled_seconds": 10,
+  "interval_seconds": 0.05,
+  "repeats": 3,
+  "idle_repeats": 3,
+  "idle_window_seconds": [
+   20,
+   30
+  ],
+  "idle_requested_seconds": 31,
+  "quick": false,
+  "pgo": false,
+  "frameworks": [
+   "zgx",
+   "gpui-fast",
+   "mygo"
+  ],
+  "modes": [
+   "animate"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 2,
+  "pacing_during_trials": false,
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ],
+  "suite": true,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 2,
+  "extended_cells": [
+   "gpui-fast/animate",
+   "mygo/animate"
+  ]
+ }
+}

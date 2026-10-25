@@ -1,0 +1,7 @@
+framework,mode,repeat,display_hz,frames,frames_per_second,interval_p50_ms,interval_p95_ms,interval_p99_ms,interval_max_ms,long_interval_fraction,long_intervals
+zgx,animate,0,120,824,103.0,9.131,12.769,18.171,20.782,0.0,0
+gpui-fast,animate,0,120,900,112.5,8.932,12.236,12.798,17.761,0.0,0
+mygo,animate,0,120,839,104.875,8.982,12.841,17.776,19.799,0.0,0
+gpui-fast,animate,1,120,831,103.875,9.088,12.406,17.395,18.662,0.0,0
+mygo,animate,1,120,843,105.375,9.114,12.473,16.946,17.819,0.0,0
+zgx,animate,1,120,840,105.0,9.074,13.113,19.527,21.618,0.0,0
