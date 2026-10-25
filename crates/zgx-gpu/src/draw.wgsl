@@ -98,7 +98,11 @@ fn shade(input:Out)->vec4<f32> {
      let e=sign(x)*sqrt(1.-exp(-x2*(1.27323954+0.147*x2)/(1.+0.147*x2)));
      color.a*=0.5-0.5*e;
    }
-   else {let aa=max(fwidthFine(distance),0.5);let outer=clamp(0.5-distance/aa,0.,1.);let inner=clamp(0.5-(distance+v.shape.y)/aa,0.,1.);let alpha=color.a*inner+v.border.a*(outer-inner);let rgb=select(vec3(0.),(color.rgb*color.a*inner+v.border.rgb*v.border.a*(outer-inner))/max(alpha,0.00001),alpha>0.);color=vec4(rgb,alpha);}
+   // A square box's corner on whole pixels is covered as its edges are:
+   // `fwidth` (the slopes' sum) adds both axes' there when the pixel's 2×2
+   // block reaches outside (a corner at an odd pixel), and shaded 3/4 what
+   // the basic shader draws whole, so a box's pixels hung on its batch.
+   else {let dx=abs(dpdxFine(distance));let dy=abs(dpdyFine(distance));let aa=max(select(dx+dy,max(dx,dy),radius<=0.),0.5);let outer=clamp(0.5-distance/aa,0.,1.);let inner=clamp(0.5-(distance+v.shape.y)/aa,0.,1.);let alpha=color.a*inner+v.border.a*(outer-inner);let rgb=select(vec3(0.),(color.rgb*color.a*inner+v.border.rgb*v.border.a*(outer-inner))/max(alpha,0.00001),alpha>0.);color=vec4(rgb,alpha);}
  }
 
  // Premultiplied texels carry their alpha already: the colour stays

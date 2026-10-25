@@ -5177,6 +5177,42 @@ fn split_shading_matches_the_full_shader() {
     assert_eq!(worst, 0, "split shading differs by up to {worst}");
 }
 
+/// A square box on whole pixels draws the same bytes through either
+/// shader, its corners included wherever they fall: a frame batches it
+/// with whatever shares its region, so otherwise its pixels would hang on
+/// what else repainted.
+#[test]
+fn a_square_box_on_whole_pixels_shades_its_corners_whole() {
+    let _gpu_fixture = gpu_fixture();
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let render = |split: bool| {
+        let mut gpu = GpuRenderer::new(200, 100).unwrap();
+        gpu.set_scale_factor(2.);
+        gpu.debug_split_shading(split);
+        let mut ui = Ui::new(100., 50.);
+        ui.mount(
+            div().w(100.).h(50.).bg(rgb(0x101418)).child(
+                // Corners on odd device pixels.
+                div()
+                    .absolute()
+                    .ml(10.5)
+                    .mt(10.5)
+                    .size(40., 12.)
+                    .bg(rgb(0x5eb1ff)),
+            ),
+        );
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        gpu.readback().unwrap()
+    };
+    let (full, split) = (render(false), render(true));
+    // The top-left corner pixel (21, 21) is the box's colour.
+    let at = (21 * 200 + 21) * 4;
+    assert_eq!(&full[at..at + 3], &[0x5e, 0xb1, 0xff]);
+    assert!(full == split, "split shading differs");
+}
+
 /// Clamped labels moving by a row (a mail list after archiving one) take
 /// their shapes from the labels that showed their text before: the same
 /// pixels as a renderer drawing that frame afresh.
