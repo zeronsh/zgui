@@ -186,22 +186,39 @@ jobs:
           key: perf-gate
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The base's binaries as main's own gate built them, by commit (the
-      # gate checks the compiler too): a PR builds its side alone.
+      # The head's binaries first: main keeps them by commit as soon as they
+      # are built (the gate checks the compiler too), and a pull request
+      # looks for its base's only once its own are, minutes after a merge
+      # rather than at once, so it builds its side alone. One path for both,
+      # as actions/cache keys include it.
+      - name: Head binaries
+        id: head
+        env:
+          ZGX_GATE_TARGET: target/perf-gate
+          ZGX_GATE_BIN_CACHE: ${{ runner.temp }}/gate-bin
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python3 scripts/perf/gate.py "$BASE" --stage head
+          if [ -f "$ZGX_GATE_BIN_CACHE/built-from" ]; then echo "binaries=yes" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/cache/save@v4
+        if: github.ref == 'refs/heads/main' && steps.head.outputs.binaries == 'yes'
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/gate-bin
+          key: gate-bin-${{ github.sha }}
+      - run: rm -rf "$RUNNER_TEMP/gate-bin"
       - uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/gate-bin
           key: gate-bin-${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
       - name: Instruction counts
-        id: gate
         env:
           ZGX_GATE_TARGET: target/perf-gate
           ZGX_GATE_BIN_CACHE: ${{ runner.temp }}/gate-bin
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
           status=0
-          python3 scripts/perf/gate.py "$BASE" --markdown perf.md || status=$?
-          if [ -f "$ZGX_GATE_BIN_CACHE/built-from" ]; then echo "binaries=yes" >> "$GITHUB_OUTPUT"; fi
+          python3 scripts/perf/gate.py "$BASE" --stage run --markdown perf.md || status=$?
           if [ "${{ github.event_name }}" != pull_request ]; then status=0; fi
           cat perf.md >> "$GITHUB_STEP_SUMMARY" || true
           echo "status=$status" >> "$GITHUB_ENV"
@@ -211,12 +228,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file perf.md
-      - uses: actions/cache/save@v4
-        if: github.ref == 'refs/heads/main' && steps.gate.outputs.binaries == 'yes'
-        continue-on-error: true
-        with:
-          path: ${{ runner.temp }}/gate-bin
-          key: gate-bin-${{ github.sha }}
       - name: Gate
         run: exit "$status"
   macos:

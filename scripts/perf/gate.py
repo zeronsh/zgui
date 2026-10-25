@@ -22,7 +22,10 @@ found as shapes the GPU draws, or rasterized where they cannot be.
 With ZGX_GATE_BIN_CACHE set, a side's binaries found there, stamped with
 its commit and compiler, are taken rather than built, and the head's are
 left there after: CI keeps main's by commit, so a pull request builds its
-own side alone.
+own side alone. `--stage head` builds the head's alone, and `--stage run`
+the rest: CI keeps main's head binaries as soon as they are built, and a
+pull request looks for its base's once its own are, minutes after a merge
+to main rather than at once.
 """
 import argparse
 import os
@@ -114,7 +117,20 @@ def built(checkout, into):
             and all((into / example).exists() for example in examples(checkout)))
 
 
+def touch(checkout):
+    """Cargo names a path crate's artifacts the same from either checkout,
+    and judges them fresh by modification time: files older than what the
+    other side last built would be taken for built. Newer, they are compiled
+    again (the registry's crates stay shared)."""
+    tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=checkout, capture_output=True, check=True).stdout
+    for path in filter(None, tracked.split(b'\0')):
+        file = checkout / path.decode()
+        if file.is_file():
+            os.utime(file)
+
+
 def build(checkout, target, into):
+    touch(checkout)
     scenes = [s for s in SCENES if has_example(checkout, s[1], s[2])]
     command = ['cargo', 'build', '--release', '--locked', '--quiet']
     for package in dict.fromkeys(s[1] for s in scenes):
@@ -158,6 +174,8 @@ def main():
     parser.add_argument('base')
     parser.add_argument('--threshold', type=float, default=1.0, help='percent a scene may grow')
     parser.add_argument('--markdown', type=pathlib.Path)
+    parser.add_argument('--stage', choices=['head', 'run'],
+                        help="build the head's binaries alone, or the rest with them built")
     args = parser.parse_args()
     # Both sides build into one target directory: CI's (ZGX_GATE_TARGET)
     # sits in the workspace's, where its cache keeps the dependencies.
@@ -169,25 +187,23 @@ def main():
                    capture_output=True)
     cache = os.environ.get('ZGX_GATE_BIN_CACHE')
     cache = pathlib.Path(cache) if cache else None
-    if cache and built(base, cache):
+    # The base's from the cache, before the head's take its place there.
+    cached = args.stage != 'head' and cache is not None and built(base, cache)
+    if cached:
         print('base binaries from the cache', flush=True)
         shutil.rmtree(WORK / 'gate-bin-base', ignore_errors=True)
         shutil.copytree(cache, WORK / 'gate-bin-base')
-    else:
+    if args.stage != 'run':
+        build(ROOT, target, WORK / 'gate-bin-head')
+        if cache:
+            shutil.rmtree(cache, ignore_errors=True)
+            shutil.copytree(WORK / 'gate-bin-head', cache)
+        if args.stage == 'head':
+            return
+    elif not (WORK / 'gate-bin-head').is_dir():
+        sys.exit("--stage run: the head's binaries are not built (--stage head)")
+    if not cached:
         build(base, target, WORK / 'gate-bin-base')
-    # Cargo names a path crate's artifacts the same from either checkout,
-    # and judges them fresh by modification time: this checkout's files,
-    # older than what the base just built, would be taken for built. Newer
-    # now, they are compiled again (the registry's crates stay shared).
-    tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=ROOT, capture_output=True, check=True).stdout
-    for path in filter(None, tracked.split(b'\0')):
-        file = ROOT / path.decode()
-        if file.is_file():
-            os.utime(file)
-    build(ROOT, target, WORK / 'gate-bin-head')
-    if cache:
-        shutil.rmtree(cache, ignore_errors=True)
-        shutil.copytree(WORK / 'gate-bin-head', cache)
     rows, failed = [], []
     for name, _, example, env in SCENES:
         base_binary = WORK / 'gate-bin-base' / example
