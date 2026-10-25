@@ -1,9 +1,8 @@
 //! Frames presented through a window's own surfaces (`LayerPresent`), each
 //! brought up to date from the one shown around what a frame draws: what
-//! they show is what drawing the scene whole shows. The copies bringing a
-//! surface up to date once read their rectangles 32 bytes apart from 128-byte
-//! quads, and a stamped frame left the rest of its regions as the surface
-//! held them frames before: stale patches in windows.
+//! they show is what drawing the scene whole shows. (The copies bringing a
+//! surface up to date once read their rectangles 32 bytes apart from
+//! 128-byte quads: stale patches in windows.)
 //!
 //! Its own binary without the test harness: layer presentation runs on the
 //! main thread, which the harness keeps for itself.
@@ -17,7 +16,7 @@ const SIZE: (f32, f32) = (640., 400.);
 
 #[cfg(target_os = "macos")]
 /// Cells all over the window, a few changing each tick: damage scattered
-/// over most of it, which a frame draws through a stencil of it.
+/// over most of it.
 fn view(live: Signal<u32>) -> View {
     div()
         .size(SIZE.0, SIZE.1)
@@ -107,10 +106,6 @@ fn scattered_damage_presented_through_surfaces_matches_drawing_whole() {
             "frame {live}: the surface shown differs from the scene drawn whole"
         );
     }
-    // Presenting through surfaces, no frame is drawn through a stencil:
-    // each surface is brought up to date around the regions a frame draws,
-    // whole. (A headless renderer, drawing into one target, does stamp.)
-    assert_eq!(window.gpu.debug_stamped_frames(), 0, "a frame stamped");
 }
 
 fn main() {

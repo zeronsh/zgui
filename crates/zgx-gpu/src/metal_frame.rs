@@ -15,13 +15,11 @@ use crate::{GpuError, Shading};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSString;
 use objc2_metal::{
-    MTLBlendFactor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLCompareFunction,
-    MTLCompileOptions, MTLDepthStencilDescriptor, MTLDepthStencilState, MTLDevice, MTLLibrary,
-    MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
-    MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState, MTLScissorRect,
-    MTLStencilDescriptor, MTLStencilOperation, MTLStorageMode, MTLStoreAction, MTLTexture,
-    MTLTextureDescriptor, MTLTextureUsage, MTLVertexDescriptor, MTLVertexFormat,
-    MTLVertexStepFunction,
+    MTLBlendFactor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLCompileOptions,
+    MTLDevice, MTLLibrary, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType,
+    MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
+    MTLRenderPipelineState, MTLScissorRect, MTLStoreAction, MTLTexture, MTLVertexDescriptor,
+    MTLVertexFormat, MTLVertexStepFunction,
 };
 use wgpu::naga;
 
@@ -29,7 +27,6 @@ type Pipeline = Retained<ProtocolObject<dyn MTLRenderPipelineState>>;
 pub(crate) type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
 pub(crate) type CommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
 type Encoder = Retained<ProtocolObject<dyn MTLRenderCommandEncoder>>;
-type DepthStencil = Retained<ProtocolObject<dyn MTLDepthStencilState>>;
 
 /// The vertex buffer's slot; slot 0 holds the viewport.
 const VERTICES: usize = 1;
@@ -56,43 +53,14 @@ pub(crate) struct MetalFrame {
     effects: std::cell::OnceCell<Option<Effects>>,
     /// Shader fills' pipelines by shader id (`None`: it did not compile).
     fills: std::cell::RefCell<std::collections::HashMap<u64, Option<Pipeline>>>,
-    /// The quads' and copies' libraries, for the stenciled pipelines.
-    draw: Library,
-    copy: Library,
-    /// Frames drawn through a stencil of their damage (see `Stenciled`),
-    /// compiled with the first.
-    stenciled: std::cell::OnceCell<Option<Stenciled>>,
-    /// The stencil, memoryless (tile memory alone, no allocation), at the
-    /// size it was last made.
-    stencil: std::cell::RefCell<Option<Texture>>,
     /// Polyline strokes' library and pipelines, compiled with the first
     /// (None: not here).
     polyline: std::cell::OnceCell<Option<Polylines>>,
 }
 
-/// A frame whose regions hold much more than its damage draws through a
-/// stencil (`Frame::stamp`): the damage's own rectangles are stamped into
-/// it, and every quad after is tested against it, so the GPU shades only
-/// damaged pixels however the regions grouped them. The quads' pipelines
-/// again, with the stencil's format; the stamp's, writing no colour.
-struct Stenciled {
-    full: Pipeline,
-    full_clear: Pipeline,
-    basic: Pipeline,
-    opaque: Pipeline,
-    copy_offset: Pipeline,
-    stamp: Pipeline,
-    /// Writing 1 where the stamp draws; passing where it drew.
-    stamping: DepthStencil,
-    tested: DepthStencil,
-}
-
-/// Polyline strokes' pipelines (polyline.wgsl): into the target, and through
-/// a stencil (`Stenciled`), made with the first stenciled frame drawing them.
+/// Polyline strokes' pipeline (polyline.wgsl).
 struct Polylines {
-    library: Library,
     plain: Pipeline,
-    stenciled: std::cell::OnceCell<Option<Pipeline>>,
 }
 
 /// effects.wgsl's passes: across into the scratch atlas, down into the
@@ -162,14 +130,7 @@ impl MetalFrame {
         let draw = Library::new(&raw, include_str!("draw.wgsl"), Kind::Quads)?;
         let copy = Library::new(&raw, include_str!("copy_offset.wgsl"), Kind::Copies)?;
         let pipeline = |library: &Library, vertex: &str, fragment: &str, blend: Blend| {
-            library.pipeline(
-                &raw,
-                vertex,
-                fragment,
-                MTLPixelFormat::BGRA8Unorm,
-                blend,
-                None,
-            )
+            library.pipeline(&raw, vertex, fragment, MTLPixelFormat::BGRA8Unorm, blend)
         };
         Ok(Self {
             full: pipeline(&draw, "vs", "fs", Blend::Over)?,
@@ -182,86 +143,8 @@ impl MetalFrame {
             blur: std::cell::OnceCell::new(),
             effects: std::cell::OnceCell::new(),
             fills: Default::default(),
-            draw,
-            copy,
-            stenciled: std::cell::OnceCell::new(),
-            stencil: Default::default(),
             polyline: std::cell::OnceCell::new(),
         })
-    }
-
-    /// Whether frames can draw through a stencil: its pipelines, compiled
-    /// now if they are not yet.
-    pub(crate) fn stencils(&self) -> bool {
-        self.stenciled_pipelines().is_some()
-    }
-
-    fn stenciled_pipelines(&self) -> Option<&Stenciled> {
-        self.stenciled
-            .get_or_init(|| {
-                let device = &self.device;
-                let pipeline = |library: &Library, vertex, fragment, blend, stencil| {
-                    let format = MTLPixelFormat::BGRA8Unorm;
-                    library
-                        .pipeline(device, vertex, fragment, format, blend, Some(stencil))
-                        .ok()
-                };
-                let state = |compare, pass| {
-                    let side = MTLStencilDescriptor::new();
-                    side.setStencilCompareFunction(compare);
-                    side.setDepthStencilPassOperation(pass);
-                    let descriptor = MTLDepthStencilDescriptor::new();
-                    descriptor.setFrontFaceStencil(Some(&side));
-                    descriptor.setBackFaceStencil(Some(&side));
-                    device.newDepthStencilStateWithDescriptor(&descriptor)
-                };
-                let (draw, copy) = (&self.draw, &self.copy);
-                Some(Stenciled {
-                    full: pipeline(draw, "vs", "fs", Blend::Over, Stencil::Tested)?,
-                    full_clear: pipeline(draw, "vs", "fs", Blend::Replace, Stencil::Tested)?,
-                    basic: pipeline(draw, "vs_basic", "fs_basic", Blend::Over, Stencil::Tested)?,
-                    opaque: pipeline(
-                        draw,
-                        "vs_basic",
-                        "fs_basic",
-                        Blend::Replace,
-                        Stencil::Tested,
-                    )?,
-                    copy_offset: pipeline(copy, "vs", "fs", Blend::Replace, Stencil::Tested)?,
-                    stamp: pipeline(draw, "vs_stamp", "fs_stamp", Blend::Replace, Stencil::Stamp)?,
-                    stamping: state(MTLCompareFunction::Always, MTLStencilOperation::Replace)?,
-                    tested: state(MTLCompareFunction::Equal, MTLStencilOperation::Keep)?,
-                })
-            })
-            .as_ref()
-    }
-
-    /// The memoryless stencil for a target of `width` by `height`.
-    fn stencil(&self, width: usize, height: usize) -> Texture {
-        let mut stencil = self.stencil.borrow_mut();
-        if let Some(texture) = stencil.as_ref()
-            && texture.width() == width
-            && texture.height() == height
-        {
-            return texture.clone();
-        }
-        // SAFETY: A two-dimensional descriptor of a valid format and size.
-        let descriptor = unsafe {
-            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
-                MTLPixelFormat::Stencil8,
-                width,
-                height,
-                false,
-            )
-        };
-        descriptor.setStorageMode(MTLStorageMode::Memoryless);
-        descriptor.setUsage(MTLTextureUsage::RenderTarget);
-        let texture = self
-            .device
-            .newTextureWithDescriptor(&descriptor)
-            .expect("a memoryless stencil");
-        *stencil = Some(texture.clone());
-        texture
     }
 
     /// Whether polyline strokes can be drawn here: their pipeline, compiled
@@ -277,40 +160,9 @@ impl MetalFrame {
                     Library::new(&self.device, &crate::polyline_source(), Kind::Quads).ok()?;
                 let format = MTLPixelFormat::BGRA8Unorm;
                 let plain = library
-                    .pipeline(&self.device, "vs", "fs_polyline", format, Blend::Over, None)
+                    .pipeline(&self.device, "vs", "fs_polyline", format, Blend::Over)
                     .ok()?;
-                Some(Polylines {
-                    library,
-                    plain,
-                    stenciled: std::cell::OnceCell::new(),
-                })
-            })
-            .as_ref()
-    }
-
-    /// Whether polyline strokes can be drawn through a stencil (`Stenciled`):
-    /// their tested pipeline, compiled now if it is not yet.
-    pub(crate) fn polylines_stenciled(&self) -> bool {
-        self.polyline_stenciled().is_some()
-    }
-
-    fn polyline_stenciled(&self) -> Option<&Pipeline> {
-        let polylines = self.polyline_pipelines()?;
-        polylines
-            .stenciled
-            .get_or_init(|| {
-                let format = MTLPixelFormat::BGRA8Unorm;
-                polylines
-                    .library
-                    .pipeline(
-                        &self.device,
-                        "vs",
-                        "fs_polyline",
-                        format,
-                        Blend::Over,
-                        Some(Stencil::Tested),
-                    )
-                    .ok()
+                Some(Polylines { plain })
             })
             .as_ref()
     }
@@ -333,7 +185,6 @@ impl MetalFrame {
                         "zgx_fill",
                         MTLPixelFormat::BGRA8Unorm,
                         Blend::Over,
-                        None,
                     )
                     .ok()
             });
@@ -361,7 +212,6 @@ impl MetalFrame {
                             fragment,
                             MTLPixelFormat::BGRA8Unorm,
                             Blend::Replace,
-                            None,
                         )
                         .ok()
                 };
@@ -390,7 +240,7 @@ impl MetalFrame {
                 let library = Library::new(&self.device, &source, Kind::Blur).ok()?;
                 let pipeline = |fragment: &str, format, blend| {
                     library
-                        .pipeline(&self.device, "vs", fragment, format, blend, None)
+                        .pipeline(&self.device, "vs", fragment, format, blend)
                         .ok()
                 };
                 let half = MTLPixelFormat::RGBA16Float;
@@ -418,7 +268,6 @@ impl MetalFrame {
         regions: &[u8],
         points: Option<(usize, usize)>,
         effects: &[EffectPass],
-        stenciled: bool,
     ) -> Frame {
         let buffer = self.queue.commandBuffer().expect("a command buffer");
         for effect in effects {
@@ -427,7 +276,7 @@ impl MetalFrame {
                 true => MTLLoadAction::Load,
                 false => MTLLoadAction::Clear,
             };
-            let encoder = pass(&buffer, &effect.target, load, None);
+            let encoder = pass(&buffer, &effect.target, load);
             encoder.setRenderPipelineState(if effect.down {
                 &pipelines.down
             } else {
@@ -453,8 +302,7 @@ impl MetalFrame {
             }
             encoder.endEncoding();
         }
-        let stencil = stenciled.then(|| self.stencil(target.width(), target.height()));
-        let encoder = pass(&buffer, target, MTLLoadAction::Load, stencil.as_deref());
+        let encoder = pass(&buffer, target, MTLLoadAction::Load);
         // Small tables ride inline with each pass; larger ones in a buffer.
         let regions = match regions.len() {
             0 => Regions::Inline(vec![0; size_of::<crate::Region>()]),
@@ -476,8 +324,6 @@ impl MetalFrame {
         let mut frame = Frame {
             buffer,
             encoder,
-            stenciled,
-            size: (target.width() as u32, target.height() as u32),
             current: None,
             scissor: None,
             vertices: {
@@ -526,7 +372,6 @@ fn pass(
     buffer: &ProtocolObject<dyn MTLCommandBuffer>,
     target: &ProtocolObject<dyn MTLTexture>,
     load: MTLLoadAction,
-    stencil: Option<&ProtocolObject<dyn MTLTexture>>,
 ) -> Encoder {
     let pass = MTLRenderPassDescriptor::new();
     // SAFETY: Index 0 of a render pass descriptor's colour attachments.
@@ -534,14 +379,6 @@ fn pass(
     color.setTexture(Some(target));
     color.setLoadAction(load);
     color.setStoreAction(MTLStoreAction::Store);
-    // Cleared, and never stored: it lives in tile memory alone.
-    if let Some(stencil) = stencil {
-        let attachment = pass.stencilAttachment();
-        attachment.setTexture(Some(stencil));
-        attachment.setLoadAction(MTLLoadAction::Clear);
-        attachment.setClearStencil(0);
-        attachment.setStoreAction(MTLStoreAction::DontCare);
-    }
     buffer
         .renderCommandEncoderWithDescriptor(&pass)
         .expect("a render encoder")
@@ -552,10 +389,6 @@ fn pass(
 pub(crate) struct Frame {
     buffer: CommandBuffer,
     encoder: Encoder,
-    /// Drawn through a stencil (`MetalFrame::stencils`): its pipelines.
-    stenciled: bool,
-    /// The target's size in pixels.
-    size: (u32, u32),
     current: Option<Bound>,
     /// The scissor last set on `encoder`: setting it again costs the
     /// driver as much as a change (most batches share their region's).
@@ -675,7 +508,7 @@ impl Frame {
         ];
         for (pipeline, source, into) in passes {
             self.encoder.endEncoding();
-            self.encoder = pass(&self.buffer, into, MTLLoadAction::Clear, None);
+            self.encoder = pass(&self.buffer, into, MTLLoadAction::Clear);
             self.encoder.setRenderPipelineState(pipeline);
             // SAFETY: Live textures for the blur's source slot.
             unsafe {
@@ -696,7 +529,7 @@ impl Frame {
     /// Open the next pass into `target` after a batch's blur passes.
     pub(crate) fn resume(&mut self, target: &ProtocolObject<dyn MTLTexture>) {
         self.encoder.endEncoding();
-        self.encoder = pass(&self.buffer, target, MTLLoadAction::Load, None);
+        self.encoder = pass(&self.buffer, target, MTLLoadAction::Load);
         self.current = None;
         self.scissor = None;
         self.quad_state();
@@ -748,25 +581,10 @@ impl Frame {
             return;
         }
         self.current = Some(bound);
-        let pipeline = match (self.stenciled, bound) {
-            (false, Bound::Quads(shading)) => frame.pipeline(shading),
-            (false, Bound::FullClear) => frame.full_clear.clone(),
-            (false, Bound::CopyOffset) => frame.copy_offset.clone(),
-            (true, bound) => {
-                let stenciled = frame.stenciled_pipelines().expect("checked by `stencils`");
-                match bound {
-                    Bound::Quads(Shading::Basic) => stenciled.basic.clone(),
-                    Bound::Quads(Shading::Opaque) => stenciled.opaque.clone(),
-                    // (No shader fills are drawn through a stencil.)
-                    Bound::Quads(Shading::Full | Shading::Fill(_)) => stenciled.full.clone(),
-                    Bound::Quads(Shading::Polyline) => frame
-                        .polyline_stenciled()
-                        .expect("checked by `polylines_stenciled`")
-                        .clone(),
-                    Bound::FullClear => stenciled.full_clear.clone(),
-                    Bound::CopyOffset => stenciled.copy_offset.clone(),
-                }
-            }
+        let pipeline = match bound {
+            Bound::Quads(shading) => frame.pipeline(shading),
+            Bound::FullClear => frame.full_clear.clone(),
+            Bound::CopyOffset => frame.copy_offset.clone(),
         };
         self.encoder.setRenderPipelineState(&pipeline);
     }
@@ -815,32 +633,6 @@ impl Frame {
         self.bind(frame, Bound::CopyOffset);
         self.draw(instances);
     }
-    /// Stamp `count` damage rectangles (a rectangle and the colour to clear
-    /// it to, two vec4s each, from byte `at` of the vertex buffer) into the
-    /// stencil, clearing them: every quad drawn after is tested against it
-    /// (a frame opened `stenciled`), and regions need no clears of their own.
-    pub(crate) fn stamp(&mut self, frame: &MetalFrame, at: usize, count: usize) {
-        let stenciled = frame.stenciled_pipelines().expect("checked by `stencils`");
-        self.encoder.setRenderPipelineState(&stenciled.stamp);
-        self.current = None;
-        self.encoder.setDepthStencilState(Some(&stenciled.stamping));
-        self.encoder.setStencilReferenceValue(1);
-        self.scissor((0, 0, self.size.0, self.size.1));
-        // SAFETY: Four-vertex strips over `count` rectangles the vertex
-        // buffer holds from `at` (`render_direct` writes them after the
-        // quads, which end on a multiple of the rectangles' 32 bytes).
-        unsafe {
-            self.encoder
-                .drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
-                    MTLPrimitiveType::TriangleStrip,
-                    0,
-                    4,
-                    count,
-                    at / 32,
-                );
-        }
-        self.encoder.setDepthStencilState(Some(&stenciled.tested));
-    }
     fn draw(&mut self, instances: std::ops::Range<u32>) {
         // SAFETY: Four-vertex strips over instances the vertex buffer holds:
         // `render_direct` draws ranges of the quads it wrote to it.
@@ -887,15 +679,6 @@ enum Blend {
     Over,
     /// The second output's complement keeps the target (`BLUR_MIX`).
     Mix,
-}
-
-/// How a pipeline meets a frame's stencil (`Stenciled`).
-#[derive(Clone, Copy, PartialEq)]
-enum Stencil {
-    /// Drawing as tested.
-    Tested,
-    /// Stamping it, clearing what it stamps.
-    Stamp,
 }
 
 /// A WGSL module compiled for Metal with zgx's fixed slots (`Kind`), any
@@ -1056,7 +839,6 @@ impl Library {
         fragment: &str,
         format: MTLPixelFormat,
         blend: Blend,
-        stencil: Option<Stencil>,
     ) -> Result<Pipeline, GpuError> {
         let function = |name: &str| {
             self.names
@@ -1068,12 +850,11 @@ impl Library {
         descriptor.setVertexFunction(Some(&*function(vertex)?));
         descriptor.setFragmentFunction(Some(&*function(fragment)?));
         // Per-instance quads, 128 bytes each: eight vec4s, as `Quad` (a
-        // copy reads its first two); the stamp's rectangles, two vec4s each.
-        let (attributes, stride) = match self.kind {
-            _ if stencil == Some(Stencil::Stamp) => (2, 32),
-            Kind::Quads | Kind::Effects => (8, 128),
-            Kind::Copies => (2, 128),
-            Kind::Blur => (0, 0),
+        // copy reads its first two).
+        let attributes = match self.kind {
+            Kind::Quads | Kind::Effects => 8,
+            Kind::Copies => 2,
+            Kind::Blur => 0,
         };
         if attributes > 0 {
             let vertices = MTLVertexDescriptor::vertexDescriptor();
@@ -1086,7 +867,7 @@ impl Library {
                     attribute.setBufferIndex(VERTICES);
                 }
                 let layout = vertices.layouts().objectAtIndexedSubscript(VERTICES);
-                layout.setStride(stride);
+                layout.setStride(128);
                 layout.setStepFunction(MTLVertexStepFunction::PerInstance);
                 layout.setStepRate(1);
             }
@@ -1112,9 +893,6 @@ impl Library {
             color.setSourceAlphaBlendFactor(MTLBlendFactor::One);
             color.setDestinationRGBBlendFactor(rgb);
             color.setDestinationAlphaBlendFactor(alpha);
-        }
-        if stencil.is_some() {
-            descriptor.setStencilAttachmentPixelFormat(MTLPixelFormat::Stencil8);
         }
         device
             .newRenderPipelineStateWithDescriptor_error(&descriptor)
