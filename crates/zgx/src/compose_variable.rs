@@ -376,7 +376,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let runtime = ui.runtime.clone();
             let mut entries: HashMap<K, Entry> = HashMap::new();
             let mounted_revision = ui.signal(0_u64);
-            let mut discovery: Option<(usize, usize)> = None;
+            let mut discovery: Option<(usize, usize, usize)> = None;
             let mut handled_request = 0;
             // Scroll-to-row requests (`NodeHandle::scroll_to_row`).
             let reveal = crate::compose::list_reveal(ui, root);
@@ -499,7 +499,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                     let mut range = model.visible_range(position, height, overscan);
                     if measured && !range.is_empty() {
                         let first = model.row_at(position).unwrap();
-                        if let Some((previous_first, previous_end)) = discovery
+                        if let Some((previous_first, previous_start, previous_end)) = discovery
                             && previous_first == first
                         {
                             if range.end > previous_end {
@@ -516,8 +516,32 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                                 // measured them; pruning early defeats doubling.
                                 range.end = range.end.max(previous_end).min(length);
                             }
+                            if pending_measurement {
+                                range.start = range.start.min(previous_start);
+                            }
+                        } else if let Some((previous_first, previous_start, previous_end)) =
+                            discovery
+                            && first < previous_first
+                            && range.end == previous_end
+                        {
+                            // Resting at the end (End, a jump): the rows
+                            // measured smaller than estimated pull the view
+                            // up a screen of estimates per pass; discover
+                            // upward as fast as downward.
+                            range.start = range
+                                .start
+                                .min(
+                                    range.end.saturating_sub(
+                                        range
+                                            .end
+                                            .saturating_sub(previous_first)
+                                            .max(1)
+                                            .saturating_mul(2),
+                                    ),
+                                )
+                                .min(previous_start);
                         }
-                        discovery = Some((first, range.end));
+                        discovery = Some((first, range.start, range.end));
                     } else {
                         discovery = None;
                     }

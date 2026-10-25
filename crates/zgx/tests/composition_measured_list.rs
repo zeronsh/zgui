@@ -885,3 +885,39 @@ fn a_fixed_list_scrolls_to_a_row_where_asked() {
     ui.try_prepare_frame().unwrap();
     assert_eq!(offset.get(), 10_000. * 20. - 300.);
 }
+
+#[test]
+fn end_over_rows_measured_far_smaller_than_estimated_settles() {
+    // Estimates of 48 that measure 1 (rows that show nothing): at the end,
+    // each pass pulls the view up a screen of estimates; discovered upward
+    // by doubling, as downward, it fills the view within the layout budget.
+    let mut ui = Ui::new(420., 500.);
+    let heights = VariableHeights::new(&ui.runtime, 5000, 48.);
+    let view = ui.mount(
+        measured_virtual_list(
+            ui.signal(0.),
+            heights.clone(),
+            2,
+            |index| index,
+            |_, index, _| div().id(format!("row-{index}")),
+        )
+        .size(420., 500.)
+        .keyboard_navigation(true),
+    );
+    ui.try_prepare_frame().unwrap();
+    let first = row(&ui, view.find("row-0").unwrap());
+    ui.input.focus(&ui.scene, Some(first));
+    ui.try_dispatch(InputEvent::KeyDown {
+        key: Key::End,
+        modifiers: Modifiers::default(),
+        repeat: false,
+    })
+    .unwrap();
+    ui.try_prepare_frame().unwrap();
+    let last = row(&ui, view.find("row-4999").unwrap());
+    assert_eq!(ui.input.focused(), Some(last));
+    let bounds = ui.scene.borrow().bounds(last);
+    assert_eq!((bounds.y, bounds.height), (499., 1.));
+    let above = row(&ui, view.find("row-4500").unwrap());
+    assert_eq!(ui.scene.borrow().bounds(above).y, 0.);
+}
