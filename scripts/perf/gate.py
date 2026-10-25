@@ -63,7 +63,13 @@ SCENES = [
     ('app-mail', 'zgx-script', 'list_state_bench', {'APP': 'mail', 'REPS': '2'}),
     ('app-dashboard', 'zgx-script', 'list_state_bench', {'APP': 'dashboard', 'ROWS': '2000', 'REPS': '2'}),
     ('app-sketch', 'zgx-script', 'list_state_bench', {'APP': 'sketch', 'SHAPES': '50', 'REPS': '3'}),
-    ('app-code', 'zgx-script', 'list_state_bench', {'APP': 'code', 'LINES': '5000', 'REPS': '2'}),
+    # The code editor's search of a letter never searched (the whole text
+    # read) on its own: added to app-code, it would count as app-code's
+    # growth against a base without it.
+    ('app-code', 'zgx-script', 'list_state_bench', {'APP': 'code', 'LINES': '5000', 'REPS': '2',
+                                                     'SKIP': 'a new letter'}),
+    ('app-code-search', 'zgx-script', 'list_state_bench', {'APP': 'code', 'LINES': '5000', 'REPS': '2',
+                                                            'ONLY': 'a new letter'}),
 ]
 
 
@@ -91,9 +97,16 @@ def has_example(checkout, package, example):
 def runs_scene(checkout, env):
     """Whether `checkout`'s binary runs the scene `env` asks for: the app
     scenes (`APP`) are `support/apps.rs`'s, which an older base lacks (its
-    binary would count its own bench under their name)."""
+    binary would count its own bench under their name), and an interaction
+    measured alone that its `apps.rs` lacks."""
     apps = checkout / 'crates' / package_in(checkout, 'zgx-script') / 'examples/support/apps.rs'
-    return 'APP' not in env or apps.exists()
+    if 'APP' not in env:
+        return True
+    if not apps.exists():
+        return False
+    # A scene of one interaction (`ONLY`) is new to a base that lacks it:
+    # its binary would count the app's setup alone.
+    return 'ONLY' not in env or env['ONLY'] in apps.read_text()
 
 
 def stamp(checkout):

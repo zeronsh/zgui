@@ -12,6 +12,8 @@
 //! `APP=mail` (`dashboard`, `sketch`, `code`) runs one app; `REPS` sets the
 //! interactions measured (20); `ROWS` the dashboard's rows (100,000),
 //! `SHAPES` Sketch's shapes (500), `LINES` the code editor's file (100,000).
+//! `ONLY=name` measures the interactions whose names hold it, `SKIP=name`
+//! the others.
 use crate::bench_limits;
 use std::time::Instant;
 use zgx::{
@@ -131,8 +133,11 @@ impl Bench {
     /// after two to warm up: its time, instructions and phases, printed.
     fn measure(&mut self, name: &str, mut interaction: impl FnMut(&mut Self, usize)) {
         // `ONLY=sort`: the interactions whose names hold it alone (a profile
-        // of one).
-        if std::env::var("ONLY").is_ok_and(|only| !name.contains(only.as_str())) {
+        // of one); `SKIP=sort`: all but those (the gate's scene of an app
+        // without an interaction it counts on its own).
+        if std::env::var("ONLY").is_ok_and(|only| !name.contains(only.as_str()))
+            || std::env::var("SKIP").is_ok_and(|skip| name.contains(skip.as_str()))
+        {
             return;
         }
         for k in 0..2 {
