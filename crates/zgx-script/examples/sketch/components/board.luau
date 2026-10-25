@@ -30,6 +30,8 @@ type Gesture = {
 	index: number?,
 	-- Selected before a shift-drag's rectangle, kept in it.
 	kept: { string },
+	-- The lines the shapes it leaves where they are offer, found once.
+	lines: { xs: { number }, ys: { number } }?,
 }
 local gesture: Gesture? = nil
 local space = false
@@ -75,25 +77,35 @@ local function handle_at(sx: number, sy: number): (geometry.Handle?, number?)
 	return nil, nil
 end
 
--- The lines the shapes not in `moving` offer to snap to.
-local function lines(skip: { [string]: boolean }): ({ number }, { number })
-	local others = {}
-	for _, s in state.shapes:peek() do
-		if not skip[s.id] then
-			table.insert(others, s)
+-- The lines the shapes not in `skip` offer to snap to: found once a
+-- gesture, as they stay put while it lasts.
+local function lines(g: Gesture, skip: { [string]: boolean }): ({ number }, { number })
+	if not g.lines then
+		local others = {}
+		for _, s in state.shapes:peek() do
+			if not skip[s.id] then
+				table.insert(others, s)
+			end
 		end
+		g.lines = { xs = snap.lines(others, "x"), ys = snap.lines(others, "y") }
 	end
-	return snap.lines(others, "x"), snap.lines(others, "y")
+	local found = g.lines :: { xs: { number }, ys: { number } }
+	return found.xs, found.ys
 end
 
 -- A world point, snapped (when snapping is on) to the others' lines and
 -- then the grid; with the guides it lands on.
-local function snap_point(x: number, y: number, skip: { [string]: boolean }): (number, number, { snap.Guide })
+local function snap_point(
+	g: Gesture,
+	x: number,
+	y: number,
+	skip: { [string]: boolean }
+): (number, number, { snap.Guide })
 	if not state.snapping:peek() then
 		return x, y, {}
 	end
 	local zoom = state.view:peek().zoom
-	local xs, ys = lines(skip)
+	local xs, ys = lines(g, skip)
 	local dx, gx = snap.shift({ x }, xs, PULL / zoom, true)
 	local dy, gy = snap.shift({ y }, ys, PULL / zoom, true)
 	local guides: { snap.Guide } = {}
@@ -118,7 +130,7 @@ local function press(e: PointerEvent)
 	local tool = state.tool:peek()
 	if tool ~= "select" then
 		history.begin()
-		local x, y, guides = snap_point(wx, wy, {})
+		local x, y, guides = snap_point(g, wx, wy, {})
 		g.kind, g.wx, g.wy = "draw", x, y
 		local id = actions.add(tool :: geometry.Kind, { x = x, y = y, w = 1, h = 1 })
 		g.index = #state.shapes:peek()
@@ -193,7 +205,7 @@ local function move(e: PointerEvent)
 		local dx, dy = wx - g.wx, wy - g.wy
 		local guides: { snap.Guide } = {}
 		if state.snapping:peek() then
-			local xs, ys = lines(selected_set())
+			local xs, ys = lines(g, selected_set())
 			local within = PULL / view.zoom
 			local ax, gx = snap.shift({ b.x + dx, b.x + dx + b.w / 2, b.x + dx + b.w }, xs, within, true)
 			local ay, gy = snap.shift({ b.y + dy, b.y + dy + b.h / 2, b.y + dy + b.h }, ys, within, true)
@@ -214,7 +226,7 @@ local function move(e: PointerEvent)
 		end)
 	elseif g.kind == "resize" and g.bounds and g.handle and g.index then
 		local id = state.shapes:peek()[g.index].id
-		local x, y, guides = snap_point(wx, wy, { [id] = true })
+		local x, y, guides = snap_point(g, wx, wy, { [id] = true })
 		local r = geometry.resize(g.bounds, g.handle, x, y)
 		local index = g.index
 		ui.batch(function()
@@ -226,7 +238,7 @@ local function move(e: PointerEvent)
 		end)
 	elseif g.kind == "draw" and g.index then
 		local id = state.shapes:peek()[g.index].id
-		local x, y, guides = snap_point(wx, wy, { [id] = true })
+		local x, y, guides = snap_point(g, wx, wy, { [id] = true })
 		if e.shift then
 			-- A square, or a circle.
 			local side = math.max(math.abs(x - g.wx), math.abs(y - g.wy))
@@ -312,13 +324,13 @@ local function drawing(): Node
 		h_full = true,
 		view = state.view,
 		bg_grid = { step = snap.GRID * 2, min_step = 12, dot = 1, color = "$border" },
-		draw = function(c)
-			for _, s in state.shapes:get() do
-				local path = outline(s, s.x, s.y, s.w, s.h, 1)
-				c:fill(path, s.fill)
-				if s.stroke_width > 0 then
-					c:stroke(path, s.stroke, s.stroke_width)
-				end
+		-- Each shape drawn on its own and kept: a drag draws the moved one.
+		each = state.shapes,
+		draw_item = function(c, s: Shape)
+			local path = outline(s, s.x, s.y, s.w, s.h, 1)
+			c:fill(path, s.fill)
+			if s.stroke_width > 0 then
+				c:stroke(path, s.stroke, s.stroke_width)
 			end
 		end,
 	}

@@ -31,6 +31,8 @@
 //! - `canvas-view`: a `ui.canvas` without `view` whose `draw` reads a zoom:
 //!   panning and zooming by drawing again runs the script for every mark;
 //!   `view` places what it drew instead.
+//! - `draw-item-state`: a `ui.canvas` `draw_item` reading state. Each item's
+//!   drawing is kept until that item is written, so what it read goes stale.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -80,6 +82,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "canvas-view",
         "a ui.canvas that pans or zooms by drawing again rather than by `view`",
+    ),
+    (
+        "draw-item-state",
+        "a ui.canvas draw_item reading state, kept until its item changes",
     ),
 ];
 
@@ -167,6 +173,7 @@ pub fn lint_source(file: &Path, source: &str) -> Vec<Diagnostic> {
     linter.list_key();
     linter.list_measured();
     linter.canvas_view();
+    linter.draw_item_state();
     let allowed = |line: u32, rule: &str| {
         comments.iter().any(|(at, text)| {
             (*at == line || *at + 1 == line)
@@ -628,20 +635,9 @@ impl Linter<'_> {
                 continue;
             }
             let Some(draw) = field("draw") else { continue };
-            let body = if self.is(draw + 2, "function") {
-                Some(draw + 2)
-            } else {
-                self.name(draw + 2).and_then(|name| {
-                    (0..self.tokens.len()).find(|&j| {
-                        self.is(j, "function")
-                            && (self.is(j + 1, name) && self.is(j + 2, "(")
-                                || self.is(j.wrapping_sub(1), "=")
-                                    && self.is(j.wrapping_sub(2), name)
-                                    && self.is(j.wrapping_sub(3), "local"))
-                    })
-                })
+            let Some(start) = self.function_given(draw + 2) else {
+                continue;
             };
-            let Some(start) = body else { continue };
             let end = self.block_end(start);
             if (start..end).any(|j| self.is(j, "zoom") && self.is(j.wrapping_sub(1), ".")) {
                 self.report(
@@ -656,6 +652,53 @@ impl Linter<'_> {
                 );
             }
         }
+    }
+
+    /// A `ui.canvas`'s `draw_item` (written there, or a local function by
+    /// name) that reads state with `:get()`: its item's drawing is kept until
+    /// the item is written, so the state's later values never show.
+    fn draw_item_state(&mut self) {
+        for at in 0..self.tokens.len() {
+            if !(self.is(at, "draw_item")
+                && self.is(at + 1, "=")
+                && (self.is(at.wrapping_sub(1), ",") || self.is(at.wrapping_sub(1), "{")))
+            {
+                continue;
+            }
+            let Some(start) = self.function_given(at + 2) else {
+                continue;
+            };
+            let end = self.block_end(start);
+            if let Some(read) = (start..end)
+                .find(|&j| self.is(j, ":") && self.is(j + 1, "get") && self.is(j + 2, "("))
+            {
+                self.report(
+                    read,
+                    "draw-item-state",
+                    "this `draw_item` reads state: each item's drawing is kept until that \
+                     item is written, so it shows the value it read then. Keep what an \
+                     item looks like in the item (its colour, whether it is chosen), or \
+                     draw what depends on other state in a canvas of its own."
+                        .into(),
+                );
+            }
+        }
+    }
+
+    /// The function a field's value at `at` names: written there, or a local
+    /// function by name.
+    fn function_given(&self, at: usize) -> Option<usize> {
+        if self.is(at, "function") {
+            return Some(at);
+        }
+        let name = self.name(at)?;
+        (0..self.tokens.len()).find(|&j| {
+            self.is(j, "function")
+                && (self.is(j + 1, name) && self.is(j + 2, "(")
+                    || self.is(j.wrapping_sub(1), "=")
+                        && self.is(j.wrapping_sub(2), name)
+                        && self.is(j.wrapping_sub(3), "local"))
+        })
     }
 
     fn run(&mut self) {
@@ -1150,6 +1193,22 @@ local plain = ui.canvas { draw = function(c, w, h) c:rect(0, 0, w, h, "#fff") en
         assert_eq!(
             rules(source),
             vec![(4, "canvas-view".into()), (5, "canvas-view".into())]
+        );
+    }
+
+    #[test]
+    fn a_draw_item_reading_state_is_reported() {
+        let source = r##"
+local shapes = ui.state("shapes", {})
+local chosen = ui.state("chosen", 0)
+local function shape(c, s) c:rect(s.x, s.y, 4, 4, if chosen:get() == s.id then "#f00" else "#fff") end
+local named = ui.canvas { each = shapes, draw_item = shape }
+local inline = ui.canvas { each = shapes, draw_item = function(c, s) c:rect(s.x, chosen:get(), 4, 4, "#fff") end }
+local plain = ui.canvas { each = shapes, draw_item = function(c, s) c:rect(s.x, s.y, 4, 4, s.fill) end }
+"##;
+        assert_eq!(
+            rules(source),
+            vec![(4, "draw-item-state".into()), (6, "draw-item-state".into())]
         );
     }
 

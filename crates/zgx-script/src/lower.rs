@@ -1097,21 +1097,63 @@ fn kind_view(
                 None => zgx::theme::Themes::of(&low.runtime).root().clone(),
             };
             let (drawn_theme, options_vm) = (theme.clone(), vm.clone());
+            let each = options.as_ref().and_then(|o| o.each.clone());
+            let mut kept = KeptItems::default();
             let view = canvas(move |(w, h)| {
-                let recorder = crate::canvas::Recorder(Default::default());
-                let result = vm.lua.create_userdata(recorder).and_then(|ud| {
-                    crate::canvas::draw_in(drawn_theme.clone(), || {
-                        vm.call::<()>(&draw, (ud.clone(), w, h))
-                    })?;
-                    ud.take::<crate::canvas::Recorder>()
-                });
-                match result {
-                    Ok(recorder) => recorder.0.into_inner(),
-                    Err(error) => {
-                        vm.report(error);
-                        Default::default()
+                // One drawing's commands, as recorded from `draw(c, ...)`.
+                let record = |draw: &mlua::Function, args: Option<&Value>| {
+                    let recorder = crate::canvas::Recorder(Default::default());
+                    let result = vm.lua.create_userdata(recorder).and_then(|ud| {
+                        crate::canvas::draw_in(drawn_theme.clone(), || match args {
+                            None => vm.call::<()>(draw, (ud.clone(), w, h)),
+                            Some(item) => vm.call::<()>(draw, (ud.clone(), item.clone(), w, h)),
+                        })?;
+                        ud.take::<crate::canvas::Recorder>()
+                    });
+                    match result {
+                        Ok(recorder) => Some(recorder.0.into_inner()),
+                        Err(error) => {
+                            vm.report(error);
+                            None
+                        }
                     }
+                };
+                let mut drawn = draw
+                    .as_ref()
+                    .and_then(|draw| record(draw, None))
+                    .unwrap_or_default();
+                if let Some((items, draw_item)) = &each {
+                    // Each item's drawing kept by its identity: an item not
+                    // written since (`set_key`, `patch` and `push` leave the
+                    // others as they were) is not drawn again. Its draw is
+                    // untracked: it reads its item alone.
+                    let list = items.with(Value::clone);
+                    if kept.size != (w, h) {
+                        kept.size = (w, h);
+                        kept.items.clear();
+                    }
+                    // Last pass's, in a map kept for its room.
+                    let mut last = std::mem::take(&mut kept.last);
+                    std::mem::swap(&mut last, &mut kept.items);
+                    for item in list.list() {
+                        let id = crate::value::identity(item);
+                        let commands = match last.remove(&id).filter(|_| id != 0) {
+                            Some((_, commands)) => commands,
+                            None => match vm.runtime.untracked(|| record(draw_item, Some(item))) {
+                                Some(commands) => commands,
+                                None => continue,
+                            },
+                        };
+                        drawn.extend(&commands);
+                        if id != 0 {
+                            kept.items.insert(id, (item.clone(), commands));
+                        }
+                    }
+                    // Items gone since: their drawings with them.
+                    last.clear();
+                    kept.last = last;
                 }
+                drawn
             });
             match options {
                 None => view,
@@ -3738,6 +3780,15 @@ fn node_text(node: &Node, vm: &Vm) -> String {
 /// A canvas's `view` (its drawing's pan and zoom) and `bg_grid` (a grid
 /// under it that follows the view), each followed in Rust: a pan or zoom
 /// runs the view's function, not `draw`.
+/// A canvas's items' drawings, by identity, each with its item (kept alive,
+/// so its address names it alone), at the size they were drawn for.
+#[derive(Default)]
+struct KeptItems {
+    size: (f32, f32),
+    items: HashMap<usize, (Value, zgx::canvas::Canvas)>,
+    last: HashMap<usize, (Value, zgx::canvas::Canvas)>,
+}
+
 fn canvas_options(
     view: View,
     options: &crate::node::CanvasOptions,

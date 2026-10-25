@@ -42,7 +42,9 @@ An SVG, from a file or from markup, drawn as vectors at every scale; `tint` reco
 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
-| `draw` | `(c: Canvas, w: number, h: number) -> ()` | required | |
+| `draw` | `(c: Canvas, w: number, h: number) -> ()` | required unless `each` | |
+| `each` | a list state | none | items drawn one by one by `draw_item`, after `draw`, in the list's order. Each item's drawing is kept by the item: one not written since (`set_key`, `patch`, `push` and `remove` leave the others as they were) is not drawn again, so dragging one shape of thousands draws that one |
+| `draw_item` | `(c: Canvas, item, w: number, h: number) -> ()` | with `each` | one item's drawing, from the item alone. It reads no state: what it read would show until its item is next written (`zgx lint` reports it). A size change draws every item again |
 | `label` | `string \| state \| function` | none | what it shows, read by assistive technology as an image's name: a chart's summary (`"Price, now 143.9, high 150.1, low 128.2"`), followed as state. Without one, the canvas is decoration, out of the accessibility tree |
 | `view` | state or function of `{ x, y, zoom }` | none | its drawing's pan and zoom: drawn at `zoom` times its size, then moved by `x`, `y`. Followed without calling `draw`: a pan or zoom places what it drew (a board, a map), so `draw` draws in its own coordinates and reads no view |
 | `bg_grid` | `{ step, min_step, dot, lines, color }` | none | a grid under the drawing that follows `view`: a mark every `step` points (16), the step doubled while marks would show closer than `min_step` (0); each a square `dot` that many points across (1) or `lines` that wide; `color` (`"$border"`). Drawn in Rust with no call per mark, and marks keep their size as the view zooms |
@@ -82,10 +84,10 @@ return ui.overlay {
 		h_full = true,
 		view = view,
 		bg_grid = { step = 16, min_step = 12, dot = 1 },
-		draw = function(c)
-			for _, s in shapes:get() do
-				c:rect(s.x, s.y, s.w, s.h, "$accent", 4)
-			end
+		-- Each shape drawn on its own and kept: moving one draws that one.
+		each = shapes,
+		draw_item = function(c, s)
+			c:rect(s.x, s.y, s.w, s.h, "$accent", 4)
 		end,
 	},
 }

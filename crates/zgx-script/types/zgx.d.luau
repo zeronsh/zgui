@@ -3933,8 +3933,17 @@ export type CanvasProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	-- Runs again when the size or the state it reads changes.
-	draw: (c: Canvas, w: number, h: number) -> ...unknown,
+	-- Runs again when the size or the state it reads changes. Required
+	-- unless `each` and `draw_item` draw it.
+	draw: ((c: Canvas, w: number, h: number) -> ...unknown)?,
+	-- A list state whose items are each drawn by `draw_item`, after `draw`,
+	-- in order. Each item's drawing is kept: an item not written since
+	-- (`set_key`, `patch` and `push` leave the rest as they were) is not
+	-- drawn again, so a drag draws the shape it moves.
+	each: State<{ any }>?,
+	-- One item's drawing, from the item alone: it reads no state (it is
+	-- kept until its item changes).
+	draw_item: ((c: Canvas, item: any, w: number, h: number) -> ...unknown)?,
 	-- What it shows, read by assistive technology as an image's name (a
 	-- chart's summary: "Price, now 143.9, high 150.1"). A state or
 	-- function is followed. Without one, it is decoration.

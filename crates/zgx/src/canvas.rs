@@ -562,6 +562,12 @@ impl Canvas {
     pub fn commands(&self) -> &[Draw] {
         &self.commands
     }
+    /// `other`'s commands after these, as drawn: a drawing made of parts
+    /// kept apart (each item's, drawn again only when it changes).
+    pub fn extend(&mut self, other: &Canvas) -> &mut Self {
+        self.commands.extend_from_slice(&other.commands);
+        self
+    }
 }
 
 #[cfg(test)]

@@ -2753,3 +2753,72 @@ fn a_canvas_view_pans_its_drawing_without_drawing_it_again() {
     assert_eq!(grid.mark, zgx::scene::GridMark::Dot(2.));
     assert_eq!(grid.color, zgx::scene::Color(0, 255, 0, 255));
 }
+
+#[test]
+fn a_canvas_draws_again_only_the_items_written_since() {
+    let mut h = Harness::inline(
+        r##"local shapes = ui.state("shapes", {
+            { x = 0, color = "#ff0000" }, { x = 10, color = "#00ff00" }, { x = 20, color = "#0000ff" },
+        })
+        local calls = 0
+        local drawn = ui.state("drawn", "")
+        return ui.column {
+            ui.button { id = "move", on_click = function() shapes:set_key({ 2, "x" }, 50) end, "move" },
+            ui.button { id = "add", on_click = function() shapes:push { x = 70, color = "#ffffff" } end, "add" },
+            ui.button { id = "drop", on_click = function() shapes:remove(1) end, "drop" },
+            ui.button { id = "count", on_click = function() drawn:set(tostring(calls)) end, "count" },
+            ui.text { id = "drawn", "{drawn}" },
+            ui.canvas {
+                id = "board", w = 100, h = 100, each = shapes,
+                draw_item = function(c, s)
+                    calls += 1
+                    c:rect(s.x, 0, 5, 5, s.color)
+                end,
+            },
+        }"##,
+    );
+    assert_eq!(h.host.error().get(), None);
+    h.ui.prepare_frame();
+    let board = h.find("board").unwrap();
+    let calls = |h: &mut Harness| {
+        h.click("count");
+        h.ui.prepare_frame();
+        h.text("drawn")
+    };
+    // The rectangles' x, in the order drawn.
+    let xs = |h: &mut Harness| {
+        let scene = h.ui.scene.borrow();
+        let id = *scene
+            .children(board)
+            .iter()
+            .find(|id| matches!(scene.kind(**id), zgx::scene::NodeKind::Canvas(_)))
+            .unwrap();
+        let zgx::scene::NodeKind::Canvas(canvas) = scene.kind(id) else {
+            unreachable!()
+        };
+        canvas
+            .commands()
+            .iter()
+            .map(|draw| match draw {
+                zgx::canvas::Draw::Fill { path, .. } => match path.shape() {
+                    Some(zgx::canvas::Shape::Rect { rect, .. }) => rect.x,
+                    other => panic!("{other:?}"),
+                },
+                other => panic!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(calls(&mut h), "3");
+    assert_eq!(xs(&mut h), [0., 10., 20.]);
+    h.click("move");
+    h.ui.prepare_frame();
+    assert_eq!(calls(&mut h), "4", "the moved item alone");
+    assert_eq!(xs(&mut h), [0., 50., 20.]);
+    h.click("add");
+    h.ui.prepare_frame();
+    assert_eq!(calls(&mut h), "5", "the pushed item alone");
+    h.click("drop");
+    h.ui.prepare_frame();
+    assert_eq!(calls(&mut h), "5", "a removal draws nothing");
+    assert_eq!(xs(&mut h), [50., 20., 70.]);
+}

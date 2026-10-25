@@ -684,7 +684,8 @@ pub(crate) enum Kind {
     },
     /// `fn(canvas, width, height)`, run again when its size or the state it
     /// reads changes; with its `view` and `grid`, if any.
-    Canvas(Function, Option<Box<CanvasOptions>>),
+    /// `draw` may be absent when `each` draws it.
+    Canvas(Option<Function>, Option<Box<CanvasOptions>>),
     /// `ui.webview { ... }`: a native web view laid out like a div.
     WebView(Box<WebSpec>),
     /// `ui.terminal { term = ui.term(id) }`: a terminal session, shown
@@ -1034,6 +1035,9 @@ fn grid_spec(lua: &Lua, grid: &Table) -> mlua::Result<GridSpec> {
 pub(crate) struct CanvasOptions {
     pub view: Option<Readable>,
     pub grid: Option<GridSpec>,
+    /// `each = state, draw_item = function(c, item, w, h)`: each item drawn
+    /// on its own and kept, drawn again only when it is written.
+    pub each: Option<(Signal<Value>, Function)>,
 }
 /// `bg_grid = { step, min_step, dot | lines, color }`.
 pub(crate) struct GridSpec {
@@ -1911,6 +1915,8 @@ const WIDGET_FIELDS: &[&str] = &[
     "src",
     "code",
     "draw",
+    "each",
+    "draw_item",
     "view",
     "bg_grid",
     "count",
@@ -3007,9 +3013,27 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set(
         "canvas",
         lua.create_function(|lua, table: Table| {
-            let draw: Function = table
-                .get("draw")
-                .map_err(|_| mlua::Error::runtime("ui.canvas needs `draw`"))?;
+            let draw: Option<Function> = table.get("draw")?;
+            let each = match (
+                table.get::<mlua::Value>("each")?,
+                table.get::<Option<Function>>("draw_item")?,
+            ) {
+                (mlua::Value::Nil, None) => None,
+                (items, Some(draw_item)) => Some((
+                    state_of(&items).ok_or_else(|| {
+                        mlua::Error::runtime("ui.canvas `each` must be a ui.state holding a list")
+                    })?,
+                    draw_item,
+                )),
+                (_, None) => {
+                    return Err(mlua::Error::runtime("ui.canvas `each` needs `draw_item`"));
+                }
+            };
+            if draw.is_none() && each.is_none() {
+                return Err(mlua::Error::runtime(
+                    "ui.canvas needs `draw` (or `each` and `draw_item`)",
+                ));
+            }
             let view = match table.get::<mlua::Value>("view")? {
                 mlua::Value::Nil => None,
                 mlua::Value::Function(f) => Some(Readable::Function(f)),
@@ -3023,8 +3047,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 None => None,
                 Some(grid) => Some(grid_spec(lua, &grid)?),
             };
-            let options =
-                (view.is_some() || grid.is_some()).then(|| Box::new(CanvasOptions { view, grid }));
+            let options = (view.is_some() || grid.is_some() || each.is_some())
+                .then(|| Box::new(CanvasOptions { view, grid, each }));
             node_ud(
                 lua,
                 fill(

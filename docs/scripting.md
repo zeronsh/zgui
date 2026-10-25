@@ -91,6 +91,7 @@ zgx lint --rules            # what it looks for
 | `list-key` | a `ui.list` without `key` whose rows index into a list state the same file removes from or inserts into: rows are by position, so each removal or insertion writes every row after it with the item now there (its text, layout and paint again) | `key = function(i) return list[i].id end`, the row reading its item by key: the rows a change shifts are moved, not written |
 | `list-measured` | a `ui.list` of fixed heights (`height`, `heights`) whose row wraps text (`wrap = true` with no `lines` cap, `ui.markdown`): how many lines it takes depends on its text and the width, which a script can't measure, so rows are cut off or leave gaps | `measured = true`: each row takes its content's height as it mounts, `height` the estimate until then |
 | `canvas-view` | a `ui.canvas` without `view` whose `draw` reads a zoom (`view.zoom`): every pan or zoom runs `draw` again, the script for every mark | draw in the canvas's own coordinates and give `view = state` (`{ x, y, zoom }`); `bg_grid` for a grid under it; what keeps its size on screen in a small canvas of its own |
+| `draw-item-state` | a `ui.canvas` `draw_item` reading state (`:get()`): each item's drawing is kept until that item is written, so it shows what it read then | keep what an item looks like in the item (its colour, whether it is chosen), or draw what depends on other state in `draw` or a canvas of its own |
 
 `-- zgx-lint: allow(rule)` on the finding's line or the line above accepts a deliberate exception (`allow(rule-a, rule-b)` for several).
 
@@ -122,6 +123,7 @@ The component library's elements (`ui.data_grid`, `ui.tree`, `ui.calendar`, `ui.
 | `image { src = "a.png", fit = "cover" }` | PNG or JPEG, relative to the script; `src` may be state |
 | `svg { src = "icon.svg" }`, `svg { code = "<svg…>" }` | `tint = color` (a state or function re-tints it); `tint = "currentColor"` follows the text color it inherits (a button's, hover included) |
 | `canvas { draw = function(c, w, h) … end }` | runs again when its size or the state it reads changes |
+| `canvas { each = state, draw_item = function(c, item, w, h) … end }` | draws each item on its own and keeps it: only items written since are drawn again |
 | `webview { src = "https://…", … }` | a native web page (WKWebView on macOS) laid out, rounded, clipped and faded like any node, with zgx content (frosted popovers too) drawn over it; see [Web views](#web-views) |
 | `terminal { term = ui.term(id) }` | a terminal session (a Ghostty surface, with the desktop host's `ghostty` feature) placed like a web view; see [Terminals](#terminals) |
 | `checkbox`, `input`, `textarea`, `progress`, `slider` | `{ label, value = state }`; `slider` takes `min`, `max`; `input` and `textarea` take `placeholder` (text shown while the value is empty: a string, state or function), `placeholder_color` and `select_on_focus = true` (focus selects all the text: an address bar) |
