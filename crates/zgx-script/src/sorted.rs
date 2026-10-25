@@ -572,29 +572,37 @@ impl Kept {
 }
 
 /// `words` sorted by their first, stably (equal ones keep their order): a
-/// pass a byte, least significant first, skipping a byte every word shares.
+/// pass a digit of 11 bits, least significant first (six, two fewer than a
+/// byte at a time), every digit's counts made in one read of the words, a
+/// digit every word shares skipped.
 fn radix_sort(words: &mut Vec<(u64, u32)>) {
-    if words.len() < 64 {
+    const BITS: u32 = 11;
+    const DIGITS: usize = 6;
+    const SIZE: usize = 1 << BITS;
+    let n = words.len();
+    if n < 64 || u32::try_from(n).is_err() {
         words.sort_by_key(|(word, _)| *word);
         return;
     }
-    let mut scratch = vec![(0, 0); words.len()];
-    for byte in 0..8 {
-        let shift = byte * 8;
-        let mut counts = [0usize; 256];
-        for (word, _) in words.iter() {
-            counts[(word >> shift) as usize & 0xff] += 1;
+    let mut counts = vec![[0u32; SIZE]; DIGITS];
+    for &(word, _) in words.iter() {
+        for (digit, counts) in counts.iter_mut().enumerate() {
+            counts[(word >> (digit as u32 * BITS)) as usize & (SIZE - 1)] += 1;
         }
-        if counts.contains(&words.len()) {
+    }
+    let mut scratch = vec![(0, 0); n];
+    for (digit, counts) in counts.iter_mut().enumerate() {
+        if counts.iter().any(|&count| count as usize == n) {
             continue;
         }
         let mut at = 0;
         for count in counts.iter_mut() {
             (*count, at) = (at, at + *count);
         }
+        let shift = digit as u32 * BITS;
         for &(word, i) in words.iter() {
-            let bucket = &mut counts[(word >> shift) as usize & 0xff];
-            scratch[*bucket] = (word, i);
+            let bucket = &mut counts[(word >> shift) as usize & (SIZE - 1)];
+            scratch[*bucket as usize] = (word, i);
             *bucket += 1;
         }
         std::mem::swap(words, &mut scratch);

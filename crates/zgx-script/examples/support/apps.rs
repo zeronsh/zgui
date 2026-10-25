@@ -130,6 +130,11 @@ impl Bench {
     /// `interaction` (the `k`th), each followed by its frame, `reps` times
     /// after two to warm up: its time, instructions and phases, printed.
     fn measure(&mut self, name: &str, mut interaction: impl FnMut(&mut Self, usize)) {
+        // `ONLY=sort`: the interactions whose names hold it alone (a profile
+        // of one).
+        if std::env::var("ONLY").is_ok_and(|only| !name.contains(only.as_str())) {
+            return;
+        }
         for k in 0..2 {
             interaction(self, k);
             self.frame();
