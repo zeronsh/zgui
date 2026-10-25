@@ -5304,6 +5304,9 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility, 
 fn update_button_labels(ui: &Ui, node: NodeId) {
     let scene = ui.scene.borrow();
     let mounting = ui.innermost_open_element();
+    // Most ancestors aren't named by their content: asked in one borrow,
+    // let go only to name one.
+    let mut semantics = ui.semantics.borrow();
     let mut current = Some(node);
     while let Some(id) = current {
         if Some(id) == mounting {
@@ -5311,23 +5314,33 @@ fn update_button_labels(ui: &Ui, node: NodeId) {
         }
         #[cfg(test)]
         LABEL_STEPS.with(|steps| steps.set(steps.get() + 1));
-        name_from_content(ui, &scene, id);
+        if named_by_content(&semantics, id) {
+            drop(semantics);
+            name_content(ui, &scene, id);
+            semantics = ui.semantics.borrow();
+        }
         current = scene.parent(id);
     }
 }
-/// `id`'s label from its text, if its content names it, as ARIA names a
-/// button, heading, tab or option from its text.
-fn name_from_content(ui: &Ui, scene: &crate::scene::Scene, id: NodeId) {
-    let named_by_content = ui.semantics.borrow().get(id).is_some_and(|n| {
+/// Whether `id`'s content names it, as ARIA names a button, heading, tab or
+/// option from its text.
+fn named_by_content(semantics: &crate::semantics::Semantics, id: NodeId) -> bool {
+    semantics.get(id).is_some_and(|n| {
         !n.named
             && matches!(
                 n.role,
                 Role::Button | Role::Heading | Role::ListItem | Role::ListBoxOption | Role::Tab
             )
-    });
-    if !named_by_content {
-        return;
+    })
+}
+/// `id`'s label from its text, if its content names it (`named_by_content`).
+fn name_from_content(ui: &Ui, scene: &crate::scene::Scene, id: NodeId) {
+    if named_by_content(&ui.semantics.borrow(), id) {
+        name_content(ui, scene, id);
     }
+}
+/// `id`'s label from its text, its content naming it.
+fn name_content(ui: &Ui, scene: &crate::scene::Scene, id: NodeId) {
     let mut parts = Vec::new();
     let mut pending = vec![id];
     let semantics = ui.semantics.borrow();
