@@ -91,7 +91,7 @@ def main():
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         env.pop("WAYLAND_DISPLAY", None)
         try:
-            xvfb = launch("xvfb", ["Xvfb", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env,
+            xvfb = launch("xvfb", ["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env,
                           stdout=subprocess.PIPE, text=True)
             if not select.select([xvfb.stdout], [], [], 10)[0]:
                 raise RuntimeError("Xvfb startup timed out")

@@ -23,7 +23,7 @@ def main():
     try:
         for name in ("xvfb", "wm", "app"):
             logs.append((args.output / (name + ".log")).open("w"))
-        xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1000x700x24", "-ac", "-noreset"], stdout=subprocess.PIPE, stderr=logs[0], text=True)
+        xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1000x700x24", "-ac", "-noreset"], stdout=subprocess.PIPE, stderr=logs[0], text=True)
         if not select.select([xvfb.stdout], [], [], 10)[0]:
             raise RuntimeError("Xvfb startup timeout")
         env = dict(os.environ, DISPLAY=":" + xvfb.stdout.readline().strip(), ZGX_ACTION_TRACE="1", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")

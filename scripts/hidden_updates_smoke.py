@@ -26,7 +26,7 @@ def main():
     xvfb = wm = app = None
     try:
         with (output / "xvfb.log").open("w") as xlog, (output / "openbox.log").open("w") as wlog, (output / "application.log").open("w") as log:
-            xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1024x768x24", "-ac"], stdout=subprocess.PIPE, stderr=xlog, text=True)
+            xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1024x768x24", "-ac"], stdout=subprocess.PIPE, stderr=xlog, text=True)
             if not select.select([xvfb.stdout], [], [], 10)[0]:
                 raise RuntimeError("Xvfb did not start")
             display = xvfb.stdout.readline().strip()

@@ -34,7 +34,7 @@ def main():
     try:
         env = dict(os.environ, WINIT_X11_SCALE_FACTOR="1", XDG_RUNTIME_DIR="/tmp", GSK_RENDERER="cairo")
         env.pop("WAYLAND_DISPLAY", None)
-        xvfb = launch("xvfb", ["Xvfb", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env,
+        xvfb = launch("xvfb", ["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env,
                       stdout=subprocess.PIPE, text=True)
         if not select.select([xvfb.stdout], [], [], 10)[0]:
             raise RuntimeError("Xvfb startup timed out")

@@ -34,7 +34,7 @@ def main():
         env = dict(os.environ, WINIT_X11_SCALE_FACTOR="1", XDG_RUNTIME_DIR="/tmp", WINDOW_PROBE_SECOND_MS="3000",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         env.pop("WAYLAND_DISPLAY", None)
-        xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env=env,
+        xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env=env,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         processes.append(xvfb)
         if not select.select([xvfb.stdout], [], [], 10)[0]:
