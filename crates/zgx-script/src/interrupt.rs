@@ -175,11 +175,12 @@ impl Alarm {
         // it is nulled before the VM goes, under the watchdog's lock, which
         // the watchdog holds while it sets the slot; the VM's own thread
         // sets it only while the VM is alive. (Already so, left alone: a
-        // store to the VM's callbacks is not free, and calls end often; a
-        // stale read skips only a store of what is there.) Sequentially
-        // consistent with `Alarm::due`, for `check`'s clearing.
+        // store to the VM's callbacks is not free, and calls end often.)
+        // The load too is sequentially consistent with `Alarm::due`, for
+        // `check`'s clearing: the watchdog's, after its mark, sees a
+        // clearing ordered before the mark rather than the hook it cleared.
         let slot = unsafe { &*slot };
-        if slot.load(Ordering::Relaxed) != hook {
+        if slot.load(Ordering::SeqCst) != hook {
             slot.store(hook, Ordering::SeqCst);
         }
     }
