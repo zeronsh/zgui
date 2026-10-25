@@ -210,6 +210,14 @@ pub(crate) fn attributes(
         .with_transparent(options.is_transparent())
         .with_decorations(options.decorations)
         .with_visible(false);
+    // An X screen of 16 or 30 bits: a visual drivers present to.
+    #[cfg(target_os = "linux")]
+    if !options.is_transparent()
+        && let Some(visual) = crate::x11_visual::visual(event_loop)
+    {
+        use winit::platform::x11::WindowAttributesExtX11;
+        attrs = attrs.with_x11_visual(visual);
+    }
     #[cfg(target_os = "linux")]
     if let Some(token) = activation {
         use winit::platform::startup_notify::WindowAttributesExtStartupNotify;

@@ -191,6 +191,13 @@ container), text shapes to nothing and everything else draws; the first text
 says once on stderr why it does not show. Before, shaping panicked every
 frame and the window drew nothing. `no_fonts_smoke.py` runs the gallery
 with a fontconfig that lists only an empty directory.
+On an X screen of 16 bits (some VNC servers, older setups) or 30 (deep
+colour), a window takes a TrueColor visual of 24 bits, or of 32 (the one
+compositing adds), rather than the screen's own (`x11_visual`): Mesa's Vulkan
+offers no format to present to a 16- or 30-bit window, so the renderer
+panicked and no window showed, and GL drew a 32-bit image into it as its
+own. `x11_depths_smoke.py` runs the gallery on screens of each depth and
+compares their pixels with a 24-bit screen's.
 
 ## Window icons
 

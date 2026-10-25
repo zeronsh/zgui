@@ -1419,9 +1419,19 @@ impl GpuContext {
                     }))
                 }
             };
-            found = adapter
-                .map(|adapter| (instance, adapter))
-                .map_err(|e| GpuError(e.to_string()));
+            // An adapter that presents to the window in no format draws
+            // nothing there (Mesa's Vulkan, to a window of an X visual of 16
+            // or 30 bits, which zgx's own windows no longer take): the next
+            // backend, as where there is no driver, rather than a panic.
+            let adapter = adapter
+                .map_err(|e| GpuError(e.to_string()))
+                .and_then(|adapter| match &surface {
+                    Some(surface) if surface.get_capabilities(&adapter).formats.is_empty() => Err(
+                        GpuError(format!("{backends:?} presents to the window in no format")),
+                    ),
+                    _ => Ok(adapter),
+                });
+            found = adapter.map(|adapter| (instance, adapter));
             if found.is_ok() {
                 break;
             }
