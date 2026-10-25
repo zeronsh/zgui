@@ -1,11 +1,14 @@
 //! `zgx lint` as tools run it: an exit status and, with `--format json`,
 //! findings they can read.
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn lint(source: &str, json: bool) -> (Option<i32>, String) {
+    // A file of its own each call: the tests run at once, in one process.
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!("zgx-lint-cli-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join(if json { "json.luau" } else { "text.luau" });
+    let file = dir.join(format!("{}.luau", NEXT.fetch_add(1, Ordering::Relaxed)));
     std::fs::write(&file, source).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_zgx"));
     command.arg("lint");
