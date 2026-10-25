@@ -13,6 +13,13 @@
 //! Unpaced GPU times swing with the GPU's clock, 2x for the same build.
 //! About 0.17 Mcycles of a frame is the GPU waking for it at all: an empty
 //! render pass costs that, whatever the target's size.)
+//!
+//! On macOS each frame is presented as a window presents it, through
+//! surfaces of the renderer's own that a layer shows, each brought up to
+//! date from the one shown before it is drawn (`GpuRenderer::debug_for_layer`):
+//! a frame measured into one retained target skips that catch-up, and once
+//! made a change look 6% cheaper than windows found it. `PRESENT=headless`
+//! draws into one retained target, as elsewhere.
 use std::hash::{Hash, Hasher};
 use zgx::widgets::Ui;
 use zgx_gpu::GpuRenderer;
@@ -45,11 +52,22 @@ fn main() {
         (heavy::WIDTH, heavy::HEIGHT)
     };
     let mut ui = Ui::new(width, height);
-    let mut gpu = GpuRenderer::new(
+    let size = (
         (width * scale).round() as u32,
         (height * scale).round() as u32,
-    )
+    );
+    // Through a layer's surfaces, as a window presents (macOS), unless asked
+    // for one retained target.
+    let layer = cfg!(target_os = "macos") && zgx::env::var("PRESENT").as_deref() != Ok("headless");
+    #[cfg(target_os = "macos")]
+    let mut gpu = if layer {
+        GpuRenderer::debug_for_layer(objc2_quartz_core::CALayer::new(), size.0, size.1)
+    } else {
+        GpuRenderer::new(size.0, size.1)
+    }
     .expect("GPU");
+    #[cfg(not(target_os = "macos"))]
+    let mut gpu = GpuRenderer::new(size.0, size.1).expect("GPU");
     gpu.set_scale_factor(scale);
     gpu.install_text(&mut ui.scene.borrow_mut());
     // Each tick's change: the dashboard's data, or the animation's clock a
@@ -100,9 +118,22 @@ fn main() {
         ui.prepare_frame();
         let report = ui.scene.borrow_mut().flush();
         let stats = gpu.render(&ui.scene.borrow(), &report.damage).unwrap();
-        // Waits for the frame, and (every 100 ticks) is what it drew. Paced,
-        // only then: a readback is GPU work of its own.
-        if tick % 100 == 99 || pace == 0. {
+        if layer {
+            // Shown: the frame waited for, as a window waits before its
+            // layer takes the surface; every 100 ticks, what it shows.
+            #[cfg(target_os = "macos")]
+            {
+                gpu.present().unwrap();
+                if tick % 100 == 99 {
+                    gpu.shown_pixels()
+                        .expect("a surface shown")
+                        .2
+                        .hash(&mut pixels);
+                }
+            }
+        } else if tick % 100 == 99 || pace == 0. {
+            // Waits for the frame, and (every 100 ticks) is what it drew.
+            // Paced, only then: a readback is GPU work of its own.
             let frame = gpu.readback().unwrap();
             if tick % 100 == 99 {
                 frame.hash(&mut pixels);
@@ -140,8 +171,13 @@ fn main() {
     };
     let mean = times.iter().map(|t| t.as_secs_f64()).sum::<f64>() / times.len().max(1) as f64 * 1e3;
     println!(
-        "{name}: GPU {:.3} ms p10, {:.3} median, {:.3} p90, {mean:.3} mean ({} frames timed); damaged {:.2} Mpx, \
+        "{name}{}: GPU {:.3} ms p10, {:.3} median, {:.3} p90, {mean:.3} mean ({} frames timed); damaged {:.2} Mpx, \
          {:.1} draws, {:.0} instances, {:.2} passes a frame; scene damage {:.2} Mpx in {:.1} rects; pixels {:016x}",
+        if layer {
+            " (through a layer)"
+        } else {
+            " (headless)"
+        },
         at(0.1),
         at(0.5),
         at(0.9),
