@@ -226,6 +226,72 @@ A determinate bar from a 0-to-1 state; it takes no input.
 | `bg` | `Color` | `"$input.bg"` | the track |
 | `color` | `Color` | inherited | the fill |
 
+## Forms
+
+`ui.form { fields, validate, submit, on_success }` holds a form's fields and its submit, as React Hook Form does; a control given `field = form.fields.email` binds to one:
+
+```lua
+local form = ui.form {
+	fields = { name = "", email = "", role = "Engineer" },
+	validate = {
+		name = function(name)
+			return if name == "" then "A name is required" else nil
+		end,
+		email = function(email)
+			return if email:find("@") then nil else "That is not an email address"
+		end,
+	},
+	submit = function(values)
+		-- In a task: it awaits, and raises what went wrong.
+		local response = ui.fetch("https://api.example/people", { method = "POST", body = values }):await()
+		if not response.ok then error(`The server answered {response.status}`, 0) end
+		return response.json
+	end,
+}
+local function field(name: string, label: string)
+	local f = form.fields[name]
+	return ui.column {
+		gap = 4,
+		ui.text { label },
+		ui.input { id = name, label = label, field = f },
+		ui.presence(f.error, function(problem: string)
+			return ui.text { problem, color = "$danger" }
+		end),
+	}
+end
+return ui.column {
+	gap = 12,
+	field("name", "Name"),
+	field("email", "Email"),
+	ui.segmented { field = form.fields.role, options = { "Engineer", "Designer" } },
+	ui.presence(form.failure, function(message: string) return ui.text { message, color = "$danger" } end),
+	ui.button {
+		function() return if form.pending:get() then "Saving…" else "Save" end,
+		disabled = form.pending,
+		on_click = form.submit,
+	},
+}
+```
+
+| `ui.form` option | |
+| --- | --- |
+| `fields` | each field's name and first value |
+| `validate` | a field's check: `check(value, values)` returns what is wrong (a message) or nil. It runs as the field changes, and as another field it reads (`values.name`) does |
+| `submit` | `submit(values)`, run as a task once every check passes: it may await, and what it raises is the form's `failure` |
+| `on_success` | `on_success(result, values)`: what `submit` returned |
+
+| On the form | |
+| --- | --- |
+| `fields.name` | a field: `value` (its state), `touched` (it has been left), `problem` (what its check says now), `error` (`problem` once it has been left or a submit tried: what to show) |
+| `values.name` | a field's value state |
+| `valid`, `attempted`, `pending`, `failure` | every check passes; a submit has been tried; a submit is under way; what the last one raised |
+| `submit()` | checks every field: one wrong shows so, and the first wrong (top, then left) takes focus; all fine, runs `submit`. A handler as it is (`on_click = form.submit`) |
+| `reset(values?)` | back to the first values (or `values`), nothing shown wrong |
+
+`field` binds a control's `value`, marks the field left as it loses focus, gives it the field's `error`, and on a one-line input makes Enter submit the form. It works on `input`, `textarea`, `checkbox`, `slider`, `segmented`, `stepper`, `select` and `combobox`; `on_blur` and `on_key` given beside it still run.
+
+Any control takes `error` (a string, state or function; nil while fine): assistive technology hears the field is invalid (`aria-invalid`), and why after its name, as it reaches it.
+
 ## Example
 
 ```lua

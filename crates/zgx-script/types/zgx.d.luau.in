@@ -542,6 +542,48 @@ export type Promise<T = unknown> = {
 	await: (self: Promise<T>) -> T,
 }
 
+-- `ui.form`'s spec: each field's first value, its checks (a message, or
+-- nil while it is fine; `values.other` reads another field), and what
+-- submitting does (in a task: it may await, and raises what went wrong).
+export type FormSpec = {
+	fields: { [string]: any },
+	validate: { [string]: (value: any, values: { [string]: any }) -> string? }?,
+	submit: ((values: { [string]: any }) -> any)?,
+	-- `on_success(result, values)`: what `submit` returned, and the values.
+	on_success: ((result: any, values: { [string]: any }) -> ())?,
+}
+-- A form's field: give it to a control as `field`.
+export type FormField = {
+	name: string,
+	value: State<any>,
+	-- It has been left.
+	touched: State<boolean>,
+	-- What its check says now, as it is typed.
+	problem: State<string?>,
+	-- `problem` once it has been left or a submit tried: what to show.
+	error: State<string?>,
+	ref: Ref,
+}
+export type Form = {
+	fields: { [string]: FormField },
+	values: { [string]: State<any> },
+	-- Every check passes.
+	valid: State<boolean>,
+	-- A submit has been tried.
+	attempted: State<boolean>,
+	-- A submit is under way.
+	pending: State<boolean>,
+	-- What the last submit raised, or nil.
+	failure: State<string?>,
+	-- Check every field (showing what is wrong, the first wrong focused);
+	-- all fine, submit. An action, or call it.
+	submit: () -> (),
+	-- Back to the first values (or `values`), nothing shown wrong.
+	reset: (values: { [string]: any }?) -> (),
+	-- The values now, as a table.
+	snapshot: () -> { [string]: any },
+}
+
 -- `ui.resource`'s data loaded in a task, and how its loading goes.
 export type Resource<T> = {
 	-- What the last load returned (`initial` until one has; nil without
@@ -1281,6 +1323,9 @@ export type NodeProps = {
 	live: ("polite" | "assertive" | "off")?,
 	-- Read after its name, as a hint (`aria-description`).
 	description: string?,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: (string | Readable<string?> | (() -> string?))?,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: boolean?,
@@ -1527,7 +1572,11 @@ export type GridFill = {
 	color: Color?,
 }
 export type CheckboxProps = Merge<Props, {
-	value: State<boolean>,
+	-- Required unless `field` gives it.
+	value: (State<boolean>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	label: string?,
 	-- Neither on nor off while true: a dash, and "mixed" to assistive
 	-- technology (a "select all" box with some of its group on).
@@ -1537,7 +1586,11 @@ export type InputProps = Merge<Props, {
 	-- A state, both ways; or, controlled as React's inputs are, a function
 	-- (or text) it shows, edits going out by `on_change` and `on_commit`.
 	-- Focused, it keeps what is being typed.
-	value: State<string> | (() -> string | number) | string,
+	-- Required unless `field` gives it.
+	value: (State<string> | (() -> string | number) | string)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	-- Each edit's text (a controlled input).
 	on_change: ((text: string) -> ...unknown)?,
 	-- The text on Enter, or on leaving the input changed: where an
@@ -1598,7 +1651,11 @@ export type InputProps = Merge<Props, {
 -- stretch of the bar sweeping across.
 export type ProgressProps = Merge<Props, { value: State<number> | State<number?>, label: string? }>
 export type SliderProps = Merge<Props, {
-	value: State<number>,
+	-- Required unless `field` gives it.
+	value: (State<number>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	label: string?,
 	-- 0 and 1 by default; min < max.
 	min: number?,
@@ -1611,7 +1668,11 @@ export type SliderProps = Merge<Props, {
 -- group to assistive technology): the arrows move the choice.
 export type SegmentedOption = string | number | { label: string, value: any? }
 export type SegmentedProps = Merge<Props, {
-	value: State<any>,
+	-- Required unless `field` gives it.
+	value: (State<any>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	-- A list of strings or of numbers as it is (Luau's tables are
 	-- invariant: `{ string }` is not a `{ SegmentedOption }`).
 	options: { string } | { number } | { SegmentedOption },
@@ -1620,7 +1681,11 @@ export type SegmentedProps = Merge<Props, {
 -- A number field with buttons that step it; the arrows step it, Page Up
 -- and Down ten steps, Home and End to its ends; typing applies on Enter.
 export type StepperProps = Merge<Props, {
-	value: State<number>,
+	-- Required unless `field` gives it.
+	value: (State<number>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	label: string?,
 	min: number?,
 	max: number?,
@@ -1765,6 +1830,9 @@ export type ComboboxProps = Merge<Props, {
 	items: State<{ ComboItem }> | State<{ any }>,
 	-- The chosen option's value, written as one is chosen.
 	value: State<any>?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	-- While true, the list says it is searching.
 	loading: State<boolean>?,
 	-- What the list says with no options ("No results").
@@ -1785,7 +1853,11 @@ export type SelectOption = string | number | { label: string, value: any?, disab
 -- A button showing the chosen option that opens a menu of them over
 -- itself; closed, typing chooses (as a native select), Down opens it.
 export type SelectProps = Merge<Props, {
-	value: State<any>,
+	-- Required unless `field` gives it.
+	value: (State<any>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	options: { string } | { number } | { SelectOption },
 	-- Shown while no option is chosen.
 	placeholder: string?,
@@ -2209,6 +2281,9 @@ declare ui: {
 	-- and when a state it read before its first await changes; only the
 	-- last load's answer is kept. `initial`: `data` until one answers.
 	resource: <T>(load: () -> T, opts: { initial: T }?) -> Resource<T>,
+	-- A form's fields, checked as they are typed, and its submit with its
+	-- pending and failure states; controls bind with `field`.
+	form: (spec: FormSpec) -> Form,
 	-- An HTTP request through the host's transport (`ScriptHost::fetcher`):
 	-- a promise of a `Response`. A plugin needs the host's grant.
 	fetch: (url: string, opts: FetchOptions?) -> Promise<Response>,

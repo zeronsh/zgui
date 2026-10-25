@@ -42,6 +42,7 @@ mod file_events;
 #[cfg(target_os = "linux")]
 #[path = "file_events_linux.rs"]
 mod file_events;
+mod form;
 mod interrupt;
 mod io;
 #[cfg(feature = "components")]
@@ -2139,6 +2140,7 @@ impl ScriptHost {
         )
         .map_err(fail)?;
         theme::install(&lua, &ui, script.dir()).map_err(fail)?;
+        form::install(&lua, &ui).map_err(fail)?;
         opens::install(&lua, &ui, self.0.opens.clone(), plugin).map_err(fail)?;
         ui.set_readonly(true);
         anime::api::install(&lua).map_err(fail)?;

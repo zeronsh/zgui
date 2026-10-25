@@ -466,8 +466,20 @@ impl AccessibilityTree {
                 Some(Live::Assertive) => n.set_live(accesskit::Live::Assertive),
                 None => {}
             }
-            if let Some(description) = &semantic.description {
-                n.set_description(description.clone());
+            // An invalid field's error: flagged, and (as the platforms'
+            // adapters read neither the flag nor its error message) said
+            // after its description, so it is heard as the field is reached.
+            let error = semantics.error(id);
+            match (&semantic.description, error) {
+                (Some(description), Some(error)) => {
+                    n.set_description(format!("{description}. {error}"))
+                }
+                (Some(description), None) => n.set_description(description.clone()),
+                (None, Some(error)) => n.set_description(error.to_owned()),
+                (None, None) => {}
+            }
+            if error.is_some() {
+                n.set_invalid(accesskit::Invalid::True);
             }
             // A heading's text is its name and its runs; its value is left
             // to the platform (its level, on macOS), or the document would
@@ -1982,6 +1994,40 @@ mod vocabulary_tests {
             .filter_map(|n| n.label())
             .collect();
         assert_eq!(names, ["Archive", "Unread"]);
+    }
+
+    #[test]
+    fn an_invalid_field_is_flagged_and_says_why() {
+        let mut ui = Ui::new(400., 300.);
+        ui.set_assistive_technology(true);
+        let error = ui.signal(Some("An email is required".to_string()));
+        let read = error.clone();
+        ui.mount(
+            column()
+                .child(
+                    button()
+                        .accessible_description("Your work address")
+                        .error_when(move || read.get())
+                        .child(text("Email")),
+                )
+                .child(button().error_when(|| None).child(text("Name"))),
+        );
+        let nodes = project(&mut ui);
+        let buttons = find(&nodes, accesskit::Role::Button);
+        assert_eq!(buttons[0].invalid(), Some(accesskit::Invalid::True));
+        // The platforms' adapters read no error message: it is said after
+        // the description.
+        assert_eq!(
+            buttons[0].description(),
+            Some("Your work address. An email is required")
+        );
+        assert_eq!(buttons[1].invalid(), None);
+        assert_eq!(buttons[1].description(), None);
+        error.set(None);
+        let nodes = project(&mut ui);
+        let buttons = find(&nodes, accesskit::Role::Button);
+        assert_eq!(buttons[0].invalid(), None);
+        assert_eq!(buttons[0].description(), Some("Your work address"));
     }
 
     #[test]

@@ -575,3 +575,135 @@ fn a_resource_whose_owner_has_gone_hears_nothing() {
     assert_eq!(h.calls(), calls, "nothing runs while nothing changes");
     assert_eq!(h.error(), None);
 }
+
+const FORM_APP: &str = r#"
+local sent = ui.state("sent", "")
+local form = ui.form {
+    fields = { name = "", email = "", agree = false },
+    validate = {
+        name = function(name) if name == "" then return "A name is required" end return nil end,
+        -- Another field read: the check follows it too.
+        email = function(email, values)
+            if not email:find("@") then return "Not an email" end
+            if values.name ~= "" and email:lower():find(values.name:lower(), 1, true) == 1 then
+                return "Not just your name"
+            end
+            return nil
+        end,
+    },
+    submit = function(values) return ui.call("save", values.email):await() end,
+    on_success = function(answer) sent:set(answer) end,
+}
+return ui.column {
+    ui.input { id = "name", label = "Name", field = form.fields.name },
+    ui.presence(form.fields.name.error, function(e) return ui.text { id = "name-error", e } end),
+    ui.input { id = "email", label = "Email", field = form.fields.email },
+    ui.presence(form.fields.email.error, function(e) return ui.text { id = "email-error", e } end),
+    ui.checkbox { id = "agree", label = "Agree", field = form.fields.agree },
+    ui.text { id = "agreed", function() return tostring(form.values.agree:get()) end },
+    ui.text { id = "state", function()
+        return `{form.pending:get()} {form.failure:get() or "-"} {sent:get()}`
+    end },
+    ui.button { id = "send", w = 40, h = 20, "s", on_click = form.submit },
+    ui.button { id = "elsewhere", w = 40, h = 20, "e" },
+}
+"#;
+
+fn form_app() -> Harness {
+    Harness::new(|runtime| {
+        let host = ScriptHost::inline(runtime, "app", FORM_APP);
+        // Saved the first time, refused after.
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        host.async_action("save", move |arg| {
+            let n = calls.get();
+            calls.set(n + 1);
+            async move {
+                zgx::timer::sleep(Duration::from_millis(2)).await;
+                if n == 0 {
+                    Ok(Value::Str(format!("saved {arg}").into()))
+                } else {
+                    Err("refused".into())
+                }
+            }
+        });
+        host
+    })
+}
+/// Whether keyboard focus is in node `id`.
+fn focused_in(h: &mut Harness, id: &str) -> bool {
+    let node = h.find(id).unwrap();
+    let focused = h.ui.input.focused();
+    focused.is_some_and(|f| f == node || h.ui.scene.borrow().is_within(f, node))
+}
+/// What node `id` (or a node inside it) tells assistive technology is wrong.
+fn error_of(h: &mut Harness, id: &str) -> Option<String> {
+    let node = h.find(id).unwrap();
+    h.ui.prepare_frame();
+    let scene = h.ui.scene.borrow();
+    let semantics = h.ui.semantics.borrow();
+    let mut pending = vec![node];
+    while let Some(n) = pending.pop() {
+        if let Some(error) = semantics.error(n) {
+            return Some(error.to_owned());
+        }
+        pending.extend(scene.children(n).iter().copied());
+    }
+    None
+}
+
+#[test]
+fn a_form_checks_as_typed_and_shows_what_is_wrong_once_left() {
+    let mut h = form_app();
+    h.ui.set_assistive_technology(true);
+    assert!(h.find("email-error").is_none());
+    h.type_text("email", "ada");
+    h.frames(1);
+    assert!(h.find("email-error").is_none(), "not until it is left");
+    h.click("elsewhere");
+    h.frames(1);
+    assert_eq!(h.text("email-error"), "Not an email");
+    assert!(
+        h.find("name-error").is_none(),
+        "a field not left says nothing"
+    );
+    assert_eq!(error_of(&mut h, "email").as_deref(), Some("Not an email"));
+    assert_eq!(error_of(&mut h, "name"), None);
+    // Fixed as it is typed.
+    h.type_text("email", "@x.org");
+    h.frames(1);
+    assert!(h.find("email-error").is_none());
+    assert_eq!(error_of(&mut h, "email"), None);
+    // A check reading another field follows it.
+    h.type_text("name", "Ada");
+    h.frames(1);
+    assert_eq!(h.text("email-error"), "Not just your name");
+    h.click("agree");
+    h.frames(1);
+    assert_eq!(h.text("agreed"), "true");
+    assert_eq!(h.error(), None);
+}
+
+#[test]
+fn enter_submits_a_form_focusing_what_is_wrong_and_saving_in_a_task() {
+    let mut h = form_app();
+    h.type_text("email", "grace@x.org");
+    // Enter in the email: the name is wrong, shows so and takes focus.
+    h.key(zgx::input::Key::Enter);
+    h.frames(1);
+    assert_eq!(h.text("name-error"), "A name is required");
+    assert!(
+        focused_in(&mut h, "name"),
+        "the first field wrong is focused"
+    );
+    assert_eq!(h.text("state"), "false - ", "nothing sent");
+    h.type_text("name", "Grace Hopper");
+    h.key(zgx::input::Key::Enter);
+    h.frames(1);
+    assert!(h.find("name-error").is_none());
+    assert_eq!(h.text("state"), "true - ", "pending");
+    wait_for(&mut h, "state", "false - saved grace@x.org");
+    // The server refuses the next: its message is the form's failure.
+    h.click("send");
+    wait_for(&mut h, "state", "false refused saved grace@x.org");
+    assert_eq!(h.error(), None);
+}

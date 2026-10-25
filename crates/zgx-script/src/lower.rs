@@ -2313,6 +2313,13 @@ fn styled(
         if let Some(axis) = a11y.focus_group {
             view = view.focus_group(axis);
         }
+        if let Some(error) = &a11y.error {
+            let (error, vm) = (resolve_owned(error), vm.clone());
+            view = view.error_when(move || match resolve(&error, Ty::Str, None, &vm) {
+                Some(Lit::Str(s)) if !s.is_empty() => Some(s.to_string()),
+                _ => None,
+            });
+        }
         if let Some(label) = &a11y.label {
             let (label, vm) = (resolve_owned(label), vm.clone());
             view = view.accessible_label_when(move || match resolve(&label, Ty::Str, None, &vm) {

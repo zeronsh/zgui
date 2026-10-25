@@ -542,6 +542,48 @@ export type Promise<T = unknown> = {
 	await: (self: Promise<T>) -> T,
 }
 
+-- `ui.form`'s spec: each field's first value, its checks (a message, or
+-- nil while it is fine; `values.other` reads another field), and what
+-- submitting does (in a task: it may await, and raises what went wrong).
+export type FormSpec = {
+	fields: { [string]: any },
+	validate: { [string]: (value: any, values: { [string]: any }) -> string? }?,
+	submit: ((values: { [string]: any }) -> any)?,
+	-- `on_success(result, values)`: what `submit` returned, and the values.
+	on_success: ((result: any, values: { [string]: any }) -> ())?,
+}
+-- A form's field: give it to a control as `field`.
+export type FormField = {
+	name: string,
+	value: State<any>,
+	-- It has been left.
+	touched: State<boolean>,
+	-- What its check says now, as it is typed.
+	problem: State<string?>,
+	-- `problem` once it has been left or a submit tried: what to show.
+	error: State<string?>,
+	ref: Ref,
+}
+export type Form = {
+	fields: { [string]: FormField },
+	values: { [string]: State<any> },
+	-- Every check passes.
+	valid: State<boolean>,
+	-- A submit has been tried.
+	attempted: State<boolean>,
+	-- A submit is under way.
+	pending: State<boolean>,
+	-- What the last submit raised, or nil.
+	failure: State<string?>,
+	-- Check every field (showing what is wrong, the first wrong focused);
+	-- all fine, submit. An action, or call it.
+	submit: () -> (),
+	-- Back to the first values (or `values`), nothing shown wrong.
+	reset: (values: { [string]: any }?) -> (),
+	-- The values now, as a table.
+	snapshot: () -> { [string]: any },
+}
+
 -- `ui.resource`'s data loaded in a task, and how its loading goes.
 export type Resource<T> = {
 	-- What the last load returned (`initial` until one has; nil without
@@ -1313,6 +1355,9 @@ export type NodeProps = {
 	live: ("polite" | "assertive" | "off")?,
 	-- Read after its name, as a hint (`aria-description`).
 	description: string?,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: (string | Readable<string?> | (() -> string?))?,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: boolean?,
@@ -1602,6 +1647,9 @@ export type Props = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -1853,6 +1901,7 @@ export type Props_checked = (boolean | Readable<boolean> | (() -> boolean))?
 export type Props_expanded = (boolean | Readable<boolean> | (() -> boolean))?
 export type Props_live = ("polite" | "assertive" | "off")?
 export type Props_description = string?
+export type Props_error = (string | Readable<string?> | (() -> string?))?
 export type Props_aria_hidden = boolean?
 export type Props_focus_group = ("vertical" | "horizontal" | "both")?
 export type Props_pointer_events = (PointerEvents | Readable<PointerEvents> | (() -> PointerEvents))?
@@ -2073,6 +2122,9 @@ export type ContainerProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -2358,6 +2410,9 @@ export type ScrollProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -2650,6 +2705,9 @@ export type TextProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -2982,6 +3040,9 @@ export type RichProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -3264,6 +3325,9 @@ export type ImageProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -3554,6 +3618,9 @@ export type SvgProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -3838,6 +3905,9 @@ export type CanvasProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -4152,6 +4222,9 @@ export type CheckboxProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -4264,7 +4337,11 @@ export type CheckboxProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<boolean>,
+	-- Required unless `field` gives it.
+	value: (State<boolean>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	label: string?,
 	-- Neither on nor off while true: a dash, and "mixed" to assistive
 	-- technology (a "select all" box with some of its group on).
@@ -4438,6 +4515,9 @@ export type InputProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -4553,7 +4633,11 @@ export type InputProps = {
 	-- A state, both ways; or, controlled as React's inputs are, a function
 	-- (or text) it shows, edits going out by `on_change` and `on_commit`.
 	-- Focused, it keeps what is being typed.
-	value: State<string> | (() -> string | number) | string,
+	-- Required unless `field` gives it.
+	value: (State<string> | (() -> string | number) | string)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	-- Each edit's text (a controlled input).
 	on_change: ((text: string) -> ...unknown)?,
 	-- The text on Enter, or on leaving the input changed: where an
@@ -4780,6 +4864,9 @@ export type ProgressProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -5063,6 +5150,9 @@ export type SliderProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -5175,7 +5265,11 @@ export type SliderProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<number>,
+	-- Required unless `field` gives it.
+	value: (State<number>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	label: string?,
 	-- 0 and 1 by default; min < max.
 	min: number?,
@@ -5355,6 +5449,9 @@ export type SegmentedProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -5467,7 +5564,11 @@ export type SegmentedProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<any>,
+	-- Required unless `field` gives it.
+	value: (State<any>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	-- A list of strings or of numbers as it is (Luau's tables are
 	-- invariant: `{ string }` is not a `{ SegmentedOption }`).
 	options: { string } | { number } | { SegmentedOption },
@@ -5643,6 +5744,9 @@ export type StepperProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -5755,7 +5859,11 @@ export type StepperProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<number>,
+	-- Required unless `field` gives it.
+	value: (State<number>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	label: string?,
 	min: number?,
 	max: number?,
@@ -5932,6 +6040,9 @@ export type DisclosureProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -6220,6 +6331,9 @@ export type AccordionProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -6500,6 +6614,9 @@ export type SectionProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -6787,6 +6904,9 @@ export type SeparatorProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -7075,6 +7195,9 @@ export type TabsProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -7371,6 +7494,9 @@ export type TreeProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -7677,6 +7803,9 @@ export type DataGridProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -7979,6 +8108,9 @@ export type CalendarProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -8273,6 +8405,9 @@ export type DatePickerProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -8565,6 +8700,9 @@ export type TimeFieldProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -8856,6 +8994,9 @@ export type ComboboxProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -8975,6 +9116,9 @@ export type ComboboxProps = {
 	items: State<{ ComboItem }> | State<{ any }>,
 	-- The chosen option's value, written as one is chosen.
 	value: State<any>?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	-- While true, the list says it is searching.
 	loading: State<boolean>?,
 	-- What the list says with no options ("No results").
@@ -9153,6 +9297,9 @@ export type CommandPaletteProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -9441,6 +9588,9 @@ export type SelectProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -9553,7 +9703,11 @@ export type SelectProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
-	value: State<any>,
+	-- Required unless `field` gives it.
+	value: (State<any>)?,
+	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
+	-- leaving, its error (and, a one-line input, Enter submitting the form).
+	field: FormField?,
 	options: { string } | { number } | { SelectOption },
 	-- Shown while no option is chosen.
 	placeholder: string?,
@@ -9728,6 +9882,9 @@ export type SplitProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -10027,6 +10184,9 @@ export type ListProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -10361,6 +10521,9 @@ export type LayerProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -10645,6 +10808,9 @@ export type ModalProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -10944,6 +11110,9 @@ export type PopoverProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -11244,6 +11413,9 @@ export type MenuItemProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -11535,6 +11707,9 @@ export type SubmenuProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -11822,6 +11997,9 @@ export type WebViewProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -12127,6 +12305,9 @@ export type TerminalProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -12410,6 +12591,9 @@ export type SlotProps = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -12698,6 +12882,9 @@ export type EachOptions = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -12989,6 +13176,9 @@ export type PresenceOptions = {
 	live: Props_live,
 	-- Read after its name, as a hint (`aria-description`).
 	description: Props_description,
+	-- What is wrong with its value (`aria-invalid`), followed: nil while it
+	-- is fine. Assistive technology hears it with the field.
+	error: Props_error,
 	-- Left out of the accessibility tree with what it holds (`aria-hidden`):
 	-- decoration, or what is said elsewhere.
 	aria_hidden: Props_aria_hidden,
@@ -13340,6 +13530,9 @@ declare ui: {
 	-- and when a state it read before its first await changes; only the
 	-- last load's answer is kept. `initial`: `data` until one answers.
 	resource: <T>(load: () -> T, opts: { initial: T }?) -> Resource<T>,
+	-- A form's fields, checked as they are typed, and its submit with its
+	-- pending and failure states; controls bind with `field`.
+	form: (spec: FormSpec) -> Form,
 	-- An HTTP request through the host's transport (`ScriptHost::fetcher`):
 	-- a promise of a `Response`. A plugin needs the host's grant.
 	fetch: (url: string, opts: FetchOptions?) -> Promise<Response>,

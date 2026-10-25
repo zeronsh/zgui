@@ -49,6 +49,7 @@ The interface is built once; Rust re-runs only what reads state that changed. `z
 | `ui.canvas { each = shapes, draw_item = … }` for a board's many shapes | one `draw` looping over them all (draws every shape again when one moves) |
 | `ui.resource(load)` for data from a server: `data`, `loading`, `error`, `status`, `reload` | a `ui.task` writing loading and error states by hand (a slow answer overwrites a newer one) |
 | `ui.modal { open = o, build = function() return Form { … } end }` | a form built once inside the modal (it keeps the last opening's state) |
+| `ui.form { fields, validate, submit }` and `ui.input { field = form.fields.email }` | a state, a "left" flag and a check per field, and a `ui.task` for the save (no Enter, nothing told to assistive technology) |
 | `ui.sorted(rows, { by = "price" })` for a list kept in order | a `ui.computed` re-sorting the whole list on each write |
 | percentages, `grow`, insets: layout without the script | `on_resize` writing sizes into state for layout |
 | `ui.every(1000, …)` at the rate a value changes | `ui.every(1, …)` (more calls than frames) |

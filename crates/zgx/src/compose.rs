@@ -1000,6 +1000,14 @@ impl View {
         self.accessibility_mut().description = Some(description.into());
         self
     }
+    /// What is wrong with this field's value, followed (`aria-invalid`
+    /// and `aria-errormessage`): `None` while it is fine. Assistive
+    /// technology hears the field is invalid, and why, as it reaches it.
+    /// Worked out only while one listens, as `accessible_label_when`.
+    pub fn error_when(mut self, error: impl FnMut() -> Option<String> + 'static) -> Self {
+        self.accessibility_mut().error = Some(Box::new(error));
+        self
+    }
     /// Leave this node and its subtree out of the accessibility tree
     /// (`aria-hidden`): decoration, or what is said elsewhere already.
     pub fn accessible_hidden(mut self) -> Self {
@@ -5092,6 +5100,7 @@ pub(crate) struct Accessibility {
     numeric: Option<(f64, f64, NumericValue)>,
     live: Option<Live>,
     description: Option<String>,
+    error: Option<Box<dyn FnMut() -> Option<String>>>,
     hidden: bool,
     focus_group: Option<crate::input::FocusGroup>,
     label: Option<Box<dyn FnMut() -> String>>,
@@ -5109,6 +5118,7 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility, 
         numeric,
         live,
         description,
+        error,
         hidden,
         focus_group,
         label,
@@ -5190,6 +5200,17 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility, 
             {
                 ui.input.set_group_current(&ui.scene.borrow(), root);
             }
+        });
+    }
+    if let Some(mut error) = error {
+        let tree = ui.semantics.clone();
+        let assistive = assistive.clone();
+        ui.bind(root, move || {
+            if !assistive.get() {
+                return;
+            }
+            let error = error();
+            tree.borrow_mut().set_error(root, error.as_deref());
         });
     }
     if let Some(mut value) = value {

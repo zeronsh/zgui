@@ -174,6 +174,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     // `ui.<widget> { label?, value = state, … }`.
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
         lua.create_function(move |lua, table: Table| {
+            crate::form::apply_field(lua, &table, false)?;
             let label: Option<String> = table.get("label")?;
             let value = expect_state(&table.get("value")?, "`value`")?;
             let kind = build(label.unwrap_or_default(), value, &table)?;
@@ -327,6 +328,7 @@ pub(crate) fn register(lua: &Lua, ui: &Table) -> mlua::Result<()> {
     ui.set(
         "combobox",
         lua.create_function(|lua, table: Table| {
+            crate::form::apply_field(lua, &table, false)?;
             let optional_state = |key: &str| -> mlua::Result<Option<Signal<Value>>> {
                 match table.get::<mlua::Value>(key)? {
                     mlua::Value::Nil => Ok(None),

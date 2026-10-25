@@ -288,6 +288,9 @@ pub struct Semantics {
     /// carries room for it.
     /// With the lines of each assistive technology is given (`long_lines`).
     long: HashMap<NodeId, (crate::text::Text, std::ops::Range<usize>)>,
+    /// What is wrong with fields' values (`set_error`), beside the nodes as
+    /// `long` is: few have one.
+    errors: HashMap<NodeId, String>,
 }
 impl Default for Semantics {
     fn default() -> Self {
@@ -304,6 +307,7 @@ impl Default for Semantics {
             revision: 0,
             instance,
             long: HashMap::new(),
+            errors: HashMap::new(),
         }
     }
 }
@@ -365,6 +369,7 @@ impl Semantics {
         }
         self.nodes.remove(&id);
         self.long.remove(&id);
+        self.errors.remove(&id);
         crate::shrink_sparse(&mut self.nodes);
     }
     /// Set `id`'s information; equal information changes nothing.
@@ -547,6 +552,33 @@ impl Semantics {
         self.revision = self.revision.wrapping_add(1);
         entry.revision = self.revision;
     }
+    /// What is wrong with field `id`'s value (`aria-invalid` and
+    /// `aria-errormessage`), or `None` while it is fine; an equal one
+    /// changes nothing.
+    pub fn set_error(&mut self, id: NodeId, error: Option<&str>) {
+        if self.buried(id) {
+            return;
+        }
+        let Some(entry) = self.nodes.get_mut(&id) else {
+            return;
+        };
+        if self.errors.get(&id).map(String::as_str) == error {
+            return;
+        }
+        match error {
+            Some(error) => self.errors.insert(id, error.to_owned()),
+            None => self.errors.remove(&id),
+        };
+        self.revision = self.revision.wrapping_add(1);
+        entry.revision = self.revision;
+    }
+    /// What is wrong with field `id`'s value (`set_error`), if anything.
+    pub fn error(&self, id: NodeId) -> Option<&str> {
+        if self.errors.is_empty() || self.buried(id) {
+            return None;
+        }
+        self.errors.get(&id).map(String::as_str)
+    }
     /// Set a text input's placeholder; an equal one changes nothing.
     pub fn set_placeholder(&mut self, id: NodeId, placeholder: Option<&str>) {
         if self.buried(id) {
@@ -569,6 +601,7 @@ impl Semantics {
         }
         if self.nodes.remove(&id).is_some() {
             self.long.remove(&id);
+            self.errors.remove(&id);
             self.revision = self.revision.wrapping_add(1);
             crate::shrink_sparse(&mut self.nodes);
         }
@@ -578,6 +611,7 @@ impl Semantics {
         let count = self.nodes.len();
         self.nodes.retain(|id, _| scene.contains(*id));
         self.long.retain(|id, _| scene.contains(*id));
+        self.errors.retain(|id, _| scene.contains(*id));
         if self.nodes.len() != count {
             self.revision = self.revision.wrapping_add(1);
         }

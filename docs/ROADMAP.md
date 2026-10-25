@@ -36,10 +36,9 @@ Primary platforms: **Linux and macOS**, per user preference. Windows remains a p
 
 ## Luau app ergonomics, against React
 
-[The team example](../crates/zgx-script/examples/team) (a list loaded from an API, a form checked as it is typed in a modal, a removal confirmed) was written to find what building a real app in Luau lacks. Fixed with it: `ui.resource` (data with loading, error and status states, loads keyed by the state they read, a stale answer dropped), a modal's or popover's `build` (its content new each time it opens, as React's conditionally rendered dialog), `ui.on_mount` outside components, `TestApp::shown`, `Value::record` (a map in any order; `Value::Map` must be sorted) and option lists typed as plain lists. Still awkward:
+[The team example](../crates/zgx-script/examples/team) (a list loaded from an API, a form checked as it is typed in a modal, a removal confirmed) was written to find what building a real app in Luau lacks. Fixed with it: `ui.resource` (data with loading, error and status states, loads keyed by the state they read, a stale answer dropped), a modal's or popover's `build` (its content new each time it opens, as React's conditionally rendered dialog), `ui.on_mount` outside components, `TestApp::shown`, `Value::record` (a map in any order; `Value::Map` must be sorted), option lists typed as plain lists, and `ui.form` with controls' `field` (checks as typed, Enter submitting, the first wrong field focused, errors heard by assistive technology as `aria-invalid`). Still awkward:
 
 - `zgx-run` gives scripts no fetcher, so an app it runs cannot reach the network (`ui.fetch` errors): a networked Luau app needs a Rust host for its transport. A default one there means an HTTP dependency in `zgx-run`.
-- Forms are hand-made: each field takes its text, whether it has been left, and its check; nothing submits on Enter or tells assistive technology which field is wrong. A field helper with those would cut most of the form's code.
 - A save is a `ui.task` with `pcall`, and Luau types what `pcall` returns on failure as the function's result (`tostring(err)` to show it). A task cannot be cancelled: a closed form's save runs on.
 
 ## Quality and performance

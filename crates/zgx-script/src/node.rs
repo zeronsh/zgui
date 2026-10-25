@@ -1813,6 +1813,9 @@ pub(crate) struct A11y {
     pub focus_group: Option<zgx::input::FocusGroup>,
     /// A `label` given as a state or function.
     pub label: Option<Source>,
+    /// What is wrong with its value (`aria-invalid`), followed: nil while
+    /// it is fine.
+    pub error: Option<Source>,
 }
 /// `focus_group`'s axes.
 fn focus_group(axis: &str) -> mlua::Result<zgx::input::FocusGroup> {
@@ -1918,6 +1921,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "code",
     "draw",
     "build",
+    "field",
     "each",
     "draw_item",
     "view",
@@ -2584,6 +2588,9 @@ fn fill_from(
                 let mode: String = lua.unpack(value)?;
                 node.a11y.get_or_insert_default().live = live_mode(&mode)?;
             }
+            "error" => {
+                node.a11y.get_or_insert_default().error = Some(source(lua, Ty::Str, "error", value)?);
+            }
             "description" => {
                 node.a11y.get_or_insert_default().description =
                     Some(lua.unpack::<String>(value)?.into());
@@ -3067,6 +3074,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
 
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
         lua.create_function(move |lua, table: Table| {
+            crate::form::apply_field(lua, &table, false)?;
             let label: Option<String> = table.get("label")?;
             let value = expect_state(&table.get("value")?, "`value`")?;
             let kind = build(label.unwrap_or_default(), value, &table)?;
@@ -3091,6 +3099,10 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         ui.set(
             name,
             lua.create_function(move |lua, table: Table| {
+                // A one-line input's Enter submits its field's form.
+                let one_line =
+                    !always_multiline && !table.get::<Option<bool>>("multiline")?.unwrap_or(false);
+                crate::form::apply_field(lua, &table, one_line)?;
                 let label: Option<String> = table.get("label")?;
                 let value = match table.get::<mlua::Value>("value")? {
                     v @ (mlua::Value::Function(_)
