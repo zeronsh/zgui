@@ -65,6 +65,8 @@ struct Inner {
     /// taken.
     queued: RefCell<Vec<EffectId>>,
     pending: RefCell<BinaryHeap<Reverse<EffectId>>>,
+    /// Room `newest_first` orders `queued` in, kept between flushes.
+    order: RefCell<Vec<u64>>,
     active: Cell<Option<EffectId>>,
     next: Cell<EffectId>,
     /// Effects stopped whose handles still live (`Effect::stop`).
@@ -93,6 +95,46 @@ impl<'a> Active<'a> {
 impl Drop for Active<'_> {
     fn drop(&mut self) {
         self.slot.set(self.previous);
+    }
+}
+/// Sort `ids` newest (highest) first. Subscribers come in no order, but the
+/// ids a write queues are mostly close together (effects made together): a
+/// bit for each id in their range, read from the top, orders them in one
+/// pass rather than a sort's many (a dashboard queues a thousand a tick).
+/// No id is queued twice (`EffectRecord::queued`), so none is lost.
+fn newest_first(ids: &mut Vec<EffectId>, bits: &mut Vec<u64>) {
+    // Effects queued as they are made come oldest first: reversed.
+    let (mut low, mut high, mut ascending) = (EffectId::MAX, 0, true);
+    let mut last = 0;
+    for &id in ids.iter() {
+        ascending &= id >= last;
+        last = id;
+        low = low.min(id);
+        high = high.max(id);
+    }
+    if ascending {
+        ids.reverse();
+        return;
+    }
+    let span = high - low;
+    if ids.len() < 32 || span / 32 > ids.len() as u64 {
+        ids.sort_unstable_by(|a, b| b.cmp(a));
+        return;
+    }
+    bits.clear();
+    bits.resize(span as usize / 64 + 1, 0);
+    for id in ids.iter() {
+        let at = id - low;
+        bits[at as usize / 64] |= 1 << (at % 64);
+    }
+    ids.clear();
+    for (word, &set) in bits.iter().enumerate().rev() {
+        let mut set = set;
+        while set != 0 {
+            let bit = 63 - set.leading_zeros() as u64;
+            ids.push(low + word as u64 * 64 + bit);
+            set &= !(1 << bit);
+        }
     }
 }
 impl Inner {
@@ -319,7 +361,7 @@ impl Runtime {
             &self.inner,
             std::mem::take(&mut *self.inner.queued.borrow_mut()),
         );
-        sorted.1.sort_unstable_by(|a, b| b.cmp(a));
+        newest_first(&mut sorted.1, &mut self.inner.order.borrow_mut());
         loop {
             let id = {
                 let mut pending = self.inner.pending.borrow_mut();
@@ -701,6 +743,40 @@ impl ServiceScope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Queued ids come out newest first, as a sort leaves them, whether
+    /// they are close together (a bitmap orders them) or far apart.
+    #[test]
+    fn queued_effects_are_ordered_newest_first() {
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut bits = Vec::new();
+        for (count, spread) in [(0, 1), (1, 1), (31, 40), (32, 32), (900, 1000), (900, 5000)]
+            .into_iter()
+            .chain([(64, 64 * 33), (500, 1 << 40)])
+        {
+            let base = next() % 1_000_000;
+            let mut ids: Vec<EffectId> = Vec::new();
+            while ids.len() < count {
+                let id = base + next() % spread;
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            let mut sorted = ids.clone();
+            sorted.sort_unstable_by(|a, b| b.cmp(a));
+            newest_first(&mut ids, &mut bits);
+            assert_eq!(ids, sorted, "{count} ids over {spread}");
+            // Queued as they were made: oldest first.
+            ids.reverse();
+            newest_first(&mut ids, &mut bits);
+            assert_eq!(ids, sorted, "{count} ascending ids over {spread}");
+        }
+    }
     #[test]
     fn a_signal_version_counts_the_writes_that_changed_it() {
         let runtime = Runtime::new();

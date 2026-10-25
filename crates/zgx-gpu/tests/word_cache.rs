@@ -46,7 +46,8 @@ fn a_changing_value_keeps_the_word_cache_the_size_of_what_is_shown() {
 
 /// A word is shaped for its direction: one kept from a left-to-right line
 /// is not served for the same text in a right-to-left run, where brackets
-/// mirror.
+/// mirror. A lone bracket: in "()" the two wrong glyphs swap back into
+/// what looks right (their byte ranges stay swapped, for carets).
 #[test]
 fn a_word_cached_left_to_right_is_shaped_again_right_to_left() {
     use cosmic_text::{Attrs, AttrsList, BufferLine, Family, FontSystem, LineEnding, Shaping};
