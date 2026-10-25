@@ -124,6 +124,10 @@ def main():
                 assert count.get_role_name() in ("button", "push button")
                 assert slider.get_role_name() == "slider"
                 assert option.get_role_name() == "check box"
+                # A canvas named from state: an image (a chart), its name
+                # worked out once a client reads the window.
+                chart = wait_for(lambda: find("Clicks chart: 0 clicks"), "a chart named from state")
+                assert chart.get_role_name() == "image", chart.get_role_name()
                 def snapshot_tree():
                     result = []
                     for node, depth in tree():
@@ -182,6 +186,7 @@ def main():
                 wait_for(lambda: state(entry, Atspi.StateType.ENABLED), "reactive enabled state")
                 assert Atspi.Text.get_text(text, 0, -1) == "Grace"
                 wait_for(lambda: has_text("Count: 1"), "button activation changes accessible status")
+                wait_for(lambda: find("Clicks chart: 1 clicks"), "a name from state following it while read")
                 # Disable the platform bridge, change the real application while
                 # it is inactive, then require fresh nodes with current state.
                 button_bounds = Atspi.Component.get_extents(count, Atspi.CoordType.SCREEN)
@@ -194,6 +199,8 @@ def main():
                     call("org.freedesktop.DBus.Properties", "Set", GLib.Variant("(ssv)", ("org.a11y.Status", name, GLib.Variant("b", True))))
                 entry = wait_for(lambda: find("AT-SPI name"), "accessibility reactivation")
                 wait_for(lambda: has_text("Count: 2"), "fresh tree includes update made while inactive")
+                # Not worked out while no client read: current once one does.
+                wait_for(lambda: find("Clicks chart: 2 clicks"), "a name from state current after reactivation")
                 text = entry.get_text_iface()
                 slider = find("AT-SPI amount")
                 value = slider.get_value_iface()
@@ -203,6 +210,7 @@ def main():
                 assert state(entry, Atspi.StateType.ENABLED)
                 activate(find("AT-SPI count"))
                 wait_for(lambda: has_text("Count: 3"), "actions work after reactivation")
+                wait_for(lambda: find("Clicks chart: 3 clicks"), "a name from state following it again")
                 pump()
                 assert any(event["type"].startswith("object:state-changed:focused") for event in events), events
                 assert any(event["type"].startswith("object:text-changed") for event in events), events
@@ -210,7 +218,7 @@ def main():
                 subprocess.run(["import", "-display", display, "-window", "root", str(args.output / "atspi.png")], check=True, timeout=10)
                 (args.output / "results.json").write_text(json.dumps(dict(passed=True,
                     backend="live AccessKit Unix AT-SPI bridge / private D-Bus / owned X11",
-                    checks=["tree roles and names", "focus action and event", "text reading", "caret and selection actions", "native typing reflected in text interface", "button activation", "numeric value mutation", "checkbox state", "disabled and reenabled input", "bridge deactivation and fresh-state reactivation"],
+                    checks=["tree roles and names", "focus action and event", "text reading", "caret and selection actions", "native typing reflected in text interface", "button activation", "numeric value mutation", "checkbox state", "disabled and reenabled input", "bridge deactivation and fresh-state reactivation", "a labelled canvas as an image", "names from state followed, and current after reactivation"],
                     final_text=Atspi.Text.get_text(text, 0, -1), final_value=Atspi.Value.get_current_value(value),
                     events_observed=len(events), process_id=app.pid,
                     limitation="AT-SPI bus-client validation; not an Orca end-user usability test."), indent=2) + "\n")

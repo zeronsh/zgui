@@ -353,7 +353,9 @@ live-task ownership without requiring a desktop.
 A [live Linux AT-SPI run](platform-validation/atspi/README.md) validates ordinary
 component controls over a private accessibility bus: readable text and status,
 focus, caret and selection, buttons, numeric values, checkbox state, disabled
-input and fresh-state reactivation. Static labels now use the AccessKit text
+input and fresh-state reactivation, and a canvas named from state (a chart) read as an
+image whose name follows the state while a client reads, and is current after a
+press made while none did (names from state wait for one, #396). Static labels now use the AccessKit text
 value contract; editors publish cached Unicode TextRuns and route selection
 actions through guarded core input. The evidence records the pinned bridge
 limitations, source hashes, native trees/events and integrated checks. The
