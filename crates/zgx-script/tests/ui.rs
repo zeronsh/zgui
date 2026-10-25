@@ -2701,3 +2701,55 @@ fn a_list_scrolls_to_a_far_row_where_asked() {
     let (top, bottom) = span(&mut h, "f-470");
     assert_eq!((top + bottom) / 2., fixed.y + fixed.height / 2.);
 }
+
+#[test]
+fn a_canvas_view_pans_its_drawing_without_drawing_it_again() {
+    let mut h = Harness::inline(
+        r##"local view = ui.state("view", { x = 0, y = 0, zoom = 1 })
+        local draws = ui.state("draws", 0)
+        return ui.column {
+            ui.button { id = "pan", on_click = function()
+                local v = view:peek()
+                view:set { x = v.x + 10, y = v.y - 4, zoom = 2 }
+            end, "pan" },
+            ui.text { id = "draws", "{draws}" },
+            ui.canvas {
+                id = "board", w = 100, h = 100, view = view,
+                bg_grid = { step = 10, min_step = 4, dot = 2, color = "#00ff00" },
+                draw = function(c)
+                    draws:set(draws:peek() + 1)
+                    c:rect(0, 0, 10, 10, "#ff0000")
+                end,
+            },
+        }"##,
+    );
+    assert_eq!(h.host.error().get(), None);
+    h.ui.prepare_frame();
+    let drawn = h.text("draws");
+    assert_ne!(drawn, "0");
+    let board = h.find("board").unwrap();
+    let drawing = {
+        let scene = h.ui.scene.borrow();
+        *scene
+            .children(board)
+            .iter()
+            .find(|id| matches!(scene.kind(**id), zgx::scene::NodeKind::Canvas(_)))
+            .unwrap()
+    };
+    h.click("pan");
+    h.ui.prepare_frame();
+    assert_eq!(h.text("draws"), drawn, "panned, not drawn again");
+    let scene = h.ui.scene.borrow();
+    assert_eq!(
+        scene.canvas_view(drawing),
+        zgx::scene::CanvasView {
+            x: 10.,
+            y: -4.,
+            scale: 2.
+        }
+    );
+    let grid = scene.grid_fill(drawing).copied().unwrap();
+    assert_eq!((grid.x, grid.y, grid.scale, grid.step), (10., -4., 2., 10.));
+    assert_eq!(grid.mark, zgx::scene::GridMark::Dot(2.));
+    assert_eq!(grid.color, zgx::scene::Color(0, 255, 0, 255));
+}

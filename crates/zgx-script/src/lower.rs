@@ -1090,16 +1090,17 @@ fn kind_view(
         }
         Kind::WebView(spec) => web_view_of(spec, vm, low),
         Kind::Terminal(term) => zgx::terminal::terminal(term),
-        Kind::Canvas(draw) => {
+        Kind::Canvas(draw, options) => {
             let (draw, vm) = (draw.clone(), vm.clone());
             let theme = match cx.as_deref().map(Context::theme) {
                 Some(theme) => theme,
                 None => zgx::theme::Themes::of(&low.runtime).root().clone(),
             };
-            canvas(move |(w, h)| {
+            let (drawn_theme, options_vm) = (theme.clone(), vm.clone());
+            let view = canvas(move |(w, h)| {
                 let recorder = crate::canvas::Recorder(Default::default());
                 let result = vm.lua.create_userdata(recorder).and_then(|ud| {
-                    crate::canvas::draw_in(theme.clone(), || {
+                    crate::canvas::draw_in(drawn_theme.clone(), || {
                         vm.call::<()>(&draw, (ud.clone(), w, h))
                     })?;
                     ud.take::<crate::canvas::Recorder>()
@@ -1111,7 +1112,11 @@ fn kind_view(
                         Default::default()
                     }
                 }
-            })
+            });
+            match options {
+                None => view,
+                Some(options) => canvas_options(view, options, options_vm, theme),
+            }
         }
         Kind::Checkbox {
             label,
@@ -3728,6 +3733,64 @@ fn node_text(node: &Node, vm: &Vm) -> String {
         .filter(|text| !text.is_empty())
         .collect();
     parts.join(separator)
+}
+
+/// A canvas's `view` (its drawing's pan and zoom) and `bg_grid` (a grid
+/// under it that follows the view), each followed in Rust: a pan or zoom
+/// runs the view's function, not `draw`.
+fn canvas_options(
+    view: View,
+    options: &crate::node::CanvasOptions,
+    vm: Rc<Vm>,
+    theme: Rc<zgx::theme::ThemeScope>,
+) -> View {
+    use crate::node::Readable;
+    // `{ x, y, zoom }` (or `scale`), as it is now.
+    let read = options.view.as_ref().map(|view| {
+        let (view, vm) = (view.clone(), vm.clone());
+        Rc::new(move || -> zgx::scene::CanvasView {
+            let value = match &view {
+                Readable::State(s) => s.get(),
+                Readable::Function(f) => vm
+                    .call::<Value>(f, ())
+                    .map_err(|e| vm.report(e))
+                    .unwrap_or_default(),
+            };
+            let field = |name: &str| value.field(name).and_then(Value::as_f64).map(|n| n as f32);
+            zgx::scene::CanvasView {
+                x: field("x").unwrap_or(0.),
+                y: field("y").unwrap_or(0.),
+                scale: field("zoom").or_else(|| field("scale")).unwrap_or(1.),
+            }
+        })
+    });
+    let mut view = view;
+    if let Some(read) = &read {
+        let read = read.clone();
+        view = view.canvas_view(move || read());
+    }
+    if let Some(grid) = &options.grid {
+        let (step, min_step, mark, color) = (grid.step, grid.min_step, grid.mark, grid.color);
+        view = view.grid_fill(move || {
+            let at = read
+                .as_ref()
+                .map_or_else(zgx::scene::CanvasView::default, |read| read());
+            let color = match color {
+                zgx::theme::Themed::Value(color) => color,
+                zgx::theme::Themed::Token(token) => theme.get(token).color()?,
+            };
+            Some(zgx::scene::GridFill {
+                step,
+                x: at.x,
+                y: at.y,
+                scale: at.scale,
+                min_step,
+                mark,
+                color,
+            })
+        });
+    }
+    view
 }
 
 /// A `ui.list` (kept out of `build`, which recurses: its locals would

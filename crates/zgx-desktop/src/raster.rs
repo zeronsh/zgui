@@ -239,11 +239,22 @@ impl Raster {
                             self.image(item.bounds, clip, image, item.effects)
                         }
                         NodeKind::Canvas(canvas) => {
+                            // A grid under its drawing, within its box.
+                            if scene.has_grid_fills()
+                                && let Some(grid) = scene.grid_fill(item.id)
+                                && let Some(inside) = clip.intersection(item.bounds)
+                            {
+                                let color = tint(grid.color, item.color());
+                                for mark in grid.marks(item.bounds) {
+                                    self.rect(mark, inside, color, item.effects);
+                                }
+                            }
                             if item.bounds.width > 0.
                                 && item.bounds.height > 0.
-                                && let Ok(raster) = self.canvases.get(
+                                && let Ok(raster) = self.canvases.get_viewed(
                                     item.id,
                                     canvas,
+                                    scene.canvas_view(item.id),
                                     item.bounds.width,
                                     item.bounds.height,
                                     1.,

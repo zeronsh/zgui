@@ -44,6 +44,8 @@ An SVG, from a file or from markup, drawn as vectors at every scale; `tint` reco
 | --- | --- | --- | --- |
 | `draw` | `(c: Canvas, w: number, h: number) -> ()` | required | |
 | `label` | `string \| state \| function` | none | what it shows, read by assistive technology as an image's name: a chart's summary (`"Price, now 143.9, high 150.1, low 128.2"`), followed as state. Without one, the canvas is decoration, out of the accessibility tree |
+| `view` | state or function of `{ x, y, zoom }` | none | its drawing's pan and zoom: drawn at `zoom` times its size, then moved by `x`, `y`. Followed without calling `draw`: a pan or zoom places what it drew (a board, a map), so `draw` draws in its own coordinates and reads no view |
+| `bg_grid` | `{ step, min_step, dot, lines, color }` | none | a grid under the drawing that follows `view`: a mark every `step` points (16), the step doubled while marks would show closer than `min_step` (0); each a square `dot` that many points across (1) or `lines` that wide; `color` (`"$border"`). Drawn in Rust with no call per mark, and marks keep their size as the view zooms |
 
 | Method of `c` | |
 | --- | --- |
@@ -60,6 +62,34 @@ An SVG, from a file or from markup, drawn as vectors at every scale; `tint` reco
 A path is built by chaining: `ui.path():move(x, y):line(x, y):quad(cx, cy, x, y):cubic(c1x, c1y, c2x, c2y, x, y):arc(cx, cy, r, start, sweep):close()`. `arc` angles are degrees, clockwise from +x. Once drawn, a path is fixed: it can be drawn again (make it once, outside `draw`), not extended. `:rect(x, y, w, h, r?)` and `:ellipse(x, y, w, h)` add a rounded rectangle or an ellipse as a closed subpath.
 
 A canvas whose drawing is only solid fills and strokes of rectangles (rounded or not), circles and lines along an axis (`c:rect`, `c:circle`, `c:line`, or a path that is just one `:rect` or `:ellipse`), and solid strokes of straight lines running one way across (`:move` then `:line`s whose x never turns back, as a sparkline's or a chart's, any joins and caps), is drawn by the GPU as those shapes: nothing is rasterized or uploaded, so redrawing it as a view pans or zooms, or as a sparkline's data ticks, costs its shapes alone. Anything else in it (curves, other ellipses, lines that turn back or crowd more than 32 points into a few widths, gradients, patterns, dashes, clips), or the canvas faded as a whole (`opacity` below 1, an edge fade), rasterizes it as before.
+
+A board that pans and zooms draws its content once, in its own coordinates, and gives the view: moving it draws nothing again. What keeps its size on screen as the view zooms (selection outlines, handles) goes in a canvas of its own over it, drawn in screen coordinates:
+
+```lua
+local view = ui.state("view", { x = 0, y = 0, zoom = 1 })
+local shapes = ui.state("shapes", { { x = 10, y = 10, w = 40, h = 30 } })
+return ui.overlay {
+	w = 400,
+	h = 300,
+	bg = "$surface.sunken",
+	on_wheel = function(e: WheelEvent)
+		local v = view:peek()
+		view:set { x = v.x - e.dx, y = v.y - e.dy, zoom = v.zoom }
+		return true
+	end,
+	ui.canvas {
+		w_full = true,
+		h_full = true,
+		view = view,
+		bg_grid = { step = 16, min_step = 12, dot = 1 },
+		draw = function(c)
+			for _, s in shapes:get() do
+				c:rect(s.x, s.y, s.w, s.h, "$accent", 4)
+			end
+		end,
+	},
+}
+```
 
 ## Masks and shaders
 

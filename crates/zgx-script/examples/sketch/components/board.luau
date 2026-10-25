@@ -302,33 +302,33 @@ local function outline(s: Shape, x: number, y: number, w: number, h: number, zoo
 	return if s.kind == "ellipse" then ellipse(x, y, w, h) else rounded(x, y, w, h, s.radius * zoom)
 end
 
--- The grid: only the view redraws it, not the shapes moving over it.
-local function grid(): Node
+-- The drawing, in world coordinates: the view pans and zooms it in Rust
+-- (`view`), drawing nothing again, over its dotted grid (`bg_grid`, which
+-- follows the view).
+local function drawing(): Node
 	return ui.canvas {
+		id = "drawing",
 		w_full = true,
 		h_full = true,
-		draw = function(c, w, h)
-			local view = state.view:get()
-			c:rect(0, 0, w, h, "$surface.sunken")
-			local step = snap.GRID * 2
-			while step * view.zoom < 12 do
-				step *= 2
-			end
-			local x0, y0 = geometry.to_world(view, 0, 0)
-			local x1, y1 = geometry.to_world(view, w, h)
-			for gx = math.floor(x0 / step) * step, x1, step do
-				for gy = math.floor(y0 / step) * step, y1, step do
-					local sx, sy = geometry.to_screen(view, gx, gy)
-					c:rect(sx - 0.5, sy - 0.5, 1, 1, "$border")
+		view = state.view,
+		bg_grid = { step = snap.GRID * 2, min_step = 12, dot = 1, color = "$border" },
+		draw = function(c)
+			for _, s in state.shapes:get() do
+				local path = outline(s, s.x, s.y, s.w, s.h, 1)
+				c:fill(path, s.fill)
+				if s.stroke_width > 0 then
+					c:stroke(path, s.stroke, s.stroke_width)
 				end
 			end
 		end,
 	}
 end
 
-local function drawing(): Node
+-- What keeps its size on screen as the view zooms: the selection's
+-- outlines and handles, the snapping guides and the marquee. A few shapes
+-- at most, drawn again as the view moves.
+local function marks(): Node
 	return ui.canvas {
-		id = "drawing",
 		w_full = true,
 		h_full = true,
 		draw = function(c, w, h)
@@ -339,22 +339,17 @@ local function drawing(): Node
 				chosen[id] = true
 			end
 			local one: Shape? = nil
+			local count = 0
 			for _, s in state.shapes:get() do
-				local x, y = geometry.to_screen(view, s.x, s.y)
-				local sw, sh = s.w * zoom, s.h * zoom
-				local path = outline(s, x, y, sw, sh, zoom)
-				c:fill(path, s.fill)
-				if s.stroke_width > 0 then
-					c:stroke(path, s.stroke, s.stroke_width * zoom)
-				end
 				if chosen[s.id] then
-					c:stroke(outline(s, x, y, sw, sh, zoom), "$accent", 1.5)
-					one = if one == nil then s else nil
+					local x, y = geometry.to_screen(view, s.x, s.y)
+					c:stroke(outline(s, x, y, s.w * zoom, s.h * zoom, zoom), "$accent", 1.5)
+					one = s
+					count += 1
 				end
 			end
 			-- One shape selected: its handles.
-			local ids = state.selected:get()
-			if #ids == 1 and one then
+			if count == 1 and one then
 				for _, handle in geometry.HANDLES do
 					local hx, hy = geometry.handle_at(one, handle)
 					local x, y = geometry.to_screen(view, hx, hy)
@@ -416,8 +411,9 @@ function M.board(): Node
 			actions.zoom(1 + e.scale, e.local_x, e.local_y)
 			return true
 		end,
-		grid(),
+		bg = "$surface.sunken",
 		drawing(),
+		marks(),
 	}
 end
 

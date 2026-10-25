@@ -506,7 +506,7 @@ impl Node {
             Kind::Rich(_) => "rich",
             Kind::Image { .. } => "image",
             Kind::Svg { .. } => "svg",
-            Kind::Canvas(_) => "canvas",
+            Kind::Canvas(..) => "canvas",
             Kind::WebView(_) => "webview",
             Kind::Terminal(_) => "terminal",
             Kind::Checkbox { .. } => "checkbox",
@@ -683,8 +683,8 @@ pub(crate) enum Kind {
         src: Source,
     },
     /// `fn(canvas, width, height)`, run again when its size or the state it
-    /// reads changes.
-    Canvas(Function),
+    /// reads changes; with its `view` and `grid`, if any.
+    Canvas(Function, Option<Box<CanvasOptions>>),
     /// `ui.webview { ... }`: a native web view laid out like a div.
     WebView(Box<WebSpec>),
     /// `ui.terminal { term = ui.term(id) }`: a terminal session, shown
@@ -1007,6 +1007,40 @@ pub(crate) struct FindProps {
     pub limit: Option<usize>,
     pub color: Option<Source>,
     pub current_color: Option<Source>,
+}
+/// `bg_grid`'s table, as a canvas takes it (`GridFill` in the types).
+fn grid_spec(lua: &Lua, grid: &Table) -> mlua::Result<GridSpec> {
+    let mark = match (
+        grid.get::<Option<f32>>("dot")?,
+        grid.get::<Option<f32>>("lines")?,
+    ) {
+        (_, Some(width)) => zgx::scene::GridMark::Lines(width),
+        (dot, None) => zgx::scene::GridMark::Dot(dot.unwrap_or(1.)),
+    };
+    let color = match grid.get::<mlua::Value>("color")? {
+        mlua::Value::Nil => Themed::Token(zgx::theme::token("border")),
+        v => themed_color(&Value::from_lua(v, lua)?)
+            .ok_or_else(|| mlua::Error::runtime("ui.canvas `bg_grid.color` must be a colour"))?,
+    };
+    Ok(GridSpec {
+        step: grid.get::<Option<f32>>("step")?.unwrap_or(16.),
+        min_step: grid.get::<Option<f32>>("min_step")?.unwrap_or(0.),
+        mark,
+        color,
+    })
+}
+/// A canvas's `view` (its drawing's pan and zoom, followed) and `bg_grid`
+/// (a grid under it, following the view).
+pub(crate) struct CanvasOptions {
+    pub view: Option<Readable>,
+    pub grid: Option<GridSpec>,
+}
+/// `bg_grid = { step, min_step, dot | lines, color }`.
+pub(crate) struct GridSpec {
+    pub step: f32,
+    pub min_step: f32,
+    pub mark: zgx::scene::GridMark,
+    pub color: Themed<Color>,
 }
 /// A state, or a function of states, read as a value.
 #[derive(Clone)]
@@ -1877,6 +1911,8 @@ const WIDGET_FIELDS: &[&str] = &[
     "src",
     "code",
     "draw",
+    "view",
+    "bg_grid",
     "count",
     "height",
     "overscan",
@@ -2488,7 +2524,7 @@ fn fill_from(
                         | Kind::Scroll { .. }
                         | Kind::List { .. }
                         // A canvas named is read as a picture (a chart).
-                        | Kind::Canvas(_)
+                        | Kind::Canvas(..)
                 ) =>
             {
                 match value {
@@ -2974,11 +3010,26 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             let draw: Function = table
                 .get("draw")
                 .map_err(|_| mlua::Error::runtime("ui.canvas needs `draw`"))?;
+            let view = match table.get::<mlua::Value>("view")? {
+                mlua::Value::Nil => None,
+                mlua::Value::Function(f) => Some(Readable::Function(f)),
+                v => Some(Readable::State(state_of(&v).ok_or_else(|| {
+                    mlua::Error::runtime(
+                        "ui.canvas `view` must be a ui.state or a function of { x, y, zoom }",
+                    )
+                })?)),
+            };
+            let grid = match table.get::<Option<Table>>("bg_grid")? {
+                None => None,
+                Some(grid) => Some(grid_spec(lua, &grid)?),
+            };
+            let options =
+                (view.is_some() || grid.is_some()).then(|| Box::new(CanvasOptions { view, grid }));
             node_ud(
                 lua,
                 fill(
                     lua,
-                    Node::new(owner(lua)?, Kind::Canvas(draw)),
+                    Node::new(owner(lua)?, Kind::Canvas(draw, options)),
                     Some(&table),
                 )?,
             )

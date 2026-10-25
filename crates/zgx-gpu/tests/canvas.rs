@@ -374,3 +374,97 @@ fn monotonic_polylines_draw_as_quads_and_look_as_their_raster_does() {
         );
     }
 }
+
+/// The RGB at `x`, `y` of a `width`-wide readback.
+fn rgb(bytes: &[u8], width: usize, x: usize, y: usize) -> [u8; 3] {
+    let at = 4 * (y * width + x);
+    [bytes[at], bytes[at + 1], bytes[at + 2]]
+}
+
+#[test]
+fn a_canvas_view_places_its_drawing_without_drawing_it_again() {
+    use zgx::scene::{CanvasView, GridFill, GridMark};
+    let mut scene = Scene::new(200., 200.);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let mut shapes = Canvas::new();
+    shapes.fill(
+        Path::rectangle(Rect::new(10., 10., 20., 20.)),
+        Color(255, 0, 0, 255),
+    );
+    let drawing = Arc::new(shapes);
+    let node = scene.append(
+        scene.root(),
+        NodeKind::Canvas(drawing.clone()),
+        Style {
+            width: Some(200.),
+            height: Some(200.),
+            ..Default::default()
+        },
+    );
+    let mut gpu = GpuRenderer::new(200, 200).unwrap();
+    let report = scene.flush();
+    gpu.render(&scene, &report.damage).unwrap();
+    let bytes = gpu.readback().unwrap();
+    assert_eq!(rgb(&bytes, 200, 20, 20), [255, 0, 0]);
+    // Moved by (50, 30) and twice the size: the rectangle spans 70 to 110
+    // across and 50 to 90 down, its quads placed anew, nothing rasterized.
+    scene.set_canvas_view(
+        node,
+        Some(CanvasView {
+            x: 50.,
+            y: 30.,
+            scale: 2.,
+        }),
+    );
+    let report = scene.flush();
+    assert!(!report.damage.is_empty(), "a view change repaints");
+    let stats = gpu.render(&scene, &report.damage).unwrap();
+    assert_eq!(stats.canvas_rasterizations, 0);
+    let bytes = gpu.readback().unwrap();
+    assert_eq!(rgb(&bytes, 200, 20, 20)[0], 0, "gone from where it was");
+    assert_eq!(rgb(&bytes, 200, 72, 52), [255, 0, 0]);
+    assert_eq!(rgb(&bytes, 200, 108, 88), [255, 0, 0]);
+    assert_eq!(rgb(&bytes, 200, 112, 92)[0], 0);
+    // A drawing that rasterizes (a curve) rasterizes again under its view.
+    let mut curved = Canvas::new();
+    curved.fill(
+        Path::rectangle(Rect::new(10., 10., 20., 20.)),
+        Color(255, 0, 0, 255),
+    );
+    let mut curve = Path::builder();
+    curve.move_to(0., 0.).quadratic_to(5., 5., 0., 10.);
+    curved.stroke(
+        curve.build().unwrap(),
+        Color(0, 0, 255, 255),
+        Stroke::default(),
+    );
+    scene.set_kind(node, NodeKind::Canvas(Arc::new(curved)));
+    let report = scene.flush();
+    let stats = gpu.render(&scene, &report.damage).unwrap();
+    assert_eq!(stats.canvas_rasterizations, 1);
+    let bytes = gpu.readback().unwrap();
+    assert_eq!(rgb(&bytes, 200, 72, 52), [255, 0, 0]);
+    // A grid under it: dots two points across, every 20 from (5, 5).
+    scene.set_canvas_view(node, None);
+    scene.set_kind(node, NodeKind::Canvas(drawing));
+    scene.set_grid_fill(
+        node,
+        Some(GridFill {
+            step: 10.,
+            x: 5.,
+            y: 5.,
+            scale: 2.,
+            min_step: 0.,
+            mark: GridMark::Dot(2.),
+            color: Color(0, 255, 0, 255),
+        }),
+    );
+    let report = scene.flush();
+    gpu.render(&scene, &report.damage).unwrap();
+    let bytes = gpu.readback().unwrap();
+    assert_eq!(rgb(&bytes, 200, 5, 5), [0, 255, 0]);
+    assert_eq!(rgb(&bytes, 200, 165, 185), [0, 255, 0]);
+    assert_eq!(rgb(&bytes, 200, 35, 15), [0, 0, 0], "between dots");
+    // Under the drawing: the rectangle covers the dot at (25, 25).
+    assert_eq!(rgb(&bytes, 200, 25, 25), [255, 0, 0]);
+}

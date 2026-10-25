@@ -1904,6 +1904,8 @@ pub struct Scene {
     inert: Vec<NodeId>,
     /// Text selection's settings and highlights (`set_user_select`).
     selectable: select::Selectable,
+    /// Canvas views and grid fills (`scene_view`).
+    views: view::Views,
 }
 /// Scroll content that moved rigidly by `(dx, dy)` within `clip`. The flush
 /// damaged only what copying the old pixels cannot provide (`exposed`, plus
@@ -2032,6 +2034,7 @@ impl Scene {
             directions: Default::default(),
             inert: Vec::new(),
             selectable: Default::default(),
+            views: Default::default(),
         }
     }
     /// Make `id`'s subtree invisible to hit testing (and so to pointer
@@ -3577,6 +3580,7 @@ impl Scene {
     /// filters.
     fn forget(&mut self, id: NodeId, node: &Node) {
         self.selectable.forget(id);
+        self.views.forget(id);
         self.cursor_styles -= usize::from(node.cursor.is_some());
         self.relative_count -= usize::from(node.style.relative);
         if node.isolated {
@@ -8896,6 +8900,9 @@ mod advanced_layout;
 #[path = "scene_select.rs"]
 mod select;
 pub use select::{TextHighlight, TextLeaf};
+#[path = "scene_view.rs"]
+mod view;
+pub use view::{CanvasView, GridFill, GridMark};
 
 /// `set_transform`'s translation: each non-finite coordinate is zero. (The
 /// setters keep their own copies of these and of the bookkeeping: calling

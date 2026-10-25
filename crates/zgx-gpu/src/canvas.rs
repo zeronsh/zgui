@@ -19,6 +19,8 @@ struct Entry {
     width: f32,
     height: f32,
     scale: f32,
+    /// The canvas's view it was drawn under (`Scene::canvas_view`).
+    view: zgx::scene::CanvasView,
     /// The raster's image id, which its GPU texture is keyed by.
     id: u64,
     /// Its pixels, until uploaded (see `CanvasCache::uploaded`).
@@ -131,6 +133,20 @@ impl CanvasCache {
         height: f32,
         scale: f32,
     ) -> Result<Raster, GpuError> {
+        self.get_viewed(node, canvas, Default::default(), width, height, scale)
+    }
+    /// `canvas` rasterized under `view` (its pan and zoom) for `node` at
+    /// `width` by `height` logical points and `scale`, from the cache while
+    /// neither changed.
+    pub fn get_viewed(
+        &mut self,
+        node: NodeId,
+        canvas: &Arc<Canvas>,
+        view: zgx::scene::CanvasView,
+        width: f32,
+        height: f32,
+        scale: f32,
+    ) -> Result<Raster, GpuError> {
         self.clock = self.clock.wrapping_add(1);
         if let Some(entry) = self.entries.get_mut(&node)
             && entry
@@ -140,11 +156,12 @@ impl CanvasCache {
             && entry.width == width
             && entry.height == height
             && entry.scale == scale
+            && entry.view == view
         {
             entry.used = self.clock;
             return Ok(entry.raster());
         }
-        let image = Arc::new(rasterize(canvas, width, height, scale)?);
+        let image = Arc::new(rasterize_viewed(canvas, view, width, height, scale)?);
         if let Some(old) = self.entries.remove(&node) {
             self.bytes -= old.bytes;
         }
@@ -164,6 +181,7 @@ impl CanvasCache {
                 width,
                 height,
                 scale,
+                view,
                 id: image.id(),
                 pixels: Some(image.clone()),
                 bytes,
@@ -268,17 +286,25 @@ impl HeadlessCanvases {
                 continue;
             }
             self.points.clear();
+            let view = scene.canvas_view(item.id);
+            if scene.has_grid_fills()
+                && let Some(grid) = scene.grid_fill(item.id)
+            {
+                let mut marks = Vec::new();
+                crate::grid_quads(grid, bounds, 1., &mut marks);
+                std::hint::black_box(marks);
+            }
             if item.effects.opacity >= 1.
                 && item.effects.edge_fade <= 0.
                 && let Some(quads) =
-                    crate::canvas_quads(canvas, (bounds.x, bounds.y), &mut self.points)
+                    crate::canvas_quads(canvas, (bounds.x, bounds.y), view, &mut self.points)
             {
                 std::hint::black_box((quads, &self.points));
                 self.cache.forget(item.id);
                 counts.0 += 1;
             } else if self
                 .cache
-                .get(item.id, canvas, bounds.width, bounds.height, scale)
+                .get_viewed(item.id, canvas, view, bounds.width, bounds.height, scale)
                 .is_ok()
             {
                 counts.1 += 1;
@@ -292,6 +318,18 @@ impl HeadlessCanvases {
 /// into an image.
 pub fn rasterize(
     canvas: &Canvas,
+    width: f32,
+    height: f32,
+    scale: f32,
+) -> Result<ImageData, GpuError> {
+    rasterize_viewed(canvas, Default::default(), width, height, scale)
+}
+/// Rasterize `canvas` under `view` (its drawing scaled and moved, as
+/// `Scene::canvas_view` places it) at `width` by `height` logical points
+/// and `scale` into an image.
+pub fn rasterize_viewed(
+    canvas: &Canvas,
+    view: zgx::scene::CanvasView,
     width: f32,
     height: f32,
     scale: f32,
@@ -318,7 +356,9 @@ pub fn rasterize(
     let mut pixmap =
         sk::Pixmap::new(w, h).ok_or_else(|| GpuError("canvas allocation failed".into()))?;
     // Exact scaling to rounded texture extents avoids a fractional final-pixel seam.
-    let transform = sk::Transform::from_scale(w as f32 / width, h as f32 / height);
+    let transform = sk::Transform::from_scale(w as f32 / width, h as f32 / height).pre_concat(
+        sk::Transform::from_row(view.scale, 0., 0., view.scale, view.x, view.y),
+    );
     let mut masks: Vec<sk::Mask> = Vec::new();
     for command in canvas.commands() {
         match command {

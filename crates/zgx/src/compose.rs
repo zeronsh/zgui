@@ -393,6 +393,10 @@ pub(crate) struct Rare {
     selection_style: Option<Box<crate::selection::SelectionStyle>>,
     /// `View::row_text`.
     row_text: Option<crate::selection::RowText>,
+    /// `View::canvas_view`: a canvas's pan and zoom, followed.
+    canvas_view: Option<Box<dyn FnMut() -> crate::scene::CanvasView>>,
+    /// `View::grid_fill`: a grid over the box, followed.
+    grid_fill: Option<Box<dyn FnMut() -> Option<crate::scene::GridFill>>>,
     /// Conditional children (`child_when`), mounted after the others.
     conditional: Vec<RegionBuilder>,
 }
@@ -437,6 +441,12 @@ impl Rare {
         }
         if self.placeholder.is_some() {
             inner.placeholder = self.placeholder;
+        }
+        if self.canvas_view.is_some() {
+            inner.canvas_view = self.canvas_view;
+        }
+        if self.grid_fill.is_some() {
+            inner.grid_fill = self.grid_fill;
         }
         if self.placeholder_color.is_some() {
             inner.placeholder_color = self.placeholder_color;
@@ -1207,6 +1217,24 @@ impl View {
     /// it, only mounted rows copy. For a virtual list.
     pub fn row_text(mut self, text: impl Fn(usize) -> Option<String> + 'static) -> Self {
         self.rare_mut().row_text = Some(std::rc::Rc::new(text));
+        self
+    }
+    /// A canvas's drawing placed by `view` (pan and zoom), following the
+    /// reactive values it reads: a change repaints the drawing as it is,
+    /// drawing nothing again (`Scene::set_canvas_view`). For a canvas.
+    pub fn canvas_view(mut self, view: impl FnMut() -> crate::scene::CanvasView + 'static) -> Self {
+        self.rare_mut().canvas_view = Some(Box::new(view));
+        self
+    }
+    /// A grid painted over a canvas's box, under its drawing (a board's
+    /// dots), following the reactive values `grid` reads: panned and zoomed
+    /// by its fields, with no call per point (`Scene::set_grid_fill`). For
+    /// a canvas.
+    pub fn grid_fill(
+        mut self,
+        grid: impl FnMut() -> Option<crate::scene::GridFill> + 'static,
+    ) -> Self {
+        self.rare_mut().grid_fill = Some(Box::new(grid));
         self
     }
     // Wrapper properties refine the component's actual root without an extra layout box.
@@ -3924,6 +3952,12 @@ fn open_element(
         });
     }
     let pictured = canvas_compute.is_some();
+    let canvas_view = rare.as_deref_mut().and_then(|r| r.canvas_view.take());
+    let grid_fill = rare.as_deref_mut().and_then(|r| r.grid_fill.take());
+    assert!(
+        (canvas_view.is_none() && grid_fill.is_none()) || canvas_compute.is_some(),
+        "canvas_view and grid_fill are only supported on canvas views"
+    );
     if let Some(mut draw) = canvas_compute {
         // As an icon's: with the frame's layout, forcing none.
         let size = ui.observe_content_size_deferred(root);
@@ -3958,6 +3992,22 @@ fn open_element(
                 },
             );
         });
+        // Its pan and zoom, and the grid under it, apart from its drawing:
+        // following them repaints it as it is.
+        if let Some(mut view) = canvas_view {
+            let scene = ui.scene.clone();
+            ui.bind(root, move || {
+                let view = view();
+                scene.borrow_mut().set_canvas_view(drawing, Some(view));
+            });
+        }
+        if let Some(mut grid) = grid_fill {
+            let scene = ui.scene.clone();
+            ui.bind(root, move || {
+                let grid = grid();
+                scene.borrow_mut().set_grid_fill(drawing, grid);
+            });
+        }
     }
     #[cfg(target_os = "macos")]
     if let Some(source) = native_source {

@@ -3558,11 +3558,21 @@ impl GpuRenderer {
                     if bounds.width <= 0. || bounds.height <= 0. {
                         continue;
                     }
+                    // A grid under its drawing (a board's dots), clipped to
+                    // its box: marks placed by the grid's view, none drawn.
+                    if scene.has_grid_fills()
+                        && let Some(grid) = scene.grid_fill(item.id)
+                    {
+                        grid_quads(grid, bounds, item.effects.opacity, &mut quads);
+                        canvas_clip = Some(bounds);
+                    }
+                    let view = scene.canvas_view(item.id);
                     // Its own opacity and edge fade apply to it as a whole:
                     // drawn in quads, each would take them alone.
                     if item.effects.opacity >= 1.
                         && item.effects.edge_fade <= 0.
-                        && let Some(drawn) = canvas_quads(canvas, (bounds.x, bounds.y), &mut points)
+                        && let Some(drawn) =
+                            canvas_quads(canvas, (bounds.x, bounds.y), view, &mut points)
                     {
                         if let Some(old) = self.node_images.remove(&item.id) {
                             self.images.remove(&old);
@@ -3586,7 +3596,7 @@ impl GpuRenderer {
                         let before = self.canvases.rasterizations();
                         let (width, height, scale) = (bounds.width, bounds.height, self.scale);
                         let id = self.canvas_texture(item.id, &mut stats, |cache| {
-                            cache.get(item.id, canvas, width, height, scale)
+                            cache.get_viewed(item.id, canvas, view, width, height, scale)
                         })?;
                         stats.canvas_rasterizations +=
                             (self.canvases.rasterizations() - before) as usize;
@@ -7748,6 +7758,7 @@ fn polyline_quad(
     style: &zgx::canvas::Stroke,
     color: Color,
     origin: (f32, f32),
+    zoom: f32,
     points: &mut Vec<[f32; 2]>,
 ) -> Option<Quad> {
     use zgx::canvas::{LineCap, LineJoin, Segment};
@@ -7757,7 +7768,7 @@ fn polyline_quad(
             (0, Segment::Move(p)) | (1.., Segment::Line(p)) => p,
             _ => return None,
         };
-        let point = [point.x + origin.0, point.y + origin.1];
+        let point = [point.x * zoom + origin.0, point.y * zoom + origin.1];
         if !point.iter().all(|v| v.is_finite()) {
             return None;
         }
@@ -7775,7 +7786,7 @@ fn polyline_quad(
     if !line.windows(2).all(|w| w[1][0] >= w[0][0]) {
         return None;
     }
-    let half = style.width / 2.;
+    let half = style.width * zoom / 2.;
     let limit = match style.join {
         LineJoin::Miter => style.miter_limit.max(1.),
         _ => 1.,
@@ -7824,7 +7835,25 @@ fn polyline_quad(
         mask: [0., first as f32 + 1., line.len() as f32, 0.],
     })
 }
-/// A canvas at `origin` drawn as quads, when each of its commands is a solid
+/// A grid fill's marks over a canvas's box (`bounds`), as plain quads.
+fn grid_quads(grid: &zgx::scene::GridFill, bounds: Rect, opacity: f32, quads: &mut Vec<Quad>) {
+    let color = rgba(grid.color, opacity);
+    quads.extend(grid.marks(bounds).into_iter().map(|r| {
+        let rect = [r.x, r.y, r.width, r.height];
+        Quad {
+            rect,
+            uv: [0.; 4],
+            color,
+            fade: rect,
+            options: [0.; 4],
+            shape: [0.; 4],
+            border: [0.; 4],
+            mask: NO_MASK,
+        }
+    }));
+}
+/// A canvas at `origin`, under `view` (its pan and zoom), drawn as quads,
+/// when each of its commands is a solid
 /// fill or stroke of a simple shape (`Path::shape`) the quad shader draws
 /// as a rasterizer would: a rectangle, its corners rounded or not, a circle,
 /// a line along an axis. No raster is made or uploaded, and moving or
@@ -7834,10 +7863,11 @@ fn polyline_quad(
 fn canvas_quads(
     canvas: &zgx::canvas::Canvas,
     origin: (f32, f32),
+    view: zgx::scene::CanvasView,
     points: &mut Vec<[f32; 2]>,
 ) -> Option<Vec<CanvasQuad>> {
     let mark = points.len();
-    let quads = canvas_quads_of(canvas, origin, points);
+    let quads = canvas_quads_of(canvas, origin, view, points);
     if quads.is_none() {
         points.truncate(mark);
     }
@@ -7846,11 +7876,23 @@ fn canvas_quads(
 fn canvas_quads_of(
     canvas: &zgx::canvas::Canvas,
     origin: (f32, f32),
+    view: zgx::scene::CanvasView,
     points: &mut Vec<[f32; 2]>,
 ) -> Option<Vec<CanvasQuad>> {
     use zgx::canvas::{Brush, Draw, LineCap, LineJoin, Segment, Shape};
     let mut out = Vec::with_capacity(canvas.commands().len());
-    let at = |r: Rect| Rect::new(r.x + origin.0, r.y + origin.1, r.width, r.height);
+    // The view scales what it draws about the box's origin, then moves it:
+    // shapes stay shapes, only placed and sized as they show.
+    let zoom = view.scale;
+    let origin = (origin.0 + view.x, origin.1 + view.y);
+    let at = |r: Rect| {
+        Rect::new(
+            r.x * zoom + origin.0,
+            r.y * zoom + origin.1,
+            r.width * zoom,
+            r.height * zoom,
+        )
+    };
     // A box given by a corner and a negative size, the other way round.
     let positive = |r: Rect| {
         Rect::new(
@@ -7889,11 +7931,11 @@ fn canvas_quads_of(
             } => match path.shape()? {
                 Shape::Rect { rect, radius } => {
                     let rect = positive(rect);
-                    out.push(fill(at(rect), radius, *color));
+                    out.push(fill(at(rect), radius * zoom, *color));
                 }
                 Shape::Ellipse { rect } if rect.width == rect.height => {
                     let rect = positive(rect);
-                    out.push(fill(at(rect), rect.width / 2., *color));
+                    out.push(fill(at(rect), rect.width * zoom / 2., *color));
                 }
                 Shape::Ellipse { .. } => return None,
                 // A line has no inside.
@@ -7903,8 +7945,10 @@ fn canvas_quads_of(
                 path,
                 brush: Brush::Solid(color),
                 style,
-            } if style.dash.is_empty() && style.width > 0. && style.width < 255. => {
+            } if style.dash.is_empty() && style.width > 0. && style.width * zoom < 255. => {
                 let half = style.width / 2.;
+                // As it shows: the stroke scales with what it outlines.
+                let (width, shown_half) = (style.width * zoom, style.width * zoom / 2.);
                 let Some(shape) = path.shape() else {
                     // Each subpath a polyline stroke.
                     let segments = path.segments();
@@ -7914,8 +7958,14 @@ fn canvas_quads_of(
                             .iter()
                             .position(|s| matches!(s, Segment::Move(_)))
                             .map_or(segments.len(), |at| start + 1 + at);
-                        let quad =
-                            polyline_quad(&segments[start..end], style, *color, origin, points)?;
+                        let quad = polyline_quad(
+                            &segments[start..end],
+                            style,
+                            *color,
+                            origin,
+                            zoom,
+                            points,
+                        )?;
                         out.push(CanvasQuad::Polyline(quad));
                         start = end;
                     }
@@ -7935,8 +7985,8 @@ fn canvas_quads_of(
                         // (within its limit) stays square, a round join
                         // rounds by half the width, a bevel cuts them.
                         let outer = match (radius > 0., style.join) {
-                            (true, _) => radius + half,
-                            (false, LineJoin::Round) => half,
+                            (true, _) => radius * zoom + shown_half,
+                            (false, LineJoin::Round) => shown_half,
                             (false, LineJoin::Miter)
                                 if style.miter_limit >= std::f32::consts::SQRT_2 =>
                             {
@@ -7944,8 +7994,8 @@ fn canvas_quads_of(
                             }
                             (false, _) => return None,
                         };
-                        let box_ = at(rect).expand(half);
-                        let side = (style.width * 16.).round();
+                        let box_ = at(rect).expand(shown_half);
+                        let side = (width * 16.).round();
                         let fade = [box_.x, box_.y, box_.width, box_.height];
                         out.push(CanvasQuad::Ring(Quad {
                             rect: reach(box_),
@@ -7976,7 +8026,7 @@ fn canvas_quads_of(
                             continue;
                         }
                         let radius = if style.cap == LineCap::Round {
-                            half
+                            shown_half
                         } else {
                             0.
                         };

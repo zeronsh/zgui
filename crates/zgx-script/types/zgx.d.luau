@@ -3936,6 +3936,24 @@ export type CanvasProps = {
 	-- chart's summary: "Price, now 143.9, high 150.1"). A state or
 	-- function is followed. Without one, it is decoration.
 	label: (string | Readable<string> | (() -> string))?,
+	-- Its drawing's pan and zoom, `{ x, y, zoom }`: drawn at `zoom` times
+	-- its size, then moved by `x`, `y` (a board's view). Followed without
+	-- calling `draw` again: a pan or zoom places what it drew.
+	view: (Readable<CanvasView> | (() -> CanvasView))?,
+	-- A grid under its drawing, following `view`: marks every `step`
+	-- points (16), the step doubled while they would show closer than
+	-- `min_step` (0), each a `dot` this wide (1) or `lines` this wide.
+	bg_grid: GridFill?,
+}
+-- A canvas's pan and zoom (`CanvasProps.view`).
+export type CanvasView = { x: number, y: number, zoom: number }
+-- `CanvasProps.bg_grid`.
+export type GridFill = {
+	step: number?,
+	min_step: number?,
+	dot: number?,
+	lines: number?,
+	color: Color?,
 }
 export type CheckboxProps = {
 	-- Size and position.
