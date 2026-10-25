@@ -1104,6 +1104,21 @@ const COMPOSITE: u8 = 4;
 /// Repainted where its damage is already recorded: layout damaged a node it
 /// moved where it was and where it lands (see `arrange`).
 const PAINTED: u8 = 8;
+/// Repaints a scene holds for a renderer before giving up on its patching
+/// (`Scene::repaints`): past them, it would draw the frame whole anyway.
+const REPAINTS_KEPT: usize = 1 << 14;
+/// Flushes a scene keeps its repaints unread before it stops keeping them
+/// (`Scene::repaints`): a renderer reads them every frame it patches.
+const REPAINTS_UNREAD: u8 = 4;
+/// What changed about a node a flush repainted (`Scene::repaints`).
+pub mod repaint {
+    /// Its own paint: style, text, kind.
+    pub const PAINT: u8 = super::PAINT;
+    /// Its box: layout moved or resized it.
+    pub const MOVED: u8 = super::PAINTED;
+    /// How it composites: opacity, transform, filters.
+    pub const COMPOSITE: u8 = super::COMPOSITE;
+}
 struct Node {
     cursor: Option<crate::cursor::Cursor>,
     parent: Option<NodeId>,
@@ -1686,6 +1701,17 @@ impl PaintExtras {
         (self != Self::default()).then(|| std::rc::Rc::new(self))
     }
 }
+/// What a paint item took from its ancestors in the paint walk (see
+/// [`Scene::layer_items_recorded`]): their translation, opacity, clip and
+/// extras, and whether it is a border pass.
+#[derive(Clone, Debug)]
+pub struct Inherited {
+    transform: Transform,
+    opacity: f32,
+    clip: Option<Rect>,
+    extras: Option<std::rc::Rc<PaintExtras>>,
+    border: bool,
+}
 /// What a node that is not plain adds, in the paint walk, to what its
 /// parent passed on: its own and its children's fade masks, rounded clips
 /// and colour filters.
@@ -1853,6 +1879,17 @@ pub struct Scene {
     /// The moves reported by the last flush, and that flush's serial.
     moves: Vec<ScrollMove>,
     flush_serial: u64,
+    /// Nodes flushes repainted since a renderer last read them, with what
+    /// changed (`repaints`).
+    repaints: Vec<(NodeId, u8)>,
+    /// The first and last flush `repaints` covers, counting every flush.
+    repaints_from: u64,
+    repaint_flushes: u64,
+    /// Whether a renderer read `repaints`: the next flush starts afresh.
+    repaints_read: std::cell::Cell<bool>,
+    /// Flushes since a renderer last read `repaints`: past a few, it no
+    /// longer patches, and flushes stop keeping them.
+    repaints_unread: u8,
     /// The styles contents nodes were given (`set_contents`), where not the
     /// default: their own paint, clip and margins; the rest of what lays
     /// them out is their last child's.
@@ -1958,6 +1995,11 @@ impl Scene {
             pending_moves: Vec::new(),
             moves: Vec::new(),
             flush_serial: 0,
+            repaints: Vec::new(),
+            repaints_from: 1,
+            repaint_flushes: 0,
+            repaints_read: std::cell::Cell::new(false),
+            repaints_unread: REPAINTS_UNREAD,
             isolation_count: 0,
             transformed: 0,
             filtered: 0,
@@ -5976,6 +6018,20 @@ impl Scene {
     /// report the damage.
     pub fn flush(&mut self) -> FrameReport {
         let mut report = FrameReport::default();
+        self.repaint_flushes += 1;
+        // Read, or past what a renderer would patch rather than redraw: from
+        // this flush on. Kept only while a renderer reads them (most never
+        // do): otherwise from the next.
+        let read = self.repaints_read.replace(false);
+        self.repaints_unread = match read {
+            true => 0,
+            false => self.repaints_unread.saturating_add(1),
+        };
+        let keep = self.repaints_unread < REPAINTS_UNREAD;
+        if read || !keep || self.repaints.len() > REPAINTS_KEPT {
+            self.repaints.clear();
+            self.repaints_from = self.repaint_flushes + u64::from(!keep);
+        }
         if self.dirty.is_empty() {
             return report;
         }
@@ -5990,6 +6046,9 @@ impl Scene {
             let flags = self.node(*id).dirty;
             if flags & (PAINT | PAINTED) != 0 {
                 report.paint_nodes += 1;
+            }
+            if keep && flags & (PAINT | PAINTED | COMPOSITE) != 0 {
+                self.repaints.push((*id, flags));
             }
             if flags & PAINT != 0 {
                 self.damage_node(*id);
@@ -6086,6 +6145,21 @@ impl Scene {
     /// Counts flushes that reported damage or moves.
     pub fn flush_serial(&self) -> u64 {
         self.flush_serial
+    }
+    /// The nodes flushes repainted since the last look, each with what
+    /// changed (see [`repaint`]), for a renderer that patches what it drew
+    /// rather than drawing it again; and the first and last flush they
+    /// cover, counting every flush: a renderer that drew after flush `n`
+    /// has missed none if they begin at `n + 1`. Nodes whose layout alone
+    /// changed (their box as it was) are left out.
+    pub fn repaints(&self) -> (std::ops::RangeInclusive<u64>, &[(NodeId, u8)]) {
+        self.repaints_read.set(true);
+        (self.repaints_from..=self.repaint_flushes, &self.repaints)
+    }
+    /// Whether any container fades edges its content overflows (those
+    /// fades follow scrolling without repainting the container).
+    pub fn has_overflow_fades(&self) -> bool {
+        !self.overflow_fades.is_empty()
     }
     /// Whether `id` is `ancestor` or inside it.
     pub fn is_within(&self, mut id: NodeId, ancestor: NodeId) -> bool {
@@ -6374,15 +6448,76 @@ impl Scene {
         damage: Option<&[Rect]>,
     ) -> Vec<PaintItem<'_>> {
         match self.popups.is_empty() {
-            true => self.layer_items_walk::<false>(root, damage),
-            false => self.layer_items_walk::<true>(root, damage),
+            true => self.layer_items_walk::<false, false>(root, damage, &mut Vec::new()),
+            false => self.layer_items_walk::<true, false>(root, damage, &mut Vec::new()),
         }
     }
+    /// The window's paint items (as [`Scene::layer_items`] with `None`), and
+    /// into `inherited` what each took from its ancestors, for
+    /// [`Scene::item_in`] to work it out again alone.
+    pub fn layer_items_recorded(&self, inherited: &mut Vec<Inherited>) -> Vec<PaintItem<'_>> {
+        inherited.clear();
+        match self.popups.is_empty() {
+            true => self.layer_items_walk::<false, true>(None, None, inherited),
+            false => self.layer_items_walk::<true, true>(None, None, inherited),
+        }
+    }
+    /// Paint item `id` worked out alone, from what it `inherited` in the walk
+    /// that recorded it (`layer_items_recorded`), its ancestors unchanged
+    /// since: the walk's step for a plain node, one adding no layer, colour
+    /// filter, fade, clip inset or clip of its own. `None` for any other, or
+    /// for one painting nothing now.
+    pub fn item_in(&self, id: NodeId, inherited: &Inherited) -> Option<PaintItem<'_>> {
+        let node = self.node(id);
+        if node.isolated
+            || node.transformed()
+            || node.effect_layer()
+            || node.effects.color_matrix().is_some()
+            || node.clip_inset.is_some()
+            || fades(&node.style)
+            || (matches!(node.kind, NodeKind::Quad(_) | NodeKind::Panel { .. })
+                && clip_axes(&node.style) == (true, true))
+        {
+            return None;
+        }
+        let transform = Transform {
+            x: inherited.transform.x + node.transform.x,
+            y: inherited.transform.y + node.transform.y,
+        };
+        let bounds = node.bounds.translated(transform);
+        let mut effects = node.effects;
+        effects.opacity *= inherited.opacity;
+        if effects.opacity <= 0.0 || !own_visible(&node.style) {
+            return None;
+        }
+        let clip = match inherited.border {
+            true => inherited.clip,
+            false => clipped_bounds(inherited.clip, bounds, &node.style),
+        };
+        let clip = match &node.kind {
+            NodeKind::Quad(_) | NodeKind::Panel { .. } => inherited.clip,
+            _ => clip,
+        };
+        Some(PaintItem {
+            isolated: false,
+            id,
+            bounds,
+            kind: &node.kind,
+            font: &node.font,
+            text_options: node.style.text_options,
+            effects,
+            clip,
+            border_pass: inherited.border,
+            extras: inherited.extras.clone(),
+        })
+    }
     /// `POPUPS`: popup roots exist, which this walk leaves out below `root`.
-    fn layer_items_walk<const POPUPS: bool>(
+    /// `RECORD`: what each item inherits goes into `inherited`.
+    fn layer_items_walk<const POPUPS: bool, const RECORD: bool>(
         &self,
         root: Option<NodeId>,
         damage: Option<&[Rect]>,
+        inherited: &mut Vec<Inherited>,
     ) -> Vec<PaintItem<'_>> {
         let reach = damage.map(|damage| {
             damage
@@ -6469,6 +6604,15 @@ impl Scene {
             // bounds. An explicit layer root keeps opacity external above.
             if effects.opacity <= 0.0 || !own_visible(&node.style) {
                 continue;
+            }
+            if RECORD {
+                inherited.push(Inherited {
+                    transform: parent_transform,
+                    opacity: parent_opacity,
+                    clip: parent_clip,
+                    extras: context.clone(),
+                    border,
+                });
             }
             // A transformed layer clips itself, inside, to its rotated box; a
             // blurred or masked one clips inside, before its effect.

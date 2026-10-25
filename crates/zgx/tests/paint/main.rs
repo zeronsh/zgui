@@ -26,6 +26,8 @@ mod hidden_blur_damage;
 mod image_cache;
 #[path = "../image_updates.rs"]
 mod image_updates;
+#[path = "../repaints.rs"]
+mod repaints;
 #[path = "../rounded_clip.rs"]
 mod rounded_clip;
 #[path = "../svg.rs"]
