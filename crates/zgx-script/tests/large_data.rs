@@ -536,3 +536,44 @@ fn index_of_finds_items_and_a_view_reads_as_written_within_a_batch() {
     // The effect ran again once (its read follows the list's write).
     assert_eq!(h.text("seen"), "3 nil 3 2 2 4 runs 2");
 }
+
+/// A search (`find`, `count`) made again for the same query over the same
+/// text is answered as before (a letter typed and taken back), follows the
+/// text as `get` does, and is searched afresh once the text changes.
+#[test]
+fn a_find_repeated_on_unchanged_text_finds_the_same_and_follows_a_change() {
+    let mut h = Harness::inline(
+        r#"
+        local text = ui.state("text", "an apple and an ant")
+        local query = ui.state("query", "an")
+        local found = ui.state("found", "")
+        ui.effect(function()
+            local matches = text:find(query:get())
+            local out = {}
+            for _, m in matches do table.insert(out, `{m[1]}-{m[2]}`) end
+            local n = text:count(query:get())
+            found:set(`{table.concat(out, ",")} ({n})`)
+        end)
+        ui.command { id = "longer", run = function() query:set("an ") end }
+        ui.command { id = "back", run = function() query:set("an") end }
+        ui.command { id = "edit", run = function() text:set("ant") end }
+        return ui.text { id = "found", "{found}" }
+        "#,
+    );
+    assert_eq!(h.error(), None);
+    let mut seen = vec![h.text("found")];
+    for step in ["longer", "back", "edit"] {
+        run(&mut h, step);
+        assert_eq!(h.error(), None);
+        seen.push(h.text("found"));
+    }
+    assert_eq!(
+        seen,
+        [
+            "1-2,10-11,14-15,17-18 (4)",
+            "1-3,14-16 (2)",
+            "1-2,10-11,14-15,17-18 (4)",
+            "1-2 (1)"
+        ]
+    );
+}

@@ -2028,11 +2028,20 @@ impl UserData for State {
             "find",
             |lua, s, (query, options): (mlua::LuaString, Option<Table>)| {
                 let (case, limit) = search_options(options.as_ref())?;
-                let (found, more) = s
-                    .fresh()
-                    .with(|value| find_all(&string_pieces(value), &query.as_bytes(), case, limit));
+                let signal = s.fresh();
+                let needle = query.as_bytes();
+                // Tracked as `get` is, found here or not.
+                signal.with(|_| ());
+                let found = recent_find(signal, &needle, case, limit).unwrap_or_else(|| {
+                    let found = Rc::new(
+                        signal.with(|value| find_all(&string_pieces(value), &needle, case, limit)),
+                    );
+                    keep_find(signal, &needle, case, limit, found.clone());
+                    found
+                });
+                let (found, more) = (&found.0, found.1);
                 let list = lua.create_table_with_capacity(found.len(), 0)?;
-                for (i, (start, end)) in found.into_iter().enumerate() {
+                for (i, &(start, end)) in found.iter().enumerate() {
                     let pair = lua.create_table_with_capacity(2, 0)?;
                     pair.raw_set(1, start + 1)?;
                     pair.raw_set(2, end)?;
@@ -2042,22 +2051,24 @@ impl UserData for State {
             },
         );
         // How many times (`find`'s matches, at most `limit`, and whether
-        // there were more), with no list made of them.
+        // there were more), with no list of them made for the script.
         methods.add_method(
             "count",
             |_, s, (query, options): (mlua::LuaString, Option<Table>)| {
                 let (case, limit) = search_options(options.as_ref())?;
-                Ok(s.fresh().with(|value| {
-                    let mut n = 0;
-                    let more = search(
-                        &string_pieces(value),
-                        &query.as_bytes(),
-                        case,
-                        limit,
-                        |_| n += 1,
+                let signal = s.fresh();
+                let needle = query.as_bytes();
+                // Tracked as `get` is, found here or not; what it finds kept
+                // for `find` (the same search's matches) and the next count.
+                signal.with(|_| ());
+                let found = recent_find(signal, &needle, case, limit).unwrap_or_else(|| {
+                    let found = Rc::new(
+                        signal.with(|value| find_all(&string_pieces(value), &needle, case, limit)),
                     );
-                    (n, more)
-                }))
+                    keep_find(signal, &needle, case, limit, found.clone());
+                    found
+                });
+                Ok((found.0.len(), found.1))
             },
         );
     }
@@ -2075,6 +2086,62 @@ fn search_options(options: Option<&Table>) -> mlua::Result<(bool, usize)> {
 }
 /// The bytes of the string `value` holds, a piece at a time (a long text's
 /// chunks); none for anything else.
+/// What a search found: its matches' byte ranges, and whether there were
+/// more than its limit.
+type Matches = Rc<(Vec<(usize, usize)>, bool)>;
+/// A search lately made (`state:find`): of which state, at which version
+/// (`Signal::version`), for what, and what it found.
+struct Found {
+    signal: zgx::reactive::WeakSignal<Value>,
+    version: u64,
+    needle: Box<[u8]>,
+    case: bool,
+    limit: usize,
+    found: Matches,
+}
+/// Searches kept: a search box's query searched again as it was (a letter
+/// typed and taken back, the search pane drawn again) is answered from here
+/// while the text is unchanged, not by reading all of it.
+const KEPT_FINDS: usize = 4;
+thread_local! {
+    static FINDS: RefCell<Vec<Found>> = const { RefCell::new(Vec::new()) };
+}
+/// What `find` last found for this search, if the text has not changed
+/// since (the same state, alive, at the same version).
+fn recent_find(signal: &Signal<Value>, needle: &[u8], case: bool, limit: usize) -> Option<Matches> {
+    let version = signal.version();
+    FINDS.with(|finds| {
+        finds
+            .borrow()
+            .iter()
+            .find(|f| {
+                f.version == version
+                    && f.case == case
+                    && f.limit == limit
+                    && *f.needle == *needle
+                    && f.signal.upgrade().is_some_and(|s| s.same(signal))
+            })
+            .map(|f| f.found.clone())
+    })
+}
+fn keep_find(signal: &Signal<Value>, needle: &[u8], case: bool, limit: usize, found: Matches) {
+    FINDS.with(|finds| {
+        let mut finds = finds.borrow_mut();
+        // The dead and the stale go first, then the oldest.
+        finds.retain(|f| f.signal.is_alive());
+        if finds.len() >= KEPT_FINDS {
+            finds.remove(0);
+        }
+        finds.push(Found {
+            signal: signal.downgrade(),
+            version: signal.version(),
+            needle: needle.into(),
+            case,
+            limit,
+            found,
+        });
+    });
+}
 pub(crate) fn string_pieces(value: &Value) -> Vec<&[u8]> {
     match value {
         Value::Str(text) => vec![text.as_bytes()],
