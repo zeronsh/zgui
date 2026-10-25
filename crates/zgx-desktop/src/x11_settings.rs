@@ -36,6 +36,9 @@ pub(crate) struct Settings {
     /// Whether `Net/ThemeName`, the GTK theme, is a dark one: named so
     /// (`Adwaita-dark`, `Greybird-dark`, `Arc-Dark`), as dark themes are.
     pub dark_theme: Option<bool>,
+    /// `Gtk/EnablePrimaryPaste`: whether a middle click pastes the primary
+    /// selection.
+    pub primary_paste: Option<bool>,
 }
 
 /// The settings the session's manager publishes now: none off X11, or with
@@ -141,6 +144,7 @@ fn parse(data: &[u8]) -> Settings {
                     b"Net/DoubleClickTime" => settings.double_click = positive,
                     b"Net/DndDragThreshold" => settings.drag_threshold = positive,
                     b"Gtk/OverlayScrolling" => settings.overlay_scrolling = Some(value != 0),
+                    b"Gtk/EnablePrimaryPaste" => settings.primary_paste = Some(value != 0),
                     _ => {}
                 }
             }
@@ -228,6 +232,7 @@ mod tests {
                     ("Xft/DPI", Value::Int(98_304)),
                     ("Net/DndDragThreshold", Value::Int(14)),
                     ("Gtk/OverlayScrolling", Value::Int(0)),
+                    ("Gtk/EnablePrimaryPaste", Value::Int(0)),
                 ],
             );
             assert_eq!(
@@ -237,6 +242,7 @@ mod tests {
                     drag_threshold: Some(14),
                     overlay_scrolling: Some(false),
                     dark_theme: Some(true),
+                    primary_paste: Some(false),
                 },
                 "big endian: {big}"
             );

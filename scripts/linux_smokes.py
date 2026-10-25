@@ -75,6 +75,7 @@ SMOKES = [
     ("launch-token", "python3 scripts/launch_token_smoke.py {bin}/gallery {bin}/native_platform --output {out}", False),
     ("double-click-time", "python3 scripts/double_click_time_smoke.py {bin}/primary_selection --output {out}", False),
     ("drag-threshold", "python3 scripts/drag_threshold_smoke.py {bin}/drag_drop --output {out}", False),
+    ("primary-paste-setting", "python3 scripts/primary_paste_setting_smoke.py {bin}/primary_selection --output {out}", False),
     ("overlay-scrolling", "python3 scripts/overlay_scrolling_smoke.py {bin}/scrollbars --output {out}", False),
     ("xsettings", "python3 scripts/xsettings_smoke.py {bin}/drag_drop {bin}/primary_selection --output {out}", False),
     ("touchpad-fling", "python3 scripts/touchpad_fling_smoke.py {bin}/scroll --output {out}", False),

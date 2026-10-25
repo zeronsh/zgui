@@ -440,6 +440,11 @@ pub(crate) fn sync(ui: &zgx::widgets::Ui) {
             x11.drag_threshold
                 .or(crate::linux_appearance::current().drag_threshold),
         ));
+        ui.set_primary_paste(
+            x11.primary_paste
+                .or(crate::linux_appearance::current().primary_paste)
+                .unwrap_or(true),
+        );
     }
     #[cfg(windows)]
     ui.theme().set_system_text_scale(windows_text_scale());

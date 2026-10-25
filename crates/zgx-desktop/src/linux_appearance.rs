@@ -63,6 +63,9 @@ pub(crate) struct Appearance {
     /// Whether scrollbars hide until their view scrolls (GNOME's
     /// `overlay-scrolling`, on by default).
     pub overlay_scrolling: Option<bool>,
+    /// Whether a middle click pastes the primary selection (GNOME's
+    /// `gtk-enable-primary-paste`, on by default).
+    pub primary_paste: Option<bool>,
 }
 
 static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
@@ -76,6 +79,7 @@ static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
     double_click: None,
     drag_threshold: None,
     overlay_scrolling: None,
+    primary_paste: None,
 });
 
 /// The settings as last read (the default until the portal answers).
@@ -171,6 +175,7 @@ fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
         (GNOME_MOUSE, "drag-threshold"),
         (KDE, "StartDragDist"),
         (GNOME, "overlay-scrolling"),
+        (GNOME, "gtk-enable-primary-paste"),
     ] {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -221,6 +226,9 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
         (GNOME, "enable-animations") => appearance.reduced_motion = value.as_i64() == Some(0),
         (GNOME, "overlay-scrolling") => {
             appearance.overlay_scrolling = value.as_i64().map(|on| on != 0)
+        }
+        (GNOME, "gtk-enable-primary-paste") => {
+            appearance.primary_paste = value.as_i64().map(|on| on != 0)
         }
         (GNOME, "text-scaling-factor") => appearance.text_scale = value.as_f64().map(|s| s as f32),
         // KDE's portal gives kdeglobals' entries as their text.
@@ -383,6 +391,12 @@ mod tests {
         assert_eq!(a.overlay_scrolling, Some(false), "scrollbars always shown");
         apply(&mut a, GNOME, "overlay-scrolling", &true);
         assert_eq!(a.overlay_scrolling, Some(true));
+        apply(&mut a, GNOME, "gtk-enable-primary-paste", &false);
+        assert_eq!(
+            a.primary_paste,
+            Some(false),
+            "middle-click paste turned off"
+        );
         apply(&mut a, GNOME, "text-scaling-factor", &1.25f64);
         assert_eq!(a.text_scale, Some(1.25), "Large Text");
         apply(&mut a, KDE, "WheelScrollLines", &"5".to_string());

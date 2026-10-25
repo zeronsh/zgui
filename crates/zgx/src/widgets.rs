@@ -901,6 +901,8 @@ struct UiStorage {
     /// An editor a middle press put its caret in, for the host to paste the
     /// primary selection into (`Ui::take_primary_paste`).
     primary_paste: Cell<Option<NodeId>>,
+    /// A middle press pastes the primary selection (`Ui::set_primary_paste`).
+    primary_paste_on: Cell<bool>,
     /// Display text's selection (`View::selectable`).
     selection: RefCell<crate::selection::State>,
     /// What the last primary press went to: the keyboard scrolls the scroll
@@ -1100,6 +1102,7 @@ impl Ui {
             advancing_interaction: Cell::new(false),
             window_gesture: Cell::new(None),
             primary_paste: Cell::new(None),
+            primary_paste_on: Cell::new(true),
             selection: Default::default(),
             last_pressed: Cell::new(None),
             elastic: Default::default(),
@@ -2361,6 +2364,13 @@ impl Ui {
     /// desktop host pastes X11's and Wayland's primary selection there.
     pub fn take_primary_paste(&self) -> Option<NodeId> {
         self.storage.primary_paste.take()
+    }
+    /// Whether a middle press in an editor pastes the primary selection
+    /// there (X11's and Wayland's): on until the desktop host says the
+    /// person turned it off (GNOME's `gtk-enable-primary-paste`), as GTK
+    /// follows it. Off, a middle press does nothing in an editor.
+    pub fn set_primary_paste(&self, on: bool) {
+        self.storage.primary_paste_on.set(on);
     }
     pub(crate) fn request_window_gesture(&self, gesture: WindowGesture) {
         self.storage.window_gesture.set(Some(gesture));
@@ -4267,7 +4277,10 @@ impl Ui {
                     x,
                     y,
                     button: PointerButton::Middle,
-                } if cfg!(all(unix, not(target_os = "macos"))) && !read_only.get() => {
+                } if cfg!(all(unix, not(target_os = "macos")))
+                    && !read_only.get()
+                    && input_storage.upgrade().is_some_and(|s| s.primary_paste_on.get()) =>
+                {
                     let s = scene.borrow();
                     let bounds = s.bounds(viewport);
                     let scroll = *scroll.borrow();

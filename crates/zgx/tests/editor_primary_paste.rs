@@ -69,4 +69,16 @@ fn a_middle_press_places_the_caret_and_asks_for_the_primary_selection() {
         None,
         "a read-only field takes no paste"
     );
+
+    // Turned off on the desktop (GNOME's `gtk-enable-primary-paste`): a
+    // middle press neither moves the caret nor asks for a paste.
+    ui.set_primary_paste(false);
+    let bounds = ui.scene.borrow().bounds(field);
+    middle(
+        &mut ui,
+        bounds.x + bounds.width - 2.,
+        bounds.y + bounds.height / 2.,
+    );
+    assert_eq!(ui.take_primary_paste(), None);
+    assert_eq!(editor.selection(), (0, 0), "the caret stayed");
 }

@@ -170,7 +170,11 @@ elsewhere the press goes on to an enclosing view's menu. Copy uses the
 `PlatformService` clipboard the desktop host provides. On Linux the host also
 makes the selection the primary selection (middle-click paste), on X11 and
 Wayland, once a gesture ends (`Ui::is_selecting_text` says whether one is
-still making it).
+still making it). A middle click in an editor pastes it there, unless the
+person turned that off (GNOME's `gtk-enable-primary-paste` through the
+settings portal, on X11 the session's XSETTINGS `Gtk/EnablePrimaryPaste`
+ahead of it, as GTK follows them; `Ui::set_primary_paste`): then a middle
+press does nothing in an editor, as in GTK's.
 
 The highlight is styled as CSS's `::selection` is. Its background is the
 theme's `selection` token (`selection.inactive` while the window is at the
