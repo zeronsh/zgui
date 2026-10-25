@@ -581,6 +581,92 @@ impl Entry {
         }
         self.laid = Some(width);
     }
+    /// One line of text's min-content size (`TextCache::min_content_plain`):
+    /// each run of words between opportunities to break a line, its
+    /// trailing blanks left out, as a line of its own, as `Compact::size`
+    /// measures `min_content_lines`' copy unwrapped. None where its words
+    /// are not the copy's.
+    fn min_content(&self, text: &str) -> Option<(f32, f32)> {
+        let [line] = self.lines.as_deref()? else {
+            return None;
+        };
+        let shape = line.shape_opt()?;
+        if shape.rtl || line.align() == Some(Align::Justified) {
+            return None;
+        }
+        let font_size = self.metrics.font_size;
+        // Words in order, with their byte ranges, widths, line heights and
+        // spans.
+        let mut words = Vec::new();
+        for (index, span) in shape.spans.iter().enumerate() {
+            if span.level.is_rtl() {
+                return None;
+            }
+            for word in &span.words {
+                let (Some(first), Some(last)) = (word.glyphs.first(), word.glyphs.last()) else {
+                    return None;
+                };
+                let height = first.metrics_opt.map(|metrics| metrics.line_height);
+                if word
+                    .glyphs
+                    .iter()
+                    .any(|glyph| glyph.metrics_opt.map(|metrics| metrics.line_height) != height)
+                {
+                    return None;
+                }
+                words.push((first.start..last.end, word.width(font_size), height, index));
+            }
+        }
+        let empty = shape.metrics_opt.map(|metrics| metrics.line_height);
+        let line_height = self.metrics.line_height;
+        let (mut widest, mut height) = (0_f32, 0_f32);
+        let mut next = 0;
+        let mut start = 0;
+        for end in zgx::text_layout::break_opportunities(text) {
+            let kept = start + text[start..end].trim_end().len();
+            let mut visual = Visual::default();
+            let mut range_width = 0_f32;
+            // The copy's line adds each span's words as cosmic-text does.
+            let mut span = None;
+            while let Some((range, width, word_height, index)) = words.get(next) {
+                if range.start >= end {
+                    break;
+                }
+                // A word across a break (cosmic-text keeps a likely
+                // ligature whole): not the copy's.
+                if range.end > end || (range.start < kept && range.end > kept) {
+                    return None;
+                }
+                if range.start < kept {
+                    if span.is_some_and(|span| span != *index) {
+                        visual.w += range_width;
+                        range_width = 0.;
+                    }
+                    span = Some(*index);
+                    visual.nonempty = true;
+                    range_width += width;
+                    if let Some(word_height) = word_height {
+                        visual.height =
+                            Some(visual.height.map_or(*word_height, |h| h.max(*word_height)));
+                    }
+                }
+                next += 1;
+            }
+            visual.w += range_width;
+            if visual.nonempty {
+                widest = widest.max(visual.w);
+                height += visual.height.unwrap_or(line_height);
+            } else if shape.spans.len() > 1 {
+                // An empty line of the copy takes a run's height that its
+                // spans don't say.
+                return None;
+            } else {
+                height += empty.unwrap_or(line_height);
+            }
+            start = end;
+        }
+        (next == words.len()).then_some((widest, height))
+    }
     fn size(&mut self, fonts: &mut FontSystem, slab: &Slab, width: Option<f32>) -> (f32, f32) {
         if let Some((_, size)) = self.sizes.iter().find(|(w, _)| *w == width) {
             return *size;
@@ -808,6 +894,43 @@ impl TextCache {
         }
         let hash = self.plain_entry(fonts, text, font_size, font, Need::Measure);
         self.sized(fonts, hash, width)
+    }
+    /// `rich`'s min-content size, CSS's: as `rich.min_content_lines()`
+    /// measures unwrapped, worked out from the words `rich` was shaped
+    /// into where they are its lines' words (`min_content_plain`).
+    pub fn min_content(&mut self, fonts: &mut FontSystem, rich: &RichText) -> (f32, f32) {
+        if Self::handles(rich) && !rich.text().contains(['\n', '\r']) {
+            let hash = self.entry(fonts, Source::Rich(rich), false, Need::Measure);
+            let size = self.entries[&hash].min_content(rich.text());
+            self.evict(hash);
+            if let Some(size) = size {
+                return size;
+            }
+        }
+        self.measure(fonts, &rich.min_content_lines(), None)
+    }
+    /// Plain text's min-content size, CSS's: as `min_content_lines(text)`
+    /// measures unwrapped, a line at every opportunity to break one and never
+    /// one inside a word. Worked out from the words `text` was shaped into,
+    /// not by shaping that copy, where they are its lines' words (one line of
+    /// left-to-right text, each word inside one of the copy's lines).
+    pub fn min_content_plain(
+        &mut self,
+        fonts: &mut FontSystem,
+        text: &Arc<str>,
+        font_size: f32,
+        font: &FontStyle,
+    ) -> (f32, f32) {
+        if Self::handles_plain(text, font_size) && !text.contains(['\n', '\r']) {
+            let hash = self.plain_entry(fonts, text, font_size, font, Need::Measure);
+            let size = self.entries[&hash].min_content(text);
+            self.evict(hash);
+            if let Some(size) = size {
+                return size;
+            }
+        }
+        let lines: Arc<str> = zgx::text_layout::min_content_lines(text).into();
+        self.measure_plain(fonts, &lines, font_size, font, None)
     }
     /// Plain text laid out at `width`. Only for text `handles_plain` accepts.
     pub fn layout_plain(
@@ -1253,6 +1376,112 @@ mod tests {
             ..Default::default()
         };
         RichText::new(text.clone(), vec![run]).expect("one valid run")
+    }
+    /// Plain text's min-content size worked out from its own words is the
+    /// size of its broken copy (`min_content_lines`) measured unwrapped, to
+    /// the bit: words and blanks, punctuation, hyphens, non-breaking and
+    /// leading spaces, emoji and combining marks, at three sizes; and it is
+    /// worked out so for ordinary words, not measured from the copy.
+    #[test]
+    fn min_content_from_its_words_is_its_broken_copys_size() {
+        let texts = [
+            "Your invoice is ready",
+            "  leading spaces and  double  spaces ",
+            "hyphen-ated words, commas; and (brackets) [too]",
+            "non\u{a0}breaking\u{a0}space and a !bang ?",
+            "a -> b != c |> d :: e",
+            "url like https://example.com/path/to/thing?x=1",
+            "émoji 👩‍💻 and 🇫🇷 flags with e\u{301} marks",
+            "supercalifragilisticexpialidocious",
+            "x",
+            "tab\tseparated\twords",
+            "x->y!=z|>w and foo/bar/baz-qux",
+            "1,000.50 (USD) — em-dash–en-dash",
+        ];
+        for mut fonts in [FontSystem::new()] {
+            for font in [
+                FontStyle::default(),
+                FontStyle {
+                    weight: 700,
+                    ..Default::default()
+                },
+            ] {
+                for font_size in [11., 16., 22.] {
+                    let mut cache = TextCache::default();
+                    for text in texts {
+                        let text: Arc<str> = text.into();
+                        let fast = cache.min_content_plain(&mut fonts, &text, font_size, &font);
+                        let copy: Arc<str> = zgx::text_layout::min_content_lines(&text).into();
+                        let measured = TextCache::default()
+                            .measure_plain(&mut fonts, &copy, font_size, &font, None);
+                        assert_eq!(
+                            (fast.0.to_bits(), fast.1.to_bits()),
+                            (measured.0.to_bits(), measured.1.to_bits()),
+                            "{text:?} at {font_size}: {fast:?} vs {measured:?}"
+                        );
+                    }
+                    let text: Arc<str> = "Your invoice is ready".into();
+                    let hash =
+                        cache.plain_entry(&mut fonts, &text, font_size, &font, Need::Measure);
+                    assert!(cache.entries[&hash].min_content(&text).is_some());
+                    // Rich text: one run, and runs of other sizes and weights
+                    // meeting inside a word and at a break.
+                    let bold = FontStyle {
+                        weight: 700,
+                        ..font.clone()
+                    };
+                    for text in texts {
+                        let third = |i: usize| {
+                            (text.len() * i / 3..=text.len())
+                                .find(|&at| text.is_char_boundary(at))
+                                .unwrap()
+                        };
+                        // Or at the space after it, as styled words meet.
+                        let space = |i: usize| {
+                            text[third(i)..]
+                                .find(' ')
+                                .map_or(text.len(), |at| third(i) + at + 1)
+                        };
+                        let runs = [
+                            vec![(text.len(), font.clone(), font_size)],
+                            vec![
+                                (third(1), font.clone(), font_size),
+                                (third(2), bold.clone(), font_size * 1.5),
+                                (text.len(), font.clone(), font_size * 0.75),
+                            ],
+                            vec![
+                                (space(1), font.clone(), font_size),
+                                (space(2), bold.clone(), font_size * 1.5),
+                                (text.len(), font.clone(), font_size * 0.75),
+                            ],
+                        ];
+                        for runs in runs {
+                            let mut end = 0;
+                            let runs: Vec<_> = runs
+                                .into_iter()
+                                .filter(|r| {
+                                    let keep = r.0 > end;
+                                    end = end.max(r.0);
+                                    keep
+                                })
+                                .collect();
+                            let rich = rich(text, &runs);
+                            let fast = cache.min_content(&mut fonts, &rich);
+                            let measured = TextCache::default().measure(
+                                &mut fonts,
+                                &rich.min_content_lines(),
+                                None,
+                            );
+                            assert_eq!(
+                                (fast.0.to_bits(), fast.1.to_bits()),
+                                (measured.0.to_bits(), measured.1.to_bits()),
+                                "rich {text:?} at {font_size}: {fast:?} vs {measured:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn plain_text_is_found_by_the_key_its_rich_text_makes() {

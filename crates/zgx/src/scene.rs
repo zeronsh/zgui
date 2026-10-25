@@ -1320,57 +1320,7 @@ pub(crate) fn clips(style: &Style) -> bool {
             .as_deref()
             .is_some_and(|o| o.clip_x == Some(true) || o.clip_y == Some(true))
 }
-/// `text` with a line break at each opportunity to break one (UAX #14):
-/// its widest line is its min-content width. Spaces ending a line hang
-/// outside it, as CSS lets them.
-fn min_content_lines(text: &str) -> String {
-    let mut lines = String::with_capacity(text.len() + 16);
-    let mut start = 0;
-    for (end, _) in unicode_linebreak::linebreaks(text) {
-        if start > 0 {
-            lines.push('\n');
-        }
-        lines.push_str(text[start..end].trim_end());
-        start = end;
-    }
-    lines
-}
-/// `rich` as `min_content_lines` breaks plain text, each run over its
-/// part of every line, a line's break in its last run.
-fn min_content_rich(rich: &crate::rich_text::RichText) -> crate::rich_text::RichText {
-    let text = rich.text();
-    let mut lines = String::with_capacity(text.len() + 16);
-    let mut runs: Vec<crate::rich_text::TextRun> = Vec::with_capacity(rich.runs().len() + 4);
-    let mut start = 0;
-    for (end, _) in unicode_linebreak::linebreaks(text) {
-        if start > 0 {
-            lines.push('\n');
-            match runs.last_mut() {
-                Some(run) => run.range.end = lines.len(),
-                None => runs.extend(rich.runs().first().cloned().map(|mut run| {
-                    run.range = 0..lines.len();
-                    run
-                })),
-            }
-        }
-        let line = text[start..end].trim_end();
-        let (from, at) = (start, lines.len());
-        lines.push_str(line);
-        for run in rich.runs() {
-            let (a, b) = (
-                run.range.start.max(from),
-                run.range.end.min(from + line.len()),
-            );
-            if a < b {
-                let mut part = run.clone();
-                part.range = at + (a - from)..at + (b - from);
-                runs.push(part);
-            }
-        }
-        start = end;
-    }
-    crate::rich_text::RichText::new(lines, runs).unwrap_or_else(|_| rich.clone())
-}
+use crate::text_layout::min_content_lines;
 /// `Node::reads`: known, reads the available width, the height; has a
 /// width or height percentage in its subtree; resolves its own against the
 /// width or height basis its parent passes (`Scene::percent_bases`).
@@ -1815,6 +1765,9 @@ impl PaintItem<'_> {
 }
 type FontMeasurer =
     dyn Fn(&std::sync::Arc<str>, f32, Option<f32>, &crate::text_layout::FontStyle) -> (f32, f32);
+type FontMinContent =
+    dyn Fn(&std::sync::Arc<str>, f32, &crate::text_layout::FontStyle) -> (f32, f32);
+type RichMinContent = dyn Fn(&crate::rich_text::RichText) -> (f32, f32);
 /// A node `Scene::walk` visits.
 #[derive(Clone, Copy, Debug)]
 pub struct WalkItem {
@@ -1875,6 +1828,11 @@ pub struct Scene {
     text_shaper: Option<std::rc::Rc<dyn crate::text_layout::TextShaper>>,
     font_shaper: Option<std::rc::Rc<dyn crate::text_layout::FontTextShaper>>,
     font_measurer: Option<Box<FontMeasurer>>,
+    /// Plain text's min-content size as `font_measurer` measures
+    /// `min_content_lines`' copy, without shaping it (`leaf_size`).
+    font_min_content: Option<Box<FontMinContent>>,
+    /// Rich text's, as `rich_measurer` measures `min_content_lines`' copy.
+    rich_min_content: Option<Box<RichMinContent>>,
     rich_measurer: crate::rich_text::TextMeasure,
     rich_shaper: Option<Box<crate::rich_text::RichShaper>>,
     text_shaper_revision: u64,
@@ -2046,6 +2004,8 @@ impl Scene {
             text_shaper: None,
             font_shaper: None,
             font_measurer: None,
+            font_min_content: None,
+            rich_min_content: None,
             rich_measurer: Default::default(),
             rich_shaper: None,
             text_shaper_revision: 0,
@@ -3265,6 +3225,27 @@ impl Scene {
             self.invalidate(id, PAINT);
             self.invalidate_layout(id);
         }
+    }
+    /// Install plain text's min-content measurement: the size the font
+    /// measurer gives `min_content_lines(text)` unwrapped (a line at every
+    /// opportunity to break one), worked out without that copy.
+    pub fn set_font_min_content_measurer(
+        &mut self,
+        measure: impl Fn(&std::sync::Arc<str>, f32, &crate::text_layout::FontStyle) -> (f32, f32)
+        + 'static,
+    ) {
+        self.font_min_content = Some(Box::new(measure));
+        self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
+    }
+    /// Install rich text's min-content measurement: the size the rich
+    /// measurer gives `RichText::min_content_lines` unwrapped, worked out
+    /// without that copy.
+    pub fn set_rich_min_content_measurer(
+        &mut self,
+        measure: impl Fn(&crate::rich_text::RichText) -> (f32, f32) + 'static,
+    ) {
+        self.rich_min_content = Some(Box::new(measure));
+        self.text_shaper_revision = self.text_shaper_revision.wrapping_add(1);
     }
     /// Install native continuous mixed-run measurement for rich display text.
     pub fn set_rich_text_measurer(
@@ -5586,11 +5567,16 @@ impl Scene {
                         // No room at all is a min-content probe: lines break
                         // at every opportunity, as CSS's min-content does,
                         // and never inside a word.
-                        let lines: Arc<str> = min_content_lines(text).into();
                         let font = &self.node(id).font;
-                        match &self.font_measurer {
-                            Some(measure) => measure(&lines, *font_size, None, font),
-                            None => self.measure_text_with_font(&lines, *font_size, None, font),
+                        match (&self.font_min_content, &self.font_measurer) {
+                            (Some(measure), _) => measure(text, *font_size, font),
+                            (None, Some(measure)) => {
+                                measure(&min_content_lines(text).into(), *font_size, None, font)
+                            }
+                            (None, None) => {
+                                let lines = min_content_lines(text);
+                                self.measure_text_with_font(&lines, *font_size, None, font)
+                            }
                         }
                     } else if style.text_options != Default::default() {
                         let runs = if text.is_empty() {
@@ -5631,8 +5617,12 @@ impl Scene {
                     let size = if limit == Some(0.) && text.options() == Default::default() {
                         // A min-content probe, as plain text's: lines
                         // break at every opportunity, never inside a word.
-                        self.rich_measurer
-                            .measure_mounted(&min_content_rich(text), None)
+                        match &self.rich_min_content {
+                            Some(measure) => measure(text),
+                            None => self
+                                .rich_measurer
+                                .measure_mounted(&text.min_content_lines(), None),
+                        }
                     } else {
                         self.rich_measurer.measure_mounted(text, limit)
                     };

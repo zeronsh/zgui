@@ -8810,6 +8810,22 @@ fn install_text(
             .borrow_mut()
             .measure_plain(&mut fonts.borrow_mut(), text, size, font, width)
     });
+    // Plain text's min-content size, from the words it was shaped into.
+    let (fonts, cache) = (shared_fonts.clone(), shared_cache.clone());
+    scene.set_font_min_content_measurer(move |text, size, font| {
+        let _span = zgx::profile::nested(zgx::profile::Phase::Text);
+        cache
+            .borrow_mut()
+            .min_content_plain(&mut fonts.borrow_mut(), text, size, font)
+    });
+    // Rich text's, likewise.
+    let (fonts, cache) = (shared_fonts.clone(), shared_cache.clone());
+    scene.set_rich_min_content_measurer(move |rich| {
+        let _span = zgx::profile::nested(zgx::profile::Phase::Text);
+        cache
+            .borrow_mut()
+            .min_content(&mut fonts.borrow_mut(), rich)
+    });
     // Apps measuring what they have not mounted keep no glyphs for it.
     let (fonts, cache) = (shared_fonts.clone(), shared_cache.clone());
     scene.set_detached_rich_text_measurer(move |rich, width| {

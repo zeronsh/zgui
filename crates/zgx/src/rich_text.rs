@@ -328,6 +328,46 @@ pub fn fallback_measure(rich: &RichText, width: Option<f32>) -> (f32, f32) {
     (max_x.max(x), y + pitch)
 }
 
+impl RichText {
+    /// As `text_layout::min_content_lines` breaks plain text: a line at
+    /// every opportunity to break one, each run over its part of every line
+    /// and a line's break in its last run. Unwrapped, its widest line is
+    /// its min-content width.
+    pub fn min_content_lines(&self) -> RichText {
+        let text = self.text();
+        let mut lines = String::with_capacity(text.len() + 16);
+        let mut runs: Vec<TextRun> = Vec::with_capacity(self.runs().len() + 4);
+        let mut start = 0;
+        for end in crate::text_layout::break_opportunities(text) {
+            if start > 0 {
+                lines.push('\n');
+                match runs.last_mut() {
+                    Some(run) => run.range.end = lines.len(),
+                    None => runs.extend(self.runs().first().cloned().map(|mut run| {
+                        run.range = 0..lines.len();
+                        run
+                    })),
+                }
+            }
+            let line = text[start..end].trim_end();
+            let (from, at) = (start, lines.len());
+            lines.push_str(line);
+            for run in self.runs() {
+                let (a, b) = (
+                    run.range.start.max(from),
+                    run.range.end.min(from + line.len()),
+                );
+                if a < b {
+                    let mut part = run.clone();
+                    part.range = at + (a - from)..at + (b - from);
+                    runs.push(part);
+                }
+            }
+            start = end;
+        }
+        RichText::new(lines, runs).unwrap_or_else(|_| self.clone())
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

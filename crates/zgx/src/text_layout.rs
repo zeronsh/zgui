@@ -895,3 +895,23 @@ mod letter_spacing_tests {
         }
     }
 }
+/// `text` with a line break at each opportunity to break one (UAX #14):
+/// its widest line is its min-content width. Spaces ending a line hang
+/// outside it, as CSS lets them.
+pub fn min_content_lines(text: &str) -> String {
+    let mut lines = String::with_capacity(text.len() + 16);
+    let mut start = 0;
+    for end in break_opportunities(text) {
+        if start > 0 {
+            lines.push('\n');
+        }
+        lines.push_str(text[start..end].trim_end());
+        start = end;
+    }
+    lines
+}
+/// Where `text`'s lines may break (UAX #14), as byte offsets: after each
+/// opportunity, and its end.
+pub fn break_opportunities(text: &str) -> impl Iterator<Item = usize> + '_ {
+    unicode_linebreak::linebreaks(text).map(|(end, _)| end)
+}
