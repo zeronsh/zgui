@@ -8,13 +8,17 @@
 //! function of an item; `filter` keeps the items a function is true for,
 //! or whose fields pass a table's tests, read in Rust (`{ sector = "Tech",
 //! symbol = { contains = "AB" } }`). Functions are called only for the
-//! items that changed, untracked.
+//! items that changed, untracked. The rows `set_key` writes are logged for
+//! the views reading a list (`WriteLog`), so a view finds them without
+//! comparing every row, and its slots are written where the order moved
+//! (`write_back`).
 use crate::{
     Vm,
     value::{State, Value},
 };
 use mlua::{Function, Lua, Table};
-use std::{cmp::Ordering, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, collections::HashMap, rc::Rc};
+use zgx::reactive::Signal;
 
 /// A sort key: numbers before strings before booleans (the other way round
 /// descending); nil (no key) last, whichever way it sorts (as `ui.sort`'s).
@@ -263,6 +267,111 @@ struct Kept {
     keys: Vec<Key>,
     kept: Vec<bool>,
     order: Vec<u32>,
+    /// The order the view was last written from: where it and `order` agree
+    /// (but where an item written lands), the view holds that item still.
+    shown: Vec<u32>,
+    /// Where the items `update` placed landed in `order`.
+    placed_at: Vec<u32>,
+}
+
+/// The rows `set_key` writes to a list a sorted view reads, so the view
+/// finds what changed from them rather than comparing every row: each
+/// write's index and the list's version after it. `since`: every write
+/// after that version is here (a write of another kind, or one not seen
+/// here, ends what it can answer, as the versions then don't follow on).
+struct WriteLog {
+    list: zgx::reactive::WeakSignal<Value>,
+    since: u64,
+    last: u64,
+    written: Vec<(u64, u32)>,
+    /// The views reading it.
+    readers: usize,
+}
+/// At most this many writes held: older ones dropped, a view behind them
+/// compares its rows again.
+const LOGGED: usize = 8192;
+thread_local! {
+    static LOGS: RefCell<HashMap<usize, WriteLog>> = RefCell::default();
+}
+/// A sorted view reads `list`: log its row writes.
+fn follow_writes(list: &Signal<Value>) {
+    LOGS.with(|logs| {
+        let version = list.version();
+        logs.borrow_mut()
+            .entry(list.addr())
+            .or_insert_with(|| WriteLog {
+                list: list.downgrade(),
+                since: version,
+                last: version,
+                written: Vec::new(),
+                readers: 0,
+            })
+            .readers += 1;
+    });
+}
+/// A sorted view of `list` is gone.
+fn unfollow_writes(list: &Signal<Value>) {
+    LOGS.with(|logs| {
+        let mut logs = logs.borrow_mut();
+        if let Some(log) = logs.get_mut(&list.addr()) {
+            log.readers -= 1;
+            if log.readers == 0 {
+                logs.remove(&list.addr());
+            }
+        }
+    });
+}
+/// `list` was written, from version `before`: row `index` (from 0), or
+/// otherwise (`None`). Nothing to do unless a sorted view reads it.
+pub(crate) fn note_write(list: &Signal<Value>, before: u64, index: Option<usize>) {
+    LOGS.with(|logs| {
+        let mut logs = logs.borrow_mut();
+        if logs.is_empty() {
+            return;
+        }
+        let Some(log) = logs.get_mut(&list.addr()) else {
+            return;
+        };
+        if !log.list.upgrade().is_some_and(|l| l.same(list)) {
+            return;
+        }
+        let after = list.version();
+        // A write it did not see: what it holds answers from here on.
+        if log.last != before {
+            log.since = before;
+            log.written.clear();
+        }
+        log.last = after;
+        match index.and_then(|i| u32::try_from(i).ok()) {
+            Some(i) => {
+                if log.written.len() >= LOGGED {
+                    log.since = log.written[LOGGED / 2 - 1].0;
+                    log.written.drain(..LOGGED / 2);
+                }
+                log.written.push((after, i));
+            }
+            None => {
+                log.since = after;
+                log.written.clear();
+            }
+        }
+    });
+}
+/// The rows of `list` written since version `seen`, if the log knows them
+/// all (`None`: compare them).
+fn written_since(list: &Signal<Value>, seen: u64) -> Option<Vec<u32>> {
+    LOGS.with(|logs| {
+        let logs = logs.borrow();
+        let log = logs.get(&list.addr())?;
+        if seen < log.since || log.last != list.version() {
+            return None;
+        }
+        let start = log.written.partition_point(|(version, _)| *version <= seen);
+        let mut rows: Vec<u32> = log.written[start..].iter().map(|(_, i)| *i).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        Some(rows)
+    })
 }
 
 /// Whether a write left item `a` as it was: the same table (unchanged rows
@@ -575,6 +684,7 @@ impl Kept {
         // 100,000), then the runs between them copied whole.
         let mut merged = Vec::with_capacity(self.order.len() + placed.len());
         let mut from = 0;
+        self.placed_at.clear();
         for &item in &placed {
             let rest = &self.order[from..];
             let at = from
@@ -582,6 +692,7 @@ impl Kept {
                     self.before(spec.descending, other, item) == Ordering::Less
                 });
             merged.extend_from_slice(&self.order[from..at]);
+            self.placed_at.push(merged.len() as u32);
             merged.push(item);
             from = at;
         }
@@ -659,9 +770,75 @@ fn change(was: Option<&Vec<Value>>, now: &[Value]) -> Change {
     Change::Some(changed)
 }
 
+/// The view, its items placed as `shown` put them, made what `order` puts
+/// them as. Where the two orders agree (found 16 positions at a time: the
+/// runs a few hundred moved rows leave alone, skipped whole) nothing is
+/// touched but an item written in its old place. A run where they differ
+/// holds the items that shift within it, in the same order (an item not
+/// written keeps its order among the others), so their values move along
+/// the run: a clone and a drop of every row a move shifts touched each
+/// one's count. Items `written` since are taken afresh. Whether it changed.
+fn write_back(
+    slots: &mut [Value],
+    order: &[u32],
+    shown: &[u32],
+    written: &[u64],
+    placed: &[u32],
+    moving: &mut Vec<Value>,
+    items: &[Value],
+) -> bool {
+    const RUN: usize = 16;
+    let is_written = |i: u32| written[i as usize / 64] & (1 << (i % 64)) != 0;
+    let (n, mut p, mut any) = (order.len(), 0, false);
+    while p < n {
+        if p % RUN == 0 && p + RUN <= n && order[p..p + RUN] == shown[p..p + RUN] {
+            p += RUN;
+            continue;
+        }
+        if order[p] == shown[p] {
+            p += 1;
+            continue;
+        }
+        let from = p;
+        while p < n && order[p] != shown[p] {
+            p += 1;
+        }
+        moving.clear();
+        for q in from..p {
+            let value = std::mem::take(&mut slots[q]);
+            if !is_written(shown[q]) {
+                moving.push(value);
+            }
+        }
+        let mut shifted = moving.drain(..);
+        for q in from..p {
+            let i = order[q];
+            slots[q] = match is_written(i) {
+                true => items[i as usize].clone(),
+                false => shifted.next().unwrap_or_else(|| items[i as usize].clone()),
+            };
+        }
+        any = true;
+    }
+    // Written and placed where they were.
+    for &p in placed {
+        let p = p as usize;
+        if order[p] == shown[p] {
+            let item = &items[order[p] as usize];
+            if !same_item(&slots[p], item) {
+                slots[p] = item.clone();
+                any = true;
+            }
+        }
+    }
+    any
+}
+
 /// `ui.sorted(list, spec)`.
 pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlua::Result<State> {
     let source = crate::node::expect_state(&list, "ui.sorted's list")?;
+    follow_writes(&source);
+    let followed = source.clone();
     let spec = match spec {
         mlua::Value::Table(t) => Ok(Spec::from_table(lua, &t)?),
         mlua::Value::Function(f) => Err(f),
@@ -704,6 +881,8 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
     };
     let (vm, signal, runtime) = (env.vm.clone(), out.clone(), env.runtime.clone());
     let mut kept = Kept::default();
+    // The values moving along the view's runs (`write_back`), its room kept.
+    let mut moving: Vec<Value> = Vec::new();
     let effect = env.runtime.effect_now(move || {
         let Some(vm) = vm.upgrade() else {
             return;
@@ -727,11 +906,23 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
         // What to take again of the items held: none, those written, or all.
         let version = source.version();
         let written = kept.items.is_none() || kept.version != version;
+        let seen = kept.version;
         kept.version = version;
-        let change = if written {
-            change(kept.items.as_ref(), &items)
-        } else {
+        let change = if !written {
             Change::None
+        } else {
+            // The rows the log says were written, when it knows (the list's
+            // length the same); else every row compared.
+            let logged = kept
+                .items
+                .as_ref()
+                .filter(|held| held.len() == items.len())
+                .and_then(|_| written_since(&source, seen));
+            match logged {
+                Some(rows) if rows.is_empty() => Change::None,
+                Some(rows) if rows.len() <= items.len() / 4 => Change::Some(rows),
+                _ => change(kept.items.as_ref(), &items),
+            }
         };
         let result = runtime.untracked(|| match change {
             Change::None if same_spec => Ok(None),
@@ -761,24 +952,26 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
                 // The view written where it changed, in place while nothing
                 // else holds it: a few rows moving in 100,000 write those.
                 // Sorted again, most of it moves: made anew.
-                let order = &kept.order;
+                let (order, shown, placed) = (&kept.order, &mut kept.shown, &kept.placed_at);
                 signal.mutate(|view| {
                     if !sorted_again
+                        && changed.is_some()
+                        && shown.len() == order.len()
                         && let Value::List(list) = view
                         && list.len() == order.len()
                         && let Some(slots) = Rc::get_mut(list)
                     {
-                        let mut any = false;
-                        for (slot, &i) in slots.iter_mut().zip(order) {
-                            let item = &items[i as usize];
-                            if !same_item(slot, item) {
-                                *slot = item.clone();
-                                any = true;
-                            }
+                        let mut written = vec![0u64; items.len().div_ceil(64)];
+                        for &i in changed.iter().flatten() {
+                            written[i as usize / 64] |= 1 << (i % 64);
                         }
+                        let any =
+                            write_back(slots, order, shown, &written, placed, &mut moving, &items);
+                        shown.copy_from_slice(order);
                         return any;
                     }
                     *view = Value::List(order.iter().map(|i| items[*i as usize].clone()).collect());
+                    shown.clone_from(order);
                     true
                 });
             }
@@ -796,6 +989,13 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
     if let Some(spec_effect) = spec_effect {
         crate::node::retain(&env, Box::new(spec_effect));
     }
-    crate::node::retain(&env, Box::new(effect));
+    // Its list's writes followed while it lives.
+    struct Following(#[allow(dead_code)] zgx::reactive::Effect, Signal<Value>);
+    impl Drop for Following {
+        fn drop(&mut self) {
+            unfollow_writes(&self.1);
+        }
+    }
+    crate::node::retain(&env, Box::new(Following(effect, followed)));
     Ok(State(out, Some(fresh)))
 }

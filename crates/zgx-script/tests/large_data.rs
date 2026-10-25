@@ -294,8 +294,12 @@ fn ui_sorted_keeps_the_order_ui_sort_gives_and_judges_only_written_rows() {
             return names(ui.sort(list, by, descending:peek()))
         end
         local checks = ui.state("checks", "")
+        -- Read a row at a time, as a list shows it: nothing holds the view,
+        -- so the next write changes it in place.
         local function check(label)
-            local same = names(view:get()) == expected()
+            local shown = table.create(view:len())
+            for i = 1, view:len() do shown[i] = view:at(i) end
+            local same = names(shown) == expected()
             checks:set(checks:peek() .. (if same then "" else label .. " differs; "))
         end
         ui.command { id = "run", run = function()
@@ -308,6 +312,19 @@ fn ui_sorted_keeps_the_order_ui_sort_gives_and_judges_only_written_rows() {
                     end
                 end)
                 check(`round {round}`)
+            end
+            -- Small moves, as a price feed's: rows shifting a few places.
+            for round = 1, 10 do
+                ui.batch(function()
+                    for _ = 1, 40 do
+                        local i = random(#rows:peek()) + 1
+                        local v = rows:peek()[i].v
+                        if v then
+                            rows:set_key({ i, "v" }, v + random(5) - 2)
+                        end
+                    end
+                end)
+                check(`small round {round}`)
             end
             rows:push({ n = "new", v = 250, sector = 1 })
             check("push")

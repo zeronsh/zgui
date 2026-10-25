@@ -1883,6 +1883,14 @@ impl UserData for State {
                 let was = at.as_ref().map_or(0, Value::weight);
                 s.charge(lua, |held| held.saturating_sub(was) + leaf.weight())?;
                 let mut done = Ok(false);
+                // The row written, for a sorted view reading the list.
+                let (before, row) = (
+                    s.0.version(),
+                    match path.first() {
+                        Some(PathKey::Index(i)) => i.checked_sub(1),
+                        _ => None,
+                    },
+                );
                 let mut write = || {
                     s.0.mutate(|v| match v.set_path_in_place(&path, &leaf) {
                         Ok(Some(changed)) => {
@@ -1904,14 +1912,19 @@ impl UserData for State {
                     None => write(),
                 };
                 if done.map_err(|e| fail("set_key", e))? {
+                    crate::sorted::note_write(&s.0, before, row);
                     return Ok(());
                 }
                 // (Charged above.)
-                s.change_by(
+                let written = s.change_by(
                     lua,
                     |old| old.set_path(&path, leaf).map_err(|e| fail("set_key", e)),
                     |_, held| held,
-                )
+                );
+                if s.0.version() != before {
+                    crate::sorted::note_write(&s.0, before, row);
+                }
+                written
             },
         );
         // A shallow merge: `patch({ a = 1, b = 2 })`.
