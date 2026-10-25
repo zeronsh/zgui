@@ -25,33 +25,8 @@ use rune::{Cx, El, Env, GrowthSpec, Runtime, ScrollSpec, col, row, text};
 use zgx_compare_rune::{ESTIMATE, chat_row, rgb};
 use zgx_workload::vlist;
 
-/// zgx_workload::micro, as the micro-bench branch defines it (mirrored here
-/// until the Rune crate's workload has it).
-mod micro {
-    pub const STATIC_ROWS: usize = 40;
-    pub const STATIC_COLUMNS: usize = 25;
-    pub const CELL: (f32, f32) = (36., 18.);
-    pub const FONT_SIZE: f32 = 12.;
-    pub fn static_label(index: usize) -> String {
-        index.to_string()
-    }
-    pub fn counter_label(value: u64) -> String {
-        format!("Count: {value}")
-    }
-    pub const ROWS: usize = 10_000;
-    pub const VIEWPORT: f32 = 800.;
-    pub const FIXED_ROW: f32 = 28.;
-    pub const STEP: f32 = 12.;
-    pub fn fixed_label(index: usize) -> String {
-        format!("Row {index}: {}", super::vlist::author(index))
-    }
-    pub const OPS: usize = 2_000;
-    pub const WARMUP: usize = 200;
-}
-use micro::*;
+use zgx_workload::micro::*;
 
-/// The comparisons' font file, built in, as the other headless benches shape it.
-static FONT: &[u8] = include_bytes!("../../../fonts/DejaVuSans.ttf");
 const SCALE: f32 = 2.0;
 const DT: f64 = 1.0 / 60.0;
 
@@ -186,7 +161,10 @@ impl Bench {
         } else {
             (vlist::WIDTH, VIEWPORT)
         };
-        let text_system = TextSystem::new(&[FONT], (zgx_workload::FONT, zgx_workload::FONT));
+        let text_system = TextSystem::new(
+            &[zgx_workload::FONT_BYTES],
+            (zgx_workload::FONT, zgx_workload::FONT),
+        );
         let env = Env {
             system_dark: true,
             scale: SCALE,
