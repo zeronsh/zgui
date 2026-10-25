@@ -672,10 +672,13 @@ keys, a drag). It stays a second after the scrolling stops, then fades out over
 shows only under the pointer. Scrolling done by the app (`offset.set`,
 `follow_end`) does not show it, as a page's script scrolling does not. The fade is
 stepped through `Ui::next_interaction_deadline`, so an idle window schedules
-nothing. The desktop host follows macOS's "Show scroll bars" setting
-(`NSScroller.preferredScrollerStyle`) at startup and whenever the window comes to
-the front. Elsewhere, and by default, a scrollbar shows whenever its view has
-something to scroll.
+nothing. The desktop host follows the system's setting at startup and whenever the
+window comes to the front: macOS's "Show scroll bars"
+(`NSScroller.preferredScrollerStyle`), Windows' "Always show scrollbars", and
+GNOME's `overlay-scrolling` through the settings portal (live, as it changes; on
+X11 the session's XSETTINGS `Gtk/OverlayScrolling` ahead of it, as GTK takes it
+there). Elsewhere (KDE, whose Breeze scrollbars always show), and by default, a
+scrollbar shows whenever its view has something to scroll.
 
 Dragging the thumb captures the pointer and preserves the initial grab position.
 Clicking elsewhere on the track pages by one viewport. Focused scrollbars support

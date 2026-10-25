@@ -60,6 +60,9 @@ pub(crate) struct Appearance {
     /// How far the pointer moves from a press before it drags, in pixels
     /// (GNOME's `drag-threshold`, 8 by default; KDE's `StartDragDist`, 10).
     pub drag_threshold: Option<u32>,
+    /// Whether scrollbars hide until their view scrolls (GNOME's
+    /// `overlay-scrolling`, on by default).
+    pub overlay_scrolling: Option<bool>,
 }
 
 static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
@@ -72,6 +75,7 @@ static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
     buttons: None,
     double_click: None,
     drag_threshold: None,
+    overlay_scrolling: None,
 });
 
 /// The settings as last read (the default until the portal answers).
@@ -166,6 +170,7 @@ fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
         (KDE, "DoubleClickInterval"),
         (GNOME_MOUSE, "drag-threshold"),
         (KDE, "StartDragDist"),
+        (GNOME, "overlay-scrolling"),
     ] {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -214,6 +219,9 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
         (APPEARANCE, "reduced-motion") => appearance.reduced_motion = value.as_u64() == Some(1),
         // A bool's RefArg reads as an integer.
         (GNOME, "enable-animations") => appearance.reduced_motion = value.as_i64() == Some(0),
+        (GNOME, "overlay-scrolling") => {
+            appearance.overlay_scrolling = value.as_i64().map(|on| on != 0)
+        }
         (GNOME, "text-scaling-factor") => appearance.text_scale = value.as_f64().map(|s| s as f32),
         // KDE's portal gives kdeglobals' entries as their text.
         (KDE, "WheelScrollLines") => {
@@ -371,6 +379,10 @@ mod tests {
         assert!(!a.reduced_motion, "GNOME's animations on");
         apply(&mut a, GNOME, "enable-animations", &false);
         assert!(a.reduced_motion);
+        apply(&mut a, GNOME, "overlay-scrolling", &false);
+        assert_eq!(a.overlay_scrolling, Some(false), "scrollbars always shown");
+        apply(&mut a, GNOME, "overlay-scrolling", &true);
+        assert_eq!(a.overlay_scrolling, Some(true));
         apply(&mut a, GNOME, "text-scaling-factor", &1.25f64);
         assert_eq!(a.text_scale, Some(1.25), "Large Text");
         apply(&mut a, KDE, "WheelScrollLines", &"5".to_string());

@@ -8,8 +8,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// Whether the system draws overlay scrollbars: macOS's "Show scroll bars"
 /// (automatic follows the pointing device: a trackpad's overlay, a mouse's
 /// legacy); Windows' "Always show scrollbars" off (Accessibility, Visual
-/// effects; Windows 10 2004 on). `None` where zgx does not read it, and
-/// scrollbars always show.
+/// effects; Windows 10 2004 on); GNOME's `overlay-scrolling` through the
+/// settings portal, and on X11 the session's XSETTINGS
+/// `Gtk/OverlayScrolling` ahead of it, as GTK takes it there. `None` where
+/// zgx does not read it (KDE, whose Breeze has none), and scrollbars always
+/// show.
 fn overlay() -> Option<bool> {
     #[cfg(target_os = "macos")]
     {
@@ -24,7 +27,13 @@ fn overlay() -> Option<bool> {
             .and_then(|settings| settings.AutoHideScrollBars())
             .ok()
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::x11_settings::current()
+            .overlay_scrolling
+            .or(crate::linux_appearance::current().overlay_scrolling)
+    }
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     {
         None
     }

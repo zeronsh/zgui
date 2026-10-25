@@ -4627,6 +4627,7 @@ impl WindowManager {
             Event::AppearanceChanged => {
                 for host in self.hosts.values_mut() {
                     crate::system_colors::sync(&host.context.ui);
+                    crate::scrollers::sync(&host.context.ui);
                     // The desktop's window buttons may have moved.
                     #[cfg(target_os = "linux")]
                     if let Some(caption) = &mut host.caption {
