@@ -308,7 +308,9 @@ fn shading(quad: &Quad, scale: f32) -> Shading {
 /// need the full shader there.
 struct QuadPipelines {
     device: wgpu::Device,
-    shader: wgpu::ShaderModule,
+    /// Their module (draw.wgsl), made with the first pipeline: a window
+    /// whose frames Metal encodes directly (metal_frame.rs) needs none.
+    shader: std::cell::OnceCell<wgpu::ShaderModule>,
     layout: wgpu::PipelineLayout,
     full: std::cell::OnceCell<wgpu::RenderPipeline>,
     full_clear: std::cell::OnceCell<wgpu::RenderPipeline>,
@@ -339,7 +341,23 @@ impl QuadPipelines {
             Shading::Polyline => return &self.polylines().pipeline,
         };
         cell.get_or_init(|| {
-            quad_pipeline(&self.device, &self.shader, &self.layout, blend, None, basic)
+            quad_pipeline(
+                &self.device,
+                self.shader(),
+                &self.layout,
+                blend,
+                None,
+                basic,
+            )
+        })
+    }
+    fn shader(&self) -> &wgpu::ShaderModule {
+        self.shader.get_or_init(|| {
+            self.device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("quads"),
+                    source: wgpu::ShaderSource::Wgsl(include_str!("draw.wgsl").into()),
+                })
         })
     }
     fn polylines(&self) -> &Polylines {
@@ -386,7 +404,14 @@ impl QuadPipelines {
             self.get(Shading::Opaque)
         } else {
             self.full_clear.get_or_init(|| {
-                quad_pipeline(&self.device, &self.shader, &self.layout, false, None, false)
+                quad_pipeline(
+                    &self.device,
+                    self.shader(),
+                    &self.layout,
+                    false,
+                    None,
+                    false,
+                )
             })
         }
     }
@@ -1445,7 +1470,6 @@ struct Prepared {
     fonts: FontSystem,
     texture_layout: wgpu::BindGroupLayout,
     viewport_layout: wgpu::BindGroupLayout,
-    quad_shader: wgpu::ShaderModule,
     quad_layout: wgpu::PipelineLayout,
     mapped_uploads: bool,
 }
@@ -1489,7 +1513,6 @@ struct GpuContextInner {
     /// Vertex and small uniform uploads are CPU-mapped instead of copied.
     mapped_uploads: bool,
     /// For dual-output (single-pass presentation) pipelines.
-    quad_shader: wgpu::ShaderModule,
     quad_layout: wgpu::PipelineLayout,
 }
 impl GpuContext {
@@ -1684,8 +1707,7 @@ impl GpuContext {
                 eprintln!("zgx: GPU error: {error}");
             }));
         }
-        let (texture_layout, viewport_layout, quad_shader, quad_layout) =
-            create_quad_pipelines(&device);
+        let (texture_layout, viewport_layout, quad_layout) = create_quad_pipelines(&device);
         zgx::profile::mark("GPU device and pipelines");
         let fonts = font_cache::system_fonts();
         zgx::profile::mark("system fonts");
@@ -1699,7 +1721,6 @@ impl GpuContext {
             fonts,
             texture_layout,
             viewport_layout,
-            quad_shader,
             quad_layout,
             mapped_uploads,
         })
@@ -1716,13 +1737,12 @@ impl GpuContext {
             fonts,
             texture_layout,
             viewport_layout,
-            quad_shader,
             quad_layout,
             mapped_uploads,
         } = prepared;
         let quads = QuadPipelines {
             device: device.clone(),
-            shader: quad_shader.clone(),
+            shader: Default::default(),
             layout: quad_layout.clone(),
             full: Default::default(),
             full_clear: Default::default(),
@@ -1745,7 +1765,6 @@ impl GpuContext {
                 quads,
                 texture_layout,
                 viewport_layout,
-                quad_shader,
                 quad_layout,
                 mapped_uploads,
             }),
@@ -5514,7 +5533,7 @@ impl GpuRenderer {
             let both = |blend, basic| {
                 quad_pipeline(
                     &self.device,
-                    &inner.quad_shader,
+                    inner.quads.shader(),
                     &inner.quad_layout,
                     blend,
                     Some(format),
@@ -5524,7 +5543,7 @@ impl GpuRenderer {
             let direct = |blend, basic| {
                 drawable_pipeline(
                     &self.device,
-                    &inner.quad_shader,
+                    inner.quads.shader(),
                     &inner.quad_layout,
                     blend,
                     format,
@@ -8846,13 +8865,8 @@ fn create_quad_pipelines(
 ) -> (
     wgpu::BindGroupLayout,
     wgpu::BindGroupLayout,
-    wgpu::ShaderModule,
     wgpu::PipelineLayout,
 ) {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("quads"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("draw.wgsl").into()),
-    });
     let group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("quads"),
         entries: &[
@@ -8905,7 +8919,7 @@ fn create_quad_pipelines(
         bind_group_layouts: &[Some(&group_layout), Some(&viewport_layout)],
         immediate_size: 0,
     });
-    (group_layout, viewport_layout, shader, layout)
+    (group_layout, viewport_layout, layout)
 }
 
 impl surface::SurfaceSource for GpuRenderer {
