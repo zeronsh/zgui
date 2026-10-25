@@ -12,7 +12,8 @@
 # 2. Every published workspace crate is packaged and built from its package
 #    (`cargo publish --workspace --dry-run`), in dependency order. That
 #    build leaves out the workspace's `[patch.crates-io]`: winit, wgpu-hal
-#    and the AccessKit adapters come from crates.io, as an app depending on
+#    and AccessKit's consumer and adapters come from crates.io (their
+#    `links` fallbacks built), as an app depending on
 #    zgx gets them, so what only builds with a vendored patch fails here
 #    (its fallbacks are what is built). The forks, not on crates.io until
 #    the release publishes them first, are given from vendor/ as `[patch]`

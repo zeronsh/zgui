@@ -43,6 +43,7 @@ func node(_ element: AXUIElement) -> [String: Any] {
     for (key, name) in names {
         if let text = string(attribute(element, name)), !text.isEmpty { out[key] = text }
     }
+    if string(attribute(element, "AXInvalid")) == "true" { out["invalid"] = true }
     if let selected = attribute(element, kAXSelectedAttribute) as? Bool { out["selected"] = selected }
     if let enabled = attribute(element, kAXEnabledAttribute) as? Bool, !enabled { out["disabled"] = true }
     if let rows = attribute(element, kAXRowsAttribute) as? [AXUIElement] { out["rows"] = rows.count }

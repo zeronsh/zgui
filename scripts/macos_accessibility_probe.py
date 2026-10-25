@@ -9,7 +9,8 @@ reads each window's accessibility tree through the AX API
 on a desktop in use. Checks that grids give VoiceOver their rows (its table
 navigation), that charts drawn on canvases are images named by what they
 show, that a group of chips is a radio group saying which is chosen, and
-that a list's options are named, selectable and pressable. Needs this
+that a list's options are named, selectable and pressable, and that an
+invalid form field says so and why (scripts/macos_ax_form). Needs this
 terminal to be allowed to control the computer (System Settings, Privacy &
 Security, Accessibility); exits 2 if it is not. macOS only.
 """
@@ -105,6 +106,18 @@ def main():
     check(instruments.get('rows', 0) >= 5 and bool(options), "the instruments are rows named with their sparkline's trend")
     check(bool(options) and 'selected' in options[0] and 'AXPress' in options[0].get('actions', []),
           'an instrument says whether it is selected and can be pressed')
+
+    # A form field wrong: VoiceOver hears it invalid (AXInvalid), and why
+    # after its description (AXHelp), from the text showing it or, with none,
+    # from the field's own error.
+    form = read_tree(reader, ROOT / 'scripts/macos_ax_form', lambda t: named(t, 'AXTextField', 'Email'))
+    email = named(form, 'AXTextField', 'Email')[0]
+    check(email.get('invalid') is True, 'an invalid field says so (AXInvalid)')
+    check('That is not an email address' in email.get('help', ''),
+          f"its error message is read with it (AXHelp {email.get('help')!r})")
+    name = named(form, 'AXTextField', 'Name')
+    check(bool(name) and name[0].get('invalid') is True and 'A name is required' in name[0].get('help', ''),
+          'a field whose error shows nowhere says it too')
 
     if failures:
         sys.exit(f'{len(failures)} failed')
