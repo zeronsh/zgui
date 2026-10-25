@@ -271,7 +271,7 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
 /// The family of a Pango font description (`"Cantarell 11"`, `"Ubuntu Sans
 /// Bold Italic 10"`, `"Noto Sans, Cantarell 11"`): the first of its list,
 /// without the style words and size after it.
-fn pango_family(description: &str) -> Option<String> {
+pub(crate) fn pango_family(description: &str) -> Option<String> {
     const STYLES: &[&str] = &[
         "normal",
         "roman",

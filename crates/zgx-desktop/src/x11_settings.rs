@@ -24,7 +24,7 @@ pub(crate) fn enable() {
 }
 
 /// The settings zgx takes from XSETTINGS.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Settings {
     /// `Net/DoubleClickTime`, in milliseconds.
     pub double_click: Option<u32>,
@@ -39,6 +39,9 @@ pub(crate) struct Settings {
     /// `Gtk/EnablePrimaryPaste`: whether a middle click pastes the primary
     /// selection.
     pub primary_paste: Option<bool>,
+    /// The family of `Gtk/FontName`, the interface font (a Pango
+    /// description, `"Noto Sans 10"`).
+    pub font: Option<String>,
 }
 
 /// The settings the session's manager publishes now: none off X11, or with
@@ -155,8 +158,16 @@ fn parse(data: &[u8]) -> Settings {
                 let Some(text) = data.get(at + 4..at + 4 + length as usize) else {
                     break;
                 };
-                if name == b"Net/ThemeName" {
-                    settings.dark_theme = Some(text.to_ascii_lowercase().ends_with(b"-dark"));
+                match name {
+                    b"Net/ThemeName" => {
+                        settings.dark_theme = Some(text.to_ascii_lowercase().ends_with(b"-dark"))
+                    }
+                    b"Gtk/FontName" => {
+                        settings.font = std::str::from_utf8(text)
+                            .ok()
+                            .and_then(crate::linux_appearance::pango_family)
+                    }
+                    _ => {}
                 }
                 at += 4 + padded(length as usize);
             }
@@ -228,6 +239,7 @@ mod tests {
                 &[
                     ("Net/ThemeName", Value::Str("Greybird-Dark")),
                     ("Gtk/ColorPalette", Value::Color),
+                    ("Gtk/FontName", Value::Str("Noto Sans Bold 10")),
                     ("Net/DoubleClickTime", Value::Int(650)),
                     ("Xft/DPI", Value::Int(98_304)),
                     ("Net/DndDragThreshold", Value::Int(14)),
@@ -243,6 +255,7 @@ mod tests {
                     overlay_scrolling: Some(false),
                     dark_theme: Some(true),
                     primary_paste: Some(false),
+                    font: Some("Noto Sans".into()),
                 },
                 "big endian: {big}"
             );

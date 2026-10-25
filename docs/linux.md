@@ -38,12 +38,16 @@ Text in the theme's generic family (`sans-serif`, which the default themes
 use, and `system-ui`) takes the desktop's interface face, as GTK and Qt apps
 do: GNOME's `font-name` (`Cantarell 11`, `Adwaita Sans 11`) or KDE's `font`,
 read through the settings portal before the first window and given to the
-renderer (`zgx_gpu::set_desktop_sans_serif`); a family the system lacks is
-passed over. Without one, cosmic-text's default stands (Open Sans, else its
+renderer (`zgx_gpu::set_desktop_sans_serif`); on X11 the session's XSETTINGS
+`Gtk/FontName` comes first, as GTK takes it there (XFCE's interface font),
+read as the first window is made, before its renderer loads the fonts. A
+family the system lacks is passed over. Without one, cosmic-text's default stands (Open Sans, else its
 fallback list). A theme or view naming a family keeps it. The size in
 `font-name` is not taken; GNOME's text scaling factor is (`text_scale`).
 `desktop_font_smoke.py` renders the gallery under "DejaVu Sans 11" and
-"DejaVu Serif 11" from a stand-in portal and finds the text changed.
+"DejaVu Serif 11" from a stand-in portal and finds the text changed, then
+under the portal's sans with xsettingsd's `Gtk/FontName` "DejaVu Serif 11",
+and finds the serif window.
 ## New windows fit the screen
 
 A window manager shows a new window as large as it asks, past the screen's

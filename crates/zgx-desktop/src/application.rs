@@ -2289,6 +2289,11 @@ impl Host {
         #[cfg(target_os = "linux")]
         if self.x11 {
             crate::x11_settings::enable();
+            // The session's interface font (XFCE's), ahead of the portal's,
+            // as GTK takes it on X11: before the renderer loads the fonts.
+            if let Some(family) = crate::x11_settings::current().font {
+                zgx_gpu::set_desktop_sans_serif(Some(family));
+            }
         }
         // X11 drag previews show in windows of their own too, moved by the
         // server as the pointer moves (`PopupHost::follow`).

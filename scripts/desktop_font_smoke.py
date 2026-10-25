@@ -3,7 +3,10 @@
 private session bus gives GNOME's `font-name`, and the gallery's text (the
 theme's generic sans-serif) takes it, as GTK apps do. Run once with
 "DejaVu Sans 11" and once with "DejaVu Serif 11": the window's text must
-differ, the rest of it not."""
+differ, the rest of it not. On X11 the session's XSETTINGS `Gtk/FontName`
+comes first, as GTK takes it there (XFCE's interface font): with the portal
+giving "DejaVu Sans 11" and xsettingsd "DejaVu Serif 11", the window is the
+serif one."""
 import argparse
 import json
 import os
@@ -51,9 +54,9 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     from PIL import Image, ImageChops
 
-    def shot(font):
+    def shot(font, xsettings=None):
         processes = []
-        name = font.split()[1].lower()
+        name = font.split()[1].lower() + ("-xsettings" if xsettings else "")
 
         def launch(label, command, env, **options):
             log = (args.output / f"{name}-{label}.log").open("w")
@@ -82,6 +85,16 @@ def main():
                 env["DISPLAY"] = ":" + xvfb.stdout.readline().strip()
                 launch("openbox", ["openbox"], env)
                 wait_for_wm(env)
+                if xsettings:
+                    config = args.output / f"{name}-xsettingsd.conf"
+                    config.write_text(f'Gtk/FontName "{xsettings}"\n')
+                    launch("xsettingsd", ["xsettingsd", "-c", str(config)], env)
+                    daemon_log = args.output / f"{name}-xsettingsd.log"
+                    deadline = time.monotonic() + 10
+                    while "Took ownership" not in daemon_log.read_text():
+                        if time.monotonic() > deadline:
+                            raise RuntimeError("xsettingsd took no selection")
+                        time.sleep(.05)
                 app = launch("application", [str(args.binary.resolve())], env)
                 deadline = time.monotonic() + 20
                 while True:
@@ -108,7 +121,13 @@ def main():
     result = {"result": "pass" if changed else "fail", "changed_box": changed, "changed_pixels": pixels}
     (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     assert changed, "the portal's font-name changed nothing"
-    print(f"PASS: the desktop's font reaches sans-serif text ({pixels} pixels differ)")
+    x11 = shot("DejaVu Sans 11", xsettings="DejaVu Serif 11")
+    differ = lambda a, b: sum(1 for p in ImageChops.difference(a, b).getdata() if p != (0, 0, 0))
+    result["xsettings over the portal: pixels unlike serif, unlike sans"] = [differ(x11, serif), differ(x11, sans)]
+    (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    assert differ(x11, serif) * 10 < differ(x11, sans), result
+    print(f"PASS: the desktop's font reaches sans-serif text ({pixels} pixels differ), "
+          "and on X11 XSETTINGS' Gtk/FontName over the portal's")
 
 
 if __name__ == "__main__":
