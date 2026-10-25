@@ -189,7 +189,7 @@ fn button(bench: &Bench, label: &str) -> Rect {
 fn mail(make: MakeDrawing) {
     let mut b = Bench::new("mail", (1180., 760.), &[], make);
     b.measure("mail: open a message", |b, k| {
-        b.app.click(&format!("row-{}", k % 2 + 1));
+        b.app.click_row("messages", k % 2 + 1);
     });
     b.measure("mail: search keystroke", |b, k| {
         if k % 2 == 0 {
@@ -198,7 +198,7 @@ fn mail(make: MakeDrawing) {
             b.app.key(Key::Backspace);
         }
     });
-    b.app.click("row-1");
+    b.app.click_row("messages", 1);
     b.frames(30);
     b.measure("mail: archive", |b, _| {
         let archive = button(b, "Archive");

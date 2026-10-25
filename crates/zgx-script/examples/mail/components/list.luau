@@ -9,12 +9,15 @@ local function row_height(): number
 	return if state.density:peek() == "compact" then 52 else 72
 end
 
-local function row(i: number): Node
+-- A row per message, keyed by its id: archiving one moves the rows after
+-- it up, as they are, rather than every row below showing the next message.
+local function row(id: number, _index: State<number>): Node
+	-- A message's id is its place in the messages: one item read.
 	local message = function(): state.Message?
-		return shown:get()[i]
+		return state.messages:at(id)
 	end
 	return ui.row {
-		id = `row-{i}`,
+		id = `message-{id}`,
 		ref = state.rows,
 		role = "option",
 		-- Read as one name, as a mail app's rows are: whether it is unread,
@@ -214,6 +217,9 @@ return function(): Node
 				return #shown:get()
 			end,
 			height = row_height(),
+			key = function(i: number): number
+				return shown:get()[i].id
+			end,
 			row = row,
 			offset = offset,
 			scrollbar = true,

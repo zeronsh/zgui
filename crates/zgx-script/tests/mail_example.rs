@@ -42,6 +42,12 @@ fn click_text(ui: &mut Ui, label: &str) {
     });
 }
 
+/// The message in row `n` of the list: the list's row holds it.
+fn message_row(h: &mut Harness, n: usize) -> zgx::scene::NodeId {
+    let row = h.row("messages", n);
+    h.ui.scene.borrow().children(row)[0]
+}
+
 fn texts(ui: &Ui) -> Vec<String> {
     let scene = ui.scene.borrow();
     scene
@@ -60,7 +66,7 @@ fn the_mail_example_opens_searches_composes_and_chooses_its_appearance() {
     let loaded = start.elapsed();
     assert!(loaded.as_secs_f64() < 2., "loads in {loaded:?}");
     // A row, then its message.
-    h.click("row-1");
+    h.click_row("messages", 1);
     h.frames(1);
     let first = h.text("subject");
     assert!(!first.is_empty(), "the message opens");
@@ -75,13 +81,7 @@ fn the_mail_example_opens_searches_composes_and_chooses_its_appearance() {
     // Searching narrows the list.
     h.type_text("search", "invoice");
     h.frames(1);
-    let shown: Vec<String> = (1..=3)
-        .filter_map(|i| {
-            h.find(&format!("row-{i}"))
-                .map(|_| h.text(&format!("row-{i}")))
-        })
-        .collect();
-    assert!(!shown.is_empty());
+    assert!(!h.row_text("messages", 1).is_empty());
     // ⌘N composes; the body is spellchecked (a password field is not).
     assert!(h.host.run_command("new"));
     h.frames(1);
@@ -127,7 +127,7 @@ fn narrower_windows_fold_the_mailboxes_then_show_one_pane() {
     click_text(&mut h.ui, "Inbox");
     h.frames(1);
     // The message pane is what is left, its text wrapped within it.
-    h.click("row-1");
+    h.click_row("messages", 1);
     h.frames(1);
     let subject = h.bounds("subject");
     assert!(subject.x + subject.width <= 800., "{subject:?}");
@@ -151,7 +151,7 @@ fn how_long_opening_a_message_takes() {
     h.frames(2);
     let start = Instant::now();
     for i in 0..10 {
-        h.click(&format!("row-{}", i % 2 + 1));
+        h.click_row("messages", i % 2 + 1);
         h.frames(1);
     }
     eprintln!("open: {:?} per message", start.elapsed() / 10);
@@ -176,7 +176,7 @@ fn focus_name(h: &Harness) -> String {
 fn the_keyboard_alone_reaches_every_part_once() {
     use zgx::input::Key;
     let mut h = mail(1180.);
-    h.click("row-1");
+    h.click_row("messages", 1);
     h.frames(1);
     h.ui.input.focus(&h.ui.scene, None);
     let mut stops = Vec::new();
@@ -250,7 +250,7 @@ fn the_keyboard_alone_reaches_every_part_once() {
 fn the_compose_sheet_holds_focus_until_escape_returns_it() {
     use zgx::input::Key;
     let mut h = mail(1180.);
-    h.click("row-1");
+    h.click_row("messages", 1);
     h.frames(1);
     let before = h.ui.input.focused();
     assert!(h.host.run_command("new"));
@@ -308,7 +308,7 @@ fn reading_a_message_costs_what_changed() {
             .unwrap_or(0)
     };
     let before = inbox(&mut h);
-    h.click("row-3");
+    h.click_row("messages", 3);
     h.frames(1);
     for _ in 0..6 {
         h.key(Key::ArrowDown);
@@ -356,7 +356,7 @@ fn what_an_action_did_is_said_in_a_live_status() {
         "New message from Grace Hopper: The nanosecond, again"
     );
     assert!(h.texts().contains(&"The nanosecond, again".to_owned()));
-    h.click("row-1");
+    h.click_row("messages", 1);
     h.frames(1);
     assert!(h.host.run_command("new"));
     h.frames(1);
@@ -366,14 +366,27 @@ fn what_an_action_did_is_said_in_a_live_status() {
 }
 
 #[test]
+fn another_message_shows_in_the_same_pane() {
+    let mut h = mail(1180.);
+    h.click_row("messages", 1);
+    h.frames(1);
+    let (pane, first) = (h.find("subject").unwrap(), h.text("subject"));
+    h.click_row("messages", 2);
+    h.frames(1);
+    // Its texts change in place: the same nodes, another message.
+    assert_eq!(h.find("subject"), Some(pane));
+    assert_ne!(h.text("subject"), first);
+}
+
+#[test]
 fn rows_have_one_name_and_the_body_is_a_document() {
     use zgx::semantics::Role;
     let mut h = mail(1180.);
-    let row = h.find("row-3").unwrap();
+    let row = message_row(&mut h, 3);
     let name = h.ui.semantics.borrow().get(row).unwrap().label.clone();
     assert!(name.starts_with("Unread, "), "{name}");
     assert!(!name.contains('●'), "{name}");
-    h.click("row-3");
+    h.click_row("messages", 3);
     h.frames(1);
     let name = h.ui.semantics.borrow().get(row).unwrap().label.clone();
     assert!(!name.starts_with("Unread"), "read now: {name}");
@@ -397,10 +410,11 @@ fn rows_have_one_name_and_the_body_is_a_document() {
 fn archiving_opens_the_next_message_and_focus_stays_in_the_list() {
     use zgx::semantics::Role;
     let mut h = mail(1180.);
-    h.click("row-2");
+    h.click_row("messages", 2);
     h.frames(1);
+    let below = h.row("messages", 3);
     let next = {
-        let row3 = h.find("row-3").unwrap();
+        let row3 = message_row(&mut h, 3);
         h.ui.semantics.borrow().get(row3).unwrap().label.clone()
     };
     let archived = h.text("subject");
@@ -431,6 +445,9 @@ fn archiving_opens_the_next_message_and_focus_stays_in_the_list() {
     let subject = h.text("subject");
     assert_ne!(subject, archived, "the next message opens");
     assert!(next.contains(&subject), "{next} / {subject}");
+    // The rows below moved up as they are: the next message's row is the
+    // one it had.
+    assert_eq!(h.row("messages", 2), below);
     // Focus is on the list's row for it, not the window.
     let focused = h.ui.input.focused().expect("focus stays in the content");
     let semantics = h.ui.semantics.borrow();

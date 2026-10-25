@@ -97,7 +97,7 @@ function M.move(id: number, mailbox: string)
 				local next = if place then list[place] else nil
 				if next then
 					M.open(next.id)
-					focus = place
+					focus = next.id
 				else
 					state.selected:set(nil)
 				end
@@ -105,13 +105,12 @@ function M.move(id: number, mailbox: string)
 			state.status:set(`Moved to {mailbox}`)
 		end)
 		-- Focus goes with it, to its row in the list, as a mail app's does
-		-- (not to the window). Rows are by position, so that row is mounted
-		-- and, the batch over, shows it; focusing it now, before the
-		-- toolbar that had focus leaves, keeps focus from moving on into
-		-- the next message's toolbar.
+		-- (not to the window). The batch over, its row has moved up into
+		-- the place; focusing it now, before the toolbar that had focus
+		-- leaves, keeps focus from moving on into the next message's toolbar.
 		if focus then
 			for _, row in state.rows:elements() do
-				if row.id == `row-{focus}` then
+				if row.id == `message-{focus}` then
 					row:focus()
 				end
 			end

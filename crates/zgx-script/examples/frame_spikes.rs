@@ -80,7 +80,7 @@ fn main() {
         let mut app = TestApp::new(|runtime| ScriptHost::new(runtime, MAIL).limits(limits));
         app.ui.scene.borrow_mut().resize(1180., 760.);
         app.frames(2);
-        app.click("row-1");
+        app.click_row("messages", 1);
         app.frames(1);
         scene("mail", app, frames, |app, frame| {
             if frame % 50 == 49 {
