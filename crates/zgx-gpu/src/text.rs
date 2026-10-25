@@ -1148,20 +1148,131 @@ pub fn rich_buffer(
         .filter(|i| *i >= start)
         .collect();
     boundaries.push(end);
-    let mut low = 0;
-    let mut high = boundaries.len();
-    while low < high {
-        let mid = low + (high - low) / 2;
-        let probe = make(fonts, boundaries[mid], true);
-        let fits = probe.layout_runs().count() <= limit
-            && width.is_none_or(|w| probe.layout_runs().all(|r| r.line_w <= w + 0.001));
-        if fits {
-            low = mid + 1;
-        } else {
-            high = mid;
+    let fits = |probe: &Buffer| {
+        probe.layout_runs().count() <= limit
+            && width.is_none_or(|w| probe.layout_runs().all(|r| r.line_w <= w + 0.001))
+    };
+    // The cut is the last boundary whose prefix and an ellipsis fit (the
+    // first that doesn't, less one). Searched from where the original's
+    // own glyphs put it, each probe shaping the text again: two, near
+    // always, where halving the row from the start took six or more for a
+    // long preview. Found where fitting only stops once, as a longer
+    // prefix does; past it, every boundary fits no more.
+    #[cfg(test)]
+    let halving = HALVING.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    let halving = false;
+    let guess = (|| {
+        if halving {
+            return None;
+        }
+        let last = limit.saturating_sub(1).min(rows.len().saturating_sub(1));
+        let row = original.layout_runs().nth(last);
+        let row = row.filter(|r| r.glyphs.iter().all(|g| g.level.is_ltr()))?;
+        let left = row.glyphs.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+        let room = width? - ellipsis_width(fonts, rich, end);
+        Some(
+            boundaries
+                .iter()
+                .take_while(|&&cut| {
+                    let cut = cut - offset;
+                    row.glyphs
+                        .iter()
+                        .filter(|g| g.end <= cut)
+                        .map(|g| g.x + g.w - left)
+                        .fold(0., f32::max)
+                        <= room
+                })
+                .count()
+                .saturating_sub(1),
+        )
+    })();
+    let Some(guess) = guess else {
+        let mut low = 0;
+        let mut high = boundaries.len();
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if fits(&make(fonts, boundaries[mid], true)) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        return make(fonts, boundaries[low.saturating_sub(1)], true);
+    };
+    // The last boundary known to fit (with its buffer) and the first known
+    // not to, galloping out from the guess, then halving between them.
+    let mut fit: Option<(usize, Buffer)> = None;
+    let mut unfit = boundaries.len();
+    let probe = |fonts: &mut FontSystem, at: usize, fit: &mut Option<(usize, Buffer)>| {
+        let buffer = make(fonts, boundaries[at], true);
+        let fitted = fits(&buffer);
+        if fitted {
+            *fit = Some((at, buffer));
+        }
+        fitted
+    };
+    if probe(fonts, guess, &mut fit) {
+        let mut step = 1;
+        while guess + step < unfit {
+            if probe(fonts, guess + step, &mut fit) {
+                step *= 2;
+            } else {
+                unfit = guess + step;
+                break;
+            }
+        }
+    } else {
+        unfit = guess;
+        let mut step = 1;
+        while unfit > 0 {
+            let at = unfit.saturating_sub(step);
+            if probe(fonts, at, &mut fit) {
+                break;
+            }
+            unfit = at;
+            step *= 2;
         }
     }
-    make(fonts, boundaries[low.saturating_sub(1)], true)
+    while let Some(low) = fit.as_ref().map(|(at, _)| *at)
+        && unfit - low > 1
+    {
+        let mid = low + (unfit - low) / 2;
+        if !probe(fonts, mid, &mut fit) {
+            unfit = mid;
+        }
+    }
+    match fit {
+        Some((_, buffer)) => buffer,
+        // None fits: the first, as halving from the start ends.
+        None => make(fonts, boundaries[0], true),
+    }
+}
+#[cfg(test)]
+thread_local! {
+    /// Truncation searched by halving the row from its start alone, as it
+    /// was before the guess (`rich_buffer`): what the guess must match.
+    static HALVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+/// The width of the ellipsis truncation appends to `rich` cut at `cut`, in
+/// the run there, as `rich_buffer` shapes it.
+fn ellipsis_width(fonts: &mut FontSystem, rich: &zgx::rich_text::RichText, cut: usize) -> f32 {
+    let Some(mut run) = rich
+        .runs()
+        .iter()
+        .take_while(|r| r.range.start < cut)
+        .last()
+        .or(rich.runs().first())
+        .cloned()
+    else {
+        return 0.;
+    };
+    run.range = 0.."…".len();
+    let ellipsis = zgx::rich_text::RichText::new("…", vec![run]).unwrap();
+    rich_buffer_raw(fonts, &ellipsis, None, None, false)
+        .layout_runs()
+        .map(|r| r.line_w)
+        .fold(0., f32::max)
 }
 /// Shape plain display text through the same overflow implementation as spans.
 pub fn display_buffer(
@@ -1355,6 +1466,88 @@ mod rich_tests {
                 .count()
                 > 2
         );
+    }
+    /// A clamped text is cut where halving its last row from the start
+    /// cut it: the same glyphs, in the same places, whatever its width,
+    /// clamp, script or runs (emoji, combining marks, a cut inside a
+    /// ligature, right-to-left text, sizes mixed in one row).
+    #[test]
+    fn a_clamped_text_is_cut_where_halving_the_row_cut_it() {
+        use zgx::text_layout::{TextOptions, TextOverflow};
+        type Glyphs = Vec<(usize, usize, u16, u32, u32, usize)>;
+        fn glyphs(buffer: &Buffer) -> (Vec<String>, Vec<(usize, u32, Glyphs)>) {
+            let lines = buffer.lines.iter().map(|l| l.text().to_owned()).collect();
+            let rows = buffer
+                .layout_runs()
+                .map(|row| {
+                    let glyphs = row
+                        .glyphs
+                        .iter()
+                        .map(|g| {
+                            (
+                                g.start,
+                                g.end,
+                                g.glyph_id,
+                                g.x.to_bits(),
+                                g.w.to_bits(),
+                                g.metadata,
+                            )
+                        })
+                        .collect();
+                    (row.line_i, row.line_w.to_bits(), glyphs)
+                })
+                .collect();
+            (lines, rows)
+        }
+        let texts = [
+            "alpha βeta 👩‍💻 words continue across several wrapped lines of text",
+            "The office file affinity of fluffy waffles flies off the shelf ffi ffl",
+            "e\u{301}cole cafe\u{301} na\u{ef}ve re\u{301}sume\u{301} a\u{308}\u{301}b combining marks over and over",
+            "👍🏽 family 👨‍👩‍👧‍👦 flags 🇫🇷🇯🇵 keycaps 1️⃣ 2️⃣ and then more words",
+            "שלום עולם and some mixed ascii text after the hebrew words",
+            "a short one",
+        ];
+        for mut fonts in [bundled_test_fonts(), FontSystem::new()] {
+            for text in texts {
+                let split = text.char_indices().nth(text.chars().count() / 3).unwrap().0;
+                let one = vec![TextRun {
+                    range: 0..text.len(),
+                    font_size: 16.,
+                    ..Default::default()
+                }];
+                let mixed = vec![
+                    TextRun {
+                        range: 0..split,
+                        font_size: 14.,
+                        ..Default::default()
+                    },
+                    TextRun {
+                        range: split..text.len(),
+                        font_size: 22.,
+                        ..Default::default()
+                    },
+                ];
+                for runs in [one, mixed] {
+                    for clamp in [1, 2, 3] {
+                        let rich =
+                            RichText::new(text, runs.clone())
+                                .unwrap()
+                                .with_options(TextOptions {
+                                    overflow: TextOverflow::Ellipsis,
+                                    line_clamp: std::num::NonZeroU32::new(clamp),
+                                });
+                        for width in (24..400).step_by(7) {
+                            let width = Some(width as f32 + 0.37);
+                            HALVING.with(|h| h.set(true));
+                            let halved = glyphs(&rich_buffer(&mut fonts, &rich, width, None));
+                            HALVING.with(|h| h.set(false));
+                            let guessed = glyphs(&rich_buffer(&mut fonts, &rich, width, None));
+                            assert_eq!(guessed, halved, "{text:?} clamped to {clamp} at {width:?}");
+                        }
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn bundled_font_registration_and_alignment_use_real_native_geometry() {
