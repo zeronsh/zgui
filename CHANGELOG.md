@@ -2,6 +2,13 @@
 
 zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps, newest first.
 
+## Unreleased
+
+### Changed
+
+**Rich text shrinks no further than its longest word**, as plain text and CSS's `min-width: auto` do: a `rich_text` (`ui.rich`) squeezed in a row narrowed to a single glyph's width before, one glyph a line.
+- *Migrate:* where a paragraph should break inside its words to fit a narrow row, state `.min_w(0.)` (`min_w = 0`).
+
 ## 0.1.0 (2026-10-25)
 
 <!-- rename-to-zgx: off (the old names, on purpose) -->

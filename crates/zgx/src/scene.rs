@@ -1335,6 +1335,42 @@ fn min_content_lines(text: &str) -> String {
     }
     lines
 }
+/// `rich` as `min_content_lines` breaks plain text, each run over its
+/// part of every line, a line's break in its last run.
+fn min_content_rich(rich: &crate::rich_text::RichText) -> crate::rich_text::RichText {
+    let text = rich.text();
+    let mut lines = String::with_capacity(text.len() + 16);
+    let mut runs: Vec<crate::rich_text::TextRun> = Vec::with_capacity(rich.runs().len() + 4);
+    let mut start = 0;
+    for (end, _) in unicode_linebreak::linebreaks(text) {
+        if start > 0 {
+            lines.push('\n');
+            match runs.last_mut() {
+                Some(run) => run.range.end = lines.len(),
+                None => runs.extend(rich.runs().first().cloned().map(|mut run| {
+                    run.range = 0..lines.len();
+                    run
+                })),
+            }
+        }
+        let line = text[start..end].trim_end();
+        let (from, at) = (start, lines.len());
+        lines.push_str(line);
+        for run in rich.runs() {
+            let (a, b) = (
+                run.range.start.max(from),
+                run.range.end.min(from + line.len()),
+            );
+            if a < b {
+                let mut part = run.clone();
+                part.range = at + (a - from)..at + (b - from);
+                runs.push(part);
+            }
+        }
+        start = end;
+    }
+    crate::rich_text::RichText::new(lines, runs).unwrap_or_else(|_| rich.clone())
+}
 /// `Node::reads`: known, reads the available width, the height; has a
 /// width or height percentage in its subtree; resolves its own against the
 /// width or height basis its parent passes (`Scene::percent_bases`).
@@ -5592,7 +5628,14 @@ impl Scene {
                 if let Some(size) = self.node(id).text_size.get().find(limit, revision) {
                     size
                 } else {
-                    let size = self.rich_measurer.measure_mounted(text, limit);
+                    let size = if limit == Some(0.) && text.options() == Default::default() {
+                        // A min-content probe, as plain text's: lines
+                        // break at every opportunity, never inside a word.
+                        self.rich_measurer
+                            .measure_mounted(&min_content_rich(text), None)
+                    } else {
+                        self.rich_measurer.measure_mounted(text, limit)
+                    };
                     TextSizes::remember(&self.node(id).text_size, limit, revision, size);
                     size
                 }
