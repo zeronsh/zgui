@@ -141,6 +141,38 @@ fn natural_height_changes_include_padding_and_margins_and_preserve_anchor() {
 }
 
 #[test]
+fn rows_measured_above_the_view_grow_above_what_is_in_view() {
+    let mut ui = Ui::new(240., 140.);
+    // Fifty-point rows, estimated at twenty: the first fifty rows' estimates
+    // reach 1000, where row 50 starts.
+    let offset = ui.signal(1000.);
+    let heights = VariableHeights::new(&ui.runtime, 100, 20.);
+    let view = ui.mount(
+        measured_virtual_list(
+            offset.clone(),
+            heights.clone(),
+            0,
+            |index| index,
+            |_, index, _| div().h(50.).id(format!("row-{index}")),
+        )
+        .size(200., 100.),
+    );
+    ui.try_prepare_frame().unwrap();
+    let shown = row(&ui, view.find("row-50").unwrap());
+    assert_eq!(ui.scene.borrow().bounds(shown).y, 0.);
+    // Up by 30: rows 48 and 49 come into view as estimates and measure 50
+    // each; row 50 moves down by the 30 alone.
+    offset.set(970.);
+    ui.try_prepare_frame().unwrap();
+    assert_eq!(heights.row_height(49), Some(50.));
+    assert_eq!(ui.scene.borrow().bounds(shown).y, 30.);
+    assert_eq!(offset.get(), 1030.);
+    ui.scene.borrow_mut().flush();
+    ui.try_prepare_frame().unwrap();
+    assert_eq!(ui.scene.borrow().bounds(shown).y, 30.);
+}
+
+#[test]
 fn wrapped_text_remeasures_visible_width_and_offscreen_rows_on_remount() {
     let mut ui = Ui::new(240., 140.);
     ui.scene

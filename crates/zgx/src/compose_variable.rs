@@ -103,6 +103,8 @@ struct Anchor {
     length: usize,
     position: f32,
     index: usize,
+    /// How far the view's top is below the anchor row's (negative when
+    /// the row starts lower, in view).
     within: f32,
     at_end: bool,
 }
@@ -162,16 +164,19 @@ pub fn measured_rows<K: Eq + std::hash::Hash + Clone + 'static>(
     mut build: impl FnMut(Signal<usize>, K, &mut Context) -> View + 'static,
 ) -> View {
     component(move |cx| {
-        // The keys `heights` describes, in order.
+        // The keys `heights` describes, in order, and where each is: kept
+        // with them, as a slice of estimates can't afford to index them all.
         let described: Rc<RefCell<Vec<K>>> = Rc::default();
+        let positions: Rc<RefCell<HashMap<K, usize>>> = Rc::default();
         // Keys still at the default height, awaiting their estimate.
         let pending: Rc<RefCell<Vec<K>>> = Rc::default();
         let estimate = Rc::new(RefCell::new(estimate));
         // Estimate pending rows, newest first, while `slice` allows.
         let refine = {
-            let (heights, described, pending, estimate) = (
+            let (heights, described, positions, pending, estimate) = (
                 heights.clone(),
                 described.clone(),
+                positions.clone(),
                 pending.clone(),
                 estimate.clone(),
             );
@@ -182,11 +187,7 @@ pub fn measured_rows<K: Eq + std::hash::Hash + Clone + 'static>(
                 let mut exact = Vec::new();
                 {
                     let described = described.borrow();
-                    let index: HashMap<&K, usize> = described
-                        .iter()
-                        .enumerate()
-                        .map(|(i, key)| (key, i))
-                        .collect();
+                    let index = positions.borrow();
                     let mut pending = pending.borrow_mut();
                     let mut estimate = estimate.borrow_mut();
                     while slice.is_none_or(|slice| started.elapsed() < slice)
@@ -237,8 +238,12 @@ pub fn measured_rows<K: Eq + std::hash::Hash + Clone + 'static>(
             }
         };
         {
-            let (heights, described, pending) =
-                (heights.clone(), described.clone(), pending.clone());
+            let (heights, described, positions, pending) = (
+                heights.clone(),
+                described.clone(),
+                positions.clone(),
+                pending.clone(),
+            );
             let runtime = cx.runtime();
             let effect = cx.runtime().effect(move || {
                 let current = rows();
@@ -263,6 +268,11 @@ pub fn measured_rows<K: Eq + std::hash::Hash + Clone + 'static>(
                         })
                         .collect();
                     heights.replace(rows).expect("finite heights");
+                    {
+                        let mut positions = positions.borrow_mut();
+                        positions.clear();
+                        positions.extend(current.iter().cloned().zip(0..));
+                    }
                     if !added.is_empty() {
                         pending.borrow_mut().extend(added);
                         schedule();
@@ -443,10 +453,11 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         // Clamp the final coordinate, too: adding a sub-height
                         // intra-row offset can round up to the following row.
                         let last = bottom.next_down().max(top);
-                        position = ((top as f64 + previous.within as f64).min(f32::MAX as f64)
-                            as f32)
-                            .min(last)
-                            .min(limit);
+                        position =
+                            ((top as f64 + previous.within as f64).clamp(0., f32::MAX as f64)
+                                as f32)
+                                .min(last)
+                                .min(limit);
                     }
                     let target = request
                         .filter(|(serial, _)| *serial != handled_request)
@@ -512,6 +523,31 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                 let unique: std::collections::HashSet<_> =
                     keys.iter().map(|(key, ..)| key).collect();
                 assert_eq!(unique.len(), keys.len(), "duplicate virtual list child key");
+                // Measured, anchor on the first row in view measured at this
+                // width: rows coming into view above it, estimates until
+                // measured, grow above it rather than push it down.
+                let next_anchor = next_anchor.map(|mut anchor| {
+                    let measured_row = |key: &K| {
+                        entries
+                            .get(key)
+                            .and_then(|entry| entry.measurement.as_ref())
+                            .is_some_and(|m| {
+                                m.with_untracked(|(w, h)| {
+                                    *w == width && width > 0. && h.is_finite()
+                                })
+                            })
+                    };
+                    if measured
+                        && let Some((_, index, top, _)) =
+                            keys.iter().find(|(key, _, top, row_height)| {
+                                top + row_height > anchor.position && measured_row(key)
+                            })
+                    {
+                        anchor.index = *index;
+                        anchor.within = anchor.position - top;
+                    }
+                    anchor
+                });
                 let Some(mut ui) = weak.upgrade() else {
                     return;
                 };
