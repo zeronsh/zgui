@@ -172,7 +172,7 @@ The session's `title` (what the program set), `pwd` (the shell's directory), `pr
 
 ### Drag and drop
 
-A node becomes a drag source with `on_drag = function() return payload end` (any plain value), dragged once the pointer moves 4 points; `drag_preview = function(payload) return node end` builds what follows the pointer, and `on_drag_end(payload, accepted)` reports how it ended. A destination takes `on_drop(payload, e)`, optionally `drop_when(payload)` to accept only some payloads, and `on_drag_over(payload, e)` / `on_drag_leave(payload)` to show where a drop would land; `e` is `{ x, y, local_x, local_y, w, h }`. The nearest accepting destination gets the drag. A node with `on_press` and `on_pointer_move` or `on_release` keeps the pointer from press to release, wherever it goes (a divider being dragged).
+A node becomes a drag source with `on_drag = function() return payload end` (any plain value), dragged once the pointer moves past the system's drag threshold (GNOME's and KDE's setting, GTK's 8 points on Linux without one, 4 elsewhere); `drag_preview = function(payload) return node end` builds what follows the pointer, and `on_drag_end(payload, accepted)` reports how it ended. A destination takes `on_drop(payload, e)`, optionally `drop_when(payload)` to accept only some payloads, and `on_drag_over(payload, e)` / `on_drag_leave(payload)` to show where a drop would land; `e` is `{ x, y, local_x, local_y, w, h }`. The nearest accepting destination gets the drag. A node with `on_press` and `on_pointer_move` or `on_release` keeps the pointer from press to release, wherever it goes (a divider being dragged).
 
 ### Context menus
 

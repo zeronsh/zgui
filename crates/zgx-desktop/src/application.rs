@@ -2632,8 +2632,8 @@ impl Host {
         }
         Ok(())
     }
-    /// The pointer moved, held, from a press in a `window_drag` region: 4
-    /// points away (as far as a drag starts), the window manager moves the
+    /// The pointer moved, held, from a press in a `window_drag` region: past
+    /// the drag threshold (as a drag starts), the window manager moves the
     /// window from here, holding the pointer until it is let go, so zgx's
     /// press ends now.
     #[cfg(target_os = "linux")]
@@ -2642,7 +2642,7 @@ impl Host {
             return;
         };
         let (dx, dy) = (self.cursor.0 - x, self.cursor.1 - y);
-        if dx * dx + dy * dy < 16. {
+        if dx.hypot(dy) <= self.context.ui.input.drag_threshold() {
             return;
         }
         self.title_press = None;

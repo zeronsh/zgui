@@ -43,7 +43,8 @@ impl View {
                     cx.capture_pointer();
                 }
                 InputEvent::PointerMove { x, y } => {
-                    if let Some((px, py)) = origin.filter(|(px, py)| (x - px).hypot(y - py) > 4.) {
+                    let far = cx.drag_threshold();
+                    if let Some((px, py)) = origin.filter(|(px, py)| (x - px).hypot(y - py) > far) {
                         origin = None;
                         cx.start_drag_from(payload(), px, py);
                     }

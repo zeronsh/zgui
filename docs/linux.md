@@ -27,8 +27,8 @@ settings portal (`appmenu:close` shows close alone, on the right;
 minimize, maximize and close on the right. Close asks the app's close policy,
 as the window manager's would. Mark the strip `View::window_drag` so it moves
 the window; a double click on it maximizes or restores. As GTK's and
-Chromium's, the move starts once the pointer, held, moves 4 points from the
-press: the window manager or compositor takes the pointer when asked to move
+Chromium's, the move starts once the pointer, held, moves past the drag
+threshold from the press: the window manager or compositor takes the pointer when asked to move
 the window, so a click (the first of a double click) stays a click.
 `window_buttons_smoke.py` checks it on X11: no frame, maximize and restore,
 a corner drag, a double click and a drag on the strip, minimize, and close.

@@ -89,6 +89,35 @@ fn typed_drop_preview_and_click_suppression() {
     assert!(view.is_mounted());
 }
 #[test]
+fn a_drag_starts_past_the_systems_drag_threshold() {
+    let mut ui = Ui::new(400., 200.);
+    let clicks = Rc::new(RefCell::new(0));
+    let clicked = clicks.clone();
+    ui.mount(
+        button()
+            .size(100., 80.)
+            .on_click(move || *clicked.borrow_mut() += 1)
+            .on_drag(|| Card(1)),
+    );
+    ui.prepare_frame();
+    // zgx's own: 4 points.
+    down(&ui, 20., 20.);
+    moved(&ui, 30., 20.);
+    assert!(ui.input.is_dragging());
+    up(&ui, 30., 20.);
+    // A desktop's, raised (GNOME's `drag-threshold`): 10 points is a click.
+    ui.input.set_drag_threshold(24.);
+    down(&ui, 20., 20.);
+    moved(&ui, 30., 20.);
+    assert!(!ui.input.is_dragging());
+    up(&ui, 30., 20.);
+    assert_eq!(*clicks.borrow(), 1);
+    down(&ui, 20., 20.);
+    moved(&ui, 50., 20.);
+    assert!(ui.input.is_dragging());
+    up(&ui, 50., 20.);
+}
+#[test]
 fn rejected_outside_and_escape_drags_end_without_drop() {
     let mut ui = Ui::new(400., 200.);
     let ends = Rc::new(RefCell::new(Vec::new()));

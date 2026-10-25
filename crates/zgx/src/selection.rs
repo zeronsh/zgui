@@ -458,7 +458,7 @@ pub(crate) fn mount_root(ui: &mut Ui, root: NodeId, mut style: SelectionStyle) {
                 let pending = ui.selection_state().borrow().pending;
                 if let Some(pending) = pending.filter(|p| p.root == root) {
                     let (dx, dy) = (x - pending.x, y - pending.y);
-                    if dx * dx + dy * dy <= 16. {
+                    if dx.hypot(dy) <= cx.drag_threshold() {
                         return;
                     }
                     ui.selection_state().borrow_mut().pending = None;

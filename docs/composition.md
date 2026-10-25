@@ -118,7 +118,7 @@ selection, or with an editor focused, those keys are left to the app.
 none`); an inner `.selectable(true)` is part of the outer region.
 
 Links and buttons inside still click; a drag that starts on one moves past
-four points, cancels its press and selects instead. Editors inside select
+the drag threshold, cancels its press and selects instead. Editors inside select
 their own text, and pressing one ends the region's selection, as does a press
 on anything that is not a control (buttons, links and menu items keep it, so
 a Copy button can copy it). A press that selects by dragging does not also

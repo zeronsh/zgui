@@ -474,7 +474,7 @@ pub(crate) fn mount_press(
                 // A click (no drag): it stays open to click in, though an
                 // item opened under the pointer (a pop-up button's,
                 // `open_over`), as AppKit's does.
-                let clicked = (x - px).hypot(y - py) <= 4.;
+                let clicked = (x - px).hypot(y - py) <= cx.drag_threshold();
                 if clicked {
                     return;
                 }
@@ -487,7 +487,7 @@ pub(crate) fn mount_press(
                     && y >= trigger.y
                     && x < trigger.x + trigger.width
                     && y < trigger.y + trigger.height;
-                if !on_trigger && (x - px).hypot(y - py) > 4. {
+                if !on_trigger {
                     close.set(false);
                 }
             }

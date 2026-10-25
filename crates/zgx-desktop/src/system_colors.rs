@@ -422,6 +422,10 @@ pub(crate) fn sync(ui: &zgx::widgets::Ui) {
     if let Some(interval) = double_click_time() {
         ui.input.set_double_click_time(interval);
     }
+    #[cfg(target_os = "linux")]
+    ui.input.set_drag_threshold(linux_drag_threshold(
+        crate::linux_appearance::current().drag_threshold,
+    ));
     #[cfg(windows)]
     ui.theme().set_system_text_scale(windows_text_scale());
     #[cfg(target_os = "linux")]
@@ -453,6 +457,13 @@ fn double_click_time() -> Option<std::time::Duration> {
     {
         None
     }
+}
+
+/// The desktop's drag threshold (GNOME's and KDE's), in the logical pixels
+/// GTK reads it in, zgx's points; GTK's own default, 8, where it gives none.
+#[cfg(target_os = "linux")]
+fn linux_drag_threshold(setting: Option<u32>) -> f32 {
+    setting.map_or(8., |pixels| pixels as f32)
 }
 
 /// Windows' "Text size" (Settings, Accessibility): 1 to 2.25, scaling text

@@ -57,6 +57,9 @@ pub(crate) struct Appearance {
     /// The double-click time in milliseconds (GNOME's `double-click`, KDE's
     /// `DoubleClickInterval`).
     pub double_click: Option<u32>,
+    /// How far the pointer moves from a press before it drags, in pixels
+    /// (GNOME's `drag-threshold`, 8 by default; KDE's `StartDragDist`, 10).
+    pub drag_threshold: Option<u32>,
 }
 
 static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
@@ -68,6 +71,7 @@ static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
     wheel_lines: None,
     buttons: None,
     double_click: None,
+    drag_threshold: None,
 });
 
 /// The settings as last read (the default until the portal answers).
@@ -160,6 +164,8 @@ fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
         (KDE_GENERAL, "font"),
         (GNOME_MOUSE, "double-click"),
         (KDE, "DoubleClickInterval"),
+        (GNOME_MOUSE, "drag-threshold"),
+        (KDE, "StartDragDist"),
     ] {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -223,6 +229,13 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
                 .or_else(|| value.as_str()?.trim().parse().ok())
                 .and_then(|ms| u32::try_from(ms).ok())
                 .filter(|&ms| ms > 0)
+        }
+        (GNOME_MOUSE, "drag-threshold") | (KDE, "StartDragDist") => {
+            appearance.drag_threshold = value
+                .as_i64()
+                .or_else(|| value.as_str()?.trim().parse().ok())
+                .and_then(|pixels| u32::try_from(pixels).ok())
+                .filter(|&pixels| pixels > 0)
         }
         (GNOME_WM, "button-layout") => {
             appearance.buttons = value
@@ -338,6 +351,10 @@ mod tests {
         assert_eq!(a.double_click, Some(700));
         apply(&mut a, KDE, "DoubleClickInterval", &"400".to_owned());
         assert_eq!(a.double_click, Some(400));
+        apply(&mut a, GNOME_MOUSE, "drag-threshold", &12i32);
+        assert_eq!(a.drag_threshold, Some(12));
+        apply(&mut a, KDE, "StartDragDist", &"20".to_owned());
+        assert_eq!(a.drag_threshold, Some(20), "as kdeglobals' text");
         apply(
             &mut a,
             GNOME_WM,

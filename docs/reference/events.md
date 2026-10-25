@@ -46,7 +46,7 @@ on_drop: ((payload: any, e: DragPoint) -> ())?
 | `on_mount` | its [element](#elements) | once, when it is mounted: start animations here |
 | `on_resize` | `{ w, h }`, its element | layout gives it a new size, and at its first layout (as a ResizeObserver reports) |
 | `on_visible` | whether any of it shows, its element | it comes into view or all of it leaves (inside every clip and scroll viewport above it), and at its first layout (as an IntersectionObserver reports): build what only matters on screen |
-| `on_drag` | nothing; returns the payload | the pointer moves 4 points from a press on it: a drag starts, carrying what it returns (any plain value) |
+| `on_drag` | nothing; returns the payload | the pointer moves past the system's drag threshold from a press on it (4 points until the desktop gives its own, GTK's 8 on Linux): a drag starts, carrying what it returns (any plain value) |
 | `drag_preview` | the payload; returns a node | what follows the pointer while it drags |
 | `on_drag_end` | the payload, whether it was dropped on a destination | the drag ends |
 | `drag_export` | the payload; returns `{ text, url, files }` | the drag leaves the window: other apps take what it returns (macOS) |

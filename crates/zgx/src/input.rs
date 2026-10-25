@@ -305,6 +305,7 @@ pub struct EventContext {
     capture: Option<Option<NodeId>>,
     pointer_modifiers: Modifiers,
     click_count: u8,
+    drag_threshold: f32,
     drag_request: Option<DragRequest>,
     drag_accepted: Option<NodeId>,
     /// What a starting drag carries to other apps (`set_drag_export`).
@@ -333,6 +334,7 @@ impl EventContext {
             capture: None,
             pointer_modifiers: Modifiers::default(),
             click_count: 0,
+            drag_threshold: DRAG_THRESHOLD,
             drag_request: None,
             drag_accepted: None,
             drag_export: None,
@@ -393,6 +395,11 @@ impl EventContext {
     /// Primary or other button press count (1–3); zero for non-press events.
     pub fn click_count(&self) -> u8 {
         self.click_count
+    }
+    /// How far, in points, the pointer moves from a press before it is a
+    /// drag rather than a click (`InputDispatcher::set_drag_threshold`).
+    pub fn drag_threshold(&self) -> f32 {
+        self.drag_threshold
     }
     /// A key event's physical key, as the DOM's `KeyboardEvent.code`
     /// (`"KeyA"`, `"Digit1"`, `"BracketLeft"`): the same key whatever the
@@ -535,6 +542,9 @@ struct ClickTracker(Option<Click>, Duration);
 /// Windows' and macOS's default double-click time, until the host gives the
 /// system's.
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+/// How far the pointer moves from a press before it is a drag, until the
+/// host gives the system's: Windows' default (`SM_CXDRAG`).
+const DRAG_THRESHOLD: f32 = 4.;
 impl Default for ClickTracker {
     fn default() -> Self {
         Self(None, DOUBLE_CLICK)
@@ -609,6 +619,8 @@ struct State {
     /// scope (`set_layer`).
     layers: Vec<NodeId>,
     clicks: ClickTracker,
+    /// The system's drag threshold, once the host gives it.
+    drag_threshold: Option<f32>,
     drag: Option<drag::DragSession>,
     /// Listeners of the drag's source removed while it went on (a drop that
     /// moves the dragged thing elsewhere): they still hear the drag end.
@@ -720,6 +732,21 @@ impl InputDispatcher {
     pub fn set_double_click_time(&self, interval: Duration) {
         self.state.borrow_mut().clicks.1 =
             interval.clamp(Duration::from_millis(100), Duration::from_secs(5));
+    }
+    /// How far, in points, the pointer moves from a press before it is a
+    /// drag rather than a click (`EventContext::drag_threshold`): the
+    /// system's, which the desktop host gives (GNOME's and KDE's setting),
+    /// and which people whose hands shake raise; 4 until it does. Held
+    /// between 1 and 100; NaN leaves it as it was.
+    pub fn set_drag_threshold(&self, points: f32) {
+        if points.is_nan() {
+            return;
+        }
+        self.state.borrow_mut().drag_threshold = Some(points.clamp(1., 100.));
+    }
+    /// The drag threshold in points (`set_drag_threshold`).
+    pub fn drag_threshold(&self) -> f32 {
+        self.state.borrow().drag_threshold.unwrap_or(DRAG_THRESHOLD)
     }
     /// A dispatcher with no listeners and nothing focused.
     pub fn new() -> Self {
@@ -1547,6 +1574,7 @@ impl InputDispatcher {
         let mut ctx = EventContext {
             pointer_modifiers,
             click_count,
+            drag_threshold: self.drag_threshold(),
             key_code,
             ..EventContext::new(event, target)
         };
