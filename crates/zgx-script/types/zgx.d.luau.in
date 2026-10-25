@@ -436,6 +436,9 @@ export type State<T> = {
 	-- One item of a list (from 1), tracked as `get` is, without the list
 	-- made into a table (a long list's rows, as a list shows them).
 	at: (self: State<T>, index: number) -> Item<T>?,
+	-- Where the first item whose `field` is `value` is (from 1), or nil:
+	-- `messages:index_of("id", 42)`, found without making the list a table.
+	index_of: (self: State<T>, field: string, value: any) -> number?,
 	-- Strings: where `query` is in the string held (tracked, as `get` is),
 	-- each match's first and last byte from 1 (as `string.find` gives them),
 	-- at most `limit`, and whether there were more. Read where the string is

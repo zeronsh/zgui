@@ -1993,7 +1993,25 @@ impl UserData for State {
             s.write(lua, Value::List(next.into()));
             Ok(removed)
         });
-        methods.add_method("len", |_, s, ()| Ok(s.0.with(|v| v.list().len())));
+        // Of a derived list (a sorted view) as it is now: brought up to date
+        // first, as `at` is, inside a batch that wrote what it derives from.
+        methods.add_method("len", |_, s, ()| Ok(s.fresh().with(|v| v.list().len())));
+        // Where the first item whose `field` is `value` is (from 1), or nil,
+        // tracked as `get` is: `messages:index_of("id", 42)`, found without
+        // making the list a table.
+        methods.add_method(
+            "index_of",
+            |_, s, (field, value): (mlua::LuaString, mlua::Value)| {
+                let value = convert(value, None)?;
+                let field = field.to_str()?;
+                Ok(s.fresh().with(|v| {
+                    v.list()
+                        .iter()
+                        .position(|item| item.field(&field) == Some(&value))
+                        .map(|i| i + 1)
+                }))
+            },
+        );
         // One item of a list (from 1), tracked as `get` is: read without
         // converting the list (a long one's rows, as a list shows them).
         methods.add_method("at", |_, s, index: usize| {

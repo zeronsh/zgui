@@ -214,11 +214,11 @@ return function(): Node
 			role = "listbox",
 			label = "Messages",
 			count = function()
-				return #shown:get()
+				return shown:len()
 			end,
 			height = row_height(),
 			key = function(i: number): number
-				return shown:get()[i].id
+				return (shown:at(i) :: state.Message).id
 			end,
 			row = row,
 			offset = offset,

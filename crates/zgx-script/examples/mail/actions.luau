@@ -1,13 +1,22 @@
 -- What the app does to its state: buttons, menus and keys call these.
 local state = require("./state")
-local visible = require("@lib/filter")
 
 local M = {}
 
--- The messages the list shows now: filtered once, for the list and for the
--- actions that move on to the next of them.
-M.shown = ui.computed(function(): { state.Message }
-	return visible(state.messages:get(), state.mailbox:get(), state.query:get())
+-- The messages the list shows now, newest first as stored, for the list
+-- and for the actions that move on to the next of them: kept in Rust as
+-- the messages change (an archive judges the one it wrote, not 4000). A
+-- search reads the subject and the sender, a test of its own.
+M.shown = ui.sorted(state.messages, function()
+	local mailbox, needle = state.mailbox:get(), string.lower(state.query:get())
+	local filter: any = if mailbox == "Starred" then { starred = true } else { mailbox = mailbox }
+	if needle ~= "" then
+		filter = function(m: state.Message): boolean
+			local here = if mailbox == "Starred" then m.starred else m.mailbox == mailbox
+			return here and string.find(string.lower(m.subject .. " " .. m.from), needle, 1, true) ~= nil
+		end
+	end
+	return { filter = filter }
 end)
 
 local function index_of(id: number): number?
@@ -64,22 +73,12 @@ function M.mark_unread(id: number)
 	end
 end
 
-local function shown(): { state.Message }
-	return M.shown:peek()
-end
-
 function M.move(id: number, mailbox: string)
 	local i = index_of(id)
 	if i then
 		-- Where it was in the list: the message after it takes its place,
 		-- and is the one open next, as a mail app moves on.
-		local at: number? = nil
-		for position, m in shown() do
-			if m.id == id then
-				at = position
-				break
-			end
-		end
+		local at = M.shown:index_of("id", id)
 		local focus: number? = nil
 		ui.batch(function()
 			-- Its unread count moves with it.
@@ -92,9 +91,8 @@ function M.move(id: number, mailbox: string)
 			end
 			state.messages:set_key({ i, "mailbox" }, mailbox)
 			if state.selected:peek() == id then
-				local list = shown()
-				local place = if at then math.min(at, #list) else nil
-				local next = if place then list[place] else nil
+				local place = if at then math.min(at, M.shown:len()) else nil
+				local next = if place then M.shown:at(place) :: state.Message? else nil
 				if next then
 					M.open(next.id)
 					focus = next.id

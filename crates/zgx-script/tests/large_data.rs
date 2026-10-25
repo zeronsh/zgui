@@ -494,3 +494,45 @@ fn ui_sorted_table_filters_keep_what_the_same_function_keeps() {
     assert_eq!(h.error(), None);
     assert_eq!(h.text("checks"), "done");
 }
+
+/// `index_of` finds an item by a field, tracked; a sorted view's `len`,
+/// `at` and `index_of` are its order now inside the batch that wrote what
+/// it sorts.
+#[test]
+fn index_of_finds_items_and_a_view_reads_as_written_within_a_batch() {
+    let mut h = Harness::inline(
+        r#"
+        local items = ui.state("items", {
+            { id = 1, box = "in" }, { id = 2, box = "in" }, { id = 3, box = "out" }, { id = 4, box = "in" },
+        })
+        local inbox = ui.sorted(items, { filter = { box = "in" } })
+        local seen = ui.state("seen", "")
+        local runs = ui.state("runs", 0)
+        ui.effect(function()
+            items:index_of("id", 3)
+            runs:set(runs:peek() + 1)
+        end)
+        ui.command { id = "run", run = function()
+            local out = {}
+            table.insert(out, tostring(items:index_of("id", 3)))
+            table.insert(out, tostring(items:index_of("id", 9)))
+            table.insert(out, tostring(inbox:index_of("id", 4)))
+            ui.batch(function()
+                items:set_key({ 2, "box" }, "out")
+                -- Within the batch: the view as written.
+                table.insert(out, tostring(inbox:len()))
+                table.insert(out, tostring(inbox:index_of("id", 4)))
+                table.insert(out, tostring((inbox:at(2) :: any).id))
+            end)
+            seen:set(table.concat(out, " "))
+        end }
+        return ui.text { id = "seen", function() return `{seen:get()} runs {runs:get()}` end }
+        "#,
+    );
+    assert_eq!(h.error(), None);
+    run(&mut h, "run");
+    assert_eq!(h.error(), None);
+    // Found, not found, in the view; then two in the view, the 4th second.
+    // The effect ran again once (its read follows the list's write).
+    assert_eq!(h.text("seen"), "3 nil 3 2 2 4 runs 2");
+}
