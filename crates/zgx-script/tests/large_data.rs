@@ -322,6 +322,25 @@ fn ui_sorted_keeps_the_order_ui_sort_gives_and_judges_only_written_rows() {
                 end
             end)
             check("filter changes")
+            -- One row written again and again in a batch: each write a new
+            -- table where the last one was.
+            ui.batch(function()
+                rows:set_key({ 3, "v" }, 1)
+                rows:set_key({ 3, "v" }, 499)
+                rows:set_key({ 3, "v" }, 2)
+            end)
+            check("one row written thrice")
+            -- Held by the script, the list is copied by the next write.
+            local held = rows:get()
+            rows:set_key({ 9, "v" }, 7)
+            check("written while held")
+            assert(#held == #rows:peek())
+            rows:remove(1)
+            check("removed")
+            local copy = table.clone(rows:peek())
+            copy[4] = { n = "swapped", v = 3, sector = 2 }
+            rows:set(copy)
+            check("set whole")
             only:set(-1)
             key:set("fn")
             check("by a function")

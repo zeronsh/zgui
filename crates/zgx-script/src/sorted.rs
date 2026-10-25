@@ -235,14 +235,21 @@ impl Spec {
     }
 }
 
-/// The view's work kept between runs: the list it last saw, each item's
+/// The view's work kept between runs: the items it last saw, each item's
 /// key and whether the filter keeps it, and the kept items' order.
 #[derive(Default)]
 struct Kept {
     /// `JUDGE_ALL`, made when first needed.
     judge_all: Option<Function>,
     spec: Option<Spec>,
-    items: Option<Rc<[Value]>>,
+    /// The items it last saw, each held (not the list holding them): the
+    /// list stays its state's alone, so a write to one row is made in place
+    /// rather than copying all of them, and an item written compares as
+    /// another (the one held keeps its place in memory).
+    items: Option<Vec<Value>>,
+    /// The list's version (`Signal::version`) when they were taken: the
+    /// same, nothing was written since (only the spec changed).
+    version: u64,
     keys: Vec<Key>,
     kept: Vec<bool>,
     order: Vec<u32>,
@@ -602,13 +609,10 @@ enum Change {
     Some(Vec<u32>),
     All,
 }
-fn change(was: Option<&Rc<[Value]>>, now: &Rc<[Value]>) -> Change {
+fn change(was: Option<&Vec<Value>>, now: &[Value]) -> Change {
     let Some(was) = was else {
         return Change::All;
     };
-    if Rc::ptr_eq(was, now) {
-        return Change::None;
-    }
     if now.len() < was.len() {
         return Change::All;
     }
@@ -617,6 +621,9 @@ fn change(was: Option<&Rc<[Value]>>, now: &Rc<[Value]>) -> Change {
         .map(|i| i as u32)
         .collect();
     changed.extend(was.len() as u32..now.len() as u32);
+    if changed.is_empty() {
+        return Change::None;
+    }
     // Most of it: sorting it all is as quick.
     if changed.len() > now.len() / 4 {
         return Change::All;
@@ -689,24 +696,63 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
             }
         };
         let same_spec = kept.spec.as_ref().is_some_and(|s| s.same(&spec));
-        let result = runtime.untracked(|| match change(kept.items.as_ref(), &items) {
-            Change::None if same_spec => Ok(false),
-            Change::Some(changed) if same_spec => {
-                kept.update(&vm, &spec, &items, &changed).map(|_| true)
-            }
-            _ => kept.rebuild(&vm, &spec, &items).map(|_| true),
+        // What to take again of the items held: none, those written, or all.
+        let version = source.version();
+        let written = kept.items.is_none() || kept.version != version;
+        kept.version = version;
+        let change = if written {
+            change(kept.items.as_ref(), &items)
+        } else {
+            Change::None
+        };
+        let result = runtime.untracked(|| match change {
+            Change::None if same_spec => Ok(None),
+            Change::Some(changed) if same_spec => kept
+                .update(&vm, &spec, &items, &changed)
+                .map(|_| Some((Some(changed), false))),
+            // A new spec over the same items (a sort, a filter): held as they are.
+            Change::None => kept
+                .rebuild(&vm, &spec, &items)
+                .map(|_| Some((Some(Vec::new()), true))),
+            _ => kept.rebuild(&vm, &spec, &items).map(|_| Some((None, true))),
         });
         match result {
-            Ok(false) => {}
-            Ok(true) => {
+            Ok(None) => {}
+            Ok(Some((changed, sorted_again))) => {
                 kept.spec = Some(spec);
-                let list: Rc<[Value]> = kept
-                    .order
-                    .iter()
-                    .map(|i| items[*i as usize].clone())
-                    .collect();
-                kept.items = Some(items);
-                signal.set(Value::List(list));
+                // The items held: the written ones taken again, or all.
+                match (&changed, kept.items.as_mut()) {
+                    (Some(changed), Some(held)) => {
+                        held.resize(items.len(), Value::Nil);
+                        for &i in changed {
+                            held[i as usize] = items[i as usize].clone();
+                        }
+                    }
+                    _ => kept.items = Some(items.to_vec()),
+                }
+                // The view written where it changed, in place while nothing
+                // else holds it: a few rows moving in 100,000 write those.
+                // Sorted again, most of it moves: made anew.
+                let order = &kept.order;
+                signal.mutate(|view| {
+                    if !sorted_again
+                        && let Value::List(list) = view
+                        && list.len() == order.len()
+                        && let Some(slots) = Rc::get_mut(list)
+                    {
+                        let mut any = false;
+                        for (slot, &i) in slots.iter_mut().zip(order) {
+                            let item = &items[i as usize];
+                            if !same_item(slot, item) {
+                                *slot = item.clone();
+                                any = true;
+                            }
+                        }
+                        return any;
+                    }
+                    *view = Value::List(order.iter().map(|i| items[*i as usize].clone()).collect());
+                    true
+                });
             }
             Err(e) => {
                 // Judged again in full next time.

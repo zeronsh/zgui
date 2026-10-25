@@ -623,7 +623,7 @@ impl<T: 'static> Signal<T> {
     }
     /// How many writes have changed it: the same number means the same
     /// value, so a reader that kept one need not compare it again.
-    pub(crate) fn version(&self) -> u64 {
+    pub fn version(&self) -> u64 {
         self.inner.version.get()
     }
     /// Subscribe the running effect, as a read does, without reading.
