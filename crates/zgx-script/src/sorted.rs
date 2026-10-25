@@ -847,6 +847,9 @@ fn radix_sort(words: &mut Vec<(u64, u32)>) {
         words.sort_by_key(|(word, _)| *word);
         return;
     }
+    if sort_few(words) {
+        return;
+    }
     let mut counts = vec![[0u32; SIZE]; DIGITS];
     for &(word, _) in words.iter() {
         for (digit, counts) in counts.iter_mut().enumerate() {
@@ -870,6 +873,56 @@ fn radix_sort(words: &mut Vec<(u64, u32)>) {
         }
         std::mem::swap(words, &mut scratch);
     }
+}
+
+/// `words` sorted, stably, when they hold at most `FEW` distinct words (a
+/// column of few values: a sector, a flag, a small number): each counted in
+/// a small table, the distinct ones sorted, and every word put by its rank
+/// in one more read, rather than a pass for each digit the words differ in
+/// (a few strings' first 8 bytes differ in all six). False, untouched, as
+/// soon as more turn up (most columns, within their first few rows).
+fn sort_few(words: &mut Vec<(u64, u32)>) -> bool {
+    const FEW: usize = 64;
+    const SLOTS: usize = 256;
+    let slot_of = |word: u64| (word.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 56) as usize;
+    // Each slot's word and how many hold it (0: empty).
+    let mut slots = [(0u64, 0u32); SLOTS];
+    let mut distinct = 0;
+    let find = |slots: &[(u64, u32); SLOTS], word: u64| {
+        let mut at = slot_of(word);
+        while slots[at].1 != 0 && slots[at].0 != word {
+            at = (at + 1) & (SLOTS - 1);
+        }
+        at
+    };
+    for &(word, _) in words.iter() {
+        let at = find(&slots, word);
+        if slots[at].1 == 0 {
+            if distinct == FEW {
+                return false;
+            }
+            distinct += 1;
+            slots[at].0 = word;
+        }
+        slots[at].1 += 1;
+    }
+    // Where each word's run starts, in the words' order.
+    let mut present: Vec<usize> = (0..SLOTS).filter(|&at| slots[at].1 != 0).collect();
+    present.sort_unstable_by_key(|&at| slots[at].0);
+    let mut start = [0u32; SLOTS];
+    let mut next = 0;
+    for at in present {
+        start[at] = next;
+        next += slots[at].1;
+    }
+    let mut sorted = vec![(0, 0); words.len()];
+    for &(word, i) in words.iter() {
+        let at = find(&slots, word);
+        sorted[start[at] as usize] = (word, i);
+        start[at] += 1;
+    }
+    *words = sorted;
+    true
 }
 
 /// What the view should do with `items`, given what it last saw: nothing,
@@ -1204,4 +1257,33 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
     }
     crate::node::retain(&env, Box::new(Following(effect, followed)));
     Ok(State(out, Some(fresh)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::radix_sort;
+
+    /// Words from a small generator: `distinct` values, 5,000 of them.
+    fn words(distinct: u64) -> Vec<(u64, u32)> {
+        let mut seed = 7u64;
+        (0..5_000u32)
+            .map(|i| {
+                seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                // Values spread over all 64 bits, so every digit differs.
+                let value = (seed >> 33) % distinct;
+                (value.wrapping_mul(0x9E37_79B9_7F4A_7C15), i)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_radix_sort_is_a_stable_sort_with_few_or_many_distinct_words() {
+        for distinct in [1, 2, 8, 64, 65, 1_000, 1 << 40] {
+            let mut sorted = words(distinct);
+            let mut expected = sorted.clone();
+            expected.sort_by_key(|(word, _)| *word);
+            radix_sort(&mut sorted);
+            assert_eq!(sorted, expected, "{distinct} distinct words");
+        }
+    }
 }
