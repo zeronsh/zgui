@@ -27,10 +27,18 @@
 //! outermost calls alone: an outermost call's start is an atomic store and
 //! load, its end a store, and a burst of short calls wakes it about once a
 //! budget. Nested calls and work off the clock only move the budget's end
-//! later, so the interrupt may be set early, which only checks it sooner. The budget itself is checked as before (`Deadline::exceeded`,
-//! the CPU time from a reading up to 1 ms old), from the moment its wall
-//! time passes: a runaway is stopped within its budget plus the watchdog's
+//! later, so the interrupt may be set early, which only checks it sooner.
+//! The budget itself is checked as before (`Deadline::exceeded`, the CPU
+//! time from a reading up to 1 ms old), from the moment its wall time
+//! passes: a runaway is stopped within its budget plus the watchdog's
 //! wake-up and 64 interrupts.
+//!
+//! The watchdog sets a call's interrupt once, marking its due time fired
+//! (`FIRED`), and sleeps on to the next call due. The interrupt then stays
+//! set until the call ends: the check clears it only while the call's due
+//! time is not marked, and looks again after clearing it, so a watchdog
+//! marking the call meanwhile either is seen or sets it after the clearing
+//! (all sequentially consistent, `check`).
 //!
 //! It is one of the crate's unsafe uses of Luau's C API, with
 //! `data::sort_by_keys` and `value`'s table conversions. How a Luau error
@@ -71,6 +79,9 @@ pub(crate) struct Watch {
     deadline: Rc<Cell<Option<Deadline>>>,
     /// The VM's main thread, for its memory alarm.
     main: *mut ffi::lua_State,
+    /// The VM is still watched: `Installed` has not dropped, so `main` is
+    /// alive and its memory alarm may point here.
+    alive: Cell<bool>,
     /// Shared with the watchdog: the slot and the running call's due time.
     alarm: Arc<Alarm>,
     /// The VM's memory limit in bytes (0: none): less, for a plugin, what
@@ -98,26 +109,21 @@ impl Watch {
     }
     /// The allocator's alarm at `collect_at`, if there is a limit.
     fn set_memory_alarm(&self) {
+        // A watch kept past its VM (by a meter) sets nothing.
+        if !self.alive.get() {
+            return;
+        }
         let alarm = (self.limit.get() > 0).then_some(mlua::MemoryAlarm {
             call: on_memory,
             data: std::ptr::from_ref(self).cast(),
         });
-        // SAFETY: `main` is the VM's main thread, alive as long as this
-        // watch (the VM drops it first); called on its thread, never while
-        // it allocates. `data` points at this watch, which the alarm
-        // outlives only by never being called: it is set again, or the VM
-        // goes, before the watch does (`Installed` owns it, and clears the
-        // alarm as it drops).
+        // SAFETY: `main` is the VM's main thread, alive while `alive` is:
+        // `Installed` clears it as it drops, before the VM goes. Called on
+        // its thread, never while it allocates. `data` points at this
+        // watch, which the alarm outlives only by never being called: it is
+        // set again, or the VM goes, before the watch does (`Installed`
+        // owns it, and clears the alarm as it drops).
         unsafe { mlua::set_memory_alarm(self.main, self.collect_at.get(), alarm) };
-    }
-    /// The outermost call's time is up past its wall-clock budget as last
-    /// published (when the watchdog sets the interrupt), so the interrupt
-    /// must stay set. A nested call or work off the clock may have moved
-    /// the budget's end later since: then it stays set early, and the check
-    /// (`Deadline::exceeded`, on the budget as it is) decides.
-    fn overdue(&self) -> bool {
-        let due = self.alarm.due.load(Ordering::SeqCst);
-        due != 0 && nanos(Instant::now()) >= due
     }
 }
 
@@ -141,10 +147,18 @@ pub(crate) struct Alarm {
     /// going (`Installed::drop`, under the watchdog's lock).
     slot: AtomicPtr<Slot>,
     /// When the running call's wall time passes its budget, in nanoseconds
-    /// from `epoch`; 0 while no call runs.
+    /// from `epoch`, with `FIRED` once the watchdog has set the interrupt
+    /// for it; 0 while no call runs.
     due: AtomicU64,
 }
+/// Marks a due time the watchdog has set the interrupt for (`Alarm::due`;
+/// nanoseconds from `epoch` reach it after 292 years).
+const FIRED: u64 = 1 << 63;
 impl Alarm {
+    /// The watchdog set the interrupt for the running call: it stays set.
+    fn fired(&self) -> bool {
+        self.due.load(Ordering::SeqCst) & FIRED != 0
+    }
     /// Set the interrupt (or clear it): an atomic store, as Luau allows
     /// from any thread.
     fn set(&self, on: bool) {
@@ -161,10 +175,12 @@ impl Alarm {
         // it is nulled before the VM goes, under the watchdog's lock, which
         // the watchdog holds while it sets the slot; the VM's own thread
         // sets it only while the VM is alive. (Already so, left alone: a
-        // store to the VM's callbacks is not free, and calls end often.)
+        // store to the VM's callbacks is not free, and calls end often; a
+        // stale read skips only a store of what is there.) Sequentially
+        // consistent with `Alarm::due`, for `check`'s clearing.
         let slot = unsafe { &*slot };
         if slot.load(Ordering::Relaxed) != hook {
-            slot.store(hook, Ordering::Release);
+            slot.store(hook, Ordering::SeqCst);
         }
     }
 }
@@ -197,10 +213,6 @@ struct Watchdog {
 /// budget is spent. Only a call running almost its whole budget runs its
 /// last moments with the interrupt set.
 const EARLY: u64 = 5_000_000;
-/// While a call stays past its budget, how often the watchdog sets its
-/// interrupt again: the hook clears itself only while no budget has
-/// passed, but one clearing as the budget passes would otherwise stand.
-const REARM: Duration = Duration::from_millis(1);
 impl Watchdog {
     /// The process's watchdog.
     fn get() -> &'static Watchdog {
@@ -255,7 +267,8 @@ impl Watchdog {
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<std::sync::Weak<Alarm>>> {
         self.alarms.lock().unwrap_or_else(|e| e.into_inner())
     }
-    /// Set the interrupt of VMs past their call's budget; when to look next.
+    /// Set the interrupt of VMs past their call's budget, once a call
+    /// (marking it `FIRED`); when to look next.
     fn scan(&self) -> u64 {
         let now = nanos(Instant::now());
         let mut alarms = self.lock();
@@ -263,23 +276,35 @@ impl Watchdog {
         let mut next = u64::MAX;
         for alarm in alarms.iter().filter_map(std::sync::Weak::upgrade) {
             match alarm.due.load(Ordering::SeqCst) {
-                0 => {}
+                due if due == 0 || due & FIRED != 0 => {}
+                // Marked first, then set: a check clearing the interrupt
+                // meanwhile sees the mark, or the setting follows its
+                // clearing (`check`). A call ended or begun since is left
+                // to the next scan (`earliest`); the interrupt set as one
+                // ends only checks once more.
                 due if due <= now => {
-                    alarm.set(true);
-                    next = next.min(now + REARM.as_nanos() as u64);
+                    let fired = alarm.due.compare_exchange(
+                        due,
+                        due | FIRED,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
+                    if fired.is_ok() {
+                        alarm.set(true);
+                    }
                 }
                 due => next = next.min(due),
             }
         }
         next
     }
-    /// The earliest call due now.
+    /// The earliest call due and not yet fired.
     fn earliest(&self) -> u64 {
         self.lock()
             .iter()
             .filter_map(std::sync::Weak::upgrade)
             .map(|alarm| alarm.due.load(Ordering::SeqCst))
-            .filter(|due| *due != 0)
+            .filter(|due| *due != 0 && due & FIRED == 0)
             .min()
             .unwrap_or(u64::MAX)
     }
@@ -302,6 +327,14 @@ impl Installed {
     /// What the interrupt checks, to change the limit it collects by.
     pub(crate) fn watch(&self) -> Rc<Watch> {
         self.watch.clone()
+    }
+    /// Whether the watchdog counts a call running, and the interrupt set.
+    #[cfg(test)]
+    pub(crate) fn state(&self) -> (bool, bool) {
+        let slot = self.watch.alarm.slot.load(Ordering::Acquire);
+        // SAFETY: the VM is alive while this is (`Drop`).
+        let set = !slot.is_null() && unsafe { !(*slot).load(Ordering::Acquire).is_null() };
+        (self.watch.alarm.due.load(Ordering::SeqCst) != 0, set)
     }
     /// An outermost call began, with `deadline`, or ended (`None`): tell
     /// the watchdog when it is due. With no call running and nothing to
@@ -340,6 +373,7 @@ impl Drop for Installed {
         }
         // SAFETY: the VM is alive (it drops after this) and not allocating.
         unsafe { mlua::set_memory_alarm(self.watch.main, 0, None) };
+        self.watch.alive.set(false);
         let _ = WATCHES.try_with(|w| {
             w.borrow_mut()
                 .retain(|(main, watch)| *main != self.main && watch.strong_count() > 0)
@@ -384,6 +418,7 @@ fn install_on(
     let watch = Rc::new(Watch {
         deadline,
         main: main.get(),
+        alive: Cell::new(true),
         alarm: alarm.clone(),
         limit: Cell::new(limit),
         live: Cell::new(0),
@@ -519,10 +554,19 @@ unsafe fn check(state: *mut ffi::lua_State) -> Verdict {
     }
     match watch.deadline.get() {
         Some(d) if d.exceeded() => Verdict::OutOfTime,
-        // Nothing to collect and no budget passed: until the watchdog or
-        // the allocator sets it again, loops run without it.
-        _ if !watch.collect.get() && !watch.overdue() => {
+        // Nothing to collect and the call not yet fired: until the watchdog
+        // or the allocator sets it again, loops run without it. Fired (a
+        // nested call or work off the clock may have moved the budget's end
+        // later since), it stays set until the call ends, and the check
+        // (`Deadline::exceeded`, on the budget as it is) decides.
+        _ if !watch.collect.get() && !watch.alarm.fired() => {
+            // Then looked at again: a watchdog marking the call after the
+            // look above is seen here, or else its mark, and so its setting,
+            // follows this clearing in the order all of them share.
             watch.alarm.set(false);
+            if watch.alarm.fired() {
+                watch.alarm.set(true);
+            }
             Verdict::Continue
         }
         _ => Verdict::Continue,
@@ -605,5 +649,36 @@ mod tests {
         installed.publish(Some(soon));
         installed.publish(None);
         settled(&|until| until == u64::MAX);
+    }
+
+    /// A call past its budget has its interrupt set once: the watchdog
+    /// then parks rather than waking while the call runs on, and the check
+    /// leaves the interrupt set until the call ends.
+    #[test]
+    fn the_watchdog_sets_a_call_past_its_budget_once() {
+        let lua = Lua::new();
+        let deadline: Rc<Cell<Option<Deadline>>> = Rc::default();
+        let watchdog = Watchdog::spawn();
+        let installed = install_on(watchdog, &lua, deadline.clone(), 0);
+        let call = Deadline::start(Duration::ZERO);
+        deadline.set(Some(call));
+        installed.publish(Some(call));
+        let start = Instant::now();
+        while !installed.watch.alarm.fired()
+            || watchdog.sleep_until.load(Ordering::SeqCst) != u64::MAX
+        {
+            assert!(start.elapsed() < Duration::from_secs(5), "never fired");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(installed.state(), (true, true));
+        // Its budget moved later (work off the clock): checks find it not
+        // exceeded and leave the interrupt set.
+        deadline.set(Some(Deadline::start(Duration::from_secs(60))));
+        lua.load("local n = 0 for i = 1, 1000 do n += i end")
+            .exec()
+            .unwrap();
+        assert_eq!(installed.state(), (true, true), "set until the call ends");
+        installed.publish(None);
+        assert_eq!(installed.state(), (false, false));
     }
 }

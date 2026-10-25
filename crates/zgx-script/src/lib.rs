@@ -347,12 +347,15 @@ impl Vm {
         if outer.is_none() {
             self.interrupt.publish(Some(started));
         }
-        let result = f();
-        self.deadline.set(outer.map(|d| d.shifted(&started)));
-        if outer.is_none() {
-            self.interrupt.publish(None);
-        }
-        result
+        // Ended as the call returns or a host function's panic unwinds out
+        // of it (caught by the app's turn or an effect): no call is left
+        // running, with its budget passing for good.
+        let _end = CallEnd {
+            vm: self,
+            outer,
+            started,
+        };
+        f()
     }
     /// Runs Rust work a script asked for (a state write and the interface
     /// it rebuilds) off the script's clock: the budget stops runaway
@@ -376,6 +379,25 @@ impl Vm {
         let message = describe(&self.name, &error);
         eprintln!("{message}");
         self.errors.set(Some(message));
+    }
+}
+
+/// A call's end (`Vm::guard`): the outer call's clock runs again, shifted
+/// by the time this one took; with none, the watchdog hears the call ended.
+struct CallEnd<'a> {
+    vm: &'a Vm,
+    outer: Option<Deadline>,
+    started: Deadline,
+}
+impl Drop for CallEnd<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.vm
+            .deadline
+            .set(self.outer.map(|d| d.shifted(&self.started)));
+        if self.outer.is_none() {
+            self.vm.interrupt.publish(None);
+        }
     }
 }
 
@@ -2174,4 +2196,45 @@ async fn wake(
         Poll::Pending
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A host function's panic unwinding out of a call (caught by the app's
+    /// turn) leaves no call running: none whose budget would pass for good,
+    /// keeping the interrupt set and every later call nested in it.
+    #[test]
+    fn a_panic_out_of_a_call_leaves_no_call_running() {
+        let runtime = Runtime::new();
+        let lua = Lua::new();
+        let deadline: Rc<Cell<Option<Deadline>>> = Rc::default();
+        let vm = Vm {
+            name: "panics".into(),
+            interrupt: interrupt::install(&lua, deadline.clone(), 0),
+            lua,
+            base: None,
+            deadline,
+            budget: Duration::from_millis(50),
+            runtime: runtime.clone(),
+            errors: runtime.signal(None),
+            layout_ids: Default::default(),
+            locate: Rc::default(),
+            calls: Rc::default(),
+        };
+        let host = vm
+            .lua
+            .create_function(|_, ()| -> mlua::Result<()> { panic!("a host function's bug") })
+            .unwrap();
+        vm.lua.globals().set("host", host).unwrap();
+        let call = || vm.guard(vm.budget, || vm.lua.load("host()").exec());
+        let nested = || vm.guard(vm.budget, || vm.guard(vm.budget, call));
+        for run in [&call as &dyn Fn() -> mlua::Result<()>, &nested] {
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+            assert!(caught.is_err(), "the panic reaches the caller");
+            assert!(vm.deadline.get().is_none(), "no call left running");
+            assert_eq!(vm.interrupt.state(), (false, false));
+        }
+    }
 }
