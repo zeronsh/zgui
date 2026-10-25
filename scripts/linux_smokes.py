@@ -93,6 +93,8 @@ SMOKES = [
     ("editor-paging", "python3 scripts/editor_paging_smoke.py {bin}/editor_paging --output {out}", False),
     ("large-document", "python3 scripts/large_document_smoke.py {bin}/large_document --output {out}", False),
     ("editor-selection", "python3 scripts/editor_selection_smoke.py {bin}/editor_selection --output {out}", False),
+    ("selection-copy", "python3 scripts/selection_copy_smoke.py {bin}/selectable_text --output {out}", False),
+    ("selection-copy-wayland", "python3 scripts/selection_copy_smoke.py {bin}/selectable_text --wayland --output {out}", False),
     ("selectable-text", "python3 scripts/selectable_text_smoke.py {bin}/selectable_text --output {out}", False),
     ("editor-autoscroll", "python3 scripts/editor_autoscroll_smoke.py {bin}/editor_autoscroll --output {out}", False),
     ("transparency", "python3 scripts/transparency_smoke.py {bin}/transparency --output {out}", False),
