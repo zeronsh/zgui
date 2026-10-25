@@ -478,7 +478,7 @@ impl AccessibilityTree {
             // text, or crates.io's adapters, which read neither) it is said
             // after the description, so it is heard as the field is reached.
             let error = semantics.error(id);
-            let shown = error_shown.get(&id).copied();
+            let shown = error.and_then(|_| error_shown.get(&id).copied());
             if error.is_some() {
                 n.set_invalid(accesskit::Invalid::True);
                 if let Some(target) = shown {

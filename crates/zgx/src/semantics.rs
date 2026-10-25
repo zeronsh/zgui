@@ -369,7 +369,9 @@ impl Semantics {
         }
         self.nodes.remove(&id);
         self.long.remove(&id);
-        self.errors.remove(&id);
+        if !self.errors.is_empty() {
+            self.errors.remove(&id);
+        }
         crate::shrink_sparse(&mut self.nodes);
     }
     /// Set `id`'s information; equal information changes nothing.
@@ -605,7 +607,9 @@ impl Semantics {
         }
         if self.nodes.remove(&id).is_some() {
             self.long.remove(&id);
-            self.errors.remove(&id);
+            if !self.errors.is_empty() {
+                self.errors.remove(&id);
+            }
             self.revision = self.revision.wrapping_add(1);
             crate::shrink_sparse(&mut self.nodes);
         }
@@ -615,7 +619,9 @@ impl Semantics {
         let count = self.nodes.len();
         self.nodes.retain(|id, _| scene.contains(*id));
         self.long.retain(|id, _| scene.contains(*id));
-        self.errors.retain(|id, _| scene.contains(*id));
+        if !self.errors.is_empty() {
+            self.errors.retain(|id, _| scene.contains(*id));
+        }
         if self.nodes.len() != count {
             self.revision = self.revision.wrapping_add(1);
         }
