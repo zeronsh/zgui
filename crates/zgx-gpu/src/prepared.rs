@@ -770,10 +770,11 @@ pub struct TextCache {
     spare_lists: Vec<Vec<BufferLine>>,
     /// Every compact's words and advances.
     slab: Slab,
-    /// Sizes of the texts it does not prepare (clamped or ellipsized: see
-    /// `handles`), by what shapes them and their options, at the widths
-    /// they were measured at: shaped whole for each measurement, a list of
-    /// them moving by a row (a mail archived) shaped every row again.
+    /// Sizes of clamped or ellipsized texts (see `handles`), by what shapes
+    /// them and their options, at the widths they were measured at: each
+    /// measured from its prepared lines broken at that width, its cut alone
+    /// shaped (`clamped_measure`); a list of them moving by a row (a mail
+    /// archived) measures every row again.
     clamped: FxHashMap<u64, Clamped>,
 }
 /// A clamped or ellipsized text's sizes (`TextCache::clamped`).
@@ -841,7 +842,7 @@ impl TextCache {
             self.hits += 1;
             return *size;
         }
-        let size = crate::text::ShapedText::with_runs(fonts, rich, width).size();
+        let size = self.clamped_measure(fonts, rich, width);
         if self.clamped.len() >= CLAMPED {
             self.clamped.clear();
         }
@@ -863,6 +864,35 @@ impl TextCache {
         }
         known.sizes.push((width, size));
         size
+    }
+    /// A clamped or ellipsized text's size at `width`, as
+    /// `ShapedText::with_runs` measures it: its layout uncut from its
+    /// prepared lines (shaped once, broken again at each width), and only
+    /// where it overflows, its cut shaped (`text::truncated`).
+    fn clamped_measure(
+        &mut self,
+        fonts: &mut FontSystem,
+        rich: &RichText,
+        width: Option<f32>,
+    ) -> (f32, f32) {
+        let Some(limit) = crate::text::clamp(rich) else {
+            return crate::text::ShapedText::with_runs(fonts, rich, width).size();
+        };
+        let hash = self.entry(fonts, Source::Rich(rich), false, Need::Layout);
+        let laid = self.laid_out(fonts, hash, width);
+        let size = |w: f32, h: f32, run: cosmic_text::LayoutRun<'_>| {
+            (w.max(run.line_w), h.max(run.line_top + run.line_height))
+        };
+        let rows = crate::text::Rows::of(laid.runs(None), laid.lines, limit);
+        let uncut = laid
+            .runs(None)
+            .fold((0., 0.), |(w, h), run| size(w, h, run));
+        match crate::text::truncated(fonts, rich, width, limit, &rows) {
+            Some(cut) => cut
+                .layout_runs()
+                .fold((0., 0.), |(w, h), run| size(w, h, run)),
+            None => uncut,
+        }
     }
     /// `rich` laid out at `width`. Only for texts `handles` accepts.
     pub fn layout(
@@ -1478,6 +1508,62 @@ mod tests {
                                 "rich {text:?} at {font_size}: {fast:?} vs {measured:?}"
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+    /// A clamped or ellipsized text measured from its prepared lines (its
+    /// cut alone shaped) is the size `ShapedText::with_runs` gives it, to the
+    /// bit: at three clamps, ellipsized or clipped, many widths, plain and in
+    /// runs of other sizes, overflowing or not.
+    #[test]
+    fn a_clamped_text_measured_from_its_prepared_lines_is_shaped_texts_size() {
+        use zgx::text_layout::{TextOptions, TextOverflow};
+        let texts = [
+            "Attached are the photos from the trail, the lake at dawn and the long ridge after",
+            "Grace Hopper",
+            "émoji 👩‍💻 and 🇫🇷 flags with e\u{301} marks in a preview that wraps",
+            "supercalifragilisticexpialidocious and more words after it",
+            "שלום עולם and some mixed ascii text after the hebrew words",
+            "a\nb\nc and a new line or two\nd",
+        ];
+        let mut fonts = FontSystem::new();
+        let font = FontStyle::default();
+        let bold = FontStyle {
+            weight: 700,
+            ..Default::default()
+        };
+        let mut cache = TextCache::default();
+        for text in texts {
+            let split = (text.len() / 2..=text.len())
+                .find(|&at| text.is_char_boundary(at))
+                .unwrap();
+            for runs in [
+                vec![(text.len(), font.clone(), 14.)],
+                vec![(split, font.clone(), 14.), (text.len(), bold.clone(), 18.)],
+            ] {
+                for (clamp, overflow) in [
+                    (Some(1), TextOverflow::Ellipsis),
+                    (Some(2), TextOverflow::Ellipsis),
+                    (Some(3), TextOverflow::Ellipsis),
+                    (Some(2), TextOverflow::Clip),
+                    (None, TextOverflow::Ellipsis),
+                ] {
+                    let options = TextOptions {
+                        overflow,
+                        line_clamp: clamp.and_then(std::num::NonZeroU32::new),
+                    };
+                    let clamped = rich(text, &runs).with_options(options);
+                    for width in (30..420).step_by(13) {
+                        let width = Some(width as f32 + 0.29);
+                        let measured = cache.measure(&mut fonts, &clamped, width);
+                        let shaped = ShapedText::with_runs(&mut fonts, &clamped, width).size();
+                        assert_eq!(
+                            (measured.0.to_bits(), measured.1.to_bits()),
+                            (shaped.0.to_bits(), shaped.1.to_bits()),
+                            "{text:?} {options:?} at {width:?}: {measured:?} vs {shaped:?}"
+                        );
                     }
                 }
             }

@@ -1050,43 +1050,89 @@ pub fn rich_buffer(
     width: Option<f32>,
     height: Option<f32>,
 ) -> Buffer {
-    use zgx::text_layout::TextOverflow;
-    let options = rich.options();
-    let Some(limit) = options
-        .line_clamp
-        .map(|n| n.get() as usize)
-        .or((options.overflow == TextOverflow::Ellipsis).then_some(1))
-    else {
+    let Some(limit) = clamp(rich) else {
         return rich_buffer_raw(fonts, rich, width, height, false);
     };
     let original = rich_buffer_raw(fonts, rich, width, None, false);
-    let rows: Vec<_> = original
-        .layout_runs()
-        .map(|r| {
-            (
-                r.line_i,
-                r.glyphs.iter().map(|g| g.start).min().unwrap_or(0),
-                r.glyphs.iter().map(|g| g.end).max().unwrap_or(0),
-                r.line_w,
-            )
-        })
-        .collect();
+    let rows = Rows::of(original.layout_runs(), &original.lines, limit);
+    truncated(fonts, rich, width, limit, &rows).unwrap_or(original)
+}
+/// The lines a clamped or ellipsized text keeps at most (`rich_buffer`),
+/// or None for one that is neither.
+pub(crate) fn clamp(rich: &zgx::rich_text::RichText) -> Option<usize> {
+    use zgx::text_layout::TextOverflow;
+    let options = rich.options();
+    options
+        .line_clamp
+        .map(|n| n.get() as usize)
+        .or((options.overflow == TextOverflow::Ellipsis).then_some(1))
+}
+/// What truncating a text needs of its layout uncut (`truncated`): each
+/// row's line, byte range and width, where each line starts, and the
+/// glyphs of the last row kept.
+pub(crate) struct Rows {
+    rows: Vec<(usize, usize, usize, f32)>,
+    starts: Vec<usize>,
+    kept: Vec<(usize, f32, f32, bool)>,
+}
+impl Rows {
+    /// From `runs`, the layout of `lines`, keeping at most `limit` rows.
+    pub(crate) fn of<'a>(
+        runs: impl Iterator<Item = cosmic_text::LayoutRun<'a>>,
+        lines: &[cosmic_text::BufferLine],
+        limit: usize,
+    ) -> Self {
+        let (mut rows, mut kept) = (Vec::new(), Vec::new());
+        for run in runs {
+            rows.push((
+                run.line_i,
+                run.glyphs.iter().map(|g| g.start).min().unwrap_or(0),
+                run.glyphs.iter().map(|g| g.end).max().unwrap_or(0),
+                run.line_w,
+            ));
+            if rows.len() <= limit {
+                kept = run
+                    .glyphs
+                    .iter()
+                    .map(|g| (g.end, g.x, g.w, g.level.is_ltr()))
+                    .collect();
+            }
+        }
+        let mut start = 0;
+        let starts = lines
+            .iter()
+            .map(|line| {
+                let at = start;
+                start += line.text().len() + line.ending().as_str().len();
+                at
+            })
+            .collect();
+        Self { rows, starts, kept }
+    }
+}
+/// `rich` cut to `limit` lines at `width` with an ellipsis, from its
+/// layout uncut there (`rows`); None where it fits uncut.
+pub(crate) fn truncated(
+    fonts: &mut FontSystem,
+    rich: &zgx::rich_text::RichText,
+    width: Option<f32>,
+    limit: usize,
+    rows: &Rows,
+) -> Option<Buffer> {
+    use zgx::text_layout::TextOverflow;
+    let options = rich.options();
+    let (starts, kept, rows) = (&rows.starts, &rows.kept, &rows.rows);
     let overflow =
         rows.len() > limit || width.is_some_and(|w| rows.iter().take(limit).any(|r| r.3 > w));
     if !overflow {
-        return original;
+        return None;
     }
     let row = rows
         .get(limit.saturating_sub(1))
         .or(rows.last())
         .copied()
         .unwrap_or((0, 0, 0, 0.));
-    let offset: usize = original
-        .lines
-        .iter()
-        .take(row.0)
-        .map(|line| line.text().len() + line.ending().as_str().len())
-        .sum();
+    let offset = starts.get(row.0).copied().unwrap_or(0);
     let start = (offset + row.1).min(rich.text().len());
     let raw_end = (offset + row.2).min(rich.text().len());
     let end = rich
@@ -1138,7 +1184,7 @@ pub fn rich_buffer(
         rich_buffer_raw(fonts, &truncated, width, None, ellipsis)
     };
     if options.overflow == TextOverflow::Clip {
-        return make(fonts, end, false);
+        return Some(make(fonts, end, false));
     }
     let mut boundaries: Vec<_> = rich
         .text()
@@ -1166,18 +1212,14 @@ pub fn rich_buffer(
         if halving {
             return None;
         }
-        let last = limit.saturating_sub(1).min(rows.len().saturating_sub(1));
-        let row = original.layout_runs().nth(last);
-        let row = row.filter(|r| r.glyphs.iter().all(|g| g.level.is_ltr()))?;
-        let left = row.glyphs.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+        if kept.is_empty() || !kept.iter().all(|g| g.3) {
+            return None;
+        }
+        let left = kept.iter().map(|g| g.1).fold(f32::INFINITY, f32::min);
         let room = width? - ellipsis_width(fonts, rich, end);
         // Each boundary's prefix reaches as far right as the glyphs ending
         // at or before it: in order of their ends, one pass.
-        let mut reach: Vec<(usize, f32)> = row
-            .glyphs
-            .iter()
-            .map(|g| (g.end, g.x + g.w - left))
-            .collect();
+        let mut reach: Vec<(usize, f32)> = kept.iter().map(|g| (g.0, g.1 + g.2 - left)).collect();
         reach.sort_unstable_by_key(|&(end, _)| end);
         let (mut at, mut right) = (0, 0_f32);
         Some(
@@ -1208,7 +1250,7 @@ pub fn rich_buffer(
                 high = mid;
             }
         }
-        return make(fonts, boundaries[low.saturating_sub(1)], true);
+        return Some(make(fonts, boundaries[low.saturating_sub(1)], true));
     };
     // The last boundary known to fit (with its buffer) and the first known
     // not to, galloping out from the guess, then halving between them.
@@ -1252,11 +1294,11 @@ pub fn rich_buffer(
             unfit = mid;
         }
     }
-    match fit {
+    Some(match fit {
         Some((_, buffer)) => buffer,
         // None fits: the first, as halving from the start ends.
         None => make(fonts, boundaries[0], true),
-    }
+    })
 }
 #[cfg(test)]
 thread_local! {
