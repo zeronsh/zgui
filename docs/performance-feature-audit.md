@@ -126,6 +126,38 @@ other size classes and `malloc_history -allBySize` lists VM mappings too
 (a fallback font's clean mapping once read as heap), so attribute sizes
 without it.
 
+## Kept frames: what they patch, and what waits (October 2026)
+
+A window draws its frame whole once and keeps it (#441). While the scene
+repaints only leaves, a frame makes just those items' instances again
+and writes them into place; with damage over a tenth of the window it is
+drawn from the kept instances (about 30 instructions an item rather than
+1,500). The heavy dashboard's `stream` mode renders 10% fewer
+instructions. A window that loses its kept frame to a change no patch
+makes keeps one again after two frames in a row that would have patched
+(#446).
+
+Anything else draws whole: a container repainting, a composite change, a
+node mounted or removed, a layer, an effect, a shader fill or polyline.
+Patching those too was measured first and is waiting. The plan was to
+re-walk each changed subtree from what its root inherited, splice its
+items over the old range, and offset the quads of rows that only
+translated. Measured with retired instructions in `apps_bench`, warm,
+it would save little:
+
+- **Mail's archive** (31 repaints a frame, 12 newly mounted nodes, 40%
+  of the window damaged) renders 1.7–3 M instructions a frame for about
+  1,100 instances. 6–11 newly mounted texts are shaped each frame, which
+  patching cannot avoid. Copying the unchanged items instead of making
+  them again would save about 0.15 M a frame, and offsetting the moved
+  rows about 0.1 M. That is roughly 1 M of the interaction's 18.4 M
+  (script 6.5 M, layout 4.0 M, paint 4.2 M).
+- **The dashboard's** sort, filter and feed tick paint under 1 M of 43–54
+  M; their `update` phase is 17–45 M.
+
+So the reactive update and layout phases come first. Patching subtrees
+is worth doing when paint is again a large share of an interaction.
+
 ## Accepted costs
 
 - **A moved or resized leaf's damage as one area** (fe7a9886, October 2026)
