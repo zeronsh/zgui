@@ -236,12 +236,17 @@ fn dashboard(make: MakeDrawing) {
     b.measure("dashboard: feed tick, sorted by price", |b, _| {
         assert!(b.app.host.run_command("refresh"));
     });
+    // Two columns in turn: each sort back to the other's order, kept.
     b.measure("dashboard: sort", |b, k| {
         b.app.click(if k % 2 == 0 {
             "sort-volume"
         } else {
             "sort-symbol"
         });
+    });
+    // Three others in turn: none the last sort's, so each sorts it all.
+    b.measure("dashboard: sort, a column not sorted by last", |b, k| {
+        b.app.click(["sort-price", "sort-change", "sort-sector"][k % 3]);
     });
     b.measure("dashboard: filter keystroke", |b, k| {
         if k % 2 == 0 {

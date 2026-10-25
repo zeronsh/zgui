@@ -61,7 +61,12 @@ SCENES = [
     # same paths at a sixth of the work (`suite.py` runs `apps_bench` full
     # size).
     ('app-mail', 'zgx-script', 'list_state_bench', {'APP': 'mail', 'REPS': '2'}),
-    ('app-dashboard', 'zgx-script', 'list_state_bench', {'APP': 'dashboard', 'ROWS': '2000', 'REPS': '2'}),
+    # A sort with no order kept (the honest whole sort) on its own, as the
+    # code editor's new-letter search is.
+    ('app-dashboard', 'zgx-script', 'list_state_bench', {'APP': 'dashboard', 'ROWS': '2000', 'REPS': '2',
+                                                          'SKIP': 'not sorted by last'}),
+    ('app-dashboard-sort', 'zgx-script', 'list_state_bench', {'APP': 'dashboard', 'ROWS': '2000', 'REPS': '3',
+                                                               'ONLY': 'not sorted by last'}),
     ('app-sketch', 'zgx-script', 'list_state_bench', {'APP': 'sketch', 'SHAPES': '50', 'REPS': '3'}),
     # The code editor's search of a letter never searched (the whole text
     # read) on its own: added to app-code, it would count as app-code's
