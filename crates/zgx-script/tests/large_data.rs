@@ -330,6 +330,22 @@ fn ui_sorted_keeps_the_order_ui_sort_gives_and_judges_only_written_rows() {
             check("push")
             descending:set(true)
             check("descending")
+            -- Sorted back and forth: the last order taken again, rows
+            -- written in between re-placed in it.
+            descending:set(false)
+            check("ascending again")
+            ui.batch(function()
+                for _ = 1, 25 do
+                    local i = random(#rows:peek()) + 1
+                    rows:set_key({ i, "v" }, random(500))
+                end
+            end)
+            check("written ascending")
+            descending:set(true)
+            check("descending again, written between")
+            descending:set(false)
+            descending:set(true)
+            check("flipped twice")
             only:set(2)
             check("filtered")
             ui.batch(function()

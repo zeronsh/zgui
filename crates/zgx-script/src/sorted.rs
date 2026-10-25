@@ -278,6 +278,13 @@ struct Kept {
     /// (those of rows written since, from the list's log, aside).
     keys_of: Option<(Rc<str>, u64)>,
     spare_keys: Option<(Rc<str>, u64, Vec<Key>)>,
+    /// The field and direction `order` is a whole list's sort by (no
+    /// filter), and the list's version it is current at; and the last such
+    /// order, kept beside it: a sort back to it (a header clicked again) is
+    /// taken again, the rows written since re-placed, not sorted anew.
+    order_of: Option<(Rc<str>, bool)>,
+    order_at: u64,
+    spare_order: Option<(Rc<str>, bool, u64, Vec<u32>)>,
 }
 
 /// The rows `set_key` writes to a list a sorted view reads, so the view
@@ -491,6 +498,30 @@ impl Kept {
         version: u64,
         written_since: &dyn Fn(u64) -> Option<Vec<u32>>,
     ) -> mlua::Result<()> {
+        // The order now, kept for a sort back to it (once the kept one has
+        // been looked at).
+        let previous = self.order_of.take().map(|(of, descending)| {
+            (
+                of,
+                descending,
+                self.order_at,
+                std::mem::take(&mut self.order),
+            )
+        });
+        let result = self.rebuild_order(vm, spec, items, version, written_since);
+        if previous.is_some() {
+            self.spare_order = previous;
+        }
+        result
+    }
+    fn rebuild_order(
+        &mut self,
+        vm: &Vm,
+        spec: &Spec,
+        items: &Rc<[Value]>,
+        version: u64,
+        written_since: &dyn Fn(u64) -> Option<Vec<u32>>,
+    ) -> mlua::Result<()> {
         self.kept.clear();
         let by_script = matches!(spec.by, By::Function(_));
         let tests = match &spec.filter {
@@ -515,6 +546,10 @@ impl Kept {
         } else if let By::Field(name) = &spec.by {
             self.field_keys(name, items, version, written_since);
             self.kept.resize(items.len(), true);
+            self.order_of = Some((name.clone(), spec.descending));
+            if self.order_again(vm, spec, items, name, version, written_since)? {
+                return Ok(());
+            }
         } else {
             for item in items.iter() {
                 let (key, kept) = Self::judge(vm, spec, item)?;
@@ -527,6 +562,42 @@ impl Kept {
             .collect();
         self.order = self.sorted(spec.descending, order);
         Ok(())
+    }
+    /// The kept order of field `name` (this direction, every item) taken
+    /// again, current at `version`: the rows written since its version
+    /// re-placed. False if there is none, or what was written is not known.
+    fn order_again(
+        &mut self,
+        vm: &Vm,
+        spec: &Spec,
+        items: &Rc<[Value]>,
+        name: &str,
+        version: u64,
+        written_since: &dyn Fn(u64) -> Option<Vec<u32>>,
+    ) -> mlua::Result<bool> {
+        let fits = self
+            .spare_order
+            .as_ref()
+            .is_some_and(|(of, descending, _, order)| {
+                **of == *name && *descending == spec.descending && order.len() == items.len()
+            });
+        if !fits {
+            return Ok(false);
+        }
+        let (_, _, at, order) = self.spare_order.take().expect("it fits");
+        let rows = if at == version {
+            Vec::new()
+        } else {
+            match written_since(at) {
+                Some(rows) => rows,
+                None => return Ok(false),
+            }
+        };
+        self.order = order;
+        if !rows.is_empty() {
+            self.update(vm, spec, items, &rows)?;
+        }
+        Ok(true)
     }
     /// `item`'s field `name`, looked for first where the item before had it
     /// (items of one shape keep their fields in one order), else searched.
@@ -927,12 +998,24 @@ fn permute(
     }
     old.clear();
     old.extend(slots.iter_mut().map(std::mem::take));
+    let mut taken = 0;
     let mut next = |i: u32| match inverse[i as usize] {
         ABSENT => items[i as usize].clone(),
-        p => std::mem::take(&mut old[p as usize]),
+        p => {
+            taken += 1;
+            std::mem::take(&mut old[p as usize])
+        }
     };
     for (slot, &i) in slots.iter_mut().zip(order) {
         *slot = next(i);
+    }
+    if taken == old.len() {
+        // SAFETY: each place was taken once (the order is the view's items
+        // rearranged), leaving `Value::Nil`, which owns nothing: forgetting
+        // them drops nothing a drop would have.
+        unsafe { old.set_len(0) };
+    } else {
+        old.clear();
     }
     true
 }
@@ -1044,10 +1127,11 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
                 .map(|_| Some((None, true))),
         });
         // The keys kept are current now: every row written since was judged.
-        if result.is_ok()
-            && let Some((_, at)) = &mut kept.keys_of
-        {
-            *at = version;
+        if result.is_ok() {
+            if let Some((_, at)) = &mut kept.keys_of {
+                *at = version;
+            }
+            kept.order_at = version;
         }
         match result {
             Ok(None) => {}
