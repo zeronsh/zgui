@@ -422,10 +422,19 @@ pub(crate) fn sync(ui: &zgx::widgets::Ui) {
     if let Some(interval) = double_click_time() {
         ui.input.set_double_click_time(interval);
     }
+    // On X11 the session's XSETTINGS come first, as GTK takes them there.
     #[cfg(target_os = "linux")]
-    ui.input.set_drag_threshold(linux_drag_threshold(
-        crate::linux_appearance::current().drag_threshold,
-    ));
+    {
+        let x11 = crate::x11_settings::current();
+        if let Some(ms) = x11.double_click {
+            ui.input
+                .set_double_click_time(std::time::Duration::from_millis(ms.into()));
+        }
+        ui.input.set_drag_threshold(linux_drag_threshold(
+            x11.drag_threshold
+                .or(crate::linux_appearance::current().drag_threshold),
+        ));
+    }
     #[cfg(windows)]
     ui.theme().set_system_text_scale(windows_text_scale());
     #[cfg(target_os = "linux")]

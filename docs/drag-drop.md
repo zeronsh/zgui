@@ -2,7 +2,7 @@
 
 [Popups, drags and windows across the screen](multi-window.md) shows the multi-window drags below with popups and windows, in Rust and Luau.
 
-A drag source produces a Rust value after a primary-button gesture travels past the drag threshold: the system's, as native controls follow it (GNOME's `drag-threshold` and KDE's `StartDragDist` through the settings portal, read again as they change, and GTK's 8 logical pixels on a Linux desktop that gives none; `InputDispatcher::set_drag_threshold`, read in a listener as `EventContext::drag_threshold`), four until a host sets it. People whose hands shake raise it, so a press that wavers stays a click. A normal click still activates the source, and a menu's press-drag-release tells a click from a drag by it too. A target accepts only its payload type and can apply an additional predicate:
+A drag source produces a Rust value after a primary-button gesture travels past the drag threshold, the system's, as native controls follow it: GNOME's `drag-threshold` and KDE's `StartDragDist` through the settings portal, read again as they change; on X11 the session's XSETTINGS `Net/DndDragThreshold` ahead of them, as GTK takes it there, read again as a window is activated; GTK's 8 logical pixels on a Linux desktop that gives none; four elsewhere until a host sets one (`InputDispatcher::set_drag_threshold`, read in a listener as `EventContext::drag_threshold`). People whose hands shake raise it, so a press that wavers stays a click. A normal click still activates the source, and a menu's press-drag-release tells a click from a drag by it too. A target accepts only its payload type and can apply an additional predicate:
 
 ```rust
 #[derive(Clone)]

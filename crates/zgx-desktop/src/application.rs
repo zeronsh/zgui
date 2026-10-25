@@ -2286,6 +2286,10 @@ impl Host {
                 RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_)
             )
         });
+        #[cfg(target_os = "linux")]
+        if self.x11 {
+            crate::x11_settings::enable();
+        }
         // X11 drag previews show in windows of their own too, moved by the
         // server as the pointer moves (`PopupHost::follow`).
         #[cfg(target_os = "linux")]

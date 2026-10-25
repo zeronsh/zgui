@@ -57,6 +57,8 @@ pub use window_place::Tabbing;
 #[cfg(target_os = "linux")]
 mod x11_nudge;
 #[cfg(target_os = "linux")]
+mod x11_settings;
+#[cfg(target_os = "linux")]
 mod x11_startup;
 #[cfg(target_os = "linux")]
 mod x11_visual;

@@ -37,5 +37,6 @@ xclip
 xdg-desktop-portal
 xdg-desktop-portal-gtk
 xdotool
+xsettingsd
 xvfb
 zenity

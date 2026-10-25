@@ -278,8 +278,9 @@ The native host forwards pointer modifiers and tracks clicks per target and
 button within the system's double-click time and four logical pixels, cycling
 through counts 1, 2, 3, then 1. The time is the person's setting, as native
 controls follow it: macOS's and Windows' mouse settings, GNOME's `double-click`
-and KDE's `DoubleClickInterval` through the settings portal, read again when
-the window is activated (`InputDispatcher::set_double_click_time`; 500 ms until
+and KDE's `DoubleClickInterval` through the settings portal, and on X11 the
+session's XSETTINGS `Net/DoubleClickTime` ahead of them, as GTK takes it there
+(XFCE's settings), read again when the window is activated (`InputDispatcher::set_double_click_time`; 500 ms until
 a host sets it). Movement outside that distance, leaving the target,
 cancellation, deactivation, disabling or removal resets the chain. Event handlers
 can inspect `EventContext::pointer_modifiers()` and `click_count()`; counts apply
