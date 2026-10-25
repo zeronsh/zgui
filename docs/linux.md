@@ -36,6 +36,16 @@ threshold from the press: the window manager or compositor takes the pointer whe
 the window, so a click (the first of a double click) stays a click.
 `window_buttons_smoke.py` checks it on X11: no frame, maximize and restore,
 a corner drag, a double click and a drag on the strip, minimize, and close.
+## The text caret
+
+The focused editor's caret blinks as GTK's and Qt's do: on X11 the session's
+XSETTINGS `Net/CursorBlink`, `Net/CursorBlinkTime` and
+`Gtk/CursorBlinkTimeout` first, else GNOME's `cursor-blink`,
+`cursor-blink-time` and `cursor-blink-timeout` through the settings portal:
+shown two thirds of the cycle and hidden one, solid after the timeout (10 s
+by default) until the next key or click. KDE's `CursorBlinkRate` is half
+each way, with no timeout. `caret_blink_smoke.py` times it from screen
+captures on X11.
 ## The interface font
 
 Text in the theme's generic family (`sans-serif`, which the default themes
