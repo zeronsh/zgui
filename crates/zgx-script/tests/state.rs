@@ -19,6 +19,26 @@ fn run(h: &mut Harness, id: &str) {
 }
 
 #[test]
+fn a_set_key_path_is_read_whole_and_a_wrong_step_is_named() {
+    let mut h = Harness::inline(
+        r#"local rows = ui.state("rows", { { name = "a", tags = { "x", "y" } } })
+        local said = ui.state("said", "")
+        ui.command { id = "write", run = function()
+            rows:set_key({ 1, "tags", 2 }, "z")
+            rows:set_key({ 1.0, "name" }, "b")
+            local ok, err = pcall(function() rows:set_key({ 1, true }, 1) end)
+            local ok2, err2 = pcall(function() rows:set_key({ 0, "name" }, 1) end)
+            local row = rows:peek()[1]
+            said:set(`{row.name} {row.tags[2]} {ok} {tostring(err):match("not boolean") ~= nil} {ok2} {tostring(err2):match("not 0") ~= nil}`)
+        end }
+        return ui.text { id = "said", "{said}" }"#,
+    );
+    run(&mut h, "write");
+    assert_eq!(h.error(), None);
+    assert_eq!(h.text("said"), "b z false true false true");
+}
+
+#[test]
 fn set_key_patch_update_and_insert_change_state() {
     let mut h = Harness::inline(
         r#"local doc = ui.state("doc", { tabs = { { id = "a", title = "A" }, { id = "b", title = "B" } }, active = "a" })

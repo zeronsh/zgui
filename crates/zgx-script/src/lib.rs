@@ -369,6 +369,16 @@ impl Vm {
         }
         result
     }
+    /// A state write, off the clock as `off_clock` puts it, but in a batch
+    /// (a handler's, `ui.batch`) or a flush, where it runs no updates now:
+    /// then nothing is taken off, and the thread's CPU time (read twice,
+    /// which costs more than the write) is not read.
+    pub(crate) fn write_off_clock<R>(&self, write: impl FnOnce() -> R) -> R {
+        if self.runtime.deferring() {
+            return write();
+        }
+        self.off_clock(write)
+    }
     pub(crate) fn call<R: mlua::FromLuaMulti>(
         &self,
         f: &mlua::Function,

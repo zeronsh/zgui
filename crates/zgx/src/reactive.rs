@@ -296,6 +296,11 @@ impl Runtime {
         }
         effect
     }
+    /// Whether a write now runs no effects before returning: inside a batch,
+    /// or a flush, which run them once they end.
+    pub fn deferring(&self) -> bool {
+        self.inner.batch_depth.get() != 0 || self.inner.flushing.get()
+    }
     /// Defers effects until the outermost batch finishes; mutations remain visible.
     pub fn batch<R>(&self, f: impl FnOnce() -> R) -> R {
         self.inner.batch_depth.set(self.inner.batch_depth.get() + 1);

@@ -1721,7 +1721,7 @@ fn only_cached(value: &Value) -> bool {
 }
 
 /// A path for `set_key`: a key, an index, or a list of them.
-fn path_of(value: mlua::Value) -> mlua::Result<Vec<PathKey>> {
+fn path_of(lua: &Lua, value: mlua::Value) -> mlua::Result<Vec<PathKey>> {
     let step = |value: mlua::Value| -> mlua::Result<PathKey> {
         Ok(match value {
             mlua::Value::String(s) => PathKey::Key(s.to_str()?.as_ref().into()),
@@ -1741,10 +1741,15 @@ fn path_of(value: mlua::Value) -> mlua::Result<Vec<PathKey>> {
     };
     match value {
         mlua::Value::Table(t) => {
-            let path = t
-                .sequence_values::<mlua::Value>()
-                .map(|v| step(v?))
-                .collect::<mlua::Result<Vec<_>>>()?;
+            let path = match raw_path(lua, &t) {
+                Some(path) => path,
+                // A step neither a string nor an index from 1: said as mlua
+                // reads it.
+                None => t
+                    .sequence_values::<mlua::Value>()
+                    .map(|v| step(v?))
+                    .collect::<mlua::Result<Vec<_>>>()?,
+            };
             if path.is_empty() {
                 return Err(mlua::Error::runtime(
                     "state:set_key needs a key; state:set replaces the whole value",
@@ -1754,6 +1759,51 @@ fn path_of(value: mlua::Value) -> mlua::Result<Vec<PathKey>> {
         }
         other => Ok(vec![step(other)?]),
     }
+}
+
+/// A path table's steps read in one C call (mlua reads each in a protected
+/// call of its own, most of a short write's cost), or `None` if one is not
+/// a string key or an index from 1 (or not UTF-8).
+fn raw_path(lua: &Lua, t: &Table) -> Option<Vec<PathKey>> {
+    use mlua::ffi;
+    let mut path: Option<Vec<PathKey>> = Some(Vec::new());
+    // SAFETY: the table is at 1 inside `exec_raw`'s C call; only raw reads
+    // and type checks are made, each read popped before the next, and a
+    // string's bytes are copied out while the table holds it. Nothing
+    // allocates in Luau or raises a Luau error.
+    let read = unsafe {
+        lua.exec_raw::<()>(t, |state| {
+            let n = ffi::lua_objlen(state, 1);
+            let steps = path.as_mut().expect("made above");
+            steps.reserve(n);
+            for i in 1..=n {
+                let step = match ffi::lua_rawgeti_(state, 1, i as std::ffi::c_int) {
+                    ffi::LUA_TNUMBER => {
+                        let n = ffi::lua_tonumberx(state, -1, std::ptr::null_mut());
+                        (n.fract() == 0. && n >= 1.).then_some(PathKey::Index(n as usize))
+                    }
+                    ffi::LUA_TSTRING => {
+                        let mut len = 0;
+                        let data = ffi::lua_tolstring(state, -1, &mut len);
+                        let bytes = std::slice::from_raw_parts(data.cast::<u8>(), len);
+                        std::str::from_utf8(bytes)
+                            .ok()
+                            .map(|key| PathKey::Key(key.into()))
+                    }
+                    _ => None,
+                };
+                ffi::lua_pop(state, 1);
+                match step {
+                    Some(step) => steps.push(step),
+                    None => {
+                        path = None;
+                        return;
+                    }
+                }
+            }
+        })
+    };
+    read.ok().and(path)
 }
 
 /// Shared state (`ui.shared`) as Rust holds it: a signal whose `set`
@@ -1824,7 +1874,7 @@ impl State {
             .app_data_ref::<crate::node::Env>()
             .and_then(|env| env.vm.upgrade());
         match vm {
-            Some(vm) => vm.off_clock(|| self.0.set(value)),
+            Some(vm) => vm.write_off_clock(|| self.0.set(value)),
             None => self.0.set(value),
         };
     }
@@ -1888,7 +1938,7 @@ impl UserData for State {
         methods.add_method(
             "set_key",
             |lua, s, (path, value): (mlua::Value, mlua::Value)| {
-                let path = path_of(path)?;
+                let path = path_of(lua, path)?;
                 // In place while nothing else holds the list (no script has
                 // read it since the last write): a batch of row writes to a
                 // list of 100,000 copies it once, not once a write.
@@ -1923,7 +1973,7 @@ impl UserData for State {
                     .app_data_ref::<crate::node::Env>()
                     .and_then(|env| env.vm.upgrade())
                 {
-                    Some(vm) => vm.off_clock(&mut write),
+                    Some(vm) => vm.write_off_clock(&mut write),
                     None => write(),
                 };
                 if done.map_err(|e| fail("set_key", e))? {
