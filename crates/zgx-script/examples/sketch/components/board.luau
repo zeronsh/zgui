@@ -328,6 +328,7 @@ end
 -- outlines and handles, the snapping guides and the marquee. A few shapes
 -- at most, drawn again as the view moves.
 local function marks(): Node
+	-- zgx-lint: allow(canvas-view)
 	return ui.canvas {
 		w_full = true,
 		h_full = true,

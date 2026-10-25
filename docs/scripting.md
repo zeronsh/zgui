@@ -90,6 +90,7 @@ zgx lint --rules            # what it looks for
 | `computed-sort` | `ui.sort` in a `ui.computed`: every change to what it reads (a row written, a tick) sorts the whole list again | `ui.sorted(list, { by, filter })`, which re-places only the rows written |
 | `list-key` | a `ui.list` without `key` whose rows index into a list state the same file removes from or inserts into: rows are by position, so each removal or insertion writes every row after it with the item now there (its text, layout and paint again) | `key = function(i) return list[i].id end`, the row reading its item by key: the rows a change shifts are moved, not written |
 | `list-measured` | a `ui.list` of fixed heights (`height`, `heights`) whose row wraps text (`wrap = true` with no `lines` cap, `ui.markdown`): how many lines it takes depends on its text and the width, which a script can't measure, so rows are cut off or leave gaps | `measured = true`: each row takes its content's height as it mounts, `height` the estimate until then |
+| `canvas-view` | a `ui.canvas` without `view` whose `draw` reads a zoom (`view.zoom`): every pan or zoom runs `draw` again, the script for every mark | draw in the canvas's own coordinates and give `view = state` (`{ x, y, zoom }`); `bg_grid` for a grid under it; what keeps its size on screen in a small canvas of its own |
 
 `-- zgx-lint: allow(rule)` on the finding's line or the line above accepts a deliberate exception (`allow(rule-a, rule-b)` for several).
 

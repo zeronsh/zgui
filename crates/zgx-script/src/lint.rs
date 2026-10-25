@@ -28,6 +28,9 @@
 //! - `list-measured`: a `ui.list` of fixed heights whose rows wrap text: a
 //!   row's lines depend on its text and the width, which a script can't
 //!   measure; `measured = true` gives each row its content's height.
+//! - `canvas-view`: a `ui.canvas` without `view` whose `draw` reads a zoom:
+//!   panning and zooming by drawing again runs the script for every mark;
+//!   `view` places what it drew instead.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -73,6 +76,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "list-measured",
         "a ui.list of fixed heights whose rows wrap text",
+    ),
+    (
+        "canvas-view",
+        "a ui.canvas that pans or zooms by drawing again rather than by `view`",
     ),
 ];
 
@@ -159,6 +166,7 @@ pub fn lint_source(file: &Path, source: &str) -> Vec<Diagnostic> {
     linter.run();
     linter.list_key();
     linter.list_measured();
+    linter.canvas_view();
     let allowed = |line: u32, rule: &str| {
         comments.iter().any(|(at, text)| {
             (*at == line || *at + 1 == line)
@@ -591,6 +599,59 @@ impl Linter<'_> {
                      row takes depends on its text and the width, which the script can't \
                      measure. `measured = true` gives each row its content's height \
                      (`height` the estimate until a row is measured)."
+                        .into(),
+                );
+            }
+        }
+    }
+
+    /// A `ui.canvas` without `view` whose `draw` (written there, or a local
+    /// function by name) reads a `.zoom`: it pans and zooms by drawing again.
+    fn canvas_view(&mut self) {
+        for at in 0..self.tokens.len() {
+            if !(self.is(at, "canvas")
+                && self.is(at.wrapping_sub(1), ".")
+                && self.is(at.wrapping_sub(2), "ui")
+                && self.is(at + 1, "{"))
+            {
+                continue;
+            }
+            let (open, close) = (at + 1, self.closing(at + 1));
+            let field = |name: &str| {
+                (open + 1..close).find(|&j| {
+                    self.is(j, name)
+                        && self.is(j + 1, "=")
+                        && (self.is(j - 1, ",") || self.is(j - 1, "{"))
+                })
+            };
+            if field("view").is_some() {
+                continue;
+            }
+            let Some(draw) = field("draw") else { continue };
+            let body = if self.is(draw + 2, "function") {
+                Some(draw + 2)
+            } else {
+                self.name(draw + 2).and_then(|name| {
+                    (0..self.tokens.len()).find(|&j| {
+                        self.is(j, "function")
+                            && (self.is(j + 1, name) && self.is(j + 2, "(")
+                                || self.is(j.wrapping_sub(1), "=")
+                                    && self.is(j.wrapping_sub(2), name)
+                                    && self.is(j.wrapping_sub(3), "local"))
+                    })
+                })
+            };
+            let Some(start) = body else { continue };
+            let end = self.block_end(start);
+            if (start..end).any(|j| self.is(j, "zoom") && self.is(j.wrapping_sub(1), ".")) {
+                self.report(
+                    at,
+                    "canvas-view",
+                    "this canvas draws through a zoom: each pan or zoom runs `draw` again, \
+                     the script for every mark. Draw in the canvas's own coordinates and \
+                     give `view = state` ({ x, y, zoom }): the view places what it drew, \
+                     and `bg_grid` draws a grid under it. What keeps its size on screen \
+                     (handles, outlines) can be a small canvas of its own."
                         .into(),
                 );
             }
@@ -1073,6 +1134,22 @@ local plain = ui.list { count = 10, row = function(i) return ui.text "x" end }
         assert_eq!(
             rules(source),
             vec![(6, "list-measured".into()), (7, "list-measured".into())]
+        );
+    }
+
+    #[test]
+    fn a_canvas_that_pans_by_drawing_again_is_reported() {
+        let source = r##"
+local view = ui.state("view", { x = 0, y = 0, zoom = 1 })
+local function board(c) local v = view:get() c:rect(v.x, v.y, 10 * v.zoom, 10 * v.zoom, "#fff") end
+local drawn = ui.canvas { draw = board }
+local inline = ui.canvas { draw = function(c) c:rect(0, 0, view:get().zoom, 1, "#fff") end }
+local viewed = ui.canvas { view = view, draw = function(c) c:rect(0, 0, 10, 10, "#fff") end }
+local plain = ui.canvas { draw = function(c, w, h) c:rect(0, 0, w, h, "#fff") end }
+"##;
+        assert_eq!(
+            rules(source),
+            vec![(4, "canvas-view".into()), (5, "canvas-view".into())]
         );
     }
 

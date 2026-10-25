@@ -45,6 +45,7 @@ The interface is built once; Rust re-runs only what reads state that changed. `z
 | `ui.list { key = function(i) … end, row = function(id, index) … }` where items are removed or inserted | rows reading `list[i]` (a removal writes every row after it) |
 | `ui.list { measured = true, … }` for rows of wrapped text | a fixed `height` guessed for wrapped text (cut off, or gaps) |
 | `el:scroll_to_row(i, { align = "center" })` on a list's element | `offset:set((i - 1) * height)` (wrong once rows differ or are measured) |
+| `ui.canvas { view = state, bg_grid = {…} }` to pan and zoom a board | `draw` reading the view's zoom (redraws every mark in script per step) |
 | `ui.sorted(rows, { by = "price" })` for a list kept in order | a `ui.computed` re-sorting the whole list on each write |
 | percentages, `grow`, insets: layout without the script | `on_resize` writing sizes into state for layout |
 | `ui.every(1000, …)` at the rate a value changes | `ui.every(1, …)` (more calls than frames) |
