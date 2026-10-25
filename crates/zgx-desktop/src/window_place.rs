@@ -176,7 +176,7 @@ pub(crate) fn window_below(x: f64, y: f64, number: isize) -> Option<isize> {
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{maximize_hidden, place, save};
+pub(crate) use linux::{maximize_hidden, opens_maximized, place, save};
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) fn place(

@@ -183,7 +183,10 @@ maximized if it was left so. A window opened maximized, saved so or asked
 to, has `_NET_WM_STATE` set before it maps: winit asks the window manager
 with a message, which it ignores for a window it does not manage yet. On
 Wayland the compositor places windows, so a saved frame keeps its size and
-maximized state alone. `window_frames_smoke.py` checks both.
+maximized state alone; left maximized, the window asks for it before its
+first commit, so its first configure is maximized and it never shows at the
+saved size first (Weston 13's pixman renderer crashed reading the buffers
+of the size it grew from). `window_frames_smoke.py` checks both.
 
 ## Graphics
 

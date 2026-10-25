@@ -11,7 +11,8 @@ and Wayland (Weston), through `window_probe`:
   maximized, and restored, at the frame it had before;
 - at a saved frame no monitor shows, it opens on the screen at the saved size;
 - on Wayland (Weston), where the compositor places windows, it reopens at
-  its saved size, or maximized, keeping the frame from before.
+  its saved size, or maximized from its first frame (never drawn at the
+  saved size and grown), keeping the frame from before.
 
 Frames are kept under a private XDG_STATE_HOME."""
 import argparse
@@ -183,24 +184,61 @@ def main():
         runtime.mkdir(mode=0o700, exist_ok=True)
         wayland = dict(env, XDG_RUNTIME_DIR=str(runtime.resolve()), WAYLAND_DISPLAY="zgx-frames")
         wayland.pop("DISPLAY")
+        # Its protocol traffic is kept (not a .log, printed whole on a
+        # failure): a client the compositor ends with a protocol error sees
+        # only a broken pipe, as winit flushes before it reads the error.
+        trace = args.output / "weston.trace"
         weston = launch("weston", ["weston", "--backend=headless", "--renderer=pixman", "--width=1280",
-                                   "--height=960", "--idle-time=0", "--no-config", "--socket=zgx-frames"], wayland)
+                                   "--height=960", "--idle-time=0", "--no-config", "--socket=zgx-frames",
+                                   f"--log={args.output / 'weston.log'}"],
+                        dict(wayland, WAYLAND_DEBUG="server"), stdout=subprocess.DEVNULL, stderr=trace.open("w"))
         until("Weston's socket", lambda: (runtime / "zgx-frames").exists(), weston, seconds=10)
+
+        def ended(app):
+            """Why a client Weston was serving went: the errors it sent, and
+            its traffic before the last."""
+            lines = trace.read_text(errors="replace").splitlines()
+            errors = [n for n, line in enumerate(lines) if ".error(" in line]
+            last = errors[-1] if errors else len(lines) - 1
+            return "\n".join([f"weston {'running' if weston.poll() is None else f'exited {weston.returncode}'}, "
+                              f"the app {'running' if app.poll() is None else f'exited {app.returncode}'}; "
+                              f"protocol errors sent: {[lines[n].strip() for n in errors]}",
+                              "the trace before the last:", *lines[max(0, last - 40):last + 1]])
+
+        def buffers(lines):
+            """The sizes of the buffers clients made (shared memory or dmabuf)."""
+            sizes = []
+            for line in lines:
+                found = (re.search(r"create_buffer\(new id wl_buffer@\d+, \d+, (\d+), (\d+),", line)
+                         or re.search(r"create_immed\(new id wl_buffer@\d+, (\d+), (\d+),", line))
+                if found:
+                    sizes.append((int(found.group(1)), int(found.group(2))))
+            return sizes
 
         def wayland_size(frame):
             frames.write_text(f"{NAME}\t{frame}\n")
+            traced = len(trace.read_text(errors="replace").splitlines())
             log = args.output / f"wayland-{len(processes)}.log"
             app = launch(log.stem, [str(args.probe), "saved"], wayland, stdout=log.open("w"))
-            line = until("its size", lambda: re.search(r"^SIZE (\d+) (\d+)$", log.read_text(), re.M), app)
+            try:
+                line = until("its size", lambda: re.search(r"^SIZE (\d+) (\d+)$", log.read_text(), re.M), app)
+            except AssertionError as error:
+                raise AssertionError(f"{error}\n{ended(app)}") from None
             # Saved again once shown: as it was.
             time.sleep(.8)
             stop(app)
+            checks[f"wayland {frame} buffers"] = sorted(set(buffers(trace.read_text(errors="replace").splitlines()[traced:])))
             return int(line.group(1)), int(line.group(2))
 
         checks["wayland size"] = wayland_size("- - 500 240 0")
         checks["wayland reopens at its size"] = checks["wayland size"] == (500, 240)
         checks["wayland maximized size"] = wayland_size("- - 500 240 1")
         checks["wayland reopens maximized"] = checks["wayland maximized size"][0] == 1280
+        # Maximized from its first frame: never drawn at the saved size and
+        # grown (Weston's pixman renderer would read the destroyed buffers).
+        checks["wayland never draws it at its saved size first"] = (
+            (500, 240) in checks["wayland - - 500 240 0 buffers"]
+            and (500, 240) not in checks["wayland - - 500 240 1 buffers"])
         checks["wayland keeps the frame before"] = saved() == "- - 500 240 1"
         stop(weston)
 

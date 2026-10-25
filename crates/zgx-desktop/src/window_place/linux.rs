@@ -117,6 +117,21 @@ pub(crate) fn save(name: &str, normal: crate::WindowBounds, maximized: bool) {
     }
 }
 
+/// The size a window `options` name was left maximized at, to open it
+/// maximized from its first configure (Wayland): asked once it is mapped,
+/// it would show at its saved size, then grow, making its swapchain again
+/// while the compositor still shows the old one (Weston's pixman renderer
+/// reads a destroyed buffer's memory). The size is the one it restores to.
+pub(crate) fn opens_maximized(options: &crate::WindowOptions) -> Option<(u32, u32)> {
+    let name = options.frame_autosave.as_deref()?;
+    maximized_size(&frames_path()?, name)
+}
+fn maximized_size(path: &Path, name: &str) -> Option<(u32, u32)> {
+    load_from(path, name)
+        .filter(|frame| frame.maximized)
+        .map(|frame| frame.size)
+}
+
 /// Open `window` (X11, not shown yet) maximized. winit asks the window
 /// manager with a `_NET_WM_STATE` message, which it heeds for the windows it
 /// manages, not one not yet shown; that one's state is its `_NET_WM_STATE`
@@ -453,6 +468,23 @@ mod tests {
         assert_eq!(load_from(&path, "main"), Some(two));
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(text.lines().count(), 2, "one line per name: {text}");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_window_left_maximized_opens_so_at_the_size_it_restores_to() {
+        let directory = std::env::temp_dir().join(format!("zgx-maximized-{}", std::process::id()));
+        let path = directory.join("frames");
+        let frame = |maximized| Frame {
+            position: None,
+            size: (500, 240),
+            maximized,
+        };
+        assert_eq!(maximized_size(&path, "main"), None, "nothing saved");
+        store_to(&path, "main", frame(true)).unwrap();
+        store_to(&path, "other", frame(false)).unwrap();
+        assert_eq!(maximized_size(&path, "main"), Some((500, 240)));
+        assert_eq!(maximized_size(&path, "other"), None, "left at its size");
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

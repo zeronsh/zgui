@@ -2223,14 +2223,31 @@ impl Host {
         if self.window.is_some() {
             return Ok(());
         }
-        let window = Arc::new(event_loop.create_window(crate::window_info::attributes(
+        let attributes = crate::window_info::attributes(
             &self.options,
             event_loop,
             #[cfg(target_os = "linux")]
             self.context.windows.application_id.as_deref(),
             #[cfg(target_os = "linux")]
             self.context.windows.activation.borrow_mut().take(),
-        )?)?);
+        )?;
+        // Left maximized, a Wayland window is maximized from its first
+        // configure, at the saved size to restore to: it never shows at
+        // that size first (see `opens_maximized`).
+        #[cfg(target_os = "linux")]
+        let opened_maximized = event_loop
+            .display_handle()
+            .is_ok_and(|handle| matches!(handle.as_raw(), RawDisplayHandle::Wayland(_)))
+            .then(|| crate::window_place::opens_maximized(&self.options))
+            .flatten();
+        #[cfg(target_os = "linux")]
+        let attributes = match opened_maximized {
+            Some((width, height)) => attributes
+                .with_inner_size(PhysicalSize::new(width, height))
+                .with_maximized(true),
+            None => attributes,
+        };
+        let window = Arc::new(event_loop.create_window(attributes)?);
         #[cfg(target_os = "macos")]
         {
             content_never_moves_window();
@@ -2386,7 +2403,17 @@ impl Host {
             crate::window_place::maximize_hidden(&window);
         }
         if self.options.bounds.is_none() {
-            self.options.bounds = Some(crate::WindowBounds::read(&window));
+            // Opened maximized, its frame is the one it restores to.
+            #[cfg(target_os = "linux")]
+            if let Some(size) = opened_maximized {
+                self.options.bounds = Some(crate::WindowBounds {
+                    position: None,
+                    size,
+                });
+            }
+            if self.options.bounds.is_none() {
+                self.options.bounds = Some(crate::WindowBounds::read(&window));
+            }
         }
         if self.options.fullscreen {
             let display = self
