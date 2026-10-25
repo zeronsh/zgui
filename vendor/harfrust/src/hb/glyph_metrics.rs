@@ -113,6 +113,7 @@ impl<'a> GlyphMetrics<'a> {
 
     /// zgx: one glyph's advance as `populate_advance_widths` works it out
     /// (its base, then its variation's delta), for `AdvanceCache`.
+    #[cfg(feature = "std")]
     pub fn populated_advance_width(&self, gid: GlyphId, coords: &[F2Dot14]) -> i32 {
         let mut advance = self
             .h_metrics
@@ -135,6 +136,7 @@ impl<'a> GlyphMetrics<'a> {
     }
 
     /// zgx: the glyphs the font holds (`AdvanceCache`).
+    #[cfg(feature = "std")]
     pub fn num_glyphs(&self) -> u32 {
         self.num_glyphs
     }

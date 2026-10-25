@@ -1,8 +1,8 @@
-//! A variable font's glyph advances, kept once worked out for its instance
-//! (zgx-harfrust's `AdvanceCache`), shape every glyph where working each
-//! out again does: the same glyphs, advances and offsets, to the bit, at
-//! every weight and size, the first time a text is shaped and every time
-//! after.
+//! A variable font's glyph advances and GPOS deltas, kept once worked out
+//! for its instance (zgx-harfrust's `AdvanceCache` and `DeltaCache`), shape
+//! every glyph where working each out again does: the same glyphs, advances
+//! and offsets, to the bit, at every weight and size, the first time a text
+//! is shaped and every time after.
 use cosmic_text::{
     Attrs, AttrsList, BufferLine, Family, FontSystem, LineEnding, Shaping, Weight, fontdb,
 };
@@ -75,10 +75,10 @@ fn all(bytes: &[u8], weights: &[u16], sizes: &[f32]) -> Vec<Glyphs> {
 }
 
 fn compare(bytes: &[u8], weights: &[u16], sizes: &[f32]) {
-    harfrust::zgx_keep_advances(false);
+    harfrust::zgx_keep_variations(false);
     let worked_out = all(bytes, weights, sizes);
-    harfrust::zgx_keep_advances(true);
-    // The first shaping fills the advances kept; the second reads them.
+    harfrust::zgx_keep_variations(true);
+    // The first shaping fills what is kept; the second reads it.
     let (mut fonts, family) = fonts(bytes);
     for pass in 0..2 {
         let mut index = 0;

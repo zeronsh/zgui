@@ -255,11 +255,12 @@ pub struct hb_font_t<'a> {
 /// with the instance fixed for the shaper's life, a glyph's advance is too.
 /// Made at the first run shaped (a slot a glyph, `UNKNOWN` until worked
 /// out); a clone starts empty. Without `std`, advances are not kept.
+#[cfg(feature = "std")]
 #[derive(Default)]
 pub(crate) struct AdvanceCache {
-    #[cfg(feature = "std")]
     advances: std::sync::OnceLock<Box<[core::sync::atomic::AtomicI32]>>,
 }
+#[cfg(feature = "std")]
 impl Clone for AdvanceCache {
     fn clone(&self) -> Self {
         Self::default()
@@ -268,17 +269,23 @@ impl Clone for AdvanceCache {
 /// No advance is `i32::MIN`.
 #[cfg(feature = "std")]
 const UNKNOWN: i32 = i32::MIN;
-/// zgx: whether variable instances keep their advances (`AdvanceCache`).
+/// zgx: whether variable instances keep what they work out
+/// (`AdvanceCache`, `ot::DeltaCache`).
 #[cfg(feature = "std")]
-static KEEP_ADVANCES: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
-/// zgx: keep a variable instance's advances (the default) or work each out
-/// again, process-wide: for a test comparing shaping with and without.
+static KEEP_VARIATIONS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+/// zgx: keep a variable instance's advances and deltas (the default) or work
+/// each out again, process-wide: for a test comparing shaping with and
+/// without.
 #[doc(hidden)]
-pub fn zgx_keep_advances(keep: bool) {
+pub fn zgx_keep_variations(keep: bool) {
     #[cfg(feature = "std")]
-    KEEP_ADVANCES.store(keep, core::sync::atomic::Ordering::Relaxed);
+    KEEP_VARIATIONS.store(keep, core::sync::atomic::Ordering::Relaxed);
     #[cfg(not(feature = "std"))]
     let _ = keep;
+}
+#[cfg(feature = "std")]
+pub(crate) fn keeps_variations() -> bool {
+    KEEP_VARIATIONS.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 impl<'a> crate::Shaper<'a> {
@@ -383,9 +390,7 @@ impl<'a> crate::Shaper<'a> {
     pub(crate) fn glyph_h_advances(&self, buffer: &mut hb_buffer_t) {
         // zgx: a variable instance's advances, each glyph's worked out once.
         #[cfg(feature = "std")]
-        if !self.ot_tables.coords.is_empty()
-            && KEEP_ADVANCES.load(core::sync::atomic::Ordering::Relaxed)
-        {
+        if !self.ot_tables.coords.is_empty() && keeps_variations() {
             use core::sync::atomic::{AtomicI32, Ordering::Relaxed};
             let coords = self.ot_tables.coords;
             let kept = self.advances.advances.get_or_init(|| {

@@ -133,6 +133,28 @@ pub struct OtTables<'a> {
     pub coords: &'a [F2Dot14],
     pub var_store: Option<ItemVariationStore<'a>>,
     pub feature_variations: [Option<u32>; 2],
+    /// zgx: `var_store`'s deltas at `coords` (see `DeltaCache`).
+    #[cfg(feature = "std")]
+    deltas: DeltaCache,
+}
+
+/// zgx: an instance's variation deltas (GDEF's item variation store at the
+/// shaper's coordinates: kerning and placements of GPOS value records,
+/// anchors), each worked out once. A delta sums a region scalar per region
+/// of its set, worked out again wherever a glyph pair is kerned; with the
+/// coordinates fixed for the shaper's life, a set's delta is too. Made as
+/// first read, a slot a delta set (`UNKNOWN` until worked out), a subtable
+/// at a time; a clone starts empty.
+#[cfg(feature = "std")]
+#[derive(Default)]
+struct DeltaCache {
+    sets: std::sync::OnceLock<Box<[std::sync::OnceLock<Box<[core::sync::atomic::AtomicI32]>>]>>,
+}
+#[cfg(feature = "std")]
+impl Clone for DeltaCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 impl<'a> OtTables<'a> {
@@ -179,7 +201,52 @@ impl<'a> OtTables<'a> {
             var_store,
             coords,
             feature_variations,
+            #[cfg(feature = "std")]
+            deltas: DeltaCache::default(),
         }
+    }
+
+    /// zgx: the delta of `var_store`'s set `outer`, `inner` at `coords`
+    /// (`ItemVariationStore::compute_delta`), kept once worked out.
+    pub fn delta(&self, outer: u16, inner: u16) -> i32 {
+        let Some(vs) = self.var_store.as_ref() else {
+            return 0;
+        };
+        let compute = || {
+            vs.compute_delta(DeltaSetIndex { outer, inner }, self.coords)
+                .unwrap_or_default()
+        };
+        #[cfg(feature = "std")]
+        if crate::hb::face::keeps_variations() {
+            use core::sync::atomic::{AtomicI32, Ordering::Relaxed};
+            const UNKNOWN: i32 = i32::MIN;
+            let sets = self.deltas.sets.get_or_init(|| {
+                (0..vs.item_variation_data_count())
+                    .map(|_| std::sync::OnceLock::new())
+                    .collect()
+            });
+            if let Some(set) = sets.get(outer as usize) {
+                let slots = set.get_or_init(|| {
+                    let items = vs
+                        .item_variation_data()
+                        .get(outer as usize)
+                        .and_then(Result::ok)
+                        .map_or(0, |data| data.item_count());
+                    (0..items).map(|_| AtomicI32::new(UNKNOWN)).collect()
+                });
+                if let Some(slot) = slots.get(inner as usize) {
+                    return match slot.load(Relaxed) {
+                        UNKNOWN => {
+                            let delta = compute();
+                            slot.store(delta, Relaxed);
+                            delta
+                        }
+                        delta => delta,
+                    };
+                }
+            }
+        }
+        compute()
     }
 
     pub fn has_glyph_classes(&self) -> bool {
@@ -276,17 +343,12 @@ impl<'a> OtTables<'a> {
     pub(super) fn resolve_anchor(&self, anchor: &AnchorTable) -> (i32, i32) {
         let mut x = anchor.x_coordinate() as i32;
         let mut y = anchor.y_coordinate() as i32;
-        if let Some(vs) = self.var_store.as_ref() {
+        if self.var_store.is_some() {
             let delta = |val: Option<Result<DeviceOrVariationIndex<'_>, ReadError>>| match val {
-                Some(Ok(DeviceOrVariationIndex::VariationIndex(varix))) => vs
-                    .compute_delta(
-                        DeltaSetIndex {
-                            outer: varix.delta_set_outer_index(),
-                            inner: varix.delta_set_inner_index(),
-                        },
-                        self.coords,
-                    )
-                    .unwrap_or_default(),
+                // zgx: kept once worked out (`delta`).
+                Some(Ok(DeviceOrVariationIndex::VariationIndex(varix))) => {
+                    self.delta(varix.delta_set_outer_index(), varix.delta_set_inner_index())
+                }
                 _ => 0,
             };
             x += delta(anchor.x_device());

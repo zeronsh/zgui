@@ -1,10 +1,7 @@
 //! OpenType GPOS lookups.
 
 use crate::hb::ot_layout_gsubgpos::OT::hb_ot_apply_context_t;
-use read_fonts::{
-    tables::{gpos::ValueFormat, variations::DeltaSetIndex},
-    FontData,
-};
+use read_fonts::{tables::gpos::ValueFormat, FontData};
 
 mod cursive;
 mod mark;
@@ -53,8 +50,7 @@ fn apply_value(
     if !format.intersects(ValueFormat::ANY_DEVICE_OR_VARIDX) {
         return Some(worked);
     }
-    if let Some(vs) = &ctx.face.ot_tables.var_store {
-        let coords = ctx.face.ot_tables.coords;
+    if ctx.face.ot_tables.var_store.is_some() {
         macro_rules! read_delta {
             () => {{
                 let rec_offset = data.read_at::<u16>(offset).ok()? as usize;
@@ -69,9 +65,8 @@ fn apply_value(
                     if format == VARIATION_INDEX_FORMAT {
                         let outer = data.read_at::<u16>(rec_offset).ok()?;
                         let inner = data.read_at::<u16>(rec_offset + 2).ok()?;
-                        value = vs
-                            .compute_delta(DeltaSetIndex { outer, inner }, coords)
-                            .unwrap_or_default();
+                        // zgx: kept once worked out (`OtTables::delta`).
+                        value = ctx.face.ot_tables.delta(outer, inner);
                         worked |= value != 0;
                     }
                 }

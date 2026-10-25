@@ -26,7 +26,7 @@ pub use hb::common::{script, Direction, Feature, Language, Script, Variation};
 pub use hb::face::{hb_font_t as Shaper, ShaperBuilder, ShaperData, ShaperInstance};
 // zgx: see `AdvanceCache`.
 #[doc(hidden)]
-pub use hb::face::zgx_keep_advances;
+pub use hb::face::zgx_keep_variations;
 pub use hb::ot_shape_plan::{hb_ot_shape_plan_t as ShapePlan, ShapePlanKey};
 
 /// Type alias for a normalized variation coordinate.
