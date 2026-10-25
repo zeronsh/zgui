@@ -74,9 +74,35 @@ def wait_for_wm(env, seconds=20):
         check = prop("-root", "_NET_SUPPORTING_WM_CHECK").rsplit("# ", 1)[-1].strip()
         if check.startswith("0x") and "_NET_WM_NAME" in prop("-id", check, "_NET_WM_NAME") \
                 and "_NET_ACTIVE_WINDOW" in prop("-root", "_NET_SUPPORTED"):
+            settle_keyboard(env, deadline)
             return
         time.sleep(.05)
     raise RuntimeError("the window manager did not start")
+
+
+def settle_keyboard(env, deadline):
+    """Send the display's first key now, before any app, and wait until the
+    window manager has taken it in. The first key xdotool sends (through
+    XTEST) switches the core keyboard to XTEST's: a keyboard map change, on
+    which Openbox ungrabs its bindings and grabs them again. An Alt+F4 sent
+    meanwhile reached the app instead of Openbox's Close, and the app stayed
+    open (one probe run in thirty, under load). The window manager handles X
+    events in order, so once it has answered a request sent after the key,
+    it has rebound: a desktop added and taken away."""
+    def desktops():
+        found = subprocess.run(["xprop", "-root", "_NET_NUMBER_OF_DESKTOPS"], env=env, capture_output=True,
+                               text=True).stdout.rsplit("=", 1)[-1].strip()
+        return int(found) if found.isdigit() else None
+    subprocess.run(["xdotool", "key", "shift"], env=env, check=True)
+    count = desktops()
+    if count is None:
+        return
+    for want in (count + 1, count):
+        subprocess.run(["xdotool", "set_num_desktops", str(want)], env=env, check=True)
+        while desktops() != want:
+            if time.monotonic() > deadline:
+                raise RuntimeError("the window manager did not answer after the first key")
+            time.sleep(.02)
 
 
 def dump_display(env, output, pid=None):

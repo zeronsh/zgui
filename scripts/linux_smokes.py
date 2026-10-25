@@ -168,7 +168,8 @@ def desktop(log):
                DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
     env.pop("WAYLAND_DISPLAY", None)
     wm = subprocess.Popen(["openbox"], env=env, stdout=log, stderr=log)
-    time.sleep(1)
+    from platform_smoke import wait_for_wm
+    wait_for_wm(env)
     return [wm, xvfb], env
 
 
