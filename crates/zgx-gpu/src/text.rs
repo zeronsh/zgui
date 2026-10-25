@@ -1171,17 +1171,27 @@ pub fn rich_buffer(
         let row = row.filter(|r| r.glyphs.iter().all(|g| g.level.is_ltr()))?;
         let left = row.glyphs.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
         let room = width? - ellipsis_width(fonts, rich, end);
+        // Each boundary's prefix reaches as far right as the glyphs ending
+        // at or before it: in order of their ends, one pass.
+        let mut reach: Vec<(usize, f32)> = row
+            .glyphs
+            .iter()
+            .map(|g| (g.end, g.x + g.w - left))
+            .collect();
+        reach.sort_unstable_by_key(|&(end, _)| end);
+        let (mut at, mut right) = (0, 0_f32);
         Some(
             boundaries
                 .iter()
                 .take_while(|&&cut| {
                     let cut = cut - offset;
-                    row.glyphs
-                        .iter()
-                        .filter(|g| g.end <= cut)
-                        .map(|g| g.x + g.w - left)
-                        .fold(0., f32::max)
-                        <= room
+                    while let Some(&(end, reach)) = reach.get(at)
+                        && end <= cut
+                    {
+                        right = right.max(reach);
+                        at += 1;
+                    }
+                    right <= room
                 })
                 .count()
                 .saturating_sub(1),
@@ -1254,8 +1264,16 @@ thread_local! {
     /// was before the guess (`rich_buffer`): what the guess must match.
     static HALVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+thread_local! {
+    /// Ellipses' widths by the font and size they are shaped in
+    /// (`ellipsis_width`): one a run's style, the same for every text.
+    static ELLIPSES: std::cell::RefCell<rustc_hash::FxHashMap<(zgx::text_layout::FontStyle, u32), f32>> =
+        Default::default();
+}
 /// The width of the ellipsis truncation appends to `rich` cut at `cut`, in
-/// the run there, as `rich_buffer` shapes it.
+/// the run there, as `rich_buffer` shapes it. Kept by the run's font and
+/// size: where fonts installed since change it, the search it starts
+/// (`rich_buffer`) only takes another probe.
 fn ellipsis_width(fonts: &mut FontSystem, rich: &zgx::rich_text::RichText, cut: usize) -> f32 {
     let Some(mut run) = rich
         .runs()
@@ -1267,12 +1285,25 @@ fn ellipsis_width(fonts: &mut FontSystem, rich: &zgx::rich_text::RichText, cut: 
     else {
         return 0.;
     };
+    let key = (run.font.clone(), run.font_size.to_bits());
+    if let Some(width) = ELLIPSES.with(|known| known.borrow().get(&key).copied()) {
+        return width;
+    }
     run.range = 0.."…".len();
     let ellipsis = zgx::rich_text::RichText::new("…", vec![run]).unwrap();
-    rich_buffer_raw(fonts, &ellipsis, None, None, false)
+    let width = rich_buffer_raw(fonts, &ellipsis, None, None, false)
         .layout_runs()
         .map(|r| r.line_w)
-        .fold(0., f32::max)
+        .fold(0., f32::max);
+    ELLIPSES.with(|known| {
+        let mut known = known.borrow_mut();
+        // Bounded: styles past it start the table again.
+        if known.len() >= 256 {
+            known.clear();
+        }
+        known.insert(key, width);
+    });
+    width
 }
 /// Shape plain display text through the same overflow implementation as spans.
 pub fn display_buffer(
