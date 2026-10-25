@@ -15,11 +15,16 @@ retired instructions (the kernel's count, every thread) vary by well under
 only add instructions, so the least of a scene's runs is the one reported. A/B mode builds
 each revision in a worktree of its own under /tmp/zgx-perf (kept, so the
 next comparison builds incrementally), runs the scenes alternately, and marks
-a difference larger than both sides' spread. With ZGX_PROFILE=1 set, a
+a difference larger than both sides' spread. Each side builds into a target
+of its own, and one last built from another checkout is claimed first
+(`claim`): cargo would otherwise hand back the other checkout's crates as
+built. A scene whose binary is the same on both sides is noted. With ZGX_PROFILE=1 set, a
 scene's own phase report (style, layout, text, damage, paint, encode,
 submit) is shown too. macOS (`/usr/bin/time -l`) and Linux (`perf stat`).
 """
 import argparse
+import filecmp
+import hashlib
 import os
 import pathlib
 import platform
@@ -69,7 +74,27 @@ def chosen(args):
     return [scene[:4] for scene in scenes]
 
 
+def claim(checkout, target):
+    """Make `target` build `checkout`'s workspace crates. Cargo names them the
+    same from any checkout and judges them fresh by modification time, so a
+    target directory last built from another checkout (another worktree, a
+    side of an earlier A/B) would hand back that checkout's crates, older
+    files here taken for built. Touched, they are compiled again (the
+    registry's crates stay shared); the target remembers whose it is."""
+    marker = target / '.zgx-checkout'
+    if marker.exists() and marker.read_text() == str(checkout.resolve()):
+        return
+    tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=checkout, capture_output=True, check=True).stdout
+    for path in filter(None, tracked.split(b'\0')):
+        file = checkout / path.decode()
+        if file.is_file():
+            os.utime(file)
+    target.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(checkout.resolve()))
+
+
 def build(checkout, target, scenes):
+    claim(checkout, target)
     command = ['cargo', 'build', '--release', '--locked', '--quiet']
     for package in dict.fromkeys(scene[1] for scene in scenes):
         command += ['-p', package]
@@ -147,11 +172,14 @@ def ab(args):
     sides = []
     for slot, revision in (('a', args.a), ('b', args.b)):
         if revision == '.':
+            # A target of this checkout's own: the slots' are their worktrees'.
             checkout, label = ROOT, 'this checkout'
+            target = WORK / f'target-{hashlib.sha1(str(ROOT).encode()).hexdigest()[:8]}'
         else:
             checkout, label = worktree(slot, revision)
             label = f'{revision} ({label})'
-        sides.append((label, build(checkout, WORK / f'target-{slot}', scenes)))
+            target = WORK / f'target-{slot}'
+        sides.append((label, build(checkout, target, scenes)))
     compare(scenes, sides, args.repeat)
 
 
@@ -164,6 +192,12 @@ def dirs(args):
 
 def compare(scenes, sides, repeat):
     print(f'A = {sides[0][0]}\nB = {sides[1][0]}\n')
+    # The same binary on both sides measures nothing: the change does not
+    # reach the scene, or a build was taken for the other's.
+    same = [name for name, _, example, _ in scenes
+            if filecmp.cmp(sides[0][1] / example, sides[1][1] / example, shallow=False)]
+    if same:
+        print(f'note: A and B are the same binary for {", ".join(same)}\n')
     print(f'{"scene":14} {"A":>11} {"B":>11} {"B - A":>8}  spread A/B')
     for name, _, example, env in scenes:
         counts = ([], [])
