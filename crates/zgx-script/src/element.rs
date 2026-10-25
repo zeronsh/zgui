@@ -975,10 +975,14 @@ impl UserData for ElementUd {
         // An input's selection, in characters (Unicode code points, from
         // 0, as `utf8.len` counts them): `el:select_all()`,
         // `el:set_selection(a, b)` (`b` defaults to `a`, a caret) and
-        // `local a, b = el:selection()` (nil for other elements).
+        // `local a, b = el:selection()` (nil for other elements). What a new
+        // selection lays out and colours again (a long document shown at its
+        // end, every line above highlighted first) is off the clock, as an
+        // edit's is.
         methods.add_method("select_all", |lua, e, ()| {
             settle(lua);
-            Ok(e.0.handle.get().is_some_and(NodeHandle::select_all))
+            let handle = e.0.handle.get();
+            Ok(off_clock(lua, |_| handle.is_some_and(NodeHandle::select_all)).unwrap_or(false))
         });
         methods.add_method(
             "set_selection",
@@ -993,7 +997,7 @@ impl UserData for ElementUd {
                     let byte = |chars: i64| byte_offset(&whole, chars.max(0) as usize);
                     (byte(anchor), byte(focus.unwrap_or(anchor)))
                 };
-                editor.set_selection(anchor, focus);
+                off_clock(lua, |_| editor.set_selection(anchor, focus));
                 Ok(true)
             },
         );
@@ -1019,7 +1023,8 @@ impl UserData for ElementUd {
                     return Ok(false);
                 };
                 let byte = |b: i64| b.max(0) as usize;
-                editor.set_selection(byte(anchor), byte(focus.unwrap_or(anchor)));
+                let (anchor, focus) = (byte(anchor), byte(focus.unwrap_or(anchor)));
+                off_clock(lua, |_| editor.set_selection(anchor, focus));
                 Ok(true)
             },
         );

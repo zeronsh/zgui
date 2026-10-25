@@ -212,6 +212,73 @@ fn a_script_short_of_its_budget_is_never_stopped() {
 }
 
 #[test]
+fn what_a_selection_lays_out_again_is_not_the_scripts_to_pay_for() {
+    // Selecting a long document to its end shows its last lines, coloured
+    // by a highlighter that has to run over every line before them: the
+    // editor's work, as typing there would be, not the handler's (the code
+    // editor's Replace All selected all of 100,000 lines and was stopped).
+    let limits = Limits {
+        call: Duration::from_millis(20),
+        ..Limits::default()
+    };
+    let mut h = Harness::new(|runtime| {
+        ScriptHost::inline(
+            runtime,
+            "app",
+            r##"local text = ui.state("text", "")
+            local el = ui.ref()
+            -- 20,000 lines the editor has not coloured yet, made on load.
+            local documents = {}
+            for _, name in { "bytes", "chars", "all" } do
+                local lines = table.create(20000)
+                for i = 1, 20000 do
+                    lines[i] = `local {name}_{i} = {i}`
+                end
+                documents[name] = table.concat(lines, "\n")
+            end
+            local function open(name)
+                text:set(documents[name])
+            end
+            -- Script that runs on, where a budget passed is found.
+            local function after()
+                for _ = 1, 1000 do end
+            end
+            -- A token a character, as a tokenizer colours code.
+            local spans = {}
+            for i = 1, 20 do
+                spans[i] = { i, i, if i % 2 == 0 then "#ff0000" else "#00ff00" }
+            end
+            return ui.column {
+                ui.button { id = "bytes", w = 80, h = 20, on_click = function()
+                    open("bytes")
+                    el:get():set_selection_bytes(0, #text:peek())
+                    after()
+                end },
+                ui.button { id = "chars", w = 80, h = 20, on_click = function()
+                    open("chars")
+                    el:get():set_selection(0, #text:peek())
+                    after()
+                end },
+                ui.button { id = "all", w = 80, h = 20, on_click = function()
+                    open("all")
+                    el:get():select_all()
+                    after()
+                end },
+                ui.textarea { ref = el, value = text, w = 300, h = 200, line_numbers = true,
+                    highlight = function(line, state)
+                        return spans, state
+                    end },
+            }"##,
+        )
+        .limits(limits)
+    });
+    for button in ["bytes", "chars", "all"] {
+        h.click(button);
+        assert_eq!(h.host.error().get(), None, "{button}");
+    }
+}
+
+#[test]
 fn nodes_a_script_keeps_mount_again_after_collections() {
     // Nodes made once and kept in variables are shown, hidden and shown
     // again, with garbage collected while they are away: a node lives as
