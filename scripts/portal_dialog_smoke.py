@@ -54,7 +54,7 @@ def main():
                        XDG_DATA_HOME=str(pathlib.Path(runtime, "data")))
             for name in ("WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP", "AT_SPI_BUS_ADDRESS"):
                 env.pop(name, None)
-            xvfb = launch("xvfb", ["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env,
+            xvfb = launch("xvfb", ["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env,
                           stdout=subprocess.PIPE, text=True)
             if not select.select([xvfb.stdout], [], [], 10)[0]:
                 raise RuntimeError("Xvfb startup timed out")

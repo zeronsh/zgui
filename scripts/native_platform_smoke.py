@@ -17,7 +17,7 @@ def main():
                 child=subprocess.Popen(cmd,env=environment or env,stderr=log,stdout=kw.pop('stdout',log),**kw)
             processes.append(child);return child
         try:
-            x=launch('xvfb',['Xvfb','-r','-displayfd','1','-screen','0','1400x1000x24','-ac'],stdout=subprocess.PIPE,text=True)
+            x=launch('xvfb',['Xvfb','-r','-noreset','-displayfd','1','-screen','0','1400x1000x24','-ac'],stdout=subprocess.PIPE,text=True)
             assert select.select([x.stdout],[],[],10)[0];env['DISPLAY']=':'+x.stdout.readline().strip()
             config=pathlib.Path(private,'bus.conf');config.write_text('<busconfig><type>session</type><listen>unix:tmpdir='+private+'</listen><auth>EXTERNAL</auth><policy context="default"><allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
             bus=launch('bus',['dbus-daemon','--nofork','--config-file='+str(config),'--print-address=1'],stdout=subprocess.PIPE,text=True)

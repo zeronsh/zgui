@@ -36,7 +36,7 @@ def main():
             env = dict(os.environ, FONTCONFIG_FILE=str(config), XDG_RUNTIME_DIR=runtime, WINIT_X11_SCALE_FACTOR="1",
                        XDG_CACHE_HOME=f"{runtime}/cache", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
             env.pop("WAYLAND_DISPLAY", None)
-            xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env=env,
+            xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env=env,
                                     stdout=subprocess.PIPE, stderr=(args.output / "xvfb.log").open("w"), text=True)
             processes.append(xvfb)
             if not select.select([xvfb.stdout], [], [], 10)[0]:

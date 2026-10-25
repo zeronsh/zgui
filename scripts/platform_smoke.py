@@ -148,7 +148,7 @@ def x11(args, output):
     xvfb = wm = None
     with (output / "xvfb.log").open("w") as log:
         try:
-            xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0",
+            xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0",
                                      "2304x1800x24", "-ac"], stdout=subprocess.PIPE,
                                     stderr=log, text=True)
             if not select.select([xvfb.stdout], [], [], 10)[0]:

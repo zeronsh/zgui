@@ -72,7 +72,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="zgx-wayland-latency-") as runtime:
         os.chmod(runtime, 0o700)
         try:
-            xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1280x960x24", "-ac"],
+            xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1280x960x24", "-ac"],
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             processes.append(xvfb)
             if not select.select([xvfb.stdout], [], [], 10)[0]:

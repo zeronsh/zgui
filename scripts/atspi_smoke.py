@@ -39,7 +39,7 @@ def main():
         os.chmod(runtime, 0o700)
         try:
             with (args.output / "xvfb.log").open("w") as log:
-                xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "900x650x24", "-ac"], stdout=subprocess.PIPE, stderr=log, text=True)
+                xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "900x650x24", "-ac"], stdout=subprocess.PIPE, stderr=log, text=True)
                 if not select.select([xvfb.stdout], [], [], 8)[0]:
                     raise RuntimeError("owned Xvfb startup timed out")
                 display = ":" + xvfb.stdout.readline().strip()

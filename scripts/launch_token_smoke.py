@@ -80,7 +80,7 @@ def main():
         env = dict(os.environ, WINIT_X11_SCALE_FACTOR="1", XDG_RUNTIME_DIR="/tmp",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
         env.pop("WAYLAND_DISPLAY", None)
-        xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"],
+        xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"],
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         processes.append(xvfb)
         if not select.select([xvfb.stdout], [], [], 10)[0]:

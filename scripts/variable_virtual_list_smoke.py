@@ -41,7 +41,7 @@ def main():
             return process
 
         try:
-            xvfb = launch("xvfb", ["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1200x900x24", "-ac"], stdout=subprocess.PIPE, text=True)
+            xvfb = launch("xvfb", ["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1200x900x24", "-ac"], stdout=subprocess.PIPE, text=True)
             assert select.select([xvfb.stdout], [], [], 10)[0], "owned Xvfb startup timed out"
             display = ":" + xvfb.stdout.readline().strip()
             assert display != ":", "owned Xvfb failed"

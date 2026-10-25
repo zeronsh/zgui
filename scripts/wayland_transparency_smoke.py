@@ -54,7 +54,7 @@ def main():
                          "XMODIFIERS", "SDL_IM_MODULE", "GLFW_IM_MODULE",
                          "IBUS_ADDRESS", "FCITX_DBUS_ADDRESS"):
                 env.pop(name, None)
-            xvfb = launch("xvfb", ["Xvfb", "-r", "-displayfd", "1", "-screen", "0",
+            xvfb = launch("xvfb", ["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0",
                                    "1400x1000x24", "-ac"], stdout=subprocess.PIPE, text=True)
             assert select.select([xvfb.stdout], [], [], 8)[0], "owned Xvfb startup timed out"
             env["DISPLAY"] = ":" + xvfb.stdout.readline().strip()

@@ -151,7 +151,7 @@ COST = {
 
 def desktop(log):
     """A private Xvfb/Openbox desktop: (processes, environment)."""
-    xvfb = subprocess.Popen(["Xvfb", "-r", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"],
+    xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"],
                             stdout=subprocess.PIPE, stderr=log, text=True)
     if not select.select([xvfb.stdout], [], [], 10)[0]:
         xvfb.kill()
