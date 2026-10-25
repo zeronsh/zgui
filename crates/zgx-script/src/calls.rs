@@ -277,9 +277,15 @@ impl UserData for PromiseUd {
 const AWAIT: &str = "zgx.await";
 /// `p:await()`: the task's coroutine yields the promise and is resumed with
 /// `(ok, value)` when it settles.
+///
+/// The same chunk (one made for every script) gives `ui.try(f, ...)`:
+/// `f(...)`'s value and nil, or nil and what it raised as a person reads
+/// it (an error object's text, without its traceback). Luau, so a task's
+/// await inside `f` yields through it as through `pcall`.
 const AWAIT_SOURCE: &str = r#"
 local yield, yieldable = coroutine.yield, coroutine.isyieldable
-return function(promise)
+local pcall, tostring, type = pcall, tostring, type
+local function await(promise)
     if not yieldable() then
         error("await runs inside ui.task(function() ... end)", 2)
     end
@@ -290,6 +296,25 @@ return function(promise)
     end
     return value
 end
+local function try(f, ...)
+    local ok, value = pcall(f, ...)
+    if ok then
+        return value, nil
+    end
+    if type(value) == "string" then
+        return nil, value
+    end
+    local text = tostring(value)
+    local cut = text:find("\nstack traceback:", 1, true)
+    if cut then
+        text = text:sub(1, cut - 1)
+    end
+    if text:sub(1, 15) == "runtime error: " then
+        text = text:sub(16)
+    end
+    return nil, text
+end
+return await, try
 "#;
 
 /// A new promise, pending, for what the script calling now asked.
@@ -407,8 +432,10 @@ pub(crate) fn install(
     actions: AsyncActions,
     fetcher: Option<SharedFetcher>,
 ) -> mlua::Result<()> {
-    let await_fn: Function = lua.load(AWAIT_SOURCE).set_name("=await").eval()?;
+    let (await_fn, try_fn): (Function, Function) =
+        lua.load(AWAIT_SOURCE).set_name("=await").eval()?;
     lua.set_named_registry_value(AWAIT, await_fn)?;
+    ui.set("try", try_fn)?;
     ui.set(
         "call",
         lua.create_function(move |lua, (name, arg): (String, Option<Value>)| {

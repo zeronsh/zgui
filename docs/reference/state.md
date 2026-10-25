@@ -26,6 +26,7 @@ ui.action(name: string, arg: unknown?) -> Action
 ui.invoke(name: string, arg: unknown?) -> ()
 ui.call(name: string, arg: unknown?) -> Promise
 ui.task<A...>(f: (A...) -> (), A...) -> Task
+ui.try<T, A...>(f: (A...) -> ...T, A...) -> (T?, string?)
 ui.resource<T>(load: () -> T, opts: { initial: T }?) -> Resource<T>
 ui.fetch(url: string, opts: FetchOptions?) -> Promise<Response>
 ui.clipboard.read() -> string?
@@ -118,6 +119,17 @@ end)
 ```
 
 `ui.task` returns its handle: `task:cancel()` stops it at the await it is at, never to go on (`task.cancelled` says so). What it awaited still settles, unheard: the host's work is not stopped, its answer only dropped. Cancel what a closed view started, as React's effects abort a fetch in their cleanup: `ui.on_cleanup(function() task:cancel() end)`. A resource cancels a load it begins again, and its owner going cancels its load; a form cancels its submit with `form.cancel()` and as it goes.
+
+`ui.try(f, ...)` is `pcall` with its error typed: `f(...)`'s value and nil, or nil and what it raised as text a person reads (an error object's message, without its traceback), where Luau types `pcall`'s error as `f`'s result. Awaits inside `f` work in a task as through `pcall`:
+
+```lua
+local status = ui.state("status", "")
+ui.task(function()
+    local _, err = ui.try(function() return ui.call("load_user"):await() end)
+    status:set(if err then `Couldn't load: {err}` else "Loaded")
+end)
+return ui.text { "{status}" }
+```
 
 A rejection that nothing handles (no `on_error`, no read of `error`, no `await`) is reported as a script error with the action's name, so a failure is never silent. A script reloaded since a call hears nothing of it. A call costs about a microsecond on top of the host's work (`ui.call`, settling and an `:after` callback; `tests/calls.rs`), and the same however many are in flight.
 

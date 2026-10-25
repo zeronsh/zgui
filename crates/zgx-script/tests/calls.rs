@@ -783,3 +783,40 @@ fn a_cancelled_task_stops_at_its_await() {
     assert_eq!(h.text("shown"), "0 2 answer 3 false ");
     assert_eq!(h.error(), None);
 }
+
+#[test]
+fn ui_try_gives_a_value_or_what_was_raised_as_text_in_a_task_too() {
+    let mut h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(
+            runtime,
+            "app",
+            r#"
+local said = ui.state("said", "")
+local rows = ui.state("rows", { 1 })
+ui.command { id = "run", run = function()
+    local v, e = ui.try(function(a, b) return a + b end, 2, 3)
+    local _, raised = ui.try(function() error("plain words", 0) end)
+    -- An error mlua made (a wrong path): its text, no traceback.
+    local _, wrong = ui.try(function() rows:set_key({ 1, true }, 0) end)
+    said:set(`{v} {e == nil} {raised} {wrong:find("traceback") == nil} {wrong:find("not boolean") ~= nil}`)
+    ui.task(function()
+        local _, refused = ui.try(function() return ui.call("refuse"):await() end)
+        local answer = ui.try(function() return ui.call("answer"):await() end)
+        said:set(said:peek() .. ` / {refused} {answer}`)
+    end)
+end }
+return ui.text { id = "said", "{said}" }
+"#,
+        );
+        host.async_action("refuse", |_| async { Err("no, thank you".into()) });
+        host.async_action("answer", |_| async { Ok(Value::Num(42.)) });
+        host
+    });
+    assert!(h.host.run_command("run"));
+    wait_for(
+        &mut h,
+        "said",
+        "5 true plain words true true / no, thank you 42",
+    );
+    assert_eq!(h.error(), None);
+}

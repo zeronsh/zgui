@@ -13539,6 +13539,10 @@ declare ui: {
 	-- Run `f(...)` as a task: `p:await()` inside it waits for a promise
 	-- without blocking anything else. Its handle cancels it.
 	task: <A...>(f: (A...) -> (), A...) -> Task,
+	-- `f(...)`'s value and nil, or nil and what it raised, as a string a
+	-- person reads (an error's text, no traceback): `pcall` with its error
+	-- typed. Awaits inside `f` work in a task, as through `pcall`.
+	try: <T, A...>(f: (A...) -> ...T, A...) -> (T?, string?),
 	-- What `load` returns, loaded in a task (it may await), as states:
 	-- `data`, `loading`, `error` and `status`. It loads again on `reload()`
 	-- and when a state it read before its first await changes; only the

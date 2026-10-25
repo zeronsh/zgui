@@ -40,15 +40,15 @@ local function remove()
 	end
 	removal_error:set(nil)
 	ui.task(function()
-		local ok, err = pcall(api.remove, member.id)
-		if ok then
+		local _, err = ui.try(api.remove, member.id)
+		if not err then
 			local at = members:index_of("id", member.id)
 			if at then
 				members:remove(at)
 			end
 			confirm_open:set(false)
 		else
-			removal_error:set(tostring(err))
+			removal_error:set(err)
 		end
 	end)
 end
