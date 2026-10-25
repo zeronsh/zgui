@@ -714,8 +714,12 @@ pub(crate) fn mount_style_with_intrinsic(
     let mut body_subscribed = false;
     ui.bind(node, move || {
         let _span = crate::profile::nested(crate::profile::Phase::Style);
-        let Some(mut ui) = weak.upgrade() else { return };
-        if !ui.scene.borrow().contains(node) {
+        // A `Ui` only for a full application: a run that changes paint or a
+        // box alone needs just the scene and themes.
+        let Some(storage) = weak.upgrade_storage() else {
+            return;
+        };
+        if !storage.scene.borrow().contains(node) {
             return;
         }
         if std::mem::replace(&mut ran, true) && memo.is_none() {
@@ -818,7 +822,7 @@ pub(crate) fn mount_style_with_intrinsic(
                     _ => false,
                 };
             let unchanged = glass.is_none_or(|opaque| {
-                opaque == ui.theme().system_preferences().reduced_transparency
+                opaque == storage.themes.system_preferences().reduced_transparency
             }) && paint.map(|p| p.set()) == last.paint
                 && (same || resized)
                 && (!last.parent || {
@@ -868,7 +872,7 @@ pub(crate) fn mount_style_with_intrinsic(
                     }
                     set_sizes(then, sizes(now));
                     patch_sizes(style, next);
-                    ui.scene.borrow_mut().set_box(node, style, boxed);
+                    storage.scene.borrow_mut().set_box(node, style, boxed);
                 }
                 // The paint written last time, from the same inputs.
                 // Resized with no dynamic paint, as last time: nothing to write.
@@ -957,7 +961,7 @@ pub(crate) fn mount_style_with_intrinsic(
                         }
                     }
                 }
-                let mut scene = ui.scene.borrow_mut();
+                let mut scene = storage.scene.borrow_mut();
                 scene.set_effects(node, effects);
                 apply_mask(&mut scene, node, &applied.0, &originals.mask);
                 scene.set_clip_inset(node, applied.0.clip_inset.or(originals.inset));
@@ -984,6 +988,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 paint.put(produced);
             }
         }
+        let mut ui = Ui::from_storage(storage);
         let mut resolved = base.clone();
         if let Some(produced) = &produced {
             resolved.merge(produced);

@@ -839,9 +839,9 @@ impl EditorDrag {
         self.generation.set(self.generation.get().wrapping_add(1));
     }
 }
-struct UiStorage {
+pub(crate) struct UiStorage {
     runtime: Runtime,
-    themes: Rc<Themes>,
+    pub(crate) themes: Rc<Themes>,
     /// The theme scope of the element being mounted (`Ui::enter_theme`).
     mount_theme: RefCell<Option<Rc<ThemeScope>>>,
     text_geometry_revision: Signal<u64>,
@@ -863,7 +863,7 @@ struct UiStorage {
     popup_soon_sent: Cell<bool>,
     /// The host shows drag previews in windows of their own (`set_popup_previews`).
     popup_previews: Cell<bool>,
-    scene: Rc<RefCell<Scene>>,
+    pub(crate) scene: Rc<RefCell<Scene>>,
     input: InputDispatcher,
     semantics: Rc<RefCell<Semantics>>,
     owned: RefCell<crate::scene::NodeMap<Owned>>,
@@ -966,6 +966,12 @@ impl WeakUi {
     /// The `Ui`, if it still exists.
     pub fn upgrade(&self) -> Option<Ui> {
         self.storage.upgrade().map(Ui::from_storage)
+    }
+    /// What the `Ui` is made from, if it still exists: for a path that
+    /// needs only its scene or themes, without a `Ui`'s handles made and
+    /// dropped (`Ui::from_storage` makes one).
+    pub(crate) fn upgrade_storage(&self) -> Option<Rc<UiStorage>> {
+        self.storage.upgrade()
     }
 }
 /// Restores the previous mount theme scope (`Ui::enter_theme`), unless
@@ -1121,7 +1127,7 @@ impl Ui {
         });
         Self::from_storage(storage)
     }
-    fn from_storage(storage: Rc<UiStorage>) -> Self {
+    pub(crate) fn from_storage(storage: Rc<UiStorage>) -> Self {
         Self {
             runtime: storage.runtime.clone(),
             scene: storage.scene.clone(),
