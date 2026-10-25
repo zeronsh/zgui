@@ -870,9 +870,12 @@ table navigation; AccessKit gave a grid none, fixed in
 `vendor/accesskit_macos`), that the tree, segmented control, stepper,
 slider, tabs and select have their roles and names, that charts drawn on
 canvases are images named by what they show, that a group of chips is a
-radio group saying which is chosen, and that a list's options are named,
-selectable and pressable. Passed on macOS 26 (M5), 2026-10-24; it fails
-without the AccessKit patch (AXRows 0). The macOS bundle
+radio group saying which is chosen, that a list's options are named,
+selectable and pressable, and that an invalid form field
+(`scripts/macos_ax_form`) says so (`AXInvalid`) and gives its error
+message in `AXHelp`, from the text showing it or its own. Passed on macOS
+26 (M5), 2026-10-24, and with the form checks (16), 2026-10-25; it fails
+without the AccessKit patches (AXRows 0, no AXInvalid). The macOS bundle
 (`macos_native_validation.py`) runs it. Speech itself (VoiceOver reading
 aloud, its rotor) is not checked: the tree it reads is.
 
