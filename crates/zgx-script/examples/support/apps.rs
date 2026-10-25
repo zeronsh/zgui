@@ -246,7 +246,8 @@ fn dashboard(make: MakeDrawing) {
     });
     // Three others in turn: none the last sort's, so each sorts it all.
     b.measure("dashboard: sort, a column not sorted by last", |b, k| {
-        b.app.click(["sort-price", "sort-change", "sort-sector"][k % 3]);
+        b.app
+            .click(["sort-price", "sort-change", "sort-sector"][k % 3]);
     });
     b.measure("dashboard: filter keystroke", |b, k| {
         if k % 2 == 0 {
