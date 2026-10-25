@@ -7,6 +7,8 @@ use zgx::widgets::Ui;
 use zgx_gpu::GpuRenderer;
 use zgx_workload::animation::*;
 
+#[path = "support/headless_font.rs"]
+mod headless_font;
 #[path = "support/animation_view.rs"]
 mod view;
 
@@ -93,8 +95,14 @@ fn main() {
         gpu
     });
     match &gpu {
-        Some(gpu) => gpu.install_text(&mut ui.scene.borrow_mut()),
-        None => text.install(&mut ui.scene.borrow_mut()),
+        Some(gpu) => {
+            headless_font::font().install(&mut gpu.text_system().borrow_mut());
+            gpu.install_text(&mut ui.scene.borrow_mut())
+        }
+        None => {
+            headless_font::font().install(&mut text.text_system().borrow_mut());
+            text.install(&mut ui.scene.borrow_mut())
+        }
     }
     let clock = ui.signal(0_f32);
     ui.mount(view::animation(clock.clone()));

@@ -15,6 +15,8 @@ use zgx::widgets::Ui;
 use zgx_gpu::{GpuRenderer, TextServices};
 use zgx_workload::{Mode, heavy::*};
 
+#[path = "support/headless_font.rs"]
+mod headless_font;
 #[path = "support/heavy_view.rs"]
 mod view;
 
@@ -69,6 +71,7 @@ fn main() {
     )
     .expect("GPU");
     gpu.set_scale_factor(scale);
+    headless_font::font().install(&mut gpu.text_system().borrow_mut());
     gpu.install_text(&mut ui.scene.borrow_mut());
     let live = ui.signal(0_u64);
     let scroll = ui.signal(0_f32);
@@ -159,6 +162,7 @@ fn main() {
 fn without_rendering(mut ui: Ui, mut work: Heavy, ticks: usize) {
     let mode = work.mode;
     let text = TextServices::new();
+    headless_font::font().install(&mut text.text_system().borrow_mut());
     text.install(&mut ui.scene.borrow_mut());
     let live = ui.signal(0_u64);
     let scroll = ui.signal(0_f32);

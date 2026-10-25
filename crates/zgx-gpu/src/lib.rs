@@ -8751,6 +8751,11 @@ impl TextServices {
             cache: Default::default(),
         }
     }
+    /// The font system it shapes and measures text with (a renderer's
+    /// `text_system`): register bundled fonts here.
+    pub fn text_system(&self) -> Rc<RefCell<FontSystem>> {
+        self.fonts.clone()
+    }
     /// Shape and measure `scene`'s text with these, as a renderer would.
     pub fn install(&self, scene: &mut Scene) {
         install_text(scene, &self.fonts, &self.cache);

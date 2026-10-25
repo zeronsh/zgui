@@ -11,6 +11,11 @@ pub const TOKEN: &str = "The quick brown fox streams a token. ";
 /// loads itself (`font_file`), so every framework shapes the same glyphs.
 pub const FONT: &str = "DejaVu Sans";
 
+/// That file, built in: what the headless benches shape with, so they measure
+/// the same glyphs on every machine, whatever fonts it has installed. The
+/// windowed adapters load the staged file instead (`font_file`).
+pub const FONT_BYTES: &[u8] = include_bytes!("../../fonts/DejaVuSans.ttf");
+
 /// FNV-1a, 64-bit: how an adapter names the font file it loaded.
 pub fn fnv64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {

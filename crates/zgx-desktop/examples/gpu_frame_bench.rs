@@ -27,6 +27,8 @@ use zgx_workload::{Mode, heavy};
 
 #[path = "support/animation_view.rs"]
 mod animation_view;
+#[path = "support/headless_font.rs"]
+mod headless_font;
 #[path = "support/heavy_view.rs"]
 mod view;
 
@@ -69,6 +71,7 @@ fn main() {
     #[cfg(not(target_os = "macos"))]
     let mut gpu = GpuRenderer::new(size.0, size.1).expect("GPU");
     gpu.set_scale_factor(scale);
+    headless_font::font().install(&mut gpu.text_system().borrow_mut());
     gpu.install_text(&mut ui.scene.borrow_mut());
     // Each tick's change: the dashboard's data, or the animation's clock a
     // 120 Hz refresh on (as `animation_headless`).
