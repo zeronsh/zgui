@@ -1,0 +1,486 @@
+{
+ "groups": [
+  {
+   "framework": "desktop",
+   "mode": "baseline",
+   "repeats": 3,
+   "cpu_percent_one_core": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "cpu_watts": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "instructions": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "cycles": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "gpu_percent": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "gpu_mcycles_per_second": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "gpu_active_mhz": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "gpu_system_watts": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "windowserver_cpu_percent": {
+    "median": 0.1373,
+    "min": 0.1368,
+    "max": 0.1375
+   },
+   "windowserver_gpu_percent": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "gpu_utilization_percent": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "mean_footprint_bytes": {
+    "median": 983232.0,
+    "min": 983232.0,
+    "max": 983232.0
+   },
+   "peak_footprint_bytes": {
+    "median": 983232.0,
+    "min": 983232.0,
+    "max": 983232.0
+   },
+   "mean_rss_bytes": {
+    "median": 1277952.0,
+    "min": 1277952.0,
+    "max": 1277952.0
+   },
+   "peak_rss_bytes": {
+    "median": 1277952.0,
+    "min": 1277952.0,
+    "max": 1277952.0
+   },
+   "workload_ticks": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   },
+   "wall_seconds": {
+    "median": 15.0408,
+    "min": 15.0043,
+    "max": 15.0484
+   }
+  },
+  {
+   "framework": "zgx",
+   "mode": "animate",
+   "repeats": 3,
+   "cpu_percent_one_core": {
+    "median": 5.0769,
+    "min": 5.0081,
+    "max": 5.1112
+   },
+   "cpu_watts": {
+    "median": 0.04066,
+    "min": 0.03972,
+    "max": 0.05119
+   },
+   "instructions": {
+    "median": 2116499047.0,
+    "min": 2102837343.0,
+    "max": 2124535187.0
+   },
+   "cycles": {
+    "median": 1666836924.0,
+    "min": 1646116091.0,
+    "max": 1855699889.0
+   },
+   "gpu_percent": {
+    "median": 6.0682,
+    "min": 6.0518,
+    "max": 6.0854
+   },
+   "gpu_mcycles_per_second": {
+    "median": 20.511,
+    "min": 20.455,
+    "max": 20.569
+   },
+   "gpu_active_mhz": {
+    "median": 338.0,
+    "min": 338.0,
+    "max": 338.0
+   },
+   "gpu_system_watts": {
+    "median": 0.2206,
+    "min": 0.22,
+    "max": 0.2225
+   },
+   "windowserver_cpu_percent": {
+    "median": 38.0802,
+    "min": 37.7572,
+    "max": 38.1832
+   },
+   "windowserver_gpu_percent": {
+    "median": 15.0666,
+    "min": 14.7994,
+    "max": 15.0953
+   },
+   "gpu_utilization_percent": {
+    "median": 0.079,
+    "min": 0.062,
+    "max": 0.087
+   },
+   "mean_footprint_bytes": {
+    "median": 246931666.0,
+    "min": 244743724.0,
+    "max": 252366359.0
+   },
+   "peak_footprint_bytes": {
+    "median": 252232592.0,
+    "min": 252101520.0,
+    "max": 252461944.0
+   },
+   "mean_rss_bytes": {
+    "median": 99494571.0,
+    "min": 99328948.0,
+    "max": 99650207.0
+   },
+   "peak_rss_bytes": {
+    "median": 100253696.0,
+    "min": 99745792.0,
+    "max": 101154816.0
+   },
+   "workload_ticks": {
+    "median": 2399.0,
+    "min": 2395.0,
+    "max": 2399.0
+   },
+   "wall_seconds": {
+    "median": 15.0383,
+    "min": 15.038,
+    "max": 15.058
+   },
+   "reported_fps": {
+    "median": 119.3,
+    "min": 119.1,
+    "max": 119.4
+   }
+  },
+  {
+   "framework": "gpui",
+   "mode": "animate",
+   "repeats": 3,
+   "cpu_percent_one_core": {
+    "median": 7.8369,
+    "min": 7.5964,
+    "max": 8.4308
+   },
+   "cpu_watts": {
+    "median": 0.10279,
+    "min": 0.09287,
+    "max": 0.11029
+   },
+   "instructions": {
+    "median": 6058128638.0,
+    "min": 6035054553.0,
+    "max": 6145121414.0
+   },
+   "cycles": {
+    "median": 2888650826.0,
+    "min": 2839142174.0,
+    "max": 2898195603.0
+   },
+   "gpu_percent": {
+    "median": 8.2952,
+    "min": 8.2785,
+    "max": 8.2959
+   },
+   "gpu_mcycles_per_second": {
+    "median": 28.038,
+    "min": 27.981,
+    "max": 28.04
+   },
+   "gpu_active_mhz": {
+    "median": 338.0,
+    "min": 338.0,
+    "max": 338.0
+   },
+   "gpu_system_watts": {
+    "median": 0.3042,
+    "min": 0.2993,
+    "max": 0.3046
+   },
+   "windowserver_cpu_percent": {
+    "median": 38.0937,
+    "min": 37.3261,
+    "max": 38.3864
+   },
+   "windowserver_gpu_percent": {
+    "median": 11.4258,
+    "min": 11.3821,
+    "max": 11.4276
+   },
+   "gpu_utilization_percent": {
+    "median": 0.558,
+    "min": 0.475,
+    "max": 0.729
+   },
+   "mean_footprint_bytes": {
+    "median": 249081092.0,
+    "min": 247956600.0,
+    "max": 259509200.0
+   },
+   "peak_footprint_bytes": {
+    "median": 252265264.0,
+    "min": 252216112.0,
+    "max": 262636432.0
+   },
+   "mean_rss_bytes": {
+    "median": 74865118.0,
+    "min": 74797124.0,
+    "max": 75031552.0
+   },
+   "peak_rss_bytes": {
+    "median": 76562432.0,
+    "min": 76464128.0,
+    "max": 76775424.0
+   },
+   "workload_ticks": {
+    "median": 2410.0,
+    "min": 2406.0,
+    "max": 2411.0
+   },
+   "wall_seconds": {
+    "median": 15.0105,
+    "min": 15.0099,
+    "max": 15.0251
+   },
+   "reported_fps": {
+    "median": 119.8,
+    "min": 119.6,
+    "max": 119.9
+   }
+  },
+  {
+   "framework": "gpui-fast",
+   "mode": "animate",
+   "repeats": 3,
+   "cpu_percent_one_core": {
+    "median": 5.76,
+    "min": 5.6332,
+    "max": 6.0985
+   },
+   "cpu_watts": {
+    "median": 0.06005,
+    "min": 0.05636,
+    "max": 0.06435
+   },
+   "instructions": {
+    "median": 3212617123.0,
+    "min": 3211053424.0,
+    "max": 3249124186.0
+   },
+   "cycles": {
+    "median": 2098948656.0,
+    "min": 2062797950.0,
+    "max": 2145723889.0
+   },
+   "gpu_percent": {
+    "median": 8.1388,
+    "min": 8.0941,
+    "max": 8.2047
+   },
+   "gpu_mcycles_per_second": {
+    "median": 27.509,
+    "min": 27.358,
+    "max": 27.732
+   },
+   "gpu_active_mhz": {
+    "median": 338.0,
+    "min": 338.0,
+    "max": 338.0
+   },
+   "gpu_system_watts": {
+    "median": 0.2585,
+    "min": 0.2555,
+    "max": 0.2664
+   },
+   "windowserver_cpu_percent": {
+    "median": 38.344,
+    "min": 37.7458,
+    "max": 38.4467
+   },
+   "windowserver_gpu_percent": {
+    "median": 11.1984,
+    "min": 10.9079,
+    "max": 13.3462
+   },
+   "gpu_utilization_percent": {
+    "median": 0.124,
+    "min": 0.0,
+    "max": 2.336
+   },
+   "mean_footprint_bytes": {
+    "median": 248499922.0,
+    "min": 248395976.0,
+    "max": 252548915.0
+   },
+   "peak_footprint_bytes": {
+    "median": 252642120.0,
+    "min": 252576584.0,
+    "max": 252707632.0
+   },
+   "mean_rss_bytes": {
+    "median": 76114100.0,
+    "min": 76010475.0,
+    "max": 76199944.0
+   },
+   "peak_rss_bytes": {
+    "median": 77791232.0,
+    "min": 76038144.0,
+    "max": 77856768.0
+   },
+   "workload_ticks": {
+    "median": 2406.0,
+    "min": 2400.0,
+    "max": 2416.0
+   },
+   "wall_seconds": {
+    "median": 15.0236,
+    "min": 15.0001,
+    "max": 15.0569
+   },
+   "reported_fps": {
+    "median": 119.4,
+    "min": 119.3,
+    "max": 119.6
+   }
+  }
+ ],
+ "pacing": [
+  {
+   "framework": "zgx",
+   "mode": "animate",
+   "repeats": 8,
+   "frames_per_second": {
+    "median": 109.3125,
+    "min": 107.5,
+    "max": 112.875
+   },
+   "interval_p50_ms": {
+    "median": 8.96,
+    "min": 8.882,
+    "max": 9.088
+   },
+   "interval_p95_ms": {
+    "median": 12.4815,
+    "min": 12.395,
+    "max": 12.697
+   },
+   "interval_p99_ms": {
+    "median": 13.948,
+    "min": 13.64,
+    "max": 16.464
+   },
+   "interval_max_ms": {
+    "median": 20.4925,
+    "min": 19.662,
+    "max": 21.875
+   },
+   "long_interval_fraction": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   }
+  },
+  {
+   "framework": "gpui",
+   "mode": "animate",
+   "repeats": 8,
+   "frames_per_second": {
+    "median": 108.375,
+    "min": 105.875,
+    "max": 112.25
+   },
+   "interval_p50_ms": {
+    "median": 8.943999999999999,
+    "min": 8.893,
+    "max": 8.995
+   },
+   "interval_p95_ms": {
+    "median": 12.821,
+    "min": 12.575,
+    "max": 12.98
+   },
+   "interval_p99_ms": {
+    "median": 16.0835,
+    "min": 14.691,
+    "max": 18.414
+   },
+   "interval_max_ms": {
+    "median": 21.5395,
+    "min": 20.339,
+    "max": 23.917
+   },
+   "long_interval_fraction": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   }
+  },
+  {
+   "framework": "gpui-fast",
+   "mode": "animate",
+   "repeats": 8,
+   "frames_per_second": {
+    "median": 107.6875,
+    "min": 106.125,
+    "max": 112.0
+   },
+   "interval_p50_ms": {
+    "median": 8.904,
+    "min": 8.778,
+    "max": 8.977
+   },
+   "interval_p95_ms": {
+    "median": 12.799,
+    "min": 12.533,
+    "max": 13.524
+   },
+   "interval_p99_ms": {
+    "median": 16.0,
+    "min": 13.629,
+    "max": 20.33
+   },
+   "interval_max_ms": {
+    "median": 21.229,
+    "min": 15.086,
+    "max": 21.763
+   },
+   "long_interval_fraction": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+   }
+  }
+ ]
+}

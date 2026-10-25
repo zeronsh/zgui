@@ -1,3 +1,29 @@
+# Republished (2026-10-25): every macOS scene on `282bfc0`
+
+Lab, heavy and animate measured again on zgx `282bfc0` with the same builds of GPUI, GPUI Fast and QuickGUI and the same protocol (dist builds, three trials per active cell, five of idle sampled 20–35 s after launch, pacing captured apart): [`latest-macos-2026-10-25-282bfc0`](latest-macos-2026-10-25-282bfc0/), [`latest-macos-heavy-2026-10-25-282bfc0`](latest-macos-heavy-2026-10-25-282bfc0/), [`latest-macos-animate-2026-10-25-282bfc0`](latest-macos-animate-2026-10-25-282bfc0/). All three accepted; the site and the README show them. Medians; memory in MB, idle with the five launches' range.
+
+Lab, zgx / GPUI / GPUI Fast / QuickGUI:
+
+| Mode | CPU (% of a core) | GPU (Mcycles/s) | Memory (MB) |
+| --- | --- | --- | --- |
+| idle | 0.00 / 0.38 / 0.40 / 0.00 | 0 / 0 / 0 / 0 | 67 (55–67) / 89 (64–96) / 53 (53–79) / 65 (57–116) |
+| scroll | 2.9 / 4.9 / 4.5 / 8.4 | 10.9 / 18.0 / 18.1 / 23.9 | 236 / 246 / 236 / 413 |
+| stream | 3.2 / 6.8 / 5.1 / 15.3 | 11.3 / 18.3 / 18.2 / 24.4 | 236 / 247 / 239 / 411 |
+| both | 3.6 / 7.0 / 5.9 / 16.0 | 11.6 / 18.1 / 18.2 / 24.2 | 237 / 248 / 239 / 415 |
+
+Heavy, zgx / GPUI / GPUI Fast:
+
+| Mode | CPU (% of a core) | GPU (Mcycles/s) | Memory (MB) |
+| --- | --- | --- | --- |
+| idle | 0.00 / 0.38 / 0.40 | 0 / 0 / 0 | 59 (53–79) / 88 (88–105) / 93 (89–95) |
+| scroll | 3.2 / 14.6 / 8.7 | 11.5 / 21.6 / 21.9 | 255 / 272 / 256 |
+| stream | 8.5 / 22.0 / 13.9 | 16.8 / 22.1 / 21.7 | 259 / 272 / 275 |
+| both | 9.1 / 23.0 / 15.9 | 16.7 / 22.0 / 21.6 | 259 / 272 / 274 |
+
+Animate, zgx / GPUI / GPUI Fast: CPU 5.1 / 7.8 / 5.8%, GPU 20.5 / 28.0 / 27.5 Mcycles/s, memory 247 / 249 / 248 MB, 119.3 / 119.8 / 119.4 fps.
+
+Against `7d559ad`: zgx's GPU work fell in every active cell of lab (−4 to −10%) and heavy (−14% in `both`, −5% in `stream` and `scroll`): damage all over a window is drawn through a stencil of itself, so the GPU shades what changed and not the regions around it (#382). Animate, which the stencil does not apply to, is level. zgx's CPU is level in all three (within each cell's range). In lab, zgx's memory in the active modes is a tie with GPUI Fast's (236–237 MB against 236–239; 225–226 against 225–228 MiB), and zgx's idle median moved from 42 to 67 MB because three of its five launches settled at the upper of the two levels this time: both runs' ranges include the upper level (about 63 MiB), so the idle difference is the driver's timing, not a change in zgx. GPUI Fast's idle moved the other way in heavy (70 → 93 MB) for the same reason.
+
 # Correction (2026-10-24): macOS runs of 2026-10-23/24 built zgui with mimalloc
 
 The macOS comparisons published on 2026-10-23 and 2026-10-24 at `51a669c` (lab, heavy and animate) built zgui with **mimalloc** as its allocator, unintentionally, while GPUI, GPUI Fast and QuickGUI used the system allocator. zgui-desktop had `zgui-run` as a dev-dependency, and `zgui-run` turns on mimalloc by default; Cargo unifies features, so every zgui-desktop example (the comparison workloads among them) was built with it from `919b719` on. #332 fixed the dependency. All three scenes were re-run on `7d559ad` (#332 included; the zgui binaries were checked to contain no mimalloc) with the same protocol: dist builds, three trials per cell, a quiet desktop. The site and the README now show the corrected runs; the old runs stay in place, each with a `CORRECTION.md`.

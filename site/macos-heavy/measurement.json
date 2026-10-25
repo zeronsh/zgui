@@ -1,10 +1,10 @@
 {
-  "date": "2026-10-24",
-  "commit": "7d559add0724ec67a7a7875148f9123f10fcf9ae",
+  "date": "2026-10-25",
+  "commit": "282bfc072400fcb3612317ee9ca47950f46eb158",
   "scene": "heavy",
   "source_dirty": false,
-  "trials": 45,
-  "samples": 7910,
+  "trials": 47,
+  "samples": 11269,
   "updates": {
     "min": 59.85,
     "max": 59.95
@@ -19,7 +19,13 @@
     "interval_seconds": 0.05,
     "repeats": 3,
     "idle_repeats": 5,
+    "idle_window_seconds": [
+      20,
+      35
+    ],
+    "idle_requested_seconds": 36,
     "quick": false,
+    "pgo": false,
     "frameworks": [
       "zgx",
       "gpui",
@@ -37,31 +43,26 @@
     "acceptance_updates_per_second": [
       58,
       61
-    ],
-    "idle_window_seconds": [
-      20,
-      35
-    ],
-    "idle_requested_seconds": 36
+    ]
   },
   "frameworks": {
-    "zgx": "7d559add0724ec67a7a7875148f9123f10fcf9ae",
+    "zgx": "282bfc072400fcb3612317ee9ca47950f46eb158",
     "gpui": "0.2.2"
   },
-  "csv_sha256": "e3b9b2b437305c7c797f7f4ec8cf4e8474de78c5e62833468aa5aa043109278b",
-  "source_csv_sha256": "30d62be2842acbea0e5077e90566c2c64bc369aefa4e7631c4ee27a7e92297d7",
+  "csv_sha256": "e43eaf8107baf97f9104cc1be2ecec9addb9a4f600ba10eb858a539196e56a5c",
+  "source_csv_sha256": "51684e6e490a06dcea47ae9c1c31f01dc14021230a824f2345f08a0a05b97e17",
   "binaries": {
     "zgx": {
-      "sha256": "15f498518eb612d215c1c34b7596e4197e416ddb87239e1301ba438d898c22e6",
-      "bytes": 11692880
+      "sha256": "5999cae2a4bf6969c4dc9c50994216904f317bfb1f813cb03a4a61e99286e582",
+      "bytes": 11834528
     },
     "gpui": {
-      "sha256": "f39313f39e0ecd605a15a720a4527e99c6f75aa13aaf9981a7a091661fb1449d",
-      "bytes": 4144208
+      "sha256": "e7e2c91fc7dfaf687a57a1b42fcbf581f5b81a02c37d1b1381e7ee7e7d66ed68",
+      "bytes": 4144496
     },
     "gpui-fast": {
-      "sha256": "20d834e1c1e9eff9fbc7aae8be5d710133fc8bae9b4fe87d388ac79c2dee8f40",
-      "bytes": 6767232
+      "sha256": "27ad25317b73e716a156d0d8d3b85d4400028ceee516001e75eef2faece3e78f",
+      "bytes": 6767536
     }
   },
   "excluded_frameworks": {
