@@ -36,7 +36,7 @@ zgx = { path = "../zgx", version = "0.1.0" }
 # Linux and its kind always build (below).
 wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "wgsl"] }
 winit = "0.30.13"
-cosmic-text = { package = "zgx-cosmic-text", version = "0.19.0", path = "../../vendor/cosmic-text", features = ["shape-run-cache"] }
+cosmic-text = { package = "zgx-cosmic-text", version = "0.19.1", path = "../../vendor/cosmic-text", features = ["shape-run-cache"] }
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 image = { version = "0.25.10", default-features = false }
@@ -79,6 +79,10 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["
 # `d3d12_device_churn` and `d3d_frame_floor`, examples on Direct3D without
 # wgpu (see docs/validation.md, docs/windows.md); only examples and tests
 # build these.
+[dev-dependencies]
+# Shaping with and without its kept advances (tests/variable_advances.rs).
+harfrust = { package = "zgx-harfrust", version = "0.5.2", path = "../../vendor/harfrust" }
+
 [target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D12", "Win32_Graphics_DirectComposition", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
 

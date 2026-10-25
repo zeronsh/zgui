@@ -13,15 +13,16 @@ zgx 0.1.0 is on crates.io (2026-10-25, tag `v0.1.0`). This is how a release goes
 
 zgx's crates: `zgx`, `zgx-components`, `zgx-gpu`, `zgx-desktop`, `zgx-script`, `zgx-run` and `zgx-ghostty-sys` (its declarations only; its `link` feature builds Ghostty from a pinned source with Zig). Not published (`publish = false`): `zgx-demo` and `zgx-workload`, the benchmarks in `comparisons/`.
 
-And three forks, as zgx's own crates, published first:
+And four forks, as zgx's own crates, published first:
 
 | Crate | Fork of | Why | Notes |
 | --- | --- | --- | --- |
-| `zgx-cosmic-text` | cosmic-text 0.19.0 | text shaping that streams without rebuilding every word's key | `vendor/cosmic-text/ZGX_PATCH.md` |
+| `zgx-harfrust` | harfrust 0.5.2 | a variable font's glyph advances worked out once for its instance, not for every run shaped | `vendor/harfrust/ZGX_PATCH.md` |
+| `zgx-cosmic-text` | cosmic-text 0.19.0 | text shaping that streams without rebuilding every word's key; shapes with `zgx-harfrust` | `vendor/cosmic-text/ZGX_PATCH.md` |
 | `zgx-taffy` | taffy 0.9.0 | auto margins that keep a flex line's gaps | `vendor/taffy/ZGX_PATCH.md` |
 | `zgx-mlua` | mlua 0.12.2 | table walks and userdata without a copy per key | `vendor/mlua/ZGX_PATCH.md` |
 
-Each keeps its upstream's license files, authors and library name (`cosmic_text`, `taffy`, `mlua`), and its version (a fix of our own bumps the patch). zgx's crates depend on them by path and version under their upstream names (`cosmic-text = { package = "zgx-cosmic-text", version = "0.19.0", path = "../../vendor/cosmic-text" }`), so code reads `cosmic_text::` as before. Only zgx's crates use them, so an app never sees two of one. Drop a fork, back to the upstream crate, once a release of it has the fix.
+Each keeps its upstream's license files, authors and library name (`harfrust`, `cosmic_text`, `taffy`, `mlua`), and its version (a fix of our own bumps the patch: `zgx-cosmic-text` is 0.19.1 since it shapes with `zgx-harfrust`). zgx's crates depend on them by path and version under their upstream names (`cosmic-text = { package = "zgx-cosmic-text", version = "0.19.1", path = "../../vendor/cosmic-text" }`, and `zgx-cosmic-text` on `zgx-harfrust` likewise), so code reads `cosmic_text::` as before. Only zgx's crates use them, so an app never sees two of one. Drop a fork, back to the upstream crate, once a release of it has the fix.
 
 ## What stays patched in the repository alone
 
@@ -35,6 +36,7 @@ Where a patch adds an API zgx calls (winit's `xdg_surface`, wgpu-hal's `expose_p
 
 ## Follow-ups: patches to drop
 
+- **harfrust**: from 0.9 a shaper takes font functions of its own (`FontFuncs`, `ShapeOptions::font_funcs`), which could keep a variable instance's advances from cosmic-text. Upgrading cosmic-text's harfrust to it (0.5 → 0.9 changes its API) and keeping them there drops `zgx-harfrust`.
 - **taffy**: the auto-margin gaps fix shipped upstream in taffy 0.14.0. Upgrading zgx's layout to it (0.9 → 0.14 changes taffy's API) drops `zgx-taffy` for crates.io's taffy.
 - **winit**: native popups are on winit's master (the 0.31 betas). Upgrading to 0.31 drops the `xdg_surface` accessors (Wayland popups through winit's own), and with them `zgx_winit_patched`; the X11 changes are to check against it then.
 
@@ -51,7 +53,7 @@ It never publishes. It doesn't run on pull requests: CI's time is unchanged. Loc
 
 Not automated, on purpose: publishing needs a crates.io token, and is done by hand, in this order, each after the release check passes on the tag:
 
-1. The forks that changed since they were last published, their versions bumped: `cargo publish --manifest-path vendor/cosmic-text/Cargo.toml`, `vendor/taffy`, `vendor/mlua --features luau`.
+1. The forks that changed since they were last published, their versions bumped, `zgx-harfrust` before `zgx-cosmic-text` (which depends on it): `cargo publish --manifest-path vendor/harfrust/Cargo.toml`, `vendor/cosmic-text`, `vendor/taffy`, `vendor/mlua --features luau`.
 2. The workspace: `cargo publish --workspace --locked` (it orders the crates itself).
 
 `cargo publish --workspace` can stop part way with cargo's own error "no packages ready to publish but … remain in plan … awaiting confirmation" (cargo 1.96, at 0.1.0, after `zgx-gpu`): what it uploaded is published (check crates.io), and the rest publish one at a time in dependency order, each waiting for the index: `cargo publish -p zgx-script --locked`, then `zgx-desktop`, then `zgx-run`.

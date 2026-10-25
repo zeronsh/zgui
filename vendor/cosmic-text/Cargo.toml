@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.89"
 name = "zgx-cosmic-text"
-version = "0.19.0"
+version = "0.19.1"
 authors = ["Jeremy Soller <jeremy@system76.com>"]
 build = false
 autolib = false
@@ -98,8 +98,10 @@ version = "0.23"
 default-features = false
 
 [dependencies.harfrust]
-version = "0.5.0"
+version = "0.5.2"
+path = "../harfrust"
 default-features = false
+package = "zgx-harfrust"
 
 [dependencies.hashbrown]
 version = "0.17"

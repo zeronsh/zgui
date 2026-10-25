@@ -4,9 +4,11 @@
 #
 #     scripts/release_check.sh [--allow-dirty]
 #
-# 1. The forks zgx publishes as its own crates (vendor/cosmic-text, taffy,
-#    mlua as zgx-cosmic-text, zgx-taffy, zgx-mlua) are each packaged and
-#    built from their package, against crates.io.
+# 1. The forks zgx publishes as its own crates (vendor/harfrust,
+#    cosmic-text, taffy, mlua as zgx-harfrust, zgx-cosmic-text, zgx-taffy,
+#    zgx-mlua) are each packaged and built from their package, against
+#    crates.io and the forks before them (zgx-cosmic-text shapes with
+#    zgx-harfrust), given from vendor/ as below.
 # 2. Every published workspace crate is packaged and built from its package
 #    (`cargo publish --workspace --dry-run`), in dependency order. That
 #    build leaves out the workspace's `[patch.crates-io]`: winit, wgpu-hal
@@ -20,17 +22,17 @@ cd "$(git rev-parse --show-toplevel)"
 # `--allow-dirty`: check uncommitted changes too (a release itself is clean).
 dirty=""
 if [ "${1:-}" = --allow-dirty ]; then dirty=--allow-dirty; fi
-forks="cosmic-text taffy mlua"
-for fork in $forks; do
-    echo "== zgx-$fork (vendor/$fork)"
-    # mlua builds for one Lua, chosen by a feature: zgx's, Luau.
-    set -- --manifest-path "vendor/$fork/Cargo.toml"
-    if [ "$fork" = mlua ]; then set -- "$@" --features luau; fi
-    cargo package "$@" $dirty
-done
+forks="harfrust cosmic-text taffy mlua"
 set --
 for fork in $forks; do
     set -- "$@" --config "patch.crates-io.zgx-$fork.path=\"vendor/$fork\""
+done
+for fork in $forks; do
+    echo "== zgx-$fork (vendor/$fork)"
+    # mlua builds for one Lua, chosen by a feature: zgx's, Luau.
+    features=""
+    if [ "$fork" = mlua ]; then features="--features luau"; fi
+    cargo package --manifest-path "vendor/$fork/Cargo.toml" $features $dirty "$@"
 done
 echo "== the workspace's published crates"
 cargo publish --workspace --dry-run --locked $dirty "$@"
