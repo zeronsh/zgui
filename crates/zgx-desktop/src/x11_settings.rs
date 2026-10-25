@@ -3,7 +3,8 @@
 //! X11 session, xsettingsd's elsewhere. GTK on X11 takes the double-click
 //! time and the drag threshold from them (`Net/DoubleClickTime`,
 //! `Net/DndDragThreshold`) ahead of anything else, and so do zgx's windows
-//! there: on XFCE the settings portal, where one runs, answers with GNOME's
+//! there, and its theme (`Net/ThemeName`), dark where XFCE's dark themes
+//! are: on XFCE the settings portal, where one runs, answers with GNOME's
 //! defaults, not the person's settings. Read with the system's other
 //! settings (`system_colors::sync`): at startup and as a window is
 //! activated, which is where a change made in the settings app arrives.
@@ -32,6 +33,9 @@ pub(crate) struct Settings {
     /// `Gtk/OverlayScrolling`: whether scrollbars hide until their view
     /// scrolls.
     pub overlay_scrolling: Option<bool>,
+    /// Whether `Net/ThemeName`, the GTK theme, is a dark one: named so
+    /// (`Adwaita-dark`, `Greybird-dark`, `Arc-Dark`), as dark themes are.
+    pub dark_theme: Option<bool>,
 }
 
 /// The settings the session's manager publishes now: none off X11, or with
@@ -144,6 +148,12 @@ fn parse(data: &[u8]) -> Settings {
                 let Some(length) = u32_at(at) else {
                     break;
                 };
+                let Some(text) = data.get(at + 4..at + 4 + length as usize) else {
+                    break;
+                };
+                if name == b"Net/ThemeName" {
+                    settings.dark_theme = Some(text.to_ascii_lowercase().ends_with(b"-dark"));
+                }
                 at += 4 + padded(length as usize);
             }
             2 => at += 8,
@@ -212,7 +222,7 @@ mod tests {
             let data = encode(
                 big,
                 &[
-                    ("Net/ThemeName", Value::Str("Greybird")),
+                    ("Net/ThemeName", Value::Str("Greybird-Dark")),
                     ("Gtk/ColorPalette", Value::Color),
                     ("Net/DoubleClickTime", Value::Int(650)),
                     ("Xft/DPI", Value::Int(98_304)),
@@ -226,6 +236,7 @@ mod tests {
                     double_click: Some(650),
                     drag_threshold: Some(14),
                     overlay_scrolling: Some(false),
+                    dark_theme: Some(true),
                 },
                 "big endian: {big}"
             );
@@ -239,5 +250,7 @@ mod tests {
         let data = encode(false, &[("Net/DoubleClickTime", Value::Int(400))]);
         assert_eq!(parse(&data[..data.len() - 2]), Settings::default());
         assert_eq!(parse(&[]), Settings::default());
+        let data = encode(true, &[("Net/ThemeName", Value::Str("Adwaita"))]);
+        assert_eq!(parse(&data).dark_theme, Some(false), "a light theme");
     }
 }

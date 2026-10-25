@@ -7,7 +7,10 @@ drag_drop example's card takes a 20-pixel move as no drag and a 40-pixel one
 as a drag; changed to 10 and reloaded, the setting holds once the window is
 activated again, and 20 pixels drags. The primary_selection example's
 editor takes two presses 700 ms apart as a double click (a word selected,
-the PRIMARY selection)."""
+the PRIMARY selection). With the portal's `color-scheme` no preference
+(XFCE's), the GTK theme decides, as it does GTK's apps: under `Net/ThemeName`
+"Greybird" that example is light, and changed to "Greybird-dark", dark once
+its window is activated again."""
 import argparse
 import json
 import os
@@ -30,6 +33,7 @@ XML = """<node><interface name="org.freedesktop.portal.Settings">
 settings = {
     ("org.gnome.desktop.peripherals.mouse", "drag-threshold"): GLib.Variant("i", 8),
     ("org.gnome.desktop.peripherals.mouse", "double-click"): GLib.Variant("i", 300),
+    ("org.freedesktop.appearance", "color-scheme"): GLib.Variant("u", 0),
 }
 
 def call(conn, sender, path, iface, method, params, invocation):
@@ -97,7 +101,7 @@ def main():
             launch("openbox", ["openbox"], env)
             wait_for_wm(env)
             config = args.output / "xsettingsd.conf"
-            config.write_text("Net/DndDragThreshold 30\nNet/DoubleClickTime 1000\n")
+            config.write_text("Net/DndDragThreshold 30\nNet/DoubleClickTime 1000\nNet/ThemeName \"Greybird\"\n")
             daemon = launch("xsettingsd", ["xsettingsd", "-c", str(config)], env)
             daemon_log = args.output / "xsettingsd.log"
             until("xsettingsd's selection", lambda: "Took ownership" in daemon_log.read_text())
@@ -133,9 +137,9 @@ def main():
             result["at 30, 40 pixels drags"] = drags(40)
             # Changed in the settings app: it holds once the window is
             # activated again.
-            config.write_text("Net/DndDragThreshold 10\nNet/DoubleClickTime 1000\n")
+            config.write_text("Net/DndDragThreshold 10\nNet/DoubleClickTime 1000\nNet/ThemeName \"Greybird\"\n")
             daemon.send_signal(signal.SIGHUP)
-            until("xsettingsd's reload", lambda: daemon_log.read_text().count("Loaded 2 settings") >= 2)
+            until("xsettingsd's reload", lambda: daemon_log.read_text().count("Loaded 3 settings") >= 2)
             other = launch("xmessage", ["xmessage", "-geometry", "+600+400", "elsewhere"], env)
             # (xmessage names no pid on its window: found by its class.)
             elsewhere = until("xmessage's window", lambda: subprocess.run(
@@ -155,6 +159,16 @@ def main():
             window = window_of(app)
             xdo("windowactivate", "--sync", window)
             time.sleep(.4)
+            # The window's background below the editors, as
+            # portal_appearance_smoke samples it.
+            from PIL import Image
+
+            def background(stage):
+                shot = args.output / f"{stage}.png"
+                subprocess.run(["import", "-window", window, str(shot)], env=env, check=True, timeout=10)
+                with Image.open(shot) as picture:
+                    return list(picture.convert("RGB").getpixel((8, 248)))
+            result["under Greybird, the background"] = background("light")
             # The same spot as primary_selection_smoke's double click.
             xdo("mousemove", "--window", window, 110, 42, "click", 1)
             time.sleep(.7)
@@ -168,6 +182,19 @@ def main():
                 result["two presses 700 ms apart select"] = until("a selected word", primary, seconds=2)
             except RuntimeError:
                 result["two presses 700 ms apart select"] = None
+            # A dark theme chosen meanwhile: dark once activated again.
+            config.write_text("Net/DndDragThreshold 10\nNet/DoubleClickTime 1000\nNet/ThemeName \"Greybird-dark\"\n")
+            daemon.send_signal(signal.SIGHUP)
+            until("xsettingsd's second reload", lambda: daemon_log.read_text().count("Loaded 3 settings") >= 3)
+            other = launch("xmessage-2", ["xmessage", "-geometry", "+600+400", "elsewhere"], env)
+            elsewhere = until("xmessage's window", lambda: subprocess.run(
+                ["xdotool", "search", "--onlyvisible", "--class", "xmessage"], env=env,
+                capture_output=True, text=True).stdout.split()[:1])[0]
+            xdo("windowactivate", "--sync", elsewhere)
+            time.sleep(.3)
+            xdo("windowactivate", "--sync", window)
+            time.sleep(.6)
+            result["changed to Greybird-dark, the background"] = background("dark")
         finally:
             for process in reversed(processes):
                 stop(process)
@@ -177,9 +204,13 @@ def main():
         "at 30, 40 pixels drags": True,
         "changed to 10, 20 pixels drags": True,
         "two presses 700 ms apart select": result["two presses 700 ms apart select"],
+        "under Greybird, the background": result["under Greybird, the background"],
+        "changed to Greybird-dark, the background": result["changed to Greybird-dark, the background"],
     } and result["two presses 700 ms apart select"], result
+    assert sum(result["under Greybird, the background"]) > 600, result
+    assert sum(result["changed to Greybird-dark, the background"]) < 200, result
     print("PASS: XSETTINGS' drag threshold (30, then 10 once reloaded and the window activated again) and "
-          "double-click time (1000 ms) held over the portal's 8 and 300")
+          "double-click time (1000 ms) held over the portal's 8 and 300, and the GTK theme made the app light, then dark")
 
 
 if __name__ == "__main__":

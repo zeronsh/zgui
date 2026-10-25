@@ -396,9 +396,15 @@ pub(crate) fn locale_direction() -> zgx::scene::Direction {
 /// and when the system's appearance or settings or the window's activity
 /// change (the user may have picked another accent meanwhile).
 pub(crate) fn sync(ui: &zgx::widgets::Ui) {
-    // Linux's dark or light: winit reports none there.
+    // Linux's dark or light: winit reports none there. The portal's
+    // preference, or with none (XFCE's), on X11 the GTK theme's, as GTK's
+    // own apps are dark under a dark theme.
     #[cfg(target_os = "linux")]
-    if let Some(scheme) = crate::linux_appearance::current().scheme {
+    if let Some(scheme) = crate::linux_appearance::current().scheme.or_else(|| {
+        use zgx::theme::Appearance::{Dark, Light};
+        let dark = crate::x11_settings::current().dark_theme?;
+        Some(if dark { Dark } else { Light })
+    }) {
         ui.theme().set_system_appearance(scheme);
     }
     let preferences = preferences();

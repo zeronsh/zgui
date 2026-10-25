@@ -445,7 +445,11 @@ macOS, Windows and Linux), high contrast, animations turned off (the motion
 durations are zero) and the text size (the font tokens scale). On Linux they
 come from the XDG settings portal, as GTK and Qt apps read them: dark or
 light, the accent, contrast and reduced motion from
-`org.freedesktop.appearance`, and GNOME's animations and Large Text. Windows'
+`org.freedesktop.appearance`, and GNOME's animations and Large Text. Where
+the portal has no dark or light preference (XFCE's), the GTK theme on X11
+decides, as it does GTK's own apps: the session's XSETTINGS `Net/ThemeName`,
+dark where it is named so (`Adwaita-dark`, `Greybird-dark`), read again as a
+window is activated. Windows'
 are listed in [the Windows notes](windows.md#system-settings). An app theme
 or `theme_scope` that sets a token keeps its own value.
 
