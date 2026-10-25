@@ -75,7 +75,33 @@ enum Waiter {
     Task {
         vm: Weak<Vm>,
         thread: Thread,
+        task: Rc<TaskState>,
     },
+}
+
+/// A task as its handle sees it (`ui.task`'s result): cancelled, it is not
+/// resumed again, stopping at the await it is at.
+#[derive(Default)]
+pub(crate) struct TaskState {
+    cancelled: Cell<bool>,
+}
+impl TaskState {
+    pub(crate) fn cancel(&self) {
+        self.cancelled.set(true);
+    }
+}
+/// `ui.task`'s handle: `cancel()`, and whether it has been (`cancelled`).
+pub(crate) struct TaskUd(pub(crate) Rc<TaskState>);
+impl UserData for TaskUd {
+    fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("cancelled", |_, t| Ok(t.0.cancelled.get()));
+    }
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("cancel", |_, t, ()| {
+            t.0.cancel();
+            Ok(())
+        });
+    }
 }
 
 pub(crate) struct Promise {
@@ -134,23 +160,29 @@ fn hear(waiter: Waiter, settled: &Settled) {
                 vm.report(error);
             }
         }
-        Waiter::Task { vm, thread } => {
+        Waiter::Task { vm, thread, task } => {
             let Some(vm) = vm.upgrade() else { return };
+            if task.cancelled.get() {
+                return;
+            }
             let resumed = match settled {
                 Settled::Value(value) => (true, value.clone()),
                 Settled::Error(error) => (false, Value::Str(error.as_str().into())),
                 Settled::Pending => return,
             };
-            drive(&vm, thread, resumed);
+            drive(&vm, thread, resumed, &task);
         }
     }
 }
 
-/// Run task `thread` from where it is until it ends or awaits a promise
-/// still pending.
-fn drive(vm: &Rc<Vm>, thread: Thread, args: impl IntoLuaMulti) {
+/// Run task `thread` from where it is until it ends, awaits a promise
+/// still pending, or `task` is cancelled.
+fn drive(vm: &Rc<Vm>, thread: Thread, args: impl IntoLuaMulti, task: &Rc<TaskState>) {
     let mut args = Some(args.into_lua_multi(&vm.lua));
     loop {
+        if task.cancelled.get() {
+            return;
+        }
         let input = match args.take() {
             Some(Ok(input)) => input,
             Some(Err(error)) => return vm.report(error),
@@ -179,6 +211,7 @@ fn drive(vm: &Rc<Vm>, thread: Thread, args: impl IntoLuaMulti) {
                 promise.waiters.borrow_mut().push(Waiter::Task {
                     vm: Rc::downgrade(vm),
                     thread,
+                    task: task.clone(),
                 });
                 return;
             }
@@ -434,8 +467,9 @@ pub(crate) fn install(
                 .upgrade()
                 .ok_or_else(|| mlua::Error::runtime("the script has gone"))?;
             let thread = lua.create_thread(f)?;
-            drive(&vm, thread, args);
-            Ok(())
+            let task = Rc::new(TaskState::default());
+            drive(&vm, thread, args, &task);
+            Ok(TaskUd(task))
         })?,
     )?;
     Ok(())
@@ -475,6 +509,9 @@ fn resource(lua: &Lua, (load, opts): (Function, Option<Table>)) -> mlua::Result<
     let vm = env.vm.clone();
     let meter = env.meter.clone();
     let (signals, counter) = ((data, loading, error, status), current.clone());
+    // The load under way: cancelled when another begins, or its owner goes.
+    let running: Rc<RefCell<Option<Rc<TaskState>>>> = Rc::default();
+    let (running_in_effect, running_owned) = (running.clone(), running);
     let effect = runtime.effect_now({
         let (data, loading, error, status) = signals.clone();
         let reloads = reloads.clone();
@@ -528,20 +565,31 @@ fn resource(lua: &Lua, (load, opts): (Function, Option<Table>)) -> mlua::Result<
             let thread = done
                 .and_then(|done| wrap.call::<Function>((load.clone(), done)))
                 .and_then(|run| vm.lua.create_thread(run));
+            let task = Rc::new(TaskState::default());
+            if let Some(previous) = running_in_effect.borrow_mut().replace(task.clone()) {
+                previous.cancel();
+            }
             match thread {
-                Ok(thread) => drive(&vm, thread, ()),
+                Ok(thread) => drive(&vm, thread, (), &task),
                 Err(e) => vm.report(e),
             }
         }
     });
     // Its loads stop with its owner.
-    struct Owned(#[allow(dead_code)] zgx::reactive::Effect, Rc<Cell<u64>>);
+    struct Owned(
+        #[allow(dead_code)] zgx::reactive::Effect,
+        Rc<Cell<u64>>,
+        Rc<RefCell<Option<Rc<TaskState>>>>,
+    );
     impl Drop for Owned {
         fn drop(&mut self) {
             self.1.set(u64::MAX);
+            if let Some(task) = self.2.borrow_mut().take() {
+                task.cancel();
+            }
         }
     }
-    crate::node::retain(&env, Box::new(Owned(effect, current)));
+    crate::node::retain(&env, Box::new(Owned(effect, current, running_owned)));
     drop(env);
     let (data, loading, error, status) = signals;
     let out = lua.create_table()?;

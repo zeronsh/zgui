@@ -582,8 +582,18 @@ export type Form = {
 	submit: () -> (),
 	-- Back to the first values (or `values`), nothing shown wrong.
 	reset: (values: { [string]: any }?) -> (),
+	-- Stop a submit under way (a Cancel button): not `pending` any more,
+	-- and what it awaits is not heard. A form gone cancels its own.
+	cancel: () -> (),
 	-- The values now, as a table.
 	snapshot: () -> { [string]: any },
+}
+
+-- A task (`ui.task`): `cancel()` stops it at the await it is at, never to
+-- go on (what it awaits still settles, unheard).
+export type Task = {
+	cancel: (self: Task) -> (),
+	cancelled: boolean,
 }
 
 -- `ui.resource`'s data loaded in a task, and how its loading goes.
@@ -2278,8 +2288,8 @@ declare ui: {
 	-- plain action settles at once with nil): a promise of what it returns.
 	call: (name: string, arg: unknown?) -> Promise,
 	-- Run `f(...)` as a task: `p:await()` inside it waits for a promise
-	-- without blocking anything else.
-	task: <A...>(f: (A...) -> (), A...) -> (),
+	-- without blocking anything else. Its handle cancels it.
+	task: <A...>(f: (A...) -> (), A...) -> Task,
 	-- What `load` returns, loaded in a task (it may await), as states:
 	-- `data`, `loading`, `error` and `status`. It loads again on `reload()`
 	-- and when a state it read before its first await changes; only the

@@ -287,6 +287,7 @@ return ui.column {
 | `valid`, `attempted`, `pending`, `failure` | every check passes; a submit has been tried; a submit is under way; what the last one raised |
 | `submit()` | checks every field: one wrong shows so, and the first wrong (top, then left) takes focus; all fine, runs `submit`. A handler as it is (`on_click = form.submit`) |
 | `reset(values?)` | back to the first values (or `values`), nothing shown wrong |
+| `cancel()` | stops a submit under way (a Cancel button): not `pending` any more, and what it awaits is not heard. A form gone (its component, a reload) cancels its own |
 
 `field` binds a control's `value`, marks the field left as it loses focus, gives it the field's `error`, and on a one-line input makes Enter submit the form. It works on `input`, `textarea`, `checkbox`, `slider`, `segmented`, `stepper`, `select` and `combobox`; `on_blur` and `on_key` given beside it still run.
 

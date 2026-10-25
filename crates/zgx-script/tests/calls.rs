@@ -707,3 +707,79 @@ fn enter_submits_a_form_focusing_what_is_wrong_and_saving_in_a_task() {
     wait_for(&mut h, "state", "false refused saved grace@x.org");
     assert_eq!(h.error(), None);
 }
+
+const CANCEL_APP: &str = r#"
+local after = ui.state("after", 0)
+local loads_finished = ui.state("loads_finished", 0)
+local id = ui.state("id", 1)
+local saved = ui.state("saved", "")
+local running = nil
+local user = ui.resource(function()
+    local which = id:get()
+    local answer = ui.call("slow", which):await()
+    loads_finished:add(1)
+    return answer
+end)
+local form = ui.form {
+    fields = { name = "Ada" },
+    submit = function(values) return ui.call("slow", 9):await() end,
+    on_success = function(answer) saved:set(answer) end,
+}
+return ui.column {
+    ui.text { id = "shown", function()
+        return `{after:get()} {loads_finished:get()} {user.data:get() or "-"} {form.pending:get()} {saved:get()}`
+    end },
+    ui.button { id = "start", w = 40, h = 20, "s", on_click = function()
+        running = ui.task(function()
+            ui.call("slow", 1):await()
+            after:add(1)
+        end)
+    end },
+    ui.button { id = "cancel", w = 40, h = 20, "c", on_click = function()
+        running:cancel()
+        assert(running.cancelled)
+    end },
+    ui.button { id = "next", w = 40, h = 20, "n", on_click = function() id:add(1) end },
+    ui.button { id = "submit", w = 40, h = 20, "u", on_click = form.submit },
+    ui.button { id = "stop", w = 40, h = 20, "x", on_click = form.cancel },
+}
+"#;
+
+#[test]
+fn a_cancelled_task_stops_at_its_await() {
+    let mut h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(runtime, "app", CANCEL_APP);
+        host.async_action("slow", |arg| async move {
+            zgx::timer::sleep(Duration::from_millis(20)).await;
+            Ok(Value::Str(format!("answer {arg}").into()))
+        });
+        host
+    });
+    wait_for(&mut h, "shown", "0 1 answer 1 false ");
+    // A task cancelled while it awaits: the answer comes, unheard.
+    h.click("start");
+    h.click("cancel");
+    std::thread::sleep(Duration::from_millis(40));
+    h.frames(3);
+    assert_eq!(h.text("shown"), "0 1 answer 1 false ");
+    // A resource asked again: its earlier load, cancelled, finishes nothing.
+    h.click("next");
+    h.click("next");
+    wait_for(&mut h, "shown", "0 2 answer 3 false ");
+    std::thread::sleep(Duration::from_millis(40));
+    h.frames(3);
+    assert_eq!(
+        h.text("shown"),
+        "0 2 answer 3 false ",
+        "the second load stopped"
+    );
+    // A form's submit cancelled: not pending, and its answer not heard.
+    h.click("submit");
+    assert_eq!(h.text("shown"), "0 2 answer 3 true ");
+    h.click("stop");
+    assert_eq!(h.text("shown"), "0 2 answer 3 false ");
+    std::thread::sleep(Duration::from_millis(40));
+    h.frames(3);
+    assert_eq!(h.text("shown"), "0 2 answer 3 false ");
+    assert_eq!(h.error(), None);
+}

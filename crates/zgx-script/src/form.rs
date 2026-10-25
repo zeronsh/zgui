@@ -29,6 +29,8 @@ local function form(spec)
     local self = { fields = {}, values = {} }
     local attempted = new_state(false)
     self.attempted = attempted
+    -- The submit under way, if any.
+    local running = nil
     self.pending = new_state(false)
     self.failure = new_state(nil)
     -- The values as a check reads them: each read follows that field alone.
@@ -109,8 +111,9 @@ local function form(spec)
         local values = self.snapshot()
         self.failure:set(nil)
         self.pending:set(true)
-        ui.task(function()
+        running = ui.task(function()
             local ok, result = pcall(spec.submit, values)
+            running = nil
             self.pending:set(false)
             if ok then
                 if spec.on_success then
@@ -121,6 +124,20 @@ local function form(spec)
             end
         end)
     end
+    -- Stop a submit under way: what it awaits is not heard.
+    function self.cancel()
+        if running then
+            running:cancel()
+            running = nil
+            self.pending:set(false)
+        end
+    end
+    -- A form gone (its component, a reload) submits nothing more.
+    ui.on_cleanup(function()
+        if running then
+            running:cancel()
+        end
+    end)
     function self.reset(to)
         ui.batch(function()
             for name, field in self.fields do
