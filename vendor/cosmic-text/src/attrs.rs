@@ -458,6 +458,16 @@ pub struct FontMatchAttrs {
     weight: Weight,
 }
 
+impl FontMatchAttrs {
+    /// zgx patch: whether `attrs` makes this key, without making one.
+    pub(crate) fn matches(&self, attrs: &Attrs<'_>) -> bool {
+        self.family.as_family() == attrs.family
+            && self.stretch == attrs.stretch
+            && self.style == attrs.style
+            && self.weight == attrs.weight
+    }
+}
+
 impl<'a> From<&Attrs<'a>> for FontMatchAttrs {
     fn from(attrs: &Attrs<'a>) -> Self {
         Self {

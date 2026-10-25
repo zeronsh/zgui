@@ -294,6 +294,9 @@ fn shape_fallback(
     missing
 }
 
+/// zgx patch: out of line, so the word cache's path through `Shaping::run`
+/// keeps its code whatever shaping a new run adds.
+#[inline(never)]
 fn shape_run(
     glyphs: &mut Vec<ShapeGlyph>,
     font_system: &mut FontSystem,
@@ -326,7 +329,7 @@ fn shape_run(
 
     let attrs = attrs_list.get_span(start_run);
 
-    let fonts = font_system.get_font_matches(&attrs);
+    let (fonts, kept) = font_matches(font_system, &attrs);
 
     let default_families = [&attrs.family];
     let mut font_iter = FontFallbackIter::new(
@@ -339,13 +342,26 @@ fn shape_run(
         attrs.optical,
     );
 
-    // zgx patch: no font at all (none installed, or none fontconfig
-    // finds): the run shapes to nothing, rather than panicking each frame.
-    let Some(font) = font_iter.next() else {
-        drop(font_iter);
-        font_system.shape_buffer.scripts = scripts;
-        no_font();
-        return;
+    let font = match kept {
+        Some(font) => {
+            font_iter.pass_default();
+            font
+        }
+        None => {
+            // zgx patch: no font at all (none installed, or none fontconfig
+            // finds): the run shapes to nothing, rather than panicking each
+            // frame.
+            let Some(font) = font_iter.next() else {
+                drop(font_iter);
+                font_system.shape_buffer.scripts = scripts;
+                no_font();
+                return;
+            };
+            if attrs.family != Family::Monospace && font_iter.gave_default() {
+                font_iter.font_system().keep_first_font(&attrs, &fonts, &font);
+            }
+            font
+        }
     };
 
     // zgx: masked text (a password) is a bullet for each character, each
@@ -573,6 +589,27 @@ fn no_font() {
              install one, such as DejaVu Sans (fonts-dejavu-core)"
         );
     });
+}
+
+/// zgx patch: `attrs`' font matches, and the face a family other than
+/// monospace (which looks at each word's characters) gives first, if a run
+/// with these attributes found it. Out of line: the word cache's path
+/// through `Shaping::run` stays as it was.
+#[inline(never)]
+fn font_matches(
+    font_system: &mut FontSystem,
+    attrs: &crate::Attrs<'_>,
+) -> (
+    alloc::sync::Arc<Vec<crate::font::FontMatchKey>>,
+    Option<alloc::sync::Arc<Font>>,
+) {
+    match (attrs.family != Family::Monospace)
+        .then(|| font_system.first_font(attrs))
+        .flatten()
+    {
+        Some((fonts, font)) => (fonts, Some(font)),
+        None => (font_system.get_font_matches(attrs), None),
+    }
 }
 
 fn shape_skip(

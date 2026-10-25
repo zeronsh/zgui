@@ -136,3 +136,19 @@ everything but the text draws, and the first such run says once on stderr
 why the text does not show. `font_cache`'s
 `text_shapes_to_nothing_with_no_font_installed` and the Linux `no-fonts`
 probe check it.
+
+## A run's first font is kept for its attributes
+
+Every run shaped without the word cache (a new value: a dashboard's figure)
+looked its attributes' font matches up by an owned key (`get_font_matches`)
+and walked them to its family's face again (`FontFallbackIter::next`). For a
+family other than monospace, which looks at each word's characters, that face
+depends only on the attributes, so `FontSystem::first_font` keeps it with the
+matches for the last eight attribute sets runs shaped with (a font without an
+optical size axis matching at any size, as `get_font_at` instances it once).
+`shape_run` starts its fallback search past the face it knows. Both are
+forgotten when the font matches are (`db_mut`, or the cache's limit).
+`shape_run` is out of line, so the word cache's path through `Shaping::run`
+keeps its code. zgx-gpu's `first_font` test shapes texts in turn under
+changing families, weights, sizes and scripts, with characters only another
+font has, to the same glyphs from the same fonts as each alone.

@@ -228,6 +228,22 @@ impl<'a> FontFallbackIter<'a> {
         }
     }
 
+    /// zgx patch: whether the font `next` gave first was its default
+    /// family's face (no monospace, script or other fallback looked at).
+    pub(crate) fn gave_default(&self) -> bool {
+        self.default_i == 1
+            && self.script_i == (0, 0)
+            && self.common_i == 0
+            && self.other_i == 0
+            && !self.end
+    }
+
+    /// zgx patch: as `next` leaves it after giving its default family's
+    /// face (`gave_default`), that face known already.
+    pub(crate) fn pass_default(&mut self) {
+        self.default_i = 1;
+    }
+
     pub fn check_missing(&self, word: &str) {
         if self.end {
             missing_warn!(
@@ -267,6 +283,11 @@ impl<'a> FontFallbackIter<'a> {
                     &face.post_script_name
                 }
             })
+    }
+
+    /// zgx patch: the font system it searches.
+    pub(crate) fn font_system(&mut self) -> &mut FontSystem {
+        self.font_system
     }
 
     pub fn shape_caches(&mut self) -> &mut ShapeBuffer {

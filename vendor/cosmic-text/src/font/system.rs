@@ -172,6 +172,10 @@ pub struct FontSystem {
     /// Cache for font matches.
     font_matches_cache: HashMap<FontMatchAttrs, Arc<Vec<FontMatchKey>>>,
 
+    /// zgx patch: the matches and first font of the last attributes runs
+    /// shaped with, newest last (`FontSystem::first_font`).
+    first_font: Vec<FirstFont>,
+
     /// zgx patch: each face's `wght` axis range (`None`: not variable in
     /// weight), read from its file the first time a match needs it.
     weight_axes: HashMap<fontdb::ID, Option<(f32, f32)>>,
@@ -200,6 +204,20 @@ impl fmt::Debug for FontSystem {
             .field("db", &self.db)
             .finish_non_exhaustive()
     }
+}
+
+/// zgx patch: attributes kept by `FontSystem::first_font` (an interface's
+/// few text styles: sizes, weights, families).
+const FIRST_FONTS: usize = 8;
+
+/// zgx patch: the font matches of a run's attributes, and the first font
+/// of their fallback (see `FontSystem::first_font`).
+#[derive(Debug)]
+struct FirstFont {
+    attrs: FontMatchAttrs,
+    optical: u16,
+    fonts: Arc<Vec<FontMatchKey>>,
+    font: Arc<Font>,
 }
 
 impl FontSystem {
@@ -311,6 +329,7 @@ impl FontSystem {
             per_script_monospace_font_ids,
             font_cache: HashMap::default(),
             font_matches_cache: HashMap::default(),
+            first_font: Vec::new(),
             weight_axes: HashMap::default(),
             font_codepoint_support_info_cache: HashMap::default(),
             monospace_fallbacks_buffer: BTreeSet::default(),
@@ -340,6 +359,7 @@ impl FontSystem {
     /// Get a mutable reference to the database.
     pub fn db_mut(&mut self) -> &mut fontdb::Database {
         self.font_matches_cache.clear();
+        self.first_font.clear();
         &mut self.db
     }
 
@@ -421,11 +441,48 @@ impl FontSystem {
         })
     }
 
+    /// zgx patch: the font matches of `attrs`, and the first font a
+    /// fallback iterator over them gives (its default family's face), if a
+    /// run last shaped with the same attributes found them. Each word of a
+    /// run looked its matches up by an owned key and walked them to its
+    /// family's face again; the same attributes give the same of both.
+    pub(crate) fn first_font(&self, attrs: &Attrs<'_>) -> Option<(Arc<Vec<FontMatchKey>>, Arc<Font>)> {
+        self.first_font
+            .iter()
+            .rev()
+            // A font without an optical size axis is the same instance at
+            // every size (`get_font_at`).
+            .find(|first| {
+                first.attrs.matches(attrs)
+                    && (first.optical == attrs.optical || !first.font.has_optical())
+            })
+            .map(|first| (first.fonts.clone(), first.font.clone()))
+    }
+
+    /// zgx patch: keep what `first_font` gives for `attrs`.
+    pub(crate) fn keep_first_font(
+        &mut self,
+        attrs: &Attrs<'_>,
+        fonts: &Arc<Vec<FontMatchKey>>,
+        font: &Arc<Font>,
+    ) {
+        if self.first_font.len() == FIRST_FONTS {
+            self.first_font.remove(0);
+        }
+        self.first_font.push(FirstFont {
+            attrs: attrs.into(),
+            optical: attrs.optical,
+            fonts: fonts.clone(),
+            font: font.clone(),
+        });
+    }
+
     pub fn get_font_matches(&mut self, attrs: &Attrs<'_>) -> Arc<Vec<FontMatchKey>> {
         // Clear the cache first if it reached the size limit
         if self.font_matches_cache.len() >= Self::FONT_MATCHES_CACHE_SIZE_LIMIT {
             log::trace!("clear font mache cache");
             self.font_matches_cache.clear();
+            self.first_font.clear();
         }
 
         self.font_matches_cache
