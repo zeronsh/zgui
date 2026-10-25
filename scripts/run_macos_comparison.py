@@ -88,12 +88,16 @@ PACING_SECONDS, PACING_REPEATS = 8, 8
 # The full protocol's 5 s warm-up stays: from 3 s, startup's own work (first
 # shaping, caches, memory still growing) read 5-10% more CPU for every
 # framework (2026-10-25).
-SUITE = {'REQUESTED': 15, 'WARMUP': 5, 'SAMPLED': 10, 'IDLE_REPEATS': 3, 'PACING_REPEATS': 2}
-# A cell whose CPU or GPU work spreads more than this share of its median
+# Three pacing captures a cell: of two, one bad capture moved a median
+# (lab scroll, 2026-10-25: 30.0 and 17.8 ms; ten more read 18.0). Idle twice:
+# it reads hundredths of a percent, its range shown.
+SUITE = {'REQUESTED': 15, 'WARMUP': 5, 'SAMPLED': 10, 'IDLE_REPEATS': 2, 'PACING_REPEATS': 3}
+# A cell whose CPU or GPU power spreads more than this share of its median
 # over its trials gets EXTRA more (the suite).
-SPREAD, EXTRA = 0.10, 2
-# Blank-row captures (vlist): after the warm-up, this long, this often.
-BLANK_SECONDS, BLANK_RATE = 8, 10
+SPREAD, EXTRA = 0.10, 1
+# Blank-row captures (vlist): after the warm-up, this long, this often, in
+# these modes (a fling scrolls as a scroll does; every capture so far read 0%).
+BLANK_SECONDS, BLANK_RATE, BLANK_MODES = 8, 10, ['scroll', 'jump']
 MODES = ['idle', 'stream', 'scroll', 'both']
 MYGO = ROOT / 'comparisons/mygo/bin'
 SCENES = {
@@ -572,7 +576,7 @@ def measure(args, frameworks, modes, repeats, commit, found):
     blanks = []
     if args.scene == 'vlist' and not args.no_pacing:
         for framework in frameworks:
-            for mode in modes:
+            for mode in [m for m in modes if m in BLANK_MODES]:
                 row = blank(args.scene, framework, mode, 0, out)
                 print(f"{framework:8} {mode:8}: blank {row.get('blank_captures', '?')}/{row.get('captures', '?')} captures, "
                       f"longest {row.get('longest_blank_points', '?')} pt", flush=True)
@@ -650,7 +654,7 @@ def measure(args, frameworks, modes, repeats, commit, found):
                           'acceptance_updates_per_second': [58, 61],
                           'suite': args.suite, 'spread_for_extra_trials': SPREAD if args.suite else None,
                           'extra_trials': EXTRA if args.suite else 0, 'extended_cells': extended,
-                          **({'blank_seconds': BLANK_SECONDS, 'blank_rate': BLANK_RATE} if blanks else {})}}
+                          **({'blank_seconds': BLANK_SECONDS, 'blank_rate': BLANK_RATE, 'blank_modes': BLANK_MODES} if blanks else {})}}
     if args.into:
         # The published run's own record, with this one's as the idle cells'.
         published = json.loads((out / 'audit.json').read_text())

@@ -72,10 +72,10 @@ Its protocol (`run_macos_comparison.py --suite`) is shorter than the full one:
 | | Suite | Full |
 | --- | --- | --- |
 | a trial | 5 s warm-up, 10 s sampled | 5 s warm-up, 15 s sampled |
-| repeats | 3, alternating order; 2 more for a cell whose CPU or GPU power spreads over 10% of its median | 3 |
-| idle | heavy only, 3 launches sampled 20–30 s after launch | every scene, 5 launches, 20–35 s |
-| frame pacing | 2 captures of 8 s per cell | 8 |
-| blank rows | vlist: one 8 s capture of the window at 10 Hz per cell | none |
+| repeats | 3, alternating order; 1 more for a cell whose CPU or GPU power spreads over 10% of its median | 3 |
+| idle | heavy only, 2 launches sampled 20–30 s after launch | every scene, 5 launches, 20–35 s |
+| frame pacing | 3 captures of 8 s per cell (of two, one bad capture moved a median: lab scroll on 2026-10-25 read 30.0 and 17.8 ms, and ten more captures of the same build 18.0) | 8 |
+| blank rows | vlist, scroll and jump: one 8 s capture of the window at 10 Hz per cell | none |
 
 Every trial is checked: it must run as long as asked (its exit within 3 s of
 `ZGX_SECONDS`) with the ticks that length makes (58–61 a second while active,
