@@ -7,7 +7,7 @@ use zgx_gpu::{GpuRenderer, text::FontData};
 const GEIST: &[u8] = include_bytes!("fonts/GeistVariable-subset.ttf");
 const SIZE: (f32, f32) = (480., 260.);
 
-fn view(live: Signal<u32>) -> View {
+fn view(live: Signal<u32>, mounted: Signal<u32>) -> View {
     let rows = live.clone();
     let card = move |index: u32| {
         let (value, bars, fill) = (live.clone(), live.clone(), live.clone());
@@ -116,15 +116,31 @@ fn view(live: Signal<u32>) -> View {
         .font_family("Geist")
         .children((0..4).map(card))
         .children((0..5).map(row))
+        // Mounted again whenever `mounted` changes: a change no patch makes.
+        .child(switch(
+            move || mounted.get(),
+            |which, _| {
+                div()
+                    .absolute()
+                    .ml(8. + 40. * which as f32)
+                    .mt(252.)
+                    .size(100., 6.)
+                    .bg(Color(255, 196, 61, 255))
+            },
+        ))
 }
 
 struct Window {
     ui: Ui,
     gpu: GpuRenderer,
     live: Signal<u32>,
+    mounted: Signal<u32>,
 }
 impl Window {
     fn new(live: u32) -> Self {
+        Self::mounted(live, 0)
+    }
+    fn mounted(live: u32, mounted: u32) -> Self {
         let gpu = GpuRenderer::new((SIZE.0 * 2.) as u32, (SIZE.1 * 2.) as u32).unwrap();
         let mut gpu = gpu;
         gpu.set_scale_factor(2.);
@@ -134,11 +150,13 @@ impl Window {
         let mut ui = Ui::new(SIZE.0, SIZE.1);
         gpu.install_text(&mut ui.scene.borrow_mut());
         let state = ui.signal(live);
-        ui.mount(view(state.clone()));
+        let which = ui.signal(mounted);
+        ui.mount(view(state.clone(), which.clone()));
         Window {
             ui,
             gpu,
             live: state,
+            mounted: which,
         }
     }
     fn draw(&mut self) -> zgx_gpu::GpuStats {
@@ -170,4 +188,30 @@ fn a_frame_patched_into_the_kept_window_is_the_frame_drawn_afresh() {
     // Every frame but those where a pill (a box holding a text) changes
     // colour patches; drawn whole then, the next patches again.
     assert!(patched >= 8, "{patched} frames patched");
+}
+
+/// A window that lost its kept frame to a change no patch makes (a node
+/// mounted) before patching from it keeps one again once a few frames in a
+/// row repaint leaves alone: patching goes on, each frame as drawn afresh.
+#[test]
+fn a_window_keeps_a_frame_again_after_a_change_no_patch_makes() {
+    let mut window = Window::new(1);
+    window.draw();
+    window.mounted.set(1);
+    window.live.set(2);
+    window.draw();
+    let mut patched = 0;
+    for live in 3..14 {
+        window.live.set(live);
+        let stats = window.draw();
+        patched += usize::from(stats.patched_items > 0);
+        let mut fresh = Window::mounted(live, 1);
+        fresh.draw();
+        assert!(
+            window.gpu.readback().unwrap() == fresh.gpu.readback().unwrap(),
+            "frame {live} differs from the scene drawn afresh (patched {})",
+            stats.patched_items
+        );
+    }
+    assert!(patched >= 5, "{patched} frames patched");
 }

@@ -818,6 +818,11 @@ fn changes_unmarked(kind: &NodeKind) -> bool {
 /// they are costs about 30 instructions an item, making a damaged one again
 /// about 1,500.
 const KEPT_SHARE: f32 = 0.1;
+/// Frames in a row a kept window would have patched and drawn from (leaves
+/// alone repainting, over `KEPT_SHARE` of it) after which a window that
+/// lost its kept frame keeps one again (`render_once`): one alone may be a
+/// change's last, and keeping costs a whole frame.
+const KEEP_AGAIN: u8 = 2;
 /// Close the open item range (`render_flat`'s `item_ranges`): its quads'
 /// count, its room (`pad`: a text's spare quads, added empty) and where
 /// its draws end.
@@ -834,6 +839,19 @@ fn close_range(
     let room = made + if pad { text_room(made) } else { 0 };
     quads.resize((open.0 + room) as usize, bytemuck::Zeroable::zeroed());
     *open = (open.0, made, room, open.3, draws.len() as u32);
+}
+/// Frames in a row a kept window would have patched (`would_patch`), read
+/// up to `flushes` and content `revision`; after a second in a row it
+/// wouldn't, the scene's repaints go unread for `skip` frames (one, then
+/// twice as many each time, up to 32), so that flushes stop keeping them
+/// where nothing patches.
+#[derive(Default)]
+struct Patchable {
+    run: u8,
+    flushes: u64,
+    revision: u64,
+    skip: u8,
+    backoff: u8,
 }
 /// Spare quads a text keeps for its value to grow into, past its own.
 fn text_room(glyphs: u32) -> u32 {
@@ -1913,6 +1931,9 @@ pub struct GpuRenderer {
     /// Whether the last frame patched the window as kept (`render_kept`):
     /// one that can't is drawn whole, to keep patching after it.
     patched: bool,
+    /// While no frame is kept, how many in a row a kept one would have
+    /// patched (`would_patch`).
+    patchable: Patchable,
     /// Where each item's quads and draws lay in a frame made to keep or
     /// patch (`render_flat`): first quad, quads, room, first draw, draws' end.
     item_ranges: Vec<(u32, u32, u32, u32, u32)>,
@@ -2313,6 +2334,7 @@ impl GpuRenderer {
             kept: None,
             patch_stats: GpuStats::default(),
             patched: false,
+            patchable: Patchable::default(),
             item_ranges: Vec::new(),
             patch_clips: Vec::new(),
             draw_made: false,
@@ -2632,9 +2654,16 @@ impl GpuRenderer {
         // Kept up to date, drawn as usual this frame (little damage).
         let maintained = self.kept.is_some();
         let was_patched = std::mem::replace(&mut self.patched, maintained);
+        // Lost (a change it couldn't patch, before it had patched): kept
+        // again once a few frames in a row show it would patch.
+        let patchable = match (&merged, maintained) {
+            (Some(regions), false) => self.would_patch(scene, regions, viewport),
+            _ => 0,
+        };
         // Drawn whole and kept to patch from: a frame whole anyway (the
-        // first, a full repaint), or one after a patched frame, so that
-        // patching goes on after a change it can't patch.
+        // first, a full repaint), one after a patched frame, so that
+        // patching goes on after a change it can't patch, or one after
+        // frames it would have patched.
         let keep = !maintained
             && self.plane.is_none()
             && !self.in_layer
@@ -2644,6 +2673,7 @@ impl GpuRenderer {
             && !scene.has_overflow_fades()
             && (self.fresh
                 || was_patched
+                || patchable >= KEEP_AGAIN
                 || damage.iter().any(|d| {
                     d.x <= 0.
                         && d.y <= 0.
@@ -3050,6 +3080,38 @@ impl GpuRenderer {
                 },
             ],
         })
+    }
+    /// Frames in a row, this one included, whose changes a kept window
+    /// would have patched and drawn from: leaves alone repainting (no
+    /// composite change, nothing mounted or removed), over `KEPT_SHARE` of
+    /// the window, with no flush unread between them.
+    fn would_patch(&mut self, scene: &Scene, regions: &[Rect], viewport: Rect) -> u8 {
+        let last = &mut self.patchable;
+        if last.skip > 0 {
+            last.skip -= 1;
+            last.run = 0;
+            return 0;
+        }
+        let (covered, repaints) = scene.repaints();
+        let area = |r: &Rect| r.width * r.height;
+        // (Flushes unread since, while skipping: read again from the next.)
+        let read = *covered.start() == last.flushes + 1;
+        let patches = read
+            && last.revision == scene.content_revision()
+            && !repaints.is_empty()
+            && regions.iter().map(area).sum::<f32>() >= KEPT_SHARE * area(&viewport)
+            && repaints.iter().all(|&(id, flags)| {
+                flags & zgx::scene::repaint::COMPOSITE == 0
+                    && scene.contains(id)
+                    && scene.children(id).is_empty()
+            });
+        (last.run, last.skip, last.backoff) = match (read, patches) {
+            (_, true) => (last.run.saturating_add(1), 0, 0),
+            (false, false) => (0, 0, last.backoff),
+            (true, false) => (0, last.backoff, (last.backoff * 2).clamp(1, 32)),
+        };
+        (last.flushes, last.revision) = (*covered.end(), scene.content_revision());
+        last.run
     }
     /// Whether the glyph atlas is filling up: the next frame drawn as usual
     /// recycles it.
