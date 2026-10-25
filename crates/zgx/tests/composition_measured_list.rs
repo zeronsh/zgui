@@ -796,3 +796,92 @@ fn measured_rows_keep_heights_by_key_and_estimate_the_unmounted() {
     assert_eq!(height_of(1001), 23.);
     assert_eq!(height_of(99), 26.);
 }
+
+#[test]
+fn a_far_measured_row_scrolled_to_lands_where_asked() {
+    use std::cell::RefCell;
+    use zgx::compose::{NodeHandle, RowAlign};
+    let mut ui = Ui::new(240., 340.);
+    // Rows of seven heights, estimated at twenty.
+    let heights = VariableHeights::new(&ui.runtime, 1000, 20.);
+    let tall = |index: usize| 10. + (index % 7) as f32 * 9.;
+    let handle: Rc<RefCell<Option<NodeHandle>>> = Rc::default();
+    let slot = handle.clone();
+    let view = ui.mount(
+        measured_virtual_list(
+            ui.signal(0.),
+            heights.clone(),
+            2,
+            |index| index,
+            move |_, index, _| div().h(tall(index)).id(format!("row-{index}")),
+        )
+        .size(200., 300.)
+        .on_mount(move |list| *slot.borrow_mut() = Some(list)),
+    );
+    ui.try_prepare_frame().unwrap();
+    let list = handle.borrow().clone().unwrap();
+    let top = ui.scene.borrow().bounds(list.node()).y;
+    let at = |ui: &Ui, index: usize| {
+        let node = row(ui, view.find(&format!("row-{index}")).unwrap());
+        ui.scene.borrow().bounds(node)
+    };
+    // From the top to row 700: everything above it was an estimate.
+    assert!(list.scroll_to_row(700, RowAlign::Start));
+    ui.try_prepare_frame().unwrap();
+    assert_eq!(at(&ui, 700).y, top, "its top at the top");
+    assert!(list.scroll_to_row(300, RowAlign::End));
+    ui.try_prepare_frame().unwrap();
+    let b = at(&ui, 300);
+    assert_eq!(b.y + b.height, top + 300., "its bottom at the bottom");
+    assert_eq!(b.height, tall(300), "measured");
+    assert!(list.scroll_to_row(900, RowAlign::Center));
+    ui.try_prepare_frame().unwrap();
+    let b = at(&ui, 900);
+    assert_eq!(b.y + b.height / 2., top + 150., "its middle at the middle");
+    // Nearest: already in view, nothing moves; below, it comes up to the edge.
+    let before = at(&ui, 901).y;
+    assert!(list.scroll_to_row(901, RowAlign::Nearest));
+    ui.try_prepare_frame().unwrap();
+    assert_eq!(at(&ui, 901).y, before);
+    assert!(list.scroll_to_row(960, RowAlign::Nearest));
+    ui.try_prepare_frame().unwrap();
+    let b = at(&ui, 960);
+    assert_eq!(b.y + b.height, top + 300.);
+}
+
+#[test]
+fn a_fixed_list_scrolls_to_a_row_where_asked() {
+    use std::cell::RefCell;
+    use zgx::compose::{NodeHandle, RowAlign};
+    let mut ui = Ui::new(240., 340.);
+    let offset = ui.signal(0.);
+    let handle: Rc<RefCell<Option<NodeHandle>>> = Rc::default();
+    let slot = handle.clone();
+    ui.mount(
+        virtual_list(
+            offset.clone(),
+            20.,
+            2,
+            || 10_000,
+            |index| index,
+            |_, index, _| div().h(20.).id(format!("row-{index}")),
+        )
+        .size(200., 300.)
+        .on_mount(move |list| *slot.borrow_mut() = Some(list)),
+    );
+    ui.try_prepare_frame().unwrap();
+    let list = handle.borrow().clone().unwrap();
+    for (align, expected) in [
+        (RowAlign::Start, 5000. * 20.),
+        (RowAlign::End, 5001. * 20. - 300.),
+        (RowAlign::Center, 5000. * 20. + 10. - 150.),
+    ] {
+        assert!(list.scroll_to_row(5000, align));
+        ui.try_prepare_frame().unwrap();
+        assert_eq!(offset.get(), expected, "{align:?}");
+    }
+    // The last row, at the start, is as far as it scrolls.
+    assert!(list.scroll_to_row(9999, RowAlign::Start));
+    ui.try_prepare_frame().unwrap();
+    assert_eq!(offset.get(), 10_000. * 20. - 300.);
+}

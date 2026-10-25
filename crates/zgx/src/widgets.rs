@@ -905,6 +905,8 @@ struct UiStorage {
     primary_paste_on: Cell<bool>,
     /// Display text's selection (`View::selectable`).
     selection: RefCell<crate::selection::State>,
+    /// Virtual lists' scroll-to-row requests, by list (`NodeHandle::scroll_to_row`).
+    list_reveals: RefCell<std::collections::HashMap<NodeId, Signal<crate::compose::RowReveal>>>,
     /// What the last primary press went to: the keyboard scrolls the scroll
     /// view around it (`scroll_keys`).
     last_pressed: Cell<Option<NodeId>>,
@@ -1107,6 +1109,7 @@ impl Ui {
             primary_paste: Cell::new(None),
             primary_paste_on: Cell::new(true),
             selection: Default::default(),
+            list_reveals: Default::default(),
             last_pressed: Cell::new(None),
             elastic: Default::default(),
             scrollbar_fades: RefCell::new(Vec::new()),
@@ -1167,6 +1170,12 @@ impl Ui {
     }
     pub(crate) fn selection_state(&self) -> &RefCell<crate::selection::State> {
         &self.storage.selection
+    }
+    /// Virtual lists' scroll-to-row requests, by the list's node.
+    pub(crate) fn list_reveals(
+        &self,
+    ) -> &RefCell<std::collections::HashMap<NodeId, Signal<crate::compose::RowReveal>>> {
+        &self.storage.list_reveals
     }
     /// What the last primary press went to, while it is mounted.
     pub(crate) fn last_pressed(&self) -> Option<NodeId> {

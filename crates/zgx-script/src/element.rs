@@ -972,6 +972,37 @@ impl UserData for ElementUd {
         methods.add_method("focus", |_, e, ()| {
             Ok(e.0.handle.get().is_some_and(NodeHandle::focus))
         });
+        // A list's row in view: `el:scroll_to_row(i, { align = "center" })`,
+        // `i` from 1, `align` start, center, end or nearest (the default).
+        methods.add_method(
+            "scroll_to_row",
+            |_, e, (index, options): (f64, Option<mlua::Table>)| {
+                use zgx::compose::RowAlign;
+                let align = match options {
+                    Some(options) => options.get::<Option<String>>("align")?,
+                    None => None,
+                };
+                let align = match align.as_deref() {
+                    None | Some("nearest") => RowAlign::Nearest,
+                    Some("start") => RowAlign::Start,
+                    Some("center") => RowAlign::Center,
+                    Some("end") => RowAlign::End,
+                    Some(other) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "scroll_to_row's align is \"start\", \"center\", \"end\" or \"nearest\", not {other:?}"
+                        )));
+                    }
+                };
+                if !(index.is_finite() && index >= 1.) {
+                    return Ok(false);
+                }
+                let row = index as usize - 1;
+                Ok(e.0
+                    .handle
+                    .get()
+                    .is_some_and(|list| list.scroll_to_row(row, align)))
+            },
+        );
         // An input's selection, in characters (Unicode code points, from
         // 0, as `utf8.len` counts them): `el:select_all()`,
         // `el:set_selection(a, b)` (`b` defaults to `a`, a caret) and

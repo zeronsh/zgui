@@ -555,6 +555,11 @@ declare extern type Element with
 	-- Keyboard focus to the element or its first focusable descendant
 	-- (shown ones only); whether it took.
 	function focus(self): boolean
+	-- A list's row `i` (from 1) in view, placed by `align`: "start",
+	-- "center", "end" or "nearest" (the default, the least scrolling). A
+	-- list of measured rows measures those around it as it lands, so it
+	-- ends where asked. False for elements that are not lists.
+	function scroll_to_row(self, i: number, options: { align: ("start" | "center" | "end" | "nearest")? }?): boolean
 	function has_class(self, class: string): boolean
 	-- An input's selection, in characters (Unicode code points from 0, as
 	-- `utf8.len` counts them). Each returns false (or nil) for elements

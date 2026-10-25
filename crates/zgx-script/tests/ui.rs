@@ -2647,3 +2647,57 @@ fn copying_a_selection_over_a_list_takes_the_rows_it_has_not_mounted() {
     assert_eq!(lines.len(), 901, "{text}");
     assert_eq!(h.host.error().get(), None);
 }
+
+#[test]
+fn a_list_scrolls_to_a_far_row_where_asked() {
+    let mut h = Harness::inline(
+        r##"local list = ui.ref()
+        local plain = ui.ref()
+        local function words(i) return string.rep("word ", (i % 5) * 9 + 1) end
+        local function go(id, row, align)
+            return ui.button { id = id, on_click = function()
+                for _, r in { list, plain } do
+                    local el = r:peek()
+                    if el then el:scroll_to_row(row, { align = align }) end
+                end
+            end, id }
+        end
+        return ui.column {
+            ui.row { go("s400", 400, "start"), go("e250", 250, "end"), go("c470", 470, "center") },
+            ui.list {
+                id = "measured", ref = list, count = 500, height = 20, measured = true,
+                w = 200, h = 300,
+                row = function(i)
+                    return ui.text { id = `m-{i}`, words(i), wrap = true, line_height = 20 }
+                end,
+            },
+            ui.list {
+                id = "fixed", ref = plain, count = 10000, height = 24, w = 200, h = 240,
+                row = function(i) return ui.text { id = `f-{i}`, `Row {i}`, h = 24 } end,
+            },
+        }"##,
+    );
+    assert_eq!(h.host.error().get(), None);
+    h.ui.prepare_frame();
+    let span = |h: &mut Harness, id: &str| {
+        let b = h.bounds(id);
+        (b.y, b.y + b.height)
+    };
+    let measured = h.bounds("measured");
+    let fixed = h.bounds("fixed");
+    h.click("s400");
+    h.frames(2);
+    assert_eq!(h.host.error().get(), None);
+    assert!((span(&mut h, "m-400").0 - measured.y).abs() < 0.5);
+    assert_eq!(span(&mut h, "f-400").0, fixed.y);
+    h.click("e250");
+    h.frames(2);
+    assert!((span(&mut h, "m-250").1 - (measured.y + measured.height)).abs() < 0.5);
+    assert_eq!(span(&mut h, "f-250").1, fixed.y + fixed.height);
+    h.click("c470");
+    h.frames(2);
+    let (top, bottom) = span(&mut h, "m-470");
+    assert!(((top + bottom) / 2. - (measured.y + measured.height / 2.)).abs() < 0.5);
+    let (top, bottom) = span(&mut h, "f-470");
+    assert_eq!((top + bottom) / 2., fixed.y + fixed.height / 2.);
+}

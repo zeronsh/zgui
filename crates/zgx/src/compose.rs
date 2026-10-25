@@ -1899,6 +1899,57 @@ pub(crate) fn view_text(view: &mut View) -> String {
         .collect();
     parts.join(separator)
 }
+/// Where a row scrolled to shows in its list's viewport
+/// (`NodeHandle::scroll_to_row`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowAlign {
+    /// Its top at the viewport's top.
+    Start,
+    /// Its middle at the viewport's middle.
+    Center,
+    /// Its bottom at the viewport's bottom.
+    End,
+    /// As little scrolling as shows it all (none if it does): the keyboard's.
+    #[default]
+    Nearest,
+}
+impl RowAlign {
+    /// The scroll position that shows the row at `top`, `height` tall, in a
+    /// viewport `view` tall now at `position`, before clamping.
+    pub(crate) fn position(self, top: f32, height: f32, view: f32, position: f32) -> f32 {
+        let bottom = (top as f64 + height as f64).min(f32::MAX as f64) as f32;
+        match self {
+            RowAlign::Start => top,
+            RowAlign::End => bottom - view,
+            RowAlign::Center => top + height / 2. - view / 2.,
+            RowAlign::Nearest if top < position || height > view => top,
+            RowAlign::Nearest if bottom as f64 > position as f64 + view as f64 => bottom - view,
+            RowAlign::Nearest => position,
+        }
+    }
+}
+/// A list's scroll-to-row request: a serial (each request new), the row,
+/// and where it shows.
+pub(crate) type RowReveal = (u64, usize, RowAlign);
+/// The list at `root` takes scroll-to-row requests (`NodeHandle::scroll_to_row`)
+/// on the signal this returns, while it is mounted.
+pub(crate) fn list_reveal(ui: &mut Ui, root: NodeId) -> Signal<RowReveal> {
+    let reveal = ui.signal((0_u64, 0_usize, RowAlign::Nearest));
+    ui.list_reveals().borrow_mut().insert(root, reveal.clone());
+    struct Forget(WeakUi, NodeId);
+    impl Drop for Forget {
+        fn drop(&mut self) {
+            if let Some(ui) = self.0.upgrade()
+                && let Ok(mut reveals) = ui.list_reveals().try_borrow_mut()
+            {
+                reveals.remove(&self.1);
+            }
+        }
+    }
+    let forget = Forget(ui.downgrade(), root);
+    ui.retain(root, forget);
+    reveal
+}
 /// Fixed-height keyed rows; only the visible range plus overscan is mounted.
 /// `count` and `key` track reactive reads. `build` runs once per mounted key;
 /// its index signal updates when that key moves. Offscreen rows are disposed,
@@ -1974,6 +2025,9 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let runtime = ui.runtime.clone();
             let mut entries: HashMap<K, (NodeId, Signal<usize>)> = HashMap::new();
             let mut handled_request = 0;
+            // Scroll-to-row requests (`NodeHandle::scroll_to_row`).
+            let reveal = list_reveal(ui, root);
+            let mut handled_reveal = 0;
             ui.bind(root, move || {
                 let length = count();
                 let (width, height) = size.get();
@@ -1993,17 +2047,17 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                     .and_then(|(_, index)| {
                         (length > 0).then_some(index.min(length.saturating_sub(1)))
                     });
-                if let Some(index) = target {
+                // A row asked for, placed as asked; else the keyboard's.
+                let (serial, row, align) = reveal.get();
+                let asked = (serial != handled_reveal && length > 0)
+                    .then_some((row.min(length.saturating_sub(1)), align));
+                handled_reveal = serial;
+                if let Some((index, align)) = asked.or(target.map(|i| (i, RowAlign::Nearest))) {
                     let top = model.row_offset(index);
-                    let bottom = (top as f64 + row_height as f64).min(f32::MAX as f64) as f32;
-                    position = if top < position {
-                        top
-                    } else if bottom > position + height {
-                        (bottom - height).max(0.)
-                    } else {
-                        position
-                    };
-                    position = position.min((model.content_height() - height).max(0.));
+                    position = align
+                        .position(top, row_height, height, position)
+                        .max(0.)
+                        .min((model.content_height() - height).max(0.));
                 }
                 let range = model.visible_range(position, height);
                 let keys: Vec<_> = range.map(|index| (key(index), index)).collect();
@@ -5352,6 +5406,25 @@ impl NodeHandle {
         {
             ui.retain(self.node, resource);
         }
+    }
+    /// Scroll the virtual list this is to row `index` (from 0), placed as
+    /// `align` says, mounting it: a list of measured rows measures the rows
+    /// around it as they land, so it ends where asked. False if this is not
+    /// a mounted virtual list.
+    pub fn scroll_to_row(&self, index: usize, align: RowAlign) -> bool {
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        let reveal = ui.list_reveals().borrow().get(&self.node).cloned();
+        let Some(reveal) = reveal else {
+            return false;
+        };
+        reveal.update(|(serial, row, how)| {
+            *serial = serial.wrapping_add(1);
+            *row = index;
+            *how = align;
+        });
+        true
     }
     /// Move keyboard focus to the node, or to the first focusable node inside
     /// it (a field's editor). False when nothing there can take focus.

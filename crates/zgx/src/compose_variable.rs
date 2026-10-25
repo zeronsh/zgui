@@ -378,7 +378,13 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let mounted_revision = ui.signal(0_u64);
             let mut discovery: Option<(usize, usize)> = None;
             let mut handled_request = 0;
-            let mut pending_reveal: Option<(usize, f32, Option<NodeId>)> = None;
+            // Scroll-to-row requests (`NodeHandle::scroll_to_row`).
+            let reveal = crate::compose::list_reveal(ui, root);
+            let mut handled_reveal = 0;
+            // A destination followed through measurement: the row, where it
+            // shows, the position it was put at, the focus then, and whether
+            // focus goes with it (the keyboard's, not a scroll's).
+            let mut pending_reveal: Option<(usize, RowAlign, f32, Option<NodeId>, bool)> = None;
             let mut anchor: Option<Anchor> = None;
             ui.bind(root, move || {
                 heights.revision.get();
@@ -421,16 +427,19 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                 }
                 let revision = heights.revision.get();
                 let pending_target = pending_reveal
-                    .filter(|(_, expected, focus)| {
+                    .filter(|(_, _, expected, focus, _)| {
                         expected.to_bits() == requested.to_bits()
                             && weak
                                 .upgrade()
                                 .is_some_and(|ui| ui.input.focused() == *focus)
                     })
-                    .map(|(index, _, _)| index);
+                    .map(|(index, align, _, _, keys)| (index, align, keys));
                 let request = navigation
                     .as_ref()
                     .map(|navigation| navigation.request.get());
+                let (serial, row, align) = reveal.get();
+                let asked = (serial != handled_reveal).then_some((row, align, false));
+                handled_reveal = serial;
                 let (length, total, position, target, geometry, next_anchor) = {
                     let model = heights.index.borrow();
                     let length = model.count();
@@ -466,25 +475,26 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                                 .min(last)
                                 .min(limit);
                     }
-                    let target = request
-                        .filter(|(serial, _)| *serial != handled_request)
-                        .map(|(_, index)| index)
+                    // A row asked for, else the keyboard's, else one followed.
+                    let target = asked
+                        .or(request
+                            .filter(|(serial, _)| *serial != handled_request)
+                            .map(|(_, index)| (index, RowAlign::Nearest, true)))
                         .or(pending_target)
-                        .and_then(|index| {
-                            (length > 0).then_some(index.min(length.saturating_sub(1)))
+                        .and_then(|(index, align, keys)| {
+                            (length > 0).then_some((
+                                index.min(length.saturating_sub(1)),
+                                align,
+                                keys,
+                            ))
                         });
-                    if let Some(index) = target {
+                    if let Some((index, align, _)) = target {
                         let top = model.row_offset(index);
                         let row_height = model.row_height(index).unwrap();
-                        let bottom = (top as f64 + row_height as f64).min(f32::MAX as f64) as f32;
-                        position = if top < position || row_height > height {
-                            top
-                        } else if bottom as f64 > position as f64 + height as f64 {
-                            (bottom - height).max(0.)
-                        } else {
-                            position
-                        }
-                        .min(limit);
+                        position = align
+                            .position(top, row_height, height, position)
+                            .max(0.)
+                            .min(limit);
                     }
                     let mut range = model.visible_range(position, height, overscan);
                     if measured && !range.is_empty() {
@@ -666,6 +676,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         && (added_measurements
                             || pending_measurement
                             || measurement_changed
+                            || asked.is_some()
                             || request.is_some_and(|(serial, _)| serial != handled_request));
                     let mut requested_focus = None;
                     if let Some(navigation) = &navigation {
@@ -680,7 +691,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         if let Some((serial, _)) = request {
                             handled_request = serial;
                         }
-                        if let Some(index) = target.filter(|_| request_unchanged) {
+                        if let Some((index, _, true)) = target.filter(|_| request_unchanged) {
                             if let Some((key, ..)) =
                                 keys.iter().find(|(_, candidate, ..)| *candidate == index)
                             {
@@ -691,15 +702,17 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             ui.input.focus(&ui.scene, Some(root));
                         }
                     }
-                    // Follow a keyboard destination through measurement, but
-                    // never override a newer pixel request or focus owner.
+                    // Follow a destination through measurement, but never
+                    // override a newer pixel request or focus owner.
                     pending_reveal = target
                         .filter(|_| {
                             keep_reveal
                                 && requested_focus
                                     .is_none_or(|node| ui.input.focused() == Some(node))
                         })
-                        .map(|index| (index, position, ui.input.focused()));
+                        .map(|(index, align, keys)| {
+                            (index, align, position, ui.input.focused(), keys)
+                        });
                 });
             });
         },

@@ -73,6 +73,33 @@ return ui.list {
 }
 ```
 
+To bring a row into view, give the list a `ref` and ask its element: `el:scroll_to_row(i, { align = "center" })`, `i` from 1, `align` `"start"` (its top at the top), `"center"`, `"end"` (its bottom at the bottom) or `"nearest"` (the default: the least scrolling, none if it shows). It works for every kind of list: one of measured rows measures the rows around the target as it lands, so the row ends exactly where asked however far it was.
+
+```lua
+local messages = ui.ref()
+return ui.column {
+	ui.button {
+		on_click = function()
+			local list = messages:peek()
+			if list then
+				list:scroll_to_row(5000, { align = "center" })
+			end
+		end,
+		"Jump to 5000",
+	},
+	ui.list {
+		ref = messages,
+		count = 10000,
+		height = 24,
+		w = 300,
+		h = 240,
+		row = function(i)
+			return ui.text { `Message {i}`, h = 24 }
+		end,
+	},
+}
+```
+
 A row is built when it scrolls into view and dropped when it leaves; it owns what it makes, as a [component](state.md#components) does: its `ui.use_state`, effects and computed values end with it.
 
 A list whose items are removed or inserted (a mailbox's messages archived, a feed's new posts) keys its rows, and reads each row's item by its key:
