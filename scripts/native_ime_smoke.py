@@ -112,17 +112,34 @@ def main():
                         if near(found, caret) or time.monotonic()>deadline:
                             return found
                         time.sleep(.1)
+                # Each stage's models and what they display: (first, second,
+                # first shown, second shown).
+                expected = [('', '', '你好', ''), ('你好', '', '你好', ''), ('你好', '', '你好中', ''), ('你好', '', '你好', ''), ('你好', '', '你好我', ''), ('你好', '', '你好', ''), ('你好', '', '你好', '世界'), ('你好', '世界', '你好', '世界')]
+                def shown(tick):
+                    values = [re.search(r'MODEL \d+ first=(".*?") second=(".*?") focus=', tick)]
+                    values += [re.search(r'DISPLAY '+label+r' (".*?") Rect', tick) for label in ('first', 'second')]
+                    if not all(values): return None
+                    return (*map(json.loads, values[0].groups()), json.loads(values[1].group(1)), json.loads(values[2].group(1)))
                 def capture(stage, follows=None):
                     # A tick that begins after the input settled: one printed
                     # before a late preedit arrived shows the one before it.
+                    # IBus converts as it is typed, out of step with the keys:
+                    # "shiji" shows 世纪 until the last "e" makes it 世界, which
+                    # a loaded machine delivers later. Ticks are read until one
+                    # shows the stage's text, or 5 s pass (the last is checked).
                     time.sleep(.55)
                     settled = len((args.output/'application.log').read_text())
                     # The app may be writing it: read until it is whole.
-                    deadline = time.monotonic()+3
+                    deadline = time.monotonic()+5
                     while True:
                         trace = (args.output/'application.log').read_text()
                         tick = trace[trace.rfind('MODEL '):]
-                        if (trace.rfind('MODEL ') >= settled and tick.count('DISPLAY ') == 2 and tick.count('CARET ') == 2) or time.monotonic()>deadline: break
+                        whole = trace.rfind('MODEL ') >= settled and tick.count('DISPLAY ') == 2 and tick.count('CARET ') == 2
+                        if (whole and shown(tick) == expected[stage-1]) or time.monotonic()>deadline: break
+                        if whole:
+                            # The next tick (the example prints one each half
+                            # second).
+                            settled = len(trace)
                         time.sleep(.05)
                     models = re.search(r'MODEL \d+ first=(".*?") second=(".*?") focus=', tick)
                     if models is None: raise AssertionError('Missing model sample')
@@ -169,7 +186,6 @@ def main():
             if 'FINAL first="你好" second="世界"' not in text:
                 raise AssertionError('Unexpected final model; see application.log')
             (args.output/'snapshots.json').write_text(json.dumps(snapshots,indent=2)+'\n')
-            expected = [('', '', '你好', ''), ('你好', '', '你好', ''), ('你好', '', '你好中', ''), ('你好', '', '你好', ''), ('你好', '', '你好我', ''), ('你好', '', '你好', ''), ('你好', '', '你好', '世界'), ('你好', '世界', '你好', '世界')]
             for sample, values in zip(snapshots, expected):
                 actual = tuple(sample[key] for key in ('first','second','display_first','display_second'))
                 if actual != values: raise AssertionError(f'Stage {sample["stage"]}: {actual!r} != {values!r}')
