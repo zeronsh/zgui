@@ -17,31 +17,9 @@ use zgx_workload::{
 
 #[path = "support/bench_font.rs"]
 mod bench_font;
-
-fn chat_row(index: usize) -> View {
-    let mut body = column()
-        .w_full()
-        .px(vlist::PAD.0)
-        .py(vlist::PAD.1)
-        .gap(vlist::GAP)
-        .bg(rgb(vlist::ROW_COLORS[index % 2]))
-        .child(
-            row()
-                .gap(8.)
-                .h(vlist::LINE_HEIGHT)
-                .child(text(vlist::author(index)).text_color(rgb(vlist::AUTHOR)))
-                .child(text(vlist::time(index)).text_color(rgb(vlist::MUTED))),
-        )
-        .child(text(vlist::text(index)).w(vlist::TEXT_WIDTH));
-    if vlist::has_image(index) {
-        body = body.child(
-            div()
-                .size(vlist::IMAGE.0, vlist::IMAGE.1)
-                .bg(rgb(vlist::IMAGE_COLOR)),
-        );
-    }
-    body
-}
+#[path = "support/vlist_view.rs"]
+mod vlist_view;
+use vlist_view::chat_row;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mode = Mode::from_env();
@@ -60,11 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run(move |cx| {
             let ticks = Rc::new(Cell::new(0_u64));
             // Rows start at the estimate of a three-line row with no image.
-            let heights = VariableHeights::new(
-                &cx.ui.runtime,
-                vlist::ROWS,
-                2. * vlist::PAD.1 + vlist::LINE_HEIGHT + vlist::GAP + 3. * vlist::LINE_HEIGHT,
-            );
+            let heights = VariableHeights::new(&cx.ui.runtime, vlist::ROWS, vlist_view::ESTIMATE);
             let offset = cx.ui.signal(0_f32);
             let list = measured_virtual_list(
                 offset.clone(),
@@ -75,19 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .w_full()
             .h_full();
-            cx.render(
-                column()
-                    .w_full()
-                    .h_full()
-                    .bg(rgb(vlist::BACKGROUND))
-                    .font_family(vlist::FONT)
-                    .text_size(vlist::FONT_SIZE)
-                    .line_height(vlist::LINE_HEIGHT)
-                    // zgx's text wraps only when asked (inherited by the rows).
-                    .text_wrap(true)
-                    .text_color(rgb(vlist::TEXT))
-                    .child(list),
-            );
+            cx.render(vlist_view::frame(list));
             cx.on_closed({
                 let ticks = ticks.clone();
                 move || eprintln!("workload_ticks={}", ticks.get())

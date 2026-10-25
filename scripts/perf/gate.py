@@ -48,6 +48,13 @@ SCENES = [
     ('lab-stream', 'zgx-desktop', 'workload_headless', {'ZGX_MODE': 'stream', 'RENDER': '0'}),
     ('lab-scroll', 'zgx-desktop', 'workload_headless', {'ZGX_MODE': 'scroll', 'RENDER': '0'}),
     ('animate', 'zgx-desktop', 'animation_headless', {'FRAMES': '1200', 'RENDER': '0'}),
+    # The microbenchmarks (micro_bench, zgx_workload::micro): one state
+    # change, one scroll step of 10,000 rows, each written and drawn through
+    # to a frame (here undrawn: layout, damage and text measured).
+    ('micro-state', 'zgx-desktop', 'micro_bench', {'SCENE': 'state', 'OPS': '300', 'WARMUP': '50', 'RENDER': '0'}),
+    ('micro-vscroll-fixed', 'zgx-desktop', 'micro_bench', {'SCENE': 'vscroll-fixed', 'OPS': '300', 'WARMUP': '50', 'RENDER': '0'}),
+    ('micro-vscroll-variable', 'zgx-desktop', 'micro_bench', {'SCENE': 'vscroll-variable', 'OPS': '300', 'WARMUP': '50',
+                                                              'RENDER': '0'}),
     ('mount', 'zgx-script', 'mount_bench', {}),
     ('script-update', 'zgx-script', 'update_bench', {'TICKS': '200'}),
     ('anime', 'zgx-script', 'anime_bench', {}),

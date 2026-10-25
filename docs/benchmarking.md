@@ -144,6 +144,38 @@ drawn. It needs Screen Recording permission, which it only checks (it never
 asks). Each run also records the agent app's own processes (`preflight.zeron`),
 whose UI drew frames while hidden on 2026-10-25.
 
+## Microbenchmarks: one state change, one scroll step
+
+`crates/zgx-desktop/examples/micro_bench.rs` times two operations headless,
+per operation, in the process's CPU time (all threads), as the median, p10,
+p90, minimum and maximum over batches after a warm-up. Their constants are
+`zgx_workload::micro`, which every framework's port takes.
+
+- `SCENE=state`: a static grid of 40 × 25 texts under one text bound to a
+  counter (`Count: N`), 960 × 720. An operation sets the counter.
+- `SCENE=vscroll-fixed` and `SCENE=vscroll-variable`: 10,000 rows in a 720 ×
+  800 viewport, either 28 pt rows of text (`virtual_list`) or the vlist scene's
+  rows (1–8 wrapped lines, about one in four with an image), measured as they
+  mount (`measured_virtual_list`). An operation scrolls 12 pt, and goes back
+  to the top past the end.
+
+Each reports two figures:
+
+- **frame**: the operation and everything up to a frame ready to present
+  (layout, damage, and the renderer's encode and submit; the GPU is settled
+  between batches, untimed). **This is the headline, and the figure the engine
+  work chases.**
+- **write**: the operation alone, with whatever it runs at once (zgx's
+  retained bindings update their nodes as the value is set). It is reported so
+  a fast write cannot hide a slow frame, and is never made faster at the
+  frame's expense.
+
+`RENDER=0` measures text as a renderer would and draws nothing, the frame's
+CPU work without a GPU, as CI's instruction gate counts it (`micro-state`,
+`micro-vscroll-fixed`, `micro-vscroll-variable`, at 300 operations each).
+Engine changes that move these keep the public API and ship only if they make
+every measured figure faster.
+
 ## The macOS comparison, quick and full
 
 `python3 scripts/run_macos_comparison.py --scene heavy --quick` measures zgx

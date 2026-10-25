@@ -1,0 +1,20 @@
+[package]
+name = "zgx-compare-gpui-fast-micro"
+version = "0.1.0"
+edition = "2024"
+# The microbenchmarks (zgx_workload::micro) in GPUI Fast, through its
+# headless test platform (`test-support`), which must not reach the windowed
+# adapters in ../gpui-fast: a crate of its own.
+[workspace]
+[dependencies]
+gpui = { package = "gpui-fast", version = "=0.1.4", features = ["test-support"] }
+# font-kit: the macOS text system (real shaping, not the test platform's no-op).
+gpui_platform = { package = "gpui-fast-platform", version = "=0.1.4", features = ["font-kit"] }
+zgx-workload = { path = "../workload" }
+[profile.release]
+lto = "thin"
+codegen-units = 1
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

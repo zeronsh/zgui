@@ -66,3 +66,16 @@ binary's hash, the toolchain's version and the build flags.
 - MyGo: `ui.List` with a `ListState`: keeps its place by an anchor row,
   measures rows as it lays them out, and estimates unmeasured ones at the
   average height.
+
+## Microbenchmarks
+
+`zgx_workload::micro` defines them (docs/benchmarking.md, "Microbenchmarks"):
+one state change, and one scroll step of 10,000 rows (fixed and variable
+heights), each timed as the write alone and through to a frame ready to
+present, in process CPU time per operation. zgx's is
+`crates/zgx-desktop/examples/micro_bench.rs`; GPUI Fast's is
+`gpui-fast-micro`, a crate of its own because it needs GPUI's headless test
+platform (`test-support`, which must not reach the windowed adapters): an
+entity update draws the window when it ends, with the real macOS text system
+and no renderer, so its frame is the scene ready to present without the GPU's
+encode, as zgx's `RENDER=0`.

@@ -752,3 +752,37 @@ pub mod vlist {
         }
     }
 }
+
+/// The microbenchmarks (`micro_bench`): one state change, and one scroll
+/// step, each to a frame ready to present, timed per operation. Every
+/// framework's port takes these numbers.
+pub mod micro {
+    /// state_update: a static grid of `STATIC_ROWS` × `STATIC_COLUMNS` texts
+    /// (`static_label`), each `CELL` points, under one text bound to a
+    /// counter (`counter_label`), in a `super::WIDTH` × `super::HEIGHT` window.
+    pub const STATIC_ROWS: usize = 40;
+    pub const STATIC_COLUMNS: usize = 25;
+    pub const CELL: (f32, f32) = (36., 18.);
+    pub const FONT_SIZE: f32 = 12.;
+    pub fn static_label(index: usize) -> String {
+        index.to_string()
+    }
+    pub fn counter_label(value: u64) -> String {
+        format!("Count: {value}")
+    }
+    /// vscroll: `ROWS` rows in a `super::vlist::WIDTH` × `VIEWPORT` window,
+    /// fixed (`FIXED_ROW` points of `fixed_label`) or variable (the vlist
+    /// rows, measured as they mount); a step scrolls `STEP` points, back to
+    /// the top past the end.
+    pub const ROWS: usize = 10_000;
+    pub const VIEWPORT: f32 = 800.;
+    pub const FIXED_ROW: f32 = 28.;
+    pub const STEP: f32 = 12.;
+    pub fn fixed_label(index: usize) -> String {
+        format!("Row {index}: {}", super::vlist::author(index))
+    }
+    /// Operations timed after `WARMUP` untimed ones, in batches of
+    /// `batch` (the CPU clock's resolution and cost are well under one).
+    pub const OPS: usize = 2_000;
+    pub const WARMUP: usize = 200;
+}
