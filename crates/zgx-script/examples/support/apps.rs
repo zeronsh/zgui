@@ -23,6 +23,13 @@ use zgx_script::{ScriptHost, testing::TestApp};
 
 const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples");
 
+/// Where the example apps' scripts are: `ZGX_EXAMPLES` when set (the perf
+/// gate runs a base revision's binary on that revision's scripts, not on the
+/// head's it was built beside), else this checkout's.
+fn examples() -> String {
+    std::env::var("ZGX_EXAMPLES").unwrap_or_else(|_| EXAMPLES.to_owned())
+}
+
 /// A size from the environment, else `default`.
 fn size(name: &str, default: usize) -> usize {
     std::env::var(name)
@@ -88,7 +95,7 @@ impl Bench {
         make: MakeDrawing,
         setup: impl FnOnce(&mut TestApp),
     ) -> Self {
-        let path = format!("{EXAMPLES}/{script}/app.luau");
+        let path = format!("{}/{script}/app.luau", examples());
         let mut app = TestApp::with_desktop(|runtime| {
             ScriptHost::new(runtime, path)
                 .limits(bench_limits::limits())

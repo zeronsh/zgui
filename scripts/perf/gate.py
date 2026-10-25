@@ -154,14 +154,20 @@ class Infra(Exception):
     """The gate could not measure: not a result about the change."""
 
 
-def count(binary, env):
+def count(binary, env, checkout=None):
     """The run's instructions. A run that fails is the gate's failure, not
     the change's: under cachegrind a script's time budget (`ZGX_GATE`
     lifts it in the benches) or a missing GPU would otherwise look like a
     result."""
+    # A side's app scripts are its own: a binary cached from main was built
+    # in the checkout a pull request runs in, where it would find the
+    # head's (a script using what the base lacks would fail there).
+    scripts = {}
+    if checkout is not None:
+        scripts['ZGX_EXAMPLES'] = str(checkout / 'crates' / package_in(checkout, 'zgx-script') / 'examples')
     result = subprocess.run(
         ['valgrind', '--tool=cachegrind', '--cache-sim=no', '--cachegrind-out-file=/dev/null', str(binary)],
-        env=dict(os.environ, **renamed_env({'ZGX_GATE': '1', **env})), capture_output=True, text=True)
+        env=dict(os.environ, **renamed_env({'ZGX_GATE': '1', **scripts, **env})), capture_output=True, text=True)
     found = re.search(r'I\s+refs:\s+([\d,]+)', result.stderr)
     if result.returncode or not found:
         why = 'a script hit its time budget' if 'time budget' in result.stdout + result.stderr else 'it failed'
@@ -208,8 +214,8 @@ def main():
     for name, _, example, env in SCENES:
         base_binary = WORK / 'gate-bin-base' / example
         try:
-            before = count(base_binary, env) if base_binary.exists() and runs_scene(base, env) else None
-            after = count(WORK / 'gate-bin-head' / example, env)
+            before = count(base_binary, env, base) if base_binary.exists() and runs_scene(base, env) else None
+            after = count(WORK / 'gate-bin-head' / example, env, ROOT)
         except Infra as error:
             # Loudly, and as what it is: no table that reads as a result.
             if args.markdown:
