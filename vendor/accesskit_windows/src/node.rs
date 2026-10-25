@@ -1084,13 +1084,8 @@ impl IRawElementProviderSimple_Impl for PlatformNode_Impl {
                         result = toolkit_description(state, &mut buffer).into()
                     }
                     UIA_ControllerForPropertyId => {
-                        // zgx patch: an invalid field's error message is
-                        // among what it controls, as Edge gives
-                        // `aria-errormessage`.
-                        let error = node.error_message().filter(|_| node.is_invalid());
                         let controlled: Vec<IUnknown> = node
                             .controls()
-                            .chain(error)
                             .filter(|controlled| filter(controlled) == FilterResult::Include)
                             .map(|controlled| context.get_or_create_platform_node(controlled.id()))
                             .map(|result| result.into_interface::<IRawElementProviderSimple>())

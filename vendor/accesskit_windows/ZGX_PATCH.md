@@ -32,12 +32,13 @@ WebView2 set it. 0.35.1 and upstream main still leave it out.
 4. A form field's error (`aria-invalid`, `aria-errormessage`), from the
    vendored accesskit_consumer (vendor/accesskit_consumer/ZGX_PATCH.md):
    `IsDataValidForForm` is false while the field is invalid; its error
-   message node is among its `ControllerFor`, as Edge gives
-   `aria-errormessage`, and its text follows the description in
-   `FullDescription`, so Narrator reads it with the field;
-   `DescribedBy` gives the nodes that describe it (`src/node.rs`,
-   `description`, `is_data_valid_for_form`, the `ControllerFor` and
-   `DescribedBy` properties). The crate's `accesskit_consumer` dependency
+   message's text follows the description in `FullDescription`, so
+   Narrator reads it with the field ("Email, edit, An email is required,
+   Invalid"), and `DescribedBy` gives the nodes that describe it
+   (`src/node.rs`, `description`, `is_data_valid_for_form`, the
+   `DescribedBy` property). Not `ControllerFor`, as Edge gives
+   `aria-errormessage`: Narrator reads an edit's `ControllerFor` as a
+   suggestion list ("Suggestions available"). The crate's `accesskit_consumer` dependency
    is the vendored one (`path`), so it builds alone too.
 
 Run the crate's tests on Windows with

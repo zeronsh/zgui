@@ -18,7 +18,8 @@ fn team(server: &TeamServer) -> Harness {
     let server = server.clone();
     let h = Harness::new(move |runtime| {
         let host = ScriptHost::new(runtime, APP);
-        server.serve(&host, Duration::from_millis(2));
+        // Slow enough that loading shows between a click and its answer.
+        server.serve(&host, Duration::from_millis(30));
         host
     });
     h.ui.scene.borrow_mut().resize(720., 640.);
