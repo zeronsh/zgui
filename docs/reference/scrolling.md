@@ -31,7 +31,9 @@ The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is 
 | `count` | `Reactive<number>` | required without `heights` | how many rows |
 | `row` | `(index: number) -> Node`, or with `key` `(key, index: State<number>) -> Node` | required | builds row `index`, from 1; with `key`, the row of item `key`, given its index as a state that follows the row |
 | `key` | `(index: number) -> number \| string \| boolean` | none | each row's item's key: a row follows its item as the list changes, moved rather than built or written again. Without it, rows are by position: a removal or an insertion writes every row after it with the item now there (its text, layout and paint done again). Keys are unique; not with `sticky` |
-| `height` | `number` | `28` | every row's height, in points (positive) |
+| `height` | `number` | `28` | every row's height, in points (positive); with `measured`, the estimate for a row not yet measured |
+| `measured` | `boolean` | `false` | rows take their content's height (wrapped text, images), measured as they mount; not with `heights` |
+| `follow` | `boolean` | `false` | with `measured` or `heights`: resting at the end, it stays at the end as rows are added and measured (a chat); scrolled away, it stays where it is |
 | `heights` | `{ number }`, a state of one, or a function returning one | none | each row's own height instead, in order; the count is its length |
 | `sticky` | `{ number }`, a state of one, or a function returning one | none | with `heights`: rows (from 1) that stick to the top while the rows after them scroll past, each pushed up by the next (section headers, a diff's file headers); the one in charge is built again over the list, as any row is |
 | `sticky_top` | `number` | `0` | how far below the top the sticky rows stick (CSS's sticky `top`): what scrolls above them still shows, so cover it if it shouldn't |
@@ -42,6 +44,33 @@ The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is 
 | `w`, `h` | `Length` | `320`, `240` | |
 
 With `heights`, rows differ in height but are still never measured: the list knows where each starts, so a changed list (a section folded, rows inserted) re-lays out without building anything offscreen. A host can publish the heights as a shared value (`ScriptHost::shared`), and the script never copies them.
+
+With `measured = true`, rows take the height of what they hold, at the list's width: a chat's or a mail's rows of wrapped text, which a script can't measure. A row is measured as it mounts; rows not yet seen are `height` tall until then, so the scrollbar's length is an estimate that settles as rows are seen. The rows in view stay where they are as rows above them are measured (scrolling up, or jumping far with `offset` or End): only the rows measured move. Positional rows keep heights by position; with `key`, heights go with their items, so a removal or an insertion keeps every measured height.
+
+```lua
+type Post = { id: number, author: string, text: string }
+local posts = ui.state("posts", {} :: { Post })
+return ui.list {
+	count = function()
+		return posts:len()
+	end,
+	measured = true,
+	-- New posts at the end stay in view while it rests there.
+	follow = true,
+	-- About one line and a name: the estimate until a row is measured.
+	height = 48,
+	row = function(i: number)
+		local post = posts:peek()[i]
+		return ui.column {
+			w_full = true,
+			px = 12,
+			py = 6,
+			ui.text { post.author, literal = true, bold = true },
+			ui.text { post.text, literal = true, wrap = true },
+		}
+	end,
+}
+```
 
 A row is built when it scrolls into view and dropped when it leaves; it owns what it makes, as a [component](state.md#components) does: its `ui.use_state`, effects and computed values end with it.
 
@@ -120,7 +149,7 @@ return ui.row {
 
 ## Gotchas
 
-- Every list row is `height` points: a taller row overlaps the next and a shorter one leaves a gap. For rows of different heights give `heights` (each row's own, still never measured).
+- Every list row is `height` points: a taller row overlaps the next and a shorter one leaves a gap. For rows of different heights give `heights` (each row's own, still never measured), or `measured = true` for rows whose height depends on their text (`zgx lint` flags wrapped text in rows of fixed height).
 - A list row is built once for its index, when it comes into view. Reading state in `row` (`items:get()[i]`) takes the value at that moment; to follow a change, read it in a function property or text inside the row (`ui.text(function() return items:get()[i].name end)`), or change `count`. Rows are keyed by index, so a row's own state stays with its position, not its data.
 - List rows do not stretch across the list: give a row's root `w_full = true`.
 - A `scroll` with no size and nothing sizing it is 320 by 240 along its scrolling axis; across it, a column or row stretches it (the default `items`), and inside one with `items = "start"` it keeps 320. Use `w_full = true`, `grow = 1` or a stretching parent.

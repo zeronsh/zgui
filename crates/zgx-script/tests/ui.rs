@@ -2403,3 +2403,194 @@ fn keyed_list_rows_follow_their_items() {
     let after: usize = h.text("builds").parse().unwrap();
     assert!(after <= built + 1, "{built} → {after} builds");
 }
+
+/// Where the text `id` is on screen: its top and height.
+fn span_of(h: &mut Harness, id: &str) -> (f32, f32) {
+    let b = h.bounds(id);
+    (b.y, b.height)
+}
+
+/// Rows of one to five wrapped lines, 20 points each, in a list 200 wide.
+const MEASURED: &str = r##"local offset = ui.state("offset", 0)
+    local function words(i) return string.rep("word ", (i % 5) * 9 + 1) end
+    return ui.column {
+        ui.button { id = "far", on_click = function() offset:set(6000) end, "far" },
+        ui.list {
+            id = "list", count = 500, height = 20, measured = true, offset = offset,
+            keyboard = true, w = 200, h = 300,
+            row = function(i)
+                return ui.text { id = `m-{i}`, words(i), wrap = true, line_height = 20 }
+            end,
+        },
+    }"##;
+
+#[test]
+fn measured_list_rows_take_their_contents_height() {
+    let mut h = Harness::inline(MEASURED);
+    assert_eq!(h.host.error().get(), None);
+    h.ui.prepare_frame();
+    let (mut heights, mut bottom) = (Vec::new(), None::<f32>);
+    for i in 1..=5 {
+        let (top, height) = span_of(&mut h, &format!("m-{i}"));
+        // Each row starts where the one above it ends.
+        if let Some(bottom) = bottom {
+            assert!((top - bottom).abs() < 0.01, "m-{i} at {top}, not {bottom}");
+        }
+        bottom = Some(top + height);
+        heights.push(height);
+    }
+    // One line (a word) for the fifth, more for the others: as they wrap.
+    assert_eq!(heights[4], 20., "{heights:?}");
+    assert!(heights[3] >= 60., "{heights:?}");
+    assert!(heights[0] > 20. && heights[0] < heights[1], "{heights:?}");
+}
+
+#[test]
+fn a_measured_list_keeps_its_place_as_estimates_are_measured() {
+    let mut h = Harness::inline(MEASURED);
+    h.click("far");
+    h.frames(2);
+    assert_eq!(h.host.error().get(), None);
+    let list = h.bounds("list");
+    // A row fully in view, below the top, and where it is.
+    let mut shown = None;
+    for i in 1..=500 {
+        let id = format!("m-{i}");
+        if h.find(&id).is_some() && span_of(&mut h, &id).0 >= list.y {
+            shown = Some(id);
+            break;
+        }
+    }
+    let shown = shown.expect("rows in view");
+    let (top, _) = span_of(&mut h, &shown);
+    // Up by 100: the rows coming into view above were estimates, measured
+    // as they mount; what was in view moves by the 100 alone.
+    h.ui.dispatch(zgx::input::InputEvent::Scroll {
+        x: list.x + 10.,
+        y: list.y + 10.,
+        delta_x: 0.,
+        delta_y: -100.,
+    });
+    h.frames(2);
+    let (moved, _) = span_of(&mut h, &shown);
+    assert!(
+        (moved - (top + 100.)).abs() < 0.5,
+        "{shown}: {top} → {moved}"
+    );
+    // And again, with no scrolling: nothing moves.
+    h.frames(2);
+    assert_eq!(span_of(&mut h, &shown).0, moved);
+}
+
+#[test]
+fn a_measured_list_jumps_to_its_last_row() {
+    let mut h = Harness::inline(MEASURED);
+    h.ui.prepare_frame();
+    h.click("m-1");
+    h.key(Key::End);
+    h.frames(2);
+    assert_eq!(h.host.error().get(), None);
+    // The last row, measured, ends at the list's bottom edge.
+    let list = h.bounds("list");
+    let (top, height) = span_of(&mut h, "m-500");
+    assert_eq!(height, 20., "one word, one line");
+    assert!(
+        (top + height - (list.y + list.height)).abs() < 0.5,
+        "m-500 ends at {}, the list at {}",
+        top + height,
+        list.y + list.height
+    );
+    let (above, above_height) = span_of(&mut h, "m-499");
+    assert!((above + above_height - top).abs() < 0.01);
+}
+
+#[test]
+fn a_keyed_measured_list_keeps_heights_with_their_rows() {
+    let mut h = Harness::inline(
+        r##"local items = ui.state("items", (function()
+            local list = {}
+            for i = 1, 100 do list[i] = { id = `i{i}`, text = string.rep("word ", (i % 4) * 12 + 1) } end
+            return list
+        end)())
+        local builds = ui.state("builds", 0)
+        return ui.column {
+            ui.button { id = "drop", on_click = function() items:remove(1) end, "drop" },
+            ui.text { id = "builds", "{builds}" },
+            ui.list {
+                id = "list", count = function() return items:len() end,
+                height = 20, measured = true, w = 200, h = 300,
+                key = function(i) return items:at(i).id end,
+                row = function(id, index)
+                    builds:set(builds:peek() + 1)
+                    local text = items:peek()[index:peek()].text
+                    return ui.text { id = id, text, wrap = true, line_height = 20 }
+                end,
+            },
+        }"##,
+    );
+    h.ui.prepare_frame();
+    assert_eq!(h.host.error().get(), None);
+    let (_, second) = span_of(&mut h, "i2");
+    let (_, third) = span_of(&mut h, "i3");
+    assert!(second > 20. && third > second, "{second} {third}");
+    let node = h.find("i2").unwrap();
+    let built: usize = h.text("builds").parse().unwrap();
+    h.click("drop");
+    h.ui.prepare_frame();
+    assert_eq!(h.host.error().get(), None);
+    // The second item's row is first now: the same node, its height kept,
+    // the third right below it.
+    assert_eq!(h.find("i2"), Some(node));
+    let (top, height) = span_of(&mut h, "i2");
+    assert_eq!(height, second);
+    assert!((span_of(&mut h, "i3").0 - (top + height)).abs() < 0.01);
+    assert!(h.find("i1").is_none());
+    let after: usize = h.text("builds").parse().unwrap();
+    assert!(after <= built + 2, "{built} → {after} builds");
+}
+
+#[test]
+fn measured_and_heights_do_not_go_together() {
+    let error = zgx_script::ScriptHost::inline(
+        &zgx::reactive::Runtime::new(),
+        "app",
+        r##"return ui.list { count = 3, measured = true, heights = { 10, 20, 30 },
+            row = function(i) return ui.text "row" end }"##,
+    )
+    .reload()
+    .unwrap_err();
+    assert!(error.contains("`measured` and `heights`"), "{error}");
+}
+
+#[test]
+fn a_following_measured_list_stays_at_its_end() {
+    let mut h = Harness::inline(
+        r##"local lines = ui.state("lines", {} :: { string })
+        return ui.column {
+            ui.button { id = "send", on_click = function()
+                lines:push(string.rep("word ", (lines:len() % 3) * 15 + 1))
+            end, "send" },
+            ui.list {
+                id = "chat", count = function() return lines:len() end,
+                height = 20, measured = true, follow = true, w = 200, h = 300,
+                row = function(i)
+                    return ui.text { id = `c-{i}`, lines:peek()[i], wrap = true, line_height = 20 }
+                end,
+            },
+        }"##,
+    );
+    for _ in 0..30 {
+        h.click("send");
+        h.frames(1);
+    }
+    assert_eq!(h.host.error().get(), None);
+    // The newest, measured, ends at the list's bottom edge.
+    let list = h.bounds("chat");
+    let (top, height) = span_of(&mut h, "c-30");
+    assert!(
+        (top + height - (list.y + list.height)).abs() < 0.5,
+        "c-30 ends at {}, the list at {}",
+        top + height,
+        list.y + list.height
+    );
+}

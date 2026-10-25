@@ -768,6 +768,12 @@ pub(crate) enum Kind {
         /// follows its item as the list changes, moved rather than built or
         /// written again; `row` then takes the key and its index, a state.
         key: Option<Function>,
+        /// `measured = true`: rows take their content's height, measured as
+        /// they mount (`height` the estimate for the rest until then).
+        measured: bool,
+        /// `follow = true` (with `measured` or `heights`): resting at the
+        /// end, it stays there as rows come and are measured (a chat).
+        follow: bool,
         offset: Option<Signal<Value>>,
         /// `scrollbar = true`: an interactive scrollbar over its edge.
         scrollbar: bool,
@@ -1871,6 +1877,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "height",
     "overscan",
     "heights",
+    "measured",
     "sticky",
     "sticky_top",
     "placement",
@@ -3255,6 +3262,12 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     "ui.list `key` and `sticky` don't go together yet: a sticky row is built by its index",
                 ));
             }
+            let measured = table.get::<Option<bool>>("measured")?.unwrap_or(false);
+            if measured && heights.is_some() {
+                return Err(mlua::Error::runtime(
+                    "ui.list `measured` and `heights` don't go together: measured rows take their content's height",
+                ));
+            }
             let count = match (&heights, table.get::<mlua::Value>("count")?) {
                 (Some(_), mlua::Value::Nil) => Source::Lit(Lit::Num(0.)),
                 (_, count) => source(lua, Ty::Num, "count", count)?,
@@ -3291,6 +3304,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             overscan,
                             build,
                             key: table.get::<Option<Function>>("key")?,
+                            measured,
+                            follow: table.get::<Option<bool>>("follow")?.unwrap_or(false),
                             offset,
                             scrollbar: table.get::<Option<bool>>("scrollbar")?.unwrap_or(false),
                             keyboard: table.get::<Option<bool>>("keyboard")?.unwrap_or(false),

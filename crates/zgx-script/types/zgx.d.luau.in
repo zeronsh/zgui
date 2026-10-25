@@ -1773,8 +1773,17 @@ export type ListProps = Merge<Props, {
 	-- than written again (rows a removal or an insertion shifts keep their
 	-- nodes, text and layout).
 	key: ((index: number) -> any)?,
-	-- Every row's height in points (28 by default).
+	-- Every row's height in points (28 by default); with `measured`, the
+	-- estimate for rows not yet measured.
 	height: number?,
+	-- Rows take their content's height (wrapped text, images), measured as
+	-- they mount; the rest are estimated (`height`), and the rows in view
+	-- stay put as estimates are measured. With `key`, heights go with
+	-- their items.
+	measured: boolean?,
+	-- With `measured` or `heights`: resting at the end, it stays there as
+	-- rows are added and measured (a chat); scrolled up, it stays put.
+	follow: boolean?,
 	-- Each row's own height instead, in order: a list, a state holding one
 	-- (a host's shared value costs the script nothing), or a function
 	-- returning one (tracked). The row count is its length.

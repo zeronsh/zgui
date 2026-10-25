@@ -43,6 +43,7 @@ The interface is built once; Rust re-runs only what reads state that changed. `z
 | `items:push(v)`, `:set_key({ 3, "title" }, v)`, `:patch` | `items:update(function(l) table.insert(l, v) end)` (copies all) |
 | `ui.list { count, row = … }` for thousands of rows | `ui.each` over thousands (builds every row) |
 | `ui.list { key = function(i) … end, row = function(id, index) … }` where items are removed or inserted | rows reading `list[i]` (a removal writes every row after it) |
+| `ui.list { measured = true, … }` for rows of wrapped text | a fixed `height` guessed for wrapped text (cut off, or gaps) |
 | `ui.sorted(rows, { by = "price" })` for a list kept in order | a `ui.computed` re-sorting the whole list on each write |
 | percentages, `grow`, insets: layout without the script | `on_resize` writing sizes into state for layout |
 | `ui.every(1000, …)` at the rate a value changes | `ui.every(1, …)` (more calls than frames) |

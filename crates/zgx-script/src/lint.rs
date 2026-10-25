@@ -23,6 +23,11 @@
 //!   Luau and restyles every reader on every display frame.
 //! - `update-copy`: `state:update(fn)` doing what `push`, `insert`, `remove`
 //!   or `set_key` do without copying the whole value through Luau.
+//! - `list-key`: a positional `ui.list` over a list the file removes from or
+//!   inserts into: every row after the change is written again.
+//! - `list-measured`: a `ui.list` of fixed heights whose rows wrap text: a
+//!   row's lines depend on its text and the width, which a script can't
+//!   measure; `measured = true` gives each row its content's height.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -64,6 +69,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "list-key",
         "a positional ui.list over a list state the file removes from or inserts into",
+    ),
+    (
+        "list-measured",
+        "a ui.list of fixed heights whose rows wrap text",
     ),
 ];
 
@@ -149,6 +158,7 @@ pub fn lint_source(file: &Path, source: &str) -> Vec<Diagnostic> {
     };
     linter.run();
     linter.list_key();
+    linter.list_measured();
     let allowed = |line: u32, rule: &str| {
         comments.iter().any(|(at, text)| {
             (*at == line || *at + 1 == line)
@@ -492,6 +502,96 @@ impl Linter<'_> {
                          paint). `key = function(i) return …id end` makes a row follow its item, \
                          the row reading it by key."
                     ),
+                );
+            }
+        }
+    }
+
+    /// The `end` (or `until`) closing the block a `function`, `if`, `do` or
+    /// `repeat` at `at` opens.
+    fn block_end(&self, at: usize) -> usize {
+        let mut depth = 0;
+        for j in at..self.tokens.len() {
+            if self.tokens[j].kind != Kind::Name {
+                continue;
+            }
+            match self.tokens[j].text.as_str() {
+                "function" | "do" | "repeat" => depth += 1,
+                "if" if !self.expression_if(j) => depth += 1,
+                "end" | "until" => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return j;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.tokens.len()
+    }
+
+    /// A `ui.list` without `measured` whose row (an inline function, or a
+    /// local function by name) wraps text with no cap on its lines: fixed
+    /// heights cut such rows off or leave gaps.
+    fn list_measured(&mut self) {
+        let field = |linter: &Self, open: usize, close: usize, name: &str| {
+            (open + 1..close).find(|&j| {
+                linter.is(j, name)
+                    && linter.is(j + 1, "=")
+                    && (linter.is(j - 1, ",") || linter.is(j - 1, "{"))
+            })
+        };
+        for at in 0..self.tokens.len() {
+            if !(self.is(at, "list")
+                && self.is(at.wrapping_sub(1), ".")
+                && self.is(at.wrapping_sub(2), "ui"))
+            {
+                continue;
+            }
+            let open = if self.is(at + 1, "{") {
+                at + 1
+            } else if self.is(at + 1, "(") && self.is(at + 2, "{") {
+                at + 2
+            } else {
+                continue;
+            };
+            let close = self.closing(open);
+            if field(self, open, close, "measured").is_some() {
+                continue;
+            }
+            let Some(row) = field(self, open, close, "row") else {
+                continue;
+            };
+            // The row's function: written here, or a local one by name.
+            let body = if self.is(row + 2, "function") {
+                Some(row + 2)
+            } else {
+                self.name(row + 2).and_then(|name| {
+                    (0..self.tokens.len()).find(|&j| {
+                        self.is(j, "function")
+                            && (self.is(j + 1, name) && self.is(j + 2, "(")
+                                || self.is(j.wrapping_sub(1), "=")
+                                    && self.is(j.wrapping_sub(2), name)
+                                    && self.is(j.wrapping_sub(3), "local"))
+                    })
+                })
+            };
+            let Some(start) = body else { continue };
+            let end = self.block_end(start);
+            let wraps = (start..end).any(|j| {
+                self.is(j, "wrap") && self.is(j + 1, "=") && self.is(j + 2, "true")
+                    || self.is(j, "markdown") && self.is(j.wrapping_sub(1), ".")
+            });
+            let capped = (start..end).any(|j| self.is(j, "lines") && self.is(j + 1, "="));
+            if wraps && !capped {
+                self.report(
+                    at,
+                    "list-measured",
+                    "this list's rows wrap text but have fixed heights: how many lines a \
+                     row takes depends on its text and the width, which the script can't \
+                     measure. `measured = true` gives each row its content's height \
+                     (`height` the estimate until a row is measured)."
+                        .into(),
                 );
             }
         }
@@ -955,6 +1055,25 @@ local items = ui.state("items", {})
 local list = ui.list { count = 10, row = function(i) return ui.text { function() return items:get()[i].name end } end }
 "##;
         assert_eq!(rules(still), vec![]);
+    }
+
+    #[test]
+    fn a_list_of_fixed_heights_with_wrapped_rows_is_reported() {
+        let source = r##"
+local function message(i)
+    if i > 0 then return ui.text { "x", wrap = true } end
+    return ui.text "y"
+end
+local list = ui.list { count = 10, height = 40, row = message }
+local inline = ui.list { count = 10, row = function(i) return ui.markdown("**x**") end }
+local measured = ui.list { count = 10, measured = true, row = message }
+local capped = ui.list { count = 10, row = function(i) return ui.text { "x", wrap = true, lines = 2 } end }
+local plain = ui.list { count = 10, row = function(i) return ui.text "x" end }
+"##;
+        assert_eq!(
+            rules(source),
+            vec![(6, "list-measured".into()), (7, "list-measured".into())]
+        );
     }
 
     #[test]

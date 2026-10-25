@@ -3623,6 +3623,52 @@ impl ListKey {
     }
 }
 
+/// The keys of a list's `count` rows: `key` called for each in a Luau loop
+/// (a call from Rust for each would cost ten times as much), its reads
+/// tracked. A row whose key is not a number, string or boolean, or every
+/// row if `key` fails, keys by its index.
+fn list_keys(vm: &Vm, key: &mlua::Function, count: usize) -> Vec<ListKey> {
+    const LOOP: &str = "zgx_list_keys";
+    let lua = &vm.lua;
+    let all = lua
+        .named_registry_value::<mlua::Function>(LOOP)
+        .or_else(|_| {
+            let all: mlua::Function = lua
+                .load(
+                    "local key, n = ...\n\
+                 local keys = table.create(n)\n\
+                 for i = 1, n do keys[i] = key(i) end\n\
+                 return keys",
+                )
+                .set_name("=ui.list keys")
+                .into_function()?;
+            lua.set_named_registry_value(LOOP, &all)?;
+            Ok::<_, mlua::Error>(all)
+        });
+    let keys = all.and_then(|all| vm.call::<mlua::Table>(&all, (key, count)));
+    let keys = match keys {
+        Ok(keys) => keys,
+        Err(e) => {
+            vm.report(e);
+            return (0..count).map(ListKey::Index).collect();
+        }
+    };
+    (0..count)
+        .map(|i| {
+            let key = match keys.raw_get::<mlua::Value>(i + 1) {
+                Ok(mlua::Value::Number(n)) => Some(ListKey::of(&Value::Num(n))),
+                Ok(mlua::Value::Integer(n)) => Some(ListKey::of(&Value::Num(n as f64))),
+                Ok(mlua::Value::Boolean(b)) => Some(Some(ListKey::Bool(b))),
+                Ok(mlua::Value::String(s)) => {
+                    Some(Some(ListKey::Str(Rc::from(&*s.to_string_lossy()))))
+                }
+                _ => None,
+            };
+            key.flatten().unwrap_or(ListKey::Index(i))
+        })
+        .collect()
+}
+
 /// A `ui.list` (kept out of `build`, which recurses: its locals would
 /// weigh on every level of a deep interface's stack).
 #[inline(never)]
@@ -3636,6 +3682,8 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         overscan,
         build: builder,
         key,
+        measured,
+        follow,
         offset,
         keyboard,
         ..
@@ -3682,9 +3730,45 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         Some(offset) => bridge(need(&mut cx), offset, number, |x| Value::Num(x as f64)),
         None => need(&mut cx).state(0_f32),
     };
+    let (count, count_vm) = (Rc::new(resolve_owned(count)), vm.clone());
+    let count = move || match resolve(&count, Ty::Num, None, &count_vm) {
+        Some(Lit::Num(n)) => n.max(0.) as usize,
+        _ => 0,
+    };
+    if *measured {
+        let cx = need(&mut cx);
+        // `height` is the estimate of a row not yet mounted.
+        let mut rows = zgx::compose::VariableHeights::new(&cx.runtime(), 0, *height);
+        if *follow {
+            rows = rows.anchor_end();
+        }
+        let list = match key {
+            // Heights by place, as many as there are rows.
+            None => {
+                let r = rows.clone();
+                cx.retain(cx.runtime().effect(move || {
+                    let _ = r.resize(count());
+                }));
+                measured_virtual_list(offset, rows, *overscan, list_key, row)
+            }
+            // Heights by key, kept as rows move: every row's key, read in
+            // one Luau loop.
+            Some(key) => {
+                let (key, vm) = (key.clone(), vm.clone());
+                let keys = move || list_keys(&vm, &key, count());
+                // Nothing better than `height` for the rows not yet mounted.
+                let estimate = |_: &[ListKey], _: usize| f32::NAN;
+                measured_rows(offset, rows, *overscan, keys, estimate, row)
+            }
+        };
+        return list.keyboard_navigation(keyboard);
+    }
     if let Some(heights) = heights {
         let cx = need(&mut cx);
-        let rows = zgx::compose::VariableHeights::new(&cx.runtime(), 0, *height);
+        let mut rows = zgx::compose::VariableHeights::new(&cx.runtime(), 0, *height);
+        if *follow {
+            rows = rows.anchor_end();
+        }
         // Every height replaced when the list changes: linear, in Rust.
         let (list, heights_vm, r) = (heights.clone(), vm.clone(), rows.clone());
         cx.retain(cx.runtime().effect(move || {
@@ -3719,16 +3803,8 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
             ),
         }
     } else {
-        let (count, count_vm) = (Rc::new(resolve_owned(count)), vm.clone());
         virtual_list(
-            offset,
-            *height,
-            *overscan,
-            move || match resolve(&count, Ty::Num, None, &count_vm) {
-                Some(Lit::Num(n)) => n.max(0.) as usize,
-                _ => 0,
-            },
-            list_key,
+            offset, *height, *overscan, count, list_key,
             // Each row owns what it makes, as `each` rows do.
             row,
         )
