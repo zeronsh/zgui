@@ -32,7 +32,7 @@ For deterministic screenshots, set `ZGX_INITIAL_TICKS=120 ZGX_MODE=idle ZGX_SECO
 ## Iterating on performance
 
 For a change's cost, compare instruction counts of the headless scenes:
-`python3 scripts/perf/suite.py ab main .` builds both, interleaves the runs
+`python3 scripts/perf/suite.py ab origin/main .` builds both, interleaves the runs
 and marks differences beyond their spread, in about two minutes. Run any
 app or bench with `ZGX_PROFILE=1` for a per-phase line every 120 frames
 (input, script, update, layout, damage, paint, encode, submit, present:

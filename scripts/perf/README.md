@@ -9,9 +9,9 @@ machine's state. Time and GPU numbers come from the windowed comparison
 
 ```sh
 python3 scripts/perf/suite.py                  # every headless scene, this checkout
-python3 scripts/perf/suite.py ab main .        # main against this checkout's files
+python3 scripts/perf/suite.py ab origin/main . # main against this checkout's files
 python3 scripts/perf/suite.py ab abc123 def456 # two commits
-python3 scripts/perf/suite.py --only heavy ab main .
+python3 scripts/perf/suite.py --only heavy ab origin/main .
 ```
 
 The suite runs each headless scene (heavy dashboard in three modes, lab

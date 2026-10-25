@@ -4,8 +4,8 @@
     python3 scripts/perf/suite.py                      # build this checkout, run every scene
     python3 scripts/perf/suite.py --only heavy,mount   # scenes whose names contain these
     python3 scripts/perf/suite.py --all                # the slow scenes too
-    python3 scripts/perf/suite.py ab main HEAD         # two revisions, interleaved
-    python3 scripts/perf/suite.py ab main .            # main against this checkout's files
+    python3 scripts/perf/suite.py ab origin/main HEAD  # two revisions, interleaved
+    python3 scripts/perf/suite.py ab origin/main .     # main against this checkout's files
     python3 scripts/perf/suite.py dirs /tmp/a /tmp/b   # two sets of built examples (build flags)
     python3 scripts/perf/suite.py clean                # remove the A/B worktrees and builds
 
@@ -18,7 +18,9 @@ next comparison builds incrementally), runs the scenes alternately, and marks
 a difference larger than both sides' spread. Each side builds into a target
 of its own, and one last built from another checkout is claimed first
 (`claim`): cargo would otherwise hand back the other checkout's crates as
-built. A scene whose binary is the same on both sides is noted. With ZGX_PROFILE=1 set, a
+built. A scene whose binary is the same on both sides is noted, and a local
+branch behind its remote (a checkout's own `main`) is flagged in the table:
+compare against `origin/main`. With ZGX_PROFILE=1 set, a
 scene's own phase report (style, layout, text, damage, paint, encode,
 submit) is shown too. macOS (`/usr/bin/time -l`) and Linux (`perf stat`).
 """
@@ -151,8 +153,28 @@ def run(args):
             print(f'    {line}')
 
 
+def behind(revision):
+    """How far the local branch `revision` is behind its remote's (`main`
+    against `origin/main`): a checkout's own `main` is often the day it was
+    made, and an A/B against it measures a stale baseline. 0 when it is not
+    a branch with one, or is not behind."""
+    git = lambda *a: subprocess.run(['git', *a], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    if not git('rev-parse', '--verify', '--quiet', f'refs/heads/{revision}'):
+        return 0, ''
+    remote = git('for-each-ref', '--format=%(upstream:short)', f'refs/heads/{revision}') or (
+        f'origin/{revision}' if git('rev-parse', '--verify', '--quiet', f'refs/remotes/origin/{revision}') else '')
+    if not remote:
+        return 0, ''
+    count = git('rev-list', '--count', f'{revision}..{remote}')
+    return int(count or 0), remote
+
+
 def worktree(slot, revision):
     """A checkout of `revision` in `slot`, made once and moved after."""
+    lag, remote = behind(revision)
+    if lag:
+        print(f'warning: {revision} is {lag} commits behind {remote} (as last fetched): '
+              f'pass {remote} to compare against it', file=sys.stderr)
     path = WORK / slot
     sha = subprocess.run(['git', 'rev-parse', '--verify', revision + '^{commit}'], cwd=ROOT,
                          capture_output=True, text=True).stdout.strip()
@@ -177,7 +199,8 @@ def ab(args):
             target = WORK / f'target-{hashlib.sha1(str(ROOT).encode()).hexdigest()[:8]}'
         else:
             checkout, label = worktree(slot, revision)
-            label = f'{revision} ({label})'
+            lag, remote = behind(revision)
+            label = f'{revision} ({label}' + (f', {lag} behind {remote})' if lag else ')')
             target = WORK / f'target-{slot}'
         sides.append((label, build(checkout, target, scenes)))
     compare(scenes, sides, args.repeat)

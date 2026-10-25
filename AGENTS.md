@@ -26,7 +26,7 @@ Linux native probes (real X11/Wayland windows, input, IME, clipboard, accessibil
 ## Principles
 
 - **Fix zgx, not around it.** A bug or a slow path found in an app or example is fixed in the engine, with a test there.
-- **Measure performance claims** (retired instructions, or repeated timings), never one noisy run: `python3 scripts/perf/suite.py ab main .` compares every headless scene in about two minutes, and `ZGX_PROFILE=1` splits a frame by phase (`scripts/perf/README.md`). Idle windows do no work: keep it so.
+- **Measure performance claims** (retired instructions, or repeated timings), never one noisy run: `python3 scripts/perf/suite.py ab origin/main .` compares every headless scene in about two minutes, and `ZGX_PROFILE=1` splits a frame by phase (`scripts/perf/README.md`). Idle windows do no work: keep it so.
 - Match the code around you: its naming, comment density and idiom.
 - Every behaviour change gets a test; native behaviour gets a probe in `scripts/` registered in `scripts/linux_smokes.py`.
 
