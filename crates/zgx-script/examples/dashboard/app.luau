@@ -43,6 +43,11 @@ local function toolbar(): Node
 			chips,
 			ui.button {
 				id = `sector-{s}`,
+				-- One choice of the sectors: assistive technology says which.
+				role = "radio",
+				checked = function()
+					return state.sector:get() == s
+				end,
 				on_click = ui.set(state.sector, s),
 				bg = function()
 					return if state.sector:get() == s then "$accent" else "$surface.raised"
@@ -57,7 +62,7 @@ local function toolbar(): Node
 		items = "center",
 		ui.text { "Markets", text_size = "$font.size.xl", bold = true },
 		ui.input { id = "search", label = "Search", placeholder = "Search symbols", value = state.query, w = 220 },
-		ui.row { gap = 4, chips },
+		ui.row { gap = 4, role = "radiogroup", label = "Sector", chips },
 		ui.div { grow = 1 },
 		ui.checkbox { id = "live", label = "Live", value = state.live },
 		ui.button {

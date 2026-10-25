@@ -108,6 +108,9 @@ def main():
         results['displays'] = display_summary(display_data)
         run('metal-rendering-tests', ['cargo', 'test', '-p', 'zgx-gpu', '--locked', '--', '--test-threads=1'], 1800)
         run('accessibility-projection-tests', ['cargo', 'test', '-p', 'zgx-desktop', '--lib', 'accessibility::', '--locked'])
+        # What VoiceOver reads of the components and charts, from live windows.
+        run('accessibility-tree', [sys.executable, str(root / 'scripts/macos_accessibility_probe.py'),
+            '--target-dir', str(args.target_dir)], 600)
         examples = ['native_surfaces', 'rich_text', 'platform_services', 'dynamic_menus', 'atspi',
                     'form', 'native_ime', 'layout', 'paint_styles', 'canvas', 'svg_transform', 'animated_image',
                     'component_workload', 'windows', 'window_controls', 'native_platform', 'drag_drop', 'actions', 'cursors']

@@ -54,12 +54,49 @@ local function header(): Node
 	return ui.row { gap = 4, px = 8, py = 6, items = "center", cells }
 end
 
+-- Where a row's recent prices went, as its sparkline shows them.
+local function trend(id: number): string
+	local history = state.history[id]
+	local first, last = history[1], history[#history]
+	local low, high = math.huge, -math.huge
+	for _, v in history do
+		low = math.min(low, v)
+		high = math.max(high, v)
+	end
+	local way = if last > first then "rising" elseif last < first then "falling" else "flat"
+	return string.format("%s, low %.2f, high %.2f", way, low, high)
+end
+
+local function price(d: data.Row): string
+	return ui.number(d.price, { decimals = 2 })
+end
+local function change(d: data.Row): string
+	return ui.number(d.change / 100, { style = "percent", decimals = 2, sign = "except_zero" })
+end
+local function volume(d: data.Row): string
+	return ui.number(d.volume, { notation = "compact" })
+end
+
 local function row(i: number): Node
 	local function data()
 		return view:at(i)
 	end
 	return ui.row {
 		id = `row-{i}`,
+		-- An instrument to choose: read as what its cells and sparkline show.
+		role = "option",
+		selected = function()
+			local d = data()
+			return d ~= nil and state.selected:get() == d.id
+		end,
+		label = function()
+			local d = data()
+			if not d then
+				return ""
+			end
+			-- Worked out only while a screen reader reads the window.
+			return `{d.symbol}, {d.sector}, {price(d)}, {change(d)}, volume {volume(d)}, trend {trend(d.id)}`
+		end,
 		w_full = true,
 		h = 32,
 		px = 8,
@@ -97,7 +134,7 @@ local function row(i: number): Node
 			id = `price-{i}`,
 			function()
 				local d = data()
-				return if d then ui.number(d.price, { decimals = 2 }) else ""
+				return if d then price(d) else ""
 			end,
 			w = 100,
 			align = "end",
@@ -106,9 +143,7 @@ local function row(i: number): Node
 			id = `change-{i}`,
 			function()
 				local d = data()
-				return if d
-					then ui.number(d.change / 100, { style = "percent", decimals = 2, sign = "except_zero" })
-					else ""
+				return if d then change(d) else ""
 			end,
 			w = 90,
 			align = "end",
@@ -121,7 +156,7 @@ local function row(i: number): Node
 			id = `volume-{i}`,
 			function()
 				local d = data()
-				return if d then ui.number(d.volume, { notation = "compact" }) else ""
+				return if d then volume(d) else ""
 			end,
 			w = 90,
 			align = "end",
@@ -161,6 +196,8 @@ return function(): Node
 		header(),
 		ui.list {
 			id = "rows",
+			role = "listbox",
+			label = "Instruments",
 			count = function()
 				return view:len()
 			end,

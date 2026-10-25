@@ -2471,6 +2471,8 @@ fn fill_from(
                         | Kind::Button
                         | Kind::Scroll { .. }
                         | Kind::List { .. }
+                        // A canvas named is read as a picture (a chart).
+                        | Kind::Canvas(_)
                 ) =>
             {
                 match value {

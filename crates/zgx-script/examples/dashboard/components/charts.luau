@@ -4,10 +4,25 @@ local data = require("@lib/data")
 
 local M = {}
 
+-- What a chart shows, read by assistive technology as its name.
+local function amount(v: number): string
+	return ui.number(v, { notation = "compact" })
+end
+
 function M.line(): Node
 	return ui.canvas {
 		w_full = true,
 		h = 180,
+		label = function()
+			state.tick:get()
+			local values = state.series
+			local low, high = math.huge, -math.huge
+			for _, v in values do
+				low = math.min(low, v)
+				high = math.max(high, v)
+			end
+			return `Price, last {#values} ticks: now {amount(values[#values])}, high {amount(high)}, low {amount(low)}`
+		end,
 		draw = function(c, w, h)
 			state.tick:get()
 			local values = state.series
@@ -37,6 +52,14 @@ function M.bars(): Node
 	return ui.canvas {
 		w_full = true,
 		h = 160,
+		label = function()
+			local totals = state.volumes:get()
+			local parts = {}
+			for _, sector in data.SECTORS do
+				table.insert(parts, `{sector} {amount(totals[sector])}`)
+			end
+			return `Volume by sector: {table.concat(parts, ", ")}`
+		end,
 		draw = function(c, w, h)
 			local totals = state.volumes:get()
 			local order = data.SECTORS

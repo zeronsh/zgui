@@ -1464,6 +1464,10 @@ export type SvgProps = Merge<Props, {
 export type CanvasProps = Merge<Props, {
 	-- Runs again when the size or the state it reads changes.
 	draw: (c: Canvas, w: number, h: number) -> ...unknown,
+	-- What it shows, read by assistive technology as an image's name (a
+	-- chart's summary: "Price, now 143.9, high 150.1"). A state or
+	-- function is followed. Without one, it is decoration.
+	label: (string | Readable<string> | (() -> string))?,
 }>
 export type CheckboxProps = Merge<Props, {
 	value: State<boolean>,

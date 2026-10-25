@@ -1088,6 +1088,13 @@ declare_class!(
         #[method_id(accessibilityRows)]
         fn rows(&self) -> Option<Id<NSArray<PlatformNode>>> {
             self.resolve_with_context(|node, _, context| {
+                // zgx patch: a grid's rows (see `table_rows`).
+                if is_table(node) {
+                    let platform_nodes = table_rows(node)
+                        .map(|row| context.get_or_create_platform_node(row.id()))
+                        .collect::<Vec<Id<PlatformNode>>>();
+                    return Some(NSArray::from_vec(platform_nodes));
+                }
                 let wrapper = NodeWrapper(node);
                 if !wrapper.is_container_with_selectable_children() {
                     return None;
@@ -1104,6 +1111,14 @@ declare_class!(
         #[method_id(accessibilitySelectedRows)]
         fn selected_rows(&self) -> Option<Id<NSArray<PlatformNode>>> {
             self.resolve_with_context(|node, _, context| {
+                // zgx patch: a grid's selected rows (see `table_rows`).
+                if is_table(node) {
+                    let platform_nodes = table_rows(node)
+                        .filter(|row| row.is_selected() == Some(true))
+                        .map(|row| context.get_or_create_platform_node(row.id()))
+                        .collect::<Vec<Id<PlatformNode>>>();
+                    return Some(NSArray::from_vec(platform_nodes));
+                }
                 let wrapper = NodeWrapper(node);
                 if !wrapper.is_container_with_selectable_children() {
                     return None;
@@ -1255,7 +1270,8 @@ declare_class!(
                     || selector == sel!(accessibilitySelectedRows)
                 {
                     let wrapper = NodeWrapper(node);
-                    return wrapper.is_container_with_selectable_children()
+                    // zgx patch: grids have rows (see `table_rows`).
+                    return wrapper.is_container_with_selectable_children() || is_table(node)
                 }
                 if selector == sel!(setAccessibilitySelected:)
                     || selector == sel!(accessibilityPerformPick)
@@ -1344,4 +1360,21 @@ impl PlatformNode {
             NSArray::from_vec(platform_nodes)
         })
     }
+}
+
+// zgx patch: whether `node` is a grid or table, whose rows VoiceOver
+// reads through `accessibilityRows` (its table navigation, "row 3 of 10").
+fn is_table(node: &Node) -> bool {
+    matches!(node.role(), Role::Grid | Role::Table | Role::TreeGrid)
+}
+
+// zgx patch: a grid's rows, its `Row` descendants through any containers
+// between (a scrolling body, a header's group). AccessKit's `items` takes
+// only item-like children, which a row is not, so a grid had no rows.
+fn table_rows<'a>(node: &Node<'a>) -> impl DoubleEndedIterator<Item = Node<'a>> + use<'a> {
+    node.filtered_children(|child| match filter(child) {
+        FilterResult::Include if child.role() == Role::Row => FilterResult::Include,
+        FilterResult::Include => FilterResult::ExcludeNode,
+        other => other,
+    })
 }

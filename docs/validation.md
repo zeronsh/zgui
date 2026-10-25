@@ -849,3 +849,19 @@ The [integrated snapshot](platform-validation/retained-blur-batching/README.md)
 passes all 600 workspace tests, 31 doctests, strict Clippy, formatting and macOS
 ARM64 all-target checking. Native effects and isolated host recreation also pass.
 All 175 archived source inputs and the tested native binary hashes are verified.
+
+## macOS accessibility tree (VoiceOver)
+
+`scripts/macos_accessibility_probe.py` opens the component catalog and the
+dashboard example on a real macOS desktop and reads their windows through
+the AX API, as VoiceOver does (attributes only: no input is sent). It checks
+that data grids and the date picker's month give their rows (VoiceOver's
+table navigation; AccessKit gave a grid none, fixed in
+`vendor/accesskit_macos`), that the tree, segmented control, stepper,
+slider, tabs and select have their roles and names, that charts drawn on
+canvases are images named by what they show, that a group of chips is a
+radio group saying which is chosen, and that a list's options are named,
+selectable and pressable. Passed on macOS 26 (M5), 2026-10-24; it fails
+without the AccessKit patch (AXRows 0). The macOS bundle
+(`macos_native_validation.py`) runs it. Speech itself (VoiceOver reading
+aloud, its rotor) is not checked: the tree it reads is.

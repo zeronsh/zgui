@@ -734,3 +734,36 @@ fn events_say_the_platforms_command_key_and_shortcuts_show_as_it_does() {
     }
     assert_eq!(as_is.shortcut.as_deref(), Some("⌥Z"), "text shows as it is");
 }
+
+/// A canvas is read as an image named by its `label` (a chart by what it
+/// shows), its `description` after the name, the label followed as state;
+/// one without a label is decoration, out of the accessibility tree.
+#[test]
+fn a_labelled_canvas_is_an_image_and_an_unlabelled_one_is_decoration() {
+    let mut h = Harness::inline(
+        r##"local change = ui.state("change", 2.5)
+        local function line(c, w, h)
+            c:stroke(ui.path():move(0, h):line(w / 2, 0):line(w, h / 2), "#3fb950", 1.5)
+        end
+        return ui.column {
+            ui.canvas { id = "chart", w = 80, h = 20, draw = line,
+                label = function() return string.format("Price trend, %+.1f%%", change:get()) end,
+                description = "60 ticks, high 143.9, low 128.2" },
+            ui.canvas { id = "plain", w = 80, h = 20, draw = line },
+            ui.button { id = "fall", on_click = function() change:set(-1.25) end, "Fall" },
+        }"##,
+    );
+    assert_eq!(h.error(), None);
+    h.ui.prepare_frame();
+    let chart = node(&mut h, "chart");
+    assert_eq!(chart.role, Role::Image);
+    assert_eq!(chart.label, "Price trend, +2.5%");
+    assert_eq!(
+        chart.description.as_deref(),
+        Some("60 ticks, high 143.9, low 128.2")
+    );
+    h.click("fall");
+    assert_eq!(node(&mut h, "chart").label, "Price trend, -1.2%");
+    let plain = h.find("plain").unwrap();
+    assert!(h.ui.semantics.borrow().get(plain).is_none(), "decoration");
+}

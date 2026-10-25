@@ -43,6 +43,7 @@ An SVG, from a file or from markup, drawn as vectors at every scale; `tint` reco
 | Option | Type | Default | |
 | --- | --- | --- | --- |
 | `draw` | `(c: Canvas, w: number, h: number) -> ()` | required | |
+| `label` | `string \| state \| function` | none | what it shows, read by assistive technology as an image's name: a chart's summary (`"Price, now 143.9, high 150.1, low 128.2"`), followed as state. Without one, the canvas is decoration, out of the accessibility tree |
 
 | Method of `c` | |
 | --- | --- |

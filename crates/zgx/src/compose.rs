@@ -2928,6 +2928,9 @@ struct Opened {
     compute: Option<Box<dyn FnMut() -> String>>,
     region: Option<RegionBuilder>,
     focusable: bool,
+    /// A canvas: named, it is a picture (a chart, by what it shows), read
+    /// as an image, as an `img` is, not a group.
+    pictured: bool,
 }
 /// The element's node, before its children. Apart from `mount_element`,
 /// whose frame stays live while they mount: in a debug build each of this
@@ -3775,6 +3778,7 @@ fn open_element(
             );
         });
     }
+    let pictured = canvas_compute.is_some();
     if let Some(mut draw) = canvas_compute {
         // As an icon's: with the frame's layout, forcing none.
         let size = ui.observe_content_size_deferred(root);
@@ -3974,6 +3978,7 @@ fn open_element(
         compute,
         region,
         focusable,
+        pictured,
     }
 }
 /// The rest of an element's mounting, once its children are in.
@@ -4000,6 +4005,7 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
         compute,
         region,
         focusable,
+        pictured,
     } = opened;
     for conditional in conditional {
         conditional(ui, child_parent, environment.clone());
@@ -4060,6 +4066,9 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
             }
         });
     }
+    // What a box named or described is, unless it says: a group, or a
+    // canvas's picture.
+    let role = if pictured { Role::Image } else { Role::Group };
     if let Some(label) = accessible_label {
         let mut semantics = ui.semantics.borrow_mut();
         if semantics.get(root).is_some() {
@@ -4068,7 +4077,7 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
                 node.named = true;
             });
         } else {
-            let mut node = SemanticNode::new(Role::Group, label);
+            let mut node = SemanticNode::new(role, label);
             node.named = true;
             semantics.set(root, node);
         }
@@ -4079,7 +4088,7 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
         if accessibility.role.is_some() {
             name_from_content(ui, &ui.scene.borrow(), root);
         }
-        apply_accessibility(ui, root, *accessibility);
+        apply_accessibility(ui, root, *accessibility, role);
     }
     ui.close_element(root);
     update_button_labels(ui, root);
@@ -4892,7 +4901,9 @@ pub(crate) struct Accessibility {
     focus_group: Option<crate::input::FocusGroup>,
     label: Option<Box<dyn FnMut() -> String>>,
 }
-fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) {
+/// `accessibility` on `root`, which is a `default` (a group, a picture)
+/// unless it gives a role.
+fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility, default: Role) {
     let Accessibility {
         role,
         level,
@@ -4940,7 +4951,7 @@ fn apply_accessibility(ui: &mut Ui, root: NodeId, accessibility: Accessibility) 
     {
         let mut semantics = ui.semantics.borrow_mut();
         if semantics.get(root).is_none() {
-            semantics.set(root, SemanticNode::new(role.unwrap_or(Role::Group), ""));
+            semantics.set(root, SemanticNode::new(role.unwrap_or(default), ""));
         }
         semantics.update(root, |node| {
             if let Some(role) = role {
