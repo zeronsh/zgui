@@ -111,6 +111,12 @@ impl Tasks {
     }
 }
 type Registry = Rc<RefCell<HashMap<String, Vec<NodeId>>>>;
+/// What a virtual list knows of one of its rows: the run that last showed
+/// it, and the index and width it was last placed at.
+struct Placed {
+    run: u64,
+    at: Option<(usize, u32)>,
+}
 #[derive(Clone)]
 pub(crate) struct Environment {
     pub(crate) services: ServiceScope,
@@ -2059,7 +2065,14 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
             }
             let weak = ui.downgrade();
             let runtime = ui.runtime.clone();
-            let mut entries: HashMap<K, (NodeId, Signal<usize>)> = HashMap::new();
+            let mut entries: HashMap<
+                K,
+                (NodeId, Signal<usize>, Placed),
+                rustc_hash::FxBuildHasher,
+            > = HashMap::default();
+            // Each run's number, which the rows it shows are stamped with.
+            let mut run = 0_u64;
+            let (mut keys, mut order) = (Vec::new(), Vec::new());
             let mut handled_request = 0;
             // Scroll-to-row requests (`NodeHandle::scroll_to_row`).
             let reveal = list_reveal(ui, root);
@@ -2096,10 +2109,30 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         .min((model.content_height() - height).max(0.));
                 }
                 let range = model.visible_range(position, height);
-                let keys: Vec<_> = range.map(|index| (key(index), index)).collect();
-                let unique: std::collections::HashSet<_> =
-                    keys.iter().map(|(key, _)| key).collect();
-                assert_eq!(unique.len(), keys.len(), "duplicate virtual list child key");
+                keys.clear();
+                keys.extend(range.map(|index| (key(index), index)));
+                // Rows kept are stamped with this run: one shown twice is a
+                // key repeated, and those left unstamped go below.
+                run += 1;
+                let mut fresh = 0;
+                for (key, _) in &keys {
+                    match entries.get_mut(key) {
+                        Some((.., placed)) => {
+                            assert!(placed.run != run, "duplicate virtual list child key");
+                            placed.run = run;
+                        }
+                        None => fresh += 1,
+                    }
+                }
+                if fresh > 1 {
+                    let mut new: std::collections::HashSet<&K, rustc_hash::FxBuildHasher> =
+                        Default::default();
+                    for (key, _) in &keys {
+                        if !entries.contains_key(key) {
+                            assert!(new.insert(key), "duplicate virtual list child key");
+                        }
+                    }
+                }
                 let Some(mut ui) = weak.upgrade() else {
                     return;
                 };
@@ -2125,12 +2158,12 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         if let Some(navigation) = &navigation {
                             navigation.mount_row(&mut ui, row, row_height);
                         }
-                        added.push((key.clone(), (row, index_signal)));
+                        added.push((key.clone(), (row, index_signal, Placed { run, at: None })));
                     }
                     entries.extend(added);
                     let mut removed_focus = false;
-                    entries.retain(|key, (node, _)| {
-                        if unique.contains(key) {
+                    entries.retain(|_, (node, _, placed)| {
+                        if placed.run == run {
                             true
                         } else {
                             if navigation.is_some()
@@ -2170,18 +2203,24 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                                 y: -position,
                             },
                         );
+                        order.clear();
                         for (key, index) in &keys {
-                            let node = entries[key].0;
-                            scene.set_style(node, crate::widgets::fixed(width, row_height));
-                            scene.set_transform(
-                                node,
-                                crate::scene::Transform {
-                                    x: 0.0,
-                                    y: model.row_offset(*index),
-                                },
-                            );
+                            let (node, _, placed) = entries.get_mut(key).expect("a row");
+                            // A row placed as it was, at the same width, stays.
+                            let at = Some((*index, width.to_bits()));
+                            if placed.at != at {
+                                placed.at = at;
+                                scene.set_style(*node, crate::widgets::fixed(width, row_height));
+                                scene.set_transform(
+                                    *node,
+                                    crate::scene::Transform {
+                                        x: 0.0,
+                                        y: model.row_offset(*index),
+                                    },
+                                );
+                            }
+                            order.push(*node);
                         }
-                        let order: Vec<_> = keys.iter().map(|(key, _)| entries[key].0).collect();
                         assert!(scene.reorder_children(content, &order));
                     }
                     transaction.commit();
