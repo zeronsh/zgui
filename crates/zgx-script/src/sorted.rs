@@ -272,6 +272,12 @@ struct Kept {
     shown: Vec<u32>,
     /// Where the items `update` placed landed in `order`.
     placed_at: Vec<u32>,
+    /// The field `keys` are of (every item's, kept or not), and the list's
+    /// version they are current at; and the last field's, kept beside them:
+    /// a sort back to it, or a filter's keystroke, reads no field again
+    /// (those of rows written since, from the list's log, aside).
+    keys_of: Option<(Rc<str>, u64)>,
+    spare_keys: Option<(Rc<str>, u64, Vec<Key>)>,
 }
 
 /// The rows `set_key` writes to a list a sorted view reads, so the view
@@ -410,7 +416,8 @@ impl Kept {
                 )
             }
         };
-        if !kept {
+        // A field's key whether kept or not (`keys_of`); a script's only if.
+        if !kept && matches!(spec.by, By::Function(_)) {
             return Ok((Key::Nil, false));
         }
         let key = match &spec.by {
@@ -421,7 +428,7 @@ impl Kept {
                 Key::of_lua(&vm.call::<mlua::Value>(f, item)?)
             }
         };
-        Ok((key, true))
+        Ok((key, kept))
     }
     fn before(&self, descending: bool, a: u32, b: u32) -> Ordering {
         self.keys[a as usize]
@@ -429,31 +436,85 @@ impl Kept {
             .then(a.cmp(&b))
     }
     /// Everything judged and sorted again.
-    fn rebuild(&mut self, vm: &Vm, spec: &Spec, items: &Rc<[Value]>) -> mlua::Result<()> {
-        self.keys.clear();
+    /// `keys` made those of field `name` for `items`, current at `version`:
+    /// kept or spare ones taken again, those of the rows written since
+    /// (`written_since`, else every row) read again.
+    fn field_keys(
+        &mut self,
+        name: &Rc<str>,
+        items: &[Value],
+        version: u64,
+        written_since: &dyn Fn(u64) -> Option<Vec<u32>>,
+    ) {
+        if self.keys_of.as_ref().is_none_or(|(of, _)| **of != **name) {
+            let current = self
+                .keys_of
+                .take()
+                .map(|(of, at)| (of, at, std::mem::take(&mut self.keys)));
+            if let Some((of, at, keys)) = self.spare_keys.take().filter(|(of, ..)| **of == **name) {
+                self.keys = keys;
+                self.keys_of = Some((of, at));
+            }
+            self.spare_keys = current;
+        }
+        let rows = match &self.keys_of {
+            Some((_, at)) if self.keys.len() == items.len() && *at == version => Some(Vec::new()),
+            Some((_, at)) if self.keys.len() == items.len() => written_since(*at),
+            _ => None,
+        };
+        match rows {
+            Some(rows) => {
+                for i in rows {
+                    let key = items[i as usize]
+                        .field(name)
+                        .map_or(Key::Nil, Key::of_value);
+                    self.keys[i as usize] = key;
+                }
+            }
+            None => {
+                self.keys.clear();
+                let mut hint = Hint::default();
+                for item in items {
+                    let key = Self::field(item, name, &mut hint);
+                    self.keys.push(key.map_or(Key::Nil, Key::of_value));
+                }
+            }
+        }
+        self.keys_of = Some((name.clone(), version));
+    }
+
+    fn rebuild(
+        &mut self,
+        vm: &Vm,
+        spec: &Spec,
+        items: &Rc<[Value]>,
+        version: u64,
+        written_since: &dyn Fn(u64) -> Option<Vec<u32>>,
+    ) -> mlua::Result<()> {
         self.kept.clear();
         let by_script = matches!(spec.by, By::Function(_));
         let tests = match &spec.filter {
             Some(Filter::Fields(tests)) => Some(tests.clone()),
             _ => None,
         };
+        if !matches!(spec.by, By::Field(_)) {
+            self.keys_of = None;
+            self.keys.clear();
+        }
         if matches!(spec.filter, Some(Filter::Function(_))) || by_script {
+            // Keys of the kept alone: not a field's for every item.
+            self.keys_of = None;
+            self.keys.clear();
             self.judge_all(vm, spec, items)?;
         } else if let (By::Field(name), Some(tests)) = (&spec.by, &tests) {
-            let (mut hint, mut hints) = (Hint::default(), vec![Hint::default(); tests.len()]);
+            self.field_keys(name, items, version, written_since);
+            let mut hints = vec![Hint::default(); tests.len()];
             for item in items.iter() {
-                let kept = Filter::fields_pass(tests, item, &mut hints);
-                let key = kept.then(|| Self::field(item, name, &mut hint)).flatten();
-                self.keys.push(key.map_or(Key::Nil, Key::of_value));
-                self.kept.push(kept);
+                self.kept.push(Filter::fields_pass(tests, item, &mut hints));
             }
         } else if let By::Field(name) = &spec.by {
-            let mut hint = Hint::default();
-            for item in items.iter() {
-                let key = Self::field(item, name, &mut hint);
-                self.keys.push(key.map_or(Key::Nil, Key::of_value));
-                self.kept.push(true);
-            }
+            self.field_keys(name, items, version, written_since);
+            self.kept.resize(items.len(), true);
         } else {
             for item in items.iter() {
                 let (key, kept) = Self::judge(vm, spec, item)?;
@@ -834,6 +895,48 @@ fn write_back(
     any
 }
 
+/// The view, its items placed as `shown` put them, made what `order` puts
+/// them as when the items are the same values (only the spec changed: a
+/// sort, a filter): each value moved to its new place (where `inverse`
+/// says it was) rather than cloned in a new list and dropped from the old,
+/// which touched every row's count twice. False, nothing done, unless it is
+/// a re-sort of the whole view and nothing else holds it.
+fn permute(
+    view: &mut Value,
+    order: &[u32],
+    shown: &[u32],
+    items: &[Value],
+    inverse: &mut Vec<u32>,
+    old: &mut Vec<Value>,
+) -> bool {
+    const ABSENT: u32 = u32::MAX;
+    let Value::List(list) = view else {
+        return false;
+    };
+    // A re-sort alone: a filter's change, leaving most of the view out or
+    // letting most in, costs less made anew.
+    let Some(slots) =
+        Rc::get_mut(list).filter(|slots| slots.len() == shown.len() && shown.len() == order.len())
+    else {
+        return false;
+    };
+    inverse.clear();
+    inverse.resize(items.len(), ABSENT);
+    for (p, &i) in shown.iter().enumerate() {
+        inverse[i as usize] = p as u32;
+    }
+    old.clear();
+    old.extend(slots.iter_mut().map(std::mem::take));
+    let mut next = |i: u32| match inverse[i as usize] {
+        ABSENT => items[i as usize].clone(),
+        p => std::mem::take(&mut old[p as usize]),
+    };
+    for (slot, &i) in slots.iter_mut().zip(order) {
+        *slot = next(i);
+    }
+    true
+}
+
 /// `ui.sorted(list, spec)`.
 pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlua::Result<State> {
     let source = crate::node::expect_state(&list, "ui.sorted's list")?;
@@ -883,6 +986,8 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
     let mut kept = Kept::default();
     // The values moving along the view's runs (`write_back`), its room kept.
     let mut moving: Vec<Value> = Vec::new();
+    // Where each item was in the view (`permute`), its room kept.
+    let mut inverse: Vec<u32> = Vec::new();
     let effect = env.runtime.effect_now(move || {
         let Some(vm) = vm.upgrade() else {
             return;
@@ -924,6 +1029,7 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
                 _ => change(kept.items.as_ref(), &items),
             }
         };
+        let written_since_seen = |at: u64| written_since(&source, at);
         let result = runtime.untracked(|| match change {
             Change::None if same_spec => Ok(None),
             Change::Some(changed) if same_spec => kept
@@ -931,10 +1037,18 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
                 .map(|_| Some((Some(changed), false))),
             // A new spec over the same items (a sort, a filter): held as they are.
             Change::None => kept
-                .rebuild(&vm, &spec, &items)
+                .rebuild(&vm, &spec, &items, version, &written_since_seen)
                 .map(|_| Some((Some(Vec::new()), true))),
-            _ => kept.rebuild(&vm, &spec, &items).map(|_| Some((None, true))),
+            _ => kept
+                .rebuild(&vm, &spec, &items, version, &written_since_seen)
+                .map(|_| Some((None, true))),
         });
+        // The keys kept are current now: every row written since was judged.
+        if result.is_ok()
+            && let Some((_, at)) = &mut kept.keys_of
+        {
+            *at = version;
+        }
         match result {
             Ok(None) => {}
             Ok(Some((changed, sorted_again))) => {
@@ -970,7 +1084,15 @@ pub(crate) fn sorted(lua: &Lua, (list, spec): (mlua::Value, mlua::Value)) -> mlu
                         shown.copy_from_slice(order);
                         return any;
                     }
-                    *view = Value::List(order.iter().map(|i| items[*i as usize].clone()).collect());
+                    // Sorted again over the same items: moved into place.
+                    let same_items = matches!(&changed, Some(changed) if changed.is_empty());
+                    if !(sorted_again
+                        && same_items
+                        && permute(view, order, shown, &items, &mut inverse, &mut moving))
+                    {
+                        *view =
+                            Value::List(order.iter().map(|i| items[*i as usize].clone()).collect());
+                    }
                     shown.clone_from(order);
                     true
                 });
