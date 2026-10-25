@@ -1,6 +1,6 @@
 # Releasing
 
-Nothing is published yet. This is how a release goes, and what it checks.
+zgx 0.1.0 is on crates.io (2026-10-25, tag `v0.1.0`). This is how a release goes, and what it checks.
 
 ## Version scheme
 
@@ -49,9 +49,13 @@ It never publishes. It doesn't run on pull requests: CI's time is unchanged. Loc
 
 ## Publishing
 
-Not yet automated, on purpose: publishing needs a crates.io token, and the first time is done by hand, in this order, each after the release check passes on the tag:
+Not automated, on purpose: publishing needs a crates.io token, and is done by hand, in this order, each after the release check passes on the tag:
 
-1. The forks: `cargo publish --manifest-path vendor/cosmic-text/Cargo.toml`, then `vendor/taffy`, then `vendor/mlua --features luau`.
+1. The forks that changed since they were last published, their versions bumped: `cargo publish --manifest-path vendor/cosmic-text/Cargo.toml`, `vendor/taffy`, `vendor/mlua --features luau`.
 2. The workspace: `cargo publish --workspace --locked` (it orders the crates itself).
 
-A crate on crates.io can't be deleted, only yanked: a name taken is taken for good. The names are reserved (placeholder versions 0.0.1 of `zgx`, `zgx-components`, `zgx-gpu`, `zgx-desktop`, `zgx-script` and `zgx-run`; `zgx-ghostty-sys` pending), and the forks' names are taken when they publish.
+`cargo publish --workspace` can stop part way with cargo's own error "no packages ready to publish but … remain in plan … awaiting confirmation" (cargo 1.96, at 0.1.0, after `zgx-gpu`): what it uploaded is published (check crates.io), and the rest publish one at a time in dependency order, each waiting for the index: `cargo publish -p zgx-script --locked`, then `zgx-desktop`, then `zgx-run`.
+
+Then tag the commit (`v<version>`), make a GitHub release from its changelog section, and check a new project builds from crates.io alone (`cargo add zgx zgx-desktop`).
+
+A crate on crates.io can't be deleted, only yanked: a version published is published for good.

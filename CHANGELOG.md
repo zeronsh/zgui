@@ -1,8 +1,8 @@
 # Changes
 
-zgx is 0.1, used from git until its first release is on crates.io (this section becomes `## 0.1.0` then); this lists what changed for apps, newest first.
+zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps, newest first.
 
-## Unreleased (October 2026)
+## 0.1.0 (2026-10-25)
 
 <!-- rename-to-zgx: off (the old names, on purpose) -->
 ### Renamed: zgui is zgx
