@@ -100,6 +100,10 @@ pub struct GpuStats {
     pub svg_rasterizations: usize,
     /// Times the instance geometry was rebuilt.
     pub geometry_rebuilds: usize,
+    /// Paint items patched into the window as kept, in a frame that drew
+    /// the rest as they were (see `render_kept`); 0 for a frame drawn from
+    /// the scene's walk.
+    pub patched_items: usize,
     /// Vertex buffers allocated or grown.
     pub vertex_buffer_allocations: usize,
     /// Physical pixels repainted.
@@ -400,6 +404,7 @@ const SPLIT_PIXELS: f32 = 32_768.;
 /// glyphs, bars) draw with the basic one.
 /// A canvas's polyline strokes (when `polylines`) draw with their
 /// own pipeline: their runs are draws of their own however the rest is.
+#[inline(always)]
 fn push_draw(
     draws: &mut Vec<Draw>,
     quads: &[Quad],
@@ -756,6 +761,129 @@ fn raster_step(magnification: f32, current: Option<i32>) -> i32 {
 }
 fn step_scale(step: i32) -> f32 {
     std::f32::consts::SQRT_2.powi(step)
+}
+/// A whole window's paint as `render_flat` made it, kept to patch where
+/// the scene repaints (`render_kept`): its quads and draws, and where each
+/// item's lie.
+struct Kept {
+    quads: Vec<Quad>,
+    draws: Vec<Draw>,
+    clips: Vec<Region>,
+    items: Vec<KeptItem>,
+    /// Each node's first item (a border pass follows it).
+    by_node: FxHashMap<NodeId, u32>,
+    /// The scene's last flush it was brought up to date with.
+    flushes: u64,
+    /// What it was drawn for: the scene's nodes and identity, the atlas
+    /// its glyphs lie in, and the target.
+    revision: u64,
+    identity: u64,
+    atlas_epoch: u64,
+    viewport: Rect,
+    scale: f32,
+    background: Color,
+}
+/// What `render_flat` makes: a frame (`FRAME`, or the kept frame when
+/// `draw_made`), or items' quads and draws alone, with where each
+/// item's lie (`PATCH`: no frame begins, nothing is drawn), to patch a kept
+/// frame with or, `record`ing, to keep. Frames drawn as usual run a loop
+/// with nothing of keeping in it, so what it calls inlines as before.
+const FRAME: u8 = 0;
+const PATCH: u8 = 2;
+/// One paint item's place in a `Kept`.
+struct KeptItem {
+    id: NodeId,
+    inherited: zgx::scene::Inherited,
+    /// Its quads: `len` of them, from `start`, in room for `room`. A text's
+    /// value grows into spare quads after its own, kept empty (zero-sized,
+    /// drawing nothing): a batch of draws in turn spans them.
+    start: u32,
+    len: u32,
+    room: u32,
+    /// Its draws: those of its quads' shadings, in turn.
+    draws: std::ops::Range<u32>,
+}
+/// Paint that changes without the scene marking its node: a native
+/// surface shows each frame its source gives it.
+fn changes_unmarked(kind: &NodeKind) -> bool {
+    #[cfg(target_os = "macos")]
+    if matches!(kind, NodeKind::NativeSurface(_)) {
+        return true;
+    }
+    let _ = kind;
+    false
+}
+/// The share of the window a frame's damage covers from which it is drawn
+/// from the window as kept (`render_kept`): sending every item's quads as
+/// they are costs about 30 instructions an item, making a damaged one again
+/// about 1,500.
+const KEPT_SHARE: f32 = 0.1;
+/// Close the open item range (`render_flat`'s `item_ranges`): its quads'
+/// count, its room (`pad`: a text's spare quads, added empty) and where
+/// its draws end.
+fn close_range(
+    quads: &mut Vec<Quad>,
+    draws: &[Draw],
+    ranges: &mut [(u32, u32, u32, u32, u32)],
+    pad: bool,
+) {
+    let Some(open) = ranges.last_mut().filter(|range| range.4 == u32::MAX) else {
+        return;
+    };
+    let made = quads.len() as u32 - open.0;
+    let room = made + if pad { text_room(made) } else { 0 };
+    quads.resize((open.0 + room) as usize, bytemuck::Zeroable::zeroed());
+    *open = (open.0, made, room, open.3, draws.len() as u32);
+}
+/// Spare quads a text keeps for its value to grow into, past its own.
+fn text_room(glyphs: u32) -> u32 {
+    (glyphs / 2).max(8)
+}
+/// `map.get(key)`, or in a patch (`PATCH`) the same through `entry`: the
+/// frame loop stays the one caller of each map's `get` (and of its search,
+/// which `get_mut` shares), inlined there.
+#[inline(always)]
+fn get_in<'a, const MODE: u8, K: Eq + std::hash::Hash + Clone, V>(
+    map: &'a mut FxHashMap<K, V>,
+    key: &K,
+) -> Option<&'a V> {
+    match MODE {
+        PATCH => match map.entry(key.clone()) {
+            std::collections::hash_map::Entry::Occupied(entry) => Some(entry.into_mut()),
+            std::collections::hash_map::Entry::Vacant(_) => None,
+        },
+        _ => map.get(key),
+    }
+}
+/// `map.insert(key, value)`, or in a patch (`PATCH`) the same through
+/// `entry`: the frame loop stays the one caller of each map's `insert`.
+#[inline(always)]
+fn insert_in<const MODE: u8, K: Eq + std::hash::Hash, V>(
+    map: &mut FxHashMap<K, V>,
+    key: K,
+    value: V,
+) {
+    match MODE {
+        PATCH => {
+            map.entry(key).insert_entry(value);
+        }
+        _ => {
+            map.insert(key, value);
+        }
+    }
+}
+impl GpuStats {
+    /// Add what `made` made (shaped, uploaded, rasterized) in a pass that
+    /// drew nothing.
+    fn add_made(&mut self, made: &GpuStats) {
+        self.shaped_nodes += made.shaped_nodes;
+        self.glyph_uploads += made.glyph_uploads;
+        self.image_uploads += made.image_uploads;
+        self.canvas_rasterizations += made.canvas_rasterizations;
+        self.canvas_quads += made.canvas_quads;
+        self.svg_rasterizations += made.svg_rasterizations;
+        self.geometry_rebuilds += made.geometry_rebuilds;
+    }
 }
 /// A backdrop filter's bounds, effects and corner radii (`Draw::blur`).
 type Backdrop = (Rect, zgx::scene::Effects, [f32; 4]);
@@ -1762,6 +1890,23 @@ pub struct GpuRenderer {
     /// The points of the frame's polyline strokes (polyline.wgsl), kept for
     /// their allocation.
     frame_points: Vec<[f32; 2]>,
+    /// The window's last whole paint, while only leaves repaint
+    /// (`render_kept`).
+    kept: Option<Box<Kept>>,
+    /// What keeping the window up to date did in a frame drawn as usual.
+    patch_stats: GpuStats,
+    /// Whether the last frame patched the window as kept (`render_kept`):
+    /// one that can't is drawn whole, to keep patching after it.
+    patched: bool,
+    /// Where each item's quads and draws lay in a frame made to keep or
+    /// patch (`render_flat`): first quad, quads, room, first draw, draws' end.
+    item_ranges: Vec<(u32, u32, u32, u32, u32)>,
+    /// A kept frame's clip regions, while it is patched (`PATCH`).
+    patch_clips: Vec<Region>,
+    /// Whether the frame's quads, draws, polyline points and clips
+    /// (`patch_clips`) are made already, for the next frame to draw as
+    /// they are.
+    draw_made: bool,
     /// The frame's draws, kept for their allocation.
     frame_draws: Vec<Draw>,
     /// How many quads and draws frames have used lately (`keep_room`).
@@ -2150,6 +2295,12 @@ impl GpuRenderer {
             vertex_capacity: 4096,
             frame_quads: Vec::new(),
             frame_points: Vec::new(),
+            kept: None,
+            patch_stats: GpuStats::default(),
+            patched: false,
+            item_ranges: Vec::new(),
+            patch_clips: Vec::new(),
+            draw_made: false,
             frame_draws: Vec::new(),
             frame_peaks: (0, 0),
             visible_glyphs: Vec::new(),
@@ -2454,9 +2605,50 @@ impl GpuRenderer {
         if start.is_some_and(|root| !scene.contains(root)) {
             return Ok(GpuStats::default());
         }
-        let items = match &merged {
-            Some(regions) => scene.layer_items_within(start, Some(&self.plane_world(regions))),
-            None => scene.layer_items(start),
+        // Only leaves repainted since the window was drawn whole: their
+        // instances patched in place, the rest drawn as they were.
+        if let Some(regions) = &merged
+            && let Some(stats) = self.render_kept(scene, damage, regions, viewport)?
+        {
+            self.patched = true;
+            self.rendered_serial = Some(scene.flush_serial());
+            return Ok(stats);
+        }
+        // Kept up to date, drawn as usual this frame (little damage).
+        let maintained = self.kept.is_some();
+        let was_patched = std::mem::replace(&mut self.patched, maintained);
+        // Drawn whole and kept to patch from: a frame whole anyway (the
+        // first, a full repaint), or one after a patched frame, so that
+        // patching goes on after a change it can't patch.
+        let keep = !maintained
+            && self.plane.is_none()
+            && !self.in_layer
+            && self.copies.is_empty()
+            && !self.atlas_filling()
+            && !scene.has_backdrop_blur()
+            && !scene.has_overflow_fades()
+            && (self.fresh
+                || was_patched
+                || damage.iter().any(|d| {
+                    d.x <= 0.
+                        && d.y <= 0.
+                        && d.x + d.width >= viewport.width
+                        && d.y + d.height >= viewport.height
+                }));
+        if !maintained {
+            self.kept = None;
+        }
+        let mut inherited = Vec::new();
+        let (items, merged) = match &merged {
+            _ if keep => (
+                scene.layer_items_recorded(&mut inherited),
+                merged.map(|_| vec![viewport]),
+            ),
+            Some(regions) => (
+                scene.layer_items_within(start, Some(&self.plane_world(regions))),
+                merged,
+            ),
+            None => (scene.layer_items(start), merged),
         };
         // Around native views, only this plane's paint (planes.rs).
         let items = self.plane_items(items);
@@ -2468,7 +2660,18 @@ impl GpuRenderer {
             }
         }
         self.prepare_effects(scene, &items)?;
-        let mut stats = self.render_flat(scene, items, damage, merged)?;
+        // Kept only if every item draws flat (no layer, no effect) from
+        // what the scene marks when it changes.
+        let keep = keep
+            && self.effect_jobs.is_empty()
+            && items
+                .iter()
+                .all(|item| !item.isolated && !changes_unmarked(item.kind));
+        let mut stats = match keep {
+            true => self.render_keeping(scene, items, inherited, damage, merged, viewport)?,
+            false => self.render_flat::<FRAME>(scene, items, damage, merged, false)?,
+        };
+        stats.add_made(&std::mem::take(&mut self.patch_stats));
         self.rendered_serial = Some(scene.flush_serial());
         stats.layer_repaints = layer_stats.layer_repaints;
         stats.layer_cache_hits = layer_stats.layer_cache_hits;
@@ -2691,11 +2894,12 @@ impl GpuRenderer {
         let in_layer = std::mem::replace(&mut self.in_layer, true);
         // `fresh` repaints the whole texture, slack included, so an earlier
         // larger frame never bleeds into sampling at the content's edge.
-        let result = self.render_flat(
+        let result = self.render_flat::<FRAME>(
             scene,
             local,
             &[Rect::new(0., 0., bounds.width, bounds.height)],
             None,
+            false,
         );
         self.in_layer = in_layer;
         self.layer_origin = old_origin;
@@ -2832,36 +3036,277 @@ impl GpuRenderer {
             ],
         })
     }
+    /// Whether the glyph atlas is filling up: the next frame drawn as usual
+    /// recycles it.
+    #[inline(always)]
+    fn atlas_filling(&self) -> bool {
+        self.cursor.1 + self.cursor.2 > self.atlas_size * 3 / 4 || self.entries.len() >= 8192
+    }
+    /// Draw `items`, the window's whole paint as the walk found them with
+    /// what they `inherited`, and keep it to patch: their quads and draws
+    /// made with where each item's lie (`render_flat::<PATCH>`), then drawn
+    /// as made.
+    fn render_keeping(
+        &mut self,
+        scene: &Scene,
+        items: Vec<zgx::scene::PaintItem<'_>>,
+        inherited: Vec<zgx::scene::Inherited>,
+        damage: &[Rect],
+        merged: Option<Vec<Rect>>,
+        viewport: Rect,
+    ) -> Result<GpuStats, GpuError> {
+        let ids: Vec<NodeId> = items.iter().map(|item| item.id).collect();
+        self.patch_clips.clear();
+        let made =
+            self.render_flat::<PATCH>(scene, items, &[viewport], Some(vec![viewport]), true)?;
+        let ranges = std::mem::take(&mut self.item_ranges);
+        // Not shader fills or polylines, whose uniforms and points change
+        // without the scene marking their nodes.
+        self.draw_made = true;
+        if ranges.len() != ids.len()
+            || inherited.len() != ids.len()
+            || !self.frame_points.is_empty()
+            || self
+                .frame_draws
+                .iter()
+                .any(|draw| matches!(draw.shading, Shading::Fill(_) | Shading::Polyline))
+        {
+            self.item_ranges = ranges;
+            let mut drawn = self.render_flat::<FRAME>(scene, Vec::new(), damage, merged, false)?;
+            drawn.add_made(&made);
+            return Ok(drawn);
+        }
+        let len = self.frame_quads.len();
+        let draws = self.frame_draws.clone();
+        let clips = self.patch_clips.clone();
+        let mut drawn = self.render_flat::<FRAME>(scene, Vec::new(), damage, merged, false)?;
+        drawn.add_made(&made);
+        let mut quads = std::mem::take(&mut self.frame_quads);
+        // (Any copies a layer frame catches up with come after.)
+        quads.truncate(len);
+        let items: Vec<KeptItem> = ids
+            .into_iter()
+            .zip(inherited)
+            .zip(&ranges)
+            .map(
+                |((id, inherited), &(start, len, room, first, end))| KeptItem {
+                    id,
+                    inherited,
+                    start,
+                    len,
+                    room,
+                    draws: first..end,
+                },
+            )
+            .collect();
+        let mut by_node = FxHashMap::default();
+        for (index, item) in items.iter().enumerate().rev() {
+            by_node.insert(item.id, index as u32);
+        }
+        self.item_ranges = ranges;
+        self.kept = Some(Box::new(Kept {
+            quads,
+            draws,
+            clips,
+            items,
+            by_node,
+            flushes: *scene.repaints().0.end(),
+            revision: scene.content_revision(),
+            identity: scene.identity(),
+            atlas_epoch: self.atlas_epoch,
+            viewport,
+            scale: self.scale,
+            background: self.background,
+        }));
+        Ok(drawn)
+    }
+    /// Draw the window as it was kept, where the scene repainted only
+    /// leaves since: each one's instances made again (`render_flat::<PATCH>`,
+    /// as a frame makes them) into its place, every other item's as they
+    /// were. Only the repainted items are visited (the scene names them),
+    /// not the window's. `None` when it can't: then the frame is drawn as
+    /// usual.
+    fn render_kept(
+        &mut self,
+        scene: &Scene,
+        damage: &[Rect],
+        regions: &[Rect],
+        viewport: Rect,
+    ) -> Result<Option<GpuStats>, GpuError> {
+        let Some(mut kept) = self.kept.take() else {
+            return Ok(None);
+        };
+        let (covered, repaints) = scene.repaints();
+        // Kept while the scene and target are those it was drawn for, and
+        // the atlas keeps its glyphs where they were.
+        if *covered.start() != kept.flushes + 1
+            || kept.revision != scene.content_revision()
+            || kept.identity != scene.identity()
+            || kept.atlas_epoch != self.atlas_epoch
+            || kept.viewport != viewport
+            || kept.scale != self.scale
+            || kept.background != self.background
+            || self.fresh
+            || self.plane.is_some()
+            || self.in_layer
+            || !self.copies.is_empty()
+            || !self.effect_jobs.is_empty()
+            || scene.has_backdrop_blur()
+            || scene.has_overflow_fades()
+            || self.atlas_filling()
+        {
+            return Ok(None);
+        }
+        // The repainted items, worked out alone from what they inherited,
+        // with their places: only leaves, painting as many items as before
+        // (a box painting over what it holds has a border pass after it).
+        let mut items = Vec::new();
+        let mut places = Vec::new();
+        for &(id, flags) in repaints {
+            if flags & zgx::scene::repaint::COMPOSITE != 0
+                || !scene.contains(id)
+                || !scene.children(id).is_empty()
+            {
+                return Ok(None);
+            }
+            let Some(&first) = kept.by_node.get(&id) else {
+                return Ok(None);
+            };
+            let over = matches!(scene.kind(id),
+                NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } if quad.paints_over());
+            let count = 1 + usize::from(over);
+            let first = first as usize;
+            if kept.items[first..]
+                .iter()
+                .take_while(|item| item.id == id)
+                .count()
+                != count
+            {
+                return Ok(None);
+            }
+            for place in first..first + count {
+                let Some(item) = scene.item_in(id, &kept.items[place].inherited) else {
+                    return Ok(None);
+                };
+                items.push(item);
+                places.push(place);
+            }
+        }
+        self.patch_clips = std::mem::take(&mut kept.clips);
+        let mut stats =
+            self.render_flat::<PATCH>(scene, items, &[viewport], Some(vec![viewport]), false)?;
+        kept.clips = std::mem::take(&mut self.patch_clips);
+        let ranges = std::mem::take(&mut self.item_ranges);
+        // Into their places, unless one grew past its room, drew more draws
+        // or polylines (whose points a kept frame doesn't hold).
+        let fits = self.frame_points.is_empty()
+            && ranges.len() == places.len()
+            && ranges
+                .iter()
+                .zip(&places)
+                .all(|(&(_, len, _, first, end), &place)| {
+                    let item = &kept.items[place];
+                    len <= item.room && end - first == item.draws.end - item.draws.start
+                });
+        if fits {
+            for (&(start, len, _, first, end), &place) in ranges.iter().zip(&places) {
+                let item = &mut kept.items[place];
+                let (at, made) = (item.start as usize, len as usize);
+                kept.quads[at..at + made]
+                    .copy_from_slice(&self.frame_quads[start as usize..(start + len) as usize]);
+                // What a longer value left past this one's, emptied.
+                if made < item.len as usize {
+                    kept.quads[at + made..at + item.len as usize]
+                        .fill(bytemuck::Zeroable::zeroed());
+                }
+                item.len = len;
+                for (to, draw) in
+                    (item.draws.start..).zip(&self.frame_draws[first as usize..end as usize])
+                {
+                    kept.draws[to as usize] = Draw {
+                        start: draw.start - start + item.start,
+                        end: draw.end - start + item.start,
+                        ..draw.clone()
+                    };
+                }
+            }
+            stats.patched_items = places.len();
+        }
+        self.item_ranges = ranges;
+        if !fits {
+            // Drawn as usual, reporting what was made.
+            stats.patched_items = 0;
+            self.patch_stats = stats;
+            return Ok(None);
+        }
+        kept.flushes = *covered.end();
+        // Drawn from it when the damage covers enough of the window that
+        // making each damaged item again costs more than sending all of
+        // them as they are; otherwise drawn as usual, and kept up to date.
+        let area = |r: &Rect| r.width * r.height;
+        if regions.iter().map(area).sum::<f32>() < KEPT_SHARE * area(&viewport) {
+            self.kept = Some(kept);
+            stats.patched_items = 0;
+            self.patch_stats = stats;
+            return Ok(None);
+        }
+        let len = kept.quads.len();
+        std::mem::swap(&mut self.frame_quads, &mut kept.quads);
+        self.frame_draws.clone_from(&kept.draws);
+        self.patch_clips.clone_from(&kept.clips);
+        self.frame_points.clear();
+        self.draw_made = true;
+        let drawn =
+            self.render_flat::<FRAME>(scene, Vec::new(), damage, Some(regions.to_vec()), false);
+        std::mem::swap(&mut self.frame_quads, &mut kept.quads);
+        kept.quads.truncate(len);
+        let mut drawn = drawn?;
+        drawn.patched_items = stats.patched_items;
+        drawn.add_made(&stats);
+        self.kept = Some(kept);
+        Ok(Some(drawn))
+    }
     /// `merged`: `damage` merged into regions already (`merge_damage`).
-    fn render_flat(
+    fn render_flat<const MODE: u8>(
         &mut self,
         scene: &Scene,
         items: Vec<zgx::scene::PaintItem<'_>>,
         damage: &[Rect],
         merged: Option<Vec<Rect>>,
+        record: bool,
     ) -> Result<GpuStats, GpuError> {
         let mut stats = GpuStats::default();
-        let copies = if self.in_layer || self.fresh {
+        // Made already (a kept frame, patched, or one made to keep): drawn
+        // as it is (it holds its background).
+        let made = MODE != PATCH && std::mem::take(&mut self.draw_made);
+        let copies = if self.in_layer || self.fresh || MODE == PATCH {
             Vec::new()
         } else {
             std::mem::take(&mut self.copies)
         };
         // Effect slots `prepare_effects` planned for these items: drawn
         // before anything composites them.
-        let effect_jobs = std::mem::take(&mut self.effect_jobs);
+        let effect_jobs = match MODE {
+            PATCH => Vec::new(),
+            _ => std::mem::take(&mut self.effect_jobs),
+        };
         if damage.is_empty() && !self.fresh && copies.is_empty() {
             self.forget_effects(&effect_jobs);
             return Ok(stats);
         }
         // Earlier commands read the vertex and uniform buffers rewritten below.
-        self.flush_pending();
+        if MODE != PATCH {
+            self.flush_pending();
+        }
         let viewport = Rect::new(
             0.,
             0.,
             self.width as f32 / self.scale,
             self.height as f32 / self.scale,
         );
-        self.select_viewport(viewport.width, viewport.height);
+        if MODE != PATCH {
+            self.select_viewport(viewport.width, viewport.height);
+        }
         // Whether the scene's own damage covers the window (not a repaint
         // forced by a stale target): see `Deferred::direct`.
         let whole = damage.iter().any(|d| {
@@ -2877,7 +3322,8 @@ impl GpuRenderer {
         // dependency can reach another filter, so expand to a fixed point.
         let damage = if self.fresh {
             vec![viewport]
-        } else if has_blur {
+        } else if MODE != PATCH && has_blur {
+            // (Patching draws nothing: its damage is the window's.)
             let dependencies: Vec<_> = items
                 .iter()
                 .filter_map(|item| {
@@ -2899,8 +3345,12 @@ impl GpuRenderer {
             self.forget_effects(&effect_jobs);
             return Ok(stats);
         }
-        self.frame = self.frame.wrapping_add(1);
-        if self.cursor.1 + self.cursor.2 > self.atlas_size * 3 / 4 || self.entries.len() >= 8192 {
+        if MODE != PATCH {
+            self.frame = self.frame.wrapping_add(1);
+        }
+        // (A kept frame's glyphs stay where they are: patching it gave way
+        // before the atlas filled, `render_kept`.)
+        if MODE != PATCH && !made && self.atlas_filling() {
             // Filling again soon after the last recycle means the visible
             // working set does not fit: grow rather than re-rasterize every
             // glyph and icon each time it fills.
@@ -2917,24 +3367,50 @@ impl GpuRenderer {
             self.atlas_recycled_at = self.frame;
         }
         let mut quads = std::mem::take(&mut self.frame_quads);
-        quads.clear();
-        quads.push(Quad {
-            rect: [0., 0., viewport.width, viewport.height],
-            uv: [0.; 4],
-            color: rgba(self.background, 1.),
-            fade: [0.; 4],
-            options: [0.; 4],
-            shape: [0.; 4],
-            border: [0.; 4],
-            mask: NO_MASK,
-        });
+        if !made {
+            quads.clear();
+        }
+        if !made && (MODE != PATCH || record) {
+            quads.push(Quad {
+                rect: [0., 0., viewport.width, viewport.height],
+                uv: [0.; 4],
+                color: rgba(self.background, 1.),
+                fade: [0.; 4],
+                options: [0.; 4],
+                shape: [0.; 4],
+                border: [0.; 4],
+                mask: NO_MASK,
+            });
+        }
         let mut points = std::mem::take(&mut self.frame_points);
-        points.clear();
+        if !made {
+            points.clear();
+        }
         let mut draws = std::mem::take(&mut self.frame_draws);
-        // The clip regions quads lie in (`Quad::mask`).
-        let mut clips: Vec<Region> = Vec::new();
-        draws.clear();
+        // The clip regions quads lie in (`Quad::mask`): a kept frame's, to
+        // patch it, or those of a frame made already.
+        let mut clips: Vec<Region> = match MODE {
+            PATCH => std::mem::take(&mut self.patch_clips),
+            _ if made => std::mem::take(&mut self.patch_clips),
+            _ => Vec::new(),
+        };
+        if !made {
+            draws.clear();
+        }
+        // To keep or patch: where each item's quads and draws lie, noted as
+        // the next begins (an item may end anywhere in the loop's body).
+        let mut ranges = match MODE {
+            PATCH => std::mem::take(&mut self.item_ranges),
+            _ => Vec::new(),
+        };
+        ranges.clear();
+        let mut text = false;
         for item in items {
+            if MODE == PATCH {
+                close_range(&mut quads, &draws, &mut ranges, record && text);
+                ranges.push((quads.len() as u32, 0, 0, draws.len() as u32, u32::MAX));
+                text = matches!(item.kind, NodeKind::Text { .. });
+            }
             // Retained hidden subtrees must not allocate textures, shape text,
             // or trigger filters until their effective opacity is visible.
             if item.effects.opacity <= 0. {
@@ -3275,7 +3751,7 @@ impl GpuRenderer {
                             if let Some(old) = self.node_images.remove(&item.id) {
                                 self.images.remove(&old);
                             }
-                            let ramp = match self.ramps.get(&key) {
+                            let ramp = match get_in::<MODE, _, _>(&mut self.ramps, &key) {
                                 Some(ramp) => ramp.clone(),
                                 None => {
                                     let ramp = Arc::new(ramp_image(&key)?);
@@ -3287,7 +3763,7 @@ impl GpuRenderer {
                                 self.upload_image(&ramp)?;
                                 stats.image_uploads += 1;
                             }
-                            self.node_ramps.insert(item.id, key);
+                            insert_in::<MODE, _, _>(&mut self.node_ramps, item.id, key);
                             canvas_image = Some(ramp.id());
                             quads.push(Quad {
                                 rect: fade,
@@ -3450,7 +3926,8 @@ impl GpuRenderer {
                 }
                 #[cfg(target_os = "macos")]
                 NodeKind::NativeSurface(frame) => {
-                    if !self.images.contains_key(&frame.id()) {
+                    // (Never kept, so never patched: `changes_unmarked`.)
+                    if MODE != PATCH && !self.images.contains_key(&frame.id()) {
                         let bytes = frame.width() as usize
                             * frame.height() as usize
                             * if frame.format() == zgx::native_surface::SurfaceFormat::Bgra {
@@ -3758,7 +4235,7 @@ impl GpuRenderer {
                             if self.shaped_like.len() >= SHAPED_LIKE {
                                 self.shaped_like.clear();
                             }
-                            self.shaped_like.insert(content, item.id);
+                            insert_in::<MODE, _, _>(&mut self.shaped_like, content, item.id);
                         }
                     }
                     let snap = |value: f32| (value * self.scale).round() / self.scale;
@@ -3874,7 +4351,7 @@ impl GpuRenderer {
                             );
                             shaped.quads.reserve(shaped.glyphs.len());
                             for glyph in &shaped.glyphs {
-                                if let Some(a) = self.glyph(glyph.key, &mut stats)? {
+                                if let Some(a) = self.glyph::<MODE>(glyph.key, &mut stats)? {
                                     shaped.quads.push(Quad {
                                         rect: [
                                             (glyph.x + a.left as f32) / self.scale,
@@ -4012,6 +4489,15 @@ impl GpuRenderer {
                 let split = self.split_shading;
                 push_draw(&mut draws, &quads, draw, split, polylines, self.scale);
             }
+        }
+        if MODE == PATCH {
+            close_range(&mut quads, &draws, &mut ranges, record && text);
+            self.item_ranges = ranges;
+            self.frame_quads = quads;
+            self.frame_draws = draws;
+            self.frame_points = points;
+            self.patch_clips = clips;
+            return Ok(stats);
         }
         // Effect passes' quads ride in the frame's vertex buffer.
         let effect_first = quads.len() as u32;
@@ -5781,7 +6267,8 @@ impl GpuRenderer {
         self.visible_glyphs = visible;
         Ok(true)
     }
-    fn glyph(
+    #[inline(always)]
+    fn glyph<const MODE: u8>(
         &mut self,
         key: CacheKey,
         stats: &mut GpuStats,
@@ -5792,7 +6279,7 @@ impl GpuRenderer {
                 "glyph font size exceeds atlas raster limit".into(),
             ));
         }
-        if let Some(entry) = self.entries.get(&key) {
+        if let Some(entry) = get_in::<MODE, _, _>(&mut self.entries, &key) {
             return Ok(*entry);
         }
         self.raster_glyph(key, stats)
@@ -7037,6 +7524,7 @@ const RAMP: u32 = 256;
 /// (any other angle rasterizes): its ramp and the texture coordinates that
 /// stretch the ramp's ends to the gradient's (padded past them by the
 /// sampler's clamping).
+#[inline(always)]
 fn axis_gradient(style: &zgx::scene::QuadStyle, bounds: Rect) -> Option<(RampKey, [f32; 4])> {
     use zgx::{canvas::Point, decoration::Background};
     let (w, h) = (bounds.width, bounds.height);
@@ -7195,6 +7683,7 @@ fn background_quad(
 /// `outline` around a box of `style` at `bounds`: a ring of its width
 /// between the box grown by its offset and by its offset and width, each
 /// rounded corner grown alike (square ones stay square).
+#[inline(always)]
 fn outline_quad(
     outline: &zgx::scene::Outline,
     style: &zgx::scene::QuadStyle,

@@ -65,6 +65,8 @@ struct Window {
     ui: Ui,
     gpu: GpuRenderer,
     live: Signal<u32>,
+    /// Frames patched into the window as kept (`render_kept`).
+    patched: usize,
 }
 #[cfg(target_os = "macos")]
 impl Window {
@@ -81,12 +83,14 @@ impl Window {
             ui,
             gpu,
             live: state,
+            patched: 0,
         }
     }
     fn show(&mut self) -> Vec<u8> {
         self.ui.prepare_frame();
         let damage = self.ui.scene.borrow_mut().flush().damage;
-        self.gpu.render(&self.ui.scene.borrow(), &damage).unwrap();
+        let stats = self.gpu.render(&self.ui.scene.borrow(), &damage).unwrap();
+        self.patched += usize::from(stats.patched_items > 0);
         self.gpu.present().unwrap();
         self.gpu.shown_pixels().expect("a surface shown").2
     }
@@ -106,6 +110,9 @@ fn scattered_damage_presented_through_surfaces_matches_drawing_whole() {
             "frame {live}: the surface shown differs from the scene drawn whole"
         );
     }
+    // Only leaves change: frames patch the window as kept, each surface
+    // then brought up to date around them.
+    assert!(window.patched > 0, "no frame patched");
 }
 
 fn main() {
