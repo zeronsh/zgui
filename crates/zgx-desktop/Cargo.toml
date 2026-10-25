@@ -51,6 +51,11 @@ fontdue = "0.9.3"
 cosmic-text = { package = "zgx-cosmic-text", version = "0.19.1", path = "../../vendor/cosmic-text" }
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
 accesskit = "0.24.1"
+# The adapters' (through accesskit_winit), named for its `links` metadata:
+# with the repository's (vendor/accesskit_consumer) a field's error message
+# goes to the platform as its own (build.rs, `zgx_accesskit_patched`). The
+# tests read through it too.
+accesskit_consumer = "0.38.0"
 unicode-segmentation = "1.12"
 accesskit_winit = "0.33.2"
 rfd = "=0.17.2"
@@ -118,7 +123,6 @@ zgx-script = { path = "../zgx-script", version = "0.1.0", optional = true }
 [dev-dependencies]
 # The components the Linux probe's example shows (`components_probe`).
 zgx-components = { path = "../zgx-components" }
-accesskit_consumer = "0.38.0"
 # The terminal example's interface is a Luau script. Image formats come
 # through this crate's own features.
 zgx-script = { path = "../zgx-script", default-features = false }

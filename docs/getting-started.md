@@ -25,7 +25,7 @@ zgx-desktop = "0.1"
 zgx-components = "0.1"
 ```
 
-That builds as it is: zgx's own forks (of cosmic-text, taffy and mlua) come with it as crates of their own. A few more of its dependencies are patched in zgx's repository alone (winit, wgpu-hal, the AccessKit adapters), and an app gets their releases instead, which zgx builds with, short of those fixes: Wayland popups open in their window, Metal frames take more command buffers, VoiceOver misses headings and grid rows ([releasing](releasing.md) lists them). To have them too, add the patches your app's build then takes from zgx's repository (a dependency's `[patch]` never reaches an app):
+That builds as it is: zgx's own forks (of cosmic-text, taffy and mlua) come with it as crates of their own. A few more of its dependencies are patched in zgx's repository alone (winit, wgpu-hal, the AccessKit adapters), and an app gets their releases instead, which zgx builds with, short of those fixes: Wayland popups open in their window, Metal frames take more command buffers, VoiceOver misses headings and grid rows, a field's error message is said only in its description ([releasing](releasing.md) lists them). To have them too, add the patches your app's build then takes from zgx's repository (a dependency's `[patch]` never reaches an app):
 
 ```toml
 [patch.crates-io]
@@ -35,6 +35,7 @@ accesskit_macos = { git = "https://github.com/zeronsh/zgx" }
 accesskit_windows = { git = "https://github.com/zeronsh/zgx" }
 accesskit_unix = { git = "https://github.com/zeronsh/zgx" }
 accesskit_atspi_common = { git = "https://github.com/zeronsh/zgx" }
+accesskit_consumer = { git = "https://github.com/zeronsh/zgx" }
 ```
 
 The first build compiles the stack once (about a minute on an Apple M-series Mac, release); later ones take seconds.

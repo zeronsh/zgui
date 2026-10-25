@@ -43,8 +43,16 @@ Chromium give it:
 4. `accesskit_unix/Cargo.toml`: built alone, it takes the vendored
    `accesskit_atspi_common`.
 
+5. `accesskit_atspi_common/src/node.rs`: a form field's error
+   (`aria-invalid`, `aria-errormessage`), from the vendored
+   accesskit_consumer (vendor/accesskit_consumer/ZGX_PATCH.md): the
+   `invalid-entry` state while it is invalid, its error message node as an
+   `ErrorMessage` relation (as Orca reads it), and the nodes that describe
+   it as `DescribedBy`. The crate's `accesskit_consumer` dependency is the
+   vendored one (`path`).
+
 zgx-desktop's `atspi_tests` (`src/accessibility.rs`, Linux) read a zgx
-data grid and tree through the patched adapter.
+data grid and tree, and an invalid field, through the patched adapter.
 Run the vendored tests with
 `cargo test --manifest-path vendor/accesskit_atspi_common/Cargo.toml --target-dir target`.
 

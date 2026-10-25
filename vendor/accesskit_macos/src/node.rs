@@ -315,7 +315,19 @@ impl NodeWrapper<'_> {
     }
 
     pub(crate) fn description(&self) -> Option<String> {
-        self.0.description()
+        // zgx patch: an invalid field's error message (`aria-errormessage`)
+        // read after its description, as Safari gives it in AXHelp.
+        let error = self
+            .0
+            .error_message()
+            .filter(|_| self.0.is_invalid())
+            .and_then(|message| message.value().or_else(|| message.label()))
+            .filter(|text| !text.is_empty());
+        match (self.0.description(), error) {
+            (Some(description), Some(error)) => Some(format!("{description}. {error}")),
+            (description, None) => description,
+            (None, error) => error,
+        }
     }
 
     pub(crate) fn placeholder(&self) -> Option<&str> {
@@ -1078,6 +1090,9 @@ declare_class!(
                     return Some(NSString::from_str(node.braille_label().unwrap()))
                 } else if attr == ns_string!("AXBrailleRoleDescription") && node.has_braille_role_description() {
                     return Some(NSString::from_str(node.braille_role_description().unwrap()))
+                } else if attr == ns_string!("AXInvalid") {
+                    // zgx patch: `aria-invalid`, as WebKit gives it.
+                    return Some(NSString::from_str(if node.is_invalid() { "true" } else { "false" }))
                 }
 
                 None

@@ -29,6 +29,17 @@ WebView2 set it. 0.35.1 and upstream main still leave it out.
    whose text is a child, had no UIA Name: Narrator's table navigation read
    them as blank. Tested by `src/tests/cell_name.rs`.
 
+4. A form field's error (`aria-invalid`, `aria-errormessage`), from the
+   vendored accesskit_consumer (vendor/accesskit_consumer/ZGX_PATCH.md):
+   `IsDataValidForForm` is false while the field is invalid; its error
+   message node is among its `ControllerFor`, as Edge gives
+   `aria-errormessage`, and its text follows the description in
+   `FullDescription`, so Narrator reads it with the field;
+   `DescribedBy` gives the nodes that describe it (`src/node.rs`,
+   `description`, `is_data_valid_for_form`, the `ControllerFor` and
+   `DescribedBy` properties). The crate's `accesskit_consumer` dependency
+   is the vendored one (`path`), so it builds alone too.
+
 Run the crate's tests on Windows with
 `cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --locked`.
 Upstream's `simple::focus` brings its window to the foreground, and fails

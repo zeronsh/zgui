@@ -26,11 +26,11 @@ Each keeps its upstream's license files, authors and library name (`harfrust`, `
 
 ## What stays patched in the repository alone
 
-The workspace's `[patch.crates-io]` keeps the rest: wgpu-hal (Metal command buffers made lazily and never empty, a Direct3D 12 adapter exposed without opening the others), winit (a Wayland window's `xdg_surface`, X11's `_NET_WM_SYNC_REQUEST` and `_NET_WM_USER_TIME`), and the AccessKit adapters for macOS, Windows and Linux (headings, grid rows, tables, tree items). Forking them would mean forking what depends on them too (wgpu, accesskit_winit). An app depending on zgx from crates.io gets their releases instead, and zgx builds and runs with them, without those fixes:
+The workspace's `[patch.crates-io]` keeps the rest: wgpu-hal (Metal command buffers made lazily and never empty, a Direct3D 12 adapter exposed without opening the others), winit (a Wayland window's `xdg_surface`, X11's `_NET_WM_SYNC_REQUEST` and `_NET_WM_USER_TIME`), and AccessKit's consumer and adapters for macOS, Windows and Linux (headings, grid rows, tables, tree items, a field's error message). Forking them would mean forking what depends on them too (wgpu, accesskit_winit). An app depending on zgx from crates.io gets their releases instead, and zgx builds and runs with them, without those fixes:
 
 - **winit**: Wayland popups open in their window, as on a compositor without `xdg_popup`, instead of as popup surfaces of their own. The X11 changes are behaviour alone: a window manager's resize no longer waits for frames, and focus-stealing prevention sees no user time.
 - **wgpu-hal**: Metal frames take upstream's command buffers (more per submission); on Windows, `request_adapter` ranks the adapters, opening a device on each.
-- **AccessKit**: VoiceOver's rotor misses headings and its table navigation finds no grid rows; Narrator and Orca lose what their patches add. Everything else reads as before.
+- **AccessKit**: VoiceOver's rotor misses headings and its table navigation finds no grid rows; Narrator and Orca lose what their patches add. An invalid field's error is said in its description rather than as the platform's own invalid flag and error message. Everything else reads as before.
 
 Where a patch adds an API zgx calls (winit's `xdg_surface`, wgpu-hal's `expose_preferred_adapter`), zgx detects it at build time: the vendored crate carries `links` metadata (`links = "zgx_winit"`, `"zgx_wgpu_hal"`) whose `patched` key reaches the build scripts of the crates depending on it (zgx-desktop, zgx-gpu), which set `zgx_winit_patched` and `zgx_wgpu_hal_patched`. With crates.io's crates neither is set, and the fallback above is compiled. Nothing to enable: a build in the repository has every patch, any other has none.
 

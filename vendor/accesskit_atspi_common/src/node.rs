@@ -323,6 +323,10 @@ impl NodeWrapper<'_> {
         if state.is_required() {
             atspi_state.insert(State::Required);
         }
+        // zgx patch: `aria-invalid`.
+        if state.is_invalid() {
+            atspi_state.insert(State::InvalidEntry);
+        }
         if state.is_multiselectable() {
             atspi_state.insert(State::Multiselectable);
         }
@@ -958,10 +962,28 @@ impl PlatformNode {
                 .controls()
                 .filter(|controlled| filter(controlled) == FilterResult::Include)
                 .map(|controlled| controlled.id())
-                .map(f)
+                .map(&f)
                 .collect();
             if !controls.is_empty() {
                 relations.insert(RelationType::ControllerFor, controls);
+            }
+            // zgx patch: an invalid field's error message
+            // (`aria-errormessage`) and what describes a node
+            // (`aria-describedby`), as Orca reads them.
+            if let Some(message) = node
+                .error_message()
+                .filter(|message| node.is_invalid() && filter(message) == FilterResult::Include)
+            {
+                relations.insert(RelationType::ErrorMessage, vec![f(message.id())]);
+            }
+            let describing: Vec<_> = node
+                .described_by()
+                .filter(|describing| filter(describing) == FilterResult::Include)
+                .map(|describing| describing.id())
+                .map(&f)
+                .collect();
+            if !describing.is_empty() {
+                relations.insert(RelationType::DescribedBy, describing);
             }
             Ok(relations)
         })

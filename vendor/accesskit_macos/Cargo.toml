@@ -45,6 +45,9 @@ version = "0.24.1"
 
 [dependencies.accesskit_consumer]
 version = "0.38.0"
+# zgx patch: the vendored consumer, whose `is_invalid`, `error_message` and
+# `described_by` this adapter reads (vendor/accesskit_consumer/ZGX_PATCH.md).
+path = "../accesskit_consumer"
 
 [dependencies.hashbrown]
 version = "0.16"

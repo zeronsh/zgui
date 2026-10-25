@@ -426,11 +426,29 @@ impl NodeWrapper<'_> {
     }
 
     fn description(&mut self) -> Option<WideString<'_>> {
-        self.node.description().map(|s| {
+        // zgx patch: an invalid field's error message (`aria-errormessage`)
+        // after its description, so Narrator reads it with the field.
+        let error = self
+            .node
+            .error_message()
+            .filter(|_| self.node.is_invalid())
+            .and_then(|message| message.value().or_else(|| message.label()))
+            .filter(|text| !text.is_empty());
+        let text = match (self.node.description(), error) {
+            (Some(description), Some(error)) => Some(format!("{description}. {error}")),
+            (description, None) => description,
+            (None, error) => error,
+        };
+        text.map(|s| {
             let mut result = WideString::new(self.string_buffer);
             result.write_str(&s).unwrap();
             result
         })
+    }
+
+    // zgx patch: `aria-invalid`.
+    fn is_data_valid_for_form(&self) -> bool {
+        !self.node.is_invalid()
     }
 
     fn culture(&self) -> Option<LocaleName<'_>> {
@@ -1066,14 +1084,30 @@ impl IRawElementProviderSimple_Impl for PlatformNode_Impl {
                         result = toolkit_description(state, &mut buffer).into()
                     }
                     UIA_ControllerForPropertyId => {
+                        // zgx patch: an invalid field's error message is
+                        // among what it controls, as Edge gives
+                        // `aria-errormessage`.
+                        let error = node.error_message().filter(|_| node.is_invalid());
                         let controlled: Vec<IUnknown> = node
                             .controls()
+                            .chain(error)
                             .filter(|controlled| filter(controlled) == FilterResult::Include)
                             .map(|controlled| context.get_or_create_platform_node(controlled.id()))
                             .map(|result| result.into_interface::<IRawElementProviderSimple>())
                             .filter_map(|controlled| controlled.cast::<IUnknown>().ok())
                             .collect();
                         result = controlled.into();
+                    }
+                    // zgx patch: `aria-describedby`.
+                    UIA_DescribedByPropertyId => {
+                        let describing: Vec<IUnknown> = node
+                            .described_by()
+                            .filter(|describing| filter(describing) == FilterResult::Include)
+                            .map(|describing| context.get_or_create_platform_node(describing.id()))
+                            .map(|result| result.into_interface::<IRawElementProviderSimple>())
+                            .filter_map(|describing| describing.cast::<IUnknown>().ok())
+                            .collect();
+                        result = describing.into();
                     }
                     _ => (),
                 }
@@ -1345,6 +1379,7 @@ properties! {
     (UIA_ClassNamePropertyId, class_name),
     (UIA_OrientationPropertyId, orientation),
     (UIA_IsRequiredForFormPropertyId, is_required),
+    (UIA_IsDataValidForFormPropertyId, is_data_valid_for_form),
     (UIA_IsPasswordPropertyId, is_password),
     (UIA_LevelPropertyId, level),
     // zgx patch: see heading_level.

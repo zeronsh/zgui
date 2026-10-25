@@ -26,4 +26,13 @@ their `AXValue`, which VoiceOver reads ("heading level 2").
    so its table navigation found nothing. Checked by
    `scripts/macos_accessibility_probe.py`.
 
+4. A form field's error (`aria-invalid`, `aria-errormessage`): `AXInvalid`
+   is `"true"` while the field is invalid, `"false"` otherwise, as WebKit
+   gives it, and the error message's text follows the field's
+   description in `accessibilityHelp` (`AXHelp`), as Safari reads
+   `aria-errormessage` (`src/node.rs`, `description` and
+   `accessibility_attribute_value`). It uses the vendored
+   accesskit_consumer's `is_invalid` and `error_message`
+   (vendor/accesskit_consumer/ZGX_PATCH.md).
+
 Drop the patch when an upstream release does the same.

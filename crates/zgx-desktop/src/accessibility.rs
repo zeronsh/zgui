@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use unicode_segmentation::UnicodeSegmentation;
 use zgx::{
     scene::{NodeId, Scene},
-    semantics::{Live, Role, ScrollAxis, SemanticRevision, Semantics},
+    semantics::{Live, Role, ScrollAxis, SemanticNode, SemanticRevision, Semantics},
 };
 
 /// How often assistive technology hears of geometry alone changing (things
@@ -346,6 +346,12 @@ impl AccessibilityTree {
         self.text_runs.retain(|owner, _| visible.contains(owner));
         self.blocks.retain(|owner| visible.contains(owner));
         self.long_runs.retain(|owner, _| visible.contains(owner));
+        // Fields saying what is wrong with them, and the text that shows it.
+        let error_shown = if semantics.has_errors() {
+            error_texts(scene, semantics, &ordered)
+        } else {
+            HashMap::new()
+        };
         let mut nodes = Vec::with_capacity(ordered.len() + 1);
         // Selectable regions projected now, and their selections: set once
         // their labels' runs are.
@@ -466,10 +472,22 @@ impl AccessibilityTree {
                 Some(Live::Assertive) => n.set_live(accesskit::Live::Assertive),
                 None => {}
             }
-            // An invalid field's error: flagged, and (as the platforms'
-            // adapters read neither the flag nor its error message) said
-            // after its description, so it is heard as the field is reached.
+            // An invalid field's error: flagged, and pointing at the text
+            // that shows it (`aria-errormessage`), which the repository's
+            // adapters give the platform as the field's. Otherwise (no such
+            // text, or crates.io's adapters, which read neither) it is said
+            // after the description, so it is heard as the field is reached.
             let error = semantics.error(id);
+            let shown = error_shown.get(&id).copied();
+            if error.is_some() {
+                n.set_invalid(accesskit::Invalid::True);
+                if let Some(target) = shown {
+                    let target = self.id(target);
+                    n.set_error_message(target);
+                    n.push_described_by(target);
+                }
+            }
+            let error = error.filter(|_| !cfg!(zgx_accesskit_patched) || shown.is_none());
             match (&semantic.description, error) {
                 (Some(description), Some(error)) => {
                     n.set_description(format!("{description}. {error}"))
@@ -478,9 +496,7 @@ impl AccessibilityTree {
                 (None, Some(error)) => n.set_description(error.to_owned()),
                 (None, None) => {}
             }
-            if error.is_some() {
-                n.set_invalid(accesskit::Invalid::True);
-            }
+
             // A heading's text is its name and its runs; its value is left
             // to the platform (its level, on macOS), or the document would
             // read it twice.
@@ -935,6 +951,35 @@ pub(crate) fn scroll_action(ui: &zgx::widgets::Ui, node: NodeId, action: Action)
         },
     );
     true
+}
+
+/// Each invalid field's error text as shown: the first label after it, in
+/// the nearest of its three closest ancestors holding one, that says what
+/// its error says.
+fn error_texts(
+    scene: &Scene,
+    semantics: &Semantics,
+    ordered: &[(NodeId, &SemanticNode)],
+) -> HashMap<NodeId, NodeId> {
+    let mut out = HashMap::new();
+    for (i, (field, _)) in ordered.iter().enumerate() {
+        let Some(error) = semantics.error(*field) else {
+            continue;
+        };
+        let after = &ordered[i + 1..];
+        let found = scene.ancestors(*field).take(3).find_map(|holder| {
+            after.iter().find_map(|(id, s)| {
+                (s.role == Role::Label
+                    && s.value.as_deref().unwrap_or(&s.label) == error
+                    && scene.is_within(*id, holder))
+                .then_some(*id)
+            })
+        });
+        if let Some(text) = found {
+            out.insert(*field, text);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -2031,6 +2076,50 @@ mod vocabulary_tests {
     }
 
     #[test]
+    fn a_field_points_at_the_text_showing_its_error() {
+        let mut ui = Ui::new(400., 300.);
+        ui.set_assistive_technology(true);
+        ui.mount(
+            column().child(text("Wrong")).child(
+                column()
+                    .child(
+                        button()
+                            .error_when(|| Some("Wrong".into()))
+                            .child(text("Email")),
+                    )
+                    .child(text("Wrong")),
+            ),
+        );
+        ui.prepare_frame();
+        let nodes = AccessibilityTree::new()
+            .update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "Test", 1.)
+            .nodes;
+        let (_, button) = nodes
+            .iter()
+            .find(|(_, n)| n.role() == accesskit::Role::Button)
+            .unwrap();
+        assert_eq!(button.invalid(), Some(accesskit::Invalid::True));
+        // The text after it, in what holds it: not the one before.
+        let wrong: Vec<_> = nodes
+            .iter()
+            .filter(|(_, n)| n.role() == accesskit::Role::Label && n.value() == Some("Wrong"))
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(wrong.len(), 2);
+        let shown = button.error_message().expect("its error message");
+        assert_eq!(shown, wrong[1]);
+        assert_eq!(button.described_by(), [shown]);
+        // With the repository's adapters, which read the message, it is not
+        // said again in the description.
+        let said = if cfg!(zgx_accesskit_patched) {
+            None
+        } else {
+            Some("Wrong")
+        };
+        assert_eq!(button.description(), said);
+    }
+
+    #[test]
     fn empty_text_leaves_the_tree_until_it_says_something() {
         let mut ui = Ui::new(400., 300.);
         let count = ui.signal(String::new());
@@ -2225,6 +2314,68 @@ mod atspi_tests {
         assert!(state("Alpha").contains(State::Expandable | State::Expanded));
         assert!(state("Beta").contains(State::Expandable | State::Collapsed));
         assert!(!state("Apple").contains(State::Expandable));
+    }
+
+    #[test]
+    fn an_invalid_field_has_its_error_message_as_a_relation() {
+        use accesskit_atspi_common::RelationType;
+        let mut ui = Ui::new(400., 300.);
+        ui.set_assistive_technology(true);
+        let error = || Some("An email is required".to_string());
+        ui.mount(
+            column()
+                .child(button().error_when(error).child(text("Email")))
+                .child(text("An email is required"))
+                .child(
+                    button()
+                        .error_when(|| Some("Too long".into()))
+                        .child(text("Name")),
+                ),
+        );
+        ui.prepare_frame();
+        let update = AccessibilityTree::new().update(
+            &ui.scene.borrow(),
+            &ui.semantics.borrow(),
+            None,
+            "Test",
+            1.,
+        );
+        let adapter = Adapter::new(
+            &AppContext::new(None),
+            Quiet,
+            update,
+            true,
+            WindowBounds::default(),
+            Ignore,
+        );
+        let mut nodes = Vec::new();
+        walk(
+            &adapter,
+            adapter.platform_node(adapter.root_id()),
+            &mut nodes,
+        );
+        let named = |name: &str| {
+            nodes
+                .iter()
+                .find(|n| n.name().unwrap() == name)
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let email = named("Email");
+        assert!(email.state().contains(State::InvalidEntry));
+        let relations = email.relation_set(|id| id).unwrap();
+        let message = relations[&RelationType::ErrorMessage][0];
+        assert_eq!(
+            adapter.platform_node(message).role().unwrap(),
+            AtspiRole::Label
+        );
+        assert_eq!(relations[&RelationType::DescribedBy], vec![message]);
+        // Shown as its own text: not said again in the description.
+        assert_eq!(email.description().unwrap(), "");
+        // Not shown anywhere: said in the description, with no relation.
+        let name = named("Name");
+        assert!(name.state().contains(State::InvalidEntry));
+        assert!(name.relation_set(|id| id).unwrap().is_empty());
+        assert_eq!(name.description().unwrap(), "Too long");
     }
 }
 
