@@ -115,7 +115,7 @@ def main():
                 rows.append(row)
                 time.sleep(2)
     with (out / 'gputrace.csv').open('w', newline='') as handle:
-        writer = csv.DictWriter(handle, fieldnames=['framework', 'mode', 'repeat', *TRACE])
+        writer = csv.DictWriter(handle, fieldnames=['framework', 'mode', 'repeat', *TRACE], lineterminator='\n')
         writer.writeheader()
         writer.writerows(rows)
     groups = []

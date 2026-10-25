@@ -133,7 +133,7 @@ def main():
     pathlib.Path(args.output + ".metadata.json").write_text(json.dumps(metadata, indent=2))
     fields = ["framework", "mode", "repeat", "wall_seconds", "cpu_seconds", "cpu_percent_one_core", "mean_rss_bytes", "peak_rss_bytes", "samples", "workload_ticks", "exit_code"]
     with open(args.output, "w", newline="") as out:
-        writer = csv.DictWriter(out, fieldnames=fields)
+        writer = csv.DictWriter(out, fieldnames=fields, lineterminator='\n')
         writer.writeheader()
         for repeat in range(args.repeats):
             # Rotate ordering to reduce systematic thermal/order bias.

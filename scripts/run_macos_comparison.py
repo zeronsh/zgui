@@ -273,7 +273,7 @@ def group(rows, keys, framework, mode):
 
 def write_csv(path, fields, rows):
     with path.open('w', newline='') as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction='ignore')
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction='ignore', lineterminator='\n')
         writer.writeheader()
         writer.writerows(rows)
 

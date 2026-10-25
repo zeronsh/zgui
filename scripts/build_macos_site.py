@@ -60,7 +60,7 @@ a.output.mkdir(parents=True, exist_ok=True)
 fields = ['framework', 'mode', 'repeat', 'wall_seconds', 'cpu_seconds', 'cpu_percent_one_core', 'mean_footprint_bytes',
           'peak_footprint_bytes', 'mean_rss_bytes', 'peak_rss_bytes', 'samples', 'workload_ticks', 'exit_code', 'terminated_after_report']
 with (a.output / 'data.csv').open('w', newline='') as output:
-    writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore', lineterminator='\n')
     writer.writeheader()
     writer.writerows(trials)
 env = audit['environment']
