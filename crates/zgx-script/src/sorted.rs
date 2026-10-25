@@ -527,6 +527,9 @@ impl Kept {
     }
     /// Items `changed` judged again and put back in their places: taken out
     /// in one pass, sorted among themselves, merged back in another.
+    // Kept out of the view's effect: inlined there it changes how the
+    // whole sort (the same effect's other path) is compiled.
+    #[inline(never)]
     fn update(
         &mut self,
         vm: &Vm,
@@ -553,19 +556,22 @@ impl Kept {
             .filter(|i| self.kept[*i as usize])
             .collect();
         placed.sort_unstable_by(|a, b| self.before(spec.descending, *a, *b));
+        // Each placed one's place among the rest, found by halving (a few
+        // hundred rows placed in 100,000 compare a few thousand times, not
+        // 100,000), then the runs between them copied whole.
         let mut merged = Vec::with_capacity(self.order.len() + placed.len());
-        let (mut a, mut b) = (0, 0);
-        while a < self.order.len() && b < placed.len() {
-            if self.before(spec.descending, placed[b], self.order[a]) == Ordering::Less {
-                merged.push(placed[b]);
-                b += 1;
-            } else {
-                merged.push(self.order[a]);
-                a += 1;
-            }
+        let mut from = 0;
+        for &item in &placed {
+            let rest = &self.order[from..];
+            let at = from
+                + rest.partition_point(|&other| {
+                    self.before(spec.descending, other, item) == Ordering::Less
+                });
+            merged.extend_from_slice(&self.order[from..at]);
+            merged.push(item);
+            from = at;
         }
-        merged.extend_from_slice(&self.order[a..]);
-        merged.extend_from_slice(&placed[b..]);
+        merged.extend_from_slice(&self.order[from..]);
         self.order = merged;
         Ok(())
     }
