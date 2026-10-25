@@ -21,7 +21,13 @@ use zgx::{
 };
 use zgx_script::{ScriptHost, testing::TestApp};
 
-const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples");
+/// The example apps' directory: `ZGX_EXAMPLES`, else this crate's. A binary
+/// kept to run against a later checkout (the instruction gate's base) is
+/// pointed at its own commit's scripts, not the checkout it was built in.
+fn examples() -> String {
+    std::env::var("ZGX_EXAMPLES")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/examples").to_string())
+}
 
 /// A size from the environment, else `default`.
 fn size(name: &str, default: usize) -> usize {
@@ -88,7 +94,7 @@ impl Bench {
         make: MakeDrawing,
         setup: impl FnOnce(&mut TestApp),
     ) -> Self {
-        let path = format!("{EXAMPLES}/{script}/app.luau");
+        let path = format!("{}/{script}/app.luau", examples());
         let mut app = TestApp::with_desktop(|runtime| {
             ScriptHost::new(runtime, path)
                 .limits(bench_limits::limits())
