@@ -371,6 +371,13 @@ fn code(make: MakeDrawing) {
             b.app.key(Key::Backspace);
         }
     });
+    // Every query new (a letter more each time, never searched before):
+    // the whole text read, where the keystroke above, a letter typed and
+    // taken back, is answered from the searches kept.
+    b.measure("code: find-all, a new letter", |b, k| {
+        let letter = char::from(b'a' + (k % 26) as u8);
+        b.app.ui.dispatch(InputEvent::Text(letter.to_string()));
+    });
     let _ = std::fs::remove_file(&path);
 }
 
