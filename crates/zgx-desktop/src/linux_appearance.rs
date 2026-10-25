@@ -66,6 +66,9 @@ pub(crate) struct Appearance {
     /// Whether a middle click pastes the primary selection (GNOME's
     /// `gtk-enable-primary-paste`, on by default).
     pub primary_paste: Option<bool>,
+    /// What a double click on a title bar does (GNOME's
+    /// `action-double-click-titlebar`).
+    pub titlebar_double_click: Option<crate::window_chrome::TitlebarAction>,
 }
 
 static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
@@ -80,6 +83,7 @@ static CURRENT: Mutex<Appearance> = Mutex::new(Appearance {
     drag_threshold: None,
     overlay_scrolling: None,
     primary_paste: None,
+    titlebar_double_click: None,
 });
 
 /// The settings as last read (the default until the portal answers).
@@ -176,6 +180,7 @@ fn read(connection: &Connection, budget: Duration) -> (Appearance, bool) {
         (KDE, "StartDragDist"),
         (GNOME, "overlay-scrolling"),
         (GNOME, "gtk-enable-primary-paste"),
+        (GNOME_WM, "action-double-click-titlebar"),
     ] {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -252,6 +257,11 @@ fn apply(appearance: &mut Appearance, namespace: &str, key: &str, value: &dyn Re
                 .or_else(|| value.as_str()?.trim().parse().ok())
                 .and_then(|pixels| u32::try_from(pixels).ok())
                 .filter(|&pixels| pixels > 0)
+        }
+        (GNOME_WM, "action-double-click-titlebar") => {
+            appearance.titlebar_double_click = value
+                .as_str()
+                .map(crate::window_chrome::TitlebarAction::parse)
         }
         (GNOME_WM, "button-layout") => {
             appearance.buttons = value
@@ -391,6 +401,25 @@ mod tests {
         assert_eq!(a.overlay_scrolling, Some(false), "scrollbars always shown");
         apply(&mut a, GNOME, "overlay-scrolling", &true);
         assert_eq!(a.overlay_scrolling, Some(true));
+        {
+            use crate::window_chrome::TitlebarAction::*;
+            for (name, action) in [
+                ("toggle-maximize", ToggleMaximize),
+                ("toggle-maximize-vertically", ToggleMaximize),
+                ("minimize", Minimize),
+                ("menu", Menu),
+                ("none", Nothing),
+                ("lower", Nothing),
+            ] {
+                apply(
+                    &mut a,
+                    GNOME_WM,
+                    "action-double-click-titlebar",
+                    &name.to_owned(),
+                );
+                assert_eq!(a.titlebar_double_click, Some(action), "{name}");
+            }
+        }
         apply(&mut a, GNOME, "gtk-enable-primary-paste", &false);
         assert_eq!(
             a.primary_paste,

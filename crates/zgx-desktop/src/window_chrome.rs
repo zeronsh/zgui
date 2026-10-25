@@ -1582,6 +1582,40 @@ mod linux {
 /// A double click in a window drag region: what a double click on the title
 /// bar does. macOS follows the system setting (zoom, minimize or nothing);
 /// elsewhere the window toggles maximized.
+/// What a double click on a Linux window's title bar does: GNOME's
+/// `action-double-click-titlebar` (GTK's `gtk-titlebar-double-click`, on X11
+/// the session's XSETTINGS `Gtk/TitlebarDoubleClick`), as GTK's header bars
+/// follow it. `lower` and `toggle-shade`, which winit cannot ask of the
+/// window manager, do nothing, as GTK's do on Wayland.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum TitlebarAction {
+    ToggleMaximize,
+    Minimize,
+    Menu,
+    Nothing,
+}
+#[cfg(target_os = "linux")]
+impl TitlebarAction {
+    pub(crate) fn parse(action: &str) -> Self {
+        match action {
+            "minimize" => Self::Minimize,
+            "menu" => Self::Menu,
+            "none" | "lower" | "toggle-shade" => Self::Nothing,
+            // And `toggle-maximize-horizontally`, `-vertically`.
+            _ => Self::ToggleMaximize,
+        }
+    }
+    /// The desktop's: on X11 the session's XSETTINGS first, then the
+    /// settings portal's; GNOME's default, toggle-maximize, without either.
+    pub(crate) fn current() -> Self {
+        crate::x11_settings::current()
+            .titlebar_double_click
+            .or(crate::linux_appearance::current().titlebar_double_click)
+            .unwrap_or(Self::ToggleMaximize)
+    }
+}
+
 pub(crate) fn double_click(window: &winit::window::Window) {
     #[cfg(target_os = "macos")]
     mac::double_click(window);

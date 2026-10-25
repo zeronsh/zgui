@@ -42,6 +42,8 @@ pub(crate) struct Settings {
     /// The family of `Gtk/FontName`, the interface font (a Pango
     /// description, `"Noto Sans 10"`).
     pub font: Option<String>,
+    /// `Gtk/TitlebarDoubleClick`: what a double click on a title bar does.
+    pub titlebar_double_click: Option<crate::window_chrome::TitlebarAction>,
 }
 
 /// The settings the session's manager publishes now: none off X11, or with
@@ -162,6 +164,11 @@ fn parse(data: &[u8]) -> Settings {
                     b"Net/ThemeName" => {
                         settings.dark_theme = Some(text.to_ascii_lowercase().ends_with(b"-dark"))
                     }
+                    b"Gtk/TitlebarDoubleClick" => {
+                        settings.titlebar_double_click = std::str::from_utf8(text)
+                            .ok()
+                            .map(crate::window_chrome::TitlebarAction::parse)
+                    }
                     b"Gtk/FontName" => {
                         settings.font = std::str::from_utf8(text)
                             .ok()
@@ -240,6 +247,7 @@ mod tests {
                     ("Net/ThemeName", Value::Str("Greybird-Dark")),
                     ("Gtk/ColorPalette", Value::Color),
                     ("Gtk/FontName", Value::Str("Noto Sans Bold 10")),
+                    ("Gtk/TitlebarDoubleClick", Value::Str("minimize")),
                     ("Net/DoubleClickTime", Value::Int(650)),
                     ("Xft/DPI", Value::Int(98_304)),
                     ("Net/DndDragThreshold", Value::Int(14)),
@@ -256,6 +264,7 @@ mod tests {
                     dark_theme: Some(true),
                     primary_paste: Some(false),
                     font: Some("Noto Sans".into()),
+                    titlebar_double_click: Some(crate::window_chrome::TitlebarAction::Minimize),
                 },
                 "big endian: {big}"
             );

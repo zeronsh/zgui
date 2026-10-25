@@ -2650,6 +2650,20 @@ impl Host {
                     .last_request_error
                     .set(window.drag_window().err().map(|e| e.to_string()));
             }
+            #[cfg(target_os = "linux")]
+            WindowGesture::DoubleClick => {
+                use crate::window_chrome::TitlebarAction;
+                match TitlebarAction::current() {
+                    TitlebarAction::ToggleMaximize => crate::window_chrome::double_click(&window),
+                    TitlebarAction::Minimize => window.set_minimized(true),
+                    TitlebarAction::Menu => window.show_window_menu(
+                        LogicalPosition::new(f64::from(self.cursor.0), f64::from(self.cursor.1))
+                            .to_physical::<f64>(self.scale_factor),
+                    ),
+                    TitlebarAction::Nothing => {}
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
             WindowGesture::DoubleClick => crate::window_chrome::double_click(&window),
             WindowGesture::Menu => window.show_window_menu(
                 LogicalPosition::new(f64::from(self.cursor.0), f64::from(self.cursor.1))

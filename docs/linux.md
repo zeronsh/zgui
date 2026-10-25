@@ -26,7 +26,11 @@ settings portal (`appmenu:close` shows close alone, on the right;
 `close,minimize,maximize:` puts all three on the left), live; without it,
 minimize, maximize and close on the right. Close asks the app's close policy,
 as the window manager's would. Mark the strip `View::window_drag` so it moves
-the window; a double click on it maximizes or restores. As GTK's and
+the window; a double click on it does what GNOME's
+`action-double-click-titlebar` says, as GTK's header bars do (on X11 the
+session's XSETTINGS `Gtk/TitlebarDoubleClick` first): maximize or restore by
+default, minimize, the window menu, or nothing (`lower` and `toggle-shade`,
+which winit cannot ask for, do nothing). As GTK's and
 Chromium's, the move starts once the pointer, held, moves past the drag
 threshold from the press: the window manager or compositor takes the pointer when asked to move
 the window, so a click (the first of a double click) stays a click.
