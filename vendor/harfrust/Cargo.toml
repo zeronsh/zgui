@@ -113,3 +113,6 @@ priority = -1
 
 [lints.rust]
 unused_qualifications = "warn"
+
+# zgx: its own workspace, outside zgx's (whose crates depend on it by path).
+[workspace]
