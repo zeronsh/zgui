@@ -186,7 +186,7 @@ impl Filter {
     }
     /// Whether `item` passes the fields' tests (`hints`: where each field
     /// was in the item before).
-    fn fields_pass(tests: &[(Rc<str>, Test)], item: &Value, hints: &mut [usize]) -> bool {
+    fn fields_pass(tests: &[(Rc<str>, Test)], item: &Value, hints: &mut [Hint]) -> bool {
         tests
             .iter()
             .zip(hints.iter_mut())
@@ -235,6 +235,16 @@ impl Spec {
     }
 }
 
+/// Where a field was in the item before (`Kept::field`), and its key's
+/// address: rows converted together share their keys, so the next row's
+/// key there is found by its address, not compared byte by byte. (A pass's
+/// items all live while it runs: an address it saw is not another key's.)
+#[derive(Clone, Copy, Default)]
+struct Hint {
+    at: usize,
+    key: usize,
+}
+
 /// The view's work kept between runs: the items it last saw, each item's
 /// key and whether the filter keeps it, and the kept items' order.
 #[derive(Default)]
@@ -274,11 +284,11 @@ impl Kept {
             None => true,
             Some(Filter::Fields(tests)) => {
                 // Where its fields are, from the start (a few on the stack).
-                let (mut stack, mut heap) = ([0; 8], Vec::new());
+                let (mut stack, mut heap) = ([Hint::default(); 8], Vec::new());
                 let hints = if tests.len() <= stack.len() {
                     &mut stack[..tests.len()]
                 } else {
-                    heap.resize(tests.len(), 0);
+                    heap.resize(tests.len(), Hint::default());
                     &mut heap[..]
                 };
                 Filter::fields_pass(tests, item, hints)
@@ -321,7 +331,7 @@ impl Kept {
         if matches!(spec.filter, Some(Filter::Function(_))) || by_script {
             self.judge_all(vm, spec, items)?;
         } else if let (By::Field(name), Some(tests)) = (&spec.by, &tests) {
-            let (mut hint, mut hints) = (0, vec![0; tests.len()]);
+            let (mut hint, mut hints) = (Hint::default(), vec![Hint::default(); tests.len()]);
             for item in items.iter() {
                 let kept = Filter::fields_pass(tests, item, &mut hints);
                 let key = kept.then(|| Self::field(item, name, &mut hint)).flatten();
@@ -329,7 +339,7 @@ impl Kept {
                 self.kept.push(kept);
             }
         } else if let By::Field(name) = &spec.by {
-            let mut hint = 0;
+            let mut hint = Hint::default();
             for item in items.iter() {
                 let key = Self::field(item, name, &mut hint);
                 self.keys.push(key.map_or(Key::Nil, Key::of_value));
@@ -350,17 +360,21 @@ impl Kept {
     }
     /// `item`'s field `name`, looked for first where the item before had it
     /// (items of one shape keep their fields in one order), else searched.
-    fn field<'a>(item: &'a Value, name: &str, hint: &mut usize) -> Option<&'a Value> {
+    fn field<'a>(item: &'a Value, name: &str, hint: &mut Hint) -> Option<&'a Value> {
         let Value::Map(fields) = item else {
             return None;
         };
-        if let Some((key, value)) = fields.get(*hint)
-            && **key == *name
+        if let Some((key, value)) = fields.get(hint.at)
+            && (key.as_ptr() as usize == hint.key || **key == *name)
         {
+            hint.key = key.as_ptr() as usize;
             return Some(value);
         }
         let at = fields.binary_search_by(|(key, _)| (**key).cmp(name)).ok()?;
-        *hint = at;
+        *hint = Hint {
+            at,
+            key: fields[at].0.as_ptr() as usize,
+        };
         Some(&fields[at].1)
     }
     /// `order` sorted by `before`. Where every key is a number (or nil), or
@@ -503,12 +517,12 @@ impl Kept {
         }
         // Fields' tests, in Rust, beside the function's keys.
         if let Some(Filter::Fields(tests)) = &spec.filter {
-            let mut hints = vec![0; tests.len()];
+            let mut hints = vec![Hint::default(); tests.len()];
             for (i, item) in items.iter().enumerate() {
                 kept[i] = kept[i] && Filter::fields_pass(tests, item, &mut hints);
             }
         }
-        let mut hint = 0;
+        let mut hint = Hint::default();
         for (i, item) in items.iter().enumerate() {
             self.kept.push(kept[i]);
             self.keys.push(if !kept[i] {
