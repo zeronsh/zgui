@@ -18,6 +18,11 @@ instructions would swamp zgx's, so heavy, lab and animate run with
 RENDER=0 (update, layout and damage, text measured as a renderer would).
 The app scenes count their canvases' CPU work too (`HeadlessCanvases`):
 found as shapes the GPU draws, or rasterized where they cannot be.
+
+With ZGX_GATE_BIN_CACHE set, a side's binaries found there, stamped with
+its commit and compiler, are taken rather than built, and the head's are
+left there after: CI keeps main's by commit, so a pull request builds its
+own side alone.
 """
 import argparse
 import os
@@ -88,6 +93,27 @@ def runs_scene(checkout, env):
     return 'APP' not in env or apps.exists()
 
 
+def stamp(checkout):
+    """What `checkout`'s binaries are built from: its commit and the
+    compiler. A checkout with changes of its own has none to match."""
+    git = lambda *a: subprocess.run(['git', *a], cwd=checkout, capture_output=True, text=True, check=True).stdout
+    if git('status', '--porcelain', '--untracked-files=no').strip():
+        return None
+    rustc = subprocess.run(['rustc', '-vV'], cwd=checkout, capture_output=True, text=True, check=True).stdout
+    return git('rev-parse', 'HEAD') + rustc
+
+
+def examples(checkout):
+    return {s[2] for s in SCENES if has_example(checkout, s[1], s[2])}
+
+
+def built(checkout, into):
+    """Whether `into` holds every binary `checkout` builds, built from it."""
+    made = into / 'built-from'
+    return (made.exists() and made.read_text() == stamp(checkout)
+            and all((into / example).exists() for example in examples(checkout)))
+
+
 def build(checkout, target, into):
     scenes = [s for s in SCENES if has_example(checkout, s[1], s[2])]
     command = ['cargo', 'build', '--release', '--locked', '--quiet']
@@ -103,6 +129,9 @@ def build(checkout, target, into):
     into.mkdir(parents=True, exist_ok=True)
     for _, _, example, _ in scenes:
         shutil.copy2(target / 'release' / 'examples' / example, into / example)
+    made = stamp(checkout)
+    if made:
+        (into / 'built-from').write_text(made)
 
 
 class Infra(Exception):
@@ -138,7 +167,14 @@ def main():
         subprocess.run(['git', 'worktree', 'remove', '--force', str(base)], cwd=ROOT)
     subprocess.run(['git', 'worktree', 'add', '--detach', str(base), args.base], cwd=ROOT, check=True,
                    capture_output=True)
-    build(base, target, WORK / 'gate-bin-base')
+    cache = os.environ.get('ZGX_GATE_BIN_CACHE')
+    cache = pathlib.Path(cache) if cache else None
+    if cache and built(base, cache):
+        print('base binaries from the cache', flush=True)
+        shutil.rmtree(WORK / 'gate-bin-base', ignore_errors=True)
+        shutil.copytree(cache, WORK / 'gate-bin-base')
+    else:
+        build(base, target, WORK / 'gate-bin-base')
     # Cargo names a path crate's artifacts the same from either checkout,
     # and judges them fresh by modification time: this checkout's files,
     # older than what the base just built, would be taken for built. Newer
@@ -149,6 +185,9 @@ def main():
         if file.is_file():
             os.utime(file)
     build(ROOT, target, WORK / 'gate-bin-head')
+    if cache:
+        shutil.rmtree(cache, ignore_errors=True)
+        shutil.copytree(WORK / 'gate-bin-head', cache)
     rows, failed = [], []
     for name, _, example, env in SCENES:
         base_binary = WORK / 'gate-bin-base' / example
