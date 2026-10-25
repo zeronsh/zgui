@@ -2359,3 +2359,47 @@ fn closed_overlays_in_a_long_list_cost_no_nodes() {
     many.click("close");
     assert_eq!(nodes(&mut many), opened, "closed again, it is kept");
 }
+
+/// A keyed list's rows follow their items: removing an item moves the rows
+/// after it, each kept (not built again, its text as it was), its index a
+/// state that follows where it is; unkeyed rows stay where they are.
+#[test]
+fn keyed_list_rows_follow_their_items() {
+    let mut h = Harness::inline(
+        r##"local items = ui.state("items", (function()
+            local list = {}
+            for i = 1, 50 do list[i] = { id = i * 10, name = `item {i}` } end
+            return list
+        end)())
+        local builds = ui.state("builds", 0)
+        return ui.column {
+            ui.button { id = "drop", on_click = function() items:remove(1) end, "drop" },
+            ui.text { id = "builds", "{builds}" },
+            ui.list {
+                count = function() return items:len() end,
+                height = 20, w = 200, h = 100,
+                key = function(i) return items:at(i).id end,
+                row = function(id, index)
+                    builds:set(builds:peek() + 1)
+                    local name = items:peek()[index:peek()].name
+                    return ui.text { id = `k-{id}`, function() return `{index:get()}: {name}` end }
+                end,
+            },
+        }"##,
+    );
+    assert_eq!(h.host.error().get(), None);
+    h.ui.prepare_frame();
+    let built: usize = h.text("builds").parse().unwrap();
+    assert_eq!(h.text("k-20"), "2: item 2");
+    let row = h.find("k-20").unwrap();
+    h.click("drop");
+    h.ui.prepare_frame();
+    assert_eq!(h.host.error().get(), None);
+    // The row of item 2 is the same node, now first; at most the row coming
+    // into view at the end is new.
+    assert_eq!(h.find("k-20"), Some(row));
+    assert_eq!(h.text("k-20"), "1: item 2");
+    assert!(h.find("k-10").is_none());
+    let after: usize = h.text("builds").parse().unwrap();
+    assert!(after <= built + 1, "{built} → {after} builds");
+}

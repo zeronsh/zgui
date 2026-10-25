@@ -249,6 +249,40 @@ impl TestApp {
     /// The text of node `id`, or of the first text inside it.
     pub fn text(&mut self, id: &str) -> String {
         let node = self.node(id);
+        self.text_in(node)
+    }
+    /// Row `n` (from 1) of the list `list` among those mounted, top to
+    /// bottom: rows by where they are, whatever names they have (a keyed
+    /// list's rows are named by their items).
+    pub fn row(&mut self, list: &str, n: usize) -> NodeId {
+        let list_node = self.node(list);
+        let scene = self.ui.scene.borrow();
+        // A list holds a viewport, which holds the content, which holds
+        // the rows.
+        let content = scene
+            .children(list_node)
+            .first()
+            .and_then(|viewport| scene.children(*viewport).first().copied())
+            .unwrap_or_else(|| panic!("`{list}` is not a list"));
+        let mut rows: Vec<NodeId> = scene.children(content).to_vec();
+        rows.sort_by(|a, b| scene.bounds(*a).y.total_cmp(&scene.bounds(*b).y));
+        *rows
+            .get(n.wrapping_sub(1))
+            .unwrap_or_else(|| panic!("`{list}` has {} rows mounted, not {n}", rows.len()))
+    }
+    /// The text of row `n` of the list `list` (the first text in it).
+    pub fn row_text(&mut self, list: &str, n: usize) -> String {
+        let row = self.row(list, n);
+        self.text_in(row)
+    }
+    /// Press and release the primary button at the middle of row `n` of the
+    /// list `list`.
+    pub fn click_row(&mut self, list: &str, n: usize) {
+        let row = self.row(list, n);
+        let bounds = self.ui.scene.borrow().bounds(row);
+        self.click_at(bounds);
+    }
+    fn text_in(&self, node: NodeId) -> String {
         let scene = self.ui.scene.borrow();
         let mut stack = vec![node];
         while let Some(n) = stack.pop() {
@@ -257,7 +291,7 @@ impl TestApp {
             }
             stack.extend(scene.children(n).iter().rev());
         }
-        panic!("no text in `{id}`: {:?}", scene.kind(node))
+        panic!("no text in {node:?}: {:?}", scene.kind(node))
     }
     /// Every text the app shows, in tree order.
     pub fn texts(&mut self) -> Vec<String> {
@@ -285,6 +319,9 @@ impl TestApp {
     /// Press and release the primary button at node `id`'s middle.
     pub fn click(&mut self, id: &str) {
         let b = self.bounds(id);
+        self.click_at(b);
+    }
+    fn click_at(&mut self, b: Rect) {
         let (x, y) = (b.x + b.width / 2., b.y + b.height / 2.);
         self.ui.dispatch(InputEvent::PointerDown {
             x,

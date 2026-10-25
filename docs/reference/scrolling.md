@@ -29,7 +29,8 @@ The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is 
 | Option | Type | Default | |
 | --- | --- | --- | --- |
 | `count` | `Reactive<number>` | required without `heights` | how many rows |
-| `row` | `(index: number) -> Node` | required | builds row `index`, from 1 |
+| `row` | `(index: number) -> Node`, or with `key` `(key, index: State<number>) -> Node` | required | builds row `index`, from 1; with `key`, the row of item `key`, given its index as a state that follows the row |
+| `key` | `(index: number) -> number \| string \| boolean` | none | each row's item's key: a row follows its item as the list changes, moved rather than built or written again. Without it, rows are by position: a removal or an insertion writes every row after it with the item now there (its text, layout and paint done again). Keys are unique; not with `sticky` |
 | `height` | `number` | `28` | every row's height, in points (positive) |
 | `heights` | `{ number }`, a state of one, or a function returning one | none | each row's own height instead, in order; the count is its length |
 | `sticky` | `{ number }`, a state of one, or a function returning one | none | with `heights`: rows (from 1) that stick to the top while the rows after them scroll past, each pushed up by the next (section headers, a diff's file headers); the one in charge is built again over the list, as any row is |
@@ -43,6 +44,31 @@ The content fills the viewport's width (`scroll`) or height (`scroll_x`) and is 
 With `heights`, rows differ in height but are still never measured: the list knows where each starts, so a changed list (a section folded, rows inserted) re-lays out without building anything offscreen. A host can publish the heights as a shared value (`ScriptHost::shared`), and the script never copies them.
 
 A row is built when it scrolls into view and dropped when it leaves; it owns what it makes, as a [component](state.md#components) does: its `ui.use_state`, effects and computed values end with it.
+
+A list whose items are removed or inserted (a mailbox's messages archived, a feed's new posts) keys its rows, and reads each row's item by its key:
+
+```lua
+type Message = { id: number, subject: string }
+-- Ids are places in the list (messages are only added at the end).
+local messages = ui.state("messages", {} :: { Message })
+local inbox = ui.state("inbox", {} :: { number })
+return ui.list {
+	count = function()
+		return inbox:len()
+	end,
+	key = function(i)
+		return inbox:at(i)
+	end,
+	row = function(id: number, index: State<number>)
+		return ui.text {
+			function()
+				local m = messages:at(id)
+				return if m then `{index:get()}. {m.subject}` else ""
+			end,
+		}
+	end,
+}
+```
 
 ## Example
 

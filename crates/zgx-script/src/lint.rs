@@ -61,6 +61,10 @@ pub const RULES: &[(&str, &str)] = &[
         "computed-sort",
         "a computed that sorts a whole list again each time it runs",
     ),
+    (
+        "list-key",
+        "a positional ui.list over a list state the file removes from or inserts into",
+    ),
 ];
 
 /// `ui.*` calls that do not build interface (`ui.state`, `ui.set`,
@@ -144,6 +148,7 @@ pub fn lint_source(file: &Path, source: &str) -> Vec<Diagnostic> {
         found: Vec::new(),
     };
     linter.run();
+    linter.list_key();
     let allowed = |line: u32, rule: &str| {
         comments.iter().any(|(at, text)| {
             (*at == line || *at + 1 == line)
@@ -415,6 +420,81 @@ impl Linter<'_> {
             }
         }
         self.tokens.len()
+    }
+
+    /// A `ui.list` without `key` in a file that reads a list state by index
+    /// (`rows:get()[i]`, `rows:at(i)`) and removes from it or inserts into
+    /// it: rows by position are each written again when one goes or comes.
+    fn list_key(&mut self) {
+        // Calls `name:method(`, by the state's name.
+        let calls = |method: &str| -> Vec<String> {
+            (0..self.tokens.len())
+                .filter(|&at| self.is(at, "(") && self.is(at.wrapping_sub(1), method))
+                .filter_map(|at| self.callee(at))
+                .filter_map(|callee| {
+                    callee
+                        .strip_suffix(&format!(":{method}"))
+                        .map(str::to_string)
+                })
+                .collect()
+        };
+        let mut changed = calls("remove");
+        changed.extend(calls("insert"));
+        if changed.is_empty() {
+            return;
+        }
+        let mut indexed = calls("at");
+        // `name:get()[` and `name:peek()[`.
+        for method in ["get", "peek"] {
+            for at in 0..self.tokens.len() {
+                if self.is(at, "(")
+                    && self.is(at.wrapping_sub(1), method)
+                    && self.is(at + 1, ")")
+                    && self.is(at + 2, "[")
+                    && let Some(name) = self
+                        .callee(at)
+                        .and_then(|c| c.strip_suffix(&format!(":{method}")).map(str::to_string))
+                {
+                    indexed.push(name);
+                }
+            }
+        }
+        let Some(list) = indexed.iter().find(|name| changed.contains(name)).cloned() else {
+            return;
+        };
+        for at in 0..self.tokens.len() {
+            if !(self.is(at, "list")
+                && self.is(at.wrapping_sub(1), ".")
+                && self.is(at.wrapping_sub(2), "ui"))
+            {
+                continue;
+            }
+            let open = if self.is(at + 1, "{") {
+                at + 1
+            } else if self.is(at + 1, "(") && self.is(at + 2, "{") {
+                at + 2
+            } else {
+                continue;
+            };
+            let close = self.closing(open);
+            let keyed = (open + 1..close).any(|j| {
+                self.is(j, "key")
+                    && self.is(j + 1, "=")
+                    && (self.is(j - 1, ",") || self.is(j - 1, "{"))
+            });
+            if !keyed {
+                self.report(
+                    at,
+                    "list-key",
+                    format!(
+                        "this list's rows are by position, and `{list}` has items removed or \
+                         inserted: each change writes every row after it again (text, layout, \
+                         paint). `key = function(i) return …id end` makes a row follow its item, \
+                         the row reading it by key."
+                    ),
+                );
+            }
+        }
     }
 
     fn run(&mut self) {
@@ -858,6 +938,23 @@ mod tests {
     }
     fn one(line: u32, rule: &str) -> Vec<(u32, String)> {
         vec![(line, rule.to_string())]
+    }
+
+    #[test]
+    fn a_positional_list_over_a_list_with_removals_is_reported() {
+        let source = r##"
+local items = ui.state("items", {})
+local function drop() items:remove(1) end
+local list = ui.list { count = 10, row = function(i) return ui.text { function() return items:get()[i].name end } end }
+local keyed = ui.list { count = 10, key = function(i) return items:at(i).id end, row = function(id) return ui.text("x") end }
+"##;
+        assert_eq!(rules(source), one(4, "list-key"));
+        // No removal or insertion: rows by position are fine.
+        let still = r##"
+local items = ui.state("items", {})
+local list = ui.list { count = 10, row = function(i) return ui.text { function() return items:get()[i].name end } end }
+"##;
+        assert_eq!(rules(still), vec![]);
     }
 
     #[test]

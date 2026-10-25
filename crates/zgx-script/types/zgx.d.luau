@@ -10094,8 +10094,14 @@ export type ListProps = {
 	-- Its rows are one Tab stop, and the arrows, Page Up and Down, Home and
 	-- End move focus through every row (mounting it), as a list box's do.
 	keyboard: boolean?,
-	-- Builds row `index` (from 1).
-	row: (index: number) -> Node,
+	-- Builds row `index` (from 1); with `key`, the row of item `key`, given
+	-- its index as a state that follows where the row is.
+	row: ((index: number) -> Node) | ((key: any, index: State<number>) -> Node),
+	-- Each row's item's key (a number, string or boolean), as a function of
+	-- its index: a row follows its item as the list changes, moved rather
+	-- than written again (rows a removal or an insertion shifts keep their
+	-- nodes, text and layout).
+	key: ((index: number) -> any)?,
 	-- Every row's height in points (28 by default).
 	height: number?,
 	-- Each row's own height instead, in order: a list, a state holding one

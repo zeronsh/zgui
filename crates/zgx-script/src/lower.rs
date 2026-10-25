@@ -3595,6 +3595,34 @@ fn lower_image(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
     }
 }
 
+/// A list row's key: its index, or (`key`) its item's key, a number,
+/// string or boolean (any other kind keys by index).
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ListKey {
+    Index(usize),
+    Num(u64),
+    Str(Rc<str>),
+    Bool(bool),
+}
+impl ListKey {
+    fn of(value: &Value) -> Option<ListKey> {
+        Some(match value {
+            Value::Num(n) => ListKey::Num(if *n == 0. { 0 } else { n.to_bits() }),
+            Value::Str(s) => ListKey::Str(s.clone()),
+            Value::Bool(b) => ListKey::Bool(*b),
+            _ => return None,
+        })
+    }
+    fn value(&self) -> Value {
+        match self {
+            ListKey::Index(i) => Value::Num((i + 1) as f64),
+            ListKey::Num(bits) => Value::Num(f64::from_bits(*bits)),
+            ListKey::Str(s) => Value::Str(s.clone()),
+            ListKey::Bool(b) => Value::Bool(*b),
+        }
+    }
+}
+
 /// A `ui.list` (kept out of `build`, which recurses: its locals would
 /// weigh on every level of a deep interface's stack).
 #[inline(never)]
@@ -3607,12 +3635,46 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         sticky_top,
         overscan,
         build: builder,
+        key,
         offset,
         keyboard,
         ..
     } = kind
     else {
         unreachable!("lower_list takes lists")
+    };
+    // Keyed rows follow their items: built once a key, given the key and
+    // their index as a state that follows where the row is.
+    let keyed = key.clone().map(|key| (key, vm.clone()));
+    let list_key = move |index: usize| -> ListKey {
+        match &keyed {
+            None => ListKey::Index(index),
+            Some((key, vm)) => match vm.call::<Value>(key, index + 1) {
+                Ok(value) => ListKey::of(&value).unwrap_or(ListKey::Index(index)),
+                Err(e) => {
+                    vm.report(e);
+                    ListKey::Index(index)
+                }
+            },
+        }
+    };
+    let row = {
+        let (builder, vm, low, keyed) = (builder.clone(), vm.clone(), low.clone(), key.is_some());
+        move |index: Signal<usize>, key: ListKey, cx: &mut Context| -> View {
+            if !keyed {
+                return build_scoped(&vm, cx, &low, &builder, index.with_untracked(|i| *i) + 1);
+            }
+            // The row's index, from 1, following its row.
+            let shown = cx
+                .runtime()
+                .signal(Value::Num((index.with_untracked(|i| *i) + 1) as f64));
+            let follow = shown.clone();
+            cx.retain(cx.runtime().effect(move || {
+                follow.set(Value::Num((index.get() + 1) as f64));
+            }));
+            let state = crate::value::State(shown, None);
+            build_scoped(&vm, cx, &low, &builder, (key.value(), state))
+        }
     };
     let keyboard = *keyboard;
     let mut cx = cx.as_deref_mut();
@@ -3640,17 +3702,8 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
             });
             let _ = r.replace(values);
         }));
-        let list = {
-            let (builder, vm, low) = (builder.clone(), vm.clone(), low.clone());
-            variable_virtual_list(
-                offset.clone(),
-                rows.clone(),
-                *overscan,
-                |index| index,
-                move |_, index, cx| build_scoped(&vm, cx, &low, &builder, index + 1),
-            )
-            .keyboard_navigation(keyboard)
-        };
+        let list = variable_virtual_list(offset.clone(), rows.clone(), *overscan, list_key, row)
+            .keyboard_navigation(keyboard);
         match sticky {
             None => list,
             Some(sticky) => sticky_list(
@@ -3667,7 +3720,6 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
         }
     } else {
         let (count, count_vm) = (Rc::new(resolve_owned(count)), vm.clone());
-        let (builder, vm, low) = (builder.clone(), vm.clone(), low.clone());
         virtual_list(
             offset,
             *height,
@@ -3676,9 +3728,9 @@ fn lower_list(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>, cx: &mut Option<&mut
                 Some(Lit::Num(n)) => n.max(0.) as usize,
                 _ => 0,
             },
-            |index| index,
+            list_key,
             // Each row owns what it makes, as `each` rows do.
-            move |_, index, cx| build_scoped(&vm, cx, &low, &builder, index + 1),
+            row,
         )
         .keyboard_navigation(keyboard)
     }

@@ -764,6 +764,10 @@ pub(crate) enum Kind {
         sticky_top: f32,
         overscan: usize,
         build: Function,
+        /// `key`: each row's item's key (a function of its index), so a row
+        /// follows its item as the list changes, moved rather than built or
+        /// written again; `row` then takes the key and its index, a state.
+        key: Option<Function>,
         offset: Option<Signal<Value>>,
         /// `scrollbar = true`: an interactive scrollbar over its edge.
         scrollbar: bool,
@@ -3246,6 +3250,11 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             if sticky.is_some() && heights.is_none() {
                 return Err(mlua::Error::runtime("ui.list `sticky` needs `heights`"));
             }
+            if sticky.is_some() && table.contains_key("key")? {
+                return Err(mlua::Error::runtime(
+                    "ui.list `key` and `sticky` don't go together yet: a sticky row is built by its index",
+                ));
+            }
             let count = match (&heights, table.get::<mlua::Value>("count")?) {
                 (Some(_), mlua::Value::Nil) => Source::Lit(Lit::Num(0.)),
                 (_, count) => source(lua, Ty::Num, "count", count)?,
@@ -3281,6 +3290,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             sticky_top,
                             overscan,
                             build,
+                            key: table.get::<Option<Function>>("key")?,
                             offset,
                             scrollbar: table.get::<Option<bool>>("scrollbar")?.unwrap_or(false),
                             keyboard: table.get::<Option<bool>>("keyboard")?.unwrap_or(false),
