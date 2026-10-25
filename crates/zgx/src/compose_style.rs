@@ -225,7 +225,9 @@ pub(crate) fn mount_style(
         node,
         base,
         inherited,
-        dynamic,
+        dynamic.map(|mut style| {
+            Box::new(move |out: &mut Option<Styles>| *out = Some(style())) as DynamicStyle
+        }),
         variants,
         disabled,
         interactive,
@@ -489,13 +491,18 @@ fn patch_sizes(style: &mut crate::scene::Style, next: &Styles) {
         style.margin = margin;
     }
 }
+/// A computed style (`View::reactive_style`), written into its caller's
+/// slot: returned, the 440-byte style was copied once made, a tenth of
+/// what a style effect re-running spent.
+pub(crate) type DynamicStyle = Box<dyn FnMut(&mut Option<Styles>)>;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn mount_style_with_intrinsic(
     ui: &mut Ui,
     node: NodeId,
     base: Styles,
     inherited: Signal<Typography>,
-    mut dynamic: Option<Box<dyn FnMut() -> Styles>>,
+    mut dynamic: Option<DynamicStyle>,
     variants: Variants,
     mut disabled: Option<Box<dyn FnMut() -> bool>>,
     interactive: bool,
@@ -731,7 +738,10 @@ pub(crate) fn mount_style_with_intrinsic(
             }
             swapped = true;
         }
-        let mut produced = dynamic.as_mut().map(|dynamic| dynamic());
+        let mut produced = None;
+        if let Some(dynamic) = dynamic.as_mut() {
+            dynamic(&mut produced);
+        }
         let state = interaction.as_ref().map(Signal::get).unwrap_or_default();
         let is_disabled = disabled.as_mut().is_some_and(|read| read());
         let in_effect = [

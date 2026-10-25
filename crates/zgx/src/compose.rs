@@ -315,7 +315,7 @@ pub struct View {
     styles: Styles,
     children: Vec<View>,
     variants: Variants,
-    reactive_style: Option<Box<dyn FnMut() -> Styles>>,
+    reactive_style: Option<crate::compose_style::DynamicStyle>,
     disabled: Option<Box<dyn FnMut() -> bool>>,
     click: Option<Box<dyn FnMut(crate::input::Modifiers)>>,
     events: Vec<EventListener>,
@@ -1029,8 +1029,10 @@ impl View {
     }
     /// Styles merged over the view's own, computed in an effect: they change
     /// as what `style` reads does, without mounting again.
-    pub fn reactive_style(mut self, style: impl FnMut() -> Styles + 'static) -> Self {
-        self.reactive_style = Some(Box::new(style));
+    pub fn reactive_style(mut self, mut style: impl FnMut() -> Styles + 'static) -> Self {
+        self.reactive_style = Some(Box::new(move |out: &mut Option<Styles>| {
+            *out = Some(style())
+        }));
         self
     }
     /// Text an editor shows while it is empty, as HTML's `placeholder`: in
@@ -1258,10 +1260,13 @@ impl View {
         }
         if let Some(mut outer) = self.reactive_style {
             inner.reactive_style = Some(match inner.reactive_style.take() {
-                Some(mut original) => Box::new(move || {
-                    let mut style = original();
-                    style.merge(&outer());
-                    style
+                Some(mut original) => Box::new(move |out: &mut Option<Styles>| {
+                    original(out);
+                    let mut over = None;
+                    outer(&mut over);
+                    if let (Some(style), Some(over)) = (out.as_mut(), over) {
+                        style.merge(&over);
+                    }
                 }),
                 None => outer,
             });
@@ -2381,9 +2386,12 @@ fn mount_portal_panel(
     {
         let bounds = ui.observe_bounds(anchor);
         let mut own = view.reactive_style.take();
-        view.reactive_style = Some(Box::new(move || {
-            let styles = own.as_mut().map_or_else(Styles::new, |f| f());
-            styles.min_w(bounds.get().width)
+        view.reactive_style = Some(Box::new(move |out: &mut Option<Styles>| {
+            let mut styles = None;
+            if let Some(f) = own.as_mut() {
+                f(&mut styles);
+            }
+            *out = Some(styles.unwrap_or_else(Styles::new).min_w(bounds.get().width));
         }));
     }
     let portal_parent = environment
@@ -2457,10 +2465,12 @@ fn mount_portal_panel(
     let area = anchor.map(|anchor| (ui.popup_screens(), ui.observe_bounds(anchor)));
     let limit = anchor.map(|_| (ui.popup_limits(), portal.position));
     let mut dynamic = view.reactive_style.take();
-    view.reactive_style = Some(Box::new(move || {
-        let mut styles = dynamic
-            .as_mut()
-            .map_or_else(Styles::new, |compute| compute());
+    view.reactive_style = Some(Box::new(move |out: &mut Option<Styles>| {
+        let mut styles = None;
+        if let Some(compute) = dynamic.as_mut() {
+            compute(&mut styles);
+        }
+        let mut styles = styles.unwrap_or_else(Styles::new);
         let bounds = area
             .as_ref()
             .and_then(|(screens, anchor)| {
@@ -2488,7 +2498,7 @@ fn mount_portal_panel(
             rare.max_width = cut(rare.max_width.or(set_max.0), width);
             rare.max_height = cut(rare.max_height.or(set_max.1), height);
         }
-        styles
+        *out = Some(styles);
     }));
     // A submenu leaves the pointer to its parent menu (moving over its other
     // items closes it); the parent's backdrop dismisses both.
