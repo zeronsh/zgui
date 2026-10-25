@@ -3000,6 +3000,11 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                             Source::Lit(Lit::Str(format!("code:{code}").into()))
                         }
                     },
+                    // A bitmap (`ui.bitmap`, a pasted image) shown as it is.
+                    mlua::Value::UserData(ud) if name == "image" && ud.is::<BitmapUd>() => {
+                        let image = ud.borrow::<BitmapUd>()?.0.clone();
+                        Source::State(env(lua)?.runtime.signal(Value::Image(image)))
+                    }
                     src => source(lua, Ty::Str, "src", src)?,
                 };
                 let label = label(&table)?;

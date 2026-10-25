@@ -3443,8 +3443,10 @@ export type ImageProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	-- PNG or JPEG, relative to the script; `https://…` (through the
-	-- host's fetcher); `host:<name>` (an image the app made).
-	src: Reactive<string>,
+	-- host's fetcher); `host:<name>` (an image the app made); or a
+	-- `Bitmap` (`ui.bitmap`, a pasted image), or a state or function of
+	-- one, shown as it is.
+	src: Reactive<string> | Bitmap | Readable<Bitmap?> | (() -> Bitmap?),
 	-- For accessibility.
 	label: string?,
 	-- Shown in its place while a remote picture loads and if it fails (an

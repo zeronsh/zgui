@@ -3600,6 +3600,37 @@ fn lower_text(text: &Text, vm: &Rc<Vm>) -> View {
         }
     }
 }
+/// What an image's `src` shows now: a picture to load by its path, or a
+/// bitmap itself (`ui.bitmap`, a pasted image, one kept in state).
+enum Picture {
+    Path(Rc<str>),
+    Image(Arc<ImageData>),
+}
+fn picture_of(src: &Owned, vm: &Vm) -> Option<Picture> {
+    let of = |value: &Value| match value {
+        Value::Image(image) => Some(Picture::Image(image.clone())),
+        Value::Str(path) => Some(Picture::Path(path.clone())),
+        _ => None,
+    };
+    match src {
+        Owned::State(state) => state.with(of),
+        Owned::Computed(f) => match vm.call::<mlua::Value>(f, ()) {
+            Ok(returned) => crate::value::convert(returned, None)
+                .map_err(|e| vm.report(e))
+                .ok()
+                .and_then(|value| of(&value)),
+            Err(e) => {
+                vm.report(e);
+                None
+            }
+        },
+        other => match resolve(other, Ty::Str, None, vm) {
+            Some(Lit::Str(path)) => Some(Picture::Path(path)),
+            _ => None,
+        },
+    }
+}
+
 /// A `ui.image` (out of `build`, as `lower_list` is).
 #[inline(never)]
 fn lower_image(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
@@ -3616,27 +3647,27 @@ fn lower_image(kind: &Kind, vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
         let (src, vm2, low2, label) = (resolve_owned(src), vm.clone(), low.clone(), label.clone());
         move || {
             let (src, vm2, low2) = (src.clone(), vm2.clone(), low2.clone());
-            image_signal(label.clone(), move || {
-                let path = match resolve(&src, Ty::Str, None, &vm2) {
-                    Some(Lit::Str(path)) => path,
-                    _ => return placeholder(),
-                };
-                load_image(&vm2, &low2, &path).unwrap_or_else(placeholder)
+            image_signal(label.clone(), move || match picture_of(&src, &vm2) {
+                Some(Picture::Image(image)) => image,
+                Some(Picture::Path(path)) => {
+                    load_image(&vm2, &low2, &path).unwrap_or_else(placeholder)
+                }
+                None => placeholder(),
             })
         }
     };
     match fallback {
         None => picture(),
         Some(fallback) => {
-            // The picture once a remote one has arrived (a local one
-            // at once), else the fallback.
+            // The picture once a remote one has arrived (a local one, or a
+            // bitmap, at once), else the fallback.
             let (src, vm2, low2) = (resolve_owned(src), vm.clone(), low.clone());
-            let shown = move || match resolve(&src, Ty::Str, None, &vm2) {
-                Some(Lit::Str(path)) if is_remote(&path) => {
+            let shown = move || match picture_of(&src, &vm2) {
+                Some(Picture::Path(path)) if is_remote(&path) => {
                     remote_status(&vm2, &low2, &path, false) == READY
                 }
-                Some(Lit::Str(_)) => true,
-                _ => false,
+                Some(_) => true,
+                None => false,
             };
             let (fallback, low3) = (fallback.clone(), low.clone());
             zgx::compose::switch(shown, move |ready, _| {

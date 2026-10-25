@@ -2886,3 +2886,48 @@ fn a_canvas_draws_again_only_the_items_written_since() {
     assert_eq!(calls(&mut h), "5", "a removal draws nothing");
     assert_eq!(xs(&mut h), [50., 20., 70.]);
 }
+
+#[test]
+fn an_image_shows_a_bitmap_given_kept_in_state_or_returned() {
+    let mut h = Harness::inline(
+        r##"local white = function() return 1 end
+        local pic = ui.state("pic", ui.bitmap(4, 2, white))
+        local shown = ui.state("shown", true)
+        return ui.column {
+            ui.image { id = "given", src = ui.bitmap(3, 3, white) },
+            ui.image { id = "kept", src = pic },
+            ui.image { id = "returned", src = function()
+                return if shown:get() then pic:get() else nil
+            end },
+            ui.button { id = "swap", w = 20, h = 20, on_click = function()
+                pic:set(ui.bitmap(5, 1, white))
+            end },
+            ui.button { id = "hide", w = 20, h = 20, on_click = function() shown:set(false) end },
+        }"##,
+    );
+    assert_eq!(h.error(), None);
+    // The picture's width and height, inside node `id`.
+    let size = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        let scene = h.ui.scene.borrow();
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            if let NodeKind::Image(image) = scene.kind(n) {
+                return (image.width(), image.height());
+            }
+            stack.extend(scene.children(n).iter().copied());
+        }
+        panic!("no image in `{id}`")
+    };
+    assert_eq!(size(&mut h, "given"), (3, 3));
+    assert_eq!(size(&mut h, "kept"), (4, 2));
+    assert_eq!(size(&mut h, "returned"), (4, 2));
+    h.click("swap");
+    h.frames(1);
+    assert_eq!(size(&mut h, "kept"), (5, 1), "follows the state");
+    assert_eq!(size(&mut h, "returned"), (5, 1));
+    h.click("hide");
+    h.frames(1);
+    assert_eq!(size(&mut h, "returned"), (1, 1), "nothing shown: empty");
+    assert_eq!(h.error(), None);
+}
