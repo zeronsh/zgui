@@ -2354,10 +2354,11 @@ mod atspi_tests {
             adapter.platform_node(adapter.root_id()),
             &mut nodes,
         );
+        // The buttons (each holds a label of the same name).
         let named = |name: &str| {
             nodes
                 .iter()
-                .find(|n| n.name().unwrap() == name)
+                .find(|n| n.role().unwrap() == AtspiRole::Button && n.name().unwrap() == name)
                 .unwrap_or_else(|| panic!("no {name}"))
         };
         let email = named("Email");
