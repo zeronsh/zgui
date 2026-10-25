@@ -436,6 +436,9 @@ struct Memo {
     /// (Only for size changes: checking every run cost animated paint more
     /// than it saved.)
     painted: bool,
+    /// What `Scene::set_box` left from patching `shown`'s box: `None` once
+    /// `shown` is made or written another way.
+    boxed: Option<u32>,
 }
 /// Which box fields `styles` sets (width, height, margins), whatever their
 /// values: a run that sets the same ones, with other values, changes only
@@ -721,6 +724,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 settled: None,
                 shown: None,
                 painted: false,
+                boxed: None,
             }));
         }
         // Interaction styles that changed take their slots, their tokens
@@ -786,6 +790,7 @@ pub(crate) fn mount_style_with_intrinsic(
             settled: Some(last),
             shown,
             painted,
+            boxed,
         }) = memo.as_deref_mut()
             && last.state == state
             && last.disabled == is_disabled
@@ -863,7 +868,7 @@ pub(crate) fn mount_style_with_intrinsic(
                     }
                     set_sizes(then, sizes(now));
                     patch_sizes(style, next);
-                    ui.scene.borrow_mut().set_box(node, style);
+                    ui.scene.borrow_mut().set_box(node, style, boxed);
                 }
                 // The paint written last time, from the same inputs.
                 // Resized with no dynamic paint, as last time: nothing to write.
@@ -1136,6 +1141,7 @@ pub(crate) fn mount_style_with_intrinsic(
             applied: Some(previous),
             shown,
             painted,
+            boxed,
             ..
         }) = memo.as_deref_mut()
             && previous.1 == inputs.1
@@ -1232,6 +1238,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 let mut scene = ui.scene.borrow_mut();
                 if resized && let Some(style) = shown {
                     patch_sizes(style, next);
+                    *boxed = None;
                     scene.set_style(node, style.clone());
                 }
                 let mut effects = originals.effects;
@@ -1310,6 +1317,7 @@ pub(crate) fn mount_style_with_intrinsic(
         if let Some(memo) = &mut memo {
             memo.shown = Some(style);
             memo.painted = false;
+            memo.boxed = None;
         }
     });
     typography

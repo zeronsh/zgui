@@ -1209,6 +1209,9 @@ struct Node {
     /// Its font's alignment as given, if `Start` or `End`, which follow the
     /// direction: made `Left` or `Right` (`set_font`).
     align_logical: Option<crate::text_layout::TextAlign>,
+    /// Writes to `style` so far: a caller that saw the count after its own
+    /// write knows the style is still the one it gave (`set_box`).
+    style_writes: u32,
 }
 impl Node {
     fn local(&self) -> LocalTransform {
@@ -2006,6 +2009,7 @@ impl Scene {
                     rtl: false,
                     align_logical: None,
                     layer_revision: 0,
+                    style_writes: 0,
                 }),
             }],
             free: Vec::new(),
@@ -3522,6 +3526,7 @@ impl Scene {
             rtl,
             align_logical: None,
             layer_revision: 0,
+            style_writes: 0,
         };
         let id = if let Some(index) = self.free.pop() {
             self.slots[index as usize].node = Some(node);
@@ -3708,17 +3713,24 @@ impl Scene {
     /// frame): those set and its layout redone, without the style copied
     /// or each of its fields weighed for what it repaints. Any other
     /// difference takes `set_style`.
-    pub(crate) fn set_box(&mut self, id: NodeId, style: &Style) {
+    ///
+    /// `kept`: what the last call left there, for a caller whose `style`
+    /// differs from the one it gave that call only in its box. While no
+    /// other write has changed `id`'s style since, the rest is known equal
+    /// and not weighed again; `None` weighs it.
+    pub(crate) fn set_box(&mut self, id: NodeId, style: &Style, kept: &mut Option<u32>) {
         let node = self.node(id);
         let old = &node.style;
+        let known = *kept == Some(node.style_writes);
         if (self.contents_count > 0 && node.contents)
             || !laid_out_as_given(style, self.way(id))
-            || !match (&old.layout_options, &style.layout_options) {
-                (Some(old), Some(new)) => Arc::ptr_eq(old, new),
-                (old, new) => old.is_none() && new.is_none(),
-            }
-            || !old.eq_except_box(style)
+            || !(known
+                || match (&old.layout_options, &style.layout_options) {
+                    (Some(old), Some(new)) => Arc::ptr_eq(old, new),
+                    (old, new) => old.is_none() && new.is_none(),
+                } && old.eq_except_box(style))
         {
+            *kept = None;
             self.set_style(id, style.clone());
             return;
         }
@@ -3731,9 +3743,13 @@ impl Scene {
             self.given_styles.remove(&id);
         }
         if same {
+            *kept = Some(self.node(id).style_writes);
             return;
         }
-        let old = &mut self.node_mut(id).style;
+        let node = self.node_mut(id);
+        node.style_writes = node.style_writes.wrapping_add(1);
+        *kept = Some(node.style_writes);
+        let old = &mut node.style;
         // Sizes for sizes leave what it and its ancestors read (`read_bits`:
         // whether it has a width or height, and whether as a percentage).
         let reads = old.width.is_some() == style.width.is_some()
@@ -3848,7 +3864,9 @@ impl Scene {
             self.relative_count =
                 self.relative_count + usize::from(style.relative) - usize::from(old.relative);
         }
-        self.node_mut(id).style = style;
+        let node = self.node_mut(id);
+        node.style = style;
+        node.style_writes = node.style_writes.wrapping_add(1);
         if paints {
             self.damage_subtree(id);
             self.invalidate(id, PAINT);
@@ -9164,7 +9182,7 @@ mod set_box_tests {
         let mut next = style.clone();
         change(&mut next);
         scenes[0].set_style(ids[0].0, next.clone());
-        scenes[1].set_box(ids[1].0, &next);
+        scenes[1].set_box(ids[1].0, &next, &mut None);
         let laid = scenes.each_mut().map(|scene| scene.flush());
         assert_eq!(laid[0].layout_nodes, laid[1].layout_nodes);
         assert_eq!(laid[0].damage, laid[1].damage);
@@ -9200,6 +9218,44 @@ mod set_box_tests {
             style.height = Some(25.);
             style.padding = 6.;
         });
+    }
+    #[test]
+    fn set_box_weighs_a_style_again_once_another_write_changed_it() {
+        let style = Style {
+            width: Some(40.),
+            height: Some(10.),
+            ..Default::default()
+        };
+        let mut scene = Scene::new(200., 200.);
+        let column = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Column),
+            Default::default(),
+        );
+        let bar = scene.append(column, NodeKind::Rect(Color(1, 2, 3, 255)), style.clone());
+        scene.flush();
+        // A caller growing the bar keeps what set_box left...
+        let mut kept = None;
+        let mut grown = style.clone();
+        grown.height = Some(20.);
+        scene.set_box(bar, &grown, &mut kept);
+        assert!(kept.is_some());
+        // ...and another write since changes more than the box: the next
+        // grow restores the caller's style whole, as set_style would.
+        let mut padded = grown.clone();
+        padded.padding = 6.;
+        scene.set_style(bar, padded);
+        grown.height = Some(30.);
+        scene.set_box(bar, &grown, &mut kept);
+        assert_eq!(scene.style(bar), grown);
+        // Unchanged since, the next grow is a box alone again.
+        grown.height = Some(35.);
+        scene.set_box(bar, &grown, &mut kept);
+        let mut again = grown.clone();
+        again.height = Some(40.);
+        scene.set_box(bar, &again, &mut kept);
+        assert_eq!(scene.style(bar), again);
+        assert_eq!(kept, Some(scene.node(bar).style_writes));
     }
 }
 #[cfg(test)]
