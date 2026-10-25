@@ -346,8 +346,10 @@ impl AccessibilityTree {
         self.text_runs.retain(|owner, _| visible.contains(owner));
         self.blocks.retain(|owner| visible.contains(owner));
         self.long_runs.retain(|owner, _| visible.contains(owner));
-        // Fields saying what is wrong with them, and the text that shows it.
-        let error_shown = if semantics.has_errors() {
+        // Fields saying what is wrong with them, and the text that shows it
+        // (most trees have none: no node is looked up for one).
+        let any_errors = semantics.has_errors();
+        let error_shown = if any_errors {
             error_texts(scene, semantics, &ordered)
         } else {
             HashMap::new()
@@ -477,7 +479,7 @@ impl AccessibilityTree {
             // adapters give the platform as the field's. Otherwise (no such
             // text, or crates.io's adapters, which read neither) it is said
             // after the description, so it is heard as the field is reached.
-            let error = semantics.error(id);
+            let error = if any_errors { semantics.error(id) } else { None };
             let shown = error.and_then(|_| error_shown.get(&id).copied());
             if error.is_some() {
                 n.set_invalid(accesskit::Invalid::True);

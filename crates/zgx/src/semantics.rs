@@ -575,10 +575,12 @@ impl Semantics {
         entry.revision = self.revision;
     }
     /// Whether any field says what is wrong with its value.
+    #[inline]
     pub fn has_errors(&self) -> bool {
         !self.errors.is_empty()
     }
     /// What is wrong with field `id`'s value (`set_error`), if anything.
+    #[inline]
     pub fn error(&self, id: NodeId) -> Option<&str> {
         if self.errors.is_empty() || self.buried(id) {
             return None;
