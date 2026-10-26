@@ -1,4 +1,4 @@
-# Luau scripts (crates/zgx-script). Table-call shorthand (`ui.column { ... }`)
+# Every Luau script in the repository. Table-call shorthand (`ui.column { ... }`)
 # keeps elements reading like markup.
 syntax = "Luau"
 call_parentheses = "NoSingleTable"

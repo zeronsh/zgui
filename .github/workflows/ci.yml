@@ -74,12 +74,13 @@ jobs:
       - name: Benchmark sampler failure evidence
         run: python3 scripts/test_compare.py -v
       - run: cargo fmt --all -- --check
-      # Luau scripts, as stylua.toml and .styluaignore have them.
+      # Every Luau script in the repository (examples and probes too), as
+      # stylua.toml and .styluaignore have them.
       - uses: JohnnyMorganz/stylua-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 2.6.0
-          args: --check crates/zgx-script
+          args: --check .
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # Feature gating stays honest: the crates build without their defaults,
       # on the oldest Rust they claim (`rust-version`): a check this job

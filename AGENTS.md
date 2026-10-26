@@ -20,7 +20,7 @@ Linux native probes (real X11/Wayland windows, input, IME, clipboard, accessibil
 ## Before you commit
 
 - `cargo fmt`, clippy with `-D warnings`, and the tests of every crate you touched.
-- Luau scripts: `cargo run -p zgx-script --bin zgx -- lint <dir>` and `... -- check <dir>` (luau-lsp), then `stylua` (2.6, `crates/zgx-script`).
+- Luau scripts: `cargo run -p zgx-script --bin zgx -- lint <dir>` and `... -- check <dir>` (luau-lsp), then `stylua .` (2.6, from the repository root: CI checks every Luau file).
 - A commit title says what is now true ("Wheel scrolling eases in whole pixels"), the body why.
 
 ## Principles

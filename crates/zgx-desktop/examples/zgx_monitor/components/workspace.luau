@@ -75,7 +75,9 @@ local function content(): Node
 			local d = drop:peek()
 			if d.target ~= target or d.zone ~= zone or d.id ~= id or d.pid ~= payload.pid then
 				drop:set(
-					if target then { target = target, zone = zone, kind = payload.kind, id = id, pid = payload.pid } else {}
+					if target
+						then { target = target, zone = zone, kind = payload.kind, id = id, pid = payload.pid }
+						else {}
 				)
 			end
 		end,
