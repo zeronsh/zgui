@@ -254,6 +254,30 @@ jobs:
           if [ "${{ github.event_name }}" != pull_request ]; then status=0; fi
           cat perf.md >> "$GITHUB_STEP_SUMMARY" || true
           echo "status=$status" >> "$GITHUB_ENV"
+      # Temporary (#689's x86 lab-stream and list-state): callgrind on both
+      # sides' gate binaries, per function. DO NOT MERGE.
+      - name: x86 probe
+        if: always()
+        run: |
+          mkdir -p probe
+          sudo apt-get install -y -q valgrind >/dev/null 2>&1 || true
+          W=/tmp/zgx-perf
+          ls $W $W/gate-bin-base $W/gate-bin-head || true
+          for side in base head; do
+            run() { env -i PATH="$PATH" HOME="$HOME" LD_PRELOAD=$W/same_run.so ZGX_SAME_RUN_REPORT=1 ZGX_GATE=1 "$@"; }
+            run ZGX_MODE=stream RENDER=0 setarch -R valgrind --tool=callgrind --callgrind-out-file=probe/lab.$side.out $W/gate-bin-$side/workload_headless > probe/lab.$side.log 2>&1 || true
+            run ZGX_EXAMPLES=$W/scripts-$side setarch -R valgrind --tool=callgrind --callgrind-out-file=probe/ls.$side.out $W/gate-bin-$side/list_state_bench > probe/ls.$side.log 2>&1 || true
+            for scene in lab ls; do
+              callgrind_annotate --auto=no --threshold=100 probe/$scene.$side.out > probe/$scene.$side.txt || true
+              grep -E "Collected|same_run" probe/$scene.$side.log | tail -2 || true
+            done
+          done
+          ls -la probe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x86-probe
+          path: probe/*.txt
       - name: Comment
         if: github.event_name == 'pull_request' && hashFiles('perf.md') != ''
         continue-on-error: true
