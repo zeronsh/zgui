@@ -4917,10 +4917,43 @@ impl Scene {
         };
         let clips = clip_axes(&node.style) != (false, false);
         let past_clip = clips && matches!(node.kind, NodeKind::Quad(_) | NodeKind::Panel { .. });
-        let at = |bounds| {
-            self.leaf_rect::<CELLS>(id, node, bounds, transform, parent_clip, clips, past_clip)
-        };
-        (at(was), at(now))
+        // Both placements paint the same kind. Select it once; only their
+        // geometry and clipping differ.
+        macro_rules! pair {
+            ($paint:expr) => {{
+                let paint = $paint;
+                let at = |bounds| {
+                    self.leaf_rect::<CELLS>(
+                        node,
+                        bounds,
+                        transform,
+                        parent_clip,
+                        clips,
+                        past_clip,
+                        &paint,
+                    )
+                };
+                (at(was), at(now))
+            }};
+        }
+        match &node.kind {
+            NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => {
+                if quad.decoration.is_none() && quad.shadow.is_none() && quad.outline.is_none() {
+                    pair!(Some)
+                } else {
+                    pair!(|bounds| Some(quad.paint_bounds(bounds)))
+                }
+            }
+            NodeKind::Image(image) => pair!(|bounds| Some(image.paint_bounds(bounds))),
+            NodeKind::Svg(svg) => pair!(|bounds| Some(svg.paint_bounds(bounds))),
+            NodeKind::Text { .. } | NodeKind::RichText { .. }
+                if node.effects.blur_radius <= 0.0 =>
+            {
+                pair!(|bounds| Some(self.text_ink(id, bounds)))
+            }
+            NodeKind::Container(_) if node.effects.blur_radius <= 0.0 => (None, None),
+            _ => pair!(Some),
+        }
     }
     /// One of `leaf_damage`'s areas: leaf `id` at `bounds`, translated by
     /// `transform` within `parent_clip`. Inlined into it, twice.
@@ -4928,13 +4961,13 @@ impl Scene {
     #[inline(always)]
     fn leaf_rect<const CELLS: bool>(
         &self,
-        id: NodeId,
         node: &Node,
         bounds: Rect,
         transform: Transform,
         parent_clip: Option<Rect>,
         clips: bool,
         past_clip: bool,
+        paint: &impl Fn(Rect) -> Option<Rect>,
     ) -> Option<Rect> {
         let bounds = bounds.translated(transform);
         let clip = match clips {
@@ -4945,7 +4978,7 @@ impl Scene {
             true => parent_clip,
             false => clip,
         };
-        let painted = self.painted_of(id, node, bounds, node.effects.blur_radius)?;
+        let painted = paint(bounds)?;
         let rect = own.and_then(|clip| painted.intersection(clip));
         match CELLS {
             true => rect,
