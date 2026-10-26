@@ -1,6 +1,7 @@
-//! macOS presentation through IOSurfaces of the renderer's own, shown by a
-//! plain layer or, at the display's full rate, queued by an
-//! `AVSampleBufferDisplayLayer`, instead of `CAMetalLayer` drawables.
+//! macOS presentation through IOSurfaces of the renderer's own, shown as a
+//! plain layer's tiles instead of `CAMetalLayer` drawables (or, with
+//! `ZGX_PRESENT_VIDEO`, at the display's full rate, queued by an
+//! `AVSampleBufferDisplayLayer`).
 //!
 //! A drawable's contents are not kept between frames, so presenting one means
 //! filling all of it: copying the whole retained frame every frame. A surface
@@ -8,19 +9,15 @@
 //! surface itself: each frame repaints what changed since that surface was
 //! last shown, and showing it copies nothing.
 //!
-//! Shown as a plain layer's contents, a surface replaces the one before; the
-//! window server, compositing on a schedule of its own, then now and then
-//! takes two in one refresh and shows nothing new in the next when frames
-//! come at the display's full rate (measured: one frame in fifty, the
-//! 99th-percentile frame interval about 21 ms where 13 is possible). A
-//! sample buffer display layer queues what it is given, one image a refresh,
-//! as `CAMetalLayer` does with its drawables, but without a drawable's
-//! per-frame bookkeeping: each surface is wrapped once in a sample buffer
-//! that is enqueued again whenever the surface holds the next frame. Slower
-//! frames (an app's own 60 Hz updates, typing) are the plain layer's
-//! contents: handed over at a set point before a refresh (the host's
-//! `refresh_grid`), they show on it reliably, which the video layer's own thread
-//! does not quite manage, and cost less (see `Layer`).
+//! Each surface is a tile of the plain layer, its contents set once; a frame
+//! shows its surface's tile and hides the one before (see `Layer`). Handed
+//! over at a set point before a refresh (the host's `refresh_grid` and its
+//! alignment at full rate), tiles show one frame a refresh at the display's
+//! full rate as reliably as a queue does, with no thread of their own. The
+//! video layer, which queues each surface wrapped once in a sample buffer,
+//! remains for a release behind `ZGX_PRESENT_VIDEO`, to compare with: its
+//! CoreMedia thread wakes about 55 times a second while it lives, and its
+//! queue holds a third surface.
 use crate::{FORMAT, GpuError};
 use objc2::{Encoding, Message, RefEncode, msg_send, rc::Retained, runtime::AnyObject};
 use objc2_core_foundation::{

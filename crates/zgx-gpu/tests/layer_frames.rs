@@ -273,6 +273,44 @@ fn shown_frame_regions_are_the_whole_frames_rows() {
     );
 }
 
+/// At the display's full rate frames are tiles too: no video layer (its
+/// CoreMedia thread never starts), one tile shown at a time, and at rest one
+/// tile left.
+#[cfg(target_os = "macos")]
+fn full_rate_frames_show_as_tiles_without_a_video_layer() {
+    let mut window = Window::new(1);
+    window.gpu.set_full_rate(true);
+    for live in 2..12 {
+        window.live.set(live);
+        window.show();
+        // SAFETY: the host's live sublayer array, read on the main thread.
+        let classes: Vec<String> = unsafe { window.host.sublayers() }
+            .map(|subs| {
+                subs.iter()
+                    .map(|sub| sub.class().name().to_str().unwrap_or("?").to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            classes
+                .iter()
+                .all(|class| !class.contains("AVSampleBufferDisplayLayer")),
+            "frame {live}: a video layer at full rate ({classes:?})"
+        );
+        let tiles = tiles(&window.host);
+        assert_eq!(
+            tiles.iter().filter(|(_, hidden)| !hidden).count(),
+            1,
+            "frame {live}: one tile shows ({tiles:?})"
+        );
+        assert!(tiles.len() <= 3, "frame {live}: {} tiles", tiles.len());
+    }
+    window.gpu.set_full_rate(false);
+    window.gpu.trim();
+    let tiles = tiles(&window.host);
+    assert_eq!(tiles.len(), 1, "at rest: one tile ({tiles:?})");
+}
+
 fn main() {
     #[cfg(target_os = "macos")]
     {
@@ -284,5 +322,7 @@ fn main() {
         println!("layer_frames: tiles fill the plain layer exactly after the host grows");
         shown_frame_regions_are_the_whole_frames_rows();
         println!("layer_frames: shown frame regions are the whole frame's rows");
+        full_rate_frames_show_as_tiles_without_a_video_layer();
+        println!("layer_frames: full-rate frames show as tiles without a video layer");
     }
 }

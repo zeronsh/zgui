@@ -1494,6 +1494,16 @@ const LAYER_HISTORY: usize = 8;
 /// resize's frames land with its window sizes before queueing resumes.
 #[cfg(target_os = "macos")]
 const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+/// `ZGX_PRESENT_VIDEO`: frames at the display's full rate are queued on a
+/// video layer (`AVSampleBufferDisplayLayer`) instead of shown as the plain
+/// layer's tiles, as they were until tiles were measured better (2026-10-25,
+/// animate at 120 Hz: CPU 4.84% → 4.03%, memory 253 → 242 MB, the 99th
+/// percentile frame interval 20.6 → 17.7 ms, and 13.6 ms with the host
+/// aligning frames to refreshes; GPU power and the window server's GPU the
+/// same). Kept for a release, to compare with.
+#[cfg(target_os = "macos")]
+static VIDEO_AT_FULL_RATE: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_PRESENT_VIDEO").is_some());
 /// How long the video layer outlasts full-rate frames (`LayerPresent::video_until`).
 #[cfg(target_os = "macos")]
 const VIDEO_LINGER: std::time::Duration = std::time::Duration::from_secs(1);
@@ -7396,11 +7406,15 @@ impl GpuRenderer {
             .resized_at
             .is_some_and(|at| at.elapsed() < RESIZE_SETTLE)
             || present.plain_only
-            // Slower frames than the display's (a 30 fps shimmer, a clock)
-            // are a plain layer's contents: the video layer queues frames
-            // on threads of its own, a cost worth paying only for a full
-            // rate. It stays a second after one, so a pause in a scroll
-            // does not drop and rebuild it.
+            // Every frame is a tile of the plain layer, at the display's
+            // full rate too (`layer_present::Layer`), unless the video
+            // layer is asked for (`ZGX_PRESENT_VIDEO`).
+            || !*VIDEO_AT_FULL_RATE
+            // With the video layer: slower frames than the display's (a
+            // 30 fps shimmer, a clock) are still the plain layer's, as the
+            // video layer queues frames on threads of its own, a cost worth
+            // paying only for a full rate. It stays a second after one, so
+            // a pause in a scroll does not drop and rebuild it.
             || (!present.full_rate
                 && present
                     .video_until
@@ -7484,10 +7498,10 @@ impl GpuRenderer {
         self.gpu_time.take()
     }
     /// Whether frames come at the display's full rate (animating or
-    /// scrolling). On macOS those are queued by a video layer, which still
-    /// holds the surface shown before the shown one when the next frame
-    /// starts, so they keep a third surface; slower frames are a plain
-    /// layer's contents, each replacing the last. Elsewhere ignored.
+    /// scrolling). On macOS they may keep a third surface, when the window
+    /// server still holds both others as the next frame starts (with
+    /// `ZGX_PRESENT_VIDEO`, the video layer's queue does); slower frames make
+    /// do with two. Elsewhere ignored.
     pub fn set_full_rate(&mut self, #[allow(unused)] full: bool) {
         #[cfg(target_os = "macos")]
         if let Some(present) = &mut self.layer_present {
