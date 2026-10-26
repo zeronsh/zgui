@@ -1978,16 +1978,34 @@ fn styled(
         let vm = vm.clone();
         let element = element.clone();
         view = view.reactive_style(move || {
-            // On the stack: this runs whenever what the styles read changes.
-            let lits: smallvec::SmallVec<[(Prop, Lit); 4]> = dynamic
-                .iter()
-                .filter_map(|(prop, source, scalar)| {
-                    Some((*prop, resolve_style(source, *prop, scalar.as_ref(), &vm)?))
-                })
-                .collect();
             let styles = match &element {
-                Some(element) => with_animated(element, lits.into_vec()),
-                None => apply_all(Styles::new(), &lits),
+                None if dynamic
+                    .iter()
+                    .all(|(prop, _, _)| !is_transform(*prop) && !is_corner(*prop)) =>
+                {
+                    // Independent properties apply as they resolve, without
+                    // collecting and traversing another list of literals.
+                    let mut styles = Styles::new();
+                    for (prop, source, scalar) in &dynamic {
+                        if let Some(lit) = resolve_style(source, *prop, scalar.as_ref(), &vm) {
+                            apply(&mut styles, *prop, &lit);
+                        }
+                    }
+                    styles
+                }
+                _ => {
+                    // On the stack: this runs whenever what the styles read changes.
+                    let lits: smallvec::SmallVec<[(Prop, Lit); 4]> = dynamic
+                        .iter()
+                        .filter_map(|(prop, source, scalar)| {
+                            Some((*prop, resolve_style(source, *prop, scalar.as_ref(), &vm)?))
+                        })
+                        .collect();
+                    match &element {
+                        Some(element) => with_animated(element, lits.into_vec()),
+                        None => apply_all(Styles::new(), &lits),
+                    }
+                }
             };
             let image = bg_image.as_ref().and_then(|(src, fit, low)| {
                 match resolve(src, Ty::Str, None, &vm) {
