@@ -113,22 +113,194 @@ impl std::fmt::Debug for Opt32 {
     }
 }
 
+/// The properties few styles set: no scene the gate runs, nor an example
+/// app, sets one. Each kept inline made every `Styles` bigger, copied when
+/// a style function returns one and kept several times over by each
+/// restyled node; together they are 72 bytes. Unset (most styles), they
+/// cost a pointer (`OverflowSlot`). Several animate every frame (filters,
+/// the clip inset, a mask's offset): set, their box comes from a small pool
+/// and goes back to it, so a style function setting them each frame
+/// allocates nothing once running.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Overflow {
+    pub(crate) object_fit: Option<ObjectFit>,
+    pub(crate) layout: Option<Layout>,
+    pub(crate) italic: Option<bool>,
+    pub(crate) blur: Opt32,
+    pub(crate) edge_fade: Opt32,
+    pub(crate) filter_blur: Opt32,
+    /// Colour filters (`Styled::brightness` and the rest).
+    pub(crate) brightness: Opt32,
+    pub(crate) contrast: Opt32,
+    pub(crate) saturate: Opt32,
+    /// Where `RareStyles::mask` lies over the node: animated every frame.
+    pub(crate) mask_offset: Option<(f32, f32)>,
+    /// `Styled::clip_inset`: animated every frame.
+    pub(crate) clip_inset: Option<crate::scene::ClipInset>,
+    pub(crate) isolated: Option<bool>,
+}
+impl Overflow {
+    /// Every property unset.
+    pub(crate) const DEFAULT: Self = Self {
+        object_fit: None,
+        layout: None,
+        italic: None,
+        blur: Opt32::none(),
+        edge_fade: Opt32::none(),
+        filter_blur: Opt32::none(),
+        brightness: Opt32::none(),
+        contrast: Opt32::none(),
+        saturate: Opt32::none(),
+        mask_offset: None,
+        clip_inset: None,
+        isolated: None,
+    };
+}
+/// Read where no style has set one (`OverflowSlot::get`).
+static UNSET: Overflow = Overflow::DEFAULT;
+/// A style's `Overflow`, allocated once one of its properties is set. It
+/// reads and compares as the `Overflow` it holds (unset:
+/// `Overflow::DEFAULT`). It owns its allocation as a `Box` would, through a
+/// pointer: `Clone for Styles` copies a style bitwise before replacing each
+/// field that owns something, which a `Box` (unique) must not be copied by.
+#[derive(Default)]
+pub(crate) struct OverflowSlot(Option<std::ptr::NonNull<Overflow>>);
+// SAFETY: it owns an `Overflow` (plain data) alone, as a `Box` would.
+unsafe impl Send for OverflowSlot {}
+// SAFETY: as for `Send`; shared, it is only read.
+unsafe impl Sync for OverflowSlot {}
+impl OverflowSlot {
+    #[inline]
+    pub(crate) fn get(&self) -> &Overflow {
+        match self.0 {
+            // SAFETY: owned by `self` (from `Box::into_raw`), so valid while
+            // `self` is borrowed.
+            Some(overflow) => unsafe { overflow.as_ref() },
+            None => &UNSET,
+        }
+    }
+    /// Whether it holds an allocation.
+    #[inline]
+    pub(crate) fn is_allocated(&self) -> bool {
+        self.0.is_some()
+    }
+    /// For writing, if allocated.
+    #[inline]
+    pub(crate) fn get_allocated_mut(&mut self) -> Option<&mut Overflow> {
+        // SAFETY: owned by `self`, which is borrowed mutably.
+        self.0.map(|overflow| unsafe { &mut *overflow.as_ptr() })
+    }
+    /// For writing: allocated (from the pool) if it was not.
+    #[inline]
+    pub(crate) fn get_mut(&mut self) -> &mut Overflow {
+        let overflow = match self.0 {
+            Some(overflow) => overflow,
+            None => self.allocate(),
+        };
+        // SAFETY: owned by `self`, which is borrowed mutably.
+        unsafe { &mut *overflow.as_ptr() }
+    }
+    /// Out of line, as are giving it back and writing paint
+    /// (`StylesFields::set_overflow_paint`): inline, the pool's thread-local
+    /// access made every style effect run that might reach it bigger and
+    /// slower (style +1.9%), unset as the properties nearly always are.
+    #[inline(never)]
+    fn allocate(&mut self) -> std::ptr::NonNull<Overflow> {
+        *self
+            .0
+            .insert(std::ptr::NonNull::from(Box::leak(overflow_pool::take())))
+    }
+}
+impl Clone for OverflowSlot {
+    fn clone(&self) -> Self {
+        Self(self.0.map(|_| {
+            let mut copy = overflow_pool::take();
+            *copy = *self.get();
+            std::ptr::NonNull::from(Box::leak(copy))
+        }))
+    }
+}
+impl Drop for OverflowSlot {
+    #[inline]
+    fn drop(&mut self) {
+        if let Some(overflow) = self.0.take() {
+            give_back(overflow);
+        }
+    }
+}
+#[inline(never)]
+fn give_back(overflow: std::ptr::NonNull<Overflow>) {
+    // SAFETY: owned by the slot it was taken from (from `Box::leak`), so
+    // given back once.
+    overflow_pool::give(unsafe { Box::from_raw(overflow.as_ptr()) });
+}
+impl PartialEq for OverflowSlot {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+impl std::fmt::Debug for OverflowSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
+    }
+}
+/// Boxes of `Overflow` let go of, for the next style setting one: a style
+/// function setting one every frame takes back the box the last frame's
+/// style gave up. At most 16 are kept (1 KB): in a steady animation
+/// each style takes one as the last gives one back.
+mod overflow_pool {
+    use super::Overflow;
+    use std::cell::RefCell;
+    const KEPT: usize = 16;
+    thread_local! {
+        // The boxes themselves are what is kept: each is handed out whole.
+        #[allow(clippy::vec_box)]
+        static SPARE: RefCell<Vec<Box<Overflow>>> = const { RefCell::new(Vec::new()) };
+    }
+    pub(super) fn take() -> Box<Overflow> {
+        match SPARE
+            .try_with(|spare| spare.borrow_mut().pop())
+            .ok()
+            .flatten()
+        {
+            Some(mut overflow) => {
+                *overflow = Overflow::DEFAULT;
+                overflow
+            }
+            None => Box::new(Overflow::DEFAULT),
+        }
+    }
+    pub(super) fn give(overflow: Box<Overflow>) {
+        let _ = SPARE.try_with(|spare| {
+            let mut spare = spare.borrow_mut();
+            if spare.len() < KEPT {
+                spare.push(overflow);
+            }
+        });
+    }
+}
+
 macro_rules! styles {
-    ($( $(#[$doc:meta])* $field:ident: $ty:ty = $bit:ident; )*) => {
+    (
+        $( $(#[$doc:meta])* $field:ident: $ty:ty = $bit:ident; )*
+        @overflow { $( $ofield:ident = $obit:ident; )* }
+    ) => {
         /// The properties a [`Styles`] holds, read through it (`Deref`);
         /// written through `Styles::fields_mut`, which marks them set.
         #[doc(hidden)]
         #[derive(Debug, Default, PartialEq)]
         pub struct StylesFields {
             $( $(#[$doc])* pub(crate) $field: $ty, )*
+            /// The properties few styles set (`Overflow`), apart.
+            pub(crate) overflow: OverflowSlot,
         }
         /// Each field's bit in `Styles::set`.
         #[allow(dead_code)]
         pub(crate) mod bit {
-            styles!(@bits 0u32; $($bit)*);
+            styles!(@bits 0u32; $($bit)* $($obit)*);
             /// Each field's bit's index.
             pub(crate) mod index {
-                styles!(@index 0u32; $($bit)*);
+                styles!(@index 0u32; $($bit)* $($obit)*);
             }
         }
         impl StylesFields {
@@ -136,6 +308,7 @@ macro_rules! styles {
             fn mask(&self) -> u64 {
                 let mut mask = 0;
                 $( if self.$field != <$ty>::default() { mask |= bit::$bit; } )*
+                $( if self.overflow().$ofield != Overflow::DEFAULT.$ofield { mask |= bit::$obit; } )*
                 mask
             }
             /// Whether the fields of `bits` are equal in both.
@@ -156,6 +329,7 @@ macro_rules! styles {
             fn eq_field(&self, other: &Self, field: u64) -> bool {
                 match field.trailing_zeros() {
                     $( bit::index::$bit => self.$field == other.$field, )*
+                    $( bit::index::$obit => self.overflow().$ofield == other.overflow().$ofield, )*
                     _ => true,
                 }
             }
@@ -174,8 +348,6 @@ macro_rules! styles {
 }
 styles! {
     layout_options: Option<std::sync::Arc<crate::layout::LayoutOptions>> = LAYOUT_OPTIONS;
-    object_fit: Option<ObjectFit> = OBJECT_FIT;
-    layout: Option<Layout> = LAYOUT;
     absolute: Option<bool> = ABSOLUTE;
     width: Opt32 = WIDTH;
     height: Opt32 = HEIGHT;
@@ -198,25 +370,12 @@ styles! {
     font_family: Option<crate::text_layout::FontFamily> = FONT_FAMILY;
     text_align: Option<crate::text_layout::TextAlign> = TEXT_ALIGN;
     font_weight: Option<u16> = FONT_WEIGHT;
-    italic: Option<bool> = ITALIC;
     radius: Opt32 = RADIUS;
     border_width: Opt32 = BORDER_WIDTH;
     border_color: Option<Color> = BORDER_COLOR;
     opacity: Opt32 = OPACITY;
-    blur: Opt32 = BLUR;
-    edge_fade: Opt32 = EDGE_FADE;
-    filter_blur: Opt32 = FILTER_BLUR;
-    /// Colour filters (`Styled::brightness` and the rest).
-    brightness: Opt32 = BRIGHTNESS;
-    contrast: Opt32 = CONTRAST;
-    saturate: Opt32 = SATURATE;
-    /// Where `RareStyles::mask` lies over the node: animated every frame.
-    mask_offset: Option<(f32, f32)> = MASK_OFFSET;
-    /// `Styled::clip_inset`: animated every frame.
-    clip_inset: Option<crate::scene::ClipInset> = CLIP_INSET;
     transform: Option<Transform> = TRANSFORM;
     local_transform: TransformPatch = LOCAL_TRANSFORM;
-    isolated: Option<bool> = ISOLATED;
     padding_sides: u8 = PADDING_SIDES;
     margin_sides: u8 = MARGIN_SIDES;
     /// Set (to none) by `bg`, `rounded` and `border`, so on most nodes.
@@ -228,6 +387,136 @@ styles! {
     /// Properties set by theme tokens (`.bg(tok::SURFACE_RAISED)`), resolved
     /// when the node is styled; see `crate::theme`.
     tokens: Option<std::sync::Arc<crate::theme::Bindings>> = TOKENS;
+    // The properties few styles set (`Overflow`): each a bit in `set` as
+    // the others, its value apart.
+    @overflow {
+        object_fit = OBJECT_FIT;
+        layout = LAYOUT;
+        italic = ITALIC;
+        blur = BLUR;
+        edge_fade = EDGE_FADE;
+        filter_blur = FILTER_BLUR;
+        brightness = BRIGHTNESS;
+        contrast = CONTRAST;
+        saturate = SATURATE;
+        mask_offset = MASK_OFFSET;
+        clip_inset = CLIP_INSET;
+        isolated = ISOLATED;
+    }
+}
+/// The paint properties among `Overflow`'s (`compose_style::Paint`'s), as
+/// one: a style effect moves them between styles together.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) struct OverflowPaint {
+    pub(crate) blur: Opt32,
+    pub(crate) edge_fade: Opt32,
+    pub(crate) filter_blur: Opt32,
+    pub(crate) brightness: Opt32,
+    pub(crate) contrast: Opt32,
+    pub(crate) saturate: Opt32,
+    pub(crate) mask_offset: Option<(f32, f32)>,
+    pub(crate) clip_inset: Option<crate::scene::ClipInset>,
+}
+impl OverflowPaint {
+    /// None set: one test a field, without branching between them (an
+    /// animated style's every run asks).
+    #[inline]
+    fn is_unset(&self) -> bool {
+        self.blur.is_none()
+            & self.edge_fade.is_none()
+            & self.filter_blur.is_none()
+            & self.brightness.is_none()
+            & self.contrast.is_none()
+            & self.saturate.is_none()
+            & self.mask_offset.is_none()
+            & self.clip_inset.is_none()
+    }
+}
+impl StylesFields {
+    /// The properties few styles set (`Overflow`).
+    #[inline]
+    pub(crate) fn overflow(&self) -> &Overflow {
+        self.overflow.get()
+    }
+    /// The same, to write (with its bits set: `Styles::fields_mut`).
+    #[inline]
+    pub(crate) fn overflow_mut(&mut self) -> &mut Overflow {
+        self.overflow.get_mut()
+    }
+    /// Its paint properties among them.
+    #[inline]
+    pub(crate) fn overflow_paint(&self) -> OverflowPaint {
+        let o = self.overflow();
+        OverflowPaint {
+            blur: o.blur,
+            edge_fade: o.edge_fade,
+            filter_blur: o.filter_blur,
+            brightness: o.brightness,
+            contrast: o.contrast,
+            saturate: o.saturate,
+            mask_offset: o.mask_offset,
+            clip_inset: o.clip_inset,
+        }
+    }
+    /// Write them; all unset over none set writes nothing (and allocates
+    /// nothing): unallocated, they read unset already.
+    #[inline]
+    pub(crate) fn set_overflow_paint(&mut self, paint: OverflowPaint) {
+        if !self.overflow.is_allocated() && paint.is_unset() {
+            return;
+        }
+        self.write_overflow_paint(paint);
+    }
+    /// Write them, unguarded (`compose_style::Paint::put` tests its own).
+    #[inline(never)]
+    pub(crate) fn write_overflow_paint(&mut self, paint: OverflowPaint) {
+        let o = self.overflow_mut();
+        (
+            o.blur,
+            o.edge_fade,
+            o.filter_blur,
+            o.brightness,
+            o.contrast,
+            o.saturate,
+            o.mask_offset,
+            o.clip_inset,
+        ) = (
+            paint.blur,
+            paint.edge_fade,
+            paint.filter_blur,
+            paint.brightness,
+            paint.contrast,
+            paint.saturate,
+            paint.mask_offset,
+            paint.clip_inset,
+        );
+    }
+    /// Take them out, leaving them unset: those of `set` (`Styles::set`
+    /// bits), the others unset already. Allocates nothing.
+    #[inline]
+    pub(crate) fn take_overflow_paint(&mut self, set: u64) -> OverflowPaint {
+        let Some(o) = self.overflow.get_allocated_mut() else {
+            return OverflowPaint::default();
+        };
+        macro_rules! taken {
+            ($field:ident, $bit:ident) => {
+                match set & bit::$bit {
+                    0 => Default::default(),
+                    _ => std::mem::take(&mut o.$field),
+                }
+            };
+        }
+        OverflowPaint {
+            blur: taken!(blur, BLUR),
+            edge_fade: taken!(edge_fade, EDGE_FADE),
+            filter_blur: taken!(filter_blur, FILTER_BLUR),
+            brightness: taken!(brightness, BRIGHTNESS),
+            contrast: taken!(contrast, CONTRAST),
+            saturate: taken!(saturate, SATURATE),
+            mask_offset: taken!(mask_offset, MASK_OFFSET),
+            clip_inset: taken!(clip_inset, CLIP_INSET),
+        }
+    }
 }
 /// A set of style properties, each unset until a builder sets it: a
 /// view's own, or a reusable patch merged over one ([`Styled::style`]).
@@ -312,10 +601,11 @@ impl Clone for Styles {
     #[inline]
     fn clone(&self) -> Self {
         // SAFETY: `self` is a valid, aligned `Styles`, so reading it bitwise
-        // gives a valid value: `copy`, whose five owning fields alias
-        // `self`'s. They are all `Arc`s or enums of `Arc`s (no `Box`, whose
-        // uniqueness an alias would break), and `ManuallyDrop` keeps `copy`
-        // from dropping them, so `self` keeps sole ownership of its own.
+        // gives a valid value: `copy`, whose six owning fields alias
+        // `self`'s. They are `Arc`s, enums of `Arc`s and an `OverflowSlot`
+        // (a pointer, no `Box`, whose uniqueness an alias would break), and
+        // `ManuallyDrop` keeps `copy` from dropping them, so `self` keeps
+        // sole ownership of its own.
         let mut copy = std::mem::ManuallyDrop::new(unsafe { std::ptr::read(self) });
         // SAFETY: each aliasing field is overwritten with its own clone;
         // `ptr::write` drops nothing, so `self`'s are not released. Every
@@ -330,6 +620,7 @@ impl Clone for Styles {
             std::ptr::write(&mut copy.paint_background, own.paint_background.clone());
             std::ptr::write(&mut copy.rare, own.rare.clone());
             std::ptr::write(&mut copy.tokens, own.tokens.clone());
+            std::ptr::write(&mut copy.overflow, own.overflow.clone());
         }
         std::mem::ManuallyDrop::into_inner(copy)
     }
@@ -345,6 +636,7 @@ fn styles_clone_covers_every_owning_field(styles: &StylesFields) -> StylesFields
         paint_background: None,
         rare: None,
         tokens: None,
+        overflow: OverflowSlot::default(),
         ..*styles
     }
 }
@@ -582,7 +874,7 @@ impl Styles {
             || self.text_align.is_some()
             || self.rare().font_fallbacks.is_some()
             || self.font_weight.is_some()
-            || self.italic.is_some()
+            || self.overflow().italic.is_some()
             || self.line_height.is_some()
             || self.rare().letter_spacing.is_some()
             || self.rare().underline.is_some()
@@ -665,7 +957,7 @@ impl Styles {
                 || other.rare().max_width.is_some()
                 || other.rare().min_height.is_some()
                 || other.rare().max_height.is_some()
-                || other.layout.is_some())
+                || other.overflow().layout.is_some())
         {
             let options = std::sync::Arc::make_mut(options);
             if other.gap.is_some() {
@@ -688,7 +980,7 @@ impl Styles {
             if other.rare().max_height.is_some() {
                 options.max_height = None;
             }
-            if other.layout.is_some() {
+            if other.overflow().layout.is_some() {
                 options.reverse = None;
             }
         }
@@ -720,14 +1012,15 @@ impl Styles {
         if other.border_edges.is_some() {
             self.fields_mut(bit::BORDER_EDGES).border_edges = other.border_edges;
         }
-        if other.object_fit.is_some() {
-            self.fields_mut(bit::OBJECT_FIT).object_fit = other.object_fit;
+        if other.overflow().object_fit.is_some() {
+            self.fields_mut(bit::OBJECT_FIT).overflow_mut().object_fit =
+                other.overflow().object_fit;
         }
         if other.absolute.is_some() {
             self.fields_mut(bit::ABSOLUTE).absolute = other.absolute;
         }
-        if other.layout.is_some() {
-            self.fields_mut(bit::LAYOUT).layout = other.layout;
+        if other.overflow().layout.is_some() {
+            self.fields_mut(bit::LAYOUT).overflow_mut().layout = other.overflow().layout;
         }
         if other.width.is_some() || other.width_percent.is_some() {
             self.fields_mut(bit::WIDTH).width = other.width;
@@ -776,8 +1069,8 @@ impl Styles {
         if other.font_weight.is_some() {
             self.fields_mut(bit::FONT_WEIGHT).font_weight = other.font_weight;
         }
-        if other.italic.is_some() {
-            self.fields_mut(bit::ITALIC).italic = other.italic;
+        if other.overflow().italic.is_some() {
+            self.fields_mut(bit::ITALIC).overflow_mut().italic = other.overflow().italic;
         }
         if other.text_size.is_some() {
             self.fields_mut(bit::TEXT_SIZE).text_size = other.text_size;
@@ -797,37 +1090,41 @@ impl Styles {
         if other.opacity.is_some() {
             self.fields_mut(bit::OPACITY).opacity = other.opacity;
         }
-        if other.blur.is_some() {
-            self.fields_mut(bit::BLUR).blur = other.blur;
+        if other.overflow().blur.is_some() {
+            self.fields_mut(bit::BLUR).overflow_mut().blur = other.overflow().blur;
         }
-        if other.edge_fade.is_some() {
-            self.fields_mut(bit::EDGE_FADE).edge_fade = other.edge_fade;
+        if other.overflow().edge_fade.is_some() {
+            self.fields_mut(bit::EDGE_FADE).overflow_mut().edge_fade = other.overflow().edge_fade;
         }
-        if other.filter_blur.is_some() {
-            self.fields_mut(bit::FILTER_BLUR).filter_blur = other.filter_blur;
+        if other.overflow().filter_blur.is_some() {
+            self.fields_mut(bit::FILTER_BLUR).overflow_mut().filter_blur =
+                other.overflow().filter_blur;
         }
-        if other.brightness.is_some() {
-            self.fields_mut(bit::BRIGHTNESS).brightness = other.brightness;
+        if other.overflow().brightness.is_some() {
+            self.fields_mut(bit::BRIGHTNESS).overflow_mut().brightness =
+                other.overflow().brightness;
         }
-        if other.contrast.is_some() {
-            self.fields_mut(bit::CONTRAST).contrast = other.contrast;
+        if other.overflow().contrast.is_some() {
+            self.fields_mut(bit::CONTRAST).overflow_mut().contrast = other.overflow().contrast;
         }
-        if other.saturate.is_some() {
-            self.fields_mut(bit::SATURATE).saturate = other.saturate;
+        if other.overflow().saturate.is_some() {
+            self.fields_mut(bit::SATURATE).overflow_mut().saturate = other.overflow().saturate;
         }
-        if other.mask_offset.is_some() {
-            self.fields_mut(bit::MASK_OFFSET).mask_offset = other.mask_offset;
+        if other.overflow().mask_offset.is_some() {
+            self.fields_mut(bit::MASK_OFFSET).overflow_mut().mask_offset =
+                other.overflow().mask_offset;
         }
-        if other.clip_inset.is_some() {
-            self.fields_mut(bit::CLIP_INSET).clip_inset = other.clip_inset;
+        if other.overflow().clip_inset.is_some() {
+            self.fields_mut(bit::CLIP_INSET).overflow_mut().clip_inset =
+                other.overflow().clip_inset;
         }
         if other.transform.is_some() {
             self.fields_mut(bit::TRANSFORM).transform = other.transform;
         }
         let local_transform = self.local_transform.over(other.local_transform);
         self.fields_mut(bit::LOCAL_TRANSFORM).local_transform = local_transform;
-        if other.isolated.is_some() {
-            self.fields_mut(bit::ISOLATED).isolated = other.isolated;
+        if other.overflow().isolated.is_some() {
+            self.fields_mut(bit::ISOLATED).overflow_mut().isolated = other.overflow().isolated;
         }
         if let Some(value) = other.padding {
             if self.padding.is_some() && self.padding_sides == 0 {
@@ -975,14 +1272,20 @@ pub trait Styled: Sized {
     /// Lay the children out in a row, last first (`flex-direction:
     /// row-reverse`).
     fn flex_row_reverse(mut self) -> Self {
-        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Row);
+        self.styles_mut()
+            .fields_mut(bit::LAYOUT)
+            .overflow_mut()
+            .layout = Some(Layout::Row);
         self.styles_mut().layout_options_mut().reverse = Some(true);
         self
     }
     /// Lay the children out in a column, last first (`flex-direction:
     /// column-reverse`).
     fn flex_col_reverse(mut self) -> Self {
-        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Column);
+        self.styles_mut()
+            .fields_mut(bit::LAYOUT)
+            .overflow_mut()
+            .layout = Some(Layout::Column);
         self.styles_mut().layout_options_mut().reverse = Some(true);
         self
     }
@@ -1300,7 +1603,10 @@ pub trait Styled: Sized {
     }
     /// Set centered image fitting within its padded content box. Not inherited.
     fn object_fit(mut self, fit: ObjectFit) -> Self {
-        self.styles_mut().fields_mut(bit::OBJECT_FIT).object_fit = Some(fit);
+        self.styles_mut()
+            .fields_mut(bit::OBJECT_FIT)
+            .overflow_mut()
+            .object_fit = Some(fit);
         self
     }
     /// Fit the image inside its box, keeping its aspect ratio
@@ -1672,7 +1978,10 @@ pub trait Styled: Sized {
     }
     /// Italic text, or upright. Inherited.
     fn italic(mut self, italic: bool) -> Self {
-        self.styles_mut().fields_mut(bit::ITALIC).italic = Some(italic);
+        self.styles_mut()
+            .fields_mut(bit::ITALIC)
+            .overflow_mut()
+            .italic = Some(italic);
         self
     }
     /// The font size in points, or a theme token. Inherited.
@@ -1752,7 +2061,7 @@ pub trait Styled: Sized {
     /// node's content itself, see `filter_blur`.
     fn blur(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Blur);
-        self.styles_mut().fields_mut(bit::BLUR).blur = Some(value).into();
+        self.styles_mut().fields_mut(bit::BLUR).overflow_mut().blur = Some(value).into();
         self
     }
     /// Content blur (CSS `filter: blur()`): the node and its subtree blur by
@@ -1761,7 +2070,10 @@ pub trait Styled: Sized {
     /// sigma (a fade in from blurred text) only composites it again. Unlike
     /// `blur`, what lies behind is untouched.
     fn filter_blur(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::FILTER_BLUR).filter_blur = Some(value).into();
+        self.styles_mut()
+            .fields_mut(bit::FILTER_BLUR)
+            .overflow_mut()
+            .filter_blur = Some(value).into();
         self
     }
     /// CSS `filter: brightness()`: the view and its subtree, as a group,
@@ -1769,18 +2081,27 @@ pub trait Styled: Sized {
     /// a button brightens on hover. Applied as the GPU writes each colour:
     /// no layer, and animating it repaints only the view's area.
     fn brightness(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::BRIGHTNESS).brightness = Some(value).into();
+        self.styles_mut()
+            .fields_mut(bit::BRIGHTNESS)
+            .overflow_mut()
+            .brightness = Some(value).into();
         self
     }
     /// CSS `filter: contrast()`: colours pushed from (or, below 1, towards)
     /// mid grey.
     fn contrast(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::CONTRAST).contrast = Some(value).into();
+        self.styles_mut()
+            .fields_mut(bit::CONTRAST)
+            .overflow_mut()
+            .contrast = Some(value).into();
         self
     }
     /// CSS `filter: saturate()`: 0 is greyscale, past 1 more vivid.
     fn saturate(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::SATURATE).saturate = Some(value).into();
+        self.styles_mut()
+            .fields_mut(bit::SATURATE)
+            .overflow_mut()
+            .saturate = Some(value).into();
         self
     }
     /// Show the node's content through `image`'s alpha (CSS `mask-image`,
@@ -1798,8 +2119,10 @@ pub trait Styled: Sized {
     /// again without layout. With `overflow_hidden` and rounded corners,
     /// the inset box is rounded alike.
     fn clip_inset(mut self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
-        self.styles_mut().fields_mut(bit::CLIP_INSET).clip_inset =
-            Some(crate::scene::ClipInset::px(top, right, bottom, left));
+        self.styles_mut()
+            .fields_mut(bit::CLIP_INSET)
+            .overflow_mut()
+            .clip_inset = Some(crate::scene::ClipInset::px(top, right, bottom, left));
         self
     }
     /// `clip_inset` in percent of the view's own size (top and bottom of its
@@ -1807,7 +2130,10 @@ pub trait Styled: Sized {
     /// `clip_inset_percent(0., 0., 100., 0.)` closes it to its top edge.
     fn clip_inset_percent(mut self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
         use crate::layout::Length::Percent;
-        self.styles_mut().fields_mut(bit::CLIP_INSET).clip_inset = Some(crate::scene::ClipInset {
+        self.styles_mut()
+            .fields_mut(bit::CLIP_INSET)
+            .overflow_mut()
+            .clip_inset = Some(crate::scene::ClipInset {
             top: Percent(top / 100.),
             right: Percent(right / 100.),
             bottom: Percent(bottom / 100.),
@@ -1817,24 +2143,36 @@ pub trait Styled: Sized {
     }
     /// `clip_inset` with each side's length (pixels or percent) as given.
     fn clip_inset_lengths(mut self, inset: crate::scene::ClipInset) -> Self {
-        self.styles_mut().fields_mut(bit::CLIP_INSET).clip_inset = Some(inset);
+        self.styles_mut()
+            .fields_mut(bit::CLIP_INSET)
+            .overflow_mut()
+            .clip_inset = Some(inset);
         self
     }
     /// Where `mask`'s image lies, from the node's laid-out origin.
     fn mask_offset(mut self, x: f32, y: f32) -> Self {
-        self.styles_mut().fields_mut(bit::MASK_OFFSET).mask_offset = Some((x, y));
+        self.styles_mut()
+            .fields_mut(bit::MASK_OFFSET)
+            .overflow_mut()
+            .mask_offset = Some((x, y));
         self
     }
     /// Fade the view's top and bottom edges out over `value` points.
     fn edge_fade(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::EDGE_FADE).edge_fade = Some(value).into();
+        self.styles_mut()
+            .fields_mut(bit::EDGE_FADE)
+            .overflow_mut()
+            .edge_fade = Some(value).into();
         self
     }
     /// Render the subtree as a group into a cached layer, then composite it
     /// once: `isolated(true).opacity(0.5)` fades overlapping children
     /// together.
     fn isolated(mut self, value: bool) -> Self {
-        self.styles_mut().fields_mut(bit::ISOLATED).isolated = Some(value);
+        self.styles_mut()
+            .fields_mut(bit::ISOLATED)
+            .overflow_mut()
+            .isolated = Some(value);
         self
     }
     /// Wrap text at the content width (true), or keep each line whole.
@@ -2122,7 +2460,10 @@ pub trait Styled: Sized {
         {
             std::sync::Arc::make_mut(options).reverse = None;
         }
-        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Row);
+        self.styles_mut()
+            .fields_mut(bit::LAYOUT)
+            .overflow_mut()
+            .layout = Some(Layout::Row);
         self
     }
     /// Lay the children out in a column, first first.
@@ -2134,12 +2475,18 @@ pub trait Styled: Sized {
         {
             std::sync::Arc::make_mut(options).reverse = None;
         }
-        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Column);
+        self.styles_mut()
+            .fields_mut(bit::LAYOUT)
+            .overflow_mut()
+            .layout = Some(Layout::Column);
         self
     }
     /// Stack the children in one area (see [`crate::compose::overlay`]).
     fn overlay(mut self) -> Self {
-        self.styles_mut().fields_mut(bit::LAYOUT).layout = Some(Layout::Overlay);
+        self.styles_mut()
+            .fields_mut(bit::LAYOUT)
+            .overflow_mut()
+            .layout = Some(Layout::Overlay);
         self
     }
     /// Align the children at the start across the axis (CSS `align-items:
@@ -2452,6 +2799,51 @@ pub const fn rgba(value: u32) -> Color {
 mod tests {
     use super::*;
 
+    /// A style setting none of the properties few set (`Overflow`) holds
+    /// no allocation for them, nor does one given their paint unset; one
+    /// setting them reads, compares, merges and clones them as any other.
+    #[test]
+    fn rare_properties_cost_nothing_unset_and_behave_as_others_set() {
+        let plain = Styles::new().w(10.).opacity(0.5).bg(Color(1, 2, 3, 255));
+        assert!(!plain.fields.overflow.is_allocated());
+        let mut painted = plain.clone();
+        painted
+            .fields_mut(bit::BLUR)
+            .set_overflow_paint(OverflowPaint::default());
+        assert!(!painted.fields.overflow.is_allocated());
+        let rare = || {
+            Styles::new()
+                .w(10.)
+                .brightness(0.5)
+                .clip_inset(1., 2., 3., 4.)
+                .italic(true)
+        };
+        let styles = rare();
+        assert!(styles.fields.overflow.is_allocated());
+        assert_eq!(styles.overflow().brightness, Some(0.5));
+        assert_eq!(styles.overflow().italic, Some(true));
+        assert!(styles == rare() && styles.clone() == styles);
+        assert!(styles != Styles::new().w(10.).brightness(0.6));
+        let mut merged = Styles::new().h(5.);
+        merged.merge(&styles);
+        assert_eq!(merged.overflow().clip_inset, styles.overflow().clip_inset);
+        assert_eq!(merged.overflow().brightness, Some(0.5));
+        assert_eq!(merged.set_bits() & bit::BRIGHTNESS, bit::BRIGHTNESS);
+    }
+    /// A style function setting a rare property every frame takes back the
+    /// box the last frame's style gave up: once running, none is allocated.
+    #[test]
+    fn a_rare_property_set_every_frame_reuses_its_box() {
+        let address = |styles: &Styles| styles.fields.overflow.0.map(|o| o.as_ptr() as usize);
+        let first = Styles::new().contrast(1.5);
+        let at = address(&first);
+        drop(first);
+        let again = Styles::new().contrast(1.2);
+        assert_eq!(address(&again), at);
+        assert_eq!(again.overflow().contrast, Some(1.2));
+        // Taken from the pool, it holds nothing of the last style.
+        assert_eq!(again.overflow().brightness, None);
+    }
     /// Values an optional number takes: unset, zeros, ordinary numbers,
     /// infinities and NaNs (one with `Opt32`'s own payload, which must
     /// still read back as a number, not as unset).
@@ -2499,10 +2891,20 @@ mod tests {
     fn styles_optional_numbers_compare_as_options() {
         macro_rules! each {
             ($($field:ident $bit:ident),* $(,)?) => {$(
+                each!(@one $field $bit |styles: &mut Styles, value: Opt32| {
+                    styles.fields_mut(bit::$bit).$field = value;
+                });
+            )*};
+            (overflow $($field:ident $bit:ident),* $(,)?) => {$(
+                each!(@one $field $bit |styles: &mut Styles, value: Opt32| {
+                    styles.fields_mut(bit::$bit).overflow_mut().$field = value;
+                });
+            )*};
+            (@one $field:ident $bit:ident $write:expr) => {
                 for a in optional_numbers() {
                     let with = |value: Option<f32>| {
                         let mut styles = Styles::default();
-                        styles.fields_mut(bit::$bit).$field = value.into();
+                        $write(&mut styles, value.into());
                         styles
                     };
                     assert_eq!(with(a).fields.mask() != 0, a.is_some(), "{} {a:?}", stringify!($field));
@@ -2510,15 +2912,17 @@ mod tests {
                         assert_eq!(with(a) == with(b), a == b, "{} {a:?} {b:?}", stringify!($field));
                     }
                 }
-            )*};
+            };
         }
         each!(
             width WIDTH, height HEIGHT, width_percent WIDTH_PERCENT,
             height_percent HEIGHT_PERCENT, gap GAP, flex_grow FLEX_GROW,
             flex_shrink FLEX_SHRINK, text_size TEXT_SIZE, radius RADIUS,
-            border_width BORDER_WIDTH, opacity OPACITY, blur BLUR,
-            edge_fade EDGE_FADE, filter_blur FILTER_BLUR, brightness BRIGHTNESS,
-            contrast CONTRAST, saturate SATURATE,
+            border_width BORDER_WIDTH, opacity OPACITY,
+        );
+        each!(overflow
+            blur BLUR, edge_fade EDGE_FADE, filter_blur FILTER_BLUR,
+            brightness BRIGHTNESS, contrast CONTRAST, saturate SATURATE,
         );
     }
     /// Comparing only the fields set in either (`Styles::set`) agrees with
@@ -2567,6 +2971,7 @@ mod tests {
                 assert_eq!(a == b, **a == **b, "{a:?} against {b:?}");
                 let sizes = |s: &StylesFields| {
                     let mut s = StylesFields {
+                        overflow: s.overflow.clone(),
                         rare: s.rare.clone(),
                         tokens: s.tokens.clone(),
                         layout_options: s.layout_options.clone(),
@@ -2759,7 +3164,7 @@ mod tests {
             );
         assert_eq!(style.rare().shadow, Some(None));
         assert_eq!(style.clip, Some(false));
-        assert_eq!(style.isolated, Some(false));
+        assert_eq!(style.overflow().isolated, Some(false));
         assert_eq!(rgb(0x102030), Color(16, 32, 48, 255));
         assert_eq!(rgba(0x10203040), Color(16, 32, 48, 64));
     }

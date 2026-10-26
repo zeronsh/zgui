@@ -3958,7 +3958,7 @@ fn open_element(
                 if let Some(value) = span.styles.font_weight {
                     font.weight = value;
                 }
-                if let Some(value) = span.styles.italic {
+                if let Some(value) = span.styles.overflow().italic {
                     font.italic = value;
                 }
                 if let Some(value) = span.styles.line_height {

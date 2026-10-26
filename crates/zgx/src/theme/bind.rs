@@ -408,7 +408,7 @@ fn sets(styles: &Styles, field: Field) -> u8 {
         Field::InsetShadow => all(styles.rare().inset_shadows.is_some()),
         Field::OutlineColor => all(styles.rare().outline.is_some()),
         Field::Opacity => all(styles.opacity.is_some()),
-        Field::Blur => all(styles.blur.is_some()),
+        Field::Blur => all(styles.overflow().blur.is_some()),
         Field::Width => all(styles.width.is_some() || styles.width_percent.is_some()),
         Field::Height => all(styles.height.is_some() || styles.height_percent.is_some()),
         // Set alongside the uniforms it lands in; nothing replaces it.
