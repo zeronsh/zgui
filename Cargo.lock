@@ -4529,6 +4529,7 @@ version = "0.1.2"
 name = "zgx-gpu"
 version = "0.1.2"
 dependencies = [
+ "block2 0.6.2",
  "bytemuck",
  "gif",
  "image",

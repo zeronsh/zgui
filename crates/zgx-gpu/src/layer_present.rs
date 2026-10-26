@@ -400,6 +400,54 @@ pub(crate) struct Layer {
     /// (`ZGX_PRESENT_DRAWABLE`), above the plain layer.
     drawables: Option<Drawables>,
 }
+/// When the window server showed each drawable (`addPresentedHandler`), as
+/// the gaps between successive presented drawables and the count it skipped:
+/// what the screen did, not what the renderer handed over.
+#[derive(Default)]
+pub(crate) struct Feedback {
+    state: std::sync::Mutex<FeedbackState>,
+}
+#[derive(Default)]
+struct FeedbackState {
+    presented: u64,
+    skipped: u64,
+    /// The last presented time (host seconds), and the latest gaps (ms).
+    last: f64,
+    gaps: std::collections::VecDeque<f64>,
+}
+impl Feedback {
+    fn record(&self, presented: f64) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if presented <= 0. {
+            state.skipped += 1;
+            return;
+        }
+        state.presented += 1;
+        if state.last > 0. && presented > state.last {
+            let gap = (presented - state.last) * 1e3;
+            state.gaps.push_back(gap);
+            if state.gaps.len() > 600 {
+                state.gaps.pop_front();
+            }
+        }
+        state.last = presented;
+    }
+    /// Drawables presented and skipped so far, and the latest gaps' median,
+    /// 99th percentile and count over 1.5 of the median (a refresh missed).
+    pub(crate) fn summary(&self) -> (u64, u64, f64, f64, usize) {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut gaps: Vec<f64> = state.gaps.iter().copied().collect();
+        gaps.sort_by(f64::total_cmp);
+        let at = |q: f64| {
+            gaps.get(((gaps.len() as f64 - 1.) * q) as usize)
+                .copied()
+                .unwrap_or(0.)
+        };
+        let median = at(0.5);
+        let late = gaps.iter().filter(|gap| **gap > median * 1.5).count();
+        (state.presented, state.skipped, median, at(0.99), late)
+    }
+}
 /// A `CAMetalLayer` whose drawables are the surfaces full-rate frames draw
 /// into, presented by Metal, which hands each to the window server for the
 /// refresh after its work completes: the system schedules them, as GPUI's.
@@ -411,6 +459,8 @@ struct Drawables {
     pending: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
     /// Whether the layer shows (its frames, over the hidden tiles).
     shown: bool,
+    /// When each drawable was shown (`Feedback`).
+    feedback: std::sync::Arc<Feedback>,
     /// Drawables present in the caller's Core Animation transaction, once
     /// their work is scheduled (`ZGX_DRAWABLE_TXN`, PROTOTYPE), rather than
     /// by Metal when it completes.
@@ -796,6 +846,7 @@ impl Layer {
                 pending: None,
                 shown: false,
                 transactional,
+                feedback: Default::default(),
             }
         });
         // DIAGNOSTIC (the flush lane's ZGX_DRAWABLE_CS_ALT): no colorspace on
@@ -832,6 +883,16 @@ impl Layer {
             transaction(|| drawables.layer.setOpaque(opaque));
         }
         let drawable = drawables.layer.nextDrawable()?;
+        let feedback = drawables.feedback.clone();
+        let handler = block2::RcBlock::new(
+            move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
+                // SAFETY: Metal passes the drawable presented, alive for the call.
+                feedback.record(unsafe { shown.as_ref() }.presentedTime());
+            },
+        );
+        // SAFETY: A live block taking the drawable, as the handler's type
+        // declares; Metal copies it.
+        unsafe { drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
         let texture = drawable.texture();
         let surface = texture.iosurface()?;
         drawables.pending = Some(drawable);
@@ -877,6 +938,12 @@ impl Layer {
             });
             self.plain_shows.set(false);
         }
+    }
+    /// What the window server did with the drawables (`Feedback`), if any.
+    pub fn drawable_feedback(&self) -> Option<std::sync::Arc<Feedback>> {
+        self.drawables
+            .as_ref()
+            .map(|drawables| drawables.feedback.clone())
     }
     /// Hide the drawable layer (the plain layer shows frames again), in the
     /// caller's transaction.

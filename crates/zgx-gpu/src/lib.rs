@@ -8168,6 +8168,29 @@ impl GpuRenderer {
         );
         present.frame += 1;
         let frame = present.frame;
+        // What the screen did with drawables lately (`layer_present::Feedback`).
+        if frame.is_multiple_of(240)
+            && let Some(feedback) = present
+                .layer
+                .as_ref()
+                .and_then(|layer| layer.drawable_feedback())
+        {
+            let line = || {
+                let (shown, skipped, median, p99, late) = feedback.summary();
+                format!(
+                    "drawables shown={shown} skipped={skipped} gap_p50={median:.2}ms gap_p99={p99:.2}ms late={late}"
+                )
+            };
+            // DIAGNOSTIC: `ZGX_DRAWABLE_FEEDBACK` prints it without the
+            // present log's layer sampler, which costs frames of its own.
+            static FEEDBACK: std::sync::LazyLock<bool> =
+                std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_DRAWABLE_FEEDBACK").is_some());
+            if *FEEDBACK {
+                eprintln!("{}", line());
+            } else {
+                present_log::log(line);
+            }
+        }
         present.buffers[index].1 = Some(frame);
         present.shown = Some(index);
         let changed = std::mem::take(&mut present.changed);
@@ -8511,6 +8534,14 @@ impl GpuRenderer {
             present.drawables = Some(drawables);
             present.plain_only = false;
         }
+    }
+    /// Test hook: drawables the window server presented and skipped so far,
+    /// and the latest gaps' median and 99th percentile in ms (macOS).
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn debug_drawable_feedback(&self) -> Option<(u64, u64, f64, f64, usize)> {
+        let present = self.layer_present.as_ref()?;
+        Some(present.layer.as_ref()?.drawable_feedback()?.summary())
     }
     /// Frames encoded with Metal directly rather than through wgpu (macOS).
     pub fn debug_metal_frames(&self) -> u64 {

@@ -68,7 +68,9 @@ wgpu-hal = { version = "29.0.4", default-features = false }
 objc2 = "0.6"
 objc2-core-foundation = "0.3.2"
 objc2-core-video = "0.3.2"
-objc2-metal = { version = "0.3.2", features = ["objc2-io-surface"] }
+objc2-metal = { version = "0.3.2", features = ["objc2-io-surface", "block2"] }
+# Drawables' presented handlers (layer_present.rs).
+block2 = "0.6"
 # Shader sources and function names for frames encoded directly (metal_frame.rs).
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSError"] }
 # Presentation through IOSurfaces shown as a layer's contents (layer_present.rs).
