@@ -6650,7 +6650,9 @@ impl Scene {
         context: &mut Option<DamageContext>,
     ) {
         self.visit(id);
-        let (x, y) = match self.node(id).style.snap {
+        // Checked by the caller: `arrange_from`, or the loop below for a
+        // child.
+        let (x, y) = match self.tree_node(id).style.snap {
             true => self.snap(id, x, y),
             false => (x, y),
         };
@@ -6896,6 +6898,7 @@ impl Scene {
     /// (`grid_takes_cells`), otherwise as rounded rectangles all walk long,
     /// a grid made meanwhile taking them as `add_damage` gives them.
     fn arrange_from(&mut self, id: NodeId, x: f32, y: f32, report: &mut FrameReport) {
+        assert!(self.contains(id), "stale scene node");
         match self.grid_takes_cells() {
             true => self.arrange::<true>(id, x, y, report, false, 0, &mut None),
             false => self.arrange::<false>(id, x, y, report, false, 0, &mut None),
