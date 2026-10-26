@@ -29,7 +29,7 @@ vulkan = ["zgx-gpu/vulkan"]
 # `zgx inspect` over a user-only local socket when its host serves it. Off
 # by default: an app shipped without it cannot be driven. zgx-run turns it
 # on for development.
-inspect = []
+inspect = ["zgx/trace"]
 
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.0" }

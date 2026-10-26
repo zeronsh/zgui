@@ -1394,7 +1394,7 @@ impl ScriptHost {
         out.dedup_by(|a, b| a.0 == b.0);
         out
     }
-    fn named_states(&self) -> Vec<(String, Signal<Value>)> {
+    pub(crate) fn named_states(&self) -> Vec<(String, Signal<Value>)> {
         let stores: Vec<Rc<Store>> = self.0.stores.borrow().values().cloned().collect();
         let mut out: Vec<(String, Signal<Value>)> = Vec::new();
         for store in stores.iter().chain(std::iter::once(&self.0.shared)) {

@@ -40,7 +40,19 @@ zgx inspect state                     # named states (ui.state, ui.persist, ui.s
 zgx inspect state messages --full     # one state; long values are cut at 200 bytes unless --full
 zgx inspect errors                    # the script error, type errors, lint findings, layout warnings ("none")
 zgx inspect lint                      # zgx lint over the app's scripts: file:line:col rule message
+zgx inspect frames 5                  # what ran in the last frames that did anything, and why
 ```
+
+`frames` is why the app did what it did, frame by frame: the states written (named ones by name, the rest counted) and the runs they caused, the costliest first, each with its time, what it is and the state that queued it:
+
+```text
+frame 131: state.luau::messages, 8 unnamed → 20 runs, 293 µs
+  153 µs @67 binding (markdown_view components/transcript.luau:32) ← a state
+  28 µs @102 binding #transcript (list #transcript components/transcript.luau:73) ← a state
+  19 µs effect 124 ← state.luau::messages
+```
+
+A binding is a node's (`@67`, its kind or the script line that made it); an effect a script's `ui.effect` (its line) or the engine's. Use it to find what a write costs and what reads too much.
 
 A tree line is `@n #id role "name or text" ="value" x,y wxh` and flags (`focused`, `disabled`, `checked`), indented two spaces a level, in document order. Boxes with nothing to say (no id, role or text) are left out and their children shown in their place; a button's own label text is folded into the button. `--all` shows every node. Same tree, same text: compare runs with `diff`.
 

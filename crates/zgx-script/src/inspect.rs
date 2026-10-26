@@ -78,6 +78,7 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   command id                                     run a ui.command
   errors                                         script error, type errors, lint, layout warnings
   lint                                           zgx lint over the app's scripts, file:line
+  frames  [n=10]                                 what ran in the last frames that did anything, and why
   wait    target [text] [gone] [timeout_ms=3000] until it shows (the text), or is gone
   sleep   ms                                     let the app run
 targets: #id, \"label or text\", role:button, @12, row 3, [2], a >> b (inside)";
@@ -99,6 +100,9 @@ impl Session {
             // Its labels (the script line of each node) while devtools run.
             inspector.set_warnings(true);
         }
+        // Why things run, from now (bindings and effects made from now are
+        // named; a reload names the script's).
+        zgx::trace::set_enabled(true);
         Self(Rc::new(Parts {
             ui: ui.downgrade(),
             handle,
@@ -353,6 +357,7 @@ impl Session {
                     Value::Nil,
                 ))
             })(),
+            "frames" => Ok(self.frames(number("n").map_or(10, |n| n as usize))),
             "wait" => {
                 let session = self.clone();
                 let request = request.clone();
@@ -373,6 +378,150 @@ impl Session {
             Ok((text, data)) => ok(text, data),
             Err(error) => failed(error),
         })
+    }
+
+    /// The last `n` frames that did anything: per frame, the states
+    /// written and the effects they ran, each with its time.
+    fn frames(&self, n: usize) -> (String, Value) {
+        let names: std::collections::HashMap<usize, String> = self
+            .0
+            .host
+            .named_states()
+            .into_iter()
+            .map(|(name, signal)| (signal.addr(), name))
+            .collect();
+        let name_of = |addr: usize| {
+            names
+                .get(&addr)
+                .cloned()
+                .unwrap_or_else(|| "a state".into())
+        };
+        // A binding names its node by number: its id too, where it has one.
+        let ids: std::collections::HashMap<u32, String> = self
+            .0
+            .handle
+            .ids()
+            .into_iter()
+            .map(|(node, id)| (node.number(), id))
+            .collect();
+        // And what the node is: how the script named it, else its kind.
+        let kinds: std::collections::HashMap<u32, String> = match self.0.ui.upgrade() {
+            Some(ui) => {
+                let scene = ui.scene.borrow();
+                let mut out = std::collections::HashMap::new();
+                let mut stack = vec![self.0.handle.node()];
+                while let Some(node) = stack.pop() {
+                    let kind = self
+                        .0
+                        .inspector
+                        .as_ref()
+                        .and_then(|i| i.label_of(node))
+                        .map(|l| match l.source {
+                            Some(source) => format!("{} {source}", l.name),
+                            None => l.name.to_string(),
+                        })
+                        .unwrap_or_else(|| zgx::inspect::kind_name(&scene, node));
+                    out.insert(node.number(), kind);
+                    stack.extend(scene.children(node).iter().copied());
+                }
+                out
+            }
+            None => Default::default(),
+        };
+        let named = |name: &str| -> String {
+            let number = name
+                .strip_prefix('@')
+                .and_then(|r| r.split(' ').next()?.parse::<u32>().ok());
+            let Some(number) = number else {
+                return name.to_string();
+            };
+            let mut out = name.to_string();
+            if let Some(id) = ids.get(&number) {
+                out.push_str(&format!(" #{id}"));
+            }
+            if let Some(kind) = kinds.get(&number) {
+                out.push_str(&format!(" ({kind})"));
+            }
+            out
+        };
+        let mut text = Vec::new();
+        let mut data = Vec::new();
+        for frame in zgx::trace::frames(n) {
+            let total: f32 = frame.runs.iter().map(|r| r.micros).sum();
+            // Named states by name; the rest (a component's, the engine's)
+            // counted.
+            let mut writes: Vec<String> = frame
+                .writes
+                .iter()
+                .filter(|(s, _)| names.contains_key(s))
+                .map(|(s, n)| {
+                    if *n > 1 {
+                        format!("{}×{n}", name_of(*s))
+                    } else {
+                        name_of(*s)
+                    }
+                })
+                .collect();
+            let unnamed = frame
+                .writes
+                .iter()
+                .filter(|(s, _)| !names.contains_key(s))
+                .count();
+            if unnamed > 0 {
+                writes.push(format!("{unnamed} unnamed"));
+            }
+            let mut line = format!(
+                "frame {}: {} → {} runs, {:.0} µs",
+                frame.index,
+                if writes.is_empty() {
+                    "no writes".into()
+                } else {
+                    writes.join(", ")
+                },
+                frame.runs.len(),
+                total
+            );
+            // The costliest runs first, a few: what to look at.
+            let mut runs = frame.runs.clone();
+            runs.sort_by(|a, b| b.micros.total_cmp(&a.micros));
+            for run in runs.iter().take(5) {
+                line.push_str(&format!(
+                    "\n  {:.0} µs {}{}",
+                    run.micros,
+                    run.name
+                        .as_deref()
+                        .map_or_else(|| format!("effect {}", run.effect), named),
+                    run.cause
+                        .map(|c| format!(" ← {}", name_of(c)))
+                        .unwrap_or_default()
+                ));
+            }
+            if runs.len() > 5 {
+                line.push_str(&format!("\n  … {} more", runs.len() - 5));
+            }
+            text.push(line);
+            data.push(Value::record([
+                ("frame", Value::Num(frame.index as f64)),
+                (
+                    "writes",
+                    Value::List(
+                        writes
+                            .iter()
+                            .map(|w| Value::from(w.as_str()))
+                            .collect::<Vec<_>>()
+                            .into(),
+                    ),
+                ),
+                ("runs", Value::Num(frame.runs.len() as f64)),
+                ("micros", Value::Num(total.round() as f64)),
+            ]));
+        }
+        let text = if text.is_empty() {
+            "nothing ran".to_string()
+        } else {
+            text.join("\n")
+        };
+        (text, Value::List(data.into()))
     }
 
     async fn wait(&self, request: &Value) -> String {
@@ -493,6 +642,12 @@ impl Drop for Server {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
+}
+
+/// Before the view mounts, for a host about to serve devtools: what it
+/// mounts is named in traces from the first frame (`frames`).
+pub fn prepare() {
+    zgx::trace::set_enabled(true);
 }
 
 /// Whether the environment asks for devtools: `ZGX_INSPECT_SOCKET=1`.

@@ -3849,6 +3849,13 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     vm.report(e);
                 }
             });
+            // Named for devtools' traces by where the script made it.
+            #[cfg(feature = "inspect")]
+            if zgx::trace::enabled()
+                && let Some(at) = location(lua)
+            {
+                zgx::trace::name(effect.number(), format!("{at} effect"));
+            }
             retain(&env, Box::new(effect));
             Ok(())
         })?,

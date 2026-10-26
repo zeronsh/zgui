@@ -122,6 +122,13 @@ fn a_session_answers_the_tree_states_and_actions() {
         ))
         .contains(r#""0""#)
     );
+    // What ran and why: the click's write, the binding it ran.
+    let frames = text(&ask(&app, &session, r#"{"cmd":"frames","n":20}"#));
+    assert!(frames.contains("count →"), "{frames}");
+    assert!(
+        frames.contains("binding") && frames.contains("← count"),
+        "{frames}"
+    );
     // A wait until something shows, and one that times out saying why.
     text(&ask(
         &app,

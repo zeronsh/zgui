@@ -158,9 +158,15 @@ impl Inner {
             record.run = record.run.wrapping_add(1);
             record.callback.clone()
         };
+        #[cfg(feature = "trace")]
+        let traced = crate::trace::enabled().then(std::time::Instant::now);
         {
             let _active = Active::run(&self.active, id);
             (*callback.borrow_mut())();
+        }
+        #[cfg(feature = "trace")]
+        if let Some(started) = traced {
+            crate::trace::ran(id, started);
         }
         // Drop subscriptions this run no longer read. The record may be
         // gone if the callback disposed its own effect.
@@ -452,6 +458,11 @@ pub struct Effect {
     runtime: Weak<Inner>,
 }
 impl Effect {
+    /// Its number, as traces name it (`zgx::trace`, with the `trace`
+    /// feature).
+    pub fn number(&self) -> u64 {
+        self.id
+    }
     /// Never run again, from now: no write queues it, nor does a queued
     /// run happen. What it holds (its closure and what that captured, its
     /// subscriptions) goes when the handle drops, which may be later, off
@@ -653,16 +664,26 @@ impl<T: 'static> Signal<T> {
                 let flushing = inner.flushing.get();
                 let (mut queued, mut pending) =
                     (inner.queued.borrow_mut(), inner.pending.borrow_mut());
+                #[cfg(feature = "trace")]
+                let mut caused: Option<Vec<EffectId>> = crate::trace::enabled().then(Vec::new);
                 for id in self.inner.subscribers.borrow().iter() {
                     if let Some(record) = effects.get_mut(id)
                         && !record.stopped
                         && !std::mem::replace(&mut record.queued, true)
                     {
+                        #[cfg(feature = "trace")]
+                        if let Some(caused) = &mut caused {
+                            caused.push(*id);
+                        }
                         match flushing {
                             true => pending.push(Reverse(*id)),
                             false => queued.push(*id),
                         }
                     }
+                }
+                #[cfg(feature = "trace")]
+                if let Some(caused) = caused {
+                    crate::trace::wrote(self.addr(), &caused);
                 }
             }
             Runtime { inner }.flush();

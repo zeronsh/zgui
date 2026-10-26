@@ -184,7 +184,7 @@ ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
   state [name] [--full]                  set <name> <json>
   click <target>       type <target> <text>      key <keys>
   scroll <target> <dy> command <id>
-  errors               lint
+  errors               lint               frames [n]
   wait <target> [--text T] [--gone] [--timeout MS]
   sleep <ms>           raw <json>
   help                 what the app answers
@@ -255,6 +255,7 @@ fn inspect(args: Vec<String>) -> ExitCode {
         "command" => put("id", arg(1)),
         "state" => put("name", arg(1)),
         "sleep" => put("ms", arg(1)),
+        "frames" => put("n", arg(1)),
         "set" => {
             put("name", arg(1));
             match arg(2).map(|v| Value::from_json(&v).unwrap_or_else(|| Value::from(v.as_str()))) {
@@ -286,7 +287,9 @@ fn inspect(args: Vec<String>) -> ExitCode {
     let fields: Vec<(String, Value)> = fields
         .into_iter()
         .map(|(k, v)| match (&*k, &v) {
-            ("dy" | "ms", Value::Str(s)) => (k, s.parse::<f64>().map(Value::Num).unwrap_or(v)),
+            ("dy" | "ms" | "n", Value::Str(s)) => {
+                (k, s.parse::<f64>().map(Value::Num).unwrap_or(v))
+            }
             _ => (k, v),
         })
         .collect();

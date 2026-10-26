@@ -27,6 +27,8 @@ pub mod timer;
 pub mod env;
 pub mod frame;
 pub mod profile;
+#[cfg(feature = "trace")]
+pub mod trace;
 
 pub mod caret_blink;
 pub(crate) mod editor_lines;

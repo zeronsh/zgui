@@ -24,6 +24,9 @@ rustc-hash = "2.1"
 # `ZGX_PROFILE=1` also times styles and text within their phases: a check
 # in every style and text run, so only in builds that ask for it.
 profile-nested = []
+# Why things ran (`zgx::trace`), for devtools: which writes queued which
+# effects, per frame. Off at run time until asked; built only for them.
+trace = []
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = "0.3.2"

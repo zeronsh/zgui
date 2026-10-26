@@ -340,8 +340,15 @@ pub fn run_hosting(
         // The script's windows (`ui.window`): each open while its state is.
         let windows_follow = follow_windows(&host, cx);
         let saving = host.clone();
+        let devtools_asked = inspect_asked();
+        #[cfg(feature = "inspect")]
+        if devtools_asked {
+            zgx_script::inspect::prepare();
+        }
         let handle = cx.render(host.view());
-        let devtools = inspect(&host, cx, handle, &script);
+        let devtools = devtools_asked
+            .then(|| inspect(&host, cx, handle, &script))
+            .flatten();
         let keep = std::cell::RefCell::new(Some((menus_follow, windows_follow, devtools)));
         cx.on_closed(move || {
             saving.save();
@@ -362,6 +369,15 @@ pub fn set_inspect(on: bool) {
 
 /// Devtools for the window, if asked: the socket that serves them, alive
 /// while what this returns is.
+/// Whether devtools are asked for: `--inspect`, or `ZGX_INSPECT_SOCKET=1`.
+fn inspect_asked() -> bool {
+    #[cfg(feature = "inspect")]
+    let env = zgx_script::inspect::asked();
+    #[cfg(not(feature = "inspect"))]
+    let env = false;
+    INSPECT.load(std::sync::atomic::Ordering::Relaxed) || env
+}
+
 #[cfg(feature = "inspect")]
 fn inspect(
     host: &ScriptHost,
@@ -369,9 +385,6 @@ fn inspect(
     handle: zgx::compose::ViewHandle,
     script: &Path,
 ) -> Option<zgx_script::inspect::Server> {
-    if !INSPECT.load(std::sync::atomic::Ordering::Relaxed) && !zgx_script::inspect::asked() {
-        return None;
-    }
     let session =
         zgx_script::inspect::Session::new(&cx.ui, handle, host, Some(cx.inspector.clone()));
     let tasks = cx.tasks.clone();
@@ -398,9 +411,7 @@ fn inspect(
     _: zgx::compose::ViewHandle,
     _: &Path,
 ) -> Option<()> {
-    if INSPECT.load(std::sync::atomic::Ordering::Relaxed) {
-        eprintln!("zgx run: built without devtools (the `inspect` feature)");
-    }
+    eprintln!("zgx run: built without devtools (the `inspect` feature)");
     None
 }
 
