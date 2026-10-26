@@ -4157,15 +4157,29 @@ impl Scene {
         }
     }
     /// A laid-out container with an explicit width and height: parents measure
-    /// it from those (or from their own flex allocation), never from its children.
+    /// it from those (or from their own flex allocation), never from its
+    /// children. Not one a row or column has shrunk below its size along
+    /// its axis: it shrinks no further than its content (`min-width: auto`),
+    /// so its children say where it stops, and a child growing past that
+    /// grows it again. At its size, content past it changes nothing (its
+    /// floor is the lesser of the two).
     fn is_layout_boundary(&self, id: NodeId) -> bool {
         let node = self.node(id);
+        let (Some(width), Some(height), Some(measured)) = (
+            node.style.width,
+            node.style.height,
+            node.measurement.as_ref(),
+        ) else {
+            return false;
+        };
         matches!(node.kind, NodeKind::Container(_) | NodeKind::Panel { .. })
             && node.parent.is_some()
-            && node.style.width.is_some()
-            && node.style.height.is_some()
             && node.style.layout_options.is_none()
-            && node.measurement.is_some()
+            // A row or column shrinks it along its axis alone: at its size
+            // on both, it was not shrunk.
+            && (node.style.flex_shrink == 0.
+                || node.style.absolute
+                || (measured.size.0 >= width && measured.size.1 >= height))
     }
     /// Mark every ancestor up to the root, ignoring boundaries.
     fn invalidate_layout_to_root(&mut self, mut id: NodeId) {
@@ -7941,6 +7955,43 @@ mod measure_work_tests {
             scene.flush();
         }
         (scene.measure_calls - before) / frames as u64
+    }
+    #[test]
+    fn a_fixed_box_that_shrank_grows_back_with_content_past_where_it_stopped() {
+        // A 900-high box in a 300-high column shrinks to its content, no
+        // further (min-height: auto); content growing past that grows it.
+        let mut scene = Scene::new(400., 300.);
+        let fixed = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Column),
+            Style {
+                width: Some(380.),
+                height: Some(900.),
+                ..Default::default()
+            },
+        );
+        let content = scene.append(
+            fixed,
+            NodeKind::Rect(Color(1, 2, 3, 255)),
+            Style {
+                width: Some(10.),
+                height: Some(290.),
+                ..Default::default()
+            },
+        );
+        scene.flush();
+        assert_eq!(scene.bounds(fixed).height, 300.);
+        let mut style = scene.style(content);
+        style.height = Some(310.);
+        scene.set_style(content, style);
+        scene.flush();
+        assert_eq!(scene.bounds(fixed).height, 310.);
+        // Unable to shrink, it is a boundary again: its own height.
+        let mut style = scene.style(fixed);
+        style.flex_shrink = 0.;
+        scene.set_style(fixed, style);
+        scene.flush();
+        assert_eq!(scene.bounds(fixed).height, 900.);
     }
     #[test]
     fn arranging_children_asks_again_only_for_those_it_did_not_just_measure() {

@@ -3159,3 +3159,24 @@ fn a_text_given_a_state_follows_it_without_the_script() {
     );
     assert_eq!(h.error(), None);
 }
+#[test]
+fn a_shrunk_column_grows_back_to_content_that_outgrew_it() {
+    let mut h = Harness::inline(
+        r##"local tall = ui.state("tall", 290)
+        ui.command { id = "grow", run = function() tall:set(310) end }
+        return ui.column { w = 380, h = 900, id = "outer",
+            ui.column { id = "inner", ui.div { w = 10, h = tall } } }"##,
+    );
+    h.frames(1);
+    let before = h.bounds("outer").height;
+    assert!(h.host.run_command("grow"));
+    h.frames(1);
+    let streamed = h.bounds("outer").height;
+    let mut fresh = Harness::inline(
+        r##"return ui.column { w = 380, h = 900, id = "outer",
+            ui.column { id = "inner", ui.div { w = 10, h = 310 } } }"##,
+    );
+    fresh.frames(1);
+    assert_eq!(streamed, fresh.bounds("outer").height, "was {before}");
+}
+
