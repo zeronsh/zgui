@@ -2708,9 +2708,12 @@ impl Host {
                 }
             }
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", zgx_winit_patched))]
         crate::services::add(window.id(), &self.context.ui);
-        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+        #[cfg(all(
+            any(target_os = "macos", windows, target_os = "linux"),
+            zgx_winit_patched
+        ))]
         {
             let (proxy, token) = (self.proxy.clone(), self.context.window.token);
             crate::text_drop::add(&window, &self.context.ui, move || {
@@ -4978,9 +4981,12 @@ impl WindowManager {
             && let Some(window) = &host.window
         {
             self.native.remove(&window.id());
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", zgx_winit_patched))]
             crate::services::remove(window.id());
-            #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+            #[cfg(all(
+                any(target_os = "macos", windows, target_os = "linux"),
+                zgx_winit_patched
+            ))]
             crate::text_drop::remove(window.id());
             crate::popup_window::set_zoom(window.id(), 1.);
             // Its drag, if X11's, goes with it.

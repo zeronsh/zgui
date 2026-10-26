@@ -49,9 +49,15 @@ mod portal_dialog;
 #[cfg(target_os = "linux")]
 mod portal_parent;
 mod scrollers;
-#[cfg(target_os = "macos")]
+// Both answer the vendored winit's hooks (`zgx_winit_patched`); with
+// crates.io's, Wayland's drags alone reach `text_drop`, through
+// `wayland_data`.
+#[cfg(all(target_os = "macos", zgx_winit_patched))]
 mod services;
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(any(
+    all(any(target_os = "macos", windows), zgx_winit_patched),
+    target_os = "linux"
+))]
 mod text_drop;
 mod thumbnail;
 mod url;

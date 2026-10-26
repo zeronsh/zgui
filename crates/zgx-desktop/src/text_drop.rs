@@ -6,15 +6,20 @@
 //! (`InputDispatcher::drag_over`). What it carries is known only as it
 //! drops (X11 hands it over then), so over a window it names no text.
 //! Wayland's drags reach the data worker instead (`wayland_data`), which
-//! asks the window's host the same (`over`, `out`, `dropped`).
+//! asks the window's host the same (`over`, `out`, `dropped`). winit's hook
+//! is the vendored winit's (`zgx_winit_patched`): with crates.io's, only
+//! Wayland's drags drop.
+use std::cell::RefCell;
+#[cfg(zgx_winit_patched)]
 use std::{
-    cell::RefCell,
     collections::HashMap,
     sync::{Arc, Weak},
 };
+#[cfg(zgx_winit_patched)]
 use winit::window::{Window, WindowId};
 use zgx::{actions::Action, input::DraggedText};
 
+#[cfg(zgx_winit_patched)]
 struct Target {
     ui: zgx::widgets::WeakUi,
     window: Weak<Window>,
@@ -24,6 +29,7 @@ struct Target {
 
 thread_local! {
     /// The windows' interfaces, by their winit window.
+    #[cfg(zgx_winit_patched)]
     static WINDOWS: RefCell<HashMap<WindowId, Target>> = RefCell::default();
     /// What a drag over a window carries while it is: text, not yet known.
     static HOVER: RefCell<Option<Action>> = const { RefCell::new(None) };
@@ -31,6 +37,7 @@ thread_local! {
 
 /// `window` shows `ui`: text dragged in from other apps drops there. The
 /// first hands winit's windows the destinations.
+#[cfg(zgx_winit_patched)]
 pub(crate) fn add(window: &Arc<Window>, ui: &zgx::widgets::Ui, wake: impl Fn() + 'static) {
     let first = WINDOWS.with(|windows| {
         let mut windows = windows.borrow_mut();
@@ -50,12 +57,14 @@ pub(crate) fn add(window: &Arc<Window>, ui: &zgx::widgets::Ui, wake: impl Fn() +
 }
 
 /// `window` closed.
+#[cfg(zgx_winit_patched)]
 pub(crate) fn remove(window: WindowId) {
     WINDOWS.with(|windows| windows.borrow_mut().remove(&window));
 }
 
 /// `window`'s interface, and the drag's point there (physical pixels) in
 /// its coordinates.
+#[cfg(zgx_winit_patched)]
 fn at(
     window: WindowId,
     x: f64,
@@ -79,6 +88,7 @@ fn at(
     taken
 }
 
+#[cfg(zgx_winit_patched)]
 fn wake(window: WindowId) {
     WINDOWS.with(|windows| {
         if let Some(target) = windows.borrow().get(&window) {
@@ -122,7 +132,9 @@ pub(crate) fn dropped(ui: &zgx::widgets::Ui, x: f32, y: f32, text: &str) -> bool
     ui.input.drag_drop(&ui.scene, &text, x, y)
 }
 
+#[cfg(zgx_winit_patched)]
 struct Windows;
+#[cfg(zgx_winit_patched)]
 impl winit::platform::text_drop::TextDrops for Windows {
     fn over(&self, window: WindowId, x: f64, y: f64) -> bool {
         at(window, x, y, over)
@@ -138,7 +150,7 @@ impl winit::platform::text_drop::TextDrops for Windows {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, zgx_winit_patched))]
 mod tests {
     use super::*;
     use winit::platform::text_drop::TextDrops;
