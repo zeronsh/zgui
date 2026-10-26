@@ -1871,6 +1871,7 @@ fn a11y_role(name: &str) -> Option<zgx::semantics::Role> {
         "dialog" => Role::Dialog,
         "img" | "image" => Role::Image,
         "tabpanel" => Role::TabPanel,
+        "article" => Role::Article,
         "radiogroup" => Role::RadioGroup,
         "radio" => Role::RadioButton,
         "switch" => Role::Switch,

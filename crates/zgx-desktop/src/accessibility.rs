@@ -891,6 +891,7 @@ fn role(r: Role) -> accesskit::Role {
         Role::MenuItem => accesskit::Role::MenuItem,
         Role::Image => accesskit::Role::Image,
         Role::Document => accesskit::Role::Document,
+        Role::Article => accesskit::Role::Article,
         Role::Heading => accesskit::Role::Heading,
         Role::List => accesskit::Role::List,
         Role::ListBox => accesskit::Role::ListBox,

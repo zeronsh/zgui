@@ -1302,6 +1302,7 @@ export type AriaRole =
 	| "dialog"
 	| "img"
 	| "tabpanel"
+	| "article"
 	| "radiogroup"
 	| "radio"
 	| "switch"

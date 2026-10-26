@@ -48,6 +48,10 @@ pub enum Role {
     /// Text read and selected as a document: a selectable region
     /// (`View::selectable`), as a browser's page is.
     Document,
+    /// One self-contained piece of a feed or a transcript
+    /// (`role="article"`): a message, a post, a comment. Screen readers
+    /// move between them.
+    Article,
     /// A section's title (`h1`…`h6`): screen readers move between them,
     /// and announce its `level`.
     Heading,
