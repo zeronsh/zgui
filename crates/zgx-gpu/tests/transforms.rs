@@ -353,3 +353,69 @@ fn raster_scale_rerenders_only_when_its_step_changes() {
     assert_eq!(render(&mut gpu, &mut scene).0.layer_repaints, 1);
     assert!(gpu.debug_cache_stats().layer_bytes > 4 * bytes);
 }
+
+/// Red pixels in column `x`.
+fn column(pixels: &[u8], x: u32) -> u32 {
+    (0..SIZE)
+        .filter(|y| pixel(pixels, x, *y) == [255, 0, 0, 255])
+        .count() as u32
+}
+
+#[test]
+fn a_tilt_in_perspective_shows_the_nearer_side_larger() {
+    let _gpu_fixture = gpu_fixture();
+    for direct in [true, false] {
+        let mut gpu = GpuRenderer::new(SIZE, SIZE).unwrap();
+        gpu.set_direct_metal(direct);
+        let mut scene = scene();
+        let root = scene.root();
+        let card = rect(&mut scene, root, 50., 50., (100., 100.), RED);
+        render(&mut gpu, &mut scene);
+        // Turned 30° about its vertical axis, seen from 300 points: its right
+        // side goes away (shorter), its left comes nearer (taller).
+        let tilt = LocalTransform {
+            rotate_y: 30f32.to_radians(),
+            perspective: 300.,
+            ..LocalTransform::IDENTITY
+        };
+        scene.set_local_transform(card, tilt);
+        let (stats, p) = render(&mut gpu, &mut scene);
+        assert_eq!(stats.layer_repaints, 1, "direct {direct}");
+        let matrix = tilt.matrix(Rect::new(50., 50., 100., 100.));
+        let (left, top) = matrix.point(50., 50.);
+        let (right, top_right) = matrix.point(150., 50.);
+        assert!(top < 50. && top_right > 50., "{top} {top_right}");
+        let (near, far) = (
+            column(&p, left.ceil() as u32 + 2),
+            column(&p, right.floor() as u32 - 2),
+        );
+        assert!(
+            near > 100 && far < 100 && near > far + 10,
+            "direct {direct}: {near} {far}"
+        );
+        // Its centre stays, and what it no longer covers is clear.
+        assert_eq!(pixel(&p, 100, 100), [255, 0, 0, 255]);
+        assert_eq!(pixel(&p, right.ceil() as u32 + 2, 100), [0; 4]);
+        // Hits follow the projection: inside the tilted card, not past it.
+        assert_eq!(scene.hit_test(left + 3., 100.), Some(card));
+        assert_ne!(scene.hit_test(right + 3., 100.), Some(card));
+
+        // Without perspective the tilt only narrows it, both sides alike.
+        scene.set_local_transform(
+            card,
+            LocalTransform {
+                perspective: 0.,
+                ..tilt
+            },
+        );
+        let (_, p) = render(&mut gpu, &mut scene);
+        let half = 50. * 30f32.to_radians().cos();
+        let (l, r) = (
+            (100. - half).ceil() as u32 + 1,
+            (100. + half).floor() as u32 - 1,
+        );
+        assert_eq!(column(&p, l), 100);
+        assert_eq!(column(&p, r), 100);
+        assert_eq!(pixel(&p, (100. + half).ceil() as u32 + 1, 100), [0; 4]);
+    }
+}

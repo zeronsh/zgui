@@ -17,7 +17,7 @@
 //! Everything here is platform independent and headless: the desktop host
 //! (`zgx-desktop`) maps placements onto native views and layers.
 use crate::{
-    affine::Affine,
+    affine::Projective,
     input::InputDispatcher,
     scene::{NodeId, NodeKind, PaintItem, Rect, RoundRect, Scene},
 };
@@ -495,14 +495,14 @@ struct Walk<'a> {
 #[derive(Clone)]
 struct Context {
     /// From the items' space to the window's (None: the identity).
-    matrix: Option<Affine>,
+    matrix: Option<Projective>,
     opacity: f32,
     clip: Option<Rect>,
     rounded: Vec<RoundRect>,
     /// Isolated ancestors, outermost first.
     layers: Vec<NodeId>,
 }
-fn map_rect(matrix: Option<Affine>, rect: Rect) -> Rect {
+fn map_rect(matrix: Option<Projective>, rect: Rect) -> Rect {
     match matrix {
         Some(matrix) => matrix.bounds(rect),
         None => rect,
@@ -510,20 +510,23 @@ fn map_rect(matrix: Option<Affine>, rect: Rect) -> Rect {
 }
 /// A scale-and-translate matrix's scales, if it is one (rounded clips and
 /// radii map exactly only through those).
-fn axis_scales(matrix: Option<Affine>) -> Option<(f32, f32)> {
-    match matrix {
+fn axis_scales(matrix: Option<Projective>) -> Option<(f32, f32)> {
+    match matrix.map(Projective::affine) {
         None => Some((1., 1.)),
-        Some(m) if m.b.abs() < 1e-5 && m.c.abs() < 1e-5 && m.a > 0. && m.d > 0. => Some((m.a, m.d)),
+        Some(Some(m)) if m.b.abs() < 1e-5 && m.c.abs() < 1e-5 && m.a > 0. && m.d > 0. => {
+            Some((m.a, m.d))
+        }
         Some(_) => None,
     }
 }
-fn magnification(matrix: Option<Affine>) -> f32 {
+/// Its linear part's mean scale (at the origin, in perspective).
+fn magnification(matrix: Option<Projective>) -> f32 {
     match matrix {
         None => 1.,
-        Some(m) => ((m.a * m.d - m.b * m.c).abs()).sqrt(),
+        Some(m) => ((m.a * m.d - m.b * m.c).abs()).sqrt() / m.pw.abs().max(1e-6),
     }
 }
-fn map_round(matrix: Option<Affine>, round: RoundRect) -> Option<RoundRect> {
+fn map_round(matrix: Option<Projective>, round: RoundRect) -> Option<RoundRect> {
     let (sx, sy) = axis_scales(matrix)?;
     let scale = sx.min(sy);
     Some(RoundRect {

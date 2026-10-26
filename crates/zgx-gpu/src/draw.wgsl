@@ -55,7 +55,11 @@ fn region(index:f32, position:vec2<f32>)->f32 {
  let p=v.rect.xy+corner*v.rect.zw;
  var position=p;
  if v.options.z>0.5 {position=vec2(dot(v.shape.xy,p)+v.border.x,dot(v.shape.zw,p)+v.border.y);}
- var o:Out; o.position=vec4(position.x/viewport.x*2.-1.,1.-position.y/viewport.y*2.,0.,1.);o.uv=v.uv.xy+corner*v.uv.zw;o.color=v.color;o.point=p;o.fade=v.fade;o.options=v.options;o.shape=v.shape;o.border=v.border;o.mask=v.mask;return o;
+ // In perspective (`options.z` 2) the corner divides by w, which the GPU
+ // does after interpolating, so `uv` and `point` stay true across the quad.
+ var w=1.;
+ if v.options.z>1.5 {w=max(dot(v.border.zw,p)+1.,1e-4);}
+ var o:Out; o.position=vec4(position.x/viewport.x*2.-w,w-position.y/viewport.y*2.,0.,w);o.uv=v.uv.xy+corner*v.uv.zw;o.color=v.color;o.point=p;o.fade=v.fade;o.options=v.options;o.shape=v.shape;o.border=v.border;o.mask=v.mask;return o;
 }
 fn shade(input:Out)->vec4<f32> { return shade_texel(input,vec4(0.),false); }
 // `shade` with the texel `given` when `has_texel` (image_effects.wgsl's,

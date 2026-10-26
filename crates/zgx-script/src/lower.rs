@@ -2668,6 +2668,9 @@ const TRANSFORM_GROUPS: &[&[Prop]] = &[
         Prop::Skew,
         Prop::SkewX,
         Prop::SkewY,
+        Prop::RotateX,
+        Prop::RotateY,
+        Prop::Perspective,
         Prop::Origin,
     ],
 ];
@@ -4811,6 +4814,9 @@ fn literal_transform(
             (Prop::Skew, Lit::Num(v)) => transform!().skew = (v.to_radians(), v.to_radians()),
             (Prop::SkewX, Lit::Num(v)) => transform!().skew.0 = v.to_radians(),
             (Prop::SkewY, Lit::Num(v)) => transform!().skew.1 = v.to_radians(),
+            (Prop::RotateX, Lit::Num(v)) => transform!().rotate_x = v.to_radians(),
+            (Prop::RotateY, Lit::Num(v)) => transform!().rotate_y = v.to_radians(),
+            (Prop::Perspective, Lit::Num(v)) => transform!().perspective = *v,
             (Prop::Origin, Lit::Pair(x, y)) => transform!().origin = (*x, *y),
             _ => {}
         }
@@ -4835,6 +4841,9 @@ fn is_transform(prop: Prop) -> bool {
             | Prop::Skew
             | Prop::SkewX
             | Prop::SkewY
+            | Prop::RotateX
+            | Prop::RotateY
+            | Prop::Perspective
             | Prop::Origin
     )
 }

@@ -402,6 +402,7 @@ vertex vsOutput vs(
 ) {
     const Vertex v = { varyings.rect, varyings.uv, varyings.color, varyings.fade, varyings.options, varyings.shape, varyings.border, varyings.mask };
     metal::float2 position = {};
+    float w = 1.0;
     Out o = {};
     metal::float2 corner_1 = metal::float2(static_cast<float>(i & 1u), static_cast<float>(i >> 1u));
     metal::float2 p_2 = v.rect.xy + (corner_1 * v.rect.zw);
@@ -409,11 +410,17 @@ vertex vsOutput vs(
     if (v.options.z > 0.5) {
         position = metal::float2(metal::dot(v.shape.xy, p_2) + v.border.x, metal::dot(v.shape.zw, p_2) + v.border.y);
     }
-    float _e36 = position.x;
-    float _e39 = viewport.x;
-    float _e46 = position.y;
-    float _e49 = viewport.y;
-    o.position = metal::float4(((_e36 / _e39) * 2.0) - 1.0, 1.0 - ((_e46 / _e49) * 2.0), 0.0, 1.0);
+    if (v.options.z > 1.5) {
+        w = metal::max(metal::dot(v.border.zw, p_2) + 1.0, 0.0001);
+    }
+    float _e49 = position.x;
+    float _e52 = viewport.x;
+    float _e56 = w;
+    float _e58 = w;
+    float _e60 = position.y;
+    float _e63 = viewport.y;
+    float _e68 = w;
+    o.position = metal::float4(((_e49 / _e52) * 2.0) - _e56, _e58 - ((_e60 / _e63) * 2.0), 0.0, _e68);
     o.uv = v.uv.xy + (corner_1 * v.uv.zw);
     o.color = v.color;
     o.point = p_2;
@@ -422,8 +429,8 @@ vertex vsOutput vs(
     o.shape = v.shape;
     o.border = v.border;
     o.mask = v.mask;
-    Out _e78 = o;
-    const auto _tmp = _e78;
+    Out _e91 = o;
+    const auto _tmp = _e91;
     return vsOutput { _tmp.position, _tmp.uv, _tmp.color, _tmp.point, _tmp.fade, _tmp.options, _tmp.shape, _tmp.border, _tmp.mask };
 }
 

@@ -372,6 +372,16 @@ pub struct LocalTransform {
     pub rotate: f32,
     /// Radians, along x then y, as CSS `skew(x, y)`.
     pub skew: (f32, f32),
+    /// Radians about the horizontal axis through `origin`, as CSS
+    /// `rotateX`: positive tips the top away.
+    pub rotate_x: f32,
+    /// Radians about the vertical axis through `origin`, as CSS `rotateY`:
+    /// positive turns the right side away.
+    pub rotate_y: f32,
+    /// How far the eye is from the plane, in logical points, as CSS
+    /// `perspective()`: a tilted side nearer the eye shows larger. 0 has no
+    /// perspective (a tilt then only narrows the node).
+    pub perspective: f32,
     /// The pivot as a fraction of the node's own laid-out size; (0.5, 0.5) is its centre (CSS default).
     pub origin: (f32, f32),
 }
@@ -386,27 +396,62 @@ impl LocalTransform {
         scale: (1., 1.),
         rotate: 0.,
         skew: (0., 0.),
+        rotate_x: 0.,
+        rotate_y: 0.,
+        perspective: 0.,
         origin: (0.5, 0.5),
     };
-    /// Whether it moves nothing, whatever its origin.
+    /// Whether it moves nothing, whatever its origin (and perspective, which
+    /// moves nothing that isn't tilted).
     pub fn is_identity(&self) -> bool {
-        self.scale == (1., 1.) && self.rotate == 0. && self.skew == (0., 0.)
+        self.scale == (1., 1.)
+            && self.rotate == 0.
+            && self.skew == (0., 0.)
+            && self.rotate_x == 0.
+            && self.rotate_y == 0.
     }
-    /// The matrix for a node at `bounds` (layout rect, untranslated): translate(origin) · rotate · skew · scale · translate(-origin)
-    pub fn matrix(&self, bounds: Rect) -> crate::affine::Affine {
-        use crate::affine::Affine;
+    /// The map for a node at `bounds` (layout rect, untranslated), as CSS
+    /// `perspective() rotateX() rotateY() rotate() skew() scale()` about the
+    /// origin: projective once tilted with a perspective, affine otherwise.
+    pub fn matrix(&self, bounds: Rect) -> crate::affine::Projective {
+        use crate::affine::{Affine, Projective};
         let skew = Affine {
             b: self.skew.1.tan(),
             c: self.skew.0.tan(),
             ..Affine::IDENTITY
         };
-        Affine::scale(self.scale.0, self.scale.1)
+        let flat = Affine::scale(self.scale.0, self.scale.1)
             .then(skew)
-            .then(Affine::rotation(self.rotate))
-            .around(
-                bounds.x + bounds.width * self.origin.0,
-                bounds.y + bounds.height * self.origin.1,
-            )
+            .then(Affine::rotation(self.rotate));
+        let (ox, oy) = (
+            bounds.x + bounds.width * self.origin.0,
+            bounds.y + bounds.height * self.origin.1,
+        );
+        let mut map = Projective::from(Affine::translation(-ox, -oy).then(flat));
+        if self.rotate_x != 0. || self.rotate_y != 0. {
+            // The plane (z = 0) turned about Y, then X, then seen from
+            // `perspective` away: depth z divides as w = 1 - z / perspective.
+            let (sx, cx) = self.rotate_x.sin_cos();
+            let (sy, cy) = self.rotate_y.sin_cos();
+            let depth = if self.perspective > 0. {
+                1. / self.perspective
+            } else {
+                0.
+            };
+            let tilt = Projective {
+                a: cy,
+                b: sx * sy,
+                c: 0.,
+                d: cx,
+                tx: 0.,
+                ty: 0.,
+                px: cx * sy * depth,
+                py: -sx * depth,
+                pw: 1.,
+            };
+            map = map.then(tilt);
+        }
+        map.then(Projective::from(Affine::translation(ox, oy)))
     }
     /// Each nonfinite component takes its identity value, so equal writes
     /// compare equal (NaN never would).
@@ -416,6 +461,9 @@ impl LocalTransform {
             scale: (finite(self.scale.0, 1.), finite(self.scale.1, 1.)),
             rotate: finite(self.rotate, 0.),
             skew: (finite(self.skew.0, 0.), finite(self.skew.1, 0.)),
+            rotate_x: finite(self.rotate_x, 0.),
+            rotate_y: finite(self.rotate_y, 0.),
+            perspective: finite(self.perspective, 0.).max(0.),
             origin: (finite(self.origin.0, 0.5), finite(self.origin.1, 0.5)),
         }
     }
@@ -429,7 +477,7 @@ impl LocalTransform {
 /// clip around that layer (see `Scene::descend`).
 #[derive(Clone, Copy)]
 struct Placement {
-    matrix: crate::affine::Affine,
+    matrix: crate::affine::Projective,
     /// Viewport units: what a layer's content paints shows this much past
     /// its mapped box (nested blurs, each stretched by the matrices after it).
     spread: f32,
@@ -441,11 +489,13 @@ impl Placement {
         let mapped = self.matrix.bounds(rect);
         // Resampled (scaled, rotated off the right angles, skewed), its
         // filtering reaches up to a pixel past the mapped box.
-        let m = self.matrix;
         let zero = |v: f32| v.abs() < 1e-4;
         let unit = |v: f32| (v.abs() - 1.).abs() < 1e-4;
-        let resampled = !((unit(m.a) && zero(m.b) && zero(m.c) && unit(m.d))
-            || (zero(m.a) && unit(m.b) && unit(m.c) && zero(m.d)));
+        // In perspective, always.
+        let resampled = self.matrix.affine().is_none_or(|m| {
+            !((unit(m.a) && zero(m.b) && zero(m.c) && unit(m.d))
+                || (zero(m.a) && unit(m.b) && unit(m.c) && zero(m.d)))
+        });
         let spread = self.spread.max(0.) + if resampled { 1. } else { 0. };
         let mapped = if spread > 0. {
             mapped.expand(spread)
@@ -462,8 +512,8 @@ pub fn filter_spread(sigma: f32) -> f32 {
 }
 /// How far `matrix` moves a point that is one unit away, at most along an
 /// axis: a spread inside a layer times this is its spread outside.
-fn stretch(matrix: crate::affine::Affine) -> f32 {
-    let linear = crate::affine::Affine {
+fn stretch(matrix: crate::affine::Projective) -> f32 {
+    let linear = crate::affine::Projective {
         tx: 0.,
         ty: 0.,
         ..matrix
@@ -1969,7 +2019,7 @@ pub struct PaintItem<'a> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PaintExtras {
     /// See `PaintItem::matrix`.
-    pub matrix: Option<crate::affine::Affine>,
+    pub matrix: Option<crate::affine::Projective>,
     /// See `PaintItem::mask`.
     pub mask: Option<FadeMask>,
     /// See `PaintItem::rounded`.
@@ -2040,7 +2090,7 @@ impl PaintItem<'_> {
     /// lands in this item's (see `LocalTransform::matrix`). Its `clip` is
     /// then its parent's; its own clips inside the layer. Always `None`
     /// from `paint_items`.
-    pub fn matrix(&self) -> Option<crate::affine::Affine> {
+    pub fn matrix(&self) -> Option<crate::affine::Projective> {
         self.extras.as_ref().and_then(|extras| extras.matrix)
     }
     /// The nearest `fade_edges` ancestor's clip and bands (top, bottom).
@@ -10939,7 +10989,7 @@ mod local_transform_tests {
         };
         let (x, y) = skew.matrix(bounds).point(10., 30.);
         assert!((x - 20.).abs() < 1e-4 && (y - 30.).abs() < 1e-4);
-        assert!(LocalTransform::IDENTITY.matrix(bounds) == crate::affine::Affine::IDENTITY);
+        assert!(LocalTransform::IDENTITY.matrix(bounds) == crate::affine::Projective::IDENTITY);
     }
     #[test]
     fn equal_and_normalized_writes_do_nothing() {

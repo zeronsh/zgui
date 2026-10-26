@@ -1185,6 +1185,11 @@ export type Styles = {
 	skew: number?,
 	skew_x: number?,
 	skew_y: number?,
+	-- Degrees about the horizontal and vertical axes through `origin` (CSS
+	-- `rotateX`, `rotateY`), seen from `perspective` points away.
+	rotate_x: number?,
+	rotate_y: number?,
+	perspective: number?,
 	origin: Pair?,
 	[number]: never,
 }
@@ -1329,6 +1334,9 @@ export type StyleProps = {
 	skew: Reactive<number>?,
 	skew_x: Reactive<number>?,
 	skew_y: Reactive<number>?,
+	rotate_x: Reactive<number>?,
+	rotate_y: Reactive<number>?,
+	perspective: Reactive<number>?,
 	origin: Reactive<Pair>?,
 }
 
@@ -2744,6 +2752,11 @@ export type ElementKeys = {
 	skewY: AnimValue?,
 	skew_x: AnimValue?,
 	skew_y: AnimValue?,
+	rotateX: AnimValue?,
+	rotate_x: AnimValue?,
+	rotateY: AnimValue?,
+	rotate_y: AnimValue?,
+	perspective: AnimValue?,
 	text_size: AnimValue?,
 	tint: AnimValue?,
 	top: AnimValue?,
@@ -2912,6 +2925,11 @@ export type ElementParams = {
 	skewY: AnimValue?,
 	skew_x: AnimValue?,
 	skew_y: AnimValue?,
+	rotateX: AnimValue?,
+	rotate_x: AnimValue?,
+	rotateY: AnimValue?,
+	rotate_y: AnimValue?,
+	perspective: AnimValue?,
 	text_size: AnimValue?,
 	tint: AnimValue?,
 	top: AnimValue?,

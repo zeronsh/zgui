@@ -34,6 +34,10 @@ pub(crate) enum Key {
     Skew,
     SkewX,
     SkewY,
+    /// Tilts (CSS `rotateX`, `rotateY`) and the distance they are seen from.
+    RotateX,
+    RotateY,
+    Perspective,
     /// The mask's position (CSS `mask-position`).
     MaskX,
     MaskY,
@@ -110,6 +114,9 @@ impl Key {
             "skew" => Key::Skew,
             "skewX" | "skew_x" => Key::SkewX,
             "skewY" | "skew_y" => Key::SkewY,
+            "rotateX" | "rotate_x" => Key::RotateX,
+            "rotateY" | "rotate_y" => Key::RotateY,
+            "perspective" => Key::Perspective,
             "backgroundColor" | "background" | "background_color" => Key::Style(Prop::Bg),
             "borderColor" => Key::Style(Prop::BorderColor),
             "borderRadius" | "border_radius" => Key::Style(Prop::Rounded),
@@ -161,6 +168,8 @@ impl Key {
             Key::Shader(_) | Key::Layer(_) => Unit::Factor,
             Key::Brightness | Key::Contrast | Key::Saturate => Unit::Factor,
             Key::Rotate | Key::Skew | Key::SkewX | Key::SkewY => Unit::Angle,
+            Key::RotateX | Key::RotateY => Unit::Angle,
+            Key::Perspective => Unit::Factor,
             Key::Style(prop) => match prop.ty() {
                 crate::node::Ty::Color => Unit::Color,
                 _ => match prop {
@@ -314,6 +323,9 @@ fn read_element(e: &Element, key: &Key) -> V {
         Key::Rotate => V::Num(local().rotate as f64),
         Key::Skew | Key::SkewX => V::Num(local().skew.0 as f64),
         Key::SkewY => V::Num(local().skew.1 as f64),
+        Key::RotateX => V::Num(local().rotate_x as f64),
+        Key::RotateY => V::Num(local().rotate_y as f64),
+        Key::Perspective => V::Num(local().perspective as f64),
         Key::Style(prop) => {
             if let Some((_, lit)) = e.animated.borrow().styles.iter().find(|(p, _)| p == prop) {
                 return match lit {
@@ -446,6 +458,18 @@ fn write_element(e: &Element, key: &Key, v: &V) {
         }
         Key::Rotate => e.set_local(crate::transform::LocalTransform {
             rotate: n(),
+            ..local()
+        }),
+        Key::RotateX => e.set_local(crate::transform::LocalTransform {
+            rotate_x: n(),
+            ..local()
+        }),
+        Key::RotateY => e.set_local(crate::transform::LocalTransform {
+            rotate_y: n(),
+            ..local()
+        }),
+        Key::Perspective => e.set_local(crate::transform::LocalTransform {
+            perspective: n().max(0.),
             ..local()
         }),
         Key::Skew => e.set_local(crate::transform::LocalTransform {

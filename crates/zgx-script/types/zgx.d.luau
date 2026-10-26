@@ -1217,6 +1217,11 @@ export type Styles = {
 	skew: number?,
 	skew_x: number?,
 	skew_y: number?,
+	-- Degrees about the horizontal and vertical axes through `origin` (CSS
+	-- `rotateX`, `rotateY`), seen from `perspective` points away.
+	rotate_x: number?,
+	rotate_y: number?,
+	perspective: number?,
 	origin: Pair?,
 	[number]: never,
 }
@@ -1361,6 +1366,9 @@ export type StyleProps = {
 	skew: Reactive<number>?,
 	skew_x: Reactive<number>?,
 	skew_y: Reactive<number>?,
+	rotate_x: Reactive<number>?,
+	rotate_y: Reactive<number>?,
+	perspective: Reactive<number>?,
 	origin: Reactive<Pair>?,
 }
 
@@ -1713,6 +1721,9 @@ export type Props = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -2009,6 +2020,9 @@ export type Props_rotate = Reactive<number>?
 export type Props_skew = Reactive<number>?
 export type Props_skew_x = Reactive<number>?
 export type Props_skew_y = Reactive<number>?
+export type Props_rotate_x = Reactive<number>?
+export type Props_rotate_y = Reactive<number>?
+export type Props_perspective = Reactive<number>?
 export type Props_origin = Reactive<Pair>?
 export type Props_theme = Reactive<ThemeSpec>?
 export type Props_provide = { [string]: any }?
@@ -2220,6 +2234,9 @@ export type ContainerProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -2535,6 +2552,9 @@ export type ScrollProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -2857,6 +2877,9 @@ export type TextProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -3171,6 +3194,9 @@ export type MarkdownViewProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -3533,6 +3559,9 @@ export type RichProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -3841,6 +3870,9 @@ export type ImageProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -4159,6 +4191,9 @@ export type SvgProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -4469,6 +4504,9 @@ export type CanvasProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -4809,6 +4847,9 @@ export type CheckboxProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -5125,6 +5166,9 @@ export type InputProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -5497,6 +5541,9 @@ export type ProgressProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -5806,6 +5853,9 @@ export type SliderProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -6128,6 +6178,9 @@ export type SegmentedProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -6446,6 +6499,9 @@ export type StepperProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -6765,6 +6821,9 @@ export type DisclosureProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -7083,6 +7142,9 @@ export type AccordionProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -7391,6 +7453,9 @@ export type SectionProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -7706,6 +7771,9 @@ export type SeparatorProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -8020,6 +8088,9 @@ export type TabsProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -8342,6 +8413,9 @@ export type TreeProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -8674,6 +8748,9 @@ export type DataGridProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -9002,6 +9079,9 @@ export type CalendarProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -9322,6 +9402,9 @@ export type DatePickerProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -9640,6 +9723,9 @@ export type TimeFieldProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -9957,6 +10043,9 @@ export type ComboboxProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -10283,6 +10372,9 @@ export type CommandPaletteProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -10597,6 +10689,9 @@ export type SelectProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -10914,6 +11009,9 @@ export type SplitProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -11243,6 +11341,9 @@ export type ListProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -11611,6 +11712,9 @@ export type LayerProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -11925,6 +12029,9 @@ export type ModalProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -12254,6 +12361,9 @@ export type PopoverProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -12588,6 +12698,9 @@ export type MenuItemProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -12901,6 +13014,9 @@ export type SubmenuProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -13218,6 +13334,9 @@ export type WebViewProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -13549,6 +13668,9 @@ export type TerminalProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -13858,6 +13980,9 @@ export type SlotProps = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -14172,6 +14297,9 @@ export type EachOptions = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -14489,6 +14617,9 @@ export type PresenceOptions = {
 	skew: Props_skew,
 	skew_x: Props_skew_x,
 	skew_y: Props_skew_y,
+	rotate_x: Props_rotate_x,
+	rotate_y: Props_rotate_y,
+	perspective: Props_perspective,
 	origin: Props_origin,
 	-- The subtree's theme: a theme's name (`"zgx-light"`), or tokens to
 	-- override (`{ accent = "#e5484d" }`, with `theme = name` to start from).
@@ -15235,6 +15366,11 @@ export type ElementKeys = {
 	skewY: AnimValue?,
 	skew_x: AnimValue?,
 	skew_y: AnimValue?,
+	rotateX: AnimValue?,
+	rotate_x: AnimValue?,
+	rotateY: AnimValue?,
+	rotate_y: AnimValue?,
+	perspective: AnimValue?,
 	text_size: AnimValue?,
 	tint: AnimValue?,
 	top: AnimValue?,
@@ -15403,6 +15539,11 @@ export type ElementParams = {
 	skewY: AnimValue?,
 	skew_x: AnimValue?,
 	skew_y: AnimValue?,
+	rotateX: AnimValue?,
+	rotate_x: AnimValue?,
+	rotateY: AnimValue?,
+	rotate_y: AnimValue?,
+	perspective: AnimValue?,
 	text_size: AnimValue?,
 	tint: AnimValue?,
 	top: AnimValue?,

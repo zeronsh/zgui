@@ -578,6 +578,40 @@ fn motion_paths_text_split_scopes_and_drawn_strokes() {
 }
 
 #[test]
+fn tilts_in_perspective_animate_as_compositor_transforms() {
+    let mut h = Harness::inline(
+        r##"anime.animate("#card", { rotateY = { 0, 20 }, rotateX = -8, duration = 100, ease = "linear" })
+        return ui.column { ui.div { id = "card", w = 40, h = 60, bg = "#58a6ff", rotate_x = 4, perspective = 1100 } }"##,
+    );
+    let local = |h: &mut Harness| {
+        let node = h.find("card").unwrap();
+        h.ui.scene.borrow().local_transform(node)
+    };
+    let start = local(&mut h);
+    assert!(
+        (start.rotate_x - 4f32.to_radians()).abs() < 1e-4,
+        "rotate_x in degrees"
+    );
+    assert_eq!(start.perspective, 1100.);
+    h.frame();
+    h.run_ms(50.);
+    let t = local(&mut h);
+    assert!(
+        (t.rotate_y.to_degrees() - 10.).abs() < 0.5,
+        "{}",
+        t.rotate_y.to_degrees()
+    );
+    assert!(
+        (t.rotate_x.to_degrees() + 2.).abs() < 0.5,
+        "{}",
+        t.rotate_x.to_degrees()
+    );
+    assert_eq!(t.perspective, 1100., "a tilt keeps the literal perspective");
+    let node = h.find("card").unwrap();
+    assert!(h.ui.scene.borrow().is_layer(node));
+}
+
+#[test]
 fn rotation_and_scale_animate_as_compositor_transforms() {
     let mut h = Harness::inline(
         r##"anime.animate("#spin", { rotate = "1turn", scale = { 1, 2 }, duration = 100, ease = "linear" })

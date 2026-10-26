@@ -458,6 +458,9 @@ impl Element {
                 Key::Skew,
                 Key::SkewX,
                 Key::SkewY,
+                Key::RotateX,
+                Key::RotateY,
+                Key::Perspective,
             ]) {
                 cleared.local = animated.local.take();
             }

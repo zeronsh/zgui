@@ -640,7 +640,8 @@ fn styles_clone_covers_every_owning_field(styles: &StylesFields) -> StylesFields
         ..*styles
     }
 }
-/// Scale, rotation, skew and origin, each set or not (see `Styled::scale`).
+/// Scale, rotation, skew, tilt, perspective and origin, each set or not
+/// (see `Styled::scale`).
 /// Inline rather than among `RareStyles`: animations rewrite it every frame,
 /// and a bit per component keeps it a third the size of four `Option`s.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -653,6 +654,9 @@ impl TransformPatch {
     const ROTATE: u8 = 2;
     const SKEW: u8 = 4;
     const ORIGIN: u8 = 8;
+    const ROTATE_X: u8 = 16;
+    const ROTATE_Y: u8 = 32;
+    const PERSPECTIVE: u8 = 64;
     /// `self` with what `over` sets laid over it.
     pub(crate) fn over(mut self, over: Self) -> Self {
         let pick = |bit: u8| over.set & bit != 0;
@@ -667,6 +671,15 @@ impl TransformPatch {
         }
         if pick(Self::ORIGIN) {
             self.values.origin = over.values.origin;
+        }
+        if pick(Self::ROTATE_X) {
+            self.values.rotate_x = over.values.rotate_x;
+        }
+        if pick(Self::ROTATE_Y) {
+            self.values.rotate_y = over.values.rotate_y;
+        }
+        if pick(Self::PERSPECTIVE) {
+            self.values.perspective = over.values.perspective;
         }
         self.set |= over.set;
         self
@@ -2782,6 +2795,41 @@ pub trait Styled: Sized {
             .local_transform;
         patch.values.skew = (x, y);
         patch.set |= TransformPatch::SKEW;
+        self
+    }
+    /// Tilt by `radians` about the horizontal axis through the transform
+    /// origin, as CSS `rotateX`: positive tips the top away. Seen in
+    /// `perspective`; without one it only shortens the view.
+    fn rotate_x(mut self, radians: f32) -> Self {
+        let patch = &mut self
+            .styles_mut()
+            .fields_mut(bit::LOCAL_TRANSFORM)
+            .local_transform;
+        patch.values.rotate_x = radians;
+        patch.set |= TransformPatch::ROTATE_X;
+        self
+    }
+    /// Tilt by `radians` about the vertical axis through the transform
+    /// origin, as CSS `rotateY`: positive turns the right side away.
+    fn rotate_y(mut self, radians: f32) -> Self {
+        let patch = &mut self
+            .styles_mut()
+            .fields_mut(bit::LOCAL_TRANSFORM)
+            .local_transform;
+        patch.values.rotate_y = radians;
+        patch.set |= TransformPatch::ROTATE_Y;
+        self
+    }
+    /// See a tilt (`rotate_x`, `rotate_y`) from `distance` logical points
+    /// away, as CSS `perspective()`: the side nearer shows larger. A tilted
+    /// view composites as a projected layer, without repainting.
+    fn perspective(mut self, distance: f32) -> Self {
+        let patch = &mut self
+            .styles_mut()
+            .fields_mut(bit::LOCAL_TRANSFORM)
+            .local_transform;
+        patch.values.perspective = distance;
+        patch.set |= TransformPatch::PERSPECTIVE;
         self
     }
     /// The pivot of `scale`, `rotate` and `skew`, as fractions of the

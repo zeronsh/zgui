@@ -5005,10 +5005,11 @@ impl GpuRenderer {
 
             // A transformed layer's matrix, from this target's origin.
             let matrix = item.matrix().map(|matrix| {
+                use zgx::affine::{Affine, Projective};
                 let (x, y) = self.layer_origin;
-                zgx::affine::Affine::translation(x, y)
+                Projective::from(Affine::translation(x, y))
                     .then(matrix)
-                    .then(zgx::affine::Affine::translation(-x, -y))
+                    .then(Projective::from(Affine::translation(-x, -y)))
             });
             // A layer composited through its layer shader, once that compiles.
             let filter = item
@@ -5064,8 +5065,10 @@ impl GpuRenderer {
                     _ => (bounds, [0., 0., layer.uv[0], layer.uv[1]]),
                 };
                 // Transformed: the quad's corners move in the vertex shader,
-                // as an affine image's; edge fades stay in its own frame.
+                // as an affine image's; edge fades stay in its own frame. In
+                // perspective (`options.z` 2), divided by `w` there too.
                 let m = matrix.unwrap_or_default();
+                let projective = matrix.is_some_and(|m| m.affine().is_none());
                 quads.push(Quad {
                     rect: [bounds.x, bounds.y, bounds.width, bounds.height],
                     uv,
@@ -5079,16 +5082,21 @@ impl GpuRenderer {
                     options: [
                         item.effects.edge_fade,
                         2.,
-                        if matrix.is_some() { 1. } else { 0. },
+                        match (matrix.is_some(), projective) {
+                            (_, true) => 2.,
+                            (true, false) => 1.,
+                            (false, false) => 0.,
+                        },
                         0.,
                     ],
                     shape: match matrix {
                         Some(_) => [m.a, m.c, m.b, m.d],
                         None => [0.; 4],
                     },
-                    border: match matrix {
-                        Some(_) => [m.tx, m.ty, 0., 0.],
-                        None => [0.; 4],
+                    border: match (matrix, projective) {
+                        (Some(_), true) => [m.tx, m.ty, m.px, m.py],
+                        (Some(_), false) => [m.tx, m.ty, 0., 0.],
+                        (None, _) => [0.; 4],
                     },
                     mask: [
                         region_index(&mut clips, Region::of(&item)),

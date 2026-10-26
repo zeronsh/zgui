@@ -1316,6 +1316,7 @@ props! {
     "x" => X: Num, "y" => Y: Num,
     "scale" => Scale: Num, "scale_x" => ScaleX: Num, "scale_y" => ScaleY: Num,
     "rotate" => Rotate: Num, "skew" => Skew: Num, "skew_x" => SkewX: Num, "skew_y" => SkewY: Num,
+    "rotate_x" => RotateX: Num, "rotate_y" => RotateY: Num, "perspective" => Perspective: Num,
     "origin" => Origin: Pair,
 }
 

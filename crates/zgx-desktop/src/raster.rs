@@ -412,10 +412,11 @@ impl Raster {
         // A transformed layer samples back through its matrix (from this
         // target's origin), nearest texel, as transformed images do.
         let matrix = item.matrix().map(|matrix| {
+            use zgx::affine::{Affine, Projective};
             let (x, y) = self.origin;
-            zgx::affine::Affine::translation(x, y)
+            Projective::from(Affine::translation(x, y))
                 .then(matrix)
-                .then(zgx::affine::Affine::translation(-x, -y))
+                .then(Projective::from(Affine::translation(-x, -y)))
         });
         let inverse = match matrix.map(|matrix| matrix.inverse()) {
             Some(None) => return,
@@ -441,7 +442,8 @@ impl Raster {
                     Some(inverse) => {
                         let (x, y) = inverse.point(px as f32 + 0.5, py as f32 + 0.5);
                         let (sx, sy) = (x - output.x, y - output.y);
-                        if sx < 0. || sy < 0. || sx >= width as f32 || sy >= height as f32 {
+                        // (Behind the eye, in perspective, it is no point.)
+                        if !(sx >= 0. && sy >= 0. && sx < width as f32 && sy < height as f32) {
                             continue;
                         }
                         (sx as usize, sy as usize, y)

@@ -1,4 +1,4 @@
-//! Scale, rotation and skew on scene nodes: zgx's local transforms, which
+//! Scale, rotation, skew and tilt in perspective on scene nodes: zgx's local transforms, which
 //! re-composite a node's cached layer without repainting it.
 pub use zgx::scene::LocalTransform;
 use zgx::{
@@ -19,5 +19,8 @@ pub fn style<S: Styled>(styles: S, transform: LocalTransform) -> S {
         .scale_xy(transform.scale.0, transform.scale.1)
         .rotate(transform.rotate)
         .skew(transform.skew.0, transform.skew.1)
+        .rotate_x(transform.rotate_x)
+        .rotate_y(transform.rotate_y)
+        .perspective(transform.perspective)
         .transform_origin(transform.origin.0, transform.origin.1)
 }
