@@ -473,3 +473,41 @@ fn the_notes_selection_slides_from_row_to_row() {
     assert_eq!(h.host.error().get(), None);
     assert!(!h.clock.wants_frame(), "settles");
 }
+
+/// Rows moved by a change slide in the rows' order, and additive values
+/// write in the order their slots were made, not in a hash map's: the same
+/// change damages the same places in the same order every run (two runs
+/// here, whose maps are seeded differently).
+#[test]
+fn a_reorder_damages_in_the_same_order_every_run() {
+    let run = || {
+        let h = Harness::inline(
+            r##"local rows = ui.shared("rows", {})
+            return ui.column { w = 400, h = 900, ui.each(rows, function(i)
+                return ui.div { w = 200, h = 10 + i % 3 * 5, bg = "#58a6ff" }
+            end, { key = function(i) return i end, animate = true }) }"##,
+        );
+        let order = |reversed: bool| {
+            let mut rows: Vec<zgx_script::Value> =
+                (0..30).map(|i| zgx_script::Value::Num(i as f64)).collect();
+            if reversed {
+                rows.reverse();
+            }
+            zgx_script::Value::List(rows.into())
+        };
+        h.host.shared("rows", order(false)).set(order(false));
+        h.frames(2);
+        h.ui.scene.borrow_mut().flush();
+        h.host.shared("rows", order(false)).set(order(true));
+        let mut frames = Vec::new();
+        for _ in 0..30 {
+            h.frame();
+            let mut scene = h.ui.scene.borrow_mut();
+            let damage = scene.flush().damage;
+            let repaints = scene.repaints().1.to_vec();
+            frames.push((format!("{damage:?}"), repaints));
+        }
+        frames
+    };
+    assert_eq!(run(), run());
+}

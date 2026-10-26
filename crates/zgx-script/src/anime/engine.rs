@@ -850,6 +850,9 @@ pub(crate) struct Owner {
 }
 
 struct AddSlot {
+    /// Which slot it was made (the slots' map has no order of its own):
+    /// sums are written in that order, the same every run.
+    order: usize,
     target: Target,
     key: Key,
     unit: Option<Rc<str>>,
@@ -1337,7 +1340,9 @@ impl Engine {
             && let Some(n) = value.num()
         {
             let mut adds = self.adds.borrow_mut();
+            let order = adds.len();
             let slot = adds.entry(slot_key).or_insert_with(|| AddSlot {
+                order,
                 target: track.target.clone(),
                 key: track.key.clone(),
                 unit: track.unit.clone(),
@@ -1377,17 +1382,26 @@ impl Engine {
     pub(crate) fn flush(&self) {
         {
             let mut adds = self.adds.borrow_mut();
-            let touched: Vec<(Target, Key, Option<Rc<str>>, f64)> = adds
+            let mut touched: Vec<_> = adds
                 .values_mut()
                 .filter_map(|s| {
                     std::mem::take(&mut s.touched).then(|| {
                         let total = s.base + std::mem::take(&mut s.sum);
-                        (s.target.clone(), s.key.clone(), s.unit.clone(), total)
+                        (
+                            s.order,
+                            s.target.clone(),
+                            s.key.clone(),
+                            s.unit.clone(),
+                            total,
+                        )
                     })
                 })
                 .collect();
             drop(adds);
-            for (target, key, unit, total) in touched {
+            // In the order the slots were made, not the map's: what they
+            // damage comes in the same order every run.
+            touched.sort_unstable_by_key(|(order, ..)| *order);
+            for (_, target, key, unit, total) in touched {
                 self.put(&target, &key, &V::Num(total), unit.as_deref());
             }
         }

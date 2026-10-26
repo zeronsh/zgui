@@ -510,8 +510,13 @@ fn slide_rows(rows: &RefCell<Rows>, region: &NodeHandle, motion: &EachMotion, vm
             return;
         }
         let origin = scene.layout_bounds(region.node());
-        for (row, (x0, y0)) in before {
-            let Some(element) = st.elements.get(&row).filter(|_| !st.exiting.contains(&row)) else {
+        // In the rows' order, not the map's: what the moves damage comes in
+        // the same order every run. (Every row with an element is shown.)
+        for row in &st.shown {
+            let Some(&(x0, y0)) = before.get(row) else {
+                continue;
+            };
+            let Some(element) = st.elements.get(row).filter(|_| !st.exiting.contains(row)) else {
                 continue;
             };
             let Some(node) = element.node().filter(|n| scene.contains(*n)) else {
