@@ -40,19 +40,20 @@ zgx inspect state                     # named states (ui.state, ui.persist, ui.s
 zgx inspect state messages --full     # one state; long values are cut at 200 bytes unless --full
 zgx inspect errors                    # the script error, type errors, lint findings, layout warnings ("none")
 zgx inspect lint                      # zgx lint over the app's scripts: file:line:col rule message
-zgx inspect frames 5                  # what ran in the last frames that did anything, and why
+zgx inspect frames 5                  # the last frames: where their time went, what ran and why
 ```
 
-`frames` is why the app did what it did, frame by frame: the states written (named ones by name, the rest counted) and the runs they caused, the costliest first, each with its time, what it is and the state that queued it:
+`frames` is where each frame's time went and why the app did what it did: the frame's time, the states written (named ones by name, the rest counted) and the runs they caused with their total; then its phases, the costliest first (each counted once, with its instructions where the platform counts them); then the costliest runs, each with its time, what it is and the state that queued it:
 
 ```text
-frame 131: state.luau::messages, 8 unnamed → 20 runs, 293 µs
+frame 131 (1.42 ms): state.luau::messages, 8 unnamed → 20 runs, 293 µs
+  phases: update 310 µs (1840K instr), text 402 µs, layout 260 µs (1210K instr), paint 190 µs, encode 120 µs, present 95 µs
   153 µs @67 binding (markdown_view components/transcript.luau:32) ← a state
   28 µs @102 binding #transcript (list #transcript components/transcript.luau:73) ← a state
   19 µs effect 124 ← state.luau::messages
 ```
 
-A binding is a node's (`@67`, its kind or the script line that made it); an effect a script's `ui.effect` (its line) or the engine's. Use it to find what a write costs and what reads too much.
+A binding is a node's (`@67`, its kind or the script line that made it); an effect a script's `ui.effect` (its line) or the engine's. The phases are `ZGX_PROFILE`'s (input, script, update, style, layout, text, damage, paint, encode, submit, present), measured only while devtools serve, so no restart: a frame with no writes (a scroll, an animation's layout) shows with its phases alone. Use it to find what a write costs, what reads too much, and which phase a slow frame spent.
 
 A tree line is `@n #id role "name or text" ="value" x,y wxh` and flags (`focused`, `disabled`, `checked`), indented two spaces a level, in document order. Boxes with nothing to say (no id, role or text) are left out and their children shown in their place; a button's own label text is folded into the button. `--all` shows every node. Same tree, same text: compare runs with `diff`.
 
@@ -87,18 +88,19 @@ claude mcp add zgx -- zgx inspect mcp      # Claude Code; any MCP client runs th
 
 A scroll, a keystroke or a streamed reply that stutters: find what runs on each of its frames and which script line made it, then fix that line.
 
-1. Run a release build with devtools, and phase costs on stderr: `ZGX_PROFILE=1 cargo run --release -p zgx-run -- --inspect app/` (a line per phase every 120 frames; a debug build's times are several times a release build's, so compare like with like).
+1. Run a release build with devtools: `cargo run --release -p zgx-run -- --inspect app/` (a debug build's times are several times a release build's, so compare like with like). An app already running with devtools needs no restart.
 2. Do the interaction a few times, through devtools so it is the same each time: `zgx inspect scroll '#feed' 400` (or `click`, `type`, `key`), or by hand.
-3. Read what ran: `zgx inspect frames 5`. Each frame lists the states written and its runs, the costliest first:
+3. Read what ran: `zgx inspect frames 5`. Each frame gives its time, the states written, where the time went by phase, and its runs, the costliest first:
 
    ```text
-   frame 212: state.luau::rows, 3 unnamed → 41 runs, 9840 µs
+   frame 212 (19.80 ms): state.luau::rows, 3 unnamed → 41 runs, 9840 µs
+     phases: update 10120 µs (52310K instr), layout 6400 µs (30120K instr), text 1900 µs, paint 820 µs, present 560 µs
      6120 µs @58 binding (column components/row.luau:14) ← state.luau::rows
      2210 µs app.luau:88 effect ← state.luau::rows
      …
    ```
 
-4. Map each costly run to its source line (`components/row.luau:14`, `app.luau:88`), then look at what that line reads and does. `zgx inspect node @58` shows the node, and `zgx inspect lint` lists what the linter already knows is costly.
+4. The costliest phase says where to look: `update` and `script` are the runs below it; `layout`, `text`, `paint` and `encode` are the interface's size and drawing (see the table). Map each costly run to its source line (`components/row.luau:14`, `app.luau:88`), then look at what that line reads and does. `zgx inspect node @58` shows the node, and `zgx inspect lint` lists what the linter already knows is costly.
 5. Change it, save (the app reloads), and repeat steps 2–3 until the frame fits: 8.3 ms at 120 Hz, 16.7 ms at 60.
 
 What the runs tell you:
@@ -109,9 +111,8 @@ What the runs tell you:
 | a `binding` run costing milliseconds, on a node holding thousands of children | `ui.each` over a long list: every row built and laid out | `ui.list`, which builds the rows in view |
 | the same `effect` line in every frame, with no write you made | an effect writing state that it (or another) reads, or `ui.every` faster than it needs | write only when the value changes; a slower timer; `ui.tween`/`ui.spring` for motion |
 | a `binding` run for a whole long text or list after a small change | `items:update(function(l) … end)` or `set` of a rebuilt table | `push`, `set_key`, `append`, `patch`: they write the path that changed |
-| few or cheap runs, yet the frame is slow | the cost is layout, text or drawing, not the script | the `ZGX_PROFILE=1` lines on stderr split it (update, layout, paint, encode); a box laid out from its content (no `w`/`h`), a long text re-measured, a blur or shadow redrawn |
-
-`frames` counts what effects and bindings run; layout, text shaping and drawing are the phases `ZGX_PROFILE=1` reports. A slow frame with cheap runs is those, and `zgx inspect tree --depth 2` shows which boxes are large or deep enough to cost.
+| few or cheap runs, yet `layout`, `text` or `paint` is most of the frame | the cost is the interface's size or drawing, not the script | a box laid out from its content (no `w`/`h`), a long text re-measured, a blur or shadow redrawn; `zgx inspect tree --depth 2` shows which boxes are large or deep enough to cost |
+| a slow frame with no writes and no runs | a scroll or an animation laying out or drawing a lot | the same as above: the phases say which |
 
 ## Recipes
 

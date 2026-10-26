@@ -23,10 +23,11 @@ const KEPT: usize = 120;
 pub fn enabled() -> bool {
     ON.load(Ordering::Relaxed)
 }
-/// Start or stop tracing (on this thread's runtimes). Off, what was
-/// recorded is dropped.
+/// Start or stop tracing (on this thread's runtimes), phases measured with
+/// it (`zgx::profile::set_recording`). Off, what was recorded is dropped.
 pub fn set_enabled(on: bool) {
     ON.store(on, Ordering::Relaxed);
+    crate::profile::set_recording(on);
     if !on {
         LOG.with_borrow_mut(|log| *log = Log::default());
     }
@@ -45,7 +46,8 @@ pub struct Run {
     /// How long it took, in microseconds (what it ran inside included).
     pub micros: f32,
 }
-/// One frame's work: writes and the runs they caused, in order.
+/// One frame's work: writes and the runs they caused, in order, and what
+/// each phase of it took.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Frame {
     /// Its number, counting frames traced.
@@ -54,6 +56,10 @@ pub struct Frame {
     pub writes: Vec<(usize, u32)>,
     /// Effects run, in the order they ran.
     pub runs: Vec<Run>,
+    /// Each phase that ran (`zgx::profile`'s: input, script, update, style,
+    /// layout, text, damage, paint, encode, submit, present): its name,
+    /// instructions (0 where not counted) and microseconds.
+    pub phases: Vec<(&'static str, u64, f32)>,
 }
 
 #[derive(Default)]
@@ -102,17 +108,19 @@ pub(crate) fn ran(effect: u64, started: Instant) {
         });
     });
 }
-/// The frame being traced is done: kept if anything happened in it.
-pub fn end_frame() {
+/// The frame being traced is done (`zgx::profile::frame`, as a renderer
+/// presents it), its phases' split given: kept if anything happened in it.
+pub fn end_frame(phases: Vec<(&'static str, u64, f32)>) {
     if !enabled() {
         return;
     }
     LOG.with_borrow_mut(|log| {
         log.index += 1;
-        if log.current.writes.is_empty() && log.current.runs.is_empty() {
+        if log.current.writes.is_empty() && log.current.runs.is_empty() && phases.is_empty() {
             return;
         }
         let mut frame = std::mem::take(&mut log.current);
+        frame.phases = phases;
         frame.index = log.index;
         log.frames.push_back(frame);
         while log.frames.len() > KEPT {

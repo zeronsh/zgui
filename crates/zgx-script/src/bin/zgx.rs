@@ -442,7 +442,7 @@ const TOOLS: &[Tool] = &[
         "zgx_frames",
         "frames",
         &[("n", "number", false)],
-        "What ran in the last frames that did anything, and why: states written, the runs they caused, costs.",
+        "The last frames that did anything: each phase's time (update, layout, text, paint, present…), the states written, the runs they caused and their costs.",
     ),
     (
         "zgx_wait",

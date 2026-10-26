@@ -78,7 +78,7 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   command id                                     run a ui.command
   errors                                         script error, type errors, lint, layout warnings
   lint                                           zgx lint over the app's scripts, file:line
-  frames  [n=10]                                 what ran in the last frames that did anything, and why
+  frames  [n=10]                                 the last frames that did anything: their phases, what ran and why
   wait    target [text] [gone] [timeout_ms=3000] until it shows (the text), or is gone
   sleep   ms                                     let the app run
 targets: #id, \"label or text\", role:button, @12, row 3, [2], a >> b (inside)";
@@ -470,9 +470,13 @@ impl Session {
             if unnamed > 0 {
                 writes.push(format!("{unnamed} unnamed"));
             }
+            // The frame's time is its phases' (a phase inside another is
+            // taken off that one, so each counts once).
+            let frame_micros: f32 = frame.phases.iter().map(|p| p.2).sum();
             let mut line = format!(
-                "frame {}: {} → {} runs, {:.0} µs",
+                "frame {} ({:.2} ms): {} → {} runs, {:.0} µs",
                 frame.index,
+                frame_micros / 1000.,
                 if writes.is_empty() {
                     "no writes".into()
                 } else {
@@ -481,6 +485,19 @@ impl Session {
                 frame.runs.len(),
                 total
             );
+            // Where the frame's time went, the costliest phase first.
+            let mut phases = frame.phases.clone();
+            phases.sort_by(|a, b| b.2.total_cmp(&a.2));
+            let split: Vec<String> = phases
+                .iter()
+                .map(|(name, instructions, micros)| match instructions {
+                    0 => format!("{name} {micros:.0} µs"),
+                    n => format!("{name} {micros:.0} µs ({}K instr)", n / 1000),
+                })
+                .collect();
+            if !split.is_empty() {
+                line.push_str(&format!("\n  phases: {}", split.join(", ")));
+            }
             // The costliest runs first, a few: what to look at.
             let mut runs = frame.runs.clone();
             runs.sort_by(|a, b| b.micros.total_cmp(&a.micros));
@@ -514,6 +531,23 @@ impl Session {
                 ),
                 ("runs", Value::Num(frame.runs.len() as f64)),
                 ("micros", Value::Num(total.round() as f64)),
+                ("frame_micros", Value::Num(frame_micros.round() as f64)),
+                (
+                    "phases",
+                    Value::List(
+                        phases
+                            .iter()
+                            .map(|(name, instructions, micros)| {
+                                Value::record([
+                                    ("phase", Value::from(*name)),
+                                    ("micros", Value::Num(micros.round() as f64)),
+                                    ("instructions", Value::Num(*instructions as f64)),
+                                ])
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                    ),
+                ),
             ]));
         }
         let text = if text.is_empty() {

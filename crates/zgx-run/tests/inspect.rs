@@ -44,7 +44,8 @@ fn ask(app: &TestApp, session: &Session, request: &str) -> Value {
             out.borrow_mut().take().unwrap()
         }
     };
-    app.settle();
+    // And draw, as a window does after it: the frame ends there.
+    app.frame();
     Value::from_json(&answer).unwrap_or_else(|| panic!("not JSON: {answer}"))
 }
 fn text(answer: &Value) -> String {
@@ -127,6 +128,11 @@ fn a_session_answers_the_tree_states_and_actions() {
     assert!(frames.contains("count →"), "{frames}");
     assert!(
         frames.contains("binding") && frames.contains("← count"),
+        "{frames}"
+    );
+    // And what each frame took, phase by phase.
+    assert!(
+        frames.contains("phases: ") && frames.contains("layout"),
         "{frames}"
     );
     // A wait until something shows, and one that times out saying why.

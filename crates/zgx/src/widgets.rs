@@ -2248,9 +2248,6 @@ impl Ui {
         if self.storage.preparing_frame.replace(true) {
             return Ok(());
         }
-        // What ran since the last frame is this frame's, for traces.
-        #[cfg(feature = "trace")]
-        crate::trace::end_frame();
         let _preparation = FramePreparationGuard(&self.storage.preparing_frame);
         // What the last frames' removals left to free, a little at a time:
         // a chunk only in a frame that removed a large subtree, which has

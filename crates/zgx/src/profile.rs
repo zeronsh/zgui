@@ -94,16 +94,38 @@ impl Phase {
     }
 }
 
-/// 0: not yet read, 1: off, 2: on.
+/// 0: not yet read, 1: off, 2: on (`ZGX_PROFILE`, reported on stderr),
+/// 3: recording for devtools alone ([`set_recording`], not reported).
 static STATE: AtomicU8 = AtomicU8::new(0);
 
-/// Whether `ZGX_PROFILE` is set (to anything but `0`).
+/// Whether phases are measured: `ZGX_PROFILE` is set (to anything but
+/// `0`), or devtools are recording ([`set_recording`]).
 #[inline]
 pub fn enabled() -> bool {
     match STATE.load(Ordering::Relaxed) {
         1 => false,
-        2 => true,
+        2 | 3 => true,
         _ => read_state(),
+    }
+}
+
+/// Whether what is measured is reported (`ZGX_PROFILE`): on stderr,
+/// with marks and signposts. Not while devtools record alone.
+#[inline]
+fn reported() -> bool {
+    STATE.load(Ordering::Relaxed) == 2
+}
+
+/// Measure phases for devtools (`zgx inspect frames`, each frame's split),
+/// without `ZGX_PROFILE`'s reports on stderr; `false` stops (unless
+/// `ZGX_PROFILE` is set). Off, a span is one relaxed load and a branch.
+pub fn set_recording(on: bool) {
+    let reported = match STATE.load(Ordering::Relaxed) {
+        0 => read_state(),
+        state => state == 2,
+    };
+    if !reported {
+        STATE.store(if on { 3 } else { 1 }, Ordering::Relaxed);
     }
 }
 
@@ -170,7 +192,7 @@ pub fn frame() {
 /// start's milestones (window, renderer, fonts, the app's build, the first
 /// frame), so what each step costs is the difference between two lines.
 pub fn mark(what: &str) {
-    if enabled() {
+    if enabled() && reported() {
         mark_now(what);
     }
 }
@@ -188,7 +210,7 @@ fn mark_now(what: &str) {
 /// and time, and start counting again: a benchmark's own split of each
 /// interaction. Empty with `ZGX_PROFILE` unset.
 pub fn take() -> Vec<(Phase, u64, Duration)> {
-    if !enabled() {
+    if !enabled() || !reported() {
         return Vec::new();
     }
     PROFILE.with(|profile| {
@@ -206,7 +228,7 @@ pub fn take() -> Vec<(Phase, u64, Duration)> {
 
 /// Report what was measured since the last report now (a benchmark's end).
 pub fn report() {
-    if enabled() {
+    if enabled() && reported() {
         PROFILE.with(|profile| profile.borrow_mut().report());
     }
 }
@@ -224,6 +246,8 @@ struct Profile {
     /// Open spans: phase, when it (or its child last) resumed, count then.
     open: Vec<(Phase, Instant, u64)>,
     totals: [Totals; PHASES.len()],
+    /// This frame's, for devtools' traces.
+    frame: [Totals; PHASES.len()],
     frames: u64,
 }
 
@@ -246,6 +270,7 @@ impl Profile {
             overhead,
             open: Vec::new(),
             totals: Default::default(),
+            frame: Default::default(),
             frames: 0,
         }
     }
@@ -261,10 +286,19 @@ impl Profile {
     /// Credit the open span with what ran since it last resumed.
     fn credit(&mut self, now: Instant, count: u64, counted: bool) {
         if let Some((phase, since, from)) = self.open.last().copied() {
-            let totals = &mut self.totals[phase as usize];
-            totals.time += now - since;
-            if counted && !phase.nested() {
-                totals.instructions += count.saturating_sub(from + self.overhead);
+            let time = now - since;
+            let instructions = match counted && !phase.nested() {
+                true => count.saturating_sub(from + self.overhead),
+                false => 0,
+            };
+            let frame = &mut self.frame[phase as usize];
+            frame.time += time;
+            frame.instructions += instructions;
+            // What is reported, with `ZGX_PROFILE` alone.
+            if reported() {
+                let totals = &mut self.totals[phase as usize];
+                totals.time += time;
+                totals.instructions += instructions;
             }
         }
     }
@@ -297,7 +331,7 @@ impl Profile {
 fn enter(phase: Phase) {
     // Nested phases run hundreds of times a frame: too many intervals to
     // read, and each signpost costs.
-    if !phase.nested() {
+    if !phase.nested() && reported() {
         signpost::begin(phase);
     }
     PROFILE.with(|profile| {
@@ -328,7 +362,7 @@ fn leave(phase: Phase) {
             }
         }
     });
-    if !phase.nested() {
+    if !phase.nested() && reported() {
         signpost::end(phase);
     }
 }
@@ -338,7 +372,22 @@ fn end_frame() {
     PROFILE.with(|profile| {
         let mut profile = profile.borrow_mut();
         profile.frames += 1;
-        if profile.frames >= REPORT_FRAMES {
+        // This frame's split, for devtools' trace of it.
+        let frame = std::mem::take(&mut profile.frame);
+        #[cfg(feature = "trace")]
+        if crate::trace::enabled() {
+            let phases = PHASES
+                .iter()
+                .zip(frame)
+                .filter(|(_, t)| !t.time.is_zero())
+                .map(|(phase, t)| (phase.name(), t.instructions, t.time.as_secs_f32() * 1e6))
+                .collect();
+            crate::trace::end_frame(phases);
+        }
+        #[cfg(not(feature = "trace"))]
+        let _ = frame;
+        // Reported on stderr with `ZGX_PROFILE` alone, not for devtools.
+        if profile.frames >= REPORT_FRAMES && reported() {
             profile.report();
         }
     });
@@ -645,6 +694,28 @@ mod tests {
             "{update:?} + {layout:?} > {wall:?}"
         );
         assert!(PROFILE.with(|profile| profile.borrow().open.is_empty()));
+
+        // Recording for devtools measures the frame's split alone: nothing
+        // toward ZGX_PROFILE's reports, takes or marks.
+        PROFILE.with(|profile| {
+            let mut profile = profile.borrow_mut();
+            profile.totals = Default::default();
+            profile.frame = Default::default();
+        });
+        STATE.store(3, Ordering::Relaxed);
+        {
+            let _layout = span(Phase::Layout);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let (totals, frame) = PROFILE.with(|profile| {
+            let profile = profile.borrow();
+            (profile.totals, profile.frame)
+        });
+        let taken = take();
+        STATE.store(1, Ordering::Relaxed);
+        assert!(frame[Phase::Layout as usize].time >= Duration::from_millis(1));
+        assert!(totals.iter().all(|t| t.time.is_zero()));
+        assert!(taken.is_empty());
     }
 
     #[test]

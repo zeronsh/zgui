@@ -244,6 +244,8 @@ impl TestApp {
         self.settle();
         self.ui.prepare_frame();
         self.settle();
+        // The frame is done, as a renderer's present ends one.
+        zgx::profile::frame();
     }
     /// `n` frames: an animation's worth.
     pub fn frames(&self, n: usize) {
