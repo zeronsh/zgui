@@ -1568,6 +1568,8 @@ struct LayerPresent {
     drawables: Option<bool>,
     /// Where this window is in the full-rate paths' trial (`PRESENT_AUTO`).
     trial: Trial,
+    /// When the trial started, for its cost (`Trial`).
+    trial_started: Option<std::time::Instant>,
 }
 #[cfg(target_os = "macos")]
 impl LayerPresent {
@@ -8276,6 +8278,7 @@ impl GpuRenderer {
                             .as_ref()
                             .and_then(|layer| layer.probe_feedback()),
                     );
+                    present.trial_started = Some(std::time::Instant::now());
                     Trial::Tiles { frames: 0, from }
                 }
                 Trial::Tiles { frames, from } if frames + 1 >= TRIAL_FRAMES => {
@@ -8315,10 +8318,14 @@ impl GpuRenderer {
                     };
                     VERDICT.store(verdict, std::sync::atomic::Ordering::Relaxed);
                     eprintln!(
-                        "zgx: full-rate frames take {} (lost: tiles {:.1}%, drawables {:.1}%)",
+                        "zgx: full-rate frames take {} (lost: tiles {:.1}%, drawables {:.1}% of {} frames each; trial {} ms)",
                         if verdict == 2 { "drawables" } else { "tiles" },
                         tiles * 100.,
-                        drawables * 100.
+                        drawables * 100.,
+                        TRIAL_FRAMES,
+                        present
+                            .trial_started
+                            .map_or(0, |at| at.elapsed().as_millis())
                     );
                     Trial::Done
                 }
