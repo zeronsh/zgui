@@ -2463,6 +2463,47 @@ mod tests {
         PathKey::Key(k.into())
     }
 
+    /// A userdata method checks its `self` as it did with the check inlined
+    /// (research B9): a value that isn't userdata, another type's, one
+    /// borrowed or destroyed, each with its error, and calls after them work.
+    #[test]
+    fn userdata_checks_keep_type_borrow_and_destruction_errors() {
+        fn cause(error: &mlua::Error) -> &mlua::Error {
+            match error {
+                mlua::Error::CallbackError { cause: inner, .. }
+                | mlua::Error::BadArgument { cause: inner, .. } => cause(inner),
+                other => other,
+            }
+        }
+        struct Other;
+        impl UserData for Other {}
+        let lua = Lua::new();
+        let runtime = Runtime::new();
+        let state = lua
+            .create_userdata(State::new(runtime.signal(Value::Num(7.))))
+            .unwrap();
+        lua.globals().set("s", state.clone()).unwrap();
+        let get: mlua::Function = lua.load("return s.get").eval().unwrap();
+        assert_eq!(get.call::<f64>(state.clone()).unwrap(), 7.);
+        let wrong = get.call::<f64>(3).unwrap_err();
+        assert!(
+            matches!(cause(&wrong), mlua::Error::FromLuaConversionError {
+            from: "integer" | "number", to, message: Some(message)
+        } if to == "userdata" && message == "expected userdata of type 'State'")
+        );
+        let other = lua.create_userdata(Other).unwrap();
+        let wrong = get.call::<f64>(other).unwrap_err();
+        assert!(matches!(cause(&wrong), mlua::Error::UserDataTypeMismatch));
+        assert_eq!(get.call::<f64>(state.clone()).unwrap(), 7.);
+        let guard = state.borrow_mut::<State>().unwrap();
+        let borrowed = get.call::<f64>(state.clone()).unwrap_err();
+        assert!(matches!(cause(&borrowed), mlua::Error::UserDataBorrowError));
+        drop(guard);
+        assert_eq!(get.call::<f64>(state.clone()).unwrap(), 7.);
+        state.destroy().unwrap();
+        let destroyed = get.call::<f64>(state).unwrap_err();
+        assert!(matches!(cause(&destroyed), mlua::Error::UserDataDestructed));
+    }
     #[test]
     fn a_luau_string_converts_as_its_text_invalid_bytes_replaced() {
         let lua = Lua::new();

@@ -48,6 +48,13 @@ about a third was mlua's handling of values rather than zgx's work:
    aborts the process, so creating userdata must either be protected or
    unable to fail.
 
+3. **`RawLua::get_userdata_type_id`** (`src/state/raw.rs`): inlined, its
+   error (a wrong or destroyed userdata, or a value that is none) reported
+   by a cold function apart (`userdata_type_error`), as before. Every
+   userdata method a script calls (`state:get()`, a node's) checks its
+   `self` here; the call and the formatting code around the check cost each
+   call ~29 instructions (research B9). No check changed.
+
 zgx-script uses both in `node.rs`: `fill_from` walks a node's properties
 with `for_each_borrowed` (a key's identity finds its property; a colour
 written out is parsed where it lies; a child node is read without a

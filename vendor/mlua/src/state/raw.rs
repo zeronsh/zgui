@@ -1408,6 +1408,8 @@ impl RawLua {
     }
 
     // Same as `get_userdata_ref_type_id` but assumes the userdata is already on the stack.
+    // zgx patch: the check inlined, its error reported out of line.
+    #[inline]
     pub(crate) unsafe fn get_userdata_type_id<T>(
         &self,
         state: *mut ffi::lua_State,
@@ -1415,7 +1417,20 @@ impl RawLua {
     ) -> Result<Option<TypeId>> {
         match self.get_userdata_type_id_inner(state, idx) {
             Ok(type_id) => Ok(type_id),
-            Err(Error::UserDataTypeMismatch) if ffi::lua_type(state, idx) != ffi::LUA_TUSERDATA => {
+            Err(err) => Self::userdata_type_error::<T>(state, idx, err),
+        }
+    }
+
+    /// zgx patch: `get_userdata_type_id`'s error, as it was reported there.
+    #[cold]
+    #[inline(never)]
+    unsafe fn userdata_type_error<T>(
+        state: *mut ffi::lua_State,
+        idx: c_int,
+        err: Error,
+    ) -> Result<Option<TypeId>> {
+        match err {
+            Error::UserDataTypeMismatch if ffi::lua_type(state, idx) != ffi::LUA_TUSERDATA => {
                 // Report `FromLuaConversionError` instead
                 let type_name = CStr::from_ptr(ffi::lua_typename(state, ffi::lua_type(state, idx)))
                     .to_str()
@@ -1423,7 +1438,7 @@ impl RawLua {
                 let message = format!("expected userdata of type '{}'", short_type_name::<T>());
                 Err(Error::from_lua_conversion(type_name, "userdata", message))
             }
-            Err(err) => Err(err),
+            err => Err(err),
         }
     }
 
