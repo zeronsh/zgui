@@ -400,6 +400,28 @@ fn apply_mask(
     });
     scene.set_mask(node, mask);
 }
+/// A paint-only run's effects, mask, clip inset (unless `inset_kept`) and
+/// translation, for a node its dynamic style moves and fades (an
+/// animation's every frame): its old and new look damaged once each, not
+/// once per write. The inset, written after the move, damages at the new
+/// place rather than the old: each covers what it paints at both, so the
+/// order changes no pixel.
+#[inline(never)]
+fn show_moved_and_faded(
+    scene: &mut crate::scene::Scene,
+    node: NodeId,
+    transform: crate::scene::Transform,
+    effects: crate::scene::Effects,
+    applied: &Styles,
+    originals: &Originals,
+    inset_kept: bool,
+) {
+    scene.set_transform_and_effects(node, transform, effects);
+    apply_mask(scene, node, applied, &originals.mask);
+    if !inset_kept {
+        scene.set_clip_inset(node, applied.clip_inset.or(originals.inset));
+    }
+}
 /// The inputs of the last full application besides paint: the dynamic
 /// styles without their paint properties, the interaction and disabled
 /// state, the inherited typography's version if it was read, the intrinsic
@@ -407,6 +429,9 @@ fn apply_mask(
 struct Settled {
     dynamic: Option<Styles>,
     paint: Option<([bool; 11], u8)>,
+    /// Whether that paint sets a translation and an opacity: a paint-only
+    /// run writes them together (`show_moved_and_faded`).
+    moves_and_fades: bool,
     state: Interaction,
     disabled: bool,
     /// Whether the inherited typography was read, at `parent_version`. Its
@@ -962,11 +987,28 @@ pub(crate) fn mount_style_with_intrinsic(
                     }
                 }
                 let mut scene = storage.scene.borrow_mut();
-                scene.set_effects(node, effects);
-                apply_mask(&mut scene, node, &applied.0, &originals.mask);
-                scene.set_clip_inset(node, applied.0.clip_inset.or(originals.inset));
-                scene.set_transform(node, resolved.transform.unwrap_or(originals.transform));
-                scene.set_local_transform(node, resolved.local.resolve(originals.local));
+                let transform = resolved.transform.unwrap_or(originals.transform);
+                let inset = applied.0.clip_inset.or(originals.inset);
+                let local = resolved.local.resolve(originals.local);
+                let (inset_kept, transform_kept, local_kept) =
+                    scene.paint_kept(node, inset, transform, local);
+                if last.moves_and_fades {
+                    show_moved_and_faded(
+                        &mut scene, node, transform, effects, &applied.0, &originals, inset_kept,
+                    );
+                } else {
+                    scene.set_effects(node, effects);
+                    apply_mask(&mut scene, node, &applied.0, &originals.mask);
+                    if !inset_kept {
+                        scene.set_clip_inset(node, inset);
+                    }
+                    if !transform_kept {
+                        scene.set_transform(node, transform);
+                    }
+                }
+                if !local_kept {
+                    scene.set_local_transform(node, local);
+                }
                 if let Some(color) = text_color
                     && let NodeKind::Text {
                         text,
@@ -1110,10 +1152,14 @@ pub(crate) fn mount_style_with_intrinsic(
         let content_layout = layout_target.as_ref().and_then(|target| target.get());
         if let Some(memo) = &mut memo {
             let mut dynamic_rest = produced;
-            let paint = dynamic_rest.as_mut().map(|rest| Paint::take(rest).set());
+            let paint = dynamic_rest.as_mut().map(Paint::take);
+            let moves_and_fades =
+                paint.is_some_and(|p| p.transform.is_some() && p.opacity.is_some());
+            let paint = paint.map(|p| p.set());
             memo.settled = Some(Settled {
                 dynamic: dynamic_rest,
                 paint,
+                moves_and_fades,
                 state,
                 disabled: is_disabled,
                 parent: tracks_parent,
@@ -1835,6 +1881,60 @@ mod tests {
         parent.update(|typography| typography.color = Themed::Value(Color(4, 5, 6, 255)));
         assert_eq!(color(&ui), Color(4, 5, 6, 255));
         assert_eq!(ui.scene.borrow().effects(text).opacity, 0.6);
+    }
+    /// A paint-only run writes the node's whole paint again: what else set
+    /// its translation, clip or local transform since is undone, whether
+    /// the style fades it alone or moves and fades it (written together).
+    #[test]
+    fn a_paint_only_run_writes_back_what_else_changed() {
+        let mut ui = Ui::new(200., 200.);
+        let value = ui.signal(0_f32);
+        let styled = |ui: &mut Ui, moves: bool| {
+            let node = ui.container(ui.root(), Layout::Column, Style::default());
+            let inherited = inherited(ui);
+            let value = value.clone();
+            mount_style(
+                ui,
+                node,
+                color(1).translate(5., 6.),
+                inherited,
+                Some(Box::new(move || {
+                    let v = value.get();
+                    let styles = Styles::new().opacity(1. - v / 100.);
+                    if moves {
+                        styles.translate(v, 2. * v)
+                    } else {
+                        styles
+                    }
+                })),
+                Variants::default(),
+                None,
+                false,
+            );
+            node
+        };
+        let (faded, moved) = (styled(&mut ui, false), styled(&mut ui, true));
+        for v in [10., 20.] {
+            value.set(v);
+            ui.scene.borrow_mut().flush();
+        }
+        for node in [faded, moved] {
+            let mut scene = ui.scene.borrow_mut();
+            scene.set_transform(node, crate::scene::Transform { x: 50., y: 60. });
+            scene.set_clip_inset(node, Some(crate::scene::ClipInset::px(1., 2., 3., 4.)));
+        }
+        value.set(30.);
+        let scene = ui.scene.borrow();
+        let transform = |node| {
+            let t = scene.transform(node);
+            (t.x, t.y)
+        };
+        assert_eq!(transform(faded), (5., 6.));
+        assert_eq!(transform(moved), (30., 60.));
+        for node in [faded, moved] {
+            assert_eq!(scene.clip_inset(node), None);
+            assert_eq!(scene.effects(node).opacity, 0.7);
+        }
     }
     /// Runs that only resize (sizes and margins, fading too) patch the last
     /// layout style instead of applying everything again: the node must end

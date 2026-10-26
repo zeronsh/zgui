@@ -2608,6 +2608,25 @@ impl Scene {
     pub fn clip_inset(&self, id: NodeId) -> Option<ClipInset> {
         self.node(id).clip_inset.as_deref().copied()
     }
+    /// Whether `id` has `inset`, `transform` and `local` already, compared
+    /// as `set_clip_inset`, `set_transform` and `set_local_transform`
+    /// compare them: a style writing its paint again every frame (one
+    /// property animated) looks the node up once for those left as they
+    /// were.
+    pub(crate) fn paint_kept(
+        &self,
+        id: NodeId,
+        inset: Option<ClipInset>,
+        transform: Transform,
+        local: LocalTransform,
+    ) -> (bool, bool, bool) {
+        let node = self.node(id);
+        (
+            node.clip_inset.as_deref().copied() == inset,
+            node.transform == finite_translation(transform),
+            node.local() == local.normalized(),
+        )
+    }
     /// Clip `id` and its descendants to its box inset by `inset` (see
     /// `ClipInset`), or with `None` stop. Animating it composites again,
     /// damaging the subtree, without layout or repainting cached layers
