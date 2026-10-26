@@ -3,7 +3,6 @@
 -- scrolled away. A row is built once; a reply's row follows its message
 -- (`row`) as it grows, and no other row runs.
 local state = require("../state")
-local Markdown = require("./markdown")
 
 type Message = state.Message
 
@@ -16,7 +15,7 @@ local function message(m: Message, _: State<number>, row: State<Message>): Node
 		py = 10,
 		justify = if mine then "end" else "start",
 		ui.column {
-			role = "group",
+			role = "article",
 			label = if mine then "You" else "Assistant",
 			max_w = 720,
 			min_w = 0,
@@ -30,9 +29,12 @@ local function message(m: Message, _: State<number>, row: State<Message>): Node
 			-- What you wrote, as you wrote it; a reply, as markdown.
 			if mine
 				then ui.text { m.text, literal = true, wrap = true }
-				else Markdown(function()
-					return row:get().text
-				end, m.id),
+				else ui.markdown_view {
+					function()
+						return row:get().text
+					end,
+					w_full = true,
+				},
 			ui.show(function()
 				local now = row:get()
 				return now.streaming == true and now.text == ""
@@ -55,6 +57,19 @@ local function message(m: Message, _: State<number>, row: State<Message>): Node
 end
 
 return function(): Node
+	-- Where each conversation was scrolled: kept as another shows, and
+	-- given back when it shows again (a new one shows its end).
+	local offset = ui.state("transcript_offset", 0)
+	local offsets: { [string]: number } = {}
+	local shown = state.current:peek()
+	ui.effect(function()
+		local id = state.current:get()
+		if id ~= shown then
+			offsets[shown] = offset:peek()
+			shown = id
+			offset:set(offsets[id] or math.huge)
+		end
+	end)
 	return ui.list {
 		id = "transcript",
 		ref = state.transcript,
@@ -64,6 +79,7 @@ return function(): Node
 			return m.id
 		end,
 		row = message,
+		offset = offset,
 		measured = true,
 		follow = true,
 		height = 64,

@@ -74,9 +74,7 @@ return function(): Node
 					ui.button {
 						id = "send",
 						"Send",
-						bg = "$accent",
-						hover = { bg = "$accent.hover" },
-						color = "#ffffff",
+						variant = "primary",
 						disabled = function()
 							return draft():match("%S") == nil or state.streaming:get() ~= nil
 						end,

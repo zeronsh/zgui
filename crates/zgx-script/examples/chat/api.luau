@@ -11,23 +11,10 @@ local M = {}
 
 local running: Task? = nil
 
--- Where message `id` of conversation `conversation` is, from 1.
-local function index_of(conversation: string, id: string): number?
-	for i, m in state.messages:peek()[conversation] or {} do
-		if m.id == id then
-			return i
-		end
-	end
-	return nil
-end
-
 -- Change field `field` of message `id` (a path write: the rest of the
 -- conversations are shared, not copied).
 local function write(conversation: string, id: string, field: string, value: any)
-	local at = index_of(conversation, id)
-	if at then
-		state.messages:set_key({ conversation, at, field }, value)
-	end
+	state.messages:set_key({ conversation, { id = id }, field }, value)
 end
 
 -- The conversation moves to the top of the sidebar.
@@ -96,12 +83,7 @@ function M.send(text: string)
 				body = { messages = history },
 				on_event = function(e: ServerEvent)
 					if e.event == "delta" then
-						local delta = ui.json.decode(e.data).text
-						local at = index_of(conversation, reply.id)
-						if at then
-							local thread = state.messages:peek()[conversation]
-							state.messages:set_key({ conversation, at, "text" }, thread[at].text .. delta)
-						end
+						state.messages:append({ conversation, { id = reply.id }, "text" }, ui.json.decode(e.data).text)
 					end
 				end,
 			}):await()
