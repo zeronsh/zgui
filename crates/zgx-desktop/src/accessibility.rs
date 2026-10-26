@@ -103,6 +103,9 @@ pub struct AccessibilityTree {
     blocks: HashSet<NodeId>,
     /// Long fields' runs, by line: the lines in their window (`long_lines`).
     long_runs: HashMap<NodeId, HashMap<usize, LineRuns>>,
+    /// Where the text node showing a node's runs was when they were placed
+    /// (`Scene::text_lines`): moved (scrolled in its field), they are again.
+    run_boxes: HashMap<NodeId, zgx::scene::Rect>,
 }
 /// A line of a long field, as text runs: kept while its text is, so an edit
 /// sends the runs of the lines it changed, and a scroll those it shows.
@@ -406,7 +409,13 @@ impl AccessibilityTree {
             // Reuse the existing cached node's geometry/children instead of
             // retaining another copy in the revision cache. Text runs must still
             // have live cached nodes/positions before omitting this projection.
+            let runs_at = semantics
+                .text_node(id)
+                .or(text.then_some(id))
+                .filter(|node| scene.contains(*node))
+                .map(|node| scene.bounds(node));
             if self.projection_revisions.get(&id) == Some(&revision)
+                && self.run_boxes.get(&id).copied() == runs_at.filter(|_| !runs.is_empty())
                 && self.blocks.contains(&id) == block
                 && self.cache.get(&native).is_some_and(|cached| {
                     cached.bounds() == Some(bounds)
@@ -656,14 +665,32 @@ impl AccessibilityTree {
             }
             n.set_bounds(bounds);
             if text || matches!(semantic.role, Role::TextInput | Role::MultilineTextInput) {
-                let reusable = self
-                    .ids
-                    .get(&id)
-                    .and_then(|native| self.cache.get(native))
-                    .is_some_and(|cached| {
-                        cached.role() == semantic_role(semantic)
-                            && cached.value() == text_value.filter(|_| !heading)
-                    })
+                // The node its text shows in, while it shows that text (a
+                // field composing shows other): its lines' geometry.
+                let shown_in = semantics
+                    .text_node(id)
+                    .or(text.then_some(id))
+                    .filter(|node| {
+                        scene.contains(*node)
+                            && match scene.kind(*node) {
+                                zgx::scene::NodeKind::Text { text, .. } => {
+                                    Some(&**text) == text_value
+                                }
+                                zgx::scene::NodeKind::RichText { .. } => text,
+                                _ => false,
+                            }
+                    });
+                let shown_box = shown_in.map(|node| scene.bounds(node));
+                let moved = self.run_boxes.get(&id).copied() != shown_box;
+                let reusable = !moved
+                    && self
+                        .ids
+                        .get(&id)
+                        .and_then(|native| self.cache.get(native))
+                        .is_some_and(|cached| {
+                            cached.role() == semantic_role(semantic)
+                                && cached.value() == text_value.filter(|_| !heading)
+                        })
                     && self.blocks.contains(&id) == block
                     && self.text_runs.get(&id).is_none_or(|ids| {
                         ids.iter().all(|run| {
@@ -679,7 +706,14 @@ impl AccessibilityTree {
                     } else {
                         self.blocks.remove(&id);
                     }
-                    if let Some(runs) = text_run_data(text_value.unwrap_or(""), block) {
+                    match shown_box {
+                        Some(shown) => self.run_boxes.insert(id, shown),
+                        None => self.run_boxes.remove(&id),
+                    };
+                    let lines = shown_in.and_then(|node| scene.text_lines(node));
+                    if let Some(runs) =
+                        text_run_data_on(text_value.unwrap_or(""), block, lines.as_deref(), scale)
+                    {
                         let ids = self.text_runs.entry(id).or_default();
                         ids.truncate(runs.len());
                         while ids.len() < runs.len() {
@@ -691,10 +725,26 @@ impl AccessibilityTree {
                             text.set_value(run.value.clone());
                             text.set_character_lengths(run.lengths.clone());
                             text.set_word_starts(run.words.clone());
-                            if index > 0 && !runs[index - 1].value.ends_with(['\n', '\r']) {
+                            if let Some(geometry) = &run.geometry {
+                                text.set_bounds(geometry.bounds);
+                                text.set_character_positions(geometry.positions.clone());
+                                text.set_character_widths(geometry.widths.clone());
+                                text.set_text_direction(if geometry.rtl {
+                                    accesskit::TextDirection::RightToLeft
+                                } else {
+                                    accesskit::TextDirection::LeftToRight
+                                });
+                            }
+                            let previous = index.checked_sub(1).map(|i| &runs[i]);
+                            if previous.is_some_and(|previous| {
+                                !previous.wraps && !previous.value.ends_with(['\n', '\r'])
+                            }) {
                                 text.set_previous_on_line(ids[index - 1]);
                             }
-                            if index + 1 < runs.len() && !run.value.ends_with(['\n', '\r']) {
+                            if index + 1 < runs.len()
+                                && !run.wraps
+                                && !run.value.ends_with(['\n', '\r'])
+                            {
                                 text.set_next_on_line(ids[index + 1]);
                             }
                             self.text_positions
@@ -778,6 +828,17 @@ struct TextRunData {
     lengths: Vec<u8>,
     offsets: Vec<usize>,
     words: Vec<u8>,
+    /// Where it shows (`text_run_data_on`): its box, and each character's
+    /// place and width across it, in its direction; in physical pixels.
+    geometry: Option<RunGeometry>,
+    /// It ends where its line wraps: the next run is on the next line.
+    wraps: bool,
+}
+struct RunGeometry {
+    bounds: accesskit::Rect,
+    positions: Vec<f32>,
+    widths: Vec<f32>,
+    rtl: bool,
 }
 /// The native position of UTF-8 offset `byte` into the label whose runs are
 /// `ids`: before the character starting there, so a block's end is before
@@ -805,6 +866,90 @@ fn run_position(
 /// `value`'s runs; a `block`'s end with a line break (zero-width in
 /// `value`, at its end) unless its text already does.
 fn text_run_data(value: &str, block: bool) -> Option<Vec<TextRunData>> {
+    text_run_data_on(value, block, None, 1.)
+}
+/// `text_run_data`, cut also where `lines` (how `value` shows,
+/// `Scene::text_lines`) wrap, each run given its box and its characters'
+/// places at `scale`: what lets a screen reader's cursor and a magnifier
+/// follow the caret and the selection.
+fn text_run_data_on(
+    value: &str,
+    block: bool,
+    lines: Option<&[zgx::scene::TextLine]>,
+    scale: f64,
+) -> Option<Vec<TextRunData>> {
+    // Each shown grapheme's line and edges; a break (not in a line) sits
+    // zero-wide at the end of the line before it.
+    let mut edges: HashMap<usize, (usize, f32, f32)> = HashMap::new();
+    let mut wrap_starts: HashSet<usize> = HashSet::new();
+    if let Some(lines) = lines {
+        for (index, line) in lines.iter().enumerate() {
+            let shown = value.get(line.range.clone())?;
+            for (i, (offset, _)) in shown.grapheme_indices(true).enumerate() {
+                let (a, b) = (*line.carets.get(i)?, *line.carets.get(i + 1)?);
+                edges.insert(line.range.start + offset, (index, a, b));
+            }
+            if index > 0 && !value[..line.range.start].ends_with(['\n', '\r']) {
+                wrap_starts.insert(line.range.start);
+            }
+        }
+    }
+    let line_of_break = |offset: usize| {
+        let lines = lines?;
+        let index = lines.iter().rposition(|line| line.range.end <= offset)?;
+        let x = *lines[index].carets.last()?;
+        Some((index, x, x))
+    };
+    // A run's box and places, from its characters' edges.
+    let place = |run: &TextRunData| -> Option<RunGeometry> {
+        let lines = lines?;
+        let chars: Vec<(usize, f32, f32)> = run.offsets[..run.offsets.len() - 1]
+            .iter()
+            .map(|offset| {
+                edges
+                    .get(offset)
+                    .copied()
+                    .or_else(|| line_of_break(*offset))
+            })
+            .collect::<Option<_>>()?;
+        let line = &lines[chars.first()?.0];
+        let rtl = line.rtl;
+        let (left, right) = chars
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(l, r), (_, a, b)| {
+                (l.min(a.min(*b)), r.max(a.max(*b)))
+            });
+        let scale_f = scale as f32;
+        Some(RunGeometry {
+            bounds: accesskit::Rect::new(
+                left as f64 * scale,
+                line.rect.y as f64 * scale,
+                right as f64 * scale,
+                (line.rect.y + line.rect.height) as f64 * scale,
+            ),
+            positions: chars
+                .iter()
+                .map(|(_, a, b)| {
+                    let start = if rtl {
+                        right - a.max(*b)
+                    } else {
+                        a.min(*b) - left
+                    };
+                    start * scale_f
+                })
+                .collect(),
+            widths: chars
+                .iter()
+                .map(|(_, a, b)| (b - a).abs() * scale_f)
+                .collect(),
+            rtl,
+        })
+    };
+    let finish = |mut run: TextRunData, wraps: bool| {
+        run.geometry = place(&run);
+        run.wraps = wraps;
+        run
+    };
     let word_starts: HashSet<_> = value
         .unicode_word_indices()
         .map(|(offset, _)| offset)
@@ -815,16 +960,21 @@ fn text_run_data(value: &str, block: bool) -> Option<Vec<TextRunData>> {
         lengths: Vec::new(),
         offsets: vec![0],
         words: Vec::new(),
+        geometry: None,
+        wraps: false,
     };
     for (offset, grapheme) in value.grapheme_indices(true) {
         let length = u8::try_from(grapheme.len()).ok()?;
-        if run.lengths.len() == 255 {
-            runs.push(run);
+        let wrap = !run.lengths.is_empty() && wrap_starts.contains(&offset);
+        if run.lengths.len() == 255 || wrap {
+            runs.push(finish(run, wrap));
             run = TextRunData {
                 value: String::new(),
                 lengths: Vec::new(),
                 offsets: vec![offset],
                 words: Vec::new(),
+                geometry: None,
+                wraps: false,
             };
         }
         if word_starts.contains(&offset) {
@@ -834,30 +984,34 @@ fn text_run_data(value: &str, block: bool) -> Option<Vec<TextRunData>> {
         run.lengths.push(length);
         run.offsets.push(offset + grapheme.len());
         if grapheme.ends_with(['\n', '\r']) {
-            runs.push(run);
+            runs.push(finish(run, false));
             run = TextRunData {
                 value: String::new(),
                 lengths: Vec::new(),
                 offsets: vec![offset + grapheme.len()],
                 words: Vec::new(),
+                geometry: None,
+                wraps: false,
             };
         }
     }
     if block && !value.is_empty() && !value.ends_with(['\n', '\r']) {
         if run.lengths.len() == 255 {
-            runs.push(run);
+            runs.push(finish(run, false));
             run = TextRunData {
                 value: String::new(),
                 lengths: Vec::new(),
                 offsets: vec![value.len()],
                 words: Vec::new(),
+                geometry: None,
+                wraps: false,
             };
         }
         run.value.push('\n');
         run.lengths.push(1);
         run.offsets.push(value.len());
     }
-    runs.push(run);
+    runs.push(finish(run, false));
     Some(runs)
 }
 
@@ -1082,6 +1236,94 @@ mod editor_text_tests {
             assert!(node.supports_action(Action::Focus));
             assert!(!node.is_disabled());
         }
+    }
+
+    #[test]
+    fn a_fields_text_runs_say_where_each_character_shows() {
+        // What a screen reader's cursor and a magnifier follow: each run's
+        // box and its characters' places, so the selection's box (macOS's
+        // AXBoundsForRange, AT-SPI's range extents) lands on its text.
+        let mut ui = Ui::new(400., 300.);
+        let value = ui.signal("one two\nthree four".to_owned());
+        let view = ui.mount(text_area("Notes", value.clone()).size(300., 200.));
+        ui.prepare_frame();
+        ui.input.focus(&ui.scene, Some(view.node()));
+        let editor = ui.focused_editor().unwrap();
+        editor.editor.borrow_mut().set_selection(4, 7);
+        editor.refresh();
+        ui.prepare_frame();
+        let scale = 2.;
+        let mut adapter = AccessibilityTree::new();
+        let update = adapter.update(
+            &ui.scene.borrow(),
+            &ui.semantics.borrow(),
+            Some(view.node()),
+            "Test",
+            scale,
+        );
+        let runs: Vec<_> = update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == accesskit::Role::TextRun)
+            .collect();
+        assert_eq!(runs.len(), 2, "a run a line");
+        for (_, run) in &runs {
+            let positions = run.character_positions().expect("places");
+            assert_eq!(positions.len(), run.character_lengths().len());
+            assert_eq!(run.character_widths().unwrap().len(), positions.len());
+            assert!(positions.windows(2).all(|w| w[1] >= w[0]), "{positions:?}");
+            assert!(run.bounds().is_some());
+        }
+        let tree = accesskit_consumer::Tree::new(update, true);
+        let focus = tree.state().focus().unwrap();
+        let boxes = focus.text_selection().unwrap().bounding_boxes();
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        // Where "two" shows, at twice the points.
+        let text_node = ui.semantics.borrow().text_node(view.node()).unwrap();
+        let lines = ui.scene.borrow().text_lines(text_node).unwrap();
+        let (left, right) = (lines[0].carets[4] as f64, lines[0].carets[7] as f64);
+        let shown = boxes[0];
+        assert!(
+            (shown.x0 - left * scale).abs() < 0.5,
+            "{shown:?} from {left}"
+        );
+        assert!(
+            (shown.x1 - right * scale).abs() < 0.5,
+            "{shown:?} to {right}"
+        );
+        assert!((shown.y0 - lines[0].rect.y as f64 * scale).abs() < 0.5);
+        // A wrapped paragraph's rows are runs of their own, not linked as
+        // one line.
+        let mut ui = Ui::new(400., 300.);
+        let view = ui.mount(
+            text_area("Notes", ui.signal("one two three four five".to_owned()))
+                .size(80., 200.)
+                .text_wrap(true),
+        );
+        ui.prepare_frame();
+        ui.input.focus(&ui.scene, Some(view.node()));
+        ui.prepare_frame();
+        let mut adapter = AccessibilityTree::new();
+        let update = adapter.update(
+            &ui.scene.borrow(),
+            &ui.semantics.borrow(),
+            Some(view.node()),
+            "Test",
+            scale,
+        );
+        let runs: Vec<_> = update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == accesskit::Role::TextRun)
+            .map(|(_, node)| node)
+            .collect();
+        assert!(runs.len() > 1, "{} runs once wrapped", runs.len());
+        assert!(runs.iter().all(|run| run.next_on_line().is_none()));
+        let tops: Vec<f64> = runs.iter().map(|run| run.bounds().unwrap().y0).collect();
+        assert!(
+            tops.windows(2).all(|w| w[1] > w[0]),
+            "a row below the last: {tops:?}"
+        );
     }
 
     #[test]
@@ -1787,6 +2029,19 @@ mod block_break_tests {
         assert_eq!(line(0), "Hello world\n");
         assert_eq!(line(1), "Second line\n");
         assert_eq!(document.text_selection().unwrap().text(), "world");
+        // And where it shows: one box, on the first label's line, right of
+        // its start.
+        let boxes = document.text_selection().unwrap().bounding_boxes();
+        let first = ui.scene.borrow().bounds(labels[0]);
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        assert!(
+            boxes[0].x0 > first.x as f64 && boxes[0].x1 > boxes[0].x0,
+            "{boxes:?}"
+        );
+        assert!(
+            boxes[0].y0 >= first.y as f64 - 0.5,
+            "{boxes:?} in {first:?}"
+        );
         let selection = document.text_selection().unwrap().to_text_selection();
         assert_eq!(
             adapter.resolve_document_selection(&selection),

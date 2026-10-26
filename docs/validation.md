@@ -879,7 +879,14 @@ canvases are images named by what they show, that a group of chips is a
 radio group saying which is chosen, that a list's options are named,
 selectable and pressable, and that an invalid form field
 (`scripts/macos_ax_form`) says so (`AXInvalid`) and gives its error
-message in `AXHelp`, from the text showing it or its own. Passed on macOS
+message in `AXHelp`, from the text showing it or its own, and that a text
+area (`scripts/macos_ax_text`, read with `scripts/macos_ax_text.swift`)
+reads its text, takes a selection set through `AXSelectedTextRange` as
+VoiceOver sets one, and says where the selection and a caret on its second
+line show (`AXBoundsForRange`, inside the field, the second line below the
+first): what VoiceOver's cursor, Zoom and Hover Text follow. Without its
+runs' geometry (before 2026-10-26) that box was empty, `[0, 1800, 0, 0]`.
+Passed on macOS
 26 (M5), 2026-10-24, and with the form checks (16), 2026-10-25; it fails
 without the AccessKit patches (AXRows 0, no AXInvalid). The macOS bundle
 (`macos_native_validation.py`) runs it. Speech itself (VoiceOver reading

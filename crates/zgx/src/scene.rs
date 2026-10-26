@@ -2058,6 +2058,20 @@ pub struct Scene {
     /// Canvas views and grid fills (`scene_view`).
     views: view::Views,
 }
+/// A visual line of text, for assistive technology (`Scene::text_lines`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextLine {
+    /// Its bytes in the node's text, its break left out.
+    pub range: std::ops::Range<usize>,
+    /// Its box, in the window's points.
+    pub rect: Rect,
+    /// Where each grapheme boundary in `range` falls across the window,
+    /// its end's included: a grapheme's left and right edges (right to
+    /// left, they decrease).
+    pub carets: Vec<f32>,
+    /// It runs right to left.
+    pub rtl: bool,
+}
 /// Scroll content that moved rigidly by `(dx, dy)` within `clip`. The flush
 /// damaged only what copying the old pixels cannot provide (`exposed`, plus
 /// every other change inside the clip at both positions). A renderer that
@@ -3503,6 +3517,74 @@ impl Scene {
     /// Changes whenever either installed shaping callback is replaced.
     pub(crate) fn text_shaper_revision(&self) -> u64 {
         self.text_shaper_revision
+    }
+    /// Text node `id`'s lines as it shows them, for assistive technology
+    /// (a screen reader's cursor, a magnifier following the caret): each
+    /// visual line's bytes, its box and every grapheme boundary's place
+    /// across it, in the window's points. `None` for a node with no text, or
+    /// one masked (a password). Shapes the text: ask only when a reader does.
+    pub fn text_lines(&self, id: NodeId) -> Option<Vec<TextLine>> {
+        use crate::text_layout::{TextAffinity, TextPosition};
+        use unicode_segmentation::UnicodeSegmentation;
+        let bounds = self.bounds(id);
+        let (text, layout): (Arc<str>, Box<dyn crate::text_layout::TextLayout>) =
+            match self.kind(id) {
+                NodeKind::Text {
+                    text, font_size, ..
+                } if !self.font(id).masked => (
+                    text.clone(),
+                    self.shape_text_with_font(text, *font_size, Some(bounds.width), self.font(id)),
+                ),
+                NodeKind::RichText { text } => (
+                    text.text_arc(),
+                    self.shape_rich_text(text, Some(bounds.width)),
+                ),
+                _ => return None,
+            };
+        let at = |byte, affinity| {
+            layout.caret_position(TextPosition {
+                byte_offset: byte,
+                affinity,
+            })
+        };
+        let mut lines = Vec::new();
+        let mut start = 0;
+        loop {
+            let (first, last) = layout.visual_line_range(TextPosition {
+                byte_offset: start,
+                affinity: TextAffinity::After,
+            });
+            let range = first.byte_offset.max(start)..last.byte_offset.max(start);
+            let mut carets: Vec<f32> = text[range.clone()]
+                .grapheme_indices(true)
+                .map(|(offset, _)| bounds.x + at(range.start + offset, TextAffinity::After).x)
+                .collect();
+            let end = at(range.end, TextAffinity::Before);
+            carets.push(bounds.x + end.x);
+            let top = at(range.start, TextAffinity::After);
+            let (left, right) = carets
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(l, r), x| (l.min(*x), r.max(*x)));
+            lines.push(TextLine {
+                rtl: carets.len() > 1 && carets[0] > carets[carets.len() - 1],
+                range: range.clone(),
+                rect: Rect::new(left, bounds.y + top.y, (right - left).max(0.), top.height),
+                carets,
+            });
+            // On past the line's break, or where it wrapped.
+            let next = if text[range.end..].starts_with("\r\n") {
+                range.end + 2
+            } else if text[range.end..].starts_with(['\n', '\r']) {
+                range.end + 1
+            } else {
+                range.end
+            };
+            if next <= start || next > text.len() || (next == range.end && next >= text.len()) {
+                break;
+            }
+            start = next;
+        }
+        Some(lines)
     }
     /// Shape `text` at `size` in `font`, wrapped at `width` if given.
     pub fn shape_text_with_font(
@@ -10628,5 +10710,55 @@ mod local_transform_tests {
         // Without a mask, moving one does nothing.
         scene.set_mask_offset(id, (1., 1.));
         assert!(scene.flush().is_idle());
+    }
+}
+
+#[cfg(test)]
+mod text_lines_tests {
+    use super::*;
+
+    #[test]
+    fn text_lines_give_each_visual_lines_bytes_box_and_grapheme_edges() {
+        let mut scene = Scene::new(400., 300.);
+        let node = scene.append(
+            scene.root(),
+            NodeKind::Text {
+                text: "ab cd\nef".into(),
+                color: Color(0, 0, 0, 255),
+                font_size: 10.,
+            },
+            Style {
+                width: Some(200.),
+                ..Default::default()
+            },
+        );
+        scene.flush();
+        let lines = scene.text_lines(node).expect("lines");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0].range, 0..5, "its break left out");
+        assert_eq!(lines[1].range, 6..8);
+        assert_eq!(lines[0].carets.len(), 6, "five graphemes, six edges");
+        assert!(
+            lines[0].carets.windows(2).all(|w| w[1] > w[0]),
+            "left to right"
+        );
+        assert!(!lines[0].rtl);
+        assert!(
+            lines[1].rect.y > lines[0].rect.y,
+            "the second below the first"
+        );
+        let b = scene.bounds(node);
+        assert_eq!(lines[0].carets[0], b.x, "in the window's points");
+        // Wrapped: a line a row.
+        let mut style = scene.style(node);
+        style.width = Some(20.);
+        scene.set_style(node, style);
+        scene.flush();
+        let wrapped = scene.text_lines(node).unwrap();
+        assert!(wrapped.len() > 2, "{wrapped:?}");
+        assert_eq!(wrapped.last().unwrap().range.end, 8);
+        for pair in wrapped.windows(2) {
+            assert!(pair[0].range.end <= pair[1].range.start, "{wrapped:?}");
+        }
     }
 }

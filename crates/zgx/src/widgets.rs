@@ -3185,6 +3185,9 @@ impl Ui {
                 label,
             ),
         );
+        // Its text shows in `text`: where assistive technology finds its
+        // lines' geometry.
+        self.semantics.borrow_mut().set_text_node(root, text);
         let scene = self.scene.clone();
         let sem = self.semantics.clone();
         let edit = editor.clone();

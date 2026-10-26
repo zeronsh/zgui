@@ -295,6 +295,9 @@ pub struct Semantics {
     /// What is wrong with fields' values (`set_error`), beside the nodes as
     /// `long` is: few have one.
     errors: HashMap<NodeId, String>,
+    /// The text node showing a field's text (`set_text_node`), whose lines
+    /// assistive technology is given the geometry of: few nodes have one.
+    text_nodes: HashMap<NodeId, NodeId>,
 }
 impl Default for Semantics {
     fn default() -> Self {
@@ -312,6 +315,7 @@ impl Default for Semantics {
             instance,
             long: HashMap::new(),
             errors: HashMap::new(),
+            text_nodes: HashMap::new(),
         }
     }
 }
@@ -375,6 +379,9 @@ impl Semantics {
         self.long.remove(&id);
         if !self.errors.is_empty() {
             self.errors.remove(&id);
+        }
+        if !self.text_nodes.is_empty() {
+            self.text_nodes.remove(&id);
         }
         crate::shrink_sparse(&mut self.nodes);
     }
@@ -606,6 +613,17 @@ impl Semantics {
         self.revision = self.revision.wrapping_add(1);
         entry.revision = self.revision;
     }
+    /// `id`'s text shows in text node `text` (a field's): assistive
+    /// technology is given that node's lines' geometry (`Scene::text_lines`)
+    /// for `id`'s value, while it shows that value.
+    pub fn set_text_node(&mut self, id: NodeId, text: NodeId) {
+        self.text_nodes.insert(id, text);
+    }
+    /// The text node showing `id`'s text (`set_text_node`): itself for a
+    /// text node, none for a node whose text is not shown in one.
+    pub fn text_node(&self, id: NodeId) -> Option<NodeId> {
+        self.text_nodes.get(&id).copied()
+    }
     /// Remove `id`'s information.
     pub fn remove(&mut self, id: NodeId) {
         if self.buried(id) {
@@ -615,6 +633,9 @@ impl Semantics {
             self.long.remove(&id);
             if !self.errors.is_empty() {
                 self.errors.remove(&id);
+            }
+            if !self.text_nodes.is_empty() {
+                self.text_nodes.remove(&id);
             }
             self.revision = self.revision.wrapping_add(1);
             crate::shrink_sparse(&mut self.nodes);
