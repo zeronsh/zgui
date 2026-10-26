@@ -19,7 +19,9 @@ func bounds(_ window: [String: Any]) -> CGRect {
 }
 var last: [String: Any] = [:]
 while Date().timeIntervalSince(began) < timeout {
-    guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
+    // A live child can precede its AppKit registration. Absence from
+    // NSRunningApplication alone does not mean that it exited.
+    if kill(pid, 0) != 0 && errno == ESRCH {
         emit(["error": "app exited before its window was ready", "pid": pid], 1)
     }
     guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
@@ -41,7 +43,7 @@ while Date().timeIntervalSince(began) < timeout {
             emit(["ready": true, "pid": pid, "window_id": normal[index][kCGWindowNumber as String] ?? 0,
                   "ready_ms": Date().timeIntervalSince(began) * 1000], 0)
         }
-        app.activate()
+        NSRunningApplication(processIdentifier: pid)?.activate()
     } else {
         last = ["window_exists": false]
     }
