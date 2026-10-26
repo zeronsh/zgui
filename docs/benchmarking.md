@@ -405,6 +405,19 @@ Measured again in October 2026 (dist builds, instructions retired, the lab windo
 
 ## On Windows
 
+`scripts/run_windows_suite.py` is the macOS suite on Windows: its scenes, frameworks (zgx and zgx through Luau in the list, GPUI Fast, MyGo, Rune) and protocol (15 s trials sampled 5–15 s after the window is ready, 3 of each cell in rotating order and one more where CPU cycles or app GPU time spread past 10%, idle twice in the dashboard at 20–30 s, 3 pacing captures of 8 s, a desktop baseline each round), into `docs/results/suite-windows-<date>-<commit>/<scene>/` in the macOS suite's files, plus `startup/` (the lab scene's binaries in the suite's font, `windows_startup_probe.py`, 10 launches each, `startup.json` in the macOS startup run's shape with cycles for instructions). `python scripts/build_site.py --platform windows <run> --startup <run>/startup/startup.json` publishes it to `site/windows/`. What differs is what Windows can read:
+- **GPU:** Windows reads no system GPU power. The GPU figures are the app's own GPU time on the 3D engines (`gpu_ms_per_second`; every engine's is kept too) and the compositor's (`dwm_gpu_ms_per_second`), from the GPU engine counters. The NVIDIA board's energy is read at each sample's two ends (NVML, no polling: `gpu_board_watts`); the page shows it only with `--board-power`, for a run where it held still across repeats.
+- **CPU:** the process's cycles (`QueryProcessCycleTime`), a second (`mcycles_per_second`) and per update or frame drawn (`mcycles_per_frame`). Windows counts CPU time in 15.6 ms scheduler ticks, too coarse for these loads: zgx's animation read 0.94% and 0.31% of a core in two trials of 1.59 and 1.50 M cycles a frame. CPU time stays in the raw data (`cpu_percent_one_core`). The compositor's CPU (`dwm_cpu_percent`) is read through performance counters, in ticks too (its cycles need administrator rights), over thousands of its frames.
+- **Memory:** private bytes (`mean_private_bytes`) and working set; each trial records the graphics API the app loaded (`graphics_modules`), since the driver's floor differs between Direct3D 11 and 12.
+- **Frame pacing:** Desktop Duplication (`framepace`, a zgx-gpu example, through `scripts/windows_framepace.py`): each frame the compositor put on screen in which the window's pixels changed, timed by its present time.
+- **No unfilled-row captures** in the list scene (macOS's `blankprobe` has no Windows counterpart yet).
+- **The machine:** it waits until no build runs and the rest of the machine uses under 75% of a core, holds the High performance plan and minimizes Zeron's windows (both restored after). `--source` names the checkout the binaries were built from: its commit and cleanliness go into each audit.
+
+```powershell
+cargo build --release --locked -p zgx-gpu --example framepace
+python scripts/run_windows_suite.py --zgx <target>/dist/examples --gpui-fast comparisons/gpui-fast/target/dist --mygo comparisons/mygo/bin --rune comparisons/rune/bin --framepace <target>/release/examples/framepace.exe
+```
+
 `scripts/windows_compare.py` runs the comparison scenes (`comparisons/README.md`) for zgx, GPUI Fast, MyGo and the older GPUI adapter in turn on the same desktop, the Windows counterpart of the macOS runner:
 - **Scenes and modes:** `lab` (`idle`, `stream`, `scroll`, `both`), `animate`, `heavy` (`both`) and `vlist` (`scroll`, `fling`, `jump`), each framework's binary as `comparisons/README.md` names it; `busy` for the old GPUI adapter. A scene runs for the frameworks whose binary is there.
 - **Samples**, every 100 ms after a 3 s warm-up, for 10 s: CPU time (`GetProcessTimes`), CPU cycles (`QueryProcessCycleTime`, finer than CPU time's scheduler ticks), working set and private bytes.

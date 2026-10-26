@@ -1,0 +1,181 @@
+{
+ "accepted": true,
+ "platform": "windows",
+ "trials": 53,
+ "samples": 4526,
+ "pacing_trials": 45,
+ "active_ticks_per_requested_second": {
+  "min": 59.55555555555556,
+  "max": 59.94444444444444
+ },
+ "scene": "vlist",
+ "commit": "9562c789f3e7bf0efb5ae272a9d5b0738bae9ec6",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-26T20:02:45.514372+00:00",
+ "finished_utc": "2026-10-26T20:35:32.625017+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "SudoMaker Virtual Display Adapter",
+    "resolution": "1920 x 1080 @ 60Hz",
+    "main": true
+   }
+  ],
+  "display_count": 1,
+  "power_plan": "High performance",
+  "on_battery": false,
+  "windows": "11 (10.0.26200)",
+  "uptime_hours": 69.4,
+  "chip": "12th Gen Intel(R) Core(TM) i7-12700KF",
+  "cores": 20,
+  "memory_bytes": 34194051072,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "gpu_driver": "617.42",
+  "power": "AC Power",
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "screen_reader_running": false,
+  "uia_client_processes_running": [
+   "TextInputHost"
+  ],
+  "remote_display_hosts_running": [
+   "sunshine"
+  ]
+ },
+ "preflight": {
+  "heavy": [],
+  "other_cpu_percent": 113.4,
+  "threshold_percent": 200.0,
+  "busiest": [
+   "zeron 33.1%",
+   "claude 1.6%",
+   "zeron 0.9%",
+   "python 0.3%",
+   "zeron 0.0%",
+   "zeron 0.0%"
+  ]
+ },
+ "binaries": {
+  "zgx": {
+   "sha256": "0ddd4ebdd9ff758eabcaf243a7bab924526932a99aa0a0ff25575092011f7f9e",
+   "bytes": 14257664
+  },
+  "zgx-luau": {
+   "sha256": "dd6eea4f1ebaf4734b497a733d8ab653c23b35429e93d9e498955f0731277d1c",
+   "bytes": 24722944
+  },
+  "gpui-fast": {
+   "sha256": "c1b0196d26a7e708863be327c021d44d73163fb40c76bbad24251921814356e5",
+   "bytes": 9602048
+  },
+  "mygo": {
+   "sha256": "63b81c7f0d6bf3dca5f1c968148f372a3c65aab523f05479e29491609acec28f",
+   "bytes": 9998336
+  },
+  "rune": {
+   "sha256": "e6e2226ccb3d9f1d56b6f6c602d4bcb21a82c4d07e37a50be2075d77e2e93b5c",
+   "bytes": 13626880
+  }
+ },
+ "toolchains": {
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "rust_profile": "dist (release, lto = \"fat\", codegen-units = 1)",
+  "go": "go version go1.27.1 windows/amd64",
+  "mygo": {
+   "mygo_version": "v0.6.3",
+   "mygo_commit": "15242900157b77228d35ca071f43e94a11bc90a0",
+   "mygo_license": "MIT",
+   "mygo_source": "https://github.com/egoist/mygo",
+   "go": "go1.27.1 windows/amd64",
+   "flags": "-trimpath -ldflags=-s -w",
+   "cgo": false
+  },
+  "rune": {
+   "rune_rev": "998bef587f09e359d877b35c66e48b8f355e73cb",
+   "rune_branch": "dev",
+   "rune_license": "MIT",
+   "rune_source": "https://github.com/anomalyco/rune",
+   "rune_patch": "PATCH.md: Tx::wheel (sha256 17d01a2fb86e35e619947368e307e43a82272956200fc94ae7910b7a7eb05535)",
+   "profile": "dist (Rune's perf with fat LTO and codegen-units 1)"
+  }
+ },
+ "invalid_trials": [],
+ "abnormal_exits": [],
+ "launches": {
+  "zgx": {
+   "trial": 37,
+   "pacing": 30
+  },
+  "gpui-fast": {
+   "trial": 35,
+   "pacing": 30
+  },
+  "mygo": {
+   "trial": 34,
+   "pacing": 30
+  },
+  "rune": {
+   "trial": 35,
+   "pacing": 30
+  },
+  "zgx-luau": {
+   "trial": 9,
+   "pacing": 9
+  }
+ },
+ "readiness_failures": [],
+ "protocol": {
+  "requested_seconds": 18,
+  "warmup_seconds": 5,
+  "sampled_seconds": 10,
+  "sampling_anchor": "window frontmost and uncovered",
+  "readiness_timeout_seconds": 2.5,
+  "lifetime_margin_seconds": 3,
+  "interval_seconds": 0.1,
+  "repeats": 3,
+  "idle_repeats": 2,
+  "idle_window_seconds": [
+   20,
+   30
+  ],
+  "idle_requested_seconds": 34,
+  "quick": false,
+  "pgo": false,
+  "frameworks": [
+   "zgx",
+   "zgx-luau",
+   "gpui-fast",
+   "mygo",
+   "rune"
+  ],
+  "modes": [
+   "scroll",
+   "fling",
+   "jump"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 3,
+  "pacing_during_trials": false,
+  "pacing_capture": "Desktop Duplication (framepace)",
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ],
+  "suite": true,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 1,
+  "extended_cells": [
+   "rune/scroll",
+   "gpui-fast/fling",
+   "zgx/jump",
+   "gpui-fast/jump",
+   "mygo/jump"
+  ],
+  "spread_metrics": [
+   "mcycles_per_second",
+   "gpu_ms_per_second"
+  ],
+  "power_plan": "High performance",
+  "font_fnv64": "ce252980ec1255ff"
+ }
+}

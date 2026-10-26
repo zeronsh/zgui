@@ -1,3 +1,27 @@
+# Windows suite (2026-10-26): every scene on `9562c78`
+
+[`suite-windows-2026-10-26-9562c78`](suite-windows-2026-10-26-9562c78/): the macOS suite's scenes, frameworks and protocol on Windows (`scripts/run_windows_suite.py`, `docs/benchmarking.md`, On Windows), every scene accepted, no app exiting abnormally. An i7-12700KF with an RTX 4090 (driver 617.42), Windows 11 build 26200, a 60 Hz 1920×1080 display at 100%, the High performance plan held; a remote display host (Apollo) streamed the desktop throughout. `python scripts/build_site.py --platform windows` publishes it to `site/windows/`.
+
+CPU is the process's cycles (Windows' CPU time counts 15.6 ms scheduler ticks: too coarse here), in millions a second; the GPU figure is the app's time on the 3D engines, in ms a second (Windows reads no system GPU power; the NVIDIA board's power, recorded in every trial, moved 2–50% between repeats and separated neighbouring frameworks in 3 of 33 pairs, so it is not shown). Medians, zgx / GPUI Fast / MyGo / Rune (vlist: zgx / zgx in Luau / GPUI Fast / MyGo / Rune):
+
+| Scene, mode | CPU (M cycles/s) | App GPU (ms/s) | Private memory (MB) | Frame time p99 (ms) |
+| --- | --- | --- | --- | --- |
+| heavy idle | 1.7 / 9.5 / 0.9 / 4.1 | 0 / 0 / 0 / 0 | 152 / 107 / 131 / 396 | - |
+| heavy stream | 279 / 550 / 730 / 1106 | 11.0 / 12.6 / 19.2 / 10.3 | 155 / 112 / 152 / 389 | 17.4 / 33.7 / 17.4 / 17.3 |
+| heavy scroll | 109 / 265 / 643 / 1194 | 2.1 / 12.6 / 17.0 / 10.3 | 152 / 110 / 143 / 396 | 17.3 / 33.6 / 33.3 / 17.8 |
+| heavy both | 322 / 572 / 791 / 1384 | 13.4 / 12.7 / 18.6 / 10.2 | 156 / 113 / 153 / 395 | 17.3 / 33.5 / 33.0 / 17.4 |
+| lab stream | 101 / 163 / 397 / 254 | 3.2 / 6.3 / 6.4 / 7.3 | 130 / 94 / 136 / 377 | 17.3 / 33.5 / 17.4 / 17.4 |
+| lab scroll | 87 / 120 / 311 / 221 | 1.8 / 4.8 / 8.9 / 7.0 | 129 / 92 / 125 / 374 | 17.3 / 33.6 / 17.4 / 17.4 |
+| lab both | 106 / 174 / 405 / 251 | 3.4 / 6.4 / 11.6 / 7.2 | 130 / 95 / 134 / 380 | 17.4 / 33.6 / 17.4 / 17.4 |
+| animate | 96 / 100 / 260 / 135 | 2.0 / 3.4 / 3.4 / 5.3 | 129 / 91 / 121 / 373 | 17.3 / 17.3 / 17.4 / 17.4 |
+| vlist scroll | 87 / 91 / 137 / 434 / 290 | 2.6 / 2.6 / 7.6 / 12.2 / 6.6 | 141 / 143 / 109 / 144 / 391 | 17.4 / 33.3 / 33.6 / 17.4 / 17.4 |
+| vlist fling | 95 / 94 / 140 / 446 / 357 | 2.8 / 2.8 / 7.5 / 12.3 / 6.6 | 143 / 145 / 109 / 144 / 394 | 33.4 / 33.6 / 33.7 / 33.8 / 17.5 |
+| vlist jump | 93 / 98 / 149 / 430 / 416 | 2.9 / 2.9 / 7.7 / 13.1 / 6.7 | 135 / 139 / 110 / 149 / 394 | 17.3 / 17.3 / 33.6 / 33.9 / 17.8 |
+
+Startup (lab, in the suite's font, medians of 10 launches, measured after the suite): first content at 323 / 299 / 234 / 605 ms, 947 / 891 / 724 / 1902 M cycles by then. zgx shows its window with its first frame (253 ms); MyGo and Rune show theirs at 38–40 ms and draw into it later. Creating the Direct3D device takes most of zgx's: 190 ms for a bare Direct3D 12 device on this machine, 170 ms for Direct3D 11.
+
+zgx uses the fewest CPU cycles in all 10 active tests and the least app GPU time in 8. Where it is not best, its worst ratio against the best rival per metric: idle CPU 1.95× MyGo's (1.7 against 0.9 M cycles/s: zgx's own threads use none at rest; it is NVIDIA's Direct3D 12 driver's background thread, which a bare Direct3D 12 device runs too, and which only developer mode can turn off); frame time p99 1.91× Rune's in the vlist fling (33.4 against 17.5 ms: its fling captures had 1.5, 2.4 and 14.6% long frames, where scroll and jump are clean); memory 1.43× GPUI Fast's (152 against 107 MB; zgx and Rune load Direct3D 12, GPUI Fast and MyGo Direct3D 11, whose drivers' floors differ); app GPU time 1.31× Rune's in heavy both (13.4 against 10.2 ms/s); long frames 5× Rune's in heavy stream (1.1 against 0.2%); DWM CPU 1.63× (tick-counted, wide ranges) and DWM GPU 1.06×; startup to first content 1.38× MyGo's (323 against 234 ms). The animation runs at this display's 60 Hz, not the Mac's 120.
+
 # Republished (2026-10-25): every macOS scene on `282bfc0`
 
 Lab, heavy and animate measured again on zgx `282bfc0` with the same builds of GPUI, GPUI Fast and QuickGUI and the same protocol (dist builds, three trials per active cell, five of idle sampled 20–35 s after launch, pacing captured apart): [`latest-macos-2026-10-25-282bfc0`](latest-macos-2026-10-25-282bfc0/), [`latest-macos-heavy-2026-10-25-282bfc0`](latest-macos-heavy-2026-10-25-282bfc0/), [`latest-macos-animate-2026-10-25-282bfc0`](latest-macos-animate-2026-10-25-282bfc0/). All three accepted; the site and the README show them. Medians; memory in MB, idle with the five launches' range.

@@ -1,6 +1,7 @@
 {
  "verdict": "zgx uses the least CPU in 10 of 10 tests and the least GPU power in 9, against GPUI Fast, MyGo and Rune.",
  "commit": "1cd5211aaa631cb019d24931434ace60685063e3",
+ "platform": "macos",
  "sampling_anchor": "window frontmost and uncovered",
  "frameworks": {
   "zgx": "zgx",
