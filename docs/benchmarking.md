@@ -197,6 +197,15 @@ cost: running the handler, and building each row that scrolls in from Luau
 Engine changes that move these keep the public API and ship only if they make
 every measured figure faster.
 
+A Luau scene's count also follows where the heap places things: the value
+cache and Luau's tables hash by address, and its collector marks in their
+order, so a change that resizes any allocated type moves it a few hundredths
+of a percent either way (one pair of builds read +0.025%, −0.006% and
+−0.125% under three placements of glibc's allocator). The gate counts a Luau
+scene that moves more than 0.01% again under two other placements
+(`GLIBC_TUNABLES`), each side, gates on the median, and marks it `layout`
+where the three disagree in sign.
+
 **The floor under a frame with the GPU encode.** Most of zgx's `RENDER=1`
 frame is what any Metal frame costs. `crates/zgx-gpu/examples/mtl_floor.rs`
 times a bare one (a command buffer, one empty render pass into a 2048 × 1536

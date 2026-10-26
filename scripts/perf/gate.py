@@ -36,6 +36,7 @@ import os
 import pathlib
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 
@@ -102,6 +103,22 @@ SCENES = [
 # rest): app-chat's test waits for its fake server's timer thread, a
 # handoff between threads that real time decides.
 SPREAD = {'app-chat': 0.2}
+
+# A Luau scene's count follows where the heap places things (the value
+# cache and Luau's tables hash by address, its collector marks in their
+# order): a change that resizes any allocated type moves it, by a few
+# hundredths of a percent either way. Such a scene that moves more than
+# `RECOUNT`% is counted again under these other placements of glibc's
+# allocator, each side, and gated on the median; where the deltas disagree
+# in sign it is flagged as layout. (Scenes that do not move run once, so
+# CI's time stays the same.)
+RECOUNT = 0.01
+PLACEMENTS = ('glibc.malloc.top_pad=1048576', 'glibc.malloc.mmap_threshold=65536')
+
+
+def scripted(name, package):
+    """Whether a scene runs Luau (its heap placed as `RECOUNT` says)."""
+    return package == 'zgx-script' or name.endswith('-luau')
 
 
 def package_in(checkout, package):
@@ -220,7 +237,7 @@ def scripts_of(checkout):
     return to
 
 
-def count(binary, env, checkout=None):
+def count(binary, env, checkout=None, placement=None):
     """The run's instructions. A run that fails is the gate's failure, not
     the change's: under cachegrind a script's time budget (`ZGX_GATE`
     lifts it in the benches) or a missing GPU would otherwise look like a
@@ -235,6 +252,8 @@ def count(binary, env, checkout=None):
     # (`same_run`): run again, the same binary counts the same.
     fixed = {k: os.environ[k] for k in ('PATH', 'HOME', 'ZGX_REAL_CLOCK') if k in os.environ}
     fixed.update(LD_PRELOAD=str(same_run()), ZGX_SAME_RUN_REPORT='1')
+    if placement:
+        fixed['GLIBC_TUNABLES'] = placement
     command = ['valgrind', '--tool=cachegrind', '--cache-sim=no', '--cachegrind-out-file=/dev/null', str(binary)]
     result = subprocess.run(
         ['setarch', '-R', *command] if shutil.which('setarch') else command,
@@ -246,6 +265,29 @@ def count(binary, env, checkout=None):
     if 'same_run: ' not in result.stderr:
         raise Infra(f'{binary.name}: ran without same_run.so preloaded\n{result.stderr[-3000:]}')
     return int(found.group(1).replace(',', ''))
+
+
+def compared(name, package, env, base, head):
+    """A scene's counts on the base (a binary and its checkout, or `None`
+    for a scene new in the head) and the head, the change in percent, and
+    every change counted: one, or for a Luau scene that moved more than
+    `RECOUNT`%, one under each heap placement, the change their median."""
+    after = count(head[0], env, head[1])
+    if base is None:
+        return None, after, None, []
+    before = count(base[0], env, base[1])
+    deltas = [(after - before) / before * 100]
+    if scripted(name, package) and abs(deltas[0]) > RECOUNT:
+        for placement in PLACEMENTS:
+            placed = count(base[0], env, base[1], placement)
+            deltas.append((count(head[0], env, head[1], placement) - placed) / placed * 100)
+    return before, after, statistics.median(deltas), deltas
+
+
+def layout_of(deltas):
+    """Deltas that disagree in sign, where the heap lies: layout, not the
+    change's work."""
+    return '; layout' if min(deltas) < 0 < max(deltas) else ''
 
 
 def same_run():
@@ -297,32 +339,38 @@ def main():
     if not cached:
         build(base, target, WORK / 'gate-bin-base')
     rows, failed = [], []
-    for name, _, example, env in SCENES:
+    for name, package, example, env in SCENES:
         base_binary = WORK / 'gate-bin-base' / example
+        head_binary = WORK / 'gate-bin-head' / example
         try:
-            before = count(base_binary, env, base) if base_binary.exists() and runs_scene(base, env) else None
-            after = count(WORK / 'gate-bin-head' / example, env, ROOT)
+            runs = base_binary.exists() and runs_scene(base, env)
+            before, after, delta, deltas = compared(name, package, env, (base_binary, base) if runs else None,
+                                                    (head_binary, ROOT))
         except Infra as error:
             # Loudly, and as what it is: no table that reads as a result.
             if args.markdown:
                 args.markdown.write_text(f'**Instruction gate: infrastructure failure, no result.**\n\n```\n{error}\n```\n')
             sys.exit(f'GATE INFRA FAILURE (not a performance result): {error}')
-        delta = (after - before) / before * 100 if before else None
         if delta is not None and delta > args.threshold:
             failed.append(name)
-        rows.append((name, before, after, delta))
+        rows.append((name, before, after, delta, deltas))
         shown = f'{before / 1e6:10.1f} M {after / 1e6:10.1f} M {delta:+7.2f}%' if before else f'{"new":>12} {after / 1e6:10.1f} M'
+        if len(deltas) > 1:
+            shown += f'  median of {", ".join(f"{d:+.3f}%" for d in deltas)}{layout_of(deltas)}'
         print(f'{name:14} {shown}', flush=True)
     sha = subprocess.run(['git', 'rev-parse', '--short', args.base], cwd=ROOT, capture_output=True,
                          text=True).stdout.strip()
     table = [f'**Instruction counts** (cachegrind, exact) against `{sha}`; the gate fails above '
              f'+{args.threshold:g}%.', '', '| scene | base | head | change |', '| --- | ---: | ---: | ---: |']
-    for name, before, after, delta in rows:
+    for name, before, after, delta, deltas in rows:
         flag = ' ⚠️' if name in failed else ''
         if before is None:
             table.append(f'| {name} | (new) | {after / 1e6:,.1f} M | |')
         else:
             spread = f' (±{SPREAD[name]:g}% with no change)' if name in SPREAD else ''
+            if len(deltas) > 1:
+                spread += (f' (median of {", ".join(f"{d:+.3f}%" for d in deltas)} under '
+                           f'{len(deltas)} heap placements{layout_of(deltas)})')
             table.append(f'| {name} | {before / 1e6:,.1f} M | {after / 1e6:,.1f} M | {delta:+.2f}%{flag}{spread} |')
     if args.markdown:
         args.markdown.write_text('\n'.join(table) + '\n')
