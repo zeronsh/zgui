@@ -927,6 +927,8 @@ pub(crate) struct UiStorage {
     pub(crate) zoom_off: Cell<bool>,
     /// Who is told the zoom changed (`on_zoom`): the host, a script.
     pub(crate) zoom_host: RefCell<Vec<Rc<dyn Fn()>>>,
+    /// A Control-wheel's notches short of a whole one (`zoom_wheel`).
+    pub(crate) zoom_wheel: Cell<f32>,
     /// The host's wheel recorder and player (`Ui::on_wheel_tape`).
     wheel_taper: RefCell<Option<WheelTaper>>,
     /// The display's refresh period (`Ui::set_refresh_interval`).
@@ -1169,6 +1171,7 @@ impl Ui {
             zoom: Cell::new(1.),
             zoom_off: Cell::new(false),
             zoom_host: RefCell::new(Vec::new()),
+            zoom_wheel: Cell::new(0.),
             wheel_taper: RefCell::new(None),
             refresh_interval: Cell::new(std::time::Duration::from_micros(16_667)),
             popup_previews: Cell::new(false),
@@ -2692,7 +2695,7 @@ impl Ui {
                 }
                 return Default::default();
             }
-            event @ InputEvent::Scroll { .. } if elastic => {
+            event @ InputEvent::Scroll { .. } if elastic && !crate::zoom::wheel_zooms() => {
                 match crate::elastic::before_scroll(self, event) {
                     Some(event) => event,
                     None => return Default::default(),
@@ -2700,7 +2703,9 @@ impl Ui {
             }
             event => event,
         };
-        let scroll = (elastic && matches!(event, InputEvent::Scroll { .. })).then(|| event.clone());
+        let scroll =
+            (elastic && !crate::zoom::wheel_zooms() && matches!(event, InputEvent::Scroll { .. }))
+                .then(|| event.clone());
         let key = matches!(event, InputEvent::KeyDown { .. }).then(|| event.clone());
         let mut result = dispatch(self, event);
         self.after_dispatch(after, &mut result);

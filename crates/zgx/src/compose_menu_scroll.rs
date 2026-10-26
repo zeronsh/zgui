@@ -80,7 +80,8 @@ pub(crate) fn mount(ui: &mut Ui, panel: NodeId, viewport: NodeId, content: NodeI
             }
         }
         if let InputEvent::Scroll { delta_y, .. } = cx.event {
-            if cx.default_prevented() {
+            // A Control-wheel zooms the window instead.
+            if cx.default_prevented() || crate::zoom::wheel_zooms() {
                 return;
             }
             if !delta_y.is_finite() {

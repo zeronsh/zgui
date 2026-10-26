@@ -361,7 +361,8 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                     return;
                 }
                 if let InputEvent::Scroll { delta_y, .. } = cx.event {
-                    if !delta_y.is_finite() {
+                    // A Control-wheel zooms the window instead.
+                    if !delta_y.is_finite() || crate::zoom::wheel_zooms() {
                         return;
                     }
                     let before = wheel_offset.get();

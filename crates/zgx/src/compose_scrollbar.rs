@@ -243,10 +243,11 @@ pub(crate) fn mount(
                 cx.release_pointer();
                 None
             }
-            // The wheel over the bar scrolls what it scrolls.
+            // The wheel over the bar scrolls what it scrolls (a
+            // Control-wheel zooms the window instead).
             InputEvent::Scroll {
                 delta_x, delta_y, ..
-            } => {
+            } if !crate::zoom::wheel_zooms() => {
                 let delta = if rtl {
                     -*delta_x
                 } else if horizontal {

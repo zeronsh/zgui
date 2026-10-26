@@ -9,12 +9,42 @@
 //! re-rasterization); nothing runs while the zoom stays. Scroll views keep
 //! what was at their top in place across it. An app's keymap or menu taking
 //! the keys keeps them; `Ui::set_zoomable(false)` turns zoom off.
+//!
+//! On Windows and Linux Control with the wheel zooms too, a level a notch,
+//! as browsers there do: the wheel goes to the nodes first, and zooms if
+//! none took it (scroll views leave it). macOS browsers zoom with neither
+//! wheel nor pinch, and neither does zgx there.
 use crate::{
     input::{InputEvent, Key, Modifiers},
     scene::NodeId,
     widgets::Ui,
 };
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
+
+thread_local! {
+    /// A Control-wheel being dispatched (`wheel`): scroll views leave it.
+    static WHEEL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run `dispatch`, a Control-wheel's scroll going to the nodes, with the
+/// window's scroll views leaving it to the zoom (`Ui::zoom_wheel`).
+#[doc(hidden)]
+pub fn wheel<R>(dispatch: impl FnOnce() -> R) -> R {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WHEEL.with(|wheel| wheel.set(false));
+        }
+    }
+    WHEEL.with(|wheel| wheel.set(true));
+    let _reset = Reset;
+    dispatch()
+}
+/// Whether the scroll being dispatched is a Control-wheel's zoom: a scroll
+/// view leaves it.
+pub(crate) fn wheel_zooms() -> bool {
+    WHEEL.with(Cell::get)
+}
 
 /// Chrome's zoom levels.
 pub const LEVELS: [f64; 17] = [
@@ -79,6 +109,31 @@ impl Ui {
     /// Whether the zoom keys zoom this window (`set_zoomable`).
     pub fn zoomable(&self) -> bool {
         !self.storage.zoom_off.get()
+    }
+    /// Whether a Control-wheel zooms this window (the host asks before
+    /// dispatching one: `wheel`, then `zoom_wheel`).
+    #[doc(hidden)]
+    pub fn wheel_zooms(&self) -> bool {
+        self.zoomable() && !self.storage.zoom_host.borrow().is_empty()
+    }
+    /// A Control-wheel nothing took turned `notches` (up, away from the
+    /// user, is positive): a level in or out for each whole notch, a
+    /// touchpad's fractions adding up.
+    #[doc(hidden)]
+    pub fn zoom_wheel(&self, notches: f32) {
+        if !notches.is_finite() {
+            return;
+        }
+        let mut turned = self.storage.zoom_wheel.get() + notches;
+        while turned >= 1. {
+            self.zoom_in();
+            turned -= 1.;
+        }
+        while turned <= -1. {
+            self.zoom_out();
+            turned += 1.;
+        }
+        self.storage.zoom_wheel.set(turned);
     }
     /// `told` each time the zoom changes: the host, to apply it; a script,
     /// to show it.

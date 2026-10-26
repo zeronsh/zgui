@@ -2175,7 +2175,8 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                     return;
                 }
                 if let InputEvent::Scroll { delta_y, .. } = cx.event {
-                    if !delta_y.is_finite() {
+                    // A Control-wheel zooms the window instead.
+                    if !delta_y.is_finite() || crate::zoom::wheel_zooms() {
                         return;
                     }
                     let before = wheel_offset.get();
@@ -4738,7 +4739,8 @@ fn mount_scroll(
             delta_x, delta_y, ..
         } = cx.event
         {
-            if cx.default_prevented() {
+            // A Control-wheel zooms the window instead.
+            if cx.default_prevented() || crate::zoom::wheel_zooms() {
                 return;
             }
             let delta = if horizontal { delta_x } else { delta_y };

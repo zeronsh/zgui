@@ -105,7 +105,10 @@ impl ScrollView {
             if cx.phase == EventPhase::Capture || cx.default_prevented() {
                 return;
             }
-            if let InputEvent::Scroll { delta_y, .. } = cx.event {
+            // A Control-wheel zooms the window instead.
+            if let InputEvent::Scroll { delta_y, .. } = cx.event
+                && !crate::zoom::wheel_zooms()
+            {
                 let before = state.offset.get();
                 state.scroll_to(before + delta_y);
                 if state.offset.get() != before {

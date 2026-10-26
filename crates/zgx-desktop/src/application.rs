@@ -3440,7 +3440,26 @@ impl Host {
                     self.touch
                         .wheel(phase, self.cursor, (dx, dy), std::time::Instant::now());
                 }
-                if crate::scroll_resample::enabled() {
+                // Control with the wheel zooms the window, a level a notch, as
+                // browsers on Windows and Linux do, unless what is under the
+                // pointer takes it (scroll views leave it). On macOS neither
+                // the wheel nor a pinch zooms a page.
+                let zooms = cfg!(not(target_os = "macos"))
+                    && self.modifiers.control
+                    && !self.modifiers.alt
+                    && !self.modifiers.meta
+                    && self.context.ui.wheel_zooms();
+                if zooms {
+                    let event = InputEvent::Scroll {
+                        x: self.cursor.0,
+                        y: self.cursor.1,
+                        delta_x: dx,
+                        delta_y: dy,
+                    };
+                    if !zgx::zoom::wheel(|| self.dispatch_prevented(event))? {
+                        self.context.ui.zoom_wheel(-dy / step.1);
+                    }
+                } else if crate::scroll_resample::enabled() {
                     // Applied on display refreshes; see `update`.
                     let now = std::time::Instant::now();
                     self.scroll.position = self.cursor;

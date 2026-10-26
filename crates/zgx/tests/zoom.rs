@@ -181,3 +181,63 @@ fn a_scroll_view_keeps_what_was_at_its_top_through_a_zoom() {
         top(&ui, "p12")
     );
 }
+
+#[test]
+fn a_control_wheel_nothing_takes_zooms_a_level_a_notch_and_scrolls_nothing() {
+    let mut ui = Ui::new(300., 200.);
+    let offset = ui.signal(0_f32);
+    let rows: Vec<View> = (0..40).map(|i| text(format!("Row {i}"))).collect();
+    let view = ui.mount(
+        scroll(offset.clone())
+            .w_full()
+            .h(200.)
+            .child(column().w_full().children(rows)),
+    );
+    ui.prepare_frame();
+    let told = hosted(&ui);
+    assert!(ui.wheel_zooms());
+    // The host's Control-wheel: to the nodes first, then the zoom.
+    let wheel = |ui: &mut Ui, delta_y: f32, notches: f32| {
+        let taken = zgx::zoom::wheel(|| {
+            ui.dispatch(InputEvent::Scroll {
+                x: 100.,
+                y: 100.,
+                delta_x: 0.,
+                delta_y,
+            })
+            .default_prevented
+        });
+        if !taken {
+            ui.zoom_wheel(notches);
+        }
+        taken
+    };
+    // Up a notch: in a level, the scroll view where it was.
+    assert!(!wheel(&mut ui, -40., 1.));
+    assert_eq!((ui.zoom(), offset.get(), told.get()), (1.1, 0., 1));
+    // A touchpad's fractions add up to a notch.
+    wheel(&mut ui, 16., -0.4);
+    wheel(&mut ui, 16., -0.4);
+    assert_eq!(ui.zoom(), 1.1);
+    wheel(&mut ui, 16., -0.4);
+    assert_eq!(ui.zoom(), 1.);
+    // A plain wheel still scrolls.
+    ui.dispatch(InputEvent::Scroll {
+        x: 100.,
+        y: 100.,
+        delta_x: 0.,
+        delta_y: 40.,
+    });
+    assert_eq!(offset.get(), 40.);
+    // What takes the wheel itself (a canvas's zoom) keeps it.
+    ui.on_event(view.node(), false, |cx| {
+        if matches!(cx.event, InputEvent::Scroll { .. }) {
+            cx.prevent_default();
+        }
+    });
+    assert!(wheel(&mut ui, -40., 1.));
+    assert_eq!(ui.zoom(), 1.);
+    // Off, the host does not ask.
+    ui.set_zoomable(false);
+    assert!(!ui.wheel_zooms());
+}

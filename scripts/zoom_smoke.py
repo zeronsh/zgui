@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """A window's zoom on X11 (Xvfb/Openbox), with real keys: zoom_probe's
-window, Ctrl+= twice, Ctrl+-, Ctrl+0.
+window, Ctrl+= twice, Ctrl+-, Ctrl+0, then Control with a wheel notch up
+and one down (in Xvfb's own pointer, inside the window).
 
 Checks that each key steps through Chrome's levels (110%, 125%, back to
 110% and 100%), that the window's logical viewport shrinks and grows by the
@@ -66,6 +67,14 @@ def main():
             for keys, zoom in [("ctrl+equal", "1.10"), ("ctrl+equal", "1.25"), ("ctrl+minus", "1.10"), ("ctrl+0", "1.00")]:
                 run("xdotool", "key", "--window", window, "--clearmodifiers", keys)
                 until(f"{zoom} after {keys}", lambda: lines()[-1].get("zoom") == zoom)
+            # Control with the wheel: a level a notch.
+            run("xdotool", "mousemove", "--window", window, "200", "150")
+            for button, zoom in [("4", "1.10"), ("5", "1.00")]:
+                run("xdotool", "keydown", "--window", window, "ctrl")
+                run("xdotool", "click", "--window", window, button)
+                run("xdotool", "keyup", "--window", window, "ctrl")
+                until(f"{zoom} after ctrl+wheel {button}", lambda: lines()[-1].get("zoom") == zoom)
+            checks["control-wheel steps a level a notch"] = True
             seen = lines()
             sizes = {line["zoom"]: tuple(map(float, line["viewport"].split("x"))) for line in seen}
             base = sizes["1.00"]
@@ -79,8 +88,8 @@ def main():
             (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
             failed = [k for k, v in checks.items() if v is False]
             assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
-            print("PASS: X11 zoom: Ctrl+= and Ctrl+- step through Chrome's levels and Ctrl+0 resets; the logical "
-                  "viewport follows the zoom, the window keeps its size")
+            print("PASS: X11 zoom: Ctrl+= and Ctrl+- step through Chrome's levels and Ctrl+0 resets, Control with "
+                  "the wheel steps a level a notch; the logical viewport follows the zoom, the window keeps its size")
         finally:
             for process in reversed(processes):
                 stop(process)
