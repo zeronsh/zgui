@@ -335,21 +335,31 @@ impl Paint {
         (set, self.local.set)
     }
     /// `self` with what `over` sets laid over it, as `Styles::merge` does.
-    fn over(self, over: Self) -> Self {
-        Self {
-            opacity: over.opacity.or(self.opacity),
-            blur: over.blur.or(self.blur),
-            edge_fade: over.edge_fade.or(self.edge_fade),
-            filter_blur: over.filter_blur.or(self.filter_blur),
-            brightness: over.brightness.or(self.brightness),
-            contrast: over.contrast.or(self.contrast),
-            saturate: over.saturate.or(self.saturate),
-            mask_offset: over.mask_offset.or(self.mask_offset),
-            clip_inset: over.clip_inset.or(self.clip_inset),
-            transform: over.transform.or(self.transform),
-            local: self.local.over(over.local),
-            text_color: over.text_color.or(self.text_color),
+    /// What `over` sets laid over `self`, as `Styles::merge` does. In
+    /// place: by value, each of the 150-byte paints was copied in and the
+    /// result out again, every run of an animated style.
+    fn lay(&mut self, over: &Self) {
+        macro_rules! lay {
+            ($($field:ident),*) => {$(
+                if over.$field.is_some() {
+                    self.$field = over.$field;
+                }
+            )*};
         }
+        lay!(
+            opacity,
+            blur,
+            edge_fade,
+            filter_blur,
+            brightness,
+            contrast,
+            saturate,
+            mask_offset,
+            clip_inset,
+            transform,
+            text_color
+        );
+        self.local = self.local.over(over.local);
     }
     fn of(styles: &Styles) -> Self {
         if styles.set_bits() & Self::BITS == 0 {
@@ -906,12 +916,12 @@ pub(crate) fn mount_style_with_intrinsic(
                     return;
                 }
                 let mut resolved = Paint::of(&base);
-                if let Some(paint) = paint {
-                    resolved = resolved.over(paint);
+                if let Some(paint) = &paint {
+                    resolved.lay(paint);
                 }
                 for (enabled, variant) in active_variants {
                     if enabled && let Some(variant) = variant {
-                        resolved = resolved.over(Paint::of(variant));
+                        resolved.lay(&Paint::of(variant));
                     }
                 }
                 let paint_color = resolved.text_color;
