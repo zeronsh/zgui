@@ -1273,6 +1273,7 @@ fn paints_only(old: &NodeKind, new: &NodeKind) -> bool {
 const BOUNDS_VALID: u8 = 1;
 const HIT_DIRECTION: u8 = 2;
 const HIT_CHECKED: u8 = 32;
+const NON_RTL: u8 = 64;
 const INK_VALID: u8 = 128;
 struct Node {
     cursor: Option<crate::cursor::Cursor>,
@@ -5428,18 +5429,29 @@ impl Scene {
         };
         // ASCII holds none: a reply streaming in is checked a word at a
         // time, not a character at a time.
-        let rtl = |text: &str| {
-            !text.is_ascii()
+        #[inline(always)]
+        fn rtl(text: &str, flags: &std::cell::Cell<u8>) -> bool {
+            let validity = flags.get();
+            if validity & NON_RTL != 0 {
+                return false;
+            }
+            let rtl = !text.is_ascii()
                 && text.chars().any(|c| {
                 matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF | 0x10800..=0x10FFF | 0x1E800..=0x1EFFF)
-            })
-        };
+            });
+            if !rtl {
+                flags.set(validity | NON_RTL);
+            }
+            rtl
+        }
         let (size, font_size, line, align) = match &node.kind {
             NodeKind::Text {
                 text, font_size, ..
             } => {
                 // Headless approximations are not what a renderer draws.
-                if rtl(text) || (self.font_measurer.is_none() && self.font_shaper.is_none()) {
+                if rtl(text, &node.bounds_valid)
+                    || (self.font_measurer.is_none() && self.font_shaper.is_none())
+                {
                     return bounds;
                 }
                 let size = remember(cached.unwrap_or_else(|| match &self.font_measurer {
@@ -5451,7 +5463,7 @@ impl Scene {
             }
             NodeKind::RichText { text } => {
                 if text.options() != Default::default()
-                    || rtl(text.text())
+                    || rtl(text.text(), &node.bounds_valid)
                     || !self.rich_measurer.is_native()
                 {
                     return bounds;
@@ -8095,6 +8107,32 @@ mod tests {
             color: Color(255, 255, 255, 255),
             font_size: 16.0,
         }
+    }
+    /// A text's proof that it holds no right-to-left script goes with its
+    /// text: changed to Hebrew, its ink is its whole box again.
+    #[test]
+    fn a_text_changed_to_right_to_left_inks_its_whole_box_again() {
+        let mut scene = Scene::new(300., 100.);
+        scene.set_font_text_measurer(|text, _, _, _| (text.chars().count() as f32 * 4., 10.));
+        let label = scene.append(
+            scene.root(),
+            text("hello"),
+            Style {
+                width: Some(200.),
+                height: Some(20.),
+                ..Style::default()
+            },
+        );
+        scene.flush();
+        let bounds = scene.bounds(label);
+        let ink = scene.text_ink(label, bounds);
+        assert_ne!(ink, bounds, "left to right: the text's own extent");
+        // Asked again with the proof kept: the same answer.
+        assert_eq!(scene.text_ink(label, bounds), ink);
+        scene.set_text(label, "שלום עולם");
+        scene.flush();
+        let bounds = scene.bounds(label);
+        assert_eq!(scene.text_ink(label, bounds), bounds);
     }
     #[test]
     fn flex_distribution_respects_limits_and_resizes() {
