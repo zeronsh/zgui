@@ -1198,7 +1198,7 @@ pub(crate) fn mount_style_with_intrinsic(
         } else {
             current
         };
-        let (resolved, opaque) = opaque_glass(&ui, resolved, &originals.kind);
+        let opaque = opaque_glass(&ui, &mut resolved, &originals.kind);
         glass = opaque;
         let inputs = (resolved, current, intrinsic_size, content_layout);
         if memo
@@ -1418,13 +1418,15 @@ struct Originals {
 /// backdrop blur, and its background solid (a clear one the theme's raised
 /// surface). Only a node with a backdrop blur reads (and follows) the
 /// setting; as a change of its styles, it restyles as any other.
-/// Returns the styles to apply, and for frosted glass whether it is opaque.
-fn opaque_glass(ui: &Ui, mut resolved: Styles, kind: &NodeKind) -> (Styles, Option<bool>) {
+/// Makes `resolved` the styles to apply; for frosted glass, returns whether
+/// it is opaque. (In place: a 440-byte style moved in and out again was
+/// copied twice by every full application.)
+fn opaque_glass(ui: &Ui, resolved: &mut Styles, kind: &NodeKind) -> Option<bool> {
     if !resolved.blur.is_some_and(|sigma| sigma > 0.) {
-        return (resolved, None);
+        return None;
     }
     if !ui.theme().system_preferences().reduced_transparency {
-        return (resolved, Some(false));
+        return Some(false);
     }
     let fill = resolved.background.unwrap_or(match kind {
         NodeKind::Panel { quad, .. } => quad.fill,
@@ -1438,7 +1440,7 @@ fn opaque_glass(ui: &Ui, mut resolved: Styles, kind: &NodeKind) -> (Styles, Opti
     let fields = resolved.fields_mut(crate::style::bit::BACKGROUND | crate::style::bit::BLUR);
     fields.background = background;
     fields.blur = Some(0.);
-    (resolved, Some(true))
+    Some(true)
 }
 #[allow(clippy::too_many_arguments)]
 fn apply_resolved(
