@@ -2829,8 +2829,22 @@ impl GpuRenderer {
         }
         stats.draw_calls += presented.draw_calls;
         stats.instances += presented.instances;
-        zgx::profile::frame();
+        // Offscreen, drawing is the whole frame; a window's ends once it
+        // shows (`present_with_notify`), its wait for the GPU and for its
+        // point in a refresh counted in it, not in the next.
+        if !self.presents() {
+            zgx::profile::frame();
+        }
         Ok(stats)
+    }
+    /// Whether frames are shown (a window's surface, or macOS's own), so
+    /// `present_with_notify` ends them.
+    fn presents(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.layer_present.is_some() {
+            return true;
+        }
+        self.surface.is_some()
     }
     fn render_inner(&mut self, scene: &Scene, damage: &[Rect]) -> Result<GpuStats, GpuError> {
         if let Some(reason) = self.context.lost() {
@@ -7396,7 +7410,20 @@ impl GpuRenderer {
         &mut self,
         before_present: impl FnOnce(),
     ) -> Result<PresentationStatus, GpuError> {
-        let _span = zgx::profile::span(zgx::profile::Phase::Present);
+        let status = {
+            let _span = zgx::profile::span(zgx::profile::Phase::Present);
+            self.present_frame(before_present)
+        };
+        // The frame is done once shown (see `render`).
+        if self.presents() {
+            zgx::profile::frame();
+        }
+        status
+    }
+    fn present_frame(
+        &mut self,
+        before_present: impl FnOnce(),
+    ) -> Result<PresentationStatus, GpuError> {
         if let Some(reason) = self.context.lost() {
             return Err(GpuError::device_lost(&reason));
         }
