@@ -851,22 +851,27 @@ pub(crate) fn mount_style_with_intrinsic(
             // Unchanged, or a box that changes only its size or margins (a
             // bar growing): the same fields set, other values, no interaction
             // style over them, and the rest compared once.
-            let same = produced == last.dynamic;
-            let resized = !same
-                && match (&produced, &last.dynamic) {
-                    (Some(now), Some(then)) => {
-                        shown.is_some()
+            let (same, resized) = match (&produced, &last.dynamic) {
+                // Paint alone (taken out above): nothing else to compare.
+                (Some(now), Some(then)) if now.set_bits() | then.set_bits() == 0 => (true, false),
+                (Some(now), Some(then)) => match now.eq_then_sizes(then) {
+                    None => (false, false),
+                    Some(sizes) => (
+                        sizes,
+                        !sizes
+                            && shown.is_some()
                             && boxes(now) == boxes(then)
                             && active_variants.iter().all(|(enabled, variant)| {
                                 !enabled
                                     || variant
                                         .as_deref()
                                         .is_none_or(|v| boxes(v) == (false, false, false))
-                            })
-                            && now.eq_except_sizes(then)
-                    }
-                    _ => false,
-                };
+                            }),
+                    ),
+                },
+                (None, None) => (true, false),
+                _ => (false, false),
+            };
             let unchanged = glass.is_none_or(|opaque| {
                 opaque == storage.themes.system_preferences().reduced_transparency
             }) && paint.map(|p| p.set()) == last.paint

@@ -292,12 +292,17 @@ impl Styles {
 impl Styles {
     /// Whether `self` and `other` are equal but for their box fields (width,
     /// height, their percentages and margins: what a growing bar changes),
-    /// comparing only fields set in either.
-    pub(crate) fn eq_except_sizes(&self, other: &Self) -> bool {
+    /// and if so, whether those are equal too (then `==`), comparing only
+    /// fields set in either: a style effect re-run's two comparisons in
+    /// one pass, out of line so the effect calling it keeps its size.
+    #[inline]
+    pub(crate) fn eq_then_sizes(&self, other: &Self) -> Option<bool> {
         let sizes =
             bit::WIDTH | bit::HEIGHT | bit::WIDTH_PERCENT | bit::HEIGHT_PERCENT | bit::MARGIN;
+        let set = self.set | other.set;
         self.fields
-            .eq_in(&other.fields, (self.set | other.set) & !sizes)
+            .eq_in(&other.fields, set & !sizes)
+            .then(|| self.fields.eq_in(&other.fields, set & sizes))
     }
 }
 /// As derived, but copying the plain fields as one block: a derived clone
@@ -2584,7 +2589,7 @@ mod tests {
                     );
                     s
                 };
-                assert_eq!(a.eq_except_sizes(b), sizes(a) == sizes(b));
+                assert_eq!(a.eq_then_sizes(b), (sizes(a) == sizes(b)).then_some(a == b));
             }
         }
     }
