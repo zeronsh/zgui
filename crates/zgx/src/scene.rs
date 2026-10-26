@@ -4379,10 +4379,11 @@ impl Scene {
             self.given_styles.remove(&id);
         }
         if same {
-            *kept = Some(self.node(id).style_writes);
+            // Checked as it starts, as below.
+            *kept = Some(self.tree_node(id).style_writes);
             return;
         }
-        let node = self.node_mut(id);
+        let node = self.tree_node_mut(id);
         node.style_writes = node.style_writes.wrapping_add(1);
         *kept = Some(node.style_writes);
         let old = &mut node.style;
@@ -4404,9 +4405,9 @@ impl Scene {
         }
         // A contents parent lays out as its last child.
         if self.contents_count > 0
-            && let Some(parent) = self.node(id).parent
-            && self.node(parent).contents
-            && self.node(parent).children.last() == Some(&id)
+            && let Some(parent) = self.tree_node(id).parent
+            && self.tree_node(parent).contents
+            && self.tree_node(parent).children.last() == Some(&id)
         {
             self.sync_contents(parent);
         }
