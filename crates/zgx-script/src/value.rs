@@ -1721,6 +1721,54 @@ fn only_cached(value: &Value) -> bool {
 }
 
 /// A path for `set_key`: a key, an index, or a list of them.
+/// `path_of`, a table step (`{ id = 7 }`) picking the first item of the list
+/// there whose fields are those, in `current` (the state's value).
+fn path_in(lua: &Lua, value: mlua::Value, current: &Value) -> mlua::Result<Vec<PathKey>> {
+    let mlua::Value::Table(t) = &value else {
+        return path_of(lua, value);
+    };
+    if raw_path(lua, t).is_some() {
+        return path_of(lua, value);
+    }
+    let mut path = Vec::new();
+    let mut at = Some(current);
+    for step in t.sequence_values::<mlua::Value>() {
+        let key = match step? {
+            mlua::Value::Table(fields) => {
+                let mut want: Vec<(Rc<str>, Value)> = Vec::new();
+                for pair in fields.pairs::<String, mlua::Value>() {
+                    let (name, v) = pair?;
+                    want.push((name.as_str().into(), convert(v, None)?));
+                }
+                let found = at.and_then(|list| {
+                    list.list()
+                        .iter()
+                        .position(|item| want.iter().all(|(name, v)| item.field(name) == Some(v)))
+                });
+                match found {
+                    Some(i) => PathKey::Index(i + 1),
+                    None => {
+                        let said: Vec<String> =
+                            want.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+                        return Err(mlua::Error::runtime(format!(
+                            "no item has {{ {} }} along the state path",
+                            said.join(", ")
+                        )));
+                    }
+                }
+            }
+            other => path_of(lua, other)?.remove(0),
+        };
+        at = at.and_then(|v| v.at(std::slice::from_ref(&key)));
+        path.push(key);
+    }
+    if path.is_empty() {
+        return Err(mlua::Error::runtime(
+            "state:set_key needs a key; state:set replaces the whole value",
+        ));
+    }
+    Ok(path)
+}
 fn path_of(lua: &Lua, value: mlua::Value) -> mlua::Result<Vec<PathKey>> {
     let step = |value: mlua::Value| -> mlua::Result<PathKey> {
         Ok(match value {
@@ -1880,6 +1928,66 @@ impl State {
     }
     /// A plugin's state to hold what `bytes` makes of what it is counted
     /// as holding (`meter`): an error if the plugin has no room for it.
+    /// `leaf` written at `path`, where `at` was: in place while nothing
+    /// else holds the list (no script has read it since the last write), so
+    /// a batch of row writes to a list of 100,000 copies it once, not once
+    /// a write.
+    fn write_at(
+        &self,
+        lua: &Lua,
+        path: &[PathKey],
+        at: Option<&Value>,
+        leaf: Value,
+        method: &str,
+    ) -> mlua::Result<()> {
+        let s = self;
+        // What it holds less the leaf it replaces, and the new one.
+        let was = at.map_or(0, Value::weight);
+        s.charge(lua, |held| held.saturating_sub(was) + leaf.weight())?;
+        let mut done = Ok(false);
+        // The row written, for a sorted view reading the list.
+        let (before, row) = (
+            s.0.version(),
+            match path.first() {
+                Some(PathKey::Index(i)) => i.checked_sub(1),
+                _ => None,
+            },
+        );
+        let mut write = || {
+            s.0.mutate(|v| match v.set_path_in_place(path, &leaf) {
+                Ok(Some(changed)) => {
+                    done = Ok(true);
+                    changed
+                }
+                Ok(None) => false,
+                Err(e) => {
+                    done = Err(e);
+                    false
+                }
+            })
+        };
+        match lua
+            .app_data_ref::<crate::node::Env>()
+            .and_then(|env| env.vm.upgrade())
+        {
+            Some(vm) => vm.write_off_clock(&mut write),
+            None => write(),
+        };
+        if done.map_err(|e| fail(method, e))? {
+            crate::sorted::note_write(&s.0, before, row);
+            return Ok(());
+        }
+        // (Charged above.)
+        let written = s.change_by(
+            lua,
+            |old| old.set_path(path, leaf).map_err(|e| fail(method, e)),
+            |_, held| held,
+        );
+        if s.0.version() != before {
+            crate::sorted::note_write(&s.0, before, row);
+        }
+        written
+    }
     fn charge(&self, lua: &Lua, bytes: impl FnOnce(usize) -> usize) -> mlua::Result<()> {
         let meter = lua
             .app_data_ref::<crate::node::Env>()
@@ -1934,62 +2042,37 @@ impl UserData for State {
             s.write(lua, next);
             Ok(())
         });
-        // `set_key("k", v)`, `set_key(3, v)`, `set_key({ "tabs", 3, "title" }, v)`.
+        // `set_key("k", v)`, `set_key(3, v)`, `set_key({ "tabs", 3, "title" }, v)`;
+        // a table step picks a list's item by its fields: `{ { id = 7 }, "title" }`.
         methods.add_method(
             "set_key",
             |lua, s, (path, value): (mlua::Value, mlua::Value)| {
-                let path = path_of(lua, path)?;
-                // In place while nothing else holds the list (no script has
-                // read it since the last write): a batch of row writes to a
-                // list of 100,000 copies it once, not once a write.
+                let path = s.0.with_untracked(|old| path_in(lua, path, old))?;
                 let at = s.0.with_untracked(|old| old.at(&path).cloned());
                 let leaf = convert(value, at.as_ref())?;
-                // What it holds less the leaf it replaces, and the new one.
-                let was = at.as_ref().map_or(0, Value::weight);
-                s.charge(lua, |held| held.saturating_sub(was) + leaf.weight())?;
-                let mut done = Ok(false);
-                // The row written, for a sorted view reading the list.
-                let (before, row) = (
-                    s.0.version(),
-                    match path.first() {
-                        Some(PathKey::Index(i)) => i.checked_sub(1),
-                        _ => None,
-                    },
-                );
-                let mut write = || {
-                    s.0.mutate(|v| match v.set_path_in_place(&path, &leaf) {
-                        Ok(Some(changed)) => {
-                            done = Ok(true);
-                            changed
-                        }
-                        Ok(None) => false,
-                        Err(e) => {
-                            done = Err(e);
-                            false
-                        }
-                    })
+                s.write_at(lua, &path, at.as_ref(), leaf, "set_key")
+            },
+        );
+        // `append(path, text)`: text added to the string at `path` (none
+        // there: the text), concatenated in Rust: a reply's token, without
+        // its text so far copied into the script and back.
+        methods.add_method(
+            "append",
+            |lua, s, (path, text): (mlua::Value, mlua::LuaString)| {
+                let path = s.0.with_untracked(|old| path_in(lua, path, old))?;
+                let at = s.0.with_untracked(|old| old.at(&path).cloned());
+                let text = text.to_str()?;
+                let joined: Rc<str> = match &at {
+                    Some(Value::Str(was)) => format!("{was}{}", &*text).into(),
+                    None | Some(Value::Nil) => (&*text).into(),
+                    Some(_) => {
+                        return Err(fail(
+                            "append",
+                            "adds text to a string, and that is not one".into(),
+                        ));
+                    }
                 };
-                match lua
-                    .app_data_ref::<crate::node::Env>()
-                    .and_then(|env| env.vm.upgrade())
-                {
-                    Some(vm) => vm.write_off_clock(&mut write),
-                    None => write(),
-                };
-                if done.map_err(|e| fail("set_key", e))? {
-                    crate::sorted::note_write(&s.0, before, row);
-                    return Ok(());
-                }
-                // (Charged above.)
-                let written = s.change_by(
-                    lua,
-                    |old| old.set_path(&path, leaf).map_err(|e| fail("set_key", e)),
-                    |_, held| held,
-                );
-                if s.0.version() != before {
-                    crate::sorted::note_write(&s.0, before, row);
-                }
-                written
+                s.write_at(lua, &path, at.as_ref(), Value::Str(joined), "append")
             },
         );
         // A shallow merge: `patch({ a = 1, b = 2 })`.

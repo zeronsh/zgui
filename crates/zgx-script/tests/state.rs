@@ -712,3 +712,26 @@ fn a_small_table_read_again_is_the_same_until_written() {
     h.click("check");
     assert_eq!(h.text("seen"), "true false b a");
 }
+
+#[test]
+fn a_path_picks_an_item_by_its_fields_and_append_adds_text() {
+    let mut h = Harness::inline(
+        r##"local chats = ui.state("chats", { c1 = { { id = "a", text = "Hi" }, { id = "b", text = "" } } })
+        local said = ui.state("said", "")
+        ui.command { id = "go", run = function()
+            chats:set_key({ "c1", { id = "a" }, "text" }, "Hello")
+            chats:append({ "c1", { id = "b" }, "text" }, "One")
+            chats:append({ "c1", { id = "b" }, "text" }, " two")
+            chats:append({ "c1", { id = "b" }, "note" }, "new")
+            local ok, err = pcall(function() chats:set_key({ "c1", { id = "z" }, "text" }, "") end)
+            local ok2, err2 = pcall(function() chats:append({ "c1", 1 }, "x") end)
+            local c = chats:peek().c1
+            said:set(`{c[1].text}|{c[2].text}|{c[2].note}|{ok}|{tostring(err):find("no item has") ~= nil}|{ok2}|{tostring(err2):find("not one") ~= nil}`)
+        end }
+        return ui.text { id = "said", "{said}" }"##,
+    );
+    assert!(h.host.run_command("go"));
+    h.frames(1);
+    assert_eq!(h.text("said"), "Hello|One two|new|false|true|false|true");
+    assert_eq!(h.error(), None);
+}

@@ -73,7 +73,8 @@ local tabs = ui.state("tabs", {} :: { Tab })
 | `peek(): T` | the value, without subscribing | for handlers and for reading what an effect should not follow |
 | `set(value: T)` | replaces the value | |
 | `update(f: (value: T) -> ...T)` | `f` gets a mutable copy: change it and return nothing, or return the new value | copies the whole value into Luau and back |
-| `set_key(path, value)` | one key (`"title"`), a list index from 1 (`3`), or a path (`{ "tabs", 3, "title" }`); `nil` removes a key | makes missing tables along the path; an index may be one past the end (appends); a list cannot get a hole (`nil` removes only its last item); the value is not type checked |
+| `set_key(path, value)` | one key (`"title"`), a list index from 1 (`3`), or a path (`{ "tabs", 3, "title" }`), where a table step picks a list's first item with those fields (`{ "c1", { id = "m5" }, "text" }`); `nil` removes a key | makes missing tables along the path; an index may be one past the end (appends); a list cannot get a hole (`nil` removes only its last item); the value is not type checked |
+| `append(path, text)` | adds `text` to the string at `path` (or puts it there) | concatenated in Rust: a token streaming into a reply, without the text so far copied into the script and back |
 | `patch(fields: { ... })` | a shallow merge of string keys | each field as `set_key(name, value)` |
 | `toggle()` | `not value` | |
 | `add(by: number?)` | adds `by` (1) to a number; anything else counts as 0 (a boolean as 0 or 1) | |

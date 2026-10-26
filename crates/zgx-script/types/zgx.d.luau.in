@@ -395,8 +395,9 @@ export type Cursor =
 	| "zoom-out"
 
 -- A key into a state's table, an index into its list (from 1), or a path
--- of them: `{ "tabs", 3, "title" }`.
-export type StatePath = string | number | { string | number }
+-- of them: `{ "tabs", 3, "title" }`. A table step picks a list's first
+-- item with those fields: `{ "c1", { id = "m5" }, "text" }`.
+export type StatePath = string | number | { string | number | { [string]: any } }
 
 ---------------------------------------------------------------------------
 -- State.
@@ -421,6 +422,9 @@ export type State<T> = {
 	-- nil removes the key. The value's type depends on the path, which Luau
 	-- cannot follow: it is not checked.
 	set_key: (self: State<T>, path: StatePath, value: any) -> (),
+	-- Adds `text` to the string at `path` (or puts it there), in Rust: a
+	-- reply's token, without the text so far copied into the script.
+	append: (self: State<T>, path: StatePath, text: string) -> (),
 	-- A shallow merge into the table.
 	patch: (self: State<T>, fields: Partial<T>) -> (),
 	-- Sets `not value` (a boolean).
