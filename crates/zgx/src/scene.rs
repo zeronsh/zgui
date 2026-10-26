@@ -1713,6 +1713,13 @@ struct Slot {
     dead: bool,
     node: Option<Node>,
 }
+/// A node id no longer in the scene was used (`Scene::node`).
+#[cold]
+#[inline(never)]
+#[track_caller]
+fn stale() -> ! {
+    panic!("stale scene node")
+}
 /// Where a parent's children are damaged (`Scene::damage_context`).
 type DamageContext = Option<(Transform, Option<Rect>)>;
 /// What a [`Scene::flush`] did, for renderers and diagnostics.
@@ -2388,13 +2395,26 @@ impl Scene {
     pub fn is_empty(&self) -> bool {
         false
     } // A scene always retains its root.
+    /// `id`'s node: one look at its slot, which must still hold it.
     fn node(&self, id: NodeId) -> &Node {
-        assert!(self.contains(id), "stale scene node");
-        self.slots[id.index as usize].node.as_ref().unwrap()
+        match self.slots.get(id.index as usize) {
+            Some(Slot {
+                generation,
+                node: Some(node),
+                ..
+            }) if *generation == id.generation => node,
+            _ => stale(),
+        }
     }
     fn node_mut(&mut self, id: NodeId) -> &mut Node {
-        assert!(self.contains(id), "stale scene node");
-        self.slots[id.index as usize].node.as_mut().unwrap()
+        match self.slots.get_mut(id.index as usize) {
+            Some(Slot {
+                generation,
+                node: Some(node),
+                ..
+            }) if *generation == id.generation => node,
+            _ => stale(),
+        }
     }
     /// `id`'s box as laid out, translated by its own and its ancestors'
     /// translations, in window points.
