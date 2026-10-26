@@ -12,6 +12,9 @@ mod bench_font;
 #[path = "support/animation_view.rs"]
 mod view;
 
+#[path = "support/frame_stamp.rs"]
+mod frame_stamp;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let seconds = Workload::from_env().seconds;
     bench_font::application()?
@@ -47,6 +50,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     window.close();
                 });
             }
-            cx.render(view::animation(clock));
+            let view = view::animation(clock);
+            cx.render(if frame_stamp::enabled() {
+                frame_stamp::over(view, frames, 960., 720.)
+            } else {
+                view
+            });
         })
 }

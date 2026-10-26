@@ -16,6 +16,9 @@ mod bench_font;
 #[path = "support/heavy_view.rs"]
 mod view;
 
+#[path = "support/frame_stamp.rs"]
+mod frame_stamp;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     bench_font::application()?
         .window(WindowOptions {
@@ -30,7 +33,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let live = cx.ui.signal(0_u64);
             let scroll = cx.ui.signal(0_f32);
             let log = cx.ui.signal(work.borrow().visible_log());
-            cx.render(view::dashboard(live.clone(), scroll.clone(), log.clone()));
+            let view = view::dashboard(live.clone(), scroll.clone(), log.clone());
+            cx.render(if frame_stamp::enabled() {
+                frame_stamp::over(view, live.clone(), WIDTH, HEIGHT)
+            } else {
+                view
+            });
             cx.on_closed({
                 let work = work.clone();
                 move || {

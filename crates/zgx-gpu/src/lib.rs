@@ -1707,9 +1707,12 @@ static PRESENT_AUTO: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
 /// The trial's verdict for the process: 0 not yet, 1 tiles, 2 drawables.
 #[cfg(target_os = "macos")]
 static VERDICT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-/// Full-rate frames each half of the trial lasts (about a second at 120 Hz).
+/// Full-rate frames each half of the trial lasts (about two seconds at 120 Hz).
 #[cfg(target_os = "macos")]
-const TRIAL_FRAMES: u32 = 120;
+const TRIAL_FRAMES: u32 = 240;
+/// How much smaller a share of frames drawables must skip than tiles to win.
+#[cfg(target_os = "macos")]
+const TRIAL_MARGIN: f64 = 0.05;
 /// The once-per-process comparison of the full-rate paths (`PRESENT_AUTO`):
 /// tiles with the probe that says which flips the window server skipped
 /// (`layer_present::Layer::start_probe`), then drawables with their own
@@ -1721,11 +1724,11 @@ enum Trial {
     Untried,
     Tiles {
         frames: u32,
-        from: (u64, u64),
+        from: layer_present::Mark,
     },
     Drawables {
         frames: u32,
-        from: (u64, u64),
+        from: layer_present::Mark,
         tiles: f64,
     },
     Done,
@@ -8238,13 +8241,18 @@ impl GpuRenderer {
             && present.full_rate
             && VERDICT.load(std::sync::atomic::Ordering::Relaxed) == 0
         {
-            // Frames handed over and lost (`Feedback::lost`), and the share
-            // lost since a start.
-            let counts = |feedback: Option<std::sync::Arc<layer_present::Feedback>>| {
-                feedback.map_or((0, 0), |feedback| feedback.lost())
-            };
-            let share = |(handed, lost): (u64, u64), (from_handed, from_lost): (u64, u64)| {
-                (lost - from_lost) as f64 / (handed - from_handed).max(1) as f64
+            // Where a feedback record stands, and the share of frames lost
+            // since then (`Feedback::lost_since`).
+            let counts =
+                |feedback: Option<std::sync::Arc<layer_present::Feedback>>| -> layer_present::Mark {
+                    feedback.map_or_else(Default::default, |feedback| feedback.mark())
+                };
+            let share = |feedback: Option<std::sync::Arc<layer_present::Feedback>>,
+                         from: layer_present::Mark| {
+                feedback.map_or(0., |feedback| {
+                    let (handed, lost) = feedback.lost_since(from);
+                    lost as f64 / handed.max(1) as f64
+                })
             };
             present.trial = match present.trial {
                 Trial::Untried => {
@@ -8272,7 +8280,7 @@ impl GpuRenderer {
                 }
                 Trial::Tiles { frames, from } if frames + 1 >= TRIAL_FRAMES => {
                     let layer = present.layer.as_mut().expect("attached");
-                    let tiles = share(counts(layer.probe_feedback()), from);
+                    let tiles = share(layer.probe_feedback(), from);
                     layer.stop_probe();
                     let from = counts(layer.drawable_feedback());
                     Trial::Drawables {
@@ -8291,15 +8299,20 @@ impl GpuRenderer {
                     tiles,
                 } if frames + 1 >= TRIAL_FRAMES => {
                     let drawables = share(
-                        counts(
-                            present
-                                .layer
-                                .as_ref()
-                                .and_then(|layer| layer.drawable_feedback()),
-                        ),
+                        present
+                            .layer
+                            .as_ref()
+                            .and_then(|layer| layer.drawable_feedback()),
                         from,
                     );
-                    let verdict = if drawables < tiles { 2 } else { 1 };
+                    // Drawables only where they skip clearly fewer: on the M1
+                    // Max tiles' flips skip 16-18% against drawables' 0.3%;
+                    // on the M5 both skip 4-9%, and tiles stay.
+                    let verdict = if tiles - drawables > TRIAL_MARGIN {
+                        2
+                    } else {
+                        1
+                    };
                     VERDICT.store(verdict, std::sync::atomic::Ordering::Relaxed);
                     eprintln!(
                         "zgx: full-rate frames take {} (lost: tiles {:.1}%, drawables {:.1}%)",

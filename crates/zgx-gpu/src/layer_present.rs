@@ -488,10 +488,12 @@ struct FeedbackState {
     /// The last presented time (host seconds), and the latest gaps (ms).
     last: f64,
     gaps: std::collections::VecDeque<f64>,
-    /// Refreshes that showed no new drawable between two that did (a gap of
-    /// n refreshes misses n - 1), on the shortest gap seen as the refresh.
-    missed: u64,
-    refresh: f64,
+}
+/// A point in a `Feedback`'s record (`Feedback::mark`).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Mark {
+    presented: u64,
+    skipped: u64,
 }
 impl Feedback {
     fn record(&self, presented: f64) {
@@ -503,12 +505,6 @@ impl Feedback {
         state.presented += 1;
         if state.last > 0. && presented > state.last {
             let gap = (presented - state.last) * 1e3;
-            if gap > 4. && (state.refresh == 0. || gap < state.refresh) {
-                state.refresh = gap;
-            }
-            if state.refresh > 0. {
-                state.missed += ((gap / state.refresh).round() as u64).saturating_sub(1);
-            }
             state.gaps.push_back(gap);
             if state.gaps.len() > 600 {
                 state.gaps.pop_front();
@@ -516,14 +512,21 @@ impl Feedback {
         }
         state.last = presented;
     }
-    /// Frames handed over so far (shown or skipped), and those lost: skipped,
-    /// or a refresh that showed none (`missed`).
-    pub(crate) fn lost(&self) -> (u64, u64) {
+    /// Where the record stands now.
+    pub(crate) fn mark(&self) -> Mark {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        (
-            state.presented + state.skipped,
-            state.skipped + state.missed,
-        )
+        Mark {
+            presented: state.presented,
+            skipped: state.skipped,
+        }
+    }
+    /// Since `from`: frames handed over (shown or skipped), and those the
+    /// window server skipped. (Gaps between shown ones are not counted: the
+    /// probe's presented times come with its transaction's, which batch.)
+    pub(crate) fn lost_since(&self, from: Mark) -> (u64, u64) {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let skipped = state.skipped - from.skipped;
+        (state.presented - from.presented + skipped, skipped)
     }
     /// Drawables presented and skipped so far, and the latest gaps' median,
     /// 99th percentile and count over 1.5 of the median (a refresh missed).
