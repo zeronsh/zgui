@@ -3954,6 +3954,8 @@ impl Host {
                 .as_ref()
                 .and_then(crate::window_info::refresh_rate_hz),
         );
+        // What the engine times itself steps by (springs, fades).
+        self.context.ui.set_refresh_interval(self.frame_interval);
     }
     /// Deliver one display refresh. Hidden windows keep their requests pending.
     fn deliver_frame(&mut self, frame: Frame) {
@@ -5068,6 +5070,7 @@ impl WindowManager {
                     host.frame_timer =
                         crate::frame_source::FrameTimer::aligned(frame.time, frame.index + 1);
                     host.frame_interval = frame.interval;
+                    host.context.ui.set_refresh_interval(frame.interval);
                     host.vsync_synced = Some(std::time::Instant::now());
                     // `about_to_wait` runs next in this same loop pass, stepping
                     // the woken animations and painting once.
@@ -5084,6 +5087,7 @@ impl WindowManager {
                     host.frame_timer =
                         crate::frame_source::FrameTimer::aligned(frame.time, frame.index + 1);
                     host.frame_interval = frame.interval;
+                    host.context.ui.set_refresh_interval(frame.interval);
                     host.deliver_frame(frame);
                 }
             }

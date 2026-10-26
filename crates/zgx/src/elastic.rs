@@ -23,8 +23,6 @@ use std::{
 const RESISTANCE: f32 = 0.55;
 /// How fast it springs back: critically damped, settled in about 0.4 s.
 const SPRING: f32 = 14.;
-/// The spring's step: a frame.
-const STEP: Duration = Duration::from_millis(16);
 /// Momentum that reaches an edge pushes past it this long, then springs back.
 const BOUNCE: Duration = Duration::from_millis(90);
 
@@ -103,6 +101,9 @@ pub(crate) struct State {
     /// The trackpad's fingers are down, or its momentum runs.
     fingers: bool,
     momentum: bool,
+    /// The momentum bounced off an edge: the rest of it is spent there, as
+    /// AppKit's is, not bounced again each time the spring settles.
+    bounced: bool,
     /// The view the gesture stretches (or springs back).
     active: Option<Weak<Elastic>>,
 }
@@ -154,6 +155,7 @@ pub(crate) fn gesture(ui: &Ui, phase: ScrollGesture) {
             ScrollGesture::Began => {
                 state.fingers = true;
                 state.momentum = false;
+                state.bounced = false;
                 false
             }
             ScrollGesture::Ended => {
@@ -162,6 +164,7 @@ pub(crate) fn gesture(ui: &Ui, phase: ScrollGesture) {
             }
             ScrollGesture::MomentumBegan => {
                 state.momentum = true;
+                state.bounced = false;
                 false
             }
             ScrollGesture::MomentumEnded => {
@@ -263,13 +266,21 @@ pub(crate) fn after_scroll(ui: &Ui, event: &InputEvent, result: &DispatchResult)
     let at = view.offset.with_untracked(|o| *o);
     let limit = view.limit();
     let outward = (delta < 0. && at <= 0.) || (delta > 0. && at >= limit);
-    if !outward || (view.spring.get().is_some() && !fingers) {
+    if !outward {
+        return;
+    }
+    if view.spring.get().is_some() && !fingers {
+        // Momentum toward an edge springing back is spent in the spring.
+        ui.elastic_state().borrow_mut().bounced = true;
         return;
     }
     if momentum && !fingers {
         // Momentum bounces off the edge: a moment's push, then back.
         match view.bounced.get() {
+            // Once a gesture's momentum: what is left of it stops at the edge.
+            None if ui.elastic_state().borrow().bounced => return,
             None => {
+                ui.elastic_state().borrow_mut().bounced = true;
                 view.bounced.set(Some(now));
                 view.next.set(Some(now + BOUNCE));
             }
@@ -319,7 +330,8 @@ pub(crate) fn advance(ui: &Ui, now: Instant) -> bool {
         ui.elastic_state().borrow_mut().active = None;
     } else {
         view.shown.set(shown);
-        view.next.set(Some(now + STEP));
+        // A step a refresh (`Ui::set_refresh_interval`).
+        view.next.set(Some(now + ui.refresh_interval()));
     }
     true
 }

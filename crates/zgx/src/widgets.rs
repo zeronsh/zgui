@@ -881,6 +881,8 @@ pub(crate) struct UiStorage {
     snapshotter: RefCell<Option<Snapshotter>>,
     /// The host's wheel recorder and player (`Ui::on_wheel_tape`).
     wheel_taper: RefCell<Option<WheelTaper>>,
+    /// The display's refresh period (`Ui::set_refresh_interval`).
+    refresh_interval: Cell<std::time::Duration>,
     /// The host shows drag previews in windows of their own (`set_popup_previews`).
     popup_previews: Cell<bool>,
     pub(crate) scene: Rc<RefCell<Scene>>,
@@ -1111,6 +1113,7 @@ impl Ui {
             popup_soon_sent: Cell::new(false),
             snapshotter: RefCell::new(None),
             wheel_taper: RefCell::new(None),
+            refresh_interval: Cell::new(std::time::Duration::from_micros(16_667)),
             popup_previews: Cell::new(false),
             runtime,
             scene: Rc::new(RefCell::new(Scene::new(width, height))),
@@ -2204,6 +2207,20 @@ impl Ui {
             return None;
         }
         take(bounds, max_width.max(1))
+    }
+    /// The display's refresh period, as the host knows it (60 Hz until
+    /// told): what the engine times itself steps by (a stretched view
+    /// springing back, overlay scrollbars fading), so they move every
+    /// refresh, on a 120 Hz display as on a 60 Hz one.
+    pub fn set_refresh_interval(&self, interval: std::time::Duration) {
+        if interval >= std::time::Duration::from_millis(2)
+            && interval <= std::time::Duration::from_millis(100)
+        {
+            self.storage.refresh_interval.set(interval);
+        }
+    }
+    pub(crate) fn refresh_interval(&self) -> std::time::Duration {
+        self.storage.refresh_interval.get()
     }
     /// How the host records and plays back wheel input for devtools (`zgx
     /// inspect`'s gesture replays): its input path, the trackpad's phases,

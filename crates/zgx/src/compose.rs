@@ -2050,6 +2050,14 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let viewport = ui.container(root, Layout::Overlay, Default::default());
             let content = ui.container(viewport, Layout::Overlay, Default::default());
             ui.scene.borrow_mut().set_scroll_copy(content, true);
+            let stretch = ListStretch::new(
+                ui,
+                root,
+                content,
+                offset.clone(),
+                size.clone(),
+                extent.clone(),
+            );
             let navigation = keyboard_navigation.then(|| {
                 crate::compose_virtual_keyboard::Navigation::new(
                     ui,
@@ -2223,13 +2231,7 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             content,
                             crate::widgets::fixed(width, model.content_height()),
                         );
-                        scene.set_transform(
-                            content,
-                            crate::scene::Transform {
-                                x: 0.0,
-                                y: -position,
-                            },
-                        );
+                        stretch.place(&mut scene, position);
                         order.clear();
                         for (key, index) in &keys {
                             let (node, _, placed) = entries.get_mut(key).expect("a row");
@@ -4429,6 +4431,79 @@ fn mount_window_drag(ui: &mut Ui, region: NodeId) {
             crate::widgets::WindowGesture::Drag
         });
     });
+}
+/// A list's stretch past its edges under a trackpad (`elastic`), as a
+/// scroll view's: what shows of its content is where the list placed it
+/// ([`ListStretch::place`]) moved by the stretch, in a binding of its own,
+/// so a frame of stretching or springing back places no rows. At an edge
+/// the rows showing are the same.
+pub(crate) struct ListStretch {
+    content: NodeId,
+    placed: Rc<Cell<f32>>,
+    shown: Signal<f32>,
+}
+impl ListStretch {
+    /// `root`'s list, its rows in `content`, scrolled to `offset` within
+    /// its `size`, `extent` tall.
+    pub(crate) fn new(
+        ui: &mut Ui,
+        root: NodeId,
+        content: NodeId,
+        offset: Signal<f32>,
+        size: Signal<(f32, f32)>,
+        extent: Signal<f32>,
+    ) -> Self {
+        let extents = ui.signal((0_f32, 0_f32));
+        {
+            let (size, extents) = (size.clone(), extents.clone());
+            ui.bind(root, move || {
+                let extent = (size.get().0, extent.get());
+                if extents.with_untracked(|e| *e != extent) {
+                    extents.set(extent);
+                }
+            });
+        }
+        let shown = crate::elastic::register(ui, root, false, size, extents, offset);
+        let placed = Rc::new(Cell::new(0_f32));
+        {
+            let (placed, shown, scene) = (placed.clone(), shown.clone(), ui.scene.clone());
+            let mut first = true;
+            ui.bind(root, move || {
+                let stretch = shown.get();
+                // The list places its content as it mounts (`place`).
+                if std::mem::take(&mut first) {
+                    return;
+                }
+                let mut scene = scene.borrow_mut();
+                if scene.contains(content) {
+                    scene.set_transform(
+                        content,
+                        crate::scene::Transform {
+                            x: 0.,
+                            y: -(placed.get() + stretch),
+                        },
+                    );
+                }
+            });
+        }
+        Self {
+            content,
+            placed,
+            shown,
+        }
+    }
+    /// The list scrolled its content to `position`.
+    pub(crate) fn place(&self, scene: &mut crate::scene::Scene, position: f32) {
+        self.placed.set(position);
+        let stretch = self.shown.with_untracked(|s| *s);
+        scene.set_transform(
+            self.content,
+            crate::scene::Transform {
+                x: 0.,
+                y: -(position + stretch),
+            },
+        );
+    }
 }
 #[allow(clippy::too_many_arguments)]
 fn mount_scroll(

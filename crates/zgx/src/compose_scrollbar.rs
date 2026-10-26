@@ -20,11 +20,10 @@ const THUMB_ACTIVE: f32 = 8.;
 const THUMB_INSET: f32 = 2.;
 
 /// How long an overlay scrollbar stays once its view stops scrolling (or
-/// the pointer leaves it), how long it takes to fade out, and the fade's
-/// step: a frame.
+/// the pointer leaves it), and how long it takes to fade out, a step a
+/// refresh (`Ui::set_refresh_interval`).
 const LINGER: Duration = Duration::from_millis(1000);
 const FADE: Duration = Duration::from_millis(200);
-const FADE_STEP: Duration = Duration::from_millis(16);
 
 /// An overlay scrollbar's showing (`Ui::set_overlay_scrollbars`).
 pub(crate) struct Fade {
@@ -95,7 +94,7 @@ pub(crate) fn advance_fades(ui: &Ui, now: Instant) -> bool {
             fade.hide();
         } else {
             fade.alpha.set(1. - done);
-            fade.next.set(Some(now + FADE_STEP));
+            fade.next.set(Some(now + ui.refresh_interval()));
         }
         stepped = true;
     }

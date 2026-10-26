@@ -336,6 +336,14 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
             let viewport = ui.container(root, Layout::Overlay, Default::default());
             let content = ui.container(viewport, Layout::Overlay, Default::default());
             ui.scene.borrow_mut().set_scroll_copy(content, true);
+            let stretch = crate::compose::ListStretch::new(
+                ui,
+                root,
+                content,
+                offset.clone(),
+                size.clone(),
+                extent.clone(),
+            );
             let navigation = keyboard_navigation.then(|| {
                 crate::compose_virtual_keyboard::Navigation::new_variable(
                     ui,
@@ -690,13 +698,7 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                             },
                         );
                         scene.set_style(content, crate::widgets::fixed(width, total));
-                        scene.set_transform(
-                            content,
-                            crate::scene::Transform {
-                                x: 0.0,
-                                y: -position,
-                            },
-                        );
+                        stretch.place(&mut scene, position);
                         order.clear();
                         for (key, _, top, row_height) in &keys {
                             let entry = entries.get_mut(key).expect("a row");

@@ -82,6 +82,10 @@ fn a_trackpad_pulled_past_an_edge_stretches_it_and_letting_go_springs_back() {
     assert!(shift(&ui, content, &offset) < 0., "the end stretches up");
     phase(&mut ui, ScrollGesture::Ended);
     let start = ui.next_interaction_deadline().expect("it springs back");
+    // Momentum toward the edge meanwhile is spent in the spring: once it
+    // settles, what is left of it does not bounce.
+    phase(&mut ui, ScrollGesture::MomentumBegan);
+    scroll_by(&mut ui, 10.);
     ui.advance_interactions(start + Duration::from_millis(100))
         .unwrap();
     let midway = shift(&ui, content, &offset);
@@ -90,6 +94,9 @@ fn a_trackpad_pulled_past_an_edge_stretches_it_and_letting_go_springs_back() {
         .unwrap();
     assert_eq!(shift(&ui, content, &offset), 0., "back");
     assert_eq!(offset.get(), 300.);
+    scroll_by(&mut ui, 6.);
+    assert_eq!(shift(&ui, content, &offset), 0., "no bounce after");
+    phase(&mut ui, ScrollGesture::MomentumEnded);
     assert_eq!(
         ui.next_interaction_deadline(),
         None,
@@ -125,7 +132,18 @@ fn a_mouse_wheel_never_stretches_and_momentum_bounces_off_an_edge() {
     ui.advance_interactions(Instant::now() + Duration::from_secs(2))
         .unwrap();
     assert_eq!(shift(&ui, content, &offset), 0.);
+    // The rest of the momentum is spent at the edge: no second bounce.
+    scroll_by(&mut ui, -8.);
+    scroll_by(&mut ui, -4.);
+    assert_eq!(shift(&ui, content, &offset), 0., "it bounces once");
+    assert_eq!(ui.next_interaction_deadline(), None);
     phase(&mut ui, ScrollGesture::MomentumEnded);
+    // A gesture of its own bounces again.
+    phase(&mut ui, ScrollGesture::Began);
+    phase(&mut ui, ScrollGesture::Ended);
+    phase(&mut ui, ScrollGesture::MomentumBegan);
+    scroll_by(&mut ui, -20.);
+    assert!(shift(&ui, content, &offset) > 0., "a new fling bounces");
 }
 
 #[test]
@@ -153,4 +171,65 @@ fn a_nested_view_at_its_edge_lets_the_outer_one_stretch() {
     scroll_by(&mut ui, -40.);
     assert!(shift(&ui, outer_content, &outer) > 0., "the page bounces");
     assert_eq!(shift(&ui, inner_content, &inner), 0., "not the box in it");
+}
+
+/// Lists (`virtual_list`, measured lists: `ui.list`'s) stretch at their
+/// edges and spring back as a scroll view does.
+#[test]
+fn lists_stretch_at_their_edges_and_spring_back() {
+    for measured in [false, true] {
+        let mut ui = Ui::new(300., 200.);
+        ui.set_elastic_scrolling(true);
+        let offset = ui.signal(0.);
+        let list = if measured {
+            let heights = VariableHeights::new(&ui.runtime, 40, 20.);
+            measured_virtual_list(offset.clone(), heights, 1, |i| i, |_, _, _| div().h(20.))
+        } else {
+            virtual_list(offset.clone(), 20., 1, || 40, |i| i, |_, _, _| div().h(20.))
+        };
+        let view = ui.mount(list.w(200.).h(100.));
+        ui.prepare_frame();
+        let content = content(&ui, view.node());
+        phase(&mut ui, ScrollGesture::Began);
+        scroll_by(&mut ui, -40.);
+        let pulled = shift(&ui, content, &offset);
+        assert!(0. < pulled && pulled < 40., "measured {measured}: {pulled}");
+        assert_eq!(offset.get(), 0.);
+        phase(&mut ui, ScrollGesture::Ended);
+        let start = ui.next_interaction_deadline().expect("it springs back");
+        ui.advance_interactions(start + Duration::from_millis(800))
+            .unwrap();
+        ui.prepare_frame();
+        assert_eq!(
+            shift(&ui, content, &offset),
+            0.,
+            "measured {measured}: back"
+        );
+        // And the end, scrolled to, stretches up.
+        offset.set(700.);
+        ui.prepare_frame();
+        phase(&mut ui, ScrollGesture::Began);
+        scroll_by(&mut ui, 30.);
+        assert!(
+            shift(&ui, content, &offset) < 0.,
+            "measured {measured}: the end"
+        );
+        assert_eq!(offset.get(), 700.);
+    }
+}
+
+/// Springing back steps a refresh at a time, at the display's rate.
+#[test]
+fn a_spring_back_steps_every_refresh_of_the_display() {
+    let mut ui = Ui::new(300., 200.);
+    ui.set_elastic_scrolling(true);
+    ui.set_refresh_interval(Duration::from_micros(8_333));
+    let (_, _) = mount(&mut ui);
+    phase(&mut ui, ScrollGesture::Began);
+    scroll_by(&mut ui, -40.);
+    phase(&mut ui, ScrollGesture::Ended);
+    let start = ui.next_interaction_deadline().expect("it springs back");
+    ui.advance_interactions(start).unwrap();
+    let next = ui.next_interaction_deadline().expect("a step after");
+    assert_eq!(next.duration_since(start), Duration::from_micros(8_333));
 }
