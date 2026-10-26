@@ -202,6 +202,15 @@ impl DamageGrid {
         let (mut open, mut next) = (Vec::<(usize, usize, usize)>::new(), Vec::new());
         for row in 0..=self.rows {
             let columns = if row < self.rows { self.columns } else { 0 };
+            // A row as the one above continues its runs as they are (often:
+            // damage is mostly rectangles).
+            if row > 0
+                && row < self.rows
+                && self.cells[row * self.stride..(row + 1) * self.stride]
+                    == self.cells[(row - 1) * self.stride..row * self.stride]
+            {
+                continue;
+            }
             // Runs are found left to right and never overlap, so both lists
             // are in order: each is looked up in the other in one pass.
             let (mut column, mut at) = (0, 0);
