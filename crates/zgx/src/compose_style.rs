@@ -1,4 +1,5 @@
 //! Styling lowered onto retained nodes; state changes preserve mounted children.
+use crate::style::Opt32;
 use crate::{
     input::{EventPhase, InputEvent, Key, PointerButton},
     reactive::Signal,
@@ -245,13 +246,13 @@ type AppliedInputs = (Styles, Typography, Option<(f32, f32)>, Option<NodeId>);
 /// colour.
 #[derive(Clone, Copy, PartialEq, Default)]
 struct Paint {
-    opacity: Option<f32>,
-    blur: Option<f32>,
-    edge_fade: Option<f32>,
-    filter_blur: Option<f32>,
-    brightness: Option<f32>,
-    contrast: Option<f32>,
-    saturate: Option<f32>,
+    opacity: Opt32,
+    blur: Opt32,
+    edge_fade: Opt32,
+    filter_blur: Opt32,
+    brightness: Opt32,
+    contrast: Opt32,
+    saturate: Opt32,
     mask_offset: Option<(f32, f32)>,
     clip_inset: Option<crate::scene::ClipInset>,
     transform: Option<crate::scene::Transform>,
@@ -490,6 +491,7 @@ struct Memo {
 /// Which box fields `styles` sets (width, height, margins), whatever their
 /// values: a run that sets the same ones, with other values, changes only
 /// those fields of the node's layout style.
+#[inline(always)]
 fn boxes(styles: &Styles) -> (bool, bool, bool) {
     (
         styles.width.is_some() || styles.width_percent.is_some(),
@@ -498,13 +500,7 @@ fn boxes(styles: &Styles) -> (bool, bool, bool) {
     )
 }
 /// The box fields' values (see `boxes`).
-type Sizes = (
-    Option<f32>,
-    Option<f32>,
-    Option<f32>,
-    Option<f32>,
-    Option<crate::scene::Insets>,
-);
+type Sizes = (Opt32, Opt32, Opt32, Opt32, Option<crate::scene::Insets>);
 fn sizes(styles: &Styles) -> Sizes {
     (
         styles.width,
@@ -530,12 +526,12 @@ fn set_sizes(styles: &mut Styles, sizes: Sizes) {
 /// `style` with `next`'s box fields, as `apply_resolved` sets them.
 fn patch_sizes(style: &mut crate::scene::Style, next: &Styles) {
     if next.width.is_some() || next.width_percent.is_some() {
-        style.width = next.width;
-        style.width_percent = next.width_percent;
+        style.width = next.width.get();
+        style.width_percent = next.width_percent.get();
     }
     if next.height.is_some() || next.height_percent.is_some() {
-        style.height = next.height;
-        style.height_percent = next.height_percent;
+        style.height = next.height.get();
+        style.height_percent = next.height_percent.get();
     }
     if let Some(margin) = next.margin {
         style.margin = margin;
@@ -941,25 +937,25 @@ pub(crate) fn mount_style_with_intrinsic(
                     || produced.as_ref().is_some_and(Styles::has_tokens);
                 resolved.put(&mut applied.0);
                 let mut effects = originals.effects;
-                if let Some(value) = resolved.opacity {
+                if let Some(value) = resolved.opacity.get() {
                     effects.opacity = value;
                 }
-                if let Some(value) = resolved.blur {
+                if let Some(value) = resolved.blur.get() {
                     effects.blur_radius = value;
                 }
-                if let Some(value) = resolved.edge_fade {
+                if let Some(value) = resolved.edge_fade.get() {
                     effects.edge_fade = value;
                 }
-                if let Some(value) = resolved.filter_blur {
+                if let Some(value) = resolved.filter_blur.get() {
                     effects.filter_blur = value;
                 }
-                if let Some(value) = resolved.brightness {
+                if let Some(value) = resolved.brightness.get() {
                     effects.brightness = value;
                 }
-                if let Some(value) = resolved.contrast {
+                if let Some(value) = resolved.contrast.get() {
                     effects.contrast = value;
                 }
-                if let Some(value) = resolved.saturate {
+                if let Some(value) = resolved.saturate.get() {
                     effects.saturate = value;
                 }
                 // The text colour matters to text, and to what inherits it:
@@ -1099,7 +1095,7 @@ pub(crate) fn mount_style_with_intrinsic(
             parent
         } else {
             let size = match (
-                resolved.text_size,
+                resolved.text_size.get(),
                 token_of(&resolved, crate::theme::Field::TextSize),
             ) {
                 (Some(_), Some(token)) => Themed::Token(token),
@@ -1315,25 +1311,25 @@ pub(crate) fn mount_style_with_intrinsic(
                     scene.set_style(node, style.clone());
                 }
                 let mut effects = originals.effects;
-                if let Some(value) = next.opacity {
+                if let Some(value) = next.opacity.get() {
                     effects.opacity = value;
                 }
-                if let Some(value) = next.blur {
+                if let Some(value) = next.blur.get() {
                     effects.blur_radius = value;
                 }
-                if let Some(value) = next.edge_fade {
+                if let Some(value) = next.edge_fade.get() {
                     effects.edge_fade = value;
                 }
-                if let Some(value) = next.filter_blur {
+                if let Some(value) = next.filter_blur.get() {
                     effects.filter_blur = value;
                 }
-                if let Some(value) = next.brightness {
+                if let Some(value) = next.brightness.get() {
                     effects.brightness = value;
                 }
-                if let Some(value) = next.contrast {
+                if let Some(value) = next.contrast.get() {
                     effects.contrast = value;
                 }
-                if let Some(value) = next.saturate {
+                if let Some(value) = next.saturate.get() {
                     effects.saturate = value;
                 }
                 scene.set_effects(node, effects);
@@ -1422,7 +1418,7 @@ struct Originals {
 /// it is opaque. (In place: a 440-byte style moved in and out again was
 /// copied twice by every full application.)
 fn opaque_glass(ui: &Ui, resolved: &mut Styles, kind: &NodeKind) -> Option<bool> {
-    if !resolved.blur.is_some_and(|sigma| sigma > 0.) {
+    if !resolved.blur.get().is_some_and(|sigma| sigma > 0.) {
         return None;
     }
     if !ui.theme().system_preferences().reduced_transparency {
@@ -1439,7 +1435,7 @@ fn opaque_glass(ui: &Ui, resolved: &mut Styles, kind: &NodeKind) -> Option<bool>
     });
     let fields = resolved.fields_mut(crate::style::bit::BACKGROUND | crate::style::bit::BLUR);
     fields.background = background;
-    fields.blur = Some(0.);
+    fields.blur = Some(0.).into();
     Some(true)
 }
 #[allow(clippy::too_many_arguments)]
@@ -1465,17 +1461,17 @@ fn apply_resolved(
             style.layout_options = Some(resolved_options.clone());
         }
     }
-    macro_rules! field { ($($field:ident),* $(,)?) => { $(if let Some(value) = resolved.$field { style.$field = value; })* }; }
+    macro_rules! field { ($($field:ident),* $(,)?) => { $(if let Some(value) = Option::from(resolved.$field) { style.$field = value; })* }; }
     let rare = resolved.rare();
     macro_rules! dimension { ($($field:ident),* $(,)?) => { $(if let Some(value) = rare.$field { style.$field = Some(value); })* }; }
     dimension!(min_width, max_width, min_height, max_height);
     if resolved.width.is_some() || resolved.width_percent.is_some() {
-        style.width = resolved.width;
-        style.width_percent = resolved.width_percent;
+        style.width = resolved.width.get();
+        style.width_percent = resolved.width_percent.get();
     }
     if resolved.height.is_some() || resolved.height_percent.is_some() {
-        style.height = resolved.height;
-        style.height_percent = resolved.height_percent;
+        style.height = resolved.height.get();
+        style.height_percent = resolved.height_percent.get();
     }
     field!(
         absolute,
@@ -1562,25 +1558,25 @@ fn apply_resolved(
         }
     }
     let mut effects = originals.effects;
-    if let Some(value) = resolved.opacity {
+    if let Some(value) = resolved.opacity.get() {
         effects.opacity = value;
     }
-    if let Some(value) = resolved.blur {
+    if let Some(value) = resolved.blur.get() {
         effects.blur_radius = value;
     }
-    if let Some(value) = resolved.edge_fade {
+    if let Some(value) = resolved.edge_fade.get() {
         effects.edge_fade = value;
     }
-    if let Some(value) = resolved.filter_blur {
+    if let Some(value) = resolved.filter_blur.get() {
         effects.filter_blur = value;
     }
-    if let Some(value) = resolved.brightness {
+    if let Some(value) = resolved.brightness.get() {
         effects.brightness = value;
     }
-    if let Some(value) = resolved.contrast {
+    if let Some(value) = resolved.contrast.get() {
         effects.contrast = value;
     }
-    if let Some(value) = resolved.saturate {
+    if let Some(value) = resolved.saturate.get() {
         effects.saturate = value;
     }
     let mut scene = ui.scene.borrow_mut();
@@ -1590,7 +1586,7 @@ fn apply_resolved(
     }
     if let Some(content) = content_layout {
         let mut content_style = scene.style(content);
-        content_style.gap = resolved.gap.unwrap_or(0.);
+        content_style.gap = resolved.gap.get().unwrap_or(0.);
         content_style.align = resolved.align.unwrap_or(crate::scene::Align::Stretch);
         content_style.justify = resolved.justify.unwrap_or(crate::scene::Justify::Start);
         content_style.layout_options =
@@ -1617,13 +1613,13 @@ fn apply_resolved(
             if let Some(value) = resolved.background {
                 quad.fill = value;
             }
-            if let Some(value) = resolved.radius {
+            if let Some(value) = resolved.radius.get() {
                 quad.radius = value;
             }
             if let Some(value) = resolved.border_color {
                 quad.border_color = value;
             }
-            if let Some(value) = resolved.border_width {
+            if let Some(value) = resolved.border_width.get() {
                 quad.border_width = value;
             }
             if let Some(value) = resolved.rare().shadow {
@@ -1839,7 +1835,7 @@ mod tests {
             explicit,
             Styles::from(crate::style::StylesFields {
                 text_color: Some(Color(12, 34, 56, 255)),
-                text_size: Some(20.),
+                text_size: Some(20.).into(),
                 ..Default::default()
             }),
             parent.clone(),
@@ -1920,7 +1916,7 @@ mod tests {
         let mut styles = made();
         let paint = Paint::take(&mut styles);
         assert_eq!(
-            (paint.opacity, paint.text_color, paint.blur),
+            (paint.opacity.get(), paint.text_color, paint.blur.get()),
             (Some(0.4), Some(Color(1, 2, 3, 255)), None)
         );
         assert!(styles == Styles::new().w(10.));
@@ -2042,8 +2038,8 @@ mod tests {
                 if read.get() {
                     Styles::from(crate::style::StylesFields {
                         background: Some(Color(9, 0, 0, 255)),
-                        text_size: Some(40.),
-                        opacity: Some(0.5),
+                        text_size: Some(40.).into(),
+                        opacity: Some(0.5).into(),
                         ..Default::default()
                     })
                 } else {

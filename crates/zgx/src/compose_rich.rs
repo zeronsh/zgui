@@ -191,7 +191,8 @@ impl TextSpan {
             size
         } else {
             16.
-        });
+        })
+        .into();
         self
     }
     /// Families to try, in order, for characters the span's font lacks.

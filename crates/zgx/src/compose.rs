@@ -1423,7 +1423,7 @@ fn menu_focus(styles: &Styles) -> fn() -> Styles {
     }
 }
 fn bordered(styles: &Styles) -> bool {
-    styles.border_width.is_some_and(|width| width > 0.)
+    styles.border_width.get().is_some_and(|width| width > 0.)
         || styles.border_edges.is_some_and(|edges| edges.is_some())
 }
 /// A scroll view's size when nothing else sizes it (`Style::intrinsic_width`).
@@ -3891,6 +3891,7 @@ fn open_element(
                 let font_size = span
                     .styles
                     .text_size
+                    .get()
                     .unwrap_or_else(|| base.size_in(Some(&theme)));
                 let color = span
                     .styles

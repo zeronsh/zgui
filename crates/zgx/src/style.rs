@@ -37,6 +37,82 @@ pub enum ObjectFit {
 /// Defines the fields a [`Styles`] holds (`StylesFields`), each one's bit
 /// in `Styles::set` (`bit`), and what visits only the fields of given bits:
 /// one list, so no field can be left out of any.
+/// An `Option<f32>` in four bytes, for `Styles`' many optional numbers: a
+/// style is copied whole when a style function returns it and when it is
+/// kept, so each field's four bytes of tag were copied with it. `None` is
+/// one NaN payload no value is stored as: a NaN set is kept as the
+/// standard NaN. It compares and prints as the `Option<f32>` it holds (a
+/// NaN equal to nothing, as there).
+#[derive(Clone, Copy)]
+pub(crate) struct Opt32(u32);
+impl Opt32 {
+    /// The bits standing for `None`: a quiet NaN with a payload `f32::NAN`
+    /// (`0x7fc0_0000`) and arithmetic never produce.
+    const NONE: u32 = 0x7fc0_57e5;
+    pub(crate) const fn none() -> Self {
+        Self(Self::NONE)
+    }
+    #[inline]
+    pub(crate) fn get(self) -> Option<f32> {
+        match self.0 {
+            Self::NONE => None,
+            bits => Some(f32::from_bits(bits)),
+        }
+    }
+    #[inline]
+    pub(crate) fn is_some(self) -> bool {
+        self.0 != Self::NONE
+    }
+    #[inline]
+    pub(crate) fn is_none(self) -> bool {
+        self.0 == Self::NONE
+    }
+}
+impl Default for Opt32 {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+impl From<Option<f32>> for Opt32 {
+    #[inline]
+    fn from(value: Option<f32>) -> Self {
+        match value {
+            None => Self::none(),
+            Some(value) if value.is_nan() => Self(f32::NAN.to_bits()),
+            Some(value) => Self(value.to_bits()),
+        }
+    }
+}
+impl From<Opt32> for Option<f32> {
+    #[inline]
+    fn from(value: Opt32) -> Self {
+        value.get()
+    }
+}
+/// As `Option<f32>` compares, on the bits: the same bits are equal but for
+/// a NaN (equal to nothing); other bits only for 0 and -0.
+impl PartialEq for Opt32 {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        let (a, b) = (self.0, other.0);
+        match a == b {
+            true => a == Self::NONE || !f32::from_bits(a).is_nan(),
+            false => (a | b) << 1 == 0,
+        }
+    }
+}
+impl PartialEq<Option<f32>> for Opt32 {
+    #[inline]
+    fn eq(&self, other: &Option<f32>) -> bool {
+        self.get() == *other
+    }
+}
+impl std::fmt::Debug for Opt32 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
 macro_rules! styles {
     ($( $(#[$doc:meta])* $field:ident: $ty:ty = $bit:ident; )*) => {
         /// The properties a [`Styles`] holds, read through it (`Deref`);
@@ -101,39 +177,39 @@ styles! {
     object_fit: Option<ObjectFit> = OBJECT_FIT;
     layout: Option<Layout> = LAYOUT;
     absolute: Option<bool> = ABSOLUTE;
-    width: Option<f32> = WIDTH;
-    height: Option<f32> = HEIGHT;
-    width_percent: Option<f32> = WIDTH_PERCENT;
-    height_percent: Option<f32> = HEIGHT_PERCENT;
+    width: Opt32 = WIDTH;
+    height: Opt32 = HEIGHT;
+    width_percent: Opt32 = WIDTH_PERCENT;
+    height_percent: Opt32 = HEIGHT_PERCENT;
     padding: Option<Insets> = PADDING;
     margin: Option<Insets> = MARGIN;
-    gap: Option<f32> = GAP;
+    gap: Opt32 = GAP;
     clip: Option<bool> = CLIP;
-    flex_grow: Option<f32> = FLEX_GROW;
-    flex_shrink: Option<f32> = FLEX_SHRINK;
+    flex_grow: Opt32 = FLEX_GROW;
+    flex_shrink: Opt32 = FLEX_SHRINK;
     align: Option<Align> = ALIGN;
     justify: Option<Justify> = JUSTIFY;
     text_wrap: Option<bool> = TEXT_WRAP;
     background: Option<Color> = BACKGROUND;
     cursor: Option<crate::cursor::Cursor> = CURSOR;
     text_color: Option<Color> = TEXT_COLOR;
-    text_size: Option<f32> = TEXT_SIZE;
+    text_size: Opt32 = TEXT_SIZE;
     line_height: Option<crate::text_layout::LineHeight> = LINE_HEIGHT;
     font_family: Option<crate::text_layout::FontFamily> = FONT_FAMILY;
     text_align: Option<crate::text_layout::TextAlign> = TEXT_ALIGN;
     font_weight: Option<u16> = FONT_WEIGHT;
     italic: Option<bool> = ITALIC;
-    radius: Option<f32> = RADIUS;
-    border_width: Option<f32> = BORDER_WIDTH;
+    radius: Opt32 = RADIUS;
+    border_width: Opt32 = BORDER_WIDTH;
     border_color: Option<Color> = BORDER_COLOR;
-    opacity: Option<f32> = OPACITY;
-    blur: Option<f32> = BLUR;
-    edge_fade: Option<f32> = EDGE_FADE;
-    filter_blur: Option<f32> = FILTER_BLUR;
+    opacity: Opt32 = OPACITY;
+    blur: Opt32 = BLUR;
+    edge_fade: Opt32 = EDGE_FADE;
+    filter_blur: Opt32 = FILTER_BLUR;
     /// Colour filters (`Styled::brightness` and the rest).
-    brightness: Option<f32> = BRIGHTNESS;
-    contrast: Option<f32> = CONTRAST;
-    saturate: Option<f32> = SATURATE;
+    brightness: Opt32 = BRIGHTNESS;
+    contrast: Opt32 = CONTRAST;
+    saturate: Opt32 = SATURATE;
     /// Where `RareStyles::mask` lies over the node: animated every frame.
     mask_offset: Option<(f32, f32)> = MASK_OFFSET;
     /// `Styled::clip_inset`: animated every frame.
@@ -1235,46 +1311,48 @@ pub trait Styled: Sized {
     /// The width in points, or a theme token; replaces `w_percent`.
     fn w(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Width);
-        self.styles_mut().fields_mut(bit::WIDTH).width = Some(value);
+        self.styles_mut().fields_mut(bit::WIDTH).width = Some(value).into();
         self.styles_mut()
             .fields_mut(bit::WIDTH_PERCENT)
-            .width_percent = None;
+            .width_percent = Opt32::none();
         self
     }
     /// The height in points, or a theme token; replaces `h_percent`.
     fn h(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Height);
-        self.styles_mut().fields_mut(bit::HEIGHT).height = Some(value);
+        self.styles_mut().fields_mut(bit::HEIGHT).height = Some(value).into();
         self.styles_mut()
             .fields_mut(bit::HEIGHT_PERCENT)
-            .height_percent = None;
+            .height_percent = Opt32::none();
         self
     }
     /// Width as a percentage of the parent's definite content width; 100 fills it.
     /// Indefinite parent widths use intrinsic sizing. Flex allocation and min/max
     /// constraints still apply. Negative and non-finite values normalize to zero.
     fn w_percent(mut self, percent: f32) -> Self {
-        self.styles_mut().fields_mut(bit::WIDTH).width = None;
+        self.styles_mut().fields_mut(bit::WIDTH).width = Opt32::none();
         self.styles_mut()
             .fields_mut(bit::WIDTH_PERCENT)
             .width_percent = Some(if percent.is_finite() {
             percent.max(0.) / 100.
         } else {
             0.
-        });
+        })
+        .into();
         self
     }
     /// Height as a percentage of the parent's definite content height.
     /// Uses the same normalization and intrinsic fallback as `w_percent`.
     fn h_percent(mut self, percent: f32) -> Self {
-        self.styles_mut().fields_mut(bit::HEIGHT).height = None;
+        self.styles_mut().fields_mut(bit::HEIGHT).height = Opt32::none();
         self.styles_mut()
             .fields_mut(bit::HEIGHT_PERCENT)
             .height_percent = Some(if percent.is_finite() {
             percent.max(0.) / 100.
         } else {
             0.
-        });
+        })
+        .into();
         self
     }
     /// Fill the parent's definite content width, subject to flex and min/max rules.
@@ -1351,20 +1429,20 @@ pub trait Styled: Sized {
             options.gap_x = None;
             options.gap_y = None;
         }
-        self.styles_mut().fields_mut(bit::GAP).gap = Some(value);
+        self.styles_mut().fields_mut(bit::GAP).gap = Some(value).into();
         self
     }
     /// How much of its parent's free space this child takes, in proportion
     /// to its siblings' (CSS `flex-grow`).
     fn flex_grow(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::FLEX_GROW).flex_grow = Some(value);
+        self.styles_mut().fields_mut(bit::FLEX_GROW).flex_grow = Some(value).into();
         self
     }
     /// How much this child gives up when its parent is short of space, in
     /// proportion to its siblings' (CSS `flex-shrink`; 1 unless set). It
     /// shrinks no smaller than its content unless `min_w`/`min_h` allow.
     fn flex_shrink(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::FLEX_SHRINK).flex_shrink = Some(value);
+        self.styles_mut().fields_mut(bit::FLEX_SHRINK).flex_shrink = Some(value).into();
         self
     }
     /// Fill the background with `brush` (a colour, or a gradient between two
@@ -1595,7 +1673,7 @@ pub trait Styled: Sized {
     /// The font size in points, or a theme token. Inherited.
     fn text_size(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::TextSize);
-        self.styles_mut().fields_mut(bit::TEXT_SIZE).text_size = Some(value);
+        self.styles_mut().fields_mut(bit::TEXT_SIZE).text_size = Some(value).into();
         self
     }
     /// Set inherited line spacing in logical pixels. Invalid/non-positive values
@@ -1638,7 +1716,7 @@ pub trait Styled: Sized {
     /// replaces `rounded_corners`.
     fn rounded(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Radius);
-        self.styles_mut().fields_mut(bit::RADIUS).radius = Some(value);
+        self.styles_mut().fields_mut(bit::RADIUS).radius = Some(value).into();
         self.styles_mut().fields_mut(bit::CORNERS).corners = Some(None);
         self
     }
@@ -1646,7 +1724,7 @@ pub trait Styled: Sized {
     /// replaces `border_edges`.
     fn border(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::BorderWidth);
-        self.styles_mut().fields_mut(bit::BORDER_WIDTH).border_width = Some(value);
+        self.styles_mut().fields_mut(bit::BORDER_WIDTH).border_width = Some(value).into();
         self.styles_mut().fields_mut(bit::BORDER_EDGES).border_edges = Some(None);
         self
     }
@@ -1660,7 +1738,7 @@ pub trait Styled: Sized {
     /// item by item unless `isolated`.
     fn opacity(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Opacity);
-        self.styles_mut().fields_mut(bit::OPACITY).opacity = Some(value);
+        self.styles_mut().fields_mut(bit::OPACITY).opacity = Some(value).into();
         self
     }
     /// Backdrop blur (CSS `backdrop-filter: blur()`): what lies behind the
@@ -1669,7 +1747,7 @@ pub trait Styled: Sized {
     /// node's content itself, see `filter_blur`.
     fn blur(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Blur);
-        self.styles_mut().fields_mut(bit::BLUR).blur = Some(value);
+        self.styles_mut().fields_mut(bit::BLUR).blur = Some(value).into();
         self
     }
     /// Content blur (CSS `filter: blur()`): the node and its subtree blur by
@@ -1678,7 +1756,7 @@ pub trait Styled: Sized {
     /// sigma (a fade in from blurred text) only composites it again. Unlike
     /// `blur`, what lies behind is untouched.
     fn filter_blur(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::FILTER_BLUR).filter_blur = Some(value);
+        self.styles_mut().fields_mut(bit::FILTER_BLUR).filter_blur = Some(value).into();
         self
     }
     /// CSS `filter: brightness()`: the view and its subtree, as a group,
@@ -1686,18 +1764,18 @@ pub trait Styled: Sized {
     /// a button brightens on hover. Applied as the GPU writes each colour:
     /// no layer, and animating it repaints only the view's area.
     fn brightness(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::BRIGHTNESS).brightness = Some(value);
+        self.styles_mut().fields_mut(bit::BRIGHTNESS).brightness = Some(value).into();
         self
     }
     /// CSS `filter: contrast()`: colours pushed from (or, below 1, towards)
     /// mid grey.
     fn contrast(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::CONTRAST).contrast = Some(value);
+        self.styles_mut().fields_mut(bit::CONTRAST).contrast = Some(value).into();
         self
     }
     /// CSS `filter: saturate()`: 0 is greyscale, past 1 more vivid.
     fn saturate(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::SATURATE).saturate = Some(value);
+        self.styles_mut().fields_mut(bit::SATURATE).saturate = Some(value).into();
         self
     }
     /// Show the node's content through `image`'s alpha (CSS `mask-image`,
@@ -1744,7 +1822,7 @@ pub trait Styled: Sized {
     }
     /// Fade the view's top and bottom edges out over `value` points.
     fn edge_fade(mut self, value: f32) -> Self {
-        self.styles_mut().fields_mut(bit::EDGE_FADE).edge_fade = Some(value);
+        self.styles_mut().fields_mut(bit::EDGE_FADE).edge_fade = Some(value).into();
         self
     }
     /// Render the subtree as a group into a cached layer, then composite it
@@ -2368,6 +2446,76 @@ pub const fn rgba(value: u32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Values an optional number takes: unset, zeros, ordinary numbers,
+    /// infinities and NaNs (one with `Opt32`'s own payload, which must
+    /// still read back as a number, not as unset).
+    fn optional_numbers() -> [Option<f32>; 10] {
+        [
+            None,
+            Some(0.),
+            Some(-0.),
+            Some(1.5),
+            Some(f32::MIN_POSITIVE),
+            Some(f32::INFINITY),
+            Some(f32::NEG_INFINITY),
+            Some(f32::NAN),
+            Some(-f32::NAN),
+            Some(f32::from_bits(Opt32::NONE)),
+        ]
+    }
+    /// `Opt32` holds what an `Option<f32>` holds and compares and prints as
+    /// it does: a NaN equal to nothing, itself included.
+    #[test]
+    fn an_optional_number_in_four_bytes_behaves_as_an_option() {
+        assert_eq!(std::mem::size_of::<Opt32>(), 4);
+        for a in optional_numbers() {
+            let x = Opt32::from(a);
+            assert_eq!(x.is_some(), a.is_some(), "{a:?}");
+            assert_eq!(x.is_none(), a.is_none(), "{a:?}");
+            match (x.get(), a) {
+                (None, None) => {}
+                (Some(got), Some(set)) if set.is_nan() => assert!(got.is_nan(), "{a:?}"),
+                (Some(got), Some(set)) => assert_eq!(got.to_bits(), set.to_bits(), "{a:?}"),
+                (got, set) => panic!("{set:?} read back as {got:?}"),
+            }
+            assert_eq!(format!("{x:?}"), format!("{a:?}"));
+            for b in optional_numbers() {
+                assert_eq!(x == Opt32::from(b), a == b, "{a:?} {b:?}");
+                assert_eq!(x == b, a == b, "{a:?} {b:?}");
+            }
+        }
+    }
+    /// Each optional number of `Styles` compares, and counts as set, as the
+    /// `Option<f32>` it was: two styles differing in it alone are equal
+    /// exactly when those options are, and it differs from its default
+    /// exactly when it is set.
+    #[test]
+    fn styles_optional_numbers_compare_as_options() {
+        macro_rules! each {
+            ($($field:ident $bit:ident),* $(,)?) => {$(
+                for a in optional_numbers() {
+                    let with = |value: Option<f32>| {
+                        let mut styles = Styles::default();
+                        styles.fields_mut(bit::$bit).$field = value.into();
+                        styles
+                    };
+                    assert_eq!(with(a).fields.mask() != 0, a.is_some(), "{} {a:?}", stringify!($field));
+                    for b in optional_numbers() {
+                        assert_eq!(with(a) == with(b), a == b, "{} {a:?} {b:?}", stringify!($field));
+                    }
+                }
+            )*};
+        }
+        each!(
+            width WIDTH, height HEIGHT, width_percent WIDTH_PERCENT,
+            height_percent HEIGHT_PERCENT, gap GAP, flex_grow FLEX_GROW,
+            flex_shrink FLEX_SHRINK, text_size TEXT_SIZE, radius RADIUS,
+            border_width BORDER_WIDTH, opacity OPACITY, blur BLUR,
+            edge_fade EDGE_FADE, filter_blur FILTER_BLUR, brightness BRIGHTNESS,
+            contrast CONTRAST, saturate SATURATE,
+        );
+    }
     /// Comparing only the fields set in either (`Styles::set`) agrees with
     /// comparing every field, however the styles were made: by builders,
     /// merged, from fields, with paint taken out, or set and set back.
@@ -2388,7 +2536,7 @@ mod tests {
                 .gap(2.)
                 .layout_options(LayoutOptions::default()),
             Styles::from(StylesFields {
-                height: Some(10.),
+                height: Some(10.).into(),
                 margin: Some(Insets {
                     top: 3.,
                     ..Insets::default()
@@ -2403,11 +2551,11 @@ mod tests {
         // Paint set, then taken out: as if never set.
         let mut taken = Styles::new().opacity(0.5).mt(3.).h(10.);
         let fields = taken.fields_taken(bit::OPACITY);
-        fields.opacity = None;
+        fields.opacity = Opt32::none();
         cases.push(taken);
         // Set, then set back: its bit stays, its value is the default's.
         let mut back = Styles::new().gap(2.);
-        back.fields_mut(bit::GAP).gap = None;
+        back.fields_mut(bit::GAP).gap = Opt32::none();
         cases.push(back);
         for a in &cases {
             for b in &cases {
@@ -2427,7 +2575,13 @@ mod tests {
                         s.width_percent,
                         s.height_percent,
                         s.margin,
-                    ) = (None, None, None, None, None);
+                    ) = (
+                        Opt32::none(),
+                        Opt32::none(),
+                        Opt32::none(),
+                        Opt32::none(),
+                        None,
+                    );
                     s
                 };
                 assert_eq!(a.eq_except_sizes(b), sizes(a) == sizes(b));
@@ -2455,7 +2609,7 @@ mod tests {
             })),
             rare: Some(rare.clone()),
             tokens: Some(tokens.clone()),
-            width: Some(12.),
+            width: Some(12.).into(),
             ..StylesFields::default()
         });
         let copy = original.clone();
