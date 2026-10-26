@@ -185,7 +185,7 @@ For low-level integration, `Ui` owns widget bindings and subscriptions. Returned
 
 ## Animation frames
 
-Animate from the window's frame clock rather than a timer. `cx.frames()` in a component (or `WindowContext::frames`) returns a `zgx::frame::FrameClock`; awaiting `frames.next()` resolves once per display refresh with a `Frame` whose `time` is the expected presentation time. Drive animations from that value, not `Instant::now()`, so they advance by whole refreshes even when the UI thread runs late. The host only ticks while a request is waiting, so an idle window does no work, and hidden, minimized or occluded windows pause until they are shown again.
+Animate from the window's frame clock rather than a timer. `cx.frames()` in a component (or `WindowContext::frames`) returns a `zgx::frame::FrameClock`; awaiting `frames.next()` resolves once per display refresh with a `Frame` whose `time` is the expected presentation time. Drive animations from that value, not `Instant::now()`, so they advance by whole refreshes even when the UI thread runs late. The host only ticks while a request is waiting, so an idle window does no work, and hidden, minimized or occluded windows pause until they are shown again. On macOS, the first press, key, scroll or gesture after a window has idled (about 1.5 s without a frame) wakes the GPU while its frame is being built, so that frame does not wait for the GPU to wake up (about 5 ms sooner on screen); `ZGX_GPU_WARM=0` turns this off.
 
 ```rust,ignore
 let frames = cx.frames();

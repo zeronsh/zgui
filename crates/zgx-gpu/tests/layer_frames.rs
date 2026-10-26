@@ -311,6 +311,31 @@ fn full_rate_frames_show_as_tiles_without_a_video_layer() {
     assert_eq!(tiles.len(), 1, "at rest: one tile ({tiles:?})");
 }
 
+/// Input after a window idled (`trim`) wakes the GPU once (`warm_up`): not
+/// before it idles, not for later input, and again after the next idle; the
+/// frames drawn around it show as before.
+#[cfg(target_os = "macos")]
+fn input_after_idle_wakes_the_gpu_once() {
+    let mut window = Window::new(1);
+    window.show();
+    window.gpu.warm_up();
+    assert_eq!(window.gpu.debug_warms(), 0, "warmed before idling");
+    window.gpu.trim();
+    window.gpu.warm_up();
+    window.gpu.warm_up();
+    assert_eq!(window.gpu.debug_warms(), 1, "one input after idling");
+    window.live.set(2);
+    assert!(
+        window.show() == Window::new(2).show(),
+        "the frame after a warm-up differs from the scene drawn whole"
+    );
+    window.gpu.warm_up();
+    assert_eq!(window.gpu.debug_warms(), 1, "warmed while drawing");
+    window.gpu.trim();
+    window.gpu.warm_up();
+    assert_eq!(window.gpu.debug_warms(), 2, "the next idle");
+}
+
 fn main() {
     #[cfg(target_os = "macos")]
     {
@@ -324,5 +349,7 @@ fn main() {
         println!("layer_frames: shown frame regions are the whole frame's rows");
         full_rate_frames_show_as_tiles_without_a_video_layer();
         println!("layer_frames: full-rate frames show as tiles without a video layer");
+        input_after_idle_wakes_the_gpu_once();
+        println!("layer_frames: input after idle wakes the GPU once");
     }
 }

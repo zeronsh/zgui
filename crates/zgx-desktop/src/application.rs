@@ -3015,6 +3015,13 @@ impl Host {
         self.force = true;
     }
     fn window_event(&mut self, event: WindowEvent) -> Result<(), Box<dyn Error>> {
+        // The GPU wakes while the frame the input makes is built, or while a
+        // scroll waits for the refresh it starts on.
+        if acts(&event)
+            && let Some(renderer) = &mut self.renderer
+        {
+            renderer.warm_up();
+        }
         if matches!(
             event,
             WindowEvent::Moved(_)
@@ -4241,6 +4248,20 @@ fn windows_clipboard_alias(key: &Key, m: zgx::input::Modifiers) -> Option<&'stat
         Key::Insert if m.shift && !m.control && !m.alt => Some("v"),
         Key::Delete if m.shift && !m.control && !m.alt => Some("x"),
         _ => None,
+    }
+}
+/// Whether `event` is input that acts (a press, a key, a scroll, a gesture,
+/// text), which a frame usually follows: not a pointer passing over, or
+/// lifted.
+fn acts(event: &WindowEvent) -> bool {
+    match event {
+        WindowEvent::MouseInput { state, .. } => state.is_pressed(),
+        WindowEvent::KeyboardInput { event, .. } => event.state.is_pressed(),
+        WindowEvent::Touch(touch) => touch.phase == winit::event::TouchPhase::Started,
+        WindowEvent::MouseWheel { .. }
+        | WindowEvent::PinchGesture { .. }
+        | WindowEvent::Ime(winit::event::Ime::Preedit(..) | winit::event::Ime::Commit(_)) => true,
+        _ => false,
     }
 }
 fn read_maximized_without_style_change(
@@ -6017,6 +6038,46 @@ fn spring_delay() -> Option<std::time::Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presses_scrolls_and_gestures_act_and_a_passing_pointer_does_not() {
+        let device_id = winit::event::DeviceId::dummy();
+        let button = |state| WindowEvent::MouseInput {
+            device_id,
+            state,
+            button: MouseButton::Left,
+        };
+        assert!(acts(&button(ElementState::Pressed)));
+        assert!(!acts(&button(ElementState::Released)));
+        assert!(acts(&WindowEvent::MouseWheel {
+            device_id,
+            delta: winit::event::MouseScrollDelta::PixelDelta((0., 12.).into()),
+            phase: winit::event::TouchPhase::Started,
+        }));
+        assert!(acts(&WindowEvent::PinchGesture {
+            device_id,
+            delta: 0.1,
+            phase: winit::event::TouchPhase::Moved,
+        }));
+        assert!(acts(&WindowEvent::Ime(winit::event::Ime::Commit(
+            "a".into()
+        ))));
+        assert!(!acts(&WindowEvent::CursorMoved {
+            device_id,
+            position: (10., 10.).into(),
+        }));
+        let touch = |phase| {
+            WindowEvent::Touch(winit::event::Touch {
+                device_id,
+                phase,
+                location: (10., 10.).into(),
+                force: None,
+                id: 0,
+            })
+        };
+        assert!(acts(&touch(winit::event::TouchPhase::Started)));
+        assert!(!acts(&touch(winit::event::TouchPhase::Moved)));
+    }
 
     #[test]
     fn a_snapshot_reads_only_what_its_node_covers_on_the_window() {

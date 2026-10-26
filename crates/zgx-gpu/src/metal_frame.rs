@@ -59,6 +59,9 @@ pub(crate) struct MetalFrame {
     /// Polyline strokes' library and pipelines, compiled with the first
     /// (None: not here).
     polyline: std::cell::OnceCell<Option<Polylines>>,
+    /// The 1×1 texture `warm` clears, made with the first (`None`: Metal
+    /// made none).
+    warm: std::cell::OnceCell<Option<Texture>>,
 }
 
 /// Polyline strokes' pipeline (polyline.wgsl).
@@ -148,7 +151,43 @@ impl MetalFrame {
             fills: Default::default(),
             image_effects: std::cell::OnceCell::new(),
             polyline: std::cell::OnceCell::new(),
+            warm: std::cell::OnceCell::new(),
         })
+    }
+
+    /// Wake the GPU: a pass clearing a 1×1 private texture, committed without
+    /// waiting (an empty command buffer may wake nothing). Nothing if Metal
+    /// refuses any of it (a lost device): the frame that follows reports that.
+    pub(crate) fn warm(&self) {
+        let target = self.warm.get_or_init(|| {
+            use objc2_metal::{MTLStorageMode, MTLTextureDescriptor, MTLTextureUsage};
+            // SAFETY: A plain 2D texture descriptor of one texel.
+            let descriptor = unsafe {
+                MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                    MTLPixelFormat::BGRA8Unorm,
+                    1,
+                    1,
+                    false,
+                )
+            };
+            descriptor.setUsage(MTLTextureUsage::RenderTarget);
+            descriptor.setStorageMode(MTLStorageMode::Private);
+            self.device.newTextureWithDescriptor(&descriptor)
+        });
+        let (Some(target), Some(buffer)) = (target, self.queue.commandBuffer()) else {
+            return;
+        };
+        let pass = MTLRenderPassDescriptor::new();
+        // SAFETY: Index 0 of a render pass descriptor's colour attachments.
+        let color = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
+        color.setTexture(Some(target));
+        color.setLoadAction(MTLLoadAction::Clear);
+        color.setStoreAction(MTLStoreAction::Store);
+        let Some(encoder) = buffer.renderCommandEncoderWithDescriptor(&pass) else {
+            return;
+        };
+        encoder.endEncoding();
+        buffer.commit();
     }
 
     /// Whether polyline strokes can be drawn here: their pipeline, compiled

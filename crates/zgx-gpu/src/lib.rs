@@ -1562,6 +1562,14 @@ const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(500)
 #[cfg(target_os = "macos")]
 static VIDEO_AT_FULL_RATE: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_PRESENT_VIDEO").is_some());
+/// `ZGX_GPU_WARM=0`: the first input after a window idled (`trim`) no longer
+/// wakes the GPU ahead of its frame (`GpuRenderer::warm_up`). Measured
+/// (2026-10-26, the mail example after idle, 8 gestures a cell): the first
+/// frame's present 6.7 → 1.7 ms, the second frame's time and the CPU and
+/// instructions per frame shown, at rest and animating, unchanged.
+#[cfg(target_os = "macos")]
+static WARM_AFTER_IDLE: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_GPU_WARM").is_none_or(|v| v != "0"));
 /// How long the video layer outlasts full-rate frames (`LayerPresent::video_until`).
 #[cfg(target_os = "macos")]
 const VIDEO_LINGER: std::time::Duration = std::time::Duration::from_secs(1);
@@ -2177,6 +2185,8 @@ pub struct GpuRenderer {
     direct_frames: u64,
     /// Frames encoded with Metal directly (`render_direct`).
     metal_frames: u64,
+    /// Passes waking the GPU for input after idling (`warm_up`).
+    warms: u64,
     /// Work encoded at presentation (single-pass frames), reported with the
     /// next `render`'s statistics.
     present_stats: GpuStats,
@@ -2277,6 +2287,10 @@ pub struct GpuRenderer {
     /// A directly encoded frame, committed, until it is known complete.
     #[cfg(target_os = "macos")]
     metal_inflight: RefCell<Option<metal_frame::CommandBuffer>>,
+    /// Trimmed, and nothing drawn since: the next input wakes the GPU
+    /// (`warm_up`).
+    #[cfg(target_os = "macos")]
+    idle: bool,
     /// How long the GPU took to run the last direct frame (`take_gpu_time`).
     #[cfg(target_os = "macos")]
     gpu_time: std::cell::Cell<Option<std::time::Duration>>,
@@ -2661,6 +2675,8 @@ impl GpuRenderer {
             #[cfg(target_os = "macos")]
             metal_inflight: RefCell::new(None),
             #[cfg(target_os = "macos")]
+            idle: false,
+            #[cfg(target_os = "macos")]
             gpu_time: std::cell::Cell::new(None),
             #[cfg(target_os = "macos")]
             viewport_values: [0.; 4],
@@ -2672,6 +2688,7 @@ impl GpuRenderer {
             single_pass_frames: 0,
             direct_frames: 0,
             metal_frames: 0,
+            warms: 0,
             present_stats: GpuStats::default(),
             atlas,
             atlas_size: 1,
@@ -2926,6 +2943,10 @@ impl GpuRenderer {
     /// Draw `scene`'s `damage` (logical rectangles) to the target, and report
     /// what it did.
     pub fn render(&mut self, scene: &Scene, damage: &[Rect]) -> Result<GpuStats, GpuError> {
+        #[cfg(target_os = "macos")]
+        {
+            self.idle = false;
+        }
         let presented = std::mem::take(&mut self.present_stats);
         let mut stats = {
             let _span = zgx::profile::span(zgx::profile::Phase::Paint);
@@ -7965,6 +7986,23 @@ impl GpuRenderer {
         {
             self.narrow_drawables();
             self.release_drawables();
+            self.idle = true;
+        }
+    }
+    /// Input arrived: if the window idled (`trim`) and has drawn nothing
+    /// since, wake the GPU now with a trivial pass, committed without
+    /// waiting, so the frame the input makes need not wait for it to wake.
+    /// On macOS, unless `ZGX_GPU_WARM=0`; elsewhere nothing.
+    #[doc(hidden)]
+    pub fn warm_up(&mut self) {
+        #[cfg(target_os = "macos")]
+        if *WARM_AFTER_IDLE
+            && std::mem::take(&mut self.idle)
+            && let Some(Some(frame)) = self.metal_frame.get()
+        {
+            present_log::log(|| "warm".into());
+            frame.warm();
+            self.warms += 1;
         }
     }
     #[cfg(target_os = "macos")]
@@ -8064,6 +8102,11 @@ impl GpuRenderer {
     )]
     #[doc(hidden)]
     pub fn debug_stencil(&mut self, _stencil: bool) {}
+    /// Passes that woke the GPU for input after idling (`warm_up`).
+    #[doc(hidden)]
+    pub fn debug_warms(&self) -> u64 {
+        self.warms
+    }
     /// Test hook: a renderer presenting through surfaces of its own, as a
     /// window's does, into `host` (a layer of the caller's), without a
     /// window: `width` by `height` pixels.
