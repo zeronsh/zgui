@@ -73,6 +73,9 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import preflight  # noqa: E402
 from staging import CWD, clean_env, stage  # noqa: E402
 REQUESTED, WARMUP, SAMPLED, INTERVAL = 20, 5, 15, 0.05
+# App lifetimes include readiness and sampler setup; samples start after
+# readiness, so a slower framework's startup cannot shorten its sample.
+READY_TIMEOUT, LIFETIME_MARGIN = 5, 6
 # Idle is sampled 20-35 s after launch, five times: until the Metal driver
 # gives back the memory it holds for any process that used the GPU lately
 # (a ~180 MB floor, returned ~6 or ~8 s after launch for every framework, on
@@ -151,6 +154,7 @@ SCENES = {
 # the stronger GPUI, MyGo and Rune.
 SUITE_FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune']
 SAMPLER, PACER, BLANK = Path('/tmp/zgx-macsample'), Path('/tmp/zgx-framepace'), Path('/tmp/zgx-blankprobe')
+READY = Path('/tmp/zgx-window-ready')
 # The one font file every adapter loads (comparisons/fonts), and how each
 # reports the bytes it loaded (zgx_workload::fnv64).
 FONT = ROOT / 'comparisons/fonts/DejaVuSans.ttf'
@@ -174,7 +178,7 @@ METRICS = ['cpu_percent_one_core', 'cpu_watts', 'instructions', 'cycles', 'gpu_p
            'mean_footprint_bytes', 'peak_footprint_bytes', 'mean_rss_bytes', 'peak_rss_bytes',
            'workload_ticks', 'wall_seconds']
 POWER = ['package_mw', 'cpu_mw', 'gpu_mw']
-FIELDS = ['framework', 'mode', 'repeat', 'ran_seconds', 'requested_seconds', 'font_fnv64', 'wall_seconds', 'cpu_seconds', 'cpu_percent_one_core', 'cpu_energy_joules',
+FIELDS = ['framework', 'mode', 'repeat', 'ran_seconds', 'requested_seconds', 'ready_seconds', 'font_fnv64', 'wall_seconds', 'cpu_seconds', 'cpu_percent_one_core', 'cpu_energy_joules',
           'cpu_watts', 'instructions', 'cycles', 'gpu_seconds', 'gpu_percent', 'gpu_mcycles_per_second',
           'gpu_active_mhz', 'gpu_system_watts', 'windowserver_cpu_percent',
           'windowserver_gpu_percent', 'gpu_utilization_percent', 'mean_footprint_bytes', 'peak_footprint_bytes',
@@ -209,6 +213,7 @@ def tools():
     run(['swiftc', '-O', str(ROOT / 'scripts/macsample.swift'), '-o', str(SAMPLER), '-lIOReport'])
     run(['swiftc', '-O', str(ROOT / 'scripts/framepace.swift'), '-o', str(PACER)])
     run(['swiftc', '-O', str(ROOT / 'scripts/blankprobe.swift'), '-o', str(BLANK)])
+    run(['swiftc', '-O', str(ROOT / 'scripts/window_ready.swift'), '-o', str(READY)])
 
 
 def toolchains(frameworks):
@@ -257,10 +262,28 @@ def launch(binary, mode, seconds, log):
         env['ZGX_FONT_FILE'] = str(stage(FONT))
     with log.open('w') as handle:
         # A copy outside ~/Documents, run in /tmp (see scripts/staging.py).
+        started = time.monotonic()
         process = subprocess.Popen([str(stage(binary))], stdout=handle, stderr=subprocess.STDOUT, env=env, cwd=CWD)
-    time.sleep(0.5)
-    # Bring the window forward: covered windows may stop presenting.
-    subprocess.run(['osascript', '-e', f'tell application "System Events" to set frontmost of (first process whose unix id is {process.pid}) to true'], capture_output=True)
+    process.benchmark_started = started
+    # vlist's height probe may be headless (Rune); it is not a timed trial.
+    if mode != 'probe':
+        try:
+            ready = json.loads(run([str(READY), str(process.pid), str(READY_TIMEOUT)]))
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
+            failure = {'error': str(error), 'stdout': getattr(error, 'stdout', None),
+                       'stderr': getattr(error, 'stderr', None)}
+            log.with_suffix('.ready-error.json').write_text(json.dumps(failure, indent=1) + '\n')
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+            raise SystemExit(f'window readiness failed; inspect {log.with_suffix(".ready-error.json")}') from error
+        if not ready.get('ready'):
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+            raise SystemExit(f'window readiness failed: {ready}')
+        process.benchmark_ready_seconds = time.monotonic() - started
+        log.with_suffix('.ready.json').write_text(json.dumps({**ready, 'spawn_to_ready_seconds': process.benchmark_ready_seconds}, indent=1) + '\n')
     return process
 
 
@@ -276,7 +299,7 @@ def finish(process, seconds):
 
 def powermetrics():
     """Package, CPU and GPU power over the sampled window, if sudo allows."""
-    command = f'sleep {WARMUP - 0.5}; exec sudo -n /usr/bin/powermetrics --samplers cpu_power,gpu_power -f plist -i 1000 -n {SAMPLED}'
+    command = f'sleep {WARMUP}; exec sudo -n /usr/bin/powermetrics --samplers cpu_power,gpu_power -f plist -i 1000 -n {SAMPLED}'
     return subprocess.Popen(['/bin/sh', '-c', command], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 
@@ -329,23 +352,23 @@ def one_trial(scene, framework, mode, repeat, out, power, paced=None):
     """One timed trial; with `paced` (a list), its frames' pacing too, appended there."""
     log = out / f'{framework}.{mode}.{repeat}.log'
     idle = mode == 'idle'
-    requested = IDLE_SETTLE + SAMPLED + 1 if idle else REQUESTED
+    requested = (IDLE_SETTLE + SAMPLED + 1 if idle else REQUESTED) + LIFETIME_MARGIN
     if framework == 'desktop':
-        process = subprocess.Popen(['/bin/sleep', str(REQUESTED)])
+        process = subprocess.Popen(['/bin/sleep', str(requested)])
     else:
         process = launch(SCENES[scene]['binaries'][framework], mode, requested, log)
-    launched = time.monotonic()
+    launched = getattr(process, 'benchmark_started', time.monotonic())
     # Idle: the 5-20 s window too, alongside the settled one, for the record.
-    early = subprocess.Popen([str(SAMPLER), str(process.pid), str(WARMUP - 0.5), str(SAMPLED), str(INTERVAL)],
+    early = subprocess.Popen([str(SAMPLER), str(process.pid), str(WARMUP), str(SAMPLED), str(INTERVAL)],
                              stdout=subprocess.PIPE, text=True) if idle else None
     meter = powermetrics() if power else None
     pacer = None
     if paced is not None and framework != 'desktop' and mode != 'idle':
         # As long as a pacing trial's capture: one running to the app's own
         # end loses its stream as the window closes.
-        pacer = subprocess.Popen([str(PACER), str(process.pid), str(WARMUP - 0.5), str(PACING_SECONDS)],
+        pacer = subprocess.Popen([str(PACER), str(process.pid), str(WARMUP), str(PACING_SECONDS)],
                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    start = IDLE_SETTLE - 0.5 if idle else WARMUP - 0.5
+    start = IDLE_SETTLE if idle else WARMUP
     sample = json.loads(run([str(SAMPLER), str(process.pid), str(start), str(SAMPLED), str(INTERVAL)]))
     if early is not None:
         sample.update({f'early_{key}': value for key, value in json.loads(early.communicate()[0]).items()})
@@ -372,6 +395,7 @@ def one_trial(scene, framework, mode, repeat, out, power, paced=None):
            **(power_of(meter) if meter else dict.fromkeys(POWER, '')),
            'exit_code': exit_code, 'terminated_after_report': terminated,
            'ran_seconds': round(ran, 2), 'requested_seconds': requested,
+           'ready_seconds': round(getattr(process, 'benchmark_ready_seconds', 0), 4),
            'font_fnv64': font.group(1) if font else ''}
     (out / f'{framework}.{mode}.{repeat}.json').write_text(json.dumps(row, indent=1) + '\n')
     return row
@@ -387,6 +411,8 @@ def valid(row, scene):
         return False
     if abs(row['ran_seconds'] - row['requested_seconds']) > 3:
         return False
+    if 'wall_seconds' in row and abs(row['wall_seconds'] - SAMPLED) > 0.5:
+        return False
     # The suite's font: the bundled file, as the app reported loading it.
     if FONT_FNV64 and 'font_fnv64' in row and row['font_fnv64'] != FONT_FNV64:
         return False
@@ -399,7 +425,7 @@ def valid(row, scene):
 
 
 def pacing(scene, framework, mode, repeat, out):
-    seconds = WARMUP + PACING_SECONDS + 1
+    seconds = WARMUP + PACING_SECONDS + 1 + LIFETIME_MARGIN
     # Screen capture occasionally fails to find a window that just opened:
     # one more try before giving up on the trial.
     # An app that exits abnormally while captured gets one more launch too.
@@ -407,7 +433,7 @@ def pacing(scene, framework, mode, repeat, out):
         counted(framework, 'pacing')
         process = launch(SCENES[scene]['binaries'][framework], mode, seconds, out / f'{framework}.{mode}.{repeat}.pacing.log')
         try:
-            result = json.loads(run([str(PACER), str(process.pid), str(WARMUP - 0.5), str(PACING_SECONDS)]))
+            result = json.loads(run([str(PACER), str(process.pid), str(WARMUP), str(PACING_SECONDS)]))
         except subprocess.CalledProcessError as error:
             # Keep the probe's JSON error for each attempt, including the
             # first one: the exception's string only names the command.
@@ -441,12 +467,12 @@ def pacing(scene, framework, mode, repeat, out):
 def blank(scene, framework, mode, repeat, out):
     """How often the window shows unfilled rows (vlist), from captures of it
     (scripts/blankprobe.swift), in a launch of its own."""
-    seconds = WARMUP + BLANK_SECONDS + 1
+    seconds = WARMUP + BLANK_SECONDS + 1 + LIFETIME_MARGIN
     for attempt in range(2):
         counted(framework, 'blank')
         process = launch(SCENES[scene]['binaries'][framework], mode, seconds, out / f'{framework}.{mode}.{repeat}.blank.log')
         try:
-            result = json.loads(run([str(BLANK), str(process.pid), str(WARMUP - 0.5), str(BLANK_SECONDS), str(BLANK_RATE)]))
+            result = json.loads(run([str(BLANK), str(process.pid), str(WARMUP), str(BLANK_SECONDS), str(BLANK_RATE)]))
         except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
             result = {'error': str(error)[-300:]}
         exit_code, terminated = finish(process, seconds)
@@ -578,7 +604,7 @@ def main():
         tools()
     if not args.skip_build:
         build(args.scene, frameworks)
-    elif not BLANK.exists():
+    elif not BLANK.exists() or not READY.exists():
         tools()
     commit = run(['git', 'rev-parse', 'HEAD'], cwd=ROOT)
     found = None if args.no_preflight else preflight.wait_until_quiet(
@@ -726,10 +752,12 @@ def measure(args, frameworks, modes, repeats, commit, found):
              'environment': environment(), 'preflight': found, 'binaries': binaries,
              'toolchains': toolchains(frameworks), 'invalid_trials': invalid,
              'abnormal_exits': CRASHES, 'launches': LAUNCHES,
-             'protocol': {'requested_seconds': REQUESTED, 'warmup_seconds': WARMUP, 'sampled_seconds': SAMPLED,
+             'protocol': {'requested_seconds': REQUESTED + LIFETIME_MARGIN, 'warmup_seconds': WARMUP, 'sampled_seconds': SAMPLED,
+                          'sampling_anchor': 'window frontmost and uncovered', 'readiness_timeout_seconds': READY_TIMEOUT,
+                          'lifetime_margin_seconds': LIFETIME_MARGIN,
                           'interval_seconds': INTERVAL, 'repeats': repeats, 'idle_repeats': idle_repeats,
                           'idle_window_seconds': [IDLE_SETTLE, IDLE_SETTLE + SAMPLED],
-                          'idle_requested_seconds': IDLE_SETTLE + SAMPLED + 1,
+                          'idle_requested_seconds': IDLE_SETTLE + SAMPLED + 1 + LIFETIME_MARGIN,
                           'quick': args.quick, 'pgo': args.pgo, 'frameworks': frameworks, 'modes': modes,
                           'pacing_seconds': PACING_SECONDS,
                           'pacing_repeats': 0 if args.no_pacing else repeats if args.quick else PACING_REPEATS,

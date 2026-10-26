@@ -273,6 +273,14 @@ pacing at 120 Hz, so those cells need a ProMotion Mac.
 
 ## The macOS comparison, quick and full
 
+Sampling starts from window readiness: the runner polls for up to five seconds
+until the app has a window that is frontmost and uncovered, then warms it for
+five seconds before the sample. It only activates the benchmark app; system
+dialogs stop the launch without being touched. Apps get six extra seconds of
+lifetime so readiness cannot truncate the sample. Logs retain readiness time,
+and the audit records the sampling anchor and actual requested lifetime. A
+shortened sample is rejected. Startup remains a separate measurement.
+
 `python3 scripts/run_macos_comparison.py --scene heavy --quick` measures zgx
 against GPUI Fast in about ten minutes: two repeats of each mode, frame
 pacing captured during the sampling trials. Use it to check a
