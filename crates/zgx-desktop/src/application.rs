@@ -1808,6 +1808,7 @@ impl Host {
                 #[cfg(target_os = "macos")]
                 if let Some((origin, period)) = self.refresh_grid() {
                     let at = self.latch.hold(std::time::Instant::now(), origin, period);
+                    let _wait = zgx::profile::span(zgx::profile::Phase::Wait);
                     sleep_until(at);
                     self.latch.rendering(std::time::Instant::now());
                 }
@@ -1855,7 +1856,9 @@ impl Host {
                     window.pre_present_notify();
                     #[cfg(target_os = "macos")]
                     if let Some((origin, period)) = grid {
-                        sleep_until(latch.decide(std::time::Instant::now(), origin, period));
+                        let at = latch.decide(std::time::Instant::now(), origin, period);
+                        let _wait = zgx::profile::span(zgx::profile::Phase::Wait);
+                        sleep_until(at);
                     }
                 })?;
                 self.native.apply();

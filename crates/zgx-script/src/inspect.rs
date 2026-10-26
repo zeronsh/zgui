@@ -471,12 +471,24 @@ impl Session {
                 writes.push(format!("{unnamed} unnamed"));
             }
             // The frame's time is its phases' (a phase inside another is
-            // taken off that one, so each counts once).
-            let frame_micros: f32 = frame.phases.iter().map(|p| p.2).sum();
+            // taken off that one, so each counts once), less what it waited
+            // for the display: that is pacing, not work.
+            let waited: f32 = frame
+                .phases
+                .iter()
+                .filter(|p| p.0 == "wait")
+                .map(|p| p.2)
+                .sum();
+            let frame_micros: f32 = frame.phases.iter().map(|p| p.2).sum::<f32>() - waited;
             let mut line = format!(
-                "frame {} ({:.2} ms): {} → {} runs, {:.0} µs",
+                "frame {} ({:.2} ms{}): {} → {} runs, {:.0} µs",
                 frame.index,
                 frame_micros / 1000.,
+                if waited >= 1. {
+                    format!(", then {:.2} ms waiting for the display", waited / 1000.)
+                } else {
+                    String::new()
+                },
                 if writes.is_empty() {
                     "no writes".into()
                 } else {
@@ -532,6 +544,7 @@ impl Session {
                 ("runs", Value::Num(frame.runs.len() as f64)),
                 ("micros", Value::Num(total.round() as f64)),
                 ("frame_micros", Value::Num(frame_micros.round() as f64)),
+                ("wait_micros", Value::Num(waited.round() as f64)),
                 (
                     "phases",
                     Value::List(

@@ -3,7 +3,7 @@
 //! The engine marks its phases with [`span`]. With `ZGX_PROFILE` unset a
 //! span is one relaxed load and a branch, and nothing else happens. Set, each
 //! top-level phase (updating, layout, damage, the paint walk, encoding,
-//! submitting, presenting) records the instructions it retired and its time,
+//! submitting, presenting, waiting for the display) records the instructions it retired and its time,
 //! excluding the phases it encloses. Built with the `profile-nested` feature,
 //! nested phases (styles inside an update, text inside layout) record their
 //! time too; their instructions stay their enclosing phase's. Every [`REPORT_FRAMES`] frames (and at [`report`]) one line per
@@ -50,10 +50,13 @@ pub enum Phase {
     Submit,
     /// Showing the frame.
     Present,
+    /// Waiting for the display: a frame held to render or hand over at its
+    /// point in a refresh (macOS's pacing). Time, not work.
+    Wait,
 }
 
 /// Every phase, in report order.
-pub const PHASES: [Phase; 11] = [
+pub const PHASES: [Phase; 12] = [
     Phase::Input,
     Phase::Script,
     Phase::Update,
@@ -65,6 +68,7 @@ pub const PHASES: [Phase; 11] = [
     Phase::Encode,
     Phase::Submit,
     Phase::Present,
+    Phase::Wait,
 ];
 
 /// Frames between reports.
@@ -85,6 +89,7 @@ impl Phase {
             Phase::Encode => "encode",
             Phase::Submit => "submit",
             Phase::Present => "present",
+            Phase::Wait => "wait",
         }
     }
     /// Phases that run many times a frame inside another: timed, but not
@@ -609,7 +614,7 @@ mod signpost {
     /// names must be).
     static NAMES: [&std::ffi::CStr; PHASES.len()] = [
         c"input", c"script", c"update", c"style", c"layout", c"text", c"damage", c"paint",
-        c"encode", c"submit", c"present",
+        c"encode", c"submit", c"present", c"wait",
     ];
     struct Log(*mut c_void);
     // SAFETY: An os_log_t is usable from any thread.

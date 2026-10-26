@@ -180,7 +180,7 @@ impl Bench {
         if !phases.is_empty() {
             let counted: u64 = phases.iter().map(|p| p.1).sum();
             for (phase, count, _) in &phases {
-                if *count > 0 && !matches!(phase, Phase::Submit | Phase::Present) {
+                if *count > 0 && !matches!(phase, Phase::Submit | Phase::Present | Phase::Wait) {
                     line += &format!(" | {} {:.2}", phase.name(), *count as f64 / 1e6 / reps);
                 }
             }
