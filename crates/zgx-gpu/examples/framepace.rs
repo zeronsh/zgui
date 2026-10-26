@@ -164,9 +164,9 @@ mod pace {
                         // Eight bytes at a time: byte by byte, a 1280x800
                         // window's 4 MB took long enough that compositions
                         // piled up between frames (MERGED).
-                        for word in line.chunks_exact(8) {
-                            let word = u64::from_le_bytes(word.try_into().expect("8 bytes"));
-                            hash = (hash ^ word).wrapping_mul(0x0100_0000_01b3);
+                        for word in line.as_chunks::<8>().0 {
+                            hash =
+                                (hash ^ u64::from_le_bytes(*word)).wrapping_mul(0x0100_0000_01b3);
                         }
                     }
                     context.Unmap(&staging, 0);
