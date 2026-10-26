@@ -1013,6 +1013,22 @@ struct Latch {
     held: std::time::Duration,
 }
 #[cfg(target_os = "macos")]
+/// DIAGNOSTIC (not for main): `ZGX_LATCH_LEAD_US` overrides `Latch::LEAD`,
+/// for sweeping the steady frames' handover point on another Mac.
+#[cfg(target_os = "macos")]
+fn lead() -> std::time::Duration {
+    static LEAD: std::sync::LazyLock<std::time::Duration> = std::sync::LazyLock::new(|| {
+        std::env::var("ZGX_LATCH_LEAD_US")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .map_or(Latch::LEAD, std::time::Duration::from_micros)
+    });
+    *LEAD
+}
+#[cfg(not(target_os = "macos"))]
+fn lead() -> std::time::Duration {
+    Latch::LEAD
+}
 impl Latch {
     /// How long before a refresh shows a frame presents. At 2.3 ms a
     /// dashboard repainting most of its window still missed refreshes (2% of
@@ -1081,7 +1097,7 @@ impl Latch {
             None => (period_ns - origin.duration_since(ready).as_nanos() % period_ns) % period_ns,
         };
         let phase = std::time::Duration::from_nanos(since as u64);
-        let point = ready - phase + period.saturating_sub(Self::LEAD);
+        let point = ready - phase + period.saturating_sub(lead());
         let first = if point >= ready {
             point
         } else {
