@@ -1659,6 +1659,30 @@ fn rotated_buttons_are_hit_where_they_are_drawn() {
     );
 }
 
+/// Sparse nested lists keep numeric order, including which invalid child fails first.
+#[test]
+fn nested_sparse_children_keep_order_and_first_error() {
+    let mut h = Harness::inline(
+        r#"local nested = {}
+        nested[90] = function() return "c" end
+        nested[3] = "b"
+        nested[2] = false
+        nested[0] = 123
+        nested[-1] = true
+        nested.ignored = true
+        local root = {}
+        root[40] = "d"
+        root[5] = nested
+        root[1] = ui.text { "a" }
+        local ok, err = pcall(function()
+            return ui.row { [30] = true, [7] = { [100] = true, [5] = 27 } }
+        end)
+        assert(not ok and string.find(tostring(err), "a child must be a ui node, string or function, not integer", 1, true), tostring(err))
+        return ui.row(root)"#,
+    );
+    assert_eq!(h.texts(), ["a", "b", "c", "d"]);
+}
+
 #[test]
 fn nil_children_leave_no_gap_in_the_list() {
     let mut h = common::Harness::inline(
