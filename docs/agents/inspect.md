@@ -83,6 +83,36 @@ zgx inspect sleep 500                                  # let the app run
 claude mcp add zgx -- zgx inspect mcp      # Claude Code; any MCP client runs the same command
 ```
 
+## Diagnose a slow interaction
+
+A scroll, a keystroke or a streamed reply that stutters: find what runs on each of its frames and which script line made it, then fix that line.
+
+1. Run a release build with devtools, and phase costs on stderr: `ZGX_PROFILE=1 cargo run --release -p zgx-run -- --inspect app/` (a line per phase every 120 frames; a debug build's times are several times a release build's, so compare like with like).
+2. Do the interaction a few times, through devtools so it is the same each time: `zgx inspect scroll '#feed' 400` (or `click`, `type`, `key`), or by hand.
+3. Read what ran: `zgx inspect frames 5`. Each frame lists the states written and its runs, the costliest first:
+
+   ```text
+   frame 212: state.luau::rows, 3 unnamed → 41 runs, 9840 µs
+     6120 µs @58 binding (column components/row.luau:14) ← state.luau::rows
+     2210 µs app.luau:88 effect ← state.luau::rows
+     …
+   ```
+
+4. Map each costly run to its source line (`components/row.luau:14`, `app.luau:88`), then look at what that line reads and does. `zgx inspect node @58` shows the node, and `zgx inspect lint` lists what the linter already knows is costly.
+5. Change it, save (the app reloads), and repeat steps 2–3 until the frame fits: 8.3 ms at 120 Hz, 16.7 ms at 60.
+
+What the runs tell you:
+
+| You see | It usually is | Do instead |
+| --- | --- | --- |
+| many `binding` runs of a list's rows on every write | rows reading the whole list (`list:get()[i]`) in their functions | `ui.list { data = state, key, row = function(item, i, row) … }`: a row reads its own item |
+| a `binding` run costing milliseconds, on a node holding thousands of children | `ui.each` over a long list: every row built and laid out | `ui.list`, which builds the rows in view |
+| the same `effect` line in every frame, with no write you made | an effect writing state that it (or another) reads, or `ui.every` faster than it needs | write only when the value changes; a slower timer; `ui.tween`/`ui.spring` for motion |
+| a `binding` run for a whole long text or list after a small change | `items:update(function(l) … end)` or `set` of a rebuilt table | `push`, `set_key`, `append`, `patch`: they write the path that changed |
+| few or cheap runs, yet the frame is slow | the cost is layout, text or drawing, not the script | the `ZGX_PROFILE=1` lines on stderr split it (update, layout, paint, encode); a box laid out from its content (no `w`/`h`), a long text re-measured, a blur or shadow redrawn |
+
+`frames` counts what effects and bindings run; layout, text shaping and drawing are the phases `ZGX_PROFILE=1` reports. A slow frame with cheap runs is those, and `zgx inspect tree --depth 2` shows which boxes are large or deep enough to cost.
+
 ## Recipes
 
 - Send a chat message and read the reply: `type '#composer' 'hi'`, `key Enter`, `wait '#message-m4' --text '.'`, `tree '#message-m4'`.
