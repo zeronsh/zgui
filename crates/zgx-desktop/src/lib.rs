@@ -37,6 +37,8 @@ mod linux_spelling;
 #[cfg(target_os = "linux")]
 mod linux_zenity;
 mod local_time;
+#[cfg(target_os = "macos")]
+mod look_up;
 mod native_drag;
 mod native_events;
 mod native_prompt;

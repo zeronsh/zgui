@@ -1954,9 +1954,23 @@ pub(crate) fn context_menu(
         {
             return Vec::new();
         }
-        let (copy, all) = (weak.clone(), weak.clone());
+        let (copy, all, look) = (weak.clone(), weak.clone(), weak.clone());
         let platform = platform.clone();
-        vec![
+        // Look Up first, as AppKit's text menus have it, where the
+        // platform looks words up.
+        let mut items = Vec::new();
+        if let Some(platform) = platform.clone().filter(|p| p.0.looks_up()) {
+            items.push(
+                crate::compose::menu_item(look_up_label(&ui.selected_text()))
+                    .id("selection-look-up")
+                    .on_click(move || {
+                        if let Some(ui) = look.upgrade() {
+                            ui.look_up_selection(&platform);
+                        }
+                    }),
+            );
+        }
+        items.extend([
             crate::compose::menu_item("Copy")
                 .id("selection-copy")
                 .on_click(move || {
@@ -1973,8 +1987,50 @@ pub(crate) fn context_menu(
                         ui.select_all_text(root);
                     }
                 }),
-        ]
+        ]);
+        items
     })
+}
+
+/// A Look Up item's label, as AppKit's: the text looked up, in quotes, cut
+/// short.
+pub(crate) fn look_up_label(text: &str) -> String {
+    let text = text.trim();
+    let mut shown: String = text.chars().take(24).collect();
+    if shown.len() < text.len() {
+        shown.push('…');
+    }
+    format!("Look Up “{shown}”")
+}
+
+impl Ui {
+    /// Show the platform's definition of the selected display text over it
+    /// (Look Up, ⌃⌘D on macOS); whether it did.
+    pub fn look_up_selection(&self, platform: &crate::platform::PlatformService) -> bool {
+        let text = self.selected_text();
+        if text.trim().is_empty() {
+            return false;
+        }
+        let start = {
+            let state = self.selection_state().borrow();
+            let (Some(anchor), Some(focus)) = (state.anchor, state.focus) else {
+                return false;
+            };
+            let scene = self.scene.borrow();
+            if !scene.contains(anchor.node) || !scene.contains(focus.node) {
+                return false;
+            }
+            if order(&scene, anchor, focus).is_le() {
+                anchor
+            } else {
+                focus
+            }
+        };
+        let Some((at, size)) = self.scene.borrow().text_baseline(start.node, start.offset) else {
+            return false;
+        };
+        platform.0.look_up(&text, at, size)
+    }
 }
 
 /// What `Ui`'s dispatch looks for after the document has had an event.

@@ -3603,6 +3603,39 @@ impl Scene {
         }
         Some(lines)
     }
+    /// Where the character at byte `at` of text node `id` starts its
+    /// baseline, in the window's points, and its font's size: what the
+    /// platform's Look Up shows a word's definition over.
+    pub fn text_baseline(&self, id: NodeId, at: usize) -> Option<((f32, f32), f32)> {
+        use unicode_segmentation::UnicodeSegmentation;
+        let (text, size) = match self.kind(id) {
+            NodeKind::Text {
+                text, font_size, ..
+            } => (text.clone(), *font_size),
+            NodeKind::RichText { text } => {
+                let size = text
+                    .runs()
+                    .iter()
+                    .find(|run| run.range.contains(&at))
+                    .or(text.runs().first())
+                    .map_or(16., |run| run.font_size);
+                (text.text_arc(), size)
+            }
+            _ => return None,
+        };
+        let lines = self.text_lines(id)?;
+        let line = lines
+            .iter()
+            .find(|line| line.range.start <= at && at <= line.range.end)?;
+        let index = text[line.range.start..at.min(line.range.end)]
+            .graphemes(true)
+            .count();
+        let x = *line.carets.get(index)?;
+        // The line's box holds the font's ascent and descent centred in its
+        // height: the baseline sits about 0.8 of the size below its top.
+        let top = line.rect.y + (line.rect.height - size).max(0.) / 2.;
+        Some(((x, top + size * 0.8), size))
+    }
     /// Shape `text` at `size` in `font`, wrapped at `width` if given.
     pub fn shape_text_with_font(
         &self,

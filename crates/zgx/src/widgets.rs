@@ -253,6 +253,19 @@ impl EditorHandle {
     pub fn value(&self) -> &EditorValue {
         &self.hint.value
     }
+    /// Show the platform's definition of the selected text over it (Look
+    /// Up); whether it did. A password's text is never looked up.
+    pub fn look_up(&self, platform: &crate::platform::PlatformService) -> bool {
+        let text = self.copy();
+        if text.trim().is_empty() {
+            return false;
+        }
+        let start = self.editor.borrow().selection().range().start;
+        let Some((at, size)) = self.scene.borrow().text_baseline(self.text, start) else {
+            return false;
+        };
+        platform.0.look_up(&text, at, size)
+    }
     /// Where an input method's candidate window goes: under the clause it
     /// is converting (Japanese, Chinese), as a native field puts it, in the
     /// window's points; `None` while there is none (the caret, then).

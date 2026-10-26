@@ -2139,6 +2139,25 @@ impl Host {
             editor.paste(&text);
         }
     }
+    /// ⌃⌘D: the selection's definition over it (Look Up), as AppKit's
+    /// text views show it: a focused field's selection, else selected
+    /// display text.
+    #[cfg(target_os = "macos")]
+    fn look_up_key(&mut self, key: &Key) -> bool {
+        let m = self.modifiers;
+        let chord = m.control && m.meta && !m.alt && !m.shift;
+        if !chord || !matches!(key, Key::Character(k) if k.eq_ignore_ascii_case("d")) {
+            return false;
+        }
+        let platform = zgx::platform::PlatformService(Rc::new(crate::platform::Desktop {
+            clipboard: self.context.windows.clipboard.clone(),
+            dialogs: self.context.dialogs.clone(),
+        }));
+        match self.context.ui.focused_editor() {
+            Some(editor) => editor.look_up(&platform),
+            None => self.context.ui.look_up_selection(&platform),
+        }
+    }
     fn clipboard_key(&mut self, key: &Key) -> bool {
         #[cfg(windows)]
         let alias = windows_clipboard_alias(key, self.modifiers);
@@ -3527,6 +3546,10 @@ impl Host {
                             })?;
                         if !prevented {
                             prevented = self.clipboard_key(&key);
+                        }
+                        #[cfg(target_os = "macos")]
+                        if !prevented {
+                            prevented = self.look_up_key(&key);
                         }
                         #[cfg(target_os = "linux")]
                         self.publish_editor_primary();

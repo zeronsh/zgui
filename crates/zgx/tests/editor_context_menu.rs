@@ -321,3 +321,134 @@ fn turning_spellcheck_off_clears_the_marks_and_on_checks_again() {
     ui.prepare_frame();
     assert_eq!(marks(&ui).len(), 2, "on: the whole text checked");
 }
+
+/// A platform that looks words up (macOS's dictionary), recording what it
+/// was asked.
+#[derive(Default)]
+struct Dictionary(RefCell<Vec<LookedUp>>);
+/// What was looked up: the text, its baseline's start, its size.
+type LookedUp = (String, (f32, f32), f32);
+impl zgx::platform::Platform for Dictionary {
+    fn clipboard_text(&self) -> Option<String> {
+        None
+    }
+    fn set_clipboard_text(&self, _: String) -> bool {
+        true
+    }
+    fn looks_up(&self) -> bool {
+        true
+    }
+    fn look_up(&self, text: &str, baseline: (f32, f32), size: f32) -> bool {
+        self.0.borrow_mut().push((text.to_owned(), baseline, size));
+        true
+    }
+    fn open_files(
+        &self,
+        _: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Vec<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn save_file(
+        &self,
+        _: zgx::platform::FilePicker,
+    ) -> zgx::platform::Pending<Result<Option<std::path::PathBuf>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+/// Where the platform looks words up, an editor's menu, and a selectable
+/// region's, offer Look Up first, as AppKit's do: the selection's text at
+/// its first character's baseline. A password offers none; a platform that
+/// looks nothing up, none.
+#[test]
+fn context_menus_look_the_selection_up_where_the_platform_does() {
+    let mut ui = Ui::new(400., 200.);
+    let dictionary = Rc::new(Dictionary::default());
+    let value = ui.signal("alpha serendipity".to_owned());
+    let view = ui.mount(provide(
+        zgx::platform::PlatformService(dictionary.clone()),
+        column()
+            .size(400., 200.)
+            .child(
+                text_input("Name", value)
+                    .id("field")
+                    .w(300.)
+                    .h(32.)
+                    .text_size(14.),
+            )
+            .child(
+                column()
+                    .selectable(true)
+                    .child(text("Look ephemeral up").text_size(14.)),
+            ),
+    ));
+    ui.prepare_frame();
+    let field = view.find("field").unwrap();
+    let editor = ui.editor(field).unwrap();
+    editor.set_selection(6, 17);
+    let at = ui.scene.borrow().bounds(field);
+    context_click(&mut ui, at.x + 60., at.y + at.height / 2.);
+    let item = view.find("editor-look-up").expect("Look Up shows");
+    let first = ui
+        .scene
+        .borrow()
+        .children(ui.scene.borrow().parent(item).unwrap())[0];
+    assert_eq!(first, item, "first in the menu");
+    let label = ui
+        .semantics
+        .borrow()
+        .get(item)
+        .map(|n| n.label.clone())
+        .unwrap_or_default();
+    assert_eq!(label, "Look Up “serendipity”");
+    choose(&mut ui, &view, "editor-look-up");
+    let asked = dictionary.0.borrow().clone();
+    assert_eq!(asked.len(), 1);
+    let (text, (x, y), size) = &asked[0];
+    assert_eq!(text, "serendipity");
+    assert_eq!(*size, 14.);
+    assert!(
+        *x > at.x + 6. && *x < at.x + at.width,
+        "at the word: {x} in {at:?}"
+    );
+    assert!(
+        *y > at.y && *y < at.y + at.height,
+        "on its line: {y} in {at:?}"
+    );
+    // Selected display text: the same, from its menu.
+    let label = {
+        let scene = ui.scene.borrow();
+        let mut stack = vec![scene.root()];
+        let mut found = None;
+        while let Some(node) = stack.pop() {
+            if matches!(scene.kind(node), zgx::scene::NodeKind::Text { text, .. } if &**text == "Look ephemeral up")
+            {
+                found = Some(node);
+            }
+            stack.extend(scene.children(node).iter().copied());
+        }
+        found.unwrap()
+    };
+    assert!(ui.select_text(
+        zgx::selection::TextPoint {
+            node: label,
+            offset: 5
+        },
+        zgx::selection::TextPoint {
+            node: label,
+            offset: 14
+        },
+    ));
+    ui.prepare_frame();
+    let shown = ui.scene.borrow().bounds(label);
+    context_click(&mut ui, shown.x + 60., shown.y + shown.height / 2.);
+    choose(&mut ui, &view, "selection-look-up");
+    let asked = dictionary.0.borrow().clone();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[1].0, "ephemeral");
+    assert!(
+        asked[1].1.0 > shown.x && asked[1].1.1 > shown.y,
+        "{:?} in {shown:?}",
+        asked[1]
+    );
+}

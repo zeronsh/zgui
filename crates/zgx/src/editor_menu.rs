@@ -28,6 +28,18 @@ pub(crate) fn context_menu(
             .as_ref()
             .map(|platform| crate::editor_spell::menu_items(&editor, platform))
             .unwrap_or_default();
+        // Look Up the selection, where the platform looks words up.
+        if copyable && let Some(platform) = platform.clone().filter(|p| p.0.looks_up()) {
+            let look = editor.clone();
+            items.insert(
+                0,
+                menu_item(crate::selection::look_up_label(&editor.copy()))
+                    .id("editor-look-up")
+                    .on_click(move || {
+                        look.look_up(&platform);
+                    }),
+            );
+        }
         if !items.is_empty() {
             items.push(separator());
         }

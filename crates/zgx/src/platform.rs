@@ -54,6 +54,18 @@ pub trait Platform {
     fn ignore_spelling(&self, word: &str) {
         let _ = word;
     }
+    /// Whether the platform looks words up (`look_up`): macOS's dictionary
+    /// panel. A context menu offers Look Up where it does.
+    fn looks_up(&self) -> bool {
+        false
+    }
+    /// Show the dictionary's entry for `text` over it, as AppKit's Look Up
+    /// does: `baseline` is where its first character's baseline starts, in
+    /// the window's points, and `size` its font size. Whether it showed.
+    fn look_up(&self, text: &str, baseline: (f32, f32), size: f32) -> bool {
+        let _ = (text, baseline, size);
+        false
+    }
     /// Put `text` on the clipboard with `html`, its rich form, where the
     /// platform takes both; plain text alone otherwise.
     fn set_clipboard_rich_text(&self, text: String, html: String) -> bool {
