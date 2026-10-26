@@ -76,19 +76,27 @@ struct DamageGrid {
     /// Words per row.
     stride: usize,
     cells: Vec<u64>,
-    marked: usize,
+    /// Words with every cell marked (`full`): the bits past the last column
+    /// are set from the start, so a row's last word fills as the others.
+    full_words: usize,
 }
 impl DamageGrid {
     fn new(viewport: Rect) -> Self {
         let columns = (viewport.width / DAMAGE_CELL).ceil().max(1.) as usize;
         let rows = (viewport.height / DAMAGE_CELL).ceil().max(1.) as usize;
         let stride = columns.div_ceil(64);
+        let mut cells = vec![0; stride * rows];
+        if !columns.is_multiple_of(64) {
+            for row in 0..rows {
+                cells[(row + 1) * stride - 1] = u64::MAX << (columns % 64);
+            }
+        }
         Self {
             columns,
             rows,
             stride,
-            cells: vec![0; stride * rows],
-            marked: 0,
+            cells,
+            full_words: 0,
         }
     }
     /// The cells `rect` touches: columns and rows, end exclusive.
@@ -124,8 +132,9 @@ impl DamageGrid {
         if first == last {
             for row in top..bottom {
                 let cell = &mut self.cells[row * self.stride + first];
-                self.marked += (head & !*cell).count_ones() as usize;
+                let was = *cell;
                 *cell |= head;
+                self.full_words += usize::from(was != u64::MAX && *cell == u64::MAX);
             }
             return;
         }
@@ -138,8 +147,9 @@ impl DamageGrid {
                     _ if index + 1 == count => tail,
                     _ => u64::MAX,
                 };
-                self.marked += (bits & !*cell).count_ones() as usize;
+                let was = *cell;
                 *cell |= bits;
+                self.full_words += usize::from(was != u64::MAX && *cell == u64::MAX);
             }
         }
     }
@@ -163,7 +173,7 @@ impl DamageGrid {
         })
     }
     fn full(&self) -> bool {
-        self.marked == self.columns * self.rows
+        self.full_words == self.cells.len()
     }
     /// The first column from `column` on (before `columns`) whose cell in
     /// `row` is `marked`, or `columns`.
@@ -9918,7 +9928,13 @@ mod damage_grid_tests {
                 assert_eq!(grid.touches(probe), reference.touches(probe));
             }
             let marked = reference.cells.iter().filter(|cell| **cell).count();
-            assert_eq!(grid.marked, marked);
+            let padding = (grid.stride * 64 - grid.columns) * grid.rows;
+            let bits: usize = grid
+                .cells
+                .iter()
+                .map(|word| word.count_ones() as usize)
+                .sum();
+            assert_eq!(bits - padding, marked);
             assert_eq!(grid.full(), marked == reference.cells.len());
             assert_eq!(grid.rects(viewport), reference.rects(viewport));
         }
