@@ -602,7 +602,7 @@ fn convert_in(value: mlua::Value, old: Option<&Value>, depth: u32) -> mlua::Resu
             Some(Value::Str(o)) if *s.as_bytes() == *o.as_bytes() => Value::Str(o.clone()),
             Some(Value::Text(o)) if same_text(o, &s.as_bytes()) => Value::Text(o.clone()),
             _ if s.as_bytes().len() > zgx::text::LONG => long_string(&s.as_bytes()),
-            _ => Value::Str(s.to_string_lossy().into()),
+            _ => Value::Str(str_of(&s.as_bytes())),
         },
         mlua::Value::Table(t) => match t
             .weak_lua()
@@ -1031,6 +1031,15 @@ thread_local! {
 /// A long string from a script, in chunks: an editor bound to it shares it.
 /// The same text set again (a file kept as the editor's and as last saved)
 /// is the same `Text`, and the edits of one share the other's chunks.
+/// A Luau string's text, invalid UTF-8 replaced (as `to_string_lossy`), in
+/// one allocation: valid text (nearly every string) is copied once, not
+/// scanned for invalid sequences into a `String` and copied again.
+fn str_of(bytes: &[u8]) -> Rc<str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Rc::from(text),
+        Err(_) => String::from_utf8_lossy(bytes).into(),
+    }
+}
 fn long_string(bytes: &[u8]) -> Value {
     let string = String::from_utf8_lossy(bytes);
     RECENT_TEXT.with_borrow_mut(|recent| {
@@ -2440,6 +2449,26 @@ mod tests {
     }
     fn key(k: &str) -> PathKey {
         PathKey::Key(k.into())
+    }
+
+    #[test]
+    fn a_luau_string_converts_as_its_text_invalid_bytes_replaced() {
+        let lua = Lua::new();
+        for bytes in [
+            &b"plain ascii"[..],
+            "d\u{e9}j\u{e0} vu \u{1f600}".as_bytes(),
+            // A multibyte character cut in two, and a stray continuation byte.
+            &"\u{e9}t\u{e9}".as_bytes()[..4],
+            b"a\x80b",
+            b"",
+        ] {
+            let string = lua.create_string(bytes).unwrap();
+            let expected = string.to_string_lossy();
+            match convert(mlua::Value::String(string), None).unwrap() {
+                Value::Str(text) => assert_eq!(&*text, expected, "{bytes:?}"),
+                other => panic!("{bytes:?} converted to {other:?}"),
+            }
+        }
     }
 
     #[test]

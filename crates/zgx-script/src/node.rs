@@ -1695,12 +1695,22 @@ fn template(lua: &Lua, text: &str) -> mlua::Result<Text> {
     }
     Ok(Text::Template(segments))
 }
+/// `f` of a Luau string's text, invalid UTF-8 replaced (as
+/// `to_string_lossy`): valid text (nearly every string) read where it lies,
+/// not scanned for invalid sequences into a `String` first.
+fn lossy<R>(string: &mlua::LuaString, f: impl FnOnce(&str) -> R) -> R {
+    let bytes = string.as_bytes();
+    match std::str::from_utf8(&bytes) {
+        Ok(text) => f(text),
+        Err(_) => f(&string.to_string_lossy()),
+    }
+}
 /// `literal`: a string is shown as it is, braces and all (data: code,
 /// titles, messages), not read as a template.
 fn text_of(lua: &Lua, value: mlua::Value, what: &str, literal: bool) -> mlua::Result<Text> {
     Ok(match value {
-        mlua::Value::String(s) if literal => Text::Literal(s.to_string_lossy()),
-        mlua::Value::String(s) => template(lua, &s.to_string_lossy())?,
+        mlua::Value::String(s) if literal => Text::Literal(lossy(&s, str::to_owned)),
+        mlua::Value::String(s) => lossy(&s, |text| template(lua, text))?,
         mlua::Value::Function(f) => Text::Computed(f),
         mlua::Value::Number(n) => Text::Literal(Value::Num(n).to_string()),
         mlua::Value::Integer(n) => Text::Literal(n.to_string()),
@@ -1791,7 +1801,7 @@ fn children(
             }
             mlua::Value::String(s) => out.push(Rc::new(Node::new(
                 owner.clone(),
-                Kind::Text(template(lua, &s.to_string_lossy())?),
+                Kind::Text(lossy(&s, |text| template(lua, text))?),
             ))),
             mlua::Value::Function(f) => out.push(Rc::new(Node::new(
                 owner.clone(),
