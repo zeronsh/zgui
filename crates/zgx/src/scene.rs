@@ -76,7 +76,9 @@ struct DamageGrid {
     /// Words per row.
     stride: usize,
     cells: Vec<u64>,
-    marked: usize,
+    /// Cells not yet marked: the grid is full at none (`full`, asked as
+    /// most damage is added).
+    unmarked: usize,
 }
 impl DamageGrid {
     fn new(viewport: Rect) -> Self {
@@ -88,7 +90,7 @@ impl DamageGrid {
             rows,
             stride,
             cells: vec![0; stride * rows],
-            marked: 0,
+            unmarked: columns * rows,
         }
     }
     /// The cells `rect` touches: columns and rows, end exclusive.
@@ -124,7 +126,7 @@ impl DamageGrid {
         if first == last {
             for row in top..bottom {
                 let cell = &mut self.cells[row * self.stride + first];
-                self.marked += (head & !*cell).count_ones() as usize;
+                self.unmarked -= (head & !*cell).count_ones() as usize;
                 *cell |= head;
             }
             return;
@@ -138,7 +140,7 @@ impl DamageGrid {
                     _ if index + 1 == count => tail,
                     _ => u64::MAX,
                 };
-                self.marked += (bits & !*cell).count_ones() as usize;
+                self.unmarked -= (bits & !*cell).count_ones() as usize;
                 *cell |= bits;
             }
         }
@@ -163,7 +165,7 @@ impl DamageGrid {
         })
     }
     fn full(&self) -> bool {
-        self.marked == self.columns * self.rows
+        self.unmarked == 0
     }
     /// The first column from `column` on (before `columns`) whose cell in
     /// `row` is `marked`, or `columns`.
@@ -9918,7 +9920,7 @@ mod damage_grid_tests {
                 assert_eq!(grid.touches(probe), reference.touches(probe));
             }
             let marked = reference.cells.iter().filter(|cell| **cell).count();
-            assert_eq!(grid.marked, marked);
+            assert_eq!(grid.unmarked, reference.cells.len() - marked);
             assert_eq!(grid.full(), marked == reference.cells.len());
             assert_eq!(grid.rects(viewport), reference.rects(viewport));
         }
