@@ -4469,18 +4469,66 @@ impl Scene {
     /// leaves the node a `repaint::BOX_ONLY` candidate.
     #[inline(always)]
     fn invalidate_layout_with(&mut self, id: NodeId, keep_reads: bool, own: bool) {
-        self.invalidate_with(id, LAYOUT, keep_reads, own);
-        let mut child = id;
-        while let Some(parent) = self.node(child).parent {
-            self.invalidate_with(parent, LAYOUT, keep_reads, false);
-            if self.is_layout_boundary(parent) {
-                // Siblings changing in turn (a card's bars) name it once.
-                if self.layout_roots.last() != Some(&parent) {
-                    self.layout_roots.push(parent);
-                }
-                return;
+        let layers = self.isolation_count + self.promoted_count > 0;
+        let mut current = id;
+        let mut first = true;
+        let mut marked = 0u64;
+        let (mut parent, mut ink) = loop {
+            let node = self.node_mut(current);
+            let boundary = !first && Self::is_layout_boundary(node);
+            let parent = node.parent;
+            let ink = node.ink_valid.replace(false);
+            node.dirty |= LAYOUT;
+            if first && own {
+                node.dirty |= CHANGED;
             }
-            child = parent;
+            if !keep_reads {
+                node.text_size.set(TextSizes::default());
+                node.reads.set(0);
+            }
+            if layers {
+                marked = marked.wrapping_add(1);
+                if node.isolated || node.promoted {
+                    node.layer_revision = node.layer_revision.wrapping_add(marked);
+                }
+            }
+            if !node.queued {
+                node.queued = true;
+                self.dirty.push(current);
+            }
+            if boundary {
+                if self.layout_roots.last() != Some(&current) {
+                    self.layout_roots.push(current);
+                }
+                break (parent, ink);
+            }
+            match parent {
+                Some(parent) => current = parent,
+                None => return,
+            }
+            first = false;
+        };
+        // Each ancestor above the boundary used to be visited once per
+        // marked node. Add exactly that many layer revisions in one visit.
+        if layers {
+            while let Some(id) = parent {
+                let node = self.node_mut(id);
+                if node.isolated || node.promoted {
+                    node.layer_revision = node.layer_revision.wrapping_add(marked);
+                }
+                if ink {
+                    ink = node.ink_valid.replace(false);
+                }
+                parent = node.parent;
+            }
+        } else if ink {
+            while let Some(id) = parent {
+                let node = self.node(id);
+                if !node.ink_valid.replace(false) {
+                    break;
+                }
+                parent = node.parent;
+            }
         }
     }
     /// A laid-out container with an explicit width and height: parents measure
@@ -4490,8 +4538,7 @@ impl Scene {
     /// so its children say where it stops, and a child growing past that
     /// grows it again. At its size, content past it changes nothing (its
     /// floor is the lesser of the two).
-    fn is_layout_boundary(&self, id: NodeId) -> bool {
-        let node = self.node(id);
+    fn is_layout_boundary(node: &Node) -> bool {
         let (Some(width), Some(height), Some(measured)) = (
             node.style.width,
             node.style.height,
