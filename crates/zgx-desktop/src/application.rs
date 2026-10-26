@@ -4043,6 +4043,14 @@ impl Host {
         self.context.ui.set_refresh_interval(self.frame_interval);
     }
     /// Deliver one display refresh. Hidden windows keep their requests pending.
+    /// The link reported the grid while the timer paces frames: it takes
+    /// the next refresh's report, and delivers nothing.
+    #[cfg(target_os = "macos")]
+    fn link_reported(&mut self) {
+        if let Some(link) = &self.display_link {
+            link.consumed();
+        }
+    }
     fn deliver_frame(&mut self, frame: Frame) {
         #[cfg(any(target_os = "macos", windows))]
         if let Some(link) = &self.display_link {
@@ -4152,10 +4160,13 @@ impl Host {
             if let Some(renderer) = &mut self.renderer {
                 renderer.set_full_rate(wanted && rate.is_none());
             }
-            let synced = !animating
-                && self
-                    .vsync_synced
-                    .is_some_and(|at| now.duration_since(at) < crate::frame_source::VSYNC_RESYNC);
+            // Once the link has reported the grid, the timer continues it:
+            // a scroll starting after a pause, or the grid going stale, keeps
+            // its frames on the timer while the link reports again (see
+            // `link_reported`). Handing frames to the link meanwhile lost a
+            // refresh each time it started: a gesture's second frame came
+            // ~22 ms after its first, and a scroll lost one a second.
+            let synced = !animating && self.vsync_synced.is_some();
             let timed = wanted && synced;
             if timed && !self.vsync_paced {
                 // The link's watchdog deadline, if any, is not a refresh.
@@ -4167,7 +4178,7 @@ impl Host {
             let stale = self
                 .vsync_synced
                 .is_none_or(|at| now.duration_since(at) >= crate::frame_source::VSYNC_RESYNC);
-            link.set_running((wanted && !synced) || (!wanted && steady && stale));
+            link.set_running((wanted && !synced) || ((wanted || steady) && stale));
             if wanted {
                 if timed {
                     if self.frame_deadline.is_none() {
@@ -5203,9 +5214,14 @@ impl WindowManager {
                     host.frame_interval = frame.interval;
                     host.context.ui.set_refresh_interval(frame.interval);
                     host.vsync_synced = Some(std::time::Instant::now());
-                    // `about_to_wait` runs next in this same loop pass, stepping
-                    // the woken animations and painting once.
-                    host.deliver_frame(frame);
+                    if host.vsync_paced {
+                        // The timer paces: the link only reported the grid.
+                        host.link_reported();
+                    } else {
+                        // `about_to_wait` runs next in this same loop pass,
+                        // stepping the woken animations and painting once.
+                        host.deliver_frame(frame);
+                    }
                 }
             }
             #[cfg(windows)]
