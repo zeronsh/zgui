@@ -254,6 +254,22 @@ jobs:
           if [ "${{ github.event_name }}" != pull_request ]; then status=0; fi
           cat perf.md >> "$GITHUB_STEP_SUMMARY" || true
           echo "status=$status" >> "$GITHUB_ENV"
+      # Temporary (#693's x86 heavy +0.02%): callgrind of heavy-both on
+      # both sides' gate binaries, per function. Not for merging.
+      - name: x86 probe
+        if: always()
+        run: |
+          mkdir -p probe
+          for side in base head; do
+            ZGX_GATE=1 ZGX_MODE=both TICKS=300 RENDER=0 LD_PRELOAD=/tmp/zgx-perf/same_run.so ZGX_SAME_RUN_REPORT=1 setarch -R valgrind --tool=callgrind --dump-instr=no --callgrind-out-file=probe/heavy.$side.out /tmp/zgx-perf/gate-bin-$side/heavy_headless >/dev/null 2>&1 || true
+            callgrind_annotate --auto=no --threshold=100 probe/heavy.$side.out > probe/heavy.$side.txt || true
+          done
+          ls -la probe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x86-probe
+          path: probe/*.txt
       - name: Comment
         if: github.event_name == 'pull_request' && hashFiles('perf.md') != ''
         continue-on-error: true
