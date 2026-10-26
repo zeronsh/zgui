@@ -2250,6 +2250,28 @@ struct TextArgs {
     content: mlua::Value,
     literal: Option<bool>,
 }
+/// A numeric literal read without making either intermediate value enum.
+struct StackNumber(Option<f64>);
+impl FromLua for StackNumber {
+    fn from_lua(value: mlua::Value, _: &Lua) -> mlua::Result<Self> {
+        Ok(Self(match value {
+            mlua::Value::Integer(n) => Some(n as f64),
+            mlua::Value::Number(n) => Some(n),
+            _ => None,
+        }))
+    }
+    unsafe fn from_stack(idx: std::ffi::c_int, lua: &mlua::state::RawLua) -> mlua::Result<Self> {
+        use mlua::ffi;
+        let state = lua.state();
+        // SAFETY: the borrowed pair holds this slot during conversion.
+        // Reading a checked number neither allocates nor calls script.
+        let number = unsafe {
+            (ffi::lua_type(state, idx) == ffi::LUA_TNUMBER)
+                .then(|| ffi::lua_tonumberx(state, idx, std::ptr::null_mut()))
+        };
+        Ok(Self(number))
+    }
+}
 /// As `fill`, in place (a node is large to move), keeping a text's own
 /// fields in `text`.
 fn fill_from(
@@ -2284,16 +2306,26 @@ fn fill_from(
             .as_ref()
             .and_then(|keys| keys.0.borrow().get(&address).map(|(_, prop)| *prop));
         if let Some(prop) = known {
-            // A colour written out, the commonest string a style takes, is
-            // read where it lies (as `source_linted` reads it).
-            let written = (prop.ty() == Ty::Color)
-                .then(|| value.as_str())
-                .flatten()
-                .filter(|s| !s.starts_with('$'))
-                .and_then(parse_color);
+            // Literal colours and numbers are read where they lie, without
+            // making intermediate values. Everything else uses the general
+            // conversion and its errors, as an unfamiliar key does.
+            let written = match prop.ty() {
+                Ty::Color => value
+                    .as_str()
+                    .filter(|s| !s.starts_with('$'))
+                    .and_then(parse_color)
+                    .map(Lit::Color),
+                ty @ (Ty::Num | Ty::Len | Ty::Pair) => value.get::<StackNumber>()?.0.map(|n| {
+                    match ty {
+                        Ty::Num => Lit::Num(n as f32),
+                        Ty::Len => Lit::Len(Length::Px(n as f32)),
+                        _ => Lit::Pair(n as f32, n as f32),
+                    }
+                }),
+                _ => None,
+            };
             let source = match written {
-                Some(color) => {
-                    let lit = Lit::Color(color);
+                Some(lit) => {
                     lint_literal(lua, prop.name(), &lit, lint)?;
                     Source::Lit(lit)
                 }
@@ -4622,6 +4654,60 @@ pub(crate) fn retain(env: &Env, resource: Box<dyn Any>) {
 
 #[cfg(test)]
 mod tests {
+    /// A known style key keeps the same numeric bits and fallback errors
+    /// as a key read for the first time.
+    #[test]
+    fn cached_numeric_style_keys_keep_values_and_errors() {
+        use super::{Kind, Lit, Node, Prop, Source, StyleKeys, fill_from};
+        fn read(lua: &mlua::Lua, table: &mlua::Table) -> Result<Vec<u32>, String> {
+            let mut node = Node::new(Default::default(), Kind::Div);
+            fill_from(lua, &mut node, table, None, crate::DesignLint::Off)
+                .map_err(|e| e.to_string())?;
+            let Source::Lit(lit) = &node.props[0].1 else {
+                panic!("expected a literal");
+            };
+            Ok(match lit {
+                Lit::Num(n) | Lit::Len(zgx::layout::Length::Px(n)) => vec![n.to_bits()],
+                Lit::Pair(a, b) => vec![a.to_bits(), b.to_bits()],
+                Lit::Len(zgx::layout::Length::Percent(n)) => vec![1, n.to_bits()],
+                Lit::Len(zgx::layout::Length::Auto) => vec![2],
+                other => panic!("unexpected literal: {other:?}"),
+            })
+        }
+        let lua = mlua::Lua::new();
+        let mut values: Vec<mlua::Value> = [
+            0.,
+            -0.,
+            1.5,
+            -3.25,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::from_bits(0x7ff8_1234_5678_0000),
+            (1_u64 << 53) as f64,
+        ]
+        .into_iter()
+        .map(mlua::Value::Number)
+        .collect();
+        values.extend([mlua::Value::Boolean(false), mlua::Value::Boolean(true)]);
+        for text in ["12", "25%", "auto", "not a number"] {
+            values.push(mlua::Value::String(lua.create_string(text).unwrap()));
+        }
+        values.push(mlua::Value::Table(
+            lua.create_sequence_from([2., 3.]).unwrap(),
+        ));
+        for prop in [Prop::W, Prop::Opacity, Prop::Origin] {
+            for value in &values {
+                lua.set_app_data(StyleKeys::default());
+                let table = lua.create_table().unwrap();
+                table.raw_set(prop.name(), value.clone()).unwrap();
+                let first = read(&lua, &table);
+                let cached = read(&lua, &table);
+                assert_eq!(cached, first, "{} = {value:?}", prop.name());
+            }
+        }
+    }
     /// A hex colour read as bytes is the colour its animation value
     /// (channels as `f64`, alpha a fraction) rounds back to, in each form
     /// and at every channel value; and what is not hex is no colour.
