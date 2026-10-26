@@ -899,6 +899,35 @@ fn sleep_until(at: std::time::Instant) {
         std::thread::sleep(at - now);
     }
 }
+/// Frames the display link paces at a fast refresh (120 Hz) are ready about
+/// 1.5 ms before a refresh point, the link firing about 2.5 ms before it:
+/// the window server shows them on the refresh after it. A few are ready
+/// earlier, up to about 3 ms before, and show on that one instead, so two
+/// frames land in one refresh and the next shows nothing new. Those few wait
+/// until `ALIGN_AT` before the point, with the rest (`align_wait`); later
+/// ones and frames at slower refreshes (whose handover the latch decides)
+/// go at once.
+#[cfg(any(target_os = "macos", test))]
+const ALIGN_EARLY: std::time::Duration = std::time::Duration::from_micros(1850);
+/// The earliest a frame waits: one ready sooner is a refresh early anyway.
+#[cfg(any(target_os = "macos", test))]
+const ALIGN_LATEST: std::time::Duration = std::time::Duration::from_micros(4500);
+/// Where an early frame waits until, before the refresh point.
+#[cfg(any(target_os = "macos", test))]
+const ALIGN_AT: std::time::Duration = std::time::Duration::from_micros(1600);
+/// The slowest refresh period frames align at (below 60 Hz's 16.7 ms).
+#[cfg(any(target_os = "macos", test))]
+const ALIGN_PERIOD: std::time::Duration = std::time::Duration::from_millis(12);
+/// How long a frame paced by the display link, `left` before the next
+/// refresh point of a refresh `period` long, waits before it is handed over
+/// (see `ALIGN_EARLY`).
+#[cfg(any(target_os = "macos", test))]
+fn align_wait(
+    left: std::time::Duration,
+    period: std::time::Duration,
+) -> Option<std::time::Duration> {
+    (period < ALIGN_PERIOD && left > ALIGN_EARLY && left < ALIGN_LATEST).then(|| left - ALIGN_AT)
+}
 /// How long after a resize frames skip the refresh-point wait (the renderer
 /// presents on the plain layer for as long: `zgx_gpu`'s `RESIZE_SETTLE`).
 #[cfg(target_os = "macos")]
@@ -1203,6 +1232,10 @@ struct Host {
     /// runs, paints wait for it so input between refreshes cannot present
     /// extra frames (which would queue drawables and block the UI thread).
     frame_arrived: bool,
+    /// The frame being drawn is the one a display refresh asked for (not
+    /// input's, drawn at once): it may wait to be handed over (`align_wait`).
+    #[cfg(target_os = "macos")]
+    refresh_frame: bool,
     /// When to release animation-only renderer memory if nothing presents
     /// before then (see `GpuRenderer::trim`).
     trim_at: Option<std::time::Instant>,
@@ -1510,6 +1543,8 @@ impl Host {
             #[cfg(target_os = "macos")]
             latch: Latch::default(),
             frame_arrived: false,
+            #[cfg(target_os = "macos")]
+            refresh_frame: false,
             trim_at: None,
             frame_save_at: None,
             startup_trim: StartupTrim::Pending,
@@ -1877,6 +1912,19 @@ impl Host {
                 let grid = self.refresh_grid();
                 #[cfg(target_os = "macos")]
                 let latch = &mut self.latch;
+                // A frame the link paces at full rate, ready early, waits
+                // to land on the refresh the others do (`align_wait`); not
+                // while a resize settles (frames then show at once, with the
+                // window's new size).
+                #[cfg(target_os = "macos")]
+                let link = self
+                    .display_link
+                    .as_ref()
+                    .filter(|_| grid.is_none() && self.link_paced && self.refresh_frame)
+                    .filter(|_| {
+                        self.resized_at
+                            .is_none_or(|at| at.elapsed() >= RESIZE_SETTLE)
+                    });
                 // With native views, both planes and the views' geometry
                 // change in one transaction (committed when it drops).
                 let transaction = self.native.begin();
@@ -1891,6 +1939,18 @@ impl Host {
                         let at = latch.decide(std::time::Instant::now(), origin, period);
                         let _wait = zgx::profile::span(zgx::profile::Phase::Wait);
                         sleep_until(at);
+                    }
+                    #[cfg(target_os = "macos")]
+                    if let Some(link) = link
+                        && let Some((phase, period)) = link.refresh_phase(
+                            std::time::Instant::now(),
+                            crate::frame_source::VSYNC_RESYNC * 3,
+                        )
+                        && let Some(wait) = align_wait(period.saturating_sub(phase), period)
+                    {
+                        // One wakeup, not `sleep_until`'s two: running late
+                        // only moves it nearer the point, still before it.
+                        std::thread::sleep(wait);
                     }
                 })?;
                 self.native.apply();
@@ -3935,8 +3995,16 @@ impl Host {
         let paced = false;
         // Scene damage accumulates until the refresh paints it in one frame.
         if !paced || due || self.frame_arrived || self.force {
+            #[cfg(target_os = "macos")]
+            {
+                self.refresh_frame = paced && self.frame_arrived;
+            }
             self.frame_arrived = false;
             self.draw()?;
+            #[cfg(target_os = "macos")]
+            {
+                self.refresh_frame = false;
+            }
         }
         self.sync_frames();
         Ok(self.tasks.has_ready() || !self.pending.borrow().is_empty())
@@ -5896,6 +5964,27 @@ mod tests {
         );
         // Wholly off: nothing.
         assert_eq!(snapshot_region(rect(-50., 0., 40., 40.), 2.).2, 0);
+    }
+    #[test]
+    fn only_early_frames_at_a_fast_refresh_wait_for_the_others_point() {
+        let ms = |value: f64| std::time::Duration::from_secs_f64(value / 1e3);
+        let (fast, slow) = (ms(8.333), ms(16.667));
+        // Most frames (about 1.5 ms before the point) and late ones go at once.
+        for left in [0.2, 1.0, 1.5, 1.6, 1.85] {
+            assert_eq!(align_wait(ms(left), fast), None, "{left} ms before");
+        }
+        // The early few wait until `ALIGN_AT` before it.
+        for left in [1.9, 2.5, 3.2, 4.4] {
+            let wait = align_wait(ms(left), fast).expect("waits");
+            assert_eq!(ms(left) - wait, ALIGN_AT, "{left} ms before");
+        }
+        // Ready a refresh early anyway, or at 60 Hz (the latch's): at once.
+        for left in [4.5, 6.0, 8.0] {
+            assert_eq!(align_wait(ms(left), fast), None, "{left} ms before");
+        }
+        for left in [1.9, 2.5, 3.2, 8.0, 15.0] {
+            assert_eq!(align_wait(ms(left), slow), None, "{left} ms at 60 Hz");
+        }
     }
     #[cfg(target_os = "macos")]
     #[test]
