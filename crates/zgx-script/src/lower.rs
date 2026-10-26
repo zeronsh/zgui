@@ -3532,6 +3532,53 @@ fn code_editor(
     }
     view
 }
+/// What a computed colour returned: a colour parsed from its text while
+/// the text is still on the Lua stack (no string made of it), or any
+/// other value (a token, `currentcolor`, text that isn't UTF-8, a
+/// number) to convert as before.
+enum ComputedColor {
+    Parsed(Option<zgx::scene::Color>),
+    Other(mlua::Value),
+}
+impl ComputedColor {
+    fn parse(text: &str) -> Option<Self> {
+        (!text.starts_with('$') && !text.eq_ignore_ascii_case("currentcolor"))
+            .then(|| Self::Parsed(crate::node::parse_color(text)))
+    }
+}
+impl mlua::FromLua for ComputedColor {
+    fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
+        if let mlua::Value::String(s) = &value
+            && let Ok(text) = s.to_str()
+            && let Some(parsed) = Self::parse(&text)
+        {
+            return Ok(parsed);
+        }
+        Ok(Self::Other(value))
+    }
+    unsafe fn from_stack(idx: std::ffi::c_int, lua: &mlua::state::RawLua) -> mlua::Result<Self> {
+        use mlua::ffi;
+        let state = lua.state();
+        // SAFETY: mlua converts a result at `idx` while it is on this
+        // stack. A string's type is checked first, so `lua_tolstring`
+        // converts nothing and allocates nothing (the collector does not
+        // run); its bytes stay where they are, held by the stack, while
+        // they are parsed. Parsing runs no Lua and keeps no borrow.
+        unsafe {
+            if ffi::lua_type(state, idx) == ffi::LUA_TSTRING {
+                let mut len = 0;
+                let bytes = ffi::lua_tolstring(state, idx, &mut len);
+                let bytes = std::slice::from_raw_parts(bytes.cast::<u8>(), len);
+                if let Ok(text) = std::str::from_utf8(bytes)
+                    && let Some(parsed) = Self::parse(text)
+                {
+                    return Ok(parsed);
+                }
+            }
+            Ok(Self::Other(mlua::Value::from_stack(idx, lua)?))
+        }
+    }
+}
 fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Option<Lit> {
     match source {
         Owned::Lit(l) => Some(l.clone()),
@@ -3544,21 +3591,17 @@ fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Opt
         // A colour or a number (most computed styles): read from what the
         // function returned as it is, without making a `Value` of it first.
         Owned::Computed(f) if matches!(ty, Ty::Color | Ty::Num) => {
-            match vm.call::<mlua::Value>(f, ()) {
-                Ok(mlua::Value::Number(n)) => lit(&Value::Num(n), ty),
-                Ok(mlua::Value::Integer(n)) => lit(&Value::Num(n as f64), ty),
-                Ok(mlua::Value::String(s))
-                    if matches!(ty, Ty::Color)
-                        && s.to_str().is_ok_and(|text| {
-                            !text.starts_with('$') && !text.eq_ignore_ascii_case("currentcolor")
-                        }) =>
-                {
-                    s.to_str()
-                        .ok()
-                        .and_then(|text| crate::node::parse_color(&text))
-                        .map(Lit::Color)
-                }
-                Ok(other) => crate::value::convert(other, None)
+            // A colour's text is parsed where it lies (`ComputedColor`).
+            let result = if matches!(ty, Ty::Color) {
+                vm.call::<ComputedColor>(f, ())
+            } else {
+                vm.call::<mlua::Value>(f, ()).map(ComputedColor::Other)
+            };
+            match result {
+                Ok(ComputedColor::Parsed(color)) => color.map(Lit::Color),
+                Ok(ComputedColor::Other(mlua::Value::Number(n))) => lit(&Value::Num(n), ty),
+                Ok(ComputedColor::Other(mlua::Value::Integer(n))) => lit(&Value::Num(n as f64), ty),
+                Ok(ComputedColor::Other(other)) => crate::value::convert(other, None)
                     .map_err(|e| vm.report(e))
                     .ok()
                     .and_then(|v| lit(&v, ty)),

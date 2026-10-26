@@ -303,9 +303,44 @@ fn computed_colours_apply_as_literal_ones_do() {
             ui.div { id = "number", w = 10, h = 10, bg = function() return 0x112233 end },
             ui.div { id = "token", w = 10, h = 10, bg = function() return "$accent" end },
             ui.div { id = "literal-token", w = 10, h = 10, bg = "$accent" },
+            ui.div { id = "current", w = 10, h = 10, bg = function() return "currentColor" end },
+            ui.div { id = "literal-current", w = 10, h = 10, bg = "currentColor" },
+            ui.div { id = "not-utf8", w = 10, h = 10, bg = function() return "\xff#123456" end },
+            ui.div { id = "plain", w = 10, h = 10 },
         }"##,
     );
     assert_eq!(h.fill("hex"), Color(0x12, 0x34, 0x56, 255));
     assert_eq!(h.fill("number"), Color(0x11, 0x22, 0x33, 255));
     assert_eq!(h.fill("token"), h.fill("literal-token"));
+    assert_eq!(h.fill("current"), h.fill("literal-current"));
+    // Text that isn't UTF-8 is no colour: the box keeps none.
+    assert_eq!(h.fill("not-utf8"), h.fill("plain"));
+}
+
+/// A computed colour that fails reports, and leaves the others updating;
+/// once it returns a colour again, its box shows it (research B4).
+#[test]
+fn a_computed_colour_that_fails_reports_and_the_rest_update() {
+    let mut h = Harness::inline(
+        r##"local tick = ui.shared("tick", 0)
+        return ui.column {
+            ui.div { id = "first", w = 10, h = 10,
+                bg = function() tick:get(); return "#123456", "ignored" end },
+            ui.div { id = "bad", w = 10, h = 10,
+                bg = function() if tick:get() == 1 then error("computed failure marker") end; return "#112233" end },
+            ui.div { id = "last", w = 10, h = 10,
+                bg = function() return if tick:get() == 0 then "#222222" else "#abcdef" end },
+            ui.div { id = "none", w = 10, h = 10, bg = function() return end },
+            ui.div { id = "plain", w = 10, h = 10 },
+        }"##,
+    );
+    assert_eq!(h.fill("first"), Color(0x12, 0x34, 0x56, 255));
+    assert_eq!(h.fill("none"), h.fill("plain"));
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(1.));
+    h.settle();
+    assert!(h.error().unwrap().contains("computed failure marker"));
+    assert_eq!(h.fill("last"), Color(0xab, 0xcd, 0xef, 255));
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(2.));
+    h.settle();
+    assert_eq!(h.fill("bad"), Color(0x11, 0x22, 0x33, 255));
 }
