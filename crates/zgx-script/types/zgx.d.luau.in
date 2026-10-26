@@ -1479,6 +1479,10 @@ export type Props = Merge<Merge<StyleProps, NodeProps>, { [number]: never }>
 -- column, row, div, overlay, grid, button: and children.
 export type ContainerProps = Merge<Props, {
 	[number]: Child,
+	-- A button's look where its own styles don't say: "primary" (the
+	-- accent), "ghost" (no background until hovered), "danger", "default".
+	-- Other containers don't take it.
+	variant: ("primary" | "ghost" | "danger" | "default")?,
 	-- The name assistive technology reads for it, instead of its text: a
 	-- switch, a button showing only an icon. A state or function is
 	-- followed: a list row's name made from what it shows now.

@@ -1852,6 +1852,46 @@ fn live_mode(mode: &str) -> mlua::Result<Option<zgx::semantics::Live>> {
         ))),
     }
 }
+/// A button's `variant`, as the styles it stands for, written into its
+/// props where the script set none (its own `bg` still wins).
+fn button_look(lua: &Lua, table: &Table) -> mlua::Result<()> {
+    let variant = table.get::<Option<String>>("variant")?;
+    table.raw_set("variant", mlua::Value::Nil)?;
+    let hover = |field: &str, value: mlua::Value| -> mlua::Result<mlua::Value> {
+        let t = lua.create_table()?;
+        t.raw_set(field, value)?;
+        Ok(mlua::Value::Table(t))
+    };
+    let str = |s: &str| lua.create_string(s).map(mlua::Value::String);
+    let look: Vec<(&str, mlua::Value)> = match variant.as_deref() {
+        None | Some("default") => Vec::new(),
+        Some("primary") => vec![
+            ("bg", str("$accent")?),
+            ("color", str("$accent.text")?),
+            ("hover", hover("bg", str("$accent.hover")?)?),
+        ],
+        Some("danger") => vec![
+            ("bg", str("$danger")?),
+            ("color", str("$accent.text")?),
+            ("hover", hover("brightness", mlua::Value::Number(1.1))?),
+        ],
+        Some("ghost") => vec![
+            ("bg", str("#00000000")?),
+            ("hover", hover("bg", str("$hover")?)?),
+        ],
+        Some(other) => {
+            return Err(mlua::Error::runtime(format!(
+                "a button's `variant` is \"primary\", \"ghost\", \"danger\" or \"default\", not `{other}`"
+            )));
+        }
+    };
+    for (key, value) in look {
+        if table.raw_get::<mlua::Value>(key)?.is_nil() {
+            table.raw_set(key, value)?;
+        }
+    }
+    Ok(())
+}
 /// A `role` as ARIA names it.
 fn a11y_role(name: &str) -> Option<zgx::semantics::Role> {
     use zgx::semantics::Role;
@@ -2901,7 +2941,17 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set("object", lua.create_function(crate::value::object)?)?;
     ui.set("div", container(|| Kind::Div)?)?;
     ui.set("overlay", container(|| Kind::Overlay)?)?;
-    ui.set("button", container(|| Kind::Button)?)?;
+    ui.set(
+        "button",
+        lua.create_function(|lua, table: Option<Table>| {
+            let mut node = Node::new(owner(lua)?, Kind::Button);
+            if let Some(table) = &table {
+                button_look(lua, table)?;
+                fill_from(lua, &mut node, table, None)?;
+            }
+            node_ud(lua, node)
+        })?,
+    )?;
     ui.set(
         "grid",
         lua.create_function(|lua, table: Option<Table>| {

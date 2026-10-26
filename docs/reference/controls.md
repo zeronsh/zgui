@@ -36,6 +36,7 @@ A focusable box whose children lie in a row; `on_click` runs on a click, Space o
 | `bg` | `Color` | `"$button.bg"` | `hover` defaults to `"$button.hover"` |
 | `rounded` | `number` | `6` | |
 | `focus` | `Styles` | an accent ring | `focus = { border = 0 }` removes it |
+| `variant` | `"primary"`, `"ghost"`, `"danger"`, `"default"` | `"default"` | how it looks where its own styles don't say: `primary` the accent (`$accent`, `$accent.text`, `$accent.hover` under the pointer), `ghost` no background until hovered (`$hover`), `danger` `$danger` |
 
 ## input and textarea
 

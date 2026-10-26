@@ -3032,6 +3032,7 @@ fn a_list_of_data_takes_no_count() {
     let error = host.reload().unwrap_err();
     assert!(error.contains("not with `count`"), "{error}");
 }
+
 #[test]
 fn a_markdown_view_draws_blocks_and_builds_again_only_those_that_change() {
     let mut h = Harness::with_desktop(|runtime| {
@@ -3074,3 +3075,26 @@ fn a_markdown_view_draws_blocks_and_builds_again_only_those_that_change() {
     assert_eq!(h.error(), None);
 }
 
+#[test]
+fn a_buttons_variant_styles_what_its_props_leave_unset() {
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.button { id = "plain", "Send" },
+            ui.button { id = "primary", "Send", variant = "primary" },
+            ui.button { id = "icon", "x", variant = "ghost", size = 24 },
+        }"##,
+    );
+    h.frames(1);
+    assert_eq!(h.bounds("primary").height, h.bounds("plain").height);
+    // `size` stays the box's, as on any element: no variant of its own.
+    assert!(h.find("icon").is_some());
+    assert_eq!(h.error(), None);
+    let runtime = zgx::reactive::Runtime::new();
+    let host = zgx_script::ScriptHost::inline(
+        &runtime,
+        "app",
+        r#"return ui.button { "x", variant = "loud" }"#,
+    );
+    let error = host.reload().unwrap_err();
+    assert!(error.contains("`variant` is"), "{error}");
+}
