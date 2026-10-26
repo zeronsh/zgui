@@ -278,24 +278,36 @@ impl Paint {
     /// Take `styles`' paint properties out, leaving them unset. None set
     /// (`Styles::set_bits`): none to take.
     fn take(styles: &mut Styles) -> Self {
-        if styles.set_bits() & Self::BITS == 0 {
+        let set = styles.set_bits();
+        if set & Self::BITS == 0 {
             return Self::default();
         }
-        // Each of `BITS` taken below, left unset.
+        use crate::style::bit;
+        // Each of `BITS` taken below, left unset. One whose bit is unset
+        // is unset already (`Styles::set`): only those set are taken (an
+        // animation sets two or three of the twelve).
         let styles = styles.fields_taken(Self::BITS);
+        macro_rules! taken {
+            ($field:ident, $bit:ident) => {
+                match set & bit::$bit {
+                    0 => Default::default(),
+                    _ => std::mem::take(&mut styles.$field),
+                }
+            };
+        }
         Self {
-            opacity: styles.opacity.take(),
-            blur: styles.blur.take(),
-            edge_fade: styles.edge_fade.take(),
-            filter_blur: styles.filter_blur.take(),
-            brightness: styles.brightness.take(),
-            contrast: styles.contrast.take(),
-            saturate: styles.saturate.take(),
-            mask_offset: styles.mask_offset.take(),
-            clip_inset: styles.clip_inset.take(),
-            transform: styles.transform.take(),
-            local: std::mem::take(&mut styles.local_transform),
-            text_color: styles.text_color.take(),
+            opacity: taken!(opacity, OPACITY),
+            blur: taken!(blur, BLUR),
+            edge_fade: taken!(edge_fade, EDGE_FADE),
+            filter_blur: taken!(filter_blur, FILTER_BLUR),
+            brightness: taken!(brightness, BRIGHTNESS),
+            contrast: taken!(contrast, CONTRAST),
+            saturate: taken!(saturate, SATURATE),
+            mask_offset: taken!(mask_offset, MASK_OFFSET),
+            clip_inset: taken!(clip_inset, CLIP_INSET),
+            transform: taken!(transform, TRANSFORM),
+            local: taken!(local_transform, LOCAL_TRANSFORM),
+            text_color: taken!(text_color, TEXT_COLOR),
         }
     }
     fn put(self, styles: &mut Styles) {
@@ -1891,6 +1903,28 @@ mod tests {
         parent.update(|typography| typography.color = Themed::Value(Color(4, 5, 6, 255)));
         assert_eq!(color(&ui), Color(4, 5, 6, 255));
         assert_eq!(ui.scene.borrow().effects(text).opacity, 0.6);
+    }
+    /// Taking paint out of a style takes what it sets and leaves it
+    /// unset, the rest of it as it was; put back, it is the same style.
+    #[test]
+    fn paint_taken_from_a_style_and_put_back_is_the_same_style() {
+        let made = || {
+            Styles::new()
+                .w(10.)
+                .opacity(0.4)
+                .translate(3., 4.)
+                .text_color(Color(1, 2, 3, 255))
+        };
+        let mut styles = made();
+        let paint = Paint::take(&mut styles);
+        assert_eq!(
+            (paint.opacity, paint.text_color, paint.blur),
+            (Some(0.4), Some(Color(1, 2, 3, 255)), None)
+        );
+        assert!(styles == Styles::new().w(10.));
+        paint.put(&mut styles);
+        assert!(styles == made());
+        assert!(Paint::take(&mut Styles::new().w(1.)) == Paint::default());
     }
     /// A paint-only run writes the node's whole paint again: what else set
     /// its translation, clip or local transform since is undone, whether
