@@ -1577,6 +1577,9 @@ struct Node {
     /// Whether it composites through a layer shader (`Scene::layer_shaders`
     /// holds it): a layer while it has one.
     layer_shaded: bool,
+    /// Whether a mask, a layer shader or a blend mode makes it a layer
+    /// (`effect_layer` asks every node walked: one test, not three).
+    layered: bool,
     /// How it mixes with its backdrop (`Scene::set_blend`): a layer unless
     /// `Normal`.
     blend: BlendMode,
@@ -1625,10 +1628,12 @@ impl Node {
     /// Whether it paints as a layer for an effect on its content: a content
     /// blur, a mask, a layer shader or a blend mode.
     fn effect_layer(&self) -> bool {
-        self.filtered()
-            || self.image_mask.is_some()
-            || self.layer_shaded
-            || self.blend != BlendMode::Normal
+        self.filtered() || self.layered
+    }
+    /// Works `layered` out again after its mask, layer shader or blend changes.
+    fn relayer(&mut self) {
+        self.layered =
+            self.image_mask.is_some() || self.layer_shaded || self.blend != BlendMode::Normal;
     }
     fn set_local(&mut self, transform: LocalTransform) {
         match &mut self.local {
@@ -2507,6 +2512,7 @@ impl Scene {
                     local: None,
                     image_mask: None,
                     layer_shaded: false,
+                    layered: false,
                     blend: BlendMode::Normal,
                     clip_inset: None,
                     shader_uniforms: None,
@@ -2929,6 +2935,7 @@ impl Scene {
         self.damage_subtree(id);
         let node = self.node_mut(id);
         node.image_mask = mask.map(Box::new);
+        node.relayer();
         if node.image_mask.is_some() && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
@@ -2948,6 +2955,7 @@ impl Scene {
         self.damage_subtree(id);
         let node = self.node_mut(id);
         node.blend = mode;
+        node.relayer();
         if mode != BlendMode::Normal && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
@@ -3011,6 +3019,7 @@ impl Scene {
         }
         let node = self.node_mut(id);
         node.layer_shaded = shaded;
+        node.relayer();
         if shaded && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
@@ -4501,6 +4510,7 @@ impl Scene {
             local: None,
             image_mask: None,
             layer_shaded: false,
+            layered: false,
             blend: BlendMode::Normal,
             clip_inset: None,
             shader_uniforms: None,
