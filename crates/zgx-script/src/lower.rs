@@ -3676,6 +3676,52 @@ fn lerp(a: &Lit, b: &Lit, t: f32) -> Option<Lit> {
     })
 }
 
+/// A computed text's short string can become its display string directly,
+/// without an intermediate shared state value. Other values retain their
+/// formatting, and long strings retain the shared document conversion.
+enum ComputedText {
+    Text(String),
+    Other(Value),
+}
+impl ComputedText {
+    fn into_string(self) -> String {
+        match self {
+            Self::Text(text) => text,
+            Self::Other(value) => value.to_string(),
+        }
+    }
+}
+impl FromLua for ComputedText {
+    fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
+        if let mlua::Value::String(text) = &value {
+            let bytes = text.as_bytes();
+            if bytes.len() <= zgx::text::LONG {
+                return Ok(Self::Text(String::from_utf8_lossy(&bytes).into_owned()));
+            }
+        }
+        Value::from_lua(value, lua).map(Self::Other)
+    }
+    unsafe fn from_stack(idx: std::ffi::c_int, lua: &mlua::state::RawLua) -> mlua::Result<Self> {
+        use mlua::ffi;
+        let state = lua.state();
+        // SAFETY: mlua keeps the result at `idx` on the stack. Checking
+        // its string type means lua_tolstring converts and allocates
+        // nothing. Its bytes stay rooted while Rust copies them; no Lua
+        // runs and no borrow escapes. Other values use the existing path.
+        unsafe {
+            if ffi::lua_type(state, idx) == ffi::LUA_TSTRING {
+                let mut len = 0;
+                let bytes = ffi::lua_tolstring(state, idx, &mut len);
+                if len <= zgx::text::LONG {
+                    let bytes = std::slice::from_raw_parts(bytes.cast::<u8>(), len);
+                    return Ok(Self::Text(String::from_utf8_lossy(bytes).into_owned()));
+                }
+            }
+            Value::from_stack(idx, lua).map(Self::Other)
+        }
+    }
+}
+
 fn render_text(text: &Text, vm: &Vm) -> String {
     match text {
         Text::Literal(s) => s.clone(),
@@ -3703,8 +3749,8 @@ fn render_text(text: &Text, vm: &Vm) -> String {
             }
             out
         }
-        Text::Computed(f) => match vm.call::<Value>(f, ()) {
-            Ok(v) => v.to_string(),
+        Text::Computed(f) => match vm.call::<ComputedText>(f, ()) {
+            Ok(v) => v.into_string(),
             Err(error) => {
                 vm.report(error);
                 "⚠".into()
