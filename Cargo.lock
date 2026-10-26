@@ -4582,6 +4582,7 @@ dependencies = [
 name = "zgx-run"
 version = "0.1.0"
 dependencies = [
+ "png 0.18.1",
  "serde_json",
  "zgx",
  "zgx-desktop",
@@ -4594,6 +4595,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "memchr",
+ "png 0.18.1",
  "pulldown-cmark",
  "serde_json",
  "smallvec",

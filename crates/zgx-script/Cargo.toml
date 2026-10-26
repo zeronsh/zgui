@@ -29,7 +29,7 @@ vulkan = ["zgx-gpu/vulkan"]
 # `zgx inspect` over a user-only local socket when its host serves it. Off
 # by default: an app shipped without it cannot be driven. zgx-run turns it
 # on for development.
-inspect = ["zgx/trace"]
+inspect = ["zgx/trace", "dep:png"]
 
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.0" }
@@ -43,6 +43,8 @@ serde_json = "1"
 # Markdown for `ui.markdown` and `zgx_script::markdown`.
 pulldown-cmark = { version = "0.13", default-features = false }
 smallvec = "1.16"
+# Devtools' snapshots (`inspect`).
+png = { version = "0.18", optional = true }
 
 # The script time budget counts the thread's CPU time (clock_gettime).
 [target.'cfg(unix)'.dependencies]

@@ -65,6 +65,40 @@ fn failed(error: impl Into<String>) -> String {
     .to_json()
 }
 
+/// Snapshots kept for an app: older ones are removed.
+const SNAPSHOTS_KEPT: u32 = 16;
+
+/// Write `image` as a PNG beside the app's socket, readable by its user
+/// alone: its path.
+fn save_png(image: &zgx::image::ImageData) -> Result<std::path::PathBuf, String> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static TAKEN: AtomicU32 = AtomicU32::new(0);
+    let n = TAKEN.fetch_add(1, Ordering::Relaxed);
+    let dir = crate::inspect_client::socket_dir();
+    make_private_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let pid = std::process::id();
+    let path = dir.join(format!("{pid}-snapshot-{n}.png"));
+    if let Some(old) = n.checked_sub(SNAPSHOTS_KEPT) {
+        let _ = std::fs::remove_file(dir.join(format!("{pid}-snapshot-{old}.png")));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let file = options
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut encoder =
+        png::Encoder::new(std::io::BufWriter::new(file), image.width(), image.height());
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .and_then(|mut writer| writer.write_image_data(image.pixels()))
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
+}
+
 const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   tree    [target] [depth] [budget=200] [all]   the interface, a node a line
   node    target                                 one node: kind, source, role, name, value, box
@@ -75,6 +109,7 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   type    target text                            click it, then type text
   key     keys                                   e.g. \"Enter\", \"cmd+k\", \"alt+ArrowDown\"
   scroll  target dy                              scroll the viewport under it
+  snapshot target [width=4096]                   its pixels as the window last drew them: a PNG, user-only
   command id                                     run a ui.command
   errors                                         script error, type errors, lint, layout warnings
   lint                                           zgx lint over the app's scripts, file:line
@@ -296,6 +331,29 @@ impl Session {
                 let (key, modifiers) = driver::parse_keys(&keys)?;
                 driver::press(&mut ui, key, modifiers);
                 Ok((format!("pressed {keys}"), Value::Nil))
+            })(),
+            "snapshot" => (|| {
+                let node = target(&ui)?;
+                let width = number("width").map_or(4096, |w| w.clamp(1., 16384.) as u32);
+                let image = ui.snapshot(node, width).ok_or(
+                    "no picture: the node is hidden or not laid out, or this window takes none \
+                     (macOS windows do)",
+                )?;
+                let path = save_png(&image)?;
+                let path_text = path.display().to_string();
+                Ok((
+                    format!(
+                        "@{} {}x{} px as last drawn → {path_text}",
+                        driver::number(node),
+                        image.width(),
+                        image.height()
+                    ),
+                    Value::record([
+                        ("path", Value::from(path_text.as_str())),
+                        ("width", Value::Num(image.width() as f64)),
+                        ("height", Value::Num(image.height() as f64)),
+                    ]),
+                ))
             })(),
             "scroll" => (|| {
                 let node = target(&ui)?;

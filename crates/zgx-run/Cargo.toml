@@ -28,6 +28,10 @@ zgx-desktop = { path = "../zgx-desktop", version = "0.1.0" }
 zgx-script = { path = "../zgx-script", version = "0.1.0" }
 serde_json = "1"
 
+[dev-dependencies]
+# Reading devtools' snapshots back.
+png = "0.18"
+
 [[bin]]
 name = "zgx-run"
 path = "src/main.rs"

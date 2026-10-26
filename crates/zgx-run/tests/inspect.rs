@@ -213,3 +213,70 @@ fn an_app_serves_its_session_on_a_socket_only_its_user_reaches() {
     );
     drop(server);
 }
+
+#[test]
+fn a_snapshot_is_a_png_of_the_node_only_its_user_reads() {
+    let (app, session) = app();
+    // Without pictures from the host, it says why.
+    let refused = error(&ask(
+        &app,
+        &session,
+        r##"{"cmd":"snapshot","target":"#add"}"##,
+    ));
+    assert!(refused.contains("no picture"), "{refused}");
+    // A host's picture of a box: one colour, two pixels a point.
+    app.ui.on_snapshot(|rect, max_width| {
+        let (w, h) = (
+            ((rect.width * 2.) as u32).min(max_width),
+            (rect.height * 2.) as u32,
+        );
+        let pixels: Vec<u8> = (0..w * h).flat_map(|_| [10, 20, 30, 255]).collect();
+        zgx::image::ImageData::new(w, h, pixels)
+            .ok()
+            .map(std::sync::Arc::new)
+    });
+    let answer = ask(&app, &session, r##"{"cmd":"snapshot","target":"#add"}"##);
+    let said = text(&answer);
+    let data = answer.field("data").unwrap();
+    let path = data.field("path").map(Value::to_string).unwrap();
+    assert_eq!(
+        data.field("width").and_then(Value::as_f64),
+        Some(120.),
+        "{said}"
+    );
+    assert_eq!(
+        data.field("height").and_then(Value::as_f64),
+        Some(48.),
+        "{said}"
+    );
+    assert!(said.contains("120x48") && said.contains(&path), "{said}");
+    let png = std::fs::read(&path).unwrap();
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    let decoder = png::Decoder::new(std::io::Cursor::new(png));
+    let mut reader = decoder.read_info().unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut pixels).unwrap();
+    assert_eq!((info.width, info.height), (120, 48));
+    assert_eq!(&pixels[..4], &[10, 20, 30, 255]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the picture is its user's");
+    }
+    // At most as wide as asked.
+    let narrow = ask(
+        &app,
+        &session,
+        r##"{"cmd":"snapshot","target":"#add","width":50}"##,
+    );
+    assert_eq!(
+        narrow
+            .field("data")
+            .unwrap()
+            .field("width")
+            .and_then(Value::as_f64),
+        Some(50.)
+    );
+    let _ = std::fs::remove_file(path);
+}

@@ -186,6 +186,7 @@ ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
   scroll <target> <dy> command <id>
   errors               lint               frames [n]
   wait <target> [--text T] [--gone] [--timeout MS]
+  snapshot <target> [--width PX] [--out file.png]
   sleep <ms>           raw <json>
   help                 what the app answers
   mcp                  serve these as MCP tools on stdio, for agents
@@ -200,6 +201,8 @@ fn inspect(args: Vec<String>) -> ExitCode {
     let mut json = false;
     let mut words: Vec<String> = Vec::new();
     let mut flags: Vec<(String, Option<String>)> = Vec::new();
+    // Where `snapshot` copies its picture.
+    let mut out: Option<String> = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -216,7 +219,14 @@ fn inspect(args: Vec<String>) -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "--all" | "--full" | "--gone" => flags.push((arg[2..].to_string(), None)),
-            "--depth" | "--budget" | "--text" | "--timeout" => {
+            "--out" => match args.next() {
+                Some(path) => out = Some(path),
+                None => {
+                    eprintln!("zgx inspect: --out takes a file");
+                    return ExitCode::from(2);
+                }
+            },
+            "--depth" | "--budget" | "--text" | "--timeout" | "--width" => {
                 flags.push((arg[2..].to_string(), args.next()));
             }
             _ => words.push(arg),
@@ -247,7 +257,7 @@ fn inspect(args: Vec<String>) -> ExitCode {
         }
     };
     match cmd.as_str() {
-        "tree" | "node" | "find" | "click" | "wait" => put("target", arg(1)),
+        "tree" | "node" | "find" | "click" | "wait" | "snapshot" => put("target", arg(1)),
         "type" => {
             put("target", arg(1));
             put("text", arg(2));
@@ -292,7 +302,7 @@ fn inspect(args: Vec<String>) -> ExitCode {
     let fields: Vec<(String, Value)> = fields
         .into_iter()
         .map(|(k, v)| match (&*k, &v) {
-            ("dy" | "ms" | "n", Value::Str(s)) => {
+            ("dy" | "ms" | "n" | "width", Value::Str(s)) => {
                 (k, s.parse::<f64>().map(Value::Num).unwrap_or(v))
             }
             _ => (k, v),
@@ -328,6 +338,18 @@ fn inspect(args: Vec<String>) -> ExitCode {
     }
     let parsed = Value::from_json(&answer).unwrap_or_default();
     if parsed.field("ok").is_some_and(Value::truthy) {
+        // A snapshot where it was asked for.
+        if let (Some(out), Some(from)) = (
+            &out,
+            parsed
+                .field("data")
+                .and_then(|d| d.field("path"))
+                .map(Value::to_string),
+        ) && let Err(error) = std::fs::copy(&from, out)
+        {
+            eprintln!("zgx inspect: {out}: {error}");
+            return ExitCode::FAILURE;
+        }
         if !json {
             let text = parsed
                 .field("text")
@@ -456,12 +478,37 @@ const TOOLS: &[Tool] = &[
         "Wait until a node shows (holding text, if given), or is gone; fails with why after the timeout.",
     ),
     (
+        "zgx_snapshot",
+        "snapshot",
+        &[("target", "string", true), ("width", "number", false)],
+        "A picture of a node as the window last drew it (a PNG, at most width pixels wide): to see what it looks like.",
+    ),
+    (
         "zgx_sleep",
         "sleep",
         &[("ms", "number", true)],
         "Let the app run for ms milliseconds.",
     ),
 ];
+
+/// `bytes` in base64 (RFC 4648, padded): an MCP image's data.
+fn base64(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = u32::from(chunk[0]) << 16
+            | u32::from(*chunk.get(1).unwrap_or(&0)) << 8
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(DIGITS[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
 
 const TARGETS: &str = "Targets: #id, \"label or text\" (in quotes), role:button, @12 (a tree number), #list row 3, \"Copy\"[2], #a >> \"b\" (inside).";
 
@@ -536,6 +583,7 @@ fn mcp() -> ExitCode {
                 let params = message.field("params").cloned().unwrap_or_default();
                 let name = params.field("name").map(Value::to_string).unwrap_or_default();
                 let args = params.field("arguments").cloned().unwrap_or_default();
+                let mut picture: Option<String> = None;
                 let answer = match TOOLS.iter().find(|t| t.0 == name) {
                     None => Err(format!("no tool {name}")),
                     Some((_, "list", _, _)) => Ok(inspect_client::apps().iter().map(|a| format!("{} {}", a.pid, a.app)).collect::<Vec<_>>().join("\n")),
@@ -552,7 +600,13 @@ fn mcp() -> ExitCode {
                             .and_then(|answer| {
                                 let answer = Value::from_json(&answer).unwrap_or_default();
                                 if answer.field("ok").is_some_and(Value::truthy) {
-                                    Ok(answer.field("text").map(Value::to_string).unwrap_or_default())
+                                    let text = answer.field("text").map(Value::to_string).unwrap_or_default();
+                                    // A snapshot's picture, beside its text.
+                                    if let Some(path) = answer.field("data").and_then(|d| d.field("path")).map(Value::to_string) {
+                                        let png = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+                                        picture = Some(base64(&png));
+                                    }
+                                    Ok(text)
                                 } else {
                                     Err(answer.field("error").map(Value::to_string).unwrap_or_default())
                                 }
@@ -560,7 +614,17 @@ fn mcp() -> ExitCode {
                     }
                 };
                 Ok(match answer {
-                    Ok(t) => Value::record([("content", Value::List(vec![text(if t.is_empty() { "ok".into() } else { t })].into())), ("isError", Value::Bool(false))]),
+                    Ok(t) => {
+                        let mut content = vec![text(if t.is_empty() { "ok".into() } else { t })];
+                        if let Some(data) = picture {
+                            content.push(Value::record([
+                                ("type", Value::from("image")),
+                                ("data", Value::from(data.as_str())),
+                                ("mimeType", Value::from("image/png")),
+                            ]));
+                        }
+                        Value::record([("content", Value::List(content.into())), ("isError", Value::Bool(false))])
+                    }
                     Err(e) => Value::record([("content", Value::List(vec![text(e)].into())), ("isError", Value::Bool(true))]),
                 })
             }
@@ -589,4 +653,21 @@ fn mcp() -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn base64_pads_as_rfc_4648_does() {
+        for (bytes, encoded) in [
+            (&b""[..], ""),
+            (b"f", "Zg=="),
+            (b"fo", "Zm8="),
+            (b"foo", "Zm9v"),
+            (b"foobar", "Zm9vYmFy"),
+            (b"\xff\xfe\x00", "//4A"),
+        ] {
+            assert_eq!(super::base64(bytes), encoded);
+        }
+    }
 }

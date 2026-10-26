@@ -41,6 +41,7 @@ fn the_mcp_server_says_what_it_offers() {
         "zgx_state",
         "zgx_frames",
         "zgx_wait",
+        "zgx_snapshot",
     ] {
         assert!(
             lines[1].contains(&format!(r#""name":"{tool}""#)),
