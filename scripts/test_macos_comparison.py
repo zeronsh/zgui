@@ -19,9 +19,9 @@ class ReadinessTests(unittest.TestCase):
                     patch.object(comparison.subprocess, 'Popen', return_value=process) as spawn, \
                     patch.object(comparison, 'run', return_value='{"ready":true}') as probe, \
                     patch.object(comparison.time, 'monotonic', side_effect=[100, 100.3]):
-                self.assertIs(comparison.launch(Path('app'), 'scroll', 17, log), process)
-            probe.assert_called_once_with([str(comparison.READY), '42', str(comparison.READY_TIMEOUT)])
-            self.assertEqual(spawn.call_args.kwargs['env']['ZGX_SECONDS'], '17')
+                self.assertIs(comparison.launch(Path('app'), 'scroll', 18, log), process)
+            probe.assert_called_once_with([str(comparison.READY), '42', str(comparison.LIFETIME_MARGIN - 0.5)])
+            self.assertEqual(spawn.call_args.kwargs['env']['ZGX_SECONDS'], '18')
             self.assertEqual(process.benchmark_started, 100)
             self.assertAlmostEqual(process.benchmark_ready_seconds, 0.3)
             self.assertAlmostEqual(json.loads(log.with_suffix('.ready.json').read_text())['spawn_to_ready_seconds'], 0.3)
@@ -37,7 +37,7 @@ class ReadinessTests(unittest.TestCase):
                     patch.object(comparison.subprocess, 'Popen', return_value=process), \
                     patch.object(comparison, 'run', side_effect=error):
                 with self.assertRaises(comparison.ReadinessFailure):
-                    comparison.launch(Path('app'), 'scroll', 17, log)
+                    comparison.launch(Path('app'), 'scroll', 18, log)
             failure = json.loads(log.with_suffix('.ready-error.1.json').read_text())
             self.assertEqual(failure['stdout'], error.stdout)
             self.assertEqual(failure['stderr'], error.stderr)
@@ -60,19 +60,19 @@ class ReadinessTests(unittest.TestCase):
             out = Path(directory)
 
             def launch(binary, mode, seconds, log):
-                log.write_text('workload_ticks=1020\n')
-                self.assertEqual(seconds, 17)
+                log.write_text('workload_ticks=1080\n')
+                self.assertEqual(seconds, 18)
                 return process
 
             with patch.object(comparison, 'REQUESTED', 15), patch.object(comparison, 'WARMUP', 5), \
                     patch.object(comparison, 'SAMPLED', 10), patch.object(comparison, 'launch', side_effect=launch), \
                     patch.object(comparison, 'run', return_value=json.dumps(sample)) as sampler, \
                     patch.object(comparison, 'finish', return_value=(0, False)), \
-                    patch.object(comparison.time, 'monotonic', return_value=17):
+                    patch.object(comparison.time, 'monotonic', return_value=18):
                 row = comparison.one_trial('lab', 'zgx', 'scroll', 0, out, False)
             sampler.assert_called_once_with([str(comparison.SAMPLER), '42', '5', '10', str(comparison.INTERVAL)])
-            self.assertEqual(row['requested_seconds'], 17)
-            self.assertEqual(row['ran_seconds'], 17)
+            self.assertEqual(row['requested_seconds'], 18)
+            self.assertEqual(row['ran_seconds'], 18)
             self.assertEqual(row['ready_seconds'], 0.3)
 
     def test_readiness_failure_retries_and_counts_both_launches(self):
@@ -115,9 +115,9 @@ class ReadinessTests(unittest.TestCase):
                     patch.object(comparison, 'stage', side_effect=lambda p: Path('/tmp') / Path(p).name), \
                     patch.object(comparison.subprocess, 'Popen', return_value=process), \
                     patch.object(comparison, 'run', return_value='{"ready":true}'), \
-                    patch.object(comparison.time, 'monotonic', side_effect=[100, 102]):
+                    patch.object(comparison.time, 'monotonic', side_effect=[100, 103]):
                 with self.assertRaises(comparison.ReadinessFailure):
-                    comparison.launch(Path('app'), 'scroll', 17, log)
+                    comparison.launch(Path('app'), 'scroll', 18, log)
             process.terminate.assert_called_once()
 
     def test_exhausted_readiness_skips_sample_and_other_frameworks_continue(self):

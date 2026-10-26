@@ -75,7 +75,7 @@ from staging import CWD, clean_env, stage  # noqa: E402
 REQUESTED, WARMUP, SAMPLED, INTERVAL = 20, 5, 15, 0.05
 # App lifetimes include readiness and sampler setup; samples start after
 # readiness, so a slower framework's startup cannot shorten its sample.
-READY_TIMEOUT, LIFETIME_MARGIN = 5, 2
+LIFETIME_MARGIN = 3
 # Idle is sampled 20-35 s after launch, five times: until the Metal driver
 # gives back the memory it holds for any process that used the GPU lately
 # (a ~180 MB floor, returned ~6 or ~8 s after launch for every framework, on
@@ -284,7 +284,7 @@ def launch(binary, mode, seconds, log):
     # vlist's height probe may be headless (Rune); it is not a timed trial.
     if mode != 'probe':
         try:
-            ready = json.loads(run([str(READY), str(process.pid), str(READY_TIMEOUT)]))
+            ready = json.loads(run([str(READY), str(process.pid), str(LIFETIME_MARGIN - 0.5)]))
         except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
             failure = {'error': str(error), 'stdout': getattr(error, 'stdout', None),
                        'stderr': getattr(error, 'stderr', None)}
@@ -813,7 +813,7 @@ def measure(args, frameworks, modes, repeats, commit, found):
              'abnormal_exits': CRASHES, 'launches': LAUNCHES,
              'readiness_failures': READINESS_FAILURES,
              'protocol': {'requested_seconds': REQUESTED + LIFETIME_MARGIN, 'warmup_seconds': WARMUP, 'sampled_seconds': SAMPLED,
-                          'sampling_anchor': 'window frontmost and uncovered', 'readiness_timeout_seconds': READY_TIMEOUT,
+                          'sampling_anchor': 'window frontmost and uncovered', 'readiness_timeout_seconds': LIFETIME_MARGIN - 0.5,
                           'lifetime_margin_seconds': LIFETIME_MARGIN,
                           'interval_seconds': INTERVAL, 'repeats': repeats, 'idle_repeats': idle_repeats,
                           'idle_window_seconds': [IDLE_SETTLE, IDLE_SETTLE + SAMPLED],
