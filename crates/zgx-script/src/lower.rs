@@ -1923,12 +1923,15 @@ fn styled(
             }
         }
         element.set_base_corners(corners);
+        let shaders = node.shaders.as_deref();
         element.set_base_shader(
-            node.shader_params
+            shaders
+                .and_then(|s| s.params)
                 .map(|params| zgx::decoration::ShaderUniforms { time: 0., params }),
         );
         element.set_base_layer(
-            node.layer_params
+            shaders
+                .and_then(|s| s.layer_params)
                 .map(|params| zgx::decoration::ShaderUniforms { time: 0., params }),
         );
         element.set_base_clip(statics.iter().find_map(|(p, l)| match (p, l) {
@@ -1963,21 +1966,20 @@ fn styled(
                 low.clone(),
             )
         });
-    let shader = node.shader.clone().map(|shader| {
-        (
-            shader,
-            node.shader_params.unwrap_or_default(),
-            node.shader_tokens,
-        )
-    });
+    let shaders = node.shaders.as_deref();
+    let shader =
+        shaders.and_then(|s| Some((s.fill.clone()?, s.params.unwrap_or_default(), s.tokens)));
     // Parameters with no fill of their own: an image's (its `characters`
     // reveal), set on its node all the same.
-    let params_only = node.shader_params.filter(|_| node.shader.is_none());
-    // A layer shader, with its literal parameters unless animated.
-    let layer = node
-        .layer_shader
-        .clone()
-        .map(|shader| (shader, node.layer_params.unwrap_or_default()));
+    let params_only = shaders.and_then(|s| s.params.filter(|_| s.fill.is_none()));
+    // A layer shader, with its literal parameters unless animated (boxed:
+    // the style closure below holds it, and few nodes have one).
+    let layer = shaders.and_then(|s| {
+        Some(Box::new((
+            s.layer.clone()?,
+            s.layer_params.unwrap_or_default(),
+        )))
+    });
     if !dynamic.is_empty()
         || element.is_some()
         || bg_image.is_some()
@@ -2009,9 +2011,11 @@ fn styled(
                 Some((image, fit)) => styles.bg_image(image, fit),
                 None => styles,
             };
-            let styles = match &layer {
+            let styles = match layer.as_deref() {
                 Some((shader, params)) => {
-                    let animated = element.as_ref().and_then(|e| e.animated.borrow().layer);
+                    let animated = element
+                        .as_ref()
+                        .and_then(|e| e.animated.borrow().layer.as_deref().copied());
                     styles
                         .layer_shader(shader.clone())
                         .layer_uniforms(animated.unwrap_or(zgx::decoration::ShaderUniforms {

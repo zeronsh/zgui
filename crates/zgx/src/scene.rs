@@ -1574,9 +1574,9 @@ struct Node {
     local: Option<Box<LocalTransform>>,
     /// An alpha mask over the subtree (`Scene::set_mask`): a layer too.
     image_mask: Option<Box<ImageMask>>,
-    /// The shader its layer composites through and that shader's uniforms
-    /// (`Scene::set_layer_shader`): a layer while it has a shader.
-    layer_shader: Option<Box<LayerShader>>,
+    /// Whether it composites through a layer shader (`Scene::layer_shaders`
+    /// holds it): a layer while it has one.
+    layer_shaded: bool,
     /// How it mixes with its backdrop (`Scene::set_blend`): a layer unless
     /// `Normal`.
     blend: BlendMode,
@@ -1622,18 +1622,12 @@ impl Node {
     fn filtered(&self) -> bool {
         self.effects.filter_blur > 0.
     }
-    /// Whether it composites through a layer shader.
-    fn layer_shaded(&self) -> bool {
-        self.layer_shader
-            .as_deref()
-            .is_some_and(|layer| layer.shader.is_some())
-    }
     /// Whether it paints as a layer for an effect on its content: a content
     /// blur, a mask, a layer shader or a blend mode.
     fn effect_layer(&self) -> bool {
         self.filtered()
             || self.image_mask.is_some()
-            || self.layer_shaded()
+            || self.layer_shaded
             || self.blend != BlendMode::Normal
     }
     fn set_local(&mut self, transform: LocalTransform) {
@@ -2427,6 +2421,9 @@ pub struct Scene {
     given_styles: NodeMap<Style>,
     /// Directions nodes set themselves (`set_direction`); others inherit.
     directions: NodeMap<Direction>,
+    /// Layer shaders and their uniforms, by node (`set_layer_shader`):
+    /// usually none.
+    layer_shaders: NodeMap<LayerShader>,
     /// Subtrees hit testing skips (`set_inert`): usually none.
     inert: Vec<NodeId>,
     /// Text selection's settings and highlights (`set_user_select`).
@@ -2509,7 +2506,7 @@ impl Scene {
                     isolated: false,
                     local: None,
                     image_mask: None,
-                    layer_shader: None,
+                    layer_shaded: false,
                     blend: BlendMode::Normal,
                     clip_inset: None,
                     shader_uniforms: None,
@@ -2581,6 +2578,7 @@ impl Scene {
             contents_styles: Default::default(),
             given_styles: Default::default(),
             directions: Default::default(),
+            layer_shaders: Default::default(),
             inert: Vec::new(),
             selectable: Default::default(),
             views: Default::default(),
@@ -2890,6 +2888,7 @@ impl Scene {
     }
     /// Whether `id` paints as a cached layer: isolated, transformed, blurred
     /// (`Effects::filter_blur`) or masked.
+    #[inline]
     pub fn is_layer(&self, id: NodeId) -> bool {
         let node = self.node(id);
         node.isolated || node.transformed() || node.effect_layer()
@@ -2956,7 +2955,10 @@ impl Scene {
     }
     /// `id`'s layer shader and its uniforms, if either is set.
     pub fn layer_shader(&self, id: NodeId) -> Option<&LayerShader> {
-        self.node(id).layer_shader.as_deref()
+        if self.layer_shaders.is_empty() {
+            return None;
+        }
+        self.layer_shaders.get(&id)
     }
     /// Composite `id`'s subtree through `shader` (see `LayerShader`), or
     /// with `None` as it is, keeping its uniforms. A node with a layer
@@ -2968,9 +2970,7 @@ impl Scene {
         shader: Option<Arc<crate::decoration::FillShader>>,
     ) {
         let uniforms = self
-            .node(id)
-            .layer_shader
-            .as_deref()
+            .layer_shader(id)
             .map(|layer| layer.uniforms)
             .unwrap_or_default();
         self.set_layer(id, LayerShader { shader, uniforms });
@@ -2988,29 +2988,30 @@ impl Scene {
         }
         uniforms.time = finite(uniforms.time);
         uniforms.params = uniforms.params.map(|row| row.map(finite));
-        let shader = self
-            .node(id)
-            .layer_shader
-            .as_deref()
-            .and_then(|layer| layer.shader.clone());
+        let shader = self.layer_shader(id).and_then(|layer| layer.shader.clone());
         if let Some(fps) = shader.as_deref().and_then(|shader| shader.fps()) {
             uniforms.time = (uniforms.time * fps).floor() / fps;
         }
         self.set_layer(id, LayerShader { shader, uniforms });
     }
     fn set_layer(&mut self, id: NodeId, layer: LayerShader) {
-        let old = self.node(id).layer_shader.as_deref();
+        let old = self.layer_shader(id);
         if old.map_or(layer == LayerShader::default(), |old| *old == layer) {
             return;
         }
-        let shaded = |layer: Option<&LayerShader>| layer.is_some_and(|l| l.shader.is_some());
         // What it shades lies within what the subtree paints anyway.
-        if shaded(old) || layer.shader.is_some() {
+        if old.is_some_and(|old| old.shader.is_some()) || layer.shader.is_some() {
             self.damage_subtree(id);
         }
+        let shaded = layer.shader.is_some();
+        if layer == LayerShader::default() {
+            self.layer_shaders.remove(&id);
+        } else {
+            self.layer_shaders.insert(id, layer);
+        }
         let node = self.node_mut(id);
-        node.layer_shader = (layer != LayerShader::default()).then(|| Box::new(layer));
-        if shaded(node.layer_shader.as_deref()) && !std::mem::replace(&mut node.promoted, true) {
+        node.layer_shaded = shaded;
+        if shaded && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
         self.invalidate(id, COMPOSITE);
@@ -4499,7 +4500,7 @@ impl Scene {
             isolated: false,
             local: None,
             image_mask: None,
-            layer_shader: None,
+            layer_shaded: false,
             blend: BlendMode::Normal,
             clip_inset: None,
             shader_uniforms: None,
@@ -4638,6 +4639,9 @@ impl Scene {
         }
         if !self.directions.is_empty() {
             self.directions.remove(&id);
+        }
+        if !self.layer_shaders.is_empty() {
+            self.layer_shaders.remove(&id);
         }
         self.transformed -= usize::from(node.transformed());
         self.filtered -= usize::from(node.filtered());
@@ -5690,7 +5694,7 @@ impl Scene {
             (own, held) => own.or(held),
         };
         // A layer shader may paint anywhere in its box.
-        let ink = match node.layer_shaded() {
+        let ink = match node.layer_shaded {
             true => Some(ink.map_or(node.bounds, |ink| ink.union(node.bounds))),
             false => ink,
         };

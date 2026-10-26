@@ -45,8 +45,9 @@ pub(crate) struct Animated {
     /// parameters): only those are written, so parameters the node's style
     /// sets (theme colours) stay.
     pub shader_slots: u32,
-    /// A layer shader's time and parameters, and which animations drive.
-    pub layer: Option<zgx::decoration::ShaderUniforms>,
+    /// A layer shader's time and parameters, and which animations drive
+    /// (boxed: few elements have a layer shader).
+    pub layer: Option<Box<zgx::decoration::ShaderUniforms>>,
     pub layer_slots: u32,
     pub styles: Vec<(Prop, Lit)>,
 }
@@ -93,8 +94,8 @@ pub(crate) struct Element {
     base_clip: Cell<Option<[f32; 4]>>,
     /// The literal shader parameters.
     base_shader: Cell<Option<zgx::decoration::ShaderUniforms>>,
-    /// The literal layer shader parameters.
-    base_layer: Cell<Option<zgx::decoration::ShaderUniforms>>,
+    /// The literal layer shader parameters (boxed, as `Animated::layer`).
+    base_layer: Cell<Option<Box<zgx::decoration::ShaderUniforms>>>,
 }
 impl Element {
     pub fn new(
@@ -287,14 +288,26 @@ impl Element {
             .unwrap_or_default()
     }
     pub fn set_base_layer(&self, uniforms: Option<zgx::decoration::ShaderUniforms>) {
-        self.base_layer.set(uniforms);
+        let mut base = self.base_layer.take();
+        match (&mut base, uniforms) {
+            (Some(held), Some(uniforms)) => **held = uniforms,
+            (_, uniforms) => base = uniforms.map(Box::new),
+        }
+        self.base_layer.set(base);
+    }
+    /// The literal layer shader parameters, if any.
+    fn base_layer(&self) -> Option<zgx::decoration::ShaderUniforms> {
+        let base = self.base_layer.take();
+        let uniforms = base.as_deref().copied();
+        self.base_layer.set(base);
+        uniforms
     }
     /// The layer shader's uniforms now.
     pub fn layer_uniforms(&self) -> zgx::decoration::ShaderUniforms {
-        if let Some(u) = self.animated.borrow().layer {
-            return u;
+        if let Some(u) = self.animated.borrow().layer.as_deref() {
+            return *u;
         }
-        if let Some(u) = self.base_layer.get() {
+        if let Some(u) = self.base_layer() {
             return u;
         }
         self.read(|scene, id| scene.layer_shader(id).map(|layer| layer.uniforms))
@@ -304,7 +317,7 @@ impl Element {
     /// Sets the layer shader's time (`slot` 0) or one of its sixteen
     /// parameters (1 to 16): composites again, no repaint.
     pub fn set_layer_slot(&self, slot: usize, value: f32) {
-        let current = self.animated.borrow().layer;
+        let current = self.animated.borrow().layer.as_deref().copied();
         let mut u = current.unwrap_or_else(|| self.layer_uniforms());
         let target = match slot {
             0 => &mut u.time,
@@ -315,7 +328,11 @@ impl Element {
         }
         *target = value;
         let mut animated = self.animated.borrow_mut();
-        animated.layer = Some(u);
+        // Written in place while it animates: no allocation a frame.
+        match &mut animated.layer {
+            Some(held) => **held = u,
+            None => animated.layer = Some(Box::new(u)),
+        }
         animated.layer_slots |= 1 << slot;
         drop(animated);
         self.compositor_changed.set(true);
@@ -543,7 +560,7 @@ impl Element {
                 set_local_transform(&mut scene, id, local);
             }
             if cleared.layer.is_some() {
-                scene.set_layer_uniforms(id, self.base_layer.get().unwrap_or_default());
+                scene.set_layer_uniforms(id, self.base_layer().unwrap_or_default());
             }
         }
         // The node's style re-runs and restores what it sets itself.
@@ -618,7 +635,7 @@ impl Element {
                 }
                 scene.set_shader_uniforms(id, shown);
             }
-            if let Some(uniforms) = animated.layer {
+            if let Some(uniforms) = animated.layer.as_deref() {
                 let mut shown = scene
                     .layer_shader(id)
                     .map(|layer| layer.uniforms)
