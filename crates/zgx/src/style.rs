@@ -657,8 +657,14 @@ impl TransformPatch {
     const ROTATE_X: u8 = 16;
     const ROTATE_Y: u8 = 32;
     const PERSPECTIVE: u8 = 64;
+    const TILT: u8 = Self::ROTATE_X | Self::ROTATE_Y | Self::PERSPECTIVE;
     /// `self` with what `over` sets laid over it.
+    #[inline]
     pub(crate) fn over(mut self, over: Self) -> Self {
+        // Most styles set no transform; few of those that do tilt.
+        if over.set == 0 {
+            return self;
+        }
         let pick = |bit: u8| over.set & bit != 0;
         if pick(Self::SCALE) {
             self.values.scale = over.values.scale;
@@ -672,19 +678,22 @@ impl TransformPatch {
         if pick(Self::ORIGIN) {
             self.values.origin = over.values.origin;
         }
-        if pick(Self::ROTATE_X) {
-            self.values.rotate_x = over.values.rotate_x;
-        }
-        if pick(Self::ROTATE_Y) {
-            self.values.rotate_y = over.values.rotate_y;
-        }
-        if pick(Self::PERSPECTIVE) {
-            self.values.perspective = over.values.perspective;
+        if pick(Self::TILT) {
+            if pick(Self::ROTATE_X) {
+                self.values.rotate_x = over.values.rotate_x;
+            }
+            if pick(Self::ROTATE_Y) {
+                self.values.rotate_y = over.values.rotate_y;
+            }
+            if pick(Self::PERSPECTIVE) {
+                self.values.perspective = over.values.perspective;
+            }
         }
         self.set |= over.set;
         self
     }
     /// `base` with the set components replaced.
+    #[inline]
     pub(crate) fn resolve(self, base: LocalTransform) -> LocalTransform {
         Self {
             values: base,
