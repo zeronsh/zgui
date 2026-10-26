@@ -1570,6 +1570,10 @@ struct LayerPresent {
     trial: Trial,
     /// When the trial started, for its cost (`Trial`).
     trial_started: Option<std::time::Instant>,
+    /// The machine the verdict is for (GPU, display and refresh, OS build),
+    /// and its verdict (`verdicts`): 0 untried, 1 tiles, 2 drawables.
+    verdict_key: String,
+    verdict: u8,
 }
 #[cfg(target_os = "macos")]
 impl LayerPresent {
@@ -1579,7 +1583,7 @@ impl LayerPresent {
         let auto = self.drawables.is_none()
             && *PRESENT_AUTO
             && self.full_rate
-            && match VERDICT.load(std::sync::atomic::Ordering::Relaxed) {
+            && match self.verdict {
                 2 => true,
                 1 => false,
                 _ => matches!(self.trial, Trial::Drawables { .. }),
@@ -1706,9 +1710,56 @@ static PRESENT_DRAWABLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(||
 static PRESENT_AUTO: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
     zgx::env::var_os("ZGX_PRESENT_DRAWABLE").is_some_and(|v| v == "auto")
 });
-/// The trial's verdict for the process: 0 not yet, 1 tiles, 2 drawables.
+/// The trial's verdicts (1 tiles, 2 drawables), by machine key (`verdict_key`):
+/// kept in the app's defaults, so a machine is tried once, not every launch.
+/// `ZGX_PRESENT_RETRIAL` tries again (and stores the new verdict).
 #[cfg(target_os = "macos")]
-static VERDICT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+mod verdicts {
+    use objc2_foundation::{NSString, NSUserDefaults};
+    static CACHE: std::sync::Mutex<Vec<(String, u8)>> = std::sync::Mutex::new(Vec::new());
+    fn name(key: &str) -> objc2::rc::Retained<NSString> {
+        NSString::from_str(&format!("zgx.presentPath.{key}"))
+    }
+    /// The verdict for `key`: 0 not tried here yet.
+    pub(crate) fn get(key: &str) -> u8 {
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, verdict)) = cache.iter().find(|(k, _)| k == key) {
+            return *verdict;
+        }
+        let verdict = if zgx::env::var_os("ZGX_PRESENT_RETRIAL").is_some() {
+            0
+        } else {
+            match NSUserDefaults::standardUserDefaults()
+                .stringForKey(&name(key))
+                .map(|v| v.to_string())
+                .as_deref()
+            {
+                Some("tiles") => 1,
+                Some("drawables") => 2,
+                _ => 0,
+            }
+        };
+        cache.push((key.to_owned(), verdict));
+        verdict
+    }
+    /// Keep `verdict` for `key`, here and in the defaults.
+    pub(crate) fn set(key: &str, verdict: u8) {
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache.retain(|(k, _)| k != key);
+        cache.push((key.to_owned(), verdict));
+        let value = NSString::from_str(if verdict == 2 { "drawables" } else { "tiles" });
+        // SAFETY: An NSString value under an NSString key, as defaults store.
+        unsafe {
+            NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&value), &name(key))
+        };
+    }
+    /// The OS's version and build ("Version 26.0.1 (Build 25A362)").
+    pub(crate) fn os() -> String {
+        objc2_foundation::NSProcessInfo::processInfo()
+            .operatingSystemVersionString()
+            .to_string()
+    }
+}
 /// Full-rate frames each half of the trial lasts (about two seconds at 120 Hz).
 #[cfg(target_os = "macos")]
 const TRIAL_FRAMES: u32 = 240;
@@ -2474,6 +2525,10 @@ pub struct GpuRenderer {
     /// The refresh the next drawable frame presents at (`set_present_at`).
     #[cfg(target_os = "macos")]
     present_at: Option<std::time::Instant>,
+    /// The display the window shows on and its refresh rate, for the
+    /// full-rate verdict's key (`set_display_key`).
+    #[cfg(target_os = "macos")]
+    display_key: String,
     /// Trimmed, and nothing drawn since: the next input wakes the GPU
     /// (`warm_up`).
     #[cfg(target_os = "macos")]
@@ -2865,6 +2920,8 @@ impl GpuRenderer {
             idle: false,
             #[cfg(target_os = "macos")]
             present_at: None,
+            #[cfg(target_os = "macos")]
+            display_key: String::new(),
             #[cfg(target_os = "macos")]
             gpu_time: std::cell::Cell::new(None),
             #[cfg(target_os = "macos")]
@@ -8001,7 +8058,7 @@ impl GpuRenderer {
                 present.retain_buffers(|_, buffer| !buffer.drawable);
             }
             // Tiles won the trial: their pool goes once a tile shows.
-            if VERDICT.load(std::sync::atomic::Ordering::Relaxed) == 1
+            if present.verdict == 1
                 && present
                     .shown
                     .is_none_or(|shown| !present.buffers[shown].0.drawable)
@@ -8237,11 +8294,35 @@ impl GpuRenderer {
         );
         present.frame += 1;
         let frame = present.frame;
+        // The machine's verdict, looked up once per key (`verdicts`).
+        if *PRESENT_AUTO && present.full_rate {
+            // SAFETY: Only the raw device's registry ID is read.
+            let gpu = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }.map_or(0, |hal| {
+                use objc2_metal::MTLDevice;
+                hal.raw_device().registryID()
+            });
+            static OS: std::sync::LazyLock<String> = std::sync::LazyLock::new(verdicts::os);
+            let key = format!("{gpu:x}.{}.{}", self.display_key, *OS).replace(' ', "_");
+            if key != present.verdict_key {
+                present.verdict = verdicts::get(&key);
+                present.verdict_key = key;
+                if present.verdict == 0 {
+                    present.trial = Trial::Untried;
+                } else {
+                    present.trial = Trial::Done;
+                    eprintln!(
+                        "zgx: full-rate frames take {} (this machine's stored verdict)",
+                        if present.verdict == 2 {
+                            "drawables"
+                        } else {
+                            "tiles"
+                        }
+                    );
+                }
+            }
+        }
         // The full-rate paths' trial (`Trial`), a frame at a time.
-        if *PRESENT_AUTO
-            && present.drawables.is_none()
-            && present.full_rate
-            && VERDICT.load(std::sync::atomic::Ordering::Relaxed) == 0
+        if *PRESENT_AUTO && present.drawables.is_none() && present.full_rate && present.verdict == 0
         {
             // Where a feedback record stands, and the share of frames lost
             // since then (`Feedback::lost_since`).
@@ -8316,7 +8397,8 @@ impl GpuRenderer {
                     } else {
                         1
                     };
-                    VERDICT.store(verdict, std::sync::atomic::Ordering::Relaxed);
+                    present.verdict = verdict;
+                    verdicts::set(&present.verdict_key, verdict);
                     eprintln!(
                         "zgx: full-rate frames take {} (lost: tiles {:.1}%, drawables {:.1}% of {} frames each; trial {} ms)",
                         if verdict == 2 { "drawables" } else { "tiles" },
@@ -8736,6 +8818,15 @@ impl GpuRenderer {
         if let Some(present) = &mut self.layer_present {
             present.drawables = Some(drawables);
             present.plain_only = false;
+        }
+    }
+    /// PROTOTYPE: the display the window shows on and its refresh rate
+    /// (`"<id>@<hz>"`), part of the full-rate verdict's key.
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn set_display_key(&mut self, key: &str) {
+        if self.display_key != key {
+            self.display_key = key.to_owned();
         }
     }
     /// PROTOTYPE: the refresh the next frame should show on, when it draws

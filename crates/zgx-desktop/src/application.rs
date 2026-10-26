@@ -1294,6 +1294,9 @@ struct Host {
     latch: Latch,
     frame_timer: crate::frame_source::FrameTimer,
     frame_interval: std::time::Duration,
+    /// The display the window shows on and its rate (`refresh_frame_interval`).
+    #[cfg(target_os = "macos")]
+    display_key: String,
     /// A display refresh arrived since the last paint. While the display link
     /// runs, paints wait for it so input between refreshes cannot present
     /// extra frames (which would queue drawables and block the UI thread).
@@ -1619,6 +1622,8 @@ impl Host {
             startup_trim: StartupTrim::Pending,
             frame_timer: crate::frame_source::FrameTimer::new(std::time::Instant::now()),
             frame_interval: crate::frame_source::DEFAULT_INTERVAL,
+            #[cfg(target_os = "macos")]
+            display_key: String::new(),
             frame_deadline: None,
             frame_heartbeat: None,
             frame_redraw_requested: false,
@@ -1963,6 +1968,7 @@ impl Host {
                         .map(|point| point + lead());
                     if let Some(renderer) = &mut self.renderer {
                         renderer.set_present_at(refresh);
+                        renderer.set_display_key(&self.display_key);
                     }
                 }
                 if let Some(renderer) = &mut self.renderer {
@@ -4168,6 +4174,24 @@ impl Host {
         );
         // What the engine times itself steps by (springs, fades).
         self.context.ui.set_refresh_interval(self.frame_interval);
+        // PROTOTYPE: which display and rate, for the renderer's full-rate
+        // verdict (`GpuRenderer::set_display_key`).
+        #[cfg(target_os = "macos")]
+        {
+            use winit::platform::macos::MonitorHandleExtMacOS;
+            let monitor = window.current_monitor();
+            self.display_key = format!(
+                "{}@{:.0}",
+                monitor.as_ref().map_or(0, |m| m.native_id()),
+                monitor
+                    .as_ref()
+                    .and_then(crate::window_info::refresh_rate_hz)
+                    .unwrap_or(0.)
+            );
+            if let Some(renderer) = &mut self.renderer {
+                renderer.set_display_key(&self.display_key);
+            }
+        }
     }
     /// Deliver one display refresh. Hidden windows keep their requests pending.
     /// The link reported the grid while the timer paces frames: it takes
