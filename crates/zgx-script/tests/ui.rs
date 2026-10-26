@@ -3159,6 +3159,74 @@ fn a_text_given_a_state_follows_it_without_the_script() {
     );
     assert_eq!(h.error(), None);
 }
+
+/// An app's scene as it shows: every node in document order, its kind,
+/// text and box: what two renders are compared by.
+fn scene_shown(h: &mut Harness) -> String {
+    h.ui.prepare_frame();
+    let scene = h.ui.scene.borrow();
+    let mut out = String::new();
+    let mut stack = vec![(scene.root(), 0)];
+    while let Some((node, depth)) = stack.pop() {
+        let b = scene.bounds(node);
+        let text = match scene.kind(node) {
+            zgx::scene::NodeKind::Text { text, .. } => format!(" {text:?}"),
+            zgx::scene::NodeKind::RichText { text, .. } => format!(" {:?}", text.text()),
+            _ => String::new(),
+        };
+        out.push_str(&format!(
+            "{}{}{text} {:.1},{:.1} {:.1}x{:.1}\n",
+            "  ".repeat(depth),
+            zgx::inspect::kind_name(&scene, node),
+            b.x,
+            b.y,
+            b.width,
+            b.height
+        ));
+        for child in scene.children(node).iter().rev() {
+            stack.push((*child, depth + 1));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_streamed_markdown_view_matches_a_full_render_after_every_piece() {
+    let document = "# Plan\n\nSome **bold** words, then `code` and a [link](https://example.com).\n\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\n\nAfter the code.\n\n1. one\n2. two\n3. three continues\n   on a second line\n\n- a\n- b\n\n> quoted\n> twice\n\n## Done\n\nThe end.";
+    const APP: &str =
+        r#"return ui.column { w = 380, h = 900, ui.markdown_view { "{reply}", w_full = true } }"#;
+    let app = |text: &str| {
+        let mut reply = None;
+        let h = Harness::new(|runtime| {
+            let host = zgx_script::ScriptHost::inline(runtime, "app", APP);
+            reply = Some(host.shared("reply", zgx_script::Value::from(text)));
+            host
+        });
+        (h, reply.unwrap())
+    };
+    let (mut streamed, reply) = app("");
+    let mut at = 0;
+    while at < document.len() {
+        // Pieces of 1 to 7 bytes, at character boundaries.
+        let mut next = (at + 1 + at % 7).min(document.len());
+        while !document.is_char_boundary(next) {
+            next += 1;
+        }
+        let so_far = &document[..next];
+        reply.set(zgx_script::Value::from(so_far));
+        streamed.frames(1);
+        let (mut whole, _) = app(so_far);
+        whole.frames(1);
+        assert_eq!(
+            scene_shown(&mut streamed),
+            scene_shown(&mut whole),
+            "after {next} bytes: {so_far:?}"
+        );
+        at = next;
+    }
+    assert_eq!(streamed.error(), None);
+}
+
 #[test]
 fn a_shrunk_column_grows_back_to_content_that_outgrew_it() {
     let mut h = Harness::inline(
@@ -3179,4 +3247,3 @@ fn a_shrunk_column_grows_back_to_content_that_outgrew_it() {
     fresh.frames(1);
     assert_eq!(streamed, fresh.bounds("outer").height, "was {before}");
 }
-
