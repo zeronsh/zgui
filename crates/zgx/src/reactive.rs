@@ -642,10 +642,6 @@ impl<T: 'static> Signal<T> {
     pub fn version(&self) -> u64 {
         self.inner.version.get()
     }
-    /// Subscribe the running effect, as a read does, without reading.
-    pub(crate) fn track_read(&self) {
-        self.track();
-    }
     /// Call `f` with the value, without subscribing.
     pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         f(&self.inner.value.borrow())

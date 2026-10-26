@@ -712,6 +712,9 @@ pub(crate) fn mount_style_with_intrinsic(
     // Whether this text node's effect subscribed to its scope's body text
     // style (`read_body`).
     let mut body_subscribed = false;
+    // Whether the effect subscribed to the inherited typography for good: a
+    // node restyled every frame then compares its version without tracking.
+    let mut parent_subscribed = false;
     ui.bind(node, move || {
         let _span = crate::profile::nested(crate::profile::Phase::Style);
         // A `Ui` only for a full application: a run that changes paint or a
@@ -825,10 +828,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 opaque == storage.themes.system_preferences().reduced_transparency
             }) && paint.map(|p| p.set()) == last.paint
                 && (same || resized)
-                && (!last.parent || {
-                    inherited.track_read();
-                    inherited.version() == last.parent_version
-                })
+                && (!last.parent || inherited.version() == last.parent_version)
                 && intrinsic.as_ref().map(|size| size.get()) == last.intrinsic
                 && layout_target.as_ref().and_then(|target| target.get()) == last.content
                 && last.text.as_ref().is_none_or(|(size, family)| {
@@ -1007,7 +1007,8 @@ pub(crate) fn mount_style_with_intrinsic(
         if let Some(output) = &object_fit {
             output.set(resolved.object_fit.unwrap_or_default());
         }
-        // Only observe inherited typography when a field is actually inherited.
+        // Only observe inherited typography when a field is actually inherited
+        // (and from then on: a later run setting every field is rare).
         let tracks_parent = resolved.rare().text_overflow.is_none()
             || resolved.rare().line_clamp.is_none()
             || resolved.text_color.is_none()
@@ -1024,11 +1025,10 @@ pub(crate) fn mount_style_with_intrinsic(
             || resolved.rare().underline.is_none()
             || resolved.rare().underline_offset.is_none();
         let parent_version = inherited.version();
-        let parent = if tracks_parent {
-            inherited.get()
-        } else {
-            inherited.with_untracked(Clone::clone)
-        };
+        if tracks_parent && !std::mem::replace(&mut parent_subscribed, true) {
+            inherited.subscribe();
+        }
+        let parent = inherited.with_untracked(Clone::clone);
         // Nothing of its own (the usual dynamic style: sizes, colours): the
         // parent's typography, as it is.
         let current = if !resolved.sets_typography() {
@@ -1797,6 +1797,40 @@ mod tests {
         assert_eq!(output.get().size, Themed::Value(24.));
         assert_eq!(stable.get(), fixed);
         assert!(ui.scene.borrow_mut().flush().layout_nodes > 0);
+    }
+    /// A text restyled every frame takes the paint-only path, which reads
+    /// no inherited typography: its parent's still reaches it.
+    #[test]
+    fn text_restyled_every_frame_follows_its_parents_typography() {
+        let mut ui = Ui::new(100., 100.);
+        let parent = inherited(&ui);
+        let text = ui.label(ui.root(), "faded", Style::default());
+        let fade = ui.signal(1_f32);
+        let read = fade.clone();
+        mount_style(
+            &mut ui,
+            text,
+            Styles::default(),
+            parent.clone(),
+            Some(Box::new(move || Styles::new().opacity(read.get()))),
+            Variants::default(),
+            None,
+            false,
+        );
+        for value in [0.9, 0.8, 0.7] {
+            fade.set(value);
+            ui.scene.borrow_mut().flush();
+        }
+        parent.update(|typography| typography.color = Themed::Value(Color(1, 2, 3, 255)));
+        let color = |ui: &Ui| match ui.scene.borrow().kind(text) {
+            NodeKind::Text { color, .. } => *color,
+            _ => panic!("expected text"),
+        };
+        assert_eq!(color(&ui), Color(1, 2, 3, 255));
+        fade.set(0.6);
+        parent.update(|typography| typography.color = Themed::Value(Color(4, 5, 6, 255)));
+        assert_eq!(color(&ui), Color(4, 5, 6, 255));
+        assert_eq!(ui.scene.borrow().effects(text).opacity, 0.6);
     }
     /// Runs that only resize (sizes and margins, fading too) patch the last
     /// layout style instead of applying everything again: the node must end
