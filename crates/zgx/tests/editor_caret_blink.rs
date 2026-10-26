@@ -137,3 +137,75 @@ fn turning_the_blink_off_shows_a_hidden_caret() {
     assert!(alpha(&ui, editor.caret) > 0);
     assert_eq!(ui.next_interaction_deadline(), None);
 }
+
+/// Every node's box, in document order.
+fn boxes(ui: &Ui) -> Vec<(NodeId, zgx::scene::Rect)> {
+    let scene = ui.scene.borrow();
+    let mut out = Vec::new();
+    let mut stack = vec![scene.root()];
+    while let Some(node) = stack.pop() {
+        out.push((node, scene.bounds(node)));
+        stack.extend(scene.children(node).iter().rev().copied());
+    }
+    out
+}
+
+/// A blinking caret never moves anything, by so much as a pixel: through
+/// many blinks of a field, an area and a field sized by its text, beside
+/// neighbours that would shift if any of them did, every box stays where it
+/// was, nothing is laid out, and each blink damages the caret alone.
+#[test]
+fn a_blinking_caret_never_moves_a_box_or_damages_past_itself() {
+    for multiline in [false, true] {
+        for sized_by_text in [false, true] {
+            let mut ui = Ui::new(500., 300.);
+            let value = ui.signal(String::from("blink, and nothing moves"));
+            let editor = if multiline {
+                text_area("Notes", value.clone())
+            } else {
+                text_input("Name", value.clone())
+            }
+            .id("field");
+            let editor = if sized_by_text {
+                editor.h(60.)
+            } else {
+                editor.size(200., 60.)
+            };
+            let mounted = ui.mount(
+                column().child(
+                    row()
+                        .child(text("before").id("before"))
+                        .child(editor)
+                        .child(text("after").id("after")),
+                ),
+            );
+            ui.prepare_frame();
+            let node = mounted.find("field").unwrap();
+            ui.input.focus(&ui.scene, Some(node));
+            ui.prepare_frame();
+            let caret = ui.focused_editor().unwrap().caret;
+            ui.set_caret_blink(Some(BLINK));
+            ui.scene.borrow_mut().flush();
+            let before = boxes(&ui);
+            let case = format!("multiline {multiline}, sized by text {sized_by_text}");
+            for blink in 0..6 {
+                let at = ui.next_interaction_deadline().expect("blinking");
+                assert!(ui.advance_interactions(at).unwrap());
+                ui.prepare_frame();
+                let report = ui.scene.borrow_mut().flush();
+                assert_eq!(report.layout_nodes, 0, "{case}, blink {blink}: laid out");
+                assert_eq!(boxes(&ui), before, "{case}, blink {blink}: a box moved");
+                let shown = ui.scene.borrow().bounds(caret);
+                for damage in &report.damage {
+                    assert!(
+                        damage.x >= shown.x - 1.
+                            && damage.y >= shown.y - 1.
+                            && damage.x + damage.width <= shown.x + shown.width + 1.
+                            && damage.y + damage.height <= shown.y + shown.height + 1.,
+                        "{case}, blink {blink}: {damage:?} past the caret {shown:?}"
+                    );
+                }
+            }
+        }
+    }
+}

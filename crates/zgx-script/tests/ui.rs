@@ -3247,3 +3247,69 @@ fn a_shrunk_column_grows_back_to_content_that_outgrew_it() {
     fresh.frames(1);
     assert_eq!(streamed, fresh.bounds("outer").height, "was {before}");
 }
+
+/// A Luau input's blinking caret moves nothing, by a pixel, and damages the
+/// caret alone: a field sized by its text and a multiline one, beside text
+/// that would shift if either did.
+#[test]
+fn a_luau_inputs_blinking_caret_moves_nothing() {
+    use std::time::Duration;
+    for multiline in [false, true] {
+        let mut h = Harness::inline(&format!(
+            r#"
+local name = ui.state("name", "blink, and nothing moves")
+return ui.column {{
+    ui.row {{
+        ui.text {{ id = "before", "before" }},
+        ui.input {{ id = "field", label = "Name", value = name, multiline = {multiline} }},
+        ui.text {{ id = "after", "after" }},
+    }},
+}}
+"#
+        ));
+        h.click("field");
+        h.frame();
+        h.ui.set_caret_blink(Some(zgx::caret_blink::CaretBlink {
+            on: Duration::from_millis(500),
+            off: Duration::from_millis(400),
+            timeout: None,
+        }));
+        h.ui.scene.borrow_mut().flush();
+        let boxes = |h: &Harness| {
+            let scene = h.ui.scene.borrow();
+            let mut out = Vec::new();
+            let mut stack = vec![scene.root()];
+            while let Some(node) = stack.pop() {
+                out.push((node, scene.bounds(node)));
+                stack.extend(scene.children(node).iter().rev().copied());
+            }
+            out
+        };
+        let before = boxes(&h);
+        let caret = h.ui.focused_editor().expect("the field is focused").caret;
+        for blink in 0..6 {
+            let at = h.ui.next_interaction_deadline().expect("blinking");
+            assert!(h.ui.advance_interactions(at).unwrap());
+            h.ui.prepare_frame();
+            let report = h.ui.scene.borrow_mut().flush();
+            assert_eq!(
+                report.layout_nodes, 0,
+                "multiline {multiline}, blink {blink}"
+            );
+            assert!(
+                boxes(&h) == before,
+                "multiline {multiline}, blink {blink}: a box moved"
+            );
+            let shown = h.ui.scene.borrow().bounds(caret);
+            for damage in &report.damage {
+                assert!(
+                    damage.x >= shown.x - 1.
+                        && damage.y >= shown.y - 1.
+                        && damage.x + damage.width <= shown.x + shown.width + 1.
+                        && damage.y + damage.height <= shown.y + shown.height + 1.,
+                    "multiline {multiline}, blink {blink}: {damage:?} past the caret {shown:?}"
+                );
+            }
+        }
+    }
+}
