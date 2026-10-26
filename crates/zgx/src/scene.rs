@@ -1270,6 +1270,10 @@ fn paints_only(old: &NodeKind, new: &NodeKind) -> bool {
         _ => false,
     }
 }
+const BOUNDS_VALID: u8 = 1;
+const HIT_DIRECTION: u8 = 2;
+const HIT_CHECKED: u8 = 32;
+const INK_VALID: u8 = 128;
 struct Node {
     cursor: Option<crate::cursor::Cursor>,
     parent: Option<NodeId>,
@@ -1299,7 +1303,10 @@ struct Node {
     /// nothing without visiting its children; it can only become visible
     /// through its own change, which invalidates it and its ancestors.
     ink: std::cell::Cell<Option<Rect>>,
-    ink_valid: std::cell::Cell<bool>,
+    /// Ink and directional hit proofs share a validity byte. Any cached
+    /// dependency sets BOUNDS_VALID, including descendants visited by a proof,
+    /// so the existing invalidation walk reaches every dependent ancestor.
+    bounds_valid: std::cell::Cell<u8>,
     /// Intrinsic text or rich text size by wrap limit and shaper revision. Flex layout
     /// measures a leaf under several constraint sets per pass, which defeats
     /// `measurement`; this keeps an unchanged label from being reshaped each
@@ -2197,7 +2204,7 @@ impl Scene {
                     alternates: Vec::new(),
                     sizes: Vec::new(),
                     ink: std::cell::Cell::new(None),
-                    ink_valid: std::cell::Cell::new(false),
+                    bounds_valid: std::cell::Cell::new(0),
                     text_size: Default::default(),
                     advanced_layout: None,
                     arrange_dirty: true,
@@ -3184,18 +3191,167 @@ impl Scene {
             false => self.hit_test_walk::<true>(x, y),
         }
     }
+    // One endpoint suffices to reject a point outside a subtree. Cache
+    // proved directions (bits 1..4) and a completed scan (bit 5), with ink
+    // in bit 7. Bit 0 witnesses every cached dependency, so invalidation
+    // carries the same one-bit value as before. Other directions remain
+    // conservative misses until invalidation or an ancestor's scan refines them.
+    #[inline(always)]
+    fn hit_outside(&self, node: &Node, b: Rect, point: (f32, f32)) -> bool {
+        if point.0 < b.x {
+            self.hit_proved::<0>(node)
+        } else if point.0 >= b.x + b.width {
+            self.hit_proved::<1>(node)
+        } else if point.1 < b.y {
+            self.hit_proved::<2>(node)
+        } else if point.1 >= b.y + b.height {
+            self.hit_proved::<3>(node)
+        } else {
+            false
+        }
+    }
+    #[inline(never)]
+    fn hit_proved<const D: usize>(&self, node: &Node) -> bool {
+        if node.bounds_valid.get() & HIT_CHECKED == 0 {
+            let b = node.bounds;
+            let start = if D < 2 { b.x } else { b.y };
+            let limit = if D.is_multiple_of(2) {
+                start
+            } else {
+                start + if D < 2 { b.width } else { b.height }
+            };
+            self.hit_projection::<D>(node, 0., 0, limit);
+        }
+        node.bounds_valid.get() & (HIT_DIRECTION << D) != 0
+    }
+    #[inline(always)]
+    fn hit_projection<const D: usize>(
+        &self,
+        node: &Node,
+        offset: f32,
+        level: u32,
+        limit: f32,
+    ) -> Option<f32> {
+        let cached = node.bounds_valid.get();
+        let zero = offset == 0.;
+        let b = node.bounds;
+        let start = if D < 2 { b.x } else { b.y };
+        let size = if D < 2 { b.width } else { b.height };
+        let own = if D.is_multiple_of(2) {
+            start + offset
+        } else {
+            (start + offset) + size
+        };
+        if if D.is_multiple_of(2) {
+            own < limit
+        } else {
+            own > limit
+        } {
+            node.bounds_valid
+                .set(cached | BOUNDS_VALID | if zero { HIT_CHECKED } else { 0 });
+            return None;
+        }
+        if zero && cached & (HIT_DIRECTION << D) != 0 {
+            return Some(own);
+        }
+        let safe = !node.transformed()
+            && !matches!(node.kind, NodeKind::Image(_) | NodeKind::Svg(_))
+            && own.is_finite();
+        if !safe {
+            node.bounds_valid
+                .set(cached | BOUNDS_VALID | if zero { HIT_CHECKED } else { 0 });
+            return None;
+        }
+        if node.children.is_empty() {
+            node.bounds_valid.set(
+                cached
+                    | BOUNDS_VALID
+                    | if zero {
+                        HIT_CHECKED | (HIT_DIRECTION << D)
+                    } else {
+                        0
+                    },
+            );
+            return Some(own);
+        }
+        if level == 0 {
+            self.hit_projection_children::<D>(node, offset, level, own, limit)
+        } else {
+            crate::deep(level, || {
+                self.hit_projection_children::<D>(node, offset, level, own, limit)
+            })
+        }
+    }
+    #[inline(never)]
+    fn hit_projection_children<const D: usize>(
+        &self,
+        node: &Node,
+        offset: f32,
+        level: u32,
+        own: f32,
+        limit: f32,
+    ) -> Option<f32> {
+        let extent = node.children.iter().try_fold(own, |held, child| {
+            let child = self.node(*child);
+            let shift = if D < 2 {
+                child.transform.x
+            } else {
+                child.transform.y
+            };
+            let c = self.hit_projection::<D>(child, offset + shift, level + 1, limit)?;
+            Some(if D.is_multiple_of(2) {
+                if held < c { held } else { c }
+            } else {
+                if held > c { held } else { c }
+            })
+        });
+        let cached = node.bounds_valid.get();
+        if offset == 0. {
+            node.bounds_valid.set(
+                cached
+                    | BOUNDS_VALID
+                    | HIT_CHECKED
+                    | if extent == Some(own) {
+                        HIT_DIRECTION << D
+                    } else {
+                        0
+                    },
+            );
+        } else {
+            node.bounds_valid.set(cached | BOUNDS_VALID);
+        }
+        extent
+    }
     /// `POPUPS`: popup roots exist, whose subtrees are hit past the viewport.
     fn hit_test_walk<const POPUPS: bool>(&self, x: f32, y: f32) -> Vec<NodeId> {
         let inside = |r: Rect, (x, y): (f32, f32)| {
             x >= r.x && y >= r.y && x < r.x + r.width && y < r.y + r.height
         };
         let mut hits = Vec::new();
-        // A node, its parent's translation, opacity and clip, and the point
-        // in its parent's layer space.
-        let mut stack = vec![(self.root, Transform::default(), 1.0, self.viewport, (x, y))];
-        while let Some((id, parent_transform, parent_opacity, parent_clip, point)) = stack.pop() {
+        // Keep the active siblings and their inherited context in locals.
+        // Only a descent with siblings left to visit needs a stack entry.
+        let roots = [self.root];
+        let mut siblings = roots.iter();
+        let mut parent_transform = Transform::default();
+        let mut parent_opacity = 1.0;
+        let mut parent_clip = self.viewport;
+        let mut parent_point = (x, y);
+        let mut stack = Vec::new();
+        loop {
+            let Some(&id) = siblings.next() else {
+                let Some((rest, transform, opacity, clip, point)) = stack.pop() else {
+                    break;
+                };
+                siblings = rest;
+                parent_transform = transform;
+                parent_opacity = opacity;
+                parent_clip = clip;
+                parent_point = point;
+                continue;
+            };
+            let point = parent_point;
             let node = self.node(id);
-            let parent_clip = match POPUPS && self.popups.contains(&id) {
+            let inherited_clip = match POPUPS && self.popups.contains(&id) {
                 true => UNCLIPPED,
                 false => parent_clip,
             };
@@ -3209,46 +3365,67 @@ impl Scene {
             } else {
                 0.
             };
-            let (point, parent_clip) = if !node.transformed() {
-                (point, parent_clip)
+            // NaN opacity is non-hittable too.
+            #[allow(clippy::neg_cmp_op_on_partial_ord)]
+            if !(opacity > 0.) {
+                continue;
+            }
+            let (point, inherited_clip) = if !node.transformed() {
+                (point, inherited_clip)
             } else {
                 // Clipped around it, or flattened to nothing, nothing in it is hit.
                 let Some(inverse) = node.local().matrix(bounds).inverse() else {
                     continue;
                 };
-                if !inside(parent_clip, point) {
+                if !inside(inherited_clip, point) {
                     continue;
                 }
                 (inverse.point(point.0, point.1), UNCLIPPED)
             };
             let clip =
-                clipped_bounds(Some(parent_clip), bounds, &node.style).unwrap_or(parent_clip);
+                clipped_bounds(Some(inherited_clip), bounds, &node.style).unwrap_or(inherited_clip);
             // Clipped by its inset too, in its own space.
             let clip = match node.clip_inset.as_deref() {
                 Some(inset) => clip.intersection(inset.apply(bounds)).unwrap_or_default(),
                 None => clip,
             };
-            stack.extend(
-                node.children
-                    .iter()
-                    .rev()
-                    .map(|child| (*child, transform, opacity, clip, point)),
-            );
             let painted = |transform: crate::affine::Affine| {
                 transform
                     .inverse()
                     .is_some_and(|inverse| inside(bounds, inverse.point(point.0, point.1)))
             };
-            let hit = opacity > 0.0
-                && match &node.kind {
-                    NodeKind::Image(image) => painted(image.paint_transform(bounds)),
-                    NodeKind::Svg(svg) => painted(svg.paint_transform(bounds)),
-                    _ => inside(bounds, point),
-                }
-                && inside(clip, point);
-            if hit {
+            let hit = match &node.kind {
+                NodeKind::Image(image) => painted(image.paint_transform(bounds)),
+                NodeKind::Svg(svg) => painted(svg.paint_transform(bounds)),
+                _ => inside(bounds, point),
+            };
+            if hit && inside(clip, point) {
                 hits.push(id);
             }
+            if node.children.is_empty() {
+                continue;
+            }
+            if !hit
+                && !POPUPS
+                && transform == Transform::default()
+                && self.hit_outside(node, bounds, point)
+            {
+                continue;
+            }
+            if !siblings.as_slice().is_empty() {
+                stack.push((
+                    siblings,
+                    parent_transform,
+                    parent_opacity,
+                    parent_clip,
+                    parent_point,
+                ));
+            }
+            siblings = node.children.iter();
+            parent_transform = transform;
+            parent_opacity = opacity;
+            parent_clip = clip;
+            parent_point = point;
         }
         // Inert subtrees paint but are not hit; what is under them is.
         if !self.inert.is_empty() {
@@ -3928,7 +4105,7 @@ impl Scene {
             alternates: Vec::new(),
             sizes: Vec::new(),
             ink: std::cell::Cell::new(None),
-            ink_valid: std::cell::Cell::new(false),
+            bounds_valid: std::cell::Cell::new(0),
             text_size: Default::default(),
             advanced_layout: None,
             arrange_dirty: true,
@@ -4515,7 +4692,7 @@ impl Scene {
         let mut current = Some(id);
         while let Some(ancestor) = current {
             let node = self.node(ancestor);
-            if !node.ink_valid.replace(false) {
+            if node.bounds_valid.replace(0) & BOUNDS_VALID == 0 {
                 break;
             }
             current = node.parent;
@@ -4557,7 +4734,7 @@ impl Scene {
             let node = self.node_mut(current);
             let boundary = !first && Self::is_layout_boundary(node);
             let parent = node.parent;
-            let ink = node.ink_valid.replace(false);
+            let ink = node.bounds_valid.replace(0);
             node.dirty |= LAYOUT;
             if first && own {
                 node.dirty |= CHANGED;
@@ -4596,15 +4773,15 @@ impl Scene {
                 if node.isolated || node.promoted {
                     node.layer_revision = node.layer_revision.wrapping_add(marked);
                 }
-                if ink {
-                    ink = node.ink_valid.replace(false);
+                if ink & BOUNDS_VALID != 0 {
+                    ink = node.bounds_valid.replace(0);
                 }
                 parent = node.parent;
             }
-        } else if ink {
+        } else if ink & BOUNDS_VALID != 0 {
             while let Some(id) = parent {
                 let node = self.node(id);
-                if !node.ink_valid.replace(false) {
+                if node.bounds_valid.replace(0) & BOUNDS_VALID == 0 {
                     break;
                 }
                 parent = node.parent;
@@ -5097,12 +5274,12 @@ impl Scene {
     /// See `Node::ink`. Computed on demand and cached until invalidated.
     fn ink(&self, id: NodeId) -> Option<Rect> {
         let node = self.node(id);
-        if node.ink_valid.get() {
+        if node.bounds_valid.get() & INK_VALID != 0 {
             return node.ink.get();
         }
         if node.effects.opacity <= 0.0 || !own_visible(&node.style) {
             node.ink.set(None);
-            node.ink_valid.set(true);
+            node.bounds_valid.set(INK_VALID | BOUNDS_VALID);
             return None;
         }
         // Its overflow clip cuts what it holds; a box's own paint (its
@@ -5136,7 +5313,7 @@ impl Scene {
             })
             .map(|ink| ink.translated(node.transform));
         node.ink.set(ink);
-        node.ink_valid.set(true);
+        node.bounds_valid.set(INK_VALID | BOUNDS_VALID);
         ink
     }
     /// Pixels this node itself can touch, matching what damage covers.
