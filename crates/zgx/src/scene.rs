@@ -1312,7 +1312,7 @@ struct Node {
     /// `measurement`; this keeps an unchanged label from being reshaped each
     /// time an ancestor relayouts. Cleared by the node's own layout invalidation.
     /// Damage fills it too (see `text_ink`), for text whose box is fixed.
-    text_size: std::cell::Cell<TextSizes>,
+    text_size: TextSizeCache,
     advanced_layout: Option<Box<advanced_layout::AdvancedLayoutCache>>,
     arrange_dirty: bool,
     /// Whether its size can depend on the available width and height it is
@@ -1380,6 +1380,16 @@ impl Node {
         }
     }
 }
+#[derive(Default)]
+struct TextSizeCache(std::cell::Cell<[Option<TextSize>; 3]>);
+impl TextSizeCache {
+    fn get(&self) -> TextSizes {
+        TextSizes(self.0.get())
+    }
+    fn set(&self, sizes: TextSizes) {
+        self.0.set(sizes.0);
+    }
+}
 /// A text node's measured sizes for its most recent wrap limits. Layout
 /// measures a paragraph at more than one width per pass (intrinsic, then
 /// final); one entry would evict the other and reshape the text each time.
@@ -1399,7 +1409,7 @@ impl TextSizes {
         self.0.rotate_right(1);
         self.0[0] = Some((limit, revision, size));
     }
-    fn remember(cell: &std::cell::Cell<Self>, limit: Option<f32>, revision: u64, size: (f32, f32)) {
+    fn remember(cell: &TextSizeCache, limit: Option<f32>, revision: u64, size: (f32, f32)) {
         let mut sizes = cell.get();
         sizes.insert(limit, revision, size);
         cell.set(sizes);
@@ -5384,21 +5394,21 @@ impl Scene {
         let revision = self.text_shaper_revision;
         let cached = node
             .text_size
-            .get()
             .0
+            .as_array_of_cells()
             .iter()
-            .flatten()
+            .filter_map(std::cell::Cell::get)
             .find_map(|(measured, at, size)| {
-                let same = *at == revision
+                let same = at == revision
                     && match (limit, measured) {
                         (None, None) => true,
                         (Some(width), None) => size.0 <= width,
                         (Some(width), Some(measured)) => {
-                            *measured == width || (*measured >= width && size.0 <= width)
+                            measured == width || (measured >= width && size.0 <= width)
                         }
                         (None, Some(_)) => false,
                     };
-                same.then_some(*size)
+                same.then_some(size)
             });
         // Measured here, the size serves this node's next damage too: a box
         // of fixed size is not measured by layout.
