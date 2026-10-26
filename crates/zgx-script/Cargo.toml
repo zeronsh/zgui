@@ -25,6 +25,11 @@ jpeg = ["zgx-gpu/jpeg"]
 gif = ["zgx-gpu/gif"]
 # Windows: Vulkan where Direct3D 12 has no adapter (see zgx-gpu).
 vulkan = ["zgx-gpu/vulkan"]
+# Devtools for agents (`zgx_script::inspect`): a running app answers
+# `zgx inspect` over a user-only local socket when its host serves it. Off
+# by default: an app shipped without it cannot be driven. zgx-run turns it
+# on for development.
+inspect = []
 
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.0" }

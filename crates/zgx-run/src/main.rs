@@ -2,7 +2,7 @@
 //! hot reload (`zgx_run::run`).
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: zgx-run <app.luau-or-dir> [args…]
+const USAGE: &str = "usage: zgx-run [--inspect] <app.luau-or-dir> [args…]
 
 Opens the script (a file, or a directory's app.luau) in a window and
 reloads it as its files change. A zgx.json beside it sets the window
@@ -11,10 +11,18 @@ hidden, glass) and app_id, where ui.persist keeps its data and, on Linux,
 the desktop file ID its windows carry (app_id.desktop). Its ui.command
 entries are the menu bar. What follows the script is its ui.args, and the
 files among them open with it (ui.on_open); with an application_id
-(reverse-DNS) in zgx.json, so do those the system opens with it.";
+(reverse-DNS) in zgx.json, so do those the system opens with it.
+
+--inspect serves devtools for agents: `zgx inspect help` drives the
+running app (its tree, states, clicks, typing, keys) over a socket only
+this user can reach.";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--inspect") {
+        args.remove(0);
+        zgx_run::set_inspect(true);
+    }
     let [path, rest @ ..] = args.as_slice() else {
         eprintln!("{USAGE}");
         return ExitCode::from(2);

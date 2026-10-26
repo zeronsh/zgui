@@ -61,5 +61,6 @@ The interface is built once; Rust re-runs only what reads state that changed. `z
 
 - `docs/scripting.md` (scripts, state, animation, lint), `docs/reference/` (every Luau element and API), `crates/zgx-script/types/zgx.d.luau` (types luau-lsp checks).
 - `docs/composition.md`, `docs/styling.md`, `docs/layout.md` (Rust views).
+- `docs/agents/inspect.md`: `zgx-run --inspect` and `zgx inspect`, to see and drive a running Luau app (its tree, states, errors; clicks, typing, keys) by the targets tests use.
 - `docs/validation.md` (what is verified, on which platform), `docs/ROADMAP.md`, `docs/windows.md`, `docs/linux.md`.
 - `.github/workflows/ci.yml`: Linux, macOS and Windows jobs on every PR.

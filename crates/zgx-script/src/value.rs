@@ -2438,6 +2438,17 @@ impl Store {
     pub fn get(&self, key: &str) -> Option<Signal<Value>> {
         self.signals.borrow().get(key).cloned()
     }
+    /// Every state it holds, by key, in key order.
+    pub fn entries(&self) -> Vec<(String, Signal<Value>)> {
+        let mut out: Vec<_> = self
+            .signals
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
 }
 
 #[cfg(test)]

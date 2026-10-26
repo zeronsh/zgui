@@ -148,6 +148,21 @@ impl Persist {
 
     /// `script`'s saved state for `key`, if a run asked for it (templates
     /// such as `"{count}"` find it by name).
+    /// Every value held, by key (scripts' keys, without their script), in
+    /// key order.
+    pub fn entries(&self) -> Vec<(String, Signal<Value>)> {
+        let mut out: Vec<_> = self
+            .entries
+            .borrow()
+            .iter()
+            .map(|(id, e)| {
+                let key = id.split_once('\n').map_or(id.as_str(), |(_, key)| key);
+                (key.to_string(), e.signal.clone())
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
     pub fn get(&self, script: &str, key: &str) -> Option<Signal<Value>> {
         let id = format!("{script}\n{key}");
         self.entries.borrow().get(&id).map(|e| e.signal.clone())

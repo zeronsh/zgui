@@ -340,14 +340,68 @@ pub fn run_hosting(
         // The script's windows (`ui.window`): each open while its state is.
         let windows_follow = follow_windows(&host, cx);
         let saving = host.clone();
-        let keep = std::cell::RefCell::new(Some((menus_follow, windows_follow)));
+        let handle = cx.render(host.view());
+        let devtools = inspect(&host, cx, handle, &script);
+        let keep = std::cell::RefCell::new(Some((menus_follow, windows_follow, devtools)));
         cx.on_closed(move || {
             saving.save();
             drop(keep.borrow_mut().take());
         });
-        cx.render(host.view());
     })?;
     Ok(())
+}
+
+static INSPECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Serve devtools (`zgx inspect`) from the next window `run` opens, as
+/// `zgx run --inspect` asks (`ZGX_INSPECT_SOCKET=1` asks too). Built
+/// without the `inspect` feature, it says so and does nothing.
+pub fn set_inspect(on: bool) {
+    INSPECT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Devtools for the window, if asked: the socket that serves them, alive
+/// while what this returns is.
+#[cfg(feature = "inspect")]
+fn inspect(
+    host: &ScriptHost,
+    cx: &mut zgx_desktop::WindowContext,
+    handle: zgx::compose::ViewHandle,
+    script: &Path,
+) -> Option<zgx_script::inspect::Server> {
+    if !INSPECT.load(std::sync::atomic::Ordering::Relaxed) && !zgx_script::inspect::asked() {
+        return None;
+    }
+    let session =
+        zgx_script::inspect::Session::new(&cx.ui, handle, host, Some(cx.inspector.clone()));
+    let tasks = cx.tasks.clone();
+    match zgx_script::inspect::serve(session, &script.display().to_string(), move |task| {
+        tasks.spawn(task)
+    }) {
+        Ok(server) => {
+            eprintln!(
+                "zgx run: devtools at {} (zgx inspect help)",
+                server.path().display()
+            );
+            Some(server)
+        }
+        Err(error) => {
+            eprintln!("zgx run: devtools: {error}");
+            None
+        }
+    }
+}
+#[cfg(not(feature = "inspect"))]
+fn inspect(
+    _: &ScriptHost,
+    _: &mut zgx_desktop::WindowContext,
+    _: zgx::compose::ViewHandle,
+    _: &Path,
+) -> Option<()> {
+    if INSPECT.load(std::sync::atomic::Ordering::Relaxed) {
+        eprintln!("zgx run: built without devtools (the `inspect` feature)");
+    }
+    None
 }
 
 /// `host`'s commands (`ui.command`) as the application's menu bar, kept

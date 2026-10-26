@@ -14,8 +14,13 @@ description = "Run a zgx Luau script as a desktop app, with hot reload: `zgx-run
 # mimalloc as the runner's allocator (zgx-desktop's `mimalloc`): 6-10%
 # less CPU for script, text and layout work, for about 2 MB more memory.
 # `--no-default-features` keeps the system's.
-default = ["mimalloc"]
+default = ["mimalloc", "inspect"]
 mimalloc = ["zgx-desktop/mimalloc"]
+# Devtools for agents (`zgx run --inspect`, `zgx inspect`): a user-only
+# local socket a running app answers on, when asked. A build for shipping
+# leaves it out (`--no-default-features --features mimalloc`): then nothing
+# can drive the app, whatever its environment says.
+inspect = ["zgx-script/inspect"]
 
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.0" }
