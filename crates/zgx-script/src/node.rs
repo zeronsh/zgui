@@ -1808,8 +1808,8 @@ impl Child {
     }
 }
 
-/// `array_items`, each entry a `Child`.
-fn child_items(table: &Table) -> mlua::Result<Vec<Child>> {
+/// A table's indexed children, sorted when they are consumed.
+fn child_items(table: &Table) -> mlua::Result<Vec<(i64, Child)>> {
     let mut items = Vec::with_capacity(table.raw_len());
     table.for_each_borrowed(|key, value| {
         if let mlua::Value::Integer(i) = key.to_value()?
@@ -1819,7 +1819,7 @@ fn child_items(table: &Table) -> mlua::Result<Vec<Child>> {
         }
         Ok(())
     })?;
-    Ok(in_order(items))
+    Ok(items)
 }
 
 /// Appends children from a table's array part: nodes, strings (text),
@@ -1827,10 +1827,13 @@ fn child_items(table: &Table) -> mlua::Result<Vec<Child>> {
 fn children(
     lua: &Lua,
     owner: &Weak<Vm>,
-    items: Vec<Child>,
+    mut items: Vec<(i64, Child)>,
     out: &mut Vec<Rc<Node>>,
 ) -> mlua::Result<()> {
-    for child in items {
+    if !items.is_sorted_by_key(|(i, _)| *i) {
+        items.sort_unstable_by_key(|(i, _)| *i);
+    }
+    for (_, child) in items {
         let child = match child {
             Child::Node(node) => {
                 out.push(node);
@@ -2814,7 +2817,7 @@ fn fill_from(
     // border_sides = …` keeps the per-side widths `border` would reset.
     node.props.sort_by_key(|(prop, _)| specificity(*prop));
     let mut kids = Vec::with_capacity(items.len());
-    children(lua, &node.owner, in_order(items), &mut kids)?;
+    children(lua, &node.owner, items, &mut kids)?;
     if !kids.is_empty() && !node.kind.takes_children() {
         return Err(mlua::Error::runtime(format!(
             "`{}` does not take children",
