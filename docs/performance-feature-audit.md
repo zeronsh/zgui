@@ -99,6 +99,40 @@ python3 scripts/windowserver_alternate.py 60 path/to/app
 Run them on a quiet desktop, with nothing else drawing. The terminal needs
 Accessibility access, so the pair script can place the windows.
 
+**What remains: every commit reaches every context.** Since tiles (each
+surface a sublayer, shown by flipping `hidden`), zgx's window server CPU
+still trails the best rival by 0.2 to 0.8 points in every 60 Hz cell (M5
+suite of 2026-10-26: heavy, lab and vlist), while it wins animate. Each tile
+flip is one Core Animation commit, and a commit, explicit or implicit
+(`CATransaction flush`), sends one message to every Core Animation context in
+the process. The heavy workload has 11: its window, a text-input window, an
+empty one, and 8 `NSMenuBarReplicantWindow`s, which AppKit makes when an app
+with a main menu activates (here with 2 displays). So a flip sends one
+1048-byte commit for the window and ten 72-byte ones for nothing.
+
+- **Cost.** Twenty more empty contexts on even seconds cost +1.32 ± 0.21
+  points with 60 commits a second, and +0.44 ± 0.18 at idle, which is only
+  their creation. That is about 0.045 points per context at 60 commits a
+  second, so about 0.45 for zgx's ten extra.
+- **It comes with the menu bar.** A bare AppKit app has 2 contexts. Give it a
+  one-item main menu and activate it, and it has 10. The number of items
+  doesn't matter, and `setMainMenu(nil)` afterwards doesn't remove them. The
+  GPUI Fast of the earlier comparisons had no menu (3 contexts). It has one
+  since #692 but presents without commits, so it never pays.
+- **No layer property changes it,** and no commit can be scoped to one
+  context. What escapes it is a present without a commit. A `CAMetalLayer`
+  drawable is one image-queue ping: with a pool of three it costs the window
+  server −0.3 ± 0.2 against tiles in heavy `stream`. With two the pool is
+  always full, which costs +4.4. At 60 Hz it has so far paced worse than tiles
+  (p99 24.5 against 19 to 23 ms, 0.8% long frames). The video layer also
+  enqueues without a commit, but it keeps a third surface, wakes a CoreMedia
+  thread and costs app CPU (+9.5 to 11.6 MB and +16 to 23% CPU at full rate),
+  which is too high a price for 0.45 points.
+
+Open (2026-10-26): drawables presented at the refresh the host's latch picks
+(`presentDrawable:atTime:`), which would pace 60 Hz frames as tiles do. Until
+that test settles it, frames below the display's rate stay on tiles.
+
 ## The heavy dashboard's malloc fragmentation (macOS)
 
 What the heavy dashboard's malloc zones hold beyond their live allocations
