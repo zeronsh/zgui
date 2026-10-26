@@ -4121,14 +4121,16 @@ impl Host {
                 .frames
                 .demanded_rate(refresh)
                 .filter(|rate| !scrolling && !inputting && *rate < refresh - 0.5);
-            // Animating at the display's rate, the link paces every frame:
-            // locked to the display, frames reach the window server one a
-            // refresh, where a timer's wake-ups wander by milliseconds and
-            // leave some refreshes without a new frame. Otherwise (slower
-            // updates, scrolling) a timer paces them on the grid the link last
-            // reported, and the link (a thread spinning to each refresh) runs
-            // again only to resync.
-            let animating = wanted && rate.is_none() && !scrolling;
+            // At the display's rate (animating, scrolling), the link paces
+            // every frame: locked to the display, frames reach the window
+            // server one a refresh, where a timer's wake-ups wander by
+            // milliseconds and leave some refreshes without a new frame. A
+            // scroll the timer paced lost a refresh each second as the link
+            // ran again to resync (3 late frames a fling against 0.75, for
+            // the same CPU). Slower updates are timer-paced on the grid the
+            // link last reported, and the link (a thread spinning to each
+            // refresh) runs again only to resync.
+            let animating = wanted && rate.is_none();
             self.link_paced = animating;
             if let Some(renderer) = &mut self.renderer {
                 renderer.set_full_rate(wanted && rate.is_none());
