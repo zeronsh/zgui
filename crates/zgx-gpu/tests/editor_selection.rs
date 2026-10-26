@@ -115,6 +115,89 @@ fn the_arrows_go_the_way_right_to_left_text_shows() {
     assert_eq!(focus(&editor), 1);
 }
 
+/// Through mixed left-to-right and right-to-left text, the arrows move the
+/// caret the way the text shows, as macOS's text views do: Right from the
+/// left edge visits every caret place left to right (the right-to-left run
+/// in its shown order), and Left comes back the same way.
+#[test]
+fn the_arrows_walk_mixed_direction_text_in_the_order_it_shows() {
+    use zgx::input::Key;
+    let fonts = Rc::new(RefCell::new(cosmic_text::FontSystem::new()));
+    let mut ui = Ui::new(500., 200.);
+    ui.scene.borrow_mut().set_font_text_shaper(
+        move |text: &str, size, width, font: &FontStyle| -> Box<dyn TextLayout> {
+            Box::new(ShapedText::with_font(
+                &mut fonts.borrow_mut(),
+                text,
+                size,
+                width,
+                font,
+            ))
+        },
+    );
+    let text = "abc אבג def";
+    let view = ui.mount(
+        text_input("Mixed", ui.signal(text.to_owned()))
+            .size(400., 36.)
+            .text_size(16.),
+    );
+    ui.prepare_frame();
+    ui.input.focus(&ui.scene, Some(view.node()));
+    let editor = ui.focused_editor().unwrap();
+    editor.editor.borrow_mut().set_selection(0, 0);
+    editor.refresh();
+    ui.prepare_frame();
+    let caret_x = |ui: &Ui| ui.scene.borrow().bounds(editor.caret).x;
+    let press = |ui: &mut Ui, key: Key| {
+        ui.dispatch(InputEvent::KeyDown {
+            key,
+            modifiers: Modifiers::default(),
+            repeat: false,
+        });
+        ui.prepare_frame();
+    };
+    let graphemes = text.chars().count();
+    let mut xs = vec![caret_x(&ui)];
+    let mut offsets = vec![editor.editor.borrow().selection().focus];
+    for _ in 0..graphemes {
+        press(&mut ui, Key::ArrowRight);
+        xs.push(caret_x(&ui));
+        offsets.push(editor.editor.borrow().selection().focus);
+    }
+    // Each press goes right until the line's right edge (where the runs
+    // meet, two places share one spot: one press passes it), and stays.
+    let end = xs.iter().position(|x| *x == *xs.last().unwrap()).unwrap();
+    assert!(
+        xs[..=end].windows(2).all(|w| w[1] > w[0] + 0.5),
+        "Right goes right each time: {xs:?} at {offsets:?}"
+    );
+    assert!(end >= graphemes - 1, "it walks the whole line: {offsets:?}");
+    assert_eq!(
+        *offsets.last().unwrap(),
+        text.len(),
+        "to the end: {offsets:?}"
+    );
+    // And back: Left retraces it to the start.
+    let mut back = vec![caret_x(&ui)];
+    for _ in 0..graphemes {
+        press(&mut ui, Key::ArrowLeft);
+        back.push(caret_x(&ui));
+    }
+    let start = back
+        .iter()
+        .position(|x| *x == *back.last().unwrap())
+        .unwrap();
+    assert!(
+        back[..=start].windows(2).all(|w| w[1] < w[0] - 0.5),
+        "Left goes left each time: {back:?}"
+    );
+    assert_eq!(
+        editor.editor.borrow().selection().focus,
+        0,
+        "back to the start"
+    );
+}
+
 /// Select-all and copy over a page of 20,000 paragraphs, shaped as a window
 /// shapes them: `cargo test --release -p zgx-gpu --test editor_selection
 /// long_document -- --ignored --nocapture`.

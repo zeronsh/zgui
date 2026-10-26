@@ -323,6 +323,11 @@ impl TextEditor {
         let typing = value != "\n" && value.graphemes(true).count() == 1;
         self.replace(value, typing.then_some(Run::Typing))
     }
+    /// Insert pasted `value` over the selection: an undo step of its own,
+    /// even of one character, as AppKit undoes a paste apart from typing.
+    pub fn insert_pasted(&mut self, value: &str) -> bool {
+        self.replace(value, None)
+    }
     /// `insert`, as an edit of `run`'s kind (`None`: a step of its own).
     fn replace(&mut self, value: &str, run: Option<Run>) -> bool {
         let range = self.selection.range();
@@ -610,7 +615,24 @@ impl TextEditor {
         }
         let focus = self.selection.focus;
         let here = caret(focus);
-        let pick = [self.previous(word), self.next(word)]
+        // Every caret place on its line (a grapheme's edges, or a word's),
+        // and the nearest past it the way it goes: the order the text
+        // shows, as AppKit's text views move, not its logical neighbours
+        // (which, where its direction changes, can lie back where it was).
+        let line = self.text.line_around(focus);
+        let (base, text) = (line.start, self.text.slice(line.clone()));
+        let places: Vec<usize> = if word {
+            text.unicode_word_indices()
+                .flat_map(|(at, w)| [base + at, base + at + w.len()])
+                .chain([line.start, line.end])
+                .collect()
+        } else {
+            text.grapheme_indices(true)
+                .map(|(at, _)| base + at)
+                .chain([line.end])
+                .collect()
+        };
+        let pick = places
             .into_iter()
             .filter(|p| *p != focus)
             .map(|p| (p, caret(p)))
@@ -1382,6 +1404,21 @@ mod undo_run_tests {
         assert_eq!((&*e.text(), &*e.selected_text()), ("aXYb", "XY"));
         assert!(e.undo());
         assert_eq!(e.text(), "ab");
+    }
+
+    #[test]
+    fn flags_move_and_delete_whole() {
+        // Two regional indicators make one flag: a caret never parts them.
+        let mut e = TextEditor::new("🇫🇷🇩🇪");
+        e.set_selection(0, 0);
+        e.move_right(false, false);
+        assert_eq!(e.selection().focus, "🇫🇷".len(), "past the first flag whole");
+        e.move_right(false, false);
+        assert_eq!(e.selection().focus, e.text().len());
+        assert!(e.backspace());
+        assert_eq!(e.text(), "🇫🇷", "the second flag deleted whole");
+        e.set_selection(4, 4);
+        assert_eq!(e.selection().focus, 0, "inside a flag: back to its start");
     }
 
     #[test]

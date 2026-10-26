@@ -110,3 +110,78 @@ fn option_arrows_move_by_paragraphs_on_macos() {
     );
     assert_eq!(value.get(), "one\ntwo three\nfour", "nothing typed");
 }
+
+/// The platform's word keys (Option on macOS, Control elsewhere) move by
+/// words and delete back a word, through the editor's keys.
+#[test]
+fn word_keys_move_and_delete_by_words() {
+    let (mut ui, value) = field("one two three");
+    let word = Modifiers {
+        alt: cfg!(target_os = "macos"),
+        control: !cfg!(target_os = "macos"),
+        ..Modifiers::default()
+    };
+    let at = |ui: &Ui| ui.focused_editor().unwrap().editor.borrow().selection();
+    key(&mut ui, Key::ArrowLeft, word);
+    assert_eq!(at(&ui).focus, 8, "the start of the last word");
+    key(
+        &mut ui,
+        Key::ArrowLeft,
+        Modifiers {
+            shift: true,
+            ..word
+        },
+    );
+    let selection = at(&ui);
+    assert_eq!(
+        (selection.anchor, selection.focus),
+        (8, 4),
+        "Shift extends a word"
+    );
+    key(&mut ui, Key::ArrowRight, word);
+    key(&mut ui, Key::ArrowRight, word);
+    assert_eq!(at(&ui).focus, 13, "to the end of the last");
+    key(&mut ui, Key::Backspace, word);
+    assert_eq!(value.get(), "one two ", "a word deleted back");
+}
+
+/// ⌘-arrows go to the line's and the text's ends on macOS.
+#[cfg(target_os = "macos")]
+#[test]
+fn command_arrows_go_to_the_line_and_text_ends_on_macos() {
+    let (mut ui, _) = field("first line\nsecond line");
+    let at = |ui: &Ui| {
+        ui.focused_editor()
+            .unwrap()
+            .editor
+            .borrow()
+            .selection()
+            .focus
+    };
+    let meta = Modifiers {
+        meta: true,
+        ..Modifiers::default()
+    };
+    key(&mut ui, Key::ArrowUp, meta);
+    assert_eq!(at(&ui), 0, "the text's start");
+    key(&mut ui, Key::ArrowRight, meta);
+    assert_eq!(at(&ui), 10, "the line's end");
+    key(&mut ui, Key::ArrowDown, meta);
+    assert_eq!(at(&ui), 22, "the text's end");
+    key(&mut ui, Key::ArrowLeft, meta);
+    assert_eq!(at(&ui), 11, "the line's start");
+}
+
+/// A single character pasted is a step of its own, not part of the typing
+/// before it, as AppKit undoes a paste.
+#[test]
+fn a_one_character_paste_undoes_apart_from_typing() {
+    let (mut ui, value) = field("");
+    for c in "ab".chars() {
+        ui.dispatch(InputEvent::Text(c.to_string()));
+    }
+    ui.focused_editor().unwrap().paste("c");
+    assert_eq!(value.get(), "abc");
+    key(&mut ui, Key::Character("z".into()), primary());
+    assert_eq!(value.get(), "ab", "the paste undone alone");
+}

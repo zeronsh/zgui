@@ -554,9 +554,10 @@ impl EditorHandle {
             return;
         }
         self.preferred_x.set(None);
+        // A step of its own, even of one character: not the typing's.
         self.editor
             .borrow_mut()
-            .insert(&normalize_text(text, self.multiline));
+            .insert_pasted(&normalize_text(text, self.multiline));
         self.hint.value.write(&self.editor);
         self.refresh();
     }
