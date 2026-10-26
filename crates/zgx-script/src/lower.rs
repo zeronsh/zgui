@@ -2128,7 +2128,7 @@ fn styled(
             view = view.pointer_events_when(move || {
                 let value = match &source {
                     Owned::State(s) => s.with(|v| v.clone()),
-                    Owned::Computed(f) => match vm.call::<Value>(f, ()) {
+                    Owned::Computed(f, _) => match vm.call::<Value>(f, ()) {
                         Ok(value) => value,
                         Err(error) => {
                             vm.report(error);
@@ -3339,7 +3339,7 @@ fn run(
 enum Owned {
     Lit(Lit),
     State(Signal<Value>),
-    Computed(mlua::Function),
+    Computed(mlua::Function, std::cell::Cell<Option<CachedHex>>),
     Anim(Option<Value>, Option<Value>),
     Variant(Rc<crate::variants::Selection>, Prop),
 }
@@ -3347,7 +3347,7 @@ fn resolve_owned(source: &Source) -> Owned {
     match source {
         Source::Lit(l) => Owned::Lit(l.clone()),
         Source::State(s) => Owned::State(s.clone()),
-        Source::Computed(f) => Owned::Computed(f.clone()),
+        Source::Computed(f) => Owned::Computed(f.clone(), std::cell::Cell::default()),
         Source::Anim(a) => Owned::Anim(a.from.clone(), a.to.clone()),
         Source::Variant(selection, prop) => Owned::Variant(selection.clone(), *prop),
     }
@@ -3355,7 +3355,7 @@ fn resolve_owned(source: &Source) -> Owned {
 /// A style's value now. What a function returns is checked by the design
 /// lint, unless it is `ui.raw`.
 fn resolve_style(source: &Owned, prop: Prop, scalar: Option<&Signal<f32>>, vm: &Vm) -> Option<Lit> {
-    if let Owned::Computed(f) = source
+    if let Owned::Computed(f, _) = source
         && vm.warnings.borrow().design != crate::DesignLint::Off
     {
         let value = vm
@@ -3550,18 +3550,61 @@ fn code_editor(
     }
     view
 }
-/// What a computed colour returned: a colour parsed from its text while
-/// the text is still on the Lua stack (no string made of it), or any
-/// other value (a token, `currentcolor`, text that isn't UTF-8, a
-/// number) to convert as before.
+/// An exact short hex key, copied while its Lua string is on the stack.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct ShortHex {
+    bytes: [u8; 9],
+    len: u8,
+}
+impl ShortHex {
+    fn new(text: &str) -> Option<Self> {
+        if !text.starts_with('#') || !matches!(text.len(), 4 | 5 | 7 | 9) {
+            return None;
+        }
+        let mut hex = Self {
+            len: text.len() as u8,
+            ..Self::default()
+        };
+        hex.bytes[..text.len()].copy_from_slice(text.as_bytes());
+        Some(hex)
+    }
+}
+#[derive(Clone, Copy)]
+struct CachedHex {
+    hex: ShortHex,
+    color: Option<zgx::scene::Color>,
+}
+fn cached_hex(
+    hex: ShortHex,
+    cache: &std::cell::Cell<Option<CachedHex>>,
+) -> Option<zgx::scene::Color> {
+    if let Some(cached) = cache.get()
+        && cached.hex == hex
+    {
+        return cached.color;
+    }
+    let color = std::str::from_utf8(&hex.bytes[..hex.len as usize])
+        .ok()
+        .and_then(crate::node::parse_color);
+    cache.set(Some(CachedHex { hex, color }));
+    color
+}
+
+/// A computed colour copied or parsed while on the Lua stack, or a value
+/// (a token, `currentcolor`, invalid UTF-8, a number) to convert as before.
 enum ComputedColor {
+    Hex(ShortHex),
     Parsed(Option<zgx::scene::Color>),
     Other(mlua::Value),
 }
 impl ComputedColor {
     fn parse(text: &str) -> Option<Self> {
-        (!text.starts_with('$') && !text.eq_ignore_ascii_case("currentcolor"))
-            .then(|| Self::Parsed(crate::node::parse_color(text)))
+        (!text.starts_with('$') && !text.eq_ignore_ascii_case("currentcolor")).then(|| {
+            match ShortHex::new(text) {
+                Some(hex) => Self::Hex(hex),
+                None => Self::Parsed(crate::node::parse_color(text)),
+            }
+        })
     }
 }
 impl mlua::FromLua for ComputedColor {
@@ -3581,7 +3624,7 @@ impl mlua::FromLua for ComputedColor {
         // stack. A string's type is checked first, so `lua_tolstring`
         // converts nothing and allocates nothing (the collector does not
         // run); its bytes stay where they are, held by the stack, while
-        // they are parsed. Parsing runs no Lua and keeps no borrow.
+        // they are copied or parsed. Neither runs Lua or keeps a borrow.
         unsafe {
             if ffi::lua_type(state, idx) == ffi::LUA_TSTRING {
                 let mut len = 0;
@@ -3608,14 +3651,20 @@ fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Opt
         Owned::State(s) => s.with(|v| lit(v, ty)),
         // A colour or a number (most computed styles): read from what the
         // function returned as it is, without making a `Value` of it first.
-        Owned::Computed(f) if matches!(ty, Ty::Color | Ty::Num) => {
-            // A colour's text is parsed where it lies (`ComputedColor`).
+        Owned::Computed(f, cache) if matches!(ty, Ty::Color | Ty::Num) => {
+            // Copy short hex keys or parse other colours before leaving the call guard.
             let result = if matches!(ty, Ty::Color) {
-                vm.call::<ComputedColor>(f, ())
+                vm.guard(vm.budget, || {
+                    f.call::<ComputedColor>(()).map(|value| match value {
+                        ComputedColor::Hex(hex) => ComputedColor::Parsed(cached_hex(hex, cache)),
+                        other => other,
+                    })
+                })
             } else {
                 vm.call::<mlua::Value>(f, ()).map(ComputedColor::Other)
             };
             match result {
+                Ok(ComputedColor::Hex(_)) => unreachable!("hex is resolved inside the call guard"),
                 Ok(ComputedColor::Parsed(color)) => color.map(Lit::Color),
                 Ok(ComputedColor::Other(mlua::Value::Number(n))) => lit(&Value::Num(n), ty),
                 Ok(ComputedColor::Other(mlua::Value::Integer(n))) => lit(&Value::Num(n as f64), ty),
@@ -3629,7 +3678,7 @@ fn resolve(source: &Owned, ty: Ty, scalar: Option<&Signal<f32>>, vm: &Vm) -> Opt
                 }
             }
         }
-        Owned::Computed(f) => vm
+        Owned::Computed(f, _) => vm
             .call::<Value>(f, ())
             .map_err(|e| vm.report(e))
             .ok()
@@ -3655,7 +3704,7 @@ fn resolve_value(source: &Owned, vm: &Vm) -> Value {
         Owned::Lit(Lit::Num(n)) => Value::Num(*n as f64),
         Owned::Lit(Lit::Bool(b)) => Value::Bool(*b),
         Owned::State(s) => s.get(),
-        Owned::Computed(f) => vm.call::<Value>(f, ()).unwrap_or_else(|e| {
+        Owned::Computed(f, _) => vm.call::<Value>(f, ()).unwrap_or_else(|e| {
             vm.report(e);
             Value::Nil
         }),
@@ -3827,7 +3876,7 @@ fn picture_of(src: &Owned, vm: &Vm) -> Option<Picture> {
     };
     match src {
         Owned::State(state) => state.with(of),
-        Owned::Computed(f) => match vm.call::<mlua::Value>(f, ()) {
+        Owned::Computed(f, _) => match vm.call::<mlua::Value>(f, ()) {
             Ok(returned) => crate::value::convert(returned, None)
                 .map_err(|e| vm.report(e))
                 .ok()
@@ -5511,4 +5560,31 @@ fn presence(
 /// sizes itself: a one-cell grid, whose items stretch.
 fn cell() -> View {
     column().grid().grid_cols(1).grid_rows(1).items_stretch()
+}
+
+#[cfg(test)]
+#[test]
+fn cached_hex_matches_every_parsed_value_in_a_sequence() {
+    let cache = std::cell::Cell::default();
+    for text in [
+        "#fff",
+        "#fff",
+        "#fff\0",
+        "#fff",
+        "#aBcD",
+        "#123456",
+        "#12345678",
+        "#GGG",
+        "#GGG",
+        "#é1",
+        "#000",
+        "#fF0f",
+    ] {
+        let hex = ShortHex::new(text).unwrap();
+        assert_eq!(
+            cached_hex(hex, &cache),
+            crate::node::parse_color(text),
+            "{text:?}"
+        );
+    }
 }

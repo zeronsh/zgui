@@ -246,21 +246,18 @@ pub(crate) fn parse_color(text: &str) -> Option<[f64; 4]> {
 /// Hex channels as bytes: style colours need no floating-point conversion
 /// or rounding back from the animation representation.
 pub(crate) fn parse_hex_color(hex: &str) -> Option<[u8; 4]> {
-    let mut digits = [0u8; 8];
-    let mut len = 0;
-    for c in hex.chars() {
-        *digits.get_mut(len)? = c.to_digit(16)? as u8;
-        len += 1;
+    let digit = |c: u8| (c as char).to_digit(16).map(|v| v as u8);
+    let single = |c| Some(digit(c)? * 17);
+    let pair = |hi, lo| Some(digit(hi)? * 16 + digit(lo)?);
+    match *hex.as_bytes() {
+        [r, g, b] => Some([single(r)?, single(g)?, single(b)?, 255]),
+        [r, g, b, a] => Some([single(r)?, single(g)?, single(b)?, single(a)?]),
+        [r, rr, g, gg, b, bb] => Some([pair(r, rr)?, pair(g, gg)?, pair(b, bb)?, 255]),
+        [r, rr, g, gg, b, bb, a, aa] => {
+            Some([pair(r, rr)?, pair(g, gg)?, pair(b, bb)?, pair(a, aa)?])
+        }
+        _ => None,
     }
-    let pair = |i: usize| digits[i] * 16 + digits[i + 1];
-    let single = |i: usize| digits[i] * 17;
-    Some(match len {
-        3 => [single(0), single(1), single(2), 255],
-        4 => [single(0), single(1), single(2), single(3)],
-        6 => [pair(0), pair(2), pair(4), 255],
-        8 => [pair(0), pair(2), pair(4), pair(6)],
-        _ => return None,
-    })
 }
 
 /// The non-hex forms of a colour, after its surrounding whitespace is trimmed.
