@@ -408,3 +408,71 @@ fn a_retained_computed_observes_design_lint_changes() {
     h.settle();
     assert_eq!(errors.borrow().len(), before + 1);
 }
+
+/// Ordinary computed properties match the element-backed path, including
+/// errors among several properties, recovery, and changing theme tokens.
+#[test]
+fn ordinary_computed_styles_match_element_styles() {
+    let mut h = Harness::inline(
+        r##"local tick = ui.shared("tick", 0)
+        local function box(targetable, group)
+            local props = {
+                w = function()
+                    if tick:get() == 1 then error("ordinary style failure") end
+                    return 40 + tick:get()
+                end,
+                h = function() return 20 + tick:get() end,
+                bg = function() return if tick:get() % 2 == 0 then "$accent" else "#123456" end,
+                opacity = function() return 0.5 + tick:get() / 10 end,
+                rounded = function() return 2 + tick:get() end,
+                border = function() return 1 + tick:get() end,
+                border_color = function() return "$border.subtle" end,
+            }
+            if group == "transform" then
+                props.x = function() return tick:get() end
+                props.y = 3
+                props.rotate = function() return tick:get() * 5 end
+            elseif group == "corner" then
+                props.rounded_tl = function() return tick:get() end
+            end
+            if targetable then props.on_mount = function() end end
+            return ui.div(props)
+        end
+        return ui.column { id = "cases",
+            box(false), box(true),
+            box(false, "transform"), box(true, "transform"),
+            box(false, "corner"), box(true, "corner"),
+        }"##,
+    );
+    for tick in 0..=3 {
+        h.host
+            .shared("tick", 0.)
+            .set(zgx_script::Value::Num(tick as f64));
+        h.settle();
+        let parent = h.find("cases").unwrap();
+        let scene = h.ui.scene.borrow();
+        let children = scene.children(parent);
+        assert_eq!(children.len(), 6);
+        for pair in children.chunks_exact(2) {
+            let (plain, element) = (pair[0], pair[1]);
+            assert_eq!(scene.style(plain), scene.style(element), "tick {tick}");
+            assert_eq!(scene.effects(plain), scene.effects(element), "tick {tick}");
+            assert_eq!(scene.kind(plain), scene.kind(element), "tick {tick}");
+            assert_eq!(
+                scene.transform(plain),
+                scene.transform(element),
+                "tick {tick}"
+            );
+            assert_eq!(
+                scene.local_transform(plain),
+                scene.local_transform(element),
+                "tick {tick}"
+            );
+            assert_eq!(scene.bounds(plain).height, (20 + tick) as f32);
+        }
+        drop(scene);
+        if tick == 1 {
+            assert!(h.error().unwrap().contains("ordinary style failure"));
+        }
+    }
+}
