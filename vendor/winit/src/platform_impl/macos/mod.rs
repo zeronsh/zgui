@@ -24,6 +24,7 @@ pub(crate) use self::event_loop::{
 };
 pub(crate) use self::monitor::{MonitorHandle, VideoModeHandle};
 pub(crate) use self::window::WindowId;
+pub(crate) use self::view::set_selection_services;
 pub(crate) use self::window_delegate::PlatformSpecificWindowAttributes;
 use crate::event::DeviceId as RootDeviceId;
 

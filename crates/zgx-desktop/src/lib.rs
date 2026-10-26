@@ -47,6 +47,8 @@ mod portal_dialog;
 #[cfg(target_os = "linux")]
 mod portal_parent;
 mod scrollers;
+#[cfg(target_os = "macos")]
+mod services;
 mod thumbnail;
 mod url;
 #[cfg(target_os = "linux")]

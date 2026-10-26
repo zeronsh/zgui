@@ -141,6 +141,21 @@ pub struct ViewState {
     option_as_alt: Cell<OptionAsAlt>,
 }
 
+// zgx patch: the app's answers to the Services menu
+// (`platform::macos::set_selection_services`).
+thread_local! {
+    static SELECTION_SERVICES: RefCell<Option<std::rc::Rc<dyn crate::platform::macos::SelectionServices>>> =
+        const { RefCell::new(None) };
+}
+pub(crate) fn set_selection_services(
+    services: Option<std::rc::Rc<dyn crate::platform::macos::SelectionServices>>,
+) {
+    SELECTION_SERVICES.with(|cell| *cell.borrow_mut() = services);
+}
+fn selection_services() -> Option<std::rc::Rc<dyn crate::platform::macos::SelectionServices>> {
+    SELECTION_SERVICES.with(|cell| cell.borrow().clone())
+}
+
 declare_class!(
     pub(super) struct WinitView;
 
@@ -434,6 +449,66 @@ declare_class!(
                 // Leave preedit so that we also report the key-up for this key.
                 self.ivars().ime_state.set(ImeState::Ground);
             }
+        }
+    }
+
+    // zgx patch: the Services menu on the window's selection.
+    unsafe impl WinitView {
+        #[method(validRequestorForSendType:returnType:)]
+        fn valid_requestor(
+            &self,
+            send_type: Option<&NSString>,
+            return_type: Option<&NSString>,
+        ) -> *mut AnyObject {
+            let window = crate::window::WindowId(self.window().id());
+            let string = unsafe { objc2_app_kit::NSPasteboardTypeString };
+            let services = selection_services();
+            let sends = send_type.is_none_or(|kind| {
+                kind == string
+                    && services.as_ref().is_some_and(|s| s.selected_text(window).is_some())
+            });
+            let returns = return_type.is_none_or(|kind| {
+                kind == string && services.as_ref().is_some_and(|s| s.selection_editable(window))
+            });
+            if (send_type.is_some() || return_type.is_some()) && sends && returns {
+                return self as *const Self as *mut AnyObject;
+            }
+            unsafe {
+                objc2::msg_send![super(self), validRequestorForSendType: send_type, returnType: return_type]
+            }
+        }
+
+        #[method(writeSelectionToPasteboard:types:)]
+        fn write_selection(
+            &self,
+            pasteboard: &objc2_app_kit::NSPasteboard,
+            types: &NSArray<NSString>,
+        ) -> objc2::runtime::Bool {
+            let string = unsafe { objc2_app_kit::NSPasteboardTypeString };
+            if !types.iter().any(|kind| &*kind == string) {
+                return objc2::runtime::Bool::NO;
+            }
+            let window = crate::window::WindowId(self.window().id());
+            let Some(text) = selection_services().and_then(|s| s.selected_text(window)) else {
+                return objc2::runtime::Bool::NO;
+            };
+            let written = unsafe {
+                pasteboard.clearContents();
+                pasteboard.setString_forType(&NSString::from_str(&text), string)
+            };
+            objc2::runtime::Bool::new(written)
+        }
+
+        #[method(readSelectionFromPasteboard:)]
+        fn read_selection(&self, pasteboard: &objc2_app_kit::NSPasteboard) -> objc2::runtime::Bool {
+            let string = unsafe { objc2_app_kit::NSPasteboardTypeString };
+            let Some(text) = (unsafe { pasteboard.stringForType(string) }) else {
+                return objc2::runtime::Bool::NO;
+            };
+            let window = crate::window::WindowId(self.window().id());
+            objc2::runtime::Bool::new(
+                selection_services().is_some_and(|s| s.replace_selection(window, &text.to_string())),
+            )
         }
     }
 

@@ -529,3 +529,25 @@ pub enum OptionAsAlt {
     #[default]
     None,
 }
+
+/// zgx patch: what macOS's Services menu acts on in a window, its selection:
+/// a service (Make New Sticky Note, Search With…, a translator) takes the
+/// selected text, and one that returns text (Make Plain Text) puts it in its
+/// place where the selection is editable. Set once by the app
+/// ([`set_selection_services`]).
+pub trait SelectionServices {
+    /// The text selected in `window`, if any.
+    fn selected_text(&self, window: crate::window::WindowId) -> Option<String>;
+    /// Whether `window`'s selection can be replaced (a field's).
+    fn selection_editable(&self, window: crate::window::WindowId) -> bool;
+    /// Put `text` in place of `window`'s selection; whether it did.
+    fn replace_selection(&self, window: crate::window::WindowId, text: &str) -> bool;
+}
+
+/// zgx patch: give windows' views `services`, as they answer the Services
+/// menu (`validRequestorForSendType:returnType:`,
+/// `writeSelectionToPasteboard:types:`, `readSelectionFromPasteboard:`).
+/// Main thread only; none answers nothing.
+pub fn set_selection_services(services: Option<std::rc::Rc<dyn SelectionServices>>) {
+    crate::platform_impl::set_selection_services(services);
+}

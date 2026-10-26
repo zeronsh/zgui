@@ -124,3 +124,18 @@ input method's server is asked for by its selection (`@server=name`, the
 X server answers): owned by no one, the input method counts as destroyed,
 as the callback would have it (`ime/mod.rs`, `InputMethod::server_name` in
 `ime/input_method.rs`).
+
+## macOS: the Services menu on a window's selection
+
+AppKit offers a view's selection to the Services menu (a translator, Make
+New Sticky Note, Search With…) only if the view answers
+`validRequestorForSendType:returnType:` and writes the selection on
+`writeSelectionToPasteboard:types:`, and puts a returned text in its place on
+`readSelectionFromPasteboard:`. winit's view did none, so Services never
+acted on zgx's text.
+
+10. `platform::macos::SelectionServices` and `set_selection_services`: an
+    app's answers (the selected text, whether it can be replaced, replacing
+    it), kept on the main thread; winit's view answers the three messages
+    from it for plain text, and passes any other request to `NSView`
+    (`view.rs`).
