@@ -46,6 +46,32 @@ impl Harness {
 }
 
 #[test]
+fn computed_text_formats_as_state_text_does() {
+    let mut h = Harness::inline(
+        r#"local values = {
+            "", "hello", "\0", "\xffa\xc0\xaf\xe2\x82", "e\u{301} 😀",
+            string.rep("x", 65535), string.rep("y", 65536), string.rep("z", 65537),
+            true, false, 0, -123, 1.25, math.huge, 0/0,
+            {"a", 2, false}, {b = "two", a = 1},
+        }
+        local children = {}
+        for i, value in values do
+            local state = ui.state("case" .. i, value)
+            table.insert(children, ui.text { id = "state" .. i, state })
+            table.insert(children, ui.text { id = "computed" .. i, function() return value end })
+        end
+        return ui.column { children }"#,
+    );
+    for i in 1..=17 {
+        assert_eq!(
+            h.text(&format!("computed{i}")),
+            h.text(&format!("state{i}")),
+            "case {i}"
+        );
+    }
+}
+
+#[test]
 fn components_have_their_own_state_and_mount_hooks() {
     let mut h = Harness::inline(
         r##"local mounted = ui.state("mounted", 0)

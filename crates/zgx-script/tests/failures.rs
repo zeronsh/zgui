@@ -6,6 +6,35 @@ mod common;
 
 use common::Harness;
 
+/// A failing text computed reports its error without stopping the other
+/// texts, and can return text again on its next update.
+#[test]
+fn a_computed_text_that_fails_reports_and_the_rest_update() {
+    let mut h = Harness::inline(
+        r#"local tick = ui.shared("tick", 0)
+        return ui.column {
+            ui.text { id = "first", function() tick:get(); return "first", "ignored" end },
+            ui.text { id = "bad", function()
+                if tick:get() == 1 then error("computed text failure marker") end
+                return "recovered"
+            end },
+            ui.text { id = "last", function() return "last " .. tick:get() end },
+            ui.text { id = "none", function() return end },
+        }"#,
+    );
+    assert_eq!(h.text("first"), "first");
+    assert_eq!(h.text("none"), "");
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(1.));
+    h.settle();
+    assert!(h.error().unwrap().contains("computed text failure marker"));
+    assert_eq!(h.text("bad"), "⚠");
+    assert_eq!(h.text("last"), "last 1");
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(2.));
+    h.settle();
+    assert_eq!(h.text("bad"), "recovered");
+    assert_eq!(h.text("last"), "last 2");
+}
+
 #[test]
 fn a_handlers_runtime_error_is_reported_and_the_app_keeps_working() {
     let mut h = Harness::inline(
