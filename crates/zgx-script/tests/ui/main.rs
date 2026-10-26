@@ -7,6 +7,8 @@
 mod components;
 #[path = "../container_queries.rs"]
 mod container_queries;
+#[path = "../driver.rs"]
+mod driver;
 #[path = "../failures.rs"]
 mod failures;
 #[path = "../layout_gaps.rs"]

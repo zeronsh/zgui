@@ -34,7 +34,7 @@ use std::{
 use zgx::{
     compose::{TaskRunner, View, ViewHandle, provide},
     frame::{Frame, FrameClock},
-    input::{InputEvent, Key, Modifiers, PointerButton},
+    input::{InputEvent, Key, Modifiers},
     reactive::Runtime,
     scene::{NodeId, NodeKind, Rect},
     task::LocalExecutor,
@@ -125,6 +125,15 @@ impl zgx::platform::Platform for FakeDesktop {
         let path = self.saves.borrow_mut().pop_front();
         Box::pin(async move { Ok(path) })
     }
+}
+
+/// A target that is an id alone, as tests have always named nodes.
+fn is_plain_id(target: &str) -> bool {
+    !target.is_empty()
+        && target
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+        && !target.starts_with("role:")
 }
 
 /// A scripted app mounted headless, 400 by 300 points.
@@ -259,13 +268,38 @@ impl TestApp {
         }
     }
 
-    /// The node with `id`, after layout.
-    pub fn find(&mut self, id: &str) -> Option<NodeId> {
+    /// The node `target` names, after layout: an id (`"send"`, the first
+    /// mounted node with it), or a target as agents name one (`"\"Send\""`,
+    /// `"role:button \"Send\""`, `"#list row 3"`, `"@12"`; see
+    /// [`crate::driver`]). None if nothing, or more than one, matches.
+    pub fn find(&mut self, target: &str) -> Option<NodeId> {
         self.ui.prepare_frame();
-        self.handle.find(id)
+        if is_plain_id(target) {
+            return self.handle.find(target);
+        }
+        crate::driver::find(&self.ui, &self.handle, target).ok()
     }
-    fn node(&mut self, id: &str) -> NodeId {
-        self.find(id).unwrap_or_else(|| panic!("no node `{id}`"))
+    /// [`TestApp::find`], or why it found none: nothing matched, or several
+    /// did (each described).
+    pub fn target(&mut self, target: &str) -> Result<NodeId, String> {
+        self.ui.prepare_frame();
+        if is_plain_id(target) {
+            return self
+                .handle
+                .find(target)
+                .ok_or_else(|| format!("no node `{target}`"));
+        }
+        crate::driver::find(&self.ui, &self.handle, target)
+    }
+    /// The interface as `zgx inspect tree` shows it: a node a line.
+    pub fn tree(&mut self) -> String {
+        self.ui.prepare_frame();
+        let (lines, hidden) =
+            crate::driver::tree(&self.ui, &self.handle, None, &Default::default());
+        crate::driver::tree_text(&lines, hidden)
+    }
+    fn node(&mut self, target: &str) -> NodeId {
+        self.target(target).unwrap_or_else(|e| panic!("{e}"))
     }
     /// Where node `id` is, in points.
     pub fn bounds(&mut self, id: &str) -> Rect {
@@ -282,16 +316,7 @@ impl TestApp {
     /// list's rows are named by their items).
     pub fn row(&mut self, list: &str, n: usize) -> NodeId {
         let list_node = self.node(list);
-        let scene = self.ui.scene.borrow();
-        // A list holds a viewport, which holds the content, which holds
-        // the rows.
-        let content = scene
-            .children(list_node)
-            .first()
-            .and_then(|viewport| scene.children(*viewport).first().copied())
-            .unwrap_or_else(|| panic!("`{list}` is not a list"));
-        let mut rows: Vec<NodeId> = scene.children(content).to_vec();
-        rows.sort_by(|a, b| scene.bounds(*a).y.total_cmp(&scene.bounds(*b).y));
+        let rows = crate::driver::rows(&self.ui.scene.borrow(), list_node);
         *rows
             .get(n.wrapping_sub(1))
             .unwrap_or_else(|| panic!("`{list}` has {} rows mounted, not {n}", rows.len()))
@@ -359,17 +384,7 @@ impl TestApp {
         self.click_at(b);
     }
     fn click_at(&mut self, b: Rect) {
-        let (x, y) = (b.x + b.width / 2., b.y + b.height / 2.);
-        self.ui.dispatch(InputEvent::PointerDown {
-            x,
-            y,
-            button: PointerButton::Primary,
-        });
-        self.ui.dispatch(InputEvent::PointerUp {
-            x,
-            y,
-            button: PointerButton::Primary,
-        });
+        crate::driver::click_at(&mut self.ui, b);
         self.settle();
     }
     /// Click field `id` (giving it focus) and type `text` into it.
@@ -380,13 +395,14 @@ impl TestApp {
     }
     /// Press and release `key`, with `modifiers`, wherever focus is.
     pub fn key_with(&mut self, key: Key, modifiers: Modifiers) {
-        self.ui.dispatch(InputEvent::KeyDown {
-            key: key.clone(),
-            modifiers,
-            repeat: false,
-        });
-        self.ui.dispatch(InputEvent::KeyUp { key, modifiers });
+        crate::driver::press(&mut self.ui, key, modifiers);
         self.settle();
+    }
+    /// Press keys written as agents write them: `"Enter"`, `"cmd+k"`,
+    /// `"alt+ArrowDown"` (`cmd` is Command on macOS, Control elsewhere).
+    pub fn keys(&mut self, keys: &str) {
+        let (key, modifiers) = crate::driver::parse_keys(keys).unwrap_or_else(|e| panic!("{e}"));
+        self.key_with(key, modifiers);
     }
     /// Press and release `key`.
     pub fn key(&mut self, key: Key) {

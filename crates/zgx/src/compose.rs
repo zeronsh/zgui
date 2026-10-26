@@ -5617,6 +5617,44 @@ impl ViewHandle {
             .copied()
             .find(|node| ui.scene.borrow().contains(*node))
     }
+    /// Every mounted node named `id` in this tree (rows of a list may share
+    /// one), in the order they were made.
+    pub fn find_all(&self, id: &str) -> Vec<NodeId> {
+        let Some(ui) = self.ui.upgrade() else {
+            return Vec::new();
+        };
+        let registry = self.registry.borrow();
+        let scene = ui.scene.borrow();
+        registry
+            .get(id)
+            .map(|nodes| {
+                nodes
+                    .iter()
+                    .copied()
+                    .filter(|n| scene.contains(*n))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    /// Every mounted node with an id in this tree, and its id.
+    pub fn ids(&self) -> Vec<(NodeId, String)> {
+        let Some(ui) = self.ui.upgrade() else {
+            return Vec::new();
+        };
+        let registry = self.registry.borrow();
+        let scene = ui.scene.borrow();
+        let mut out: Vec<(NodeId, String)> = registry
+            .iter()
+            .flat_map(|(id, nodes)| {
+                nodes
+                    .iter()
+                    .filter(|n| scene.contains(**n))
+                    .map(move |n| (*n, id.clone()))
+            })
+            .collect();
+        out.sort_by_key(|(n, _)| n.number());
+        out
+    }
 }
 impl Ui {
     /// Mount a declarative tree under the document root. The document owns its lifetime.

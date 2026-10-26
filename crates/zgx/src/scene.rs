@@ -13,6 +13,11 @@ pub struct NodeId {
     generation: u32,
 }
 impl NodeId {
+    /// Its number, as diagnostics and devtools name it (`@12`): no other
+    /// node in the scene has it while this one is there.
+    pub fn number(self) -> u32 {
+        self.index
+    }
     /// Its slot: no other node in the scene has it while this one is there.
     pub(crate) fn slot(self) -> usize {
         self.index as usize
