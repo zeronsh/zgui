@@ -1045,6 +1045,32 @@ fn shader_fills_take_params_and_animate_their_uniforms() {
 }
 
 #[test]
+fn blend_names_a_mode_and_follows_state() {
+    let mut h = Harness::inline(
+        r##"local mode = ui.state("mode", "soft-light")
+        return ui.column {
+            ui.div { id = "d", w = 20, h = 20, bg = "#336699", blend = mode },
+            ui.button { id = "b", label = "Swap", on_click = function() mode:set("difference") end },
+        }"##,
+    );
+    let node = h.find("d").unwrap();
+    assert_eq!(
+        h.ui.scene.borrow().blend(node),
+        zgx::scene::BlendMode::SoftLight
+    );
+    assert!(
+        h.ui.scene.borrow().is_layer(node),
+        "a blended node is a layer"
+    );
+    h.click("b");
+    h.frame();
+    assert_eq!(
+        h.ui.scene.borrow().blend(node),
+        zgx::scene::BlendMode::Difference
+    );
+}
+
+#[test]
 fn layer_shaders_take_params_and_animate_their_uniforms() {
     let mut h = Harness::inline(
         r##"local sheen = ui.layer_shader("fn layer(input: LayerInput) -> vec4<f32> { return input.color * input.params[0]; }")

@@ -1741,6 +1741,9 @@ fn apply_resolved(
     if let Some(uniforms) = resolved.rare().layer_uniforms {
         scene.set_layer_uniforms(node, uniforms);
     }
+    if let Some(mode) = resolved.rare().blend {
+        scene.set_blend(node, mode);
+    }
     style
 }
 

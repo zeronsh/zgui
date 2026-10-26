@@ -290,6 +290,13 @@ enum Shading {
     /// (`zgx::scene::LayerShader`, by shader id): its pipeline, `shade` for
     /// the rest. Never batched with other shadings.
     Filter(u64),
+    /// A cached layer blended with the backdrop (`zgx::scene::BlendMode`,
+    /// its mode in `mask.z`): blend.wgsl's pipeline, reading a copy of the
+    /// target under it, and replacing the target's pixels. Drawn alone, at
+    /// the start of a pass (see `render_flat`).
+    Blend,
+    /// `Blend` through a layer shader (by shader id).
+    FilterBlend(u64),
     /// An image drawn with an effect (`ImageEffect`): image_effects.wgsl's
     /// pipeline, compiled when one first draws, `shade` for whatever else
     /// the draw holds.
@@ -361,9 +368,12 @@ impl QuadPipelines {
     /// The pipeline drawing quads of `shading`.
     fn get(&self, shading: Shading) -> &wgpu::RenderPipeline {
         let (cell, basic, blend) = match shading {
-            Shading::Full | Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect => {
-                (&self.full, false, true)
-            }
+            Shading::Full
+            | Shading::Fill(_)
+            | Shading::Filter(_)
+            | Shading::Blend
+            | Shading::FilterBlend(_)
+            | Shading::ImageEffect => (&self.full, false, true),
             Shading::Basic => (&self.basic, true, true),
             Shading::Opaque => (&self.basic_clear, true, false),
             Shading::Polyline => return &self.polylines().pipeline,
@@ -472,7 +482,11 @@ fn push_draw(
         && draw.layer.is_none()
         && !matches!(
             draw.shading,
-            Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect
+            Shading::Fill(_)
+                | Shading::Filter(_)
+                | Shading::Blend
+                | Shading::FilterBlend(_)
+                | Shading::ImageEffect
         );
     if !(split || polylines) || draw.end <= draw.start {
         draws.push(draw);
@@ -1899,9 +1913,12 @@ struct Picks<'p> {
 impl<'p> Picks<'p> {
     fn get(&self, shading: Shading) -> &'p wgpu::RenderPipeline {
         match shading {
-            Shading::Full | Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect => {
-                self.full
-            }
+            Shading::Full
+            | Shading::Fill(_)
+            | Shading::Filter(_)
+            | Shading::Blend
+            | Shading::FilterBlend(_)
+            | Shading::ImageEffect => self.full,
             Shading::Basic => self.basic,
             Shading::Opaque => self.opaque,
             Shading::Polyline => self.polyline.expect("made for a frame with polylines"),
@@ -1942,7 +1959,12 @@ fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
         Shading::Opaque => Some(0),
         Shading::Basic => Some(1),
         Shading::Full => Some(2),
-        Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect | Shading::Polyline => None,
+        Shading::Fill(_)
+        | Shading::Filter(_)
+        | Shading::Blend
+        | Shading::FilterBlend(_)
+        | Shading::ImageEffect
+        | Shading::Polyline => None,
     };
     Some(if cost(a)? >= cost(b)? { a } else { b })
 }
@@ -2627,6 +2649,14 @@ pub struct GpuRenderer {
     fill_shaders: FxHashMap<u64, Arc<zgx::decoration::FillShader>>,
     /// Layer shaders' pipelines by shader id (`None`: it failed to compile).
     filter_pipelines: FxHashMap<u64, Option<wgpu::RenderPipeline>>,
+    /// Blended layers' pipelines (blend.wgsl): `BLEND_PLAIN`'s, and each
+    /// layer shader's by its id (`None`: it failed to compile).
+    blend_pipelines: FxHashMap<u64, Option<wgpu::RenderPipeline>>,
+    /// Their group 2 (the backdrop) and layout, made with the first.
+    blend_layouts: std::cell::OnceCell<(wgpu::BindGroupLayout, wgpu::PipelineLayout)>,
+    /// Copies of the target under blended layers, one per target size
+    /// (the window's, each layer's), with their bind groups.
+    backdrops: FxHashMap<(u32, u32), (wgpu::Texture, wgpu::BindGroup)>,
     /// The presentation plane drawn around native views (planes.rs).
     plane: Option<planes::PlaneState>,
 }
@@ -3095,6 +3125,9 @@ impl GpuRenderer {
             effect_jobs: Vec::new(),
             fill_pipelines: FxHashMap::default(),
             filter_pipelines: FxHashMap::default(),
+            blend_pipelines: FxHashMap::default(),
+            blend_layouts: std::cell::OnceCell::new(),
+            backdrops: FxHashMap::default(),
             image_effect_pipeline: Default::default(),
             fill_shaders: FxHashMap::default(),
             plane: None,
@@ -3861,6 +3894,8 @@ impl GpuRenderer {
         match shading {
             Shading::Fill(id) => self.fill_pipelines.get(&id)?.as_ref(),
             Shading::Filter(id) => self.filter_pipelines.get(&id)?.as_ref(),
+            Shading::Blend => self.blend_pipelines.get(&BLEND_PLAIN)?.as_ref(),
+            Shading::FilterBlend(id) => self.blend_pipelines.get(&id)?.as_ref(),
             Shading::ImageEffect => self.image_effect_pipeline.get(),
             _ => None,
         }
@@ -3928,6 +3963,82 @@ impl GpuRenderer {
         });
         self.filter_pipelines.insert(shader.id(), pipeline);
         self.filter_pipelines[&shader.id()].is_some()
+    }
+    /// The blended layers' group 2 (the backdrop) and pipeline layout.
+    fn blend_layouts(&self) -> &(wgpu::BindGroupLayout, wgpu::PipelineLayout) {
+        self.blend_layouts.get_or_init(|| {
+            let backdrop = self
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("blend backdrop"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    }],
+                });
+            let layout = self
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("blended layers"),
+                    bind_group_layouts: &[
+                        Some(&self.context.inner.texture_layout),
+                        Some(&self.context.inner.viewport_layout),
+                        Some(&backdrop),
+                    ],
+                    immediate_size: 0,
+                });
+            (backdrop, layout)
+        })
+    }
+    /// Compile the blended layers' pipeline, plain or through layer shader
+    /// `shader`, if new; whether it can draw.
+    fn prepare_blend(&mut self, shader: Option<&zgx::decoration::FillShader>) -> bool {
+        let key = shader.map_or(BLEND_PLAIN, |shader| shader.id());
+        if let Some(compiled) = self.blend_pipelines.get(&key) {
+            return compiled.is_some();
+        }
+        let (source, entry) = match shader {
+            Some(shader) => (filter_source(shader.source()), "zgx_filter_blended"),
+            None => (blend_source(), "zgx_blended"),
+        };
+        let pipeline = fill_validates(&source).then(|| {
+            let module = self
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("blended layer"),
+                    source: wgpu::ShaderSource::Wgsl(source.into()),
+                });
+            let (_, layout) = self.blend_layouts();
+            blend_pipeline(&self.device, &module, layout, entry)
+        });
+        self.blend_pipelines.insert(key, pipeline);
+        self.blend_pipelines[&key].is_some()
+    }
+    /// The backdrop for the current target (`target`'s size): made once
+    /// per size, its bind group with it.
+    fn backdrop(&mut self) -> &(wgpu::Texture, wgpu::BindGroup) {
+        let size = (self.target.width(), self.target.height());
+        if !self.backdrops.contains_key(&size) {
+            let texture = texture(&self.device, size.0, size.1, "blend backdrop");
+            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("blend backdrop"),
+                layout: &self.blend_layouts().0,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &texture.create_view(&Default::default()),
+                    ),
+                }],
+            });
+            self.backdrops.insert(size, (texture, bind));
+        }
+        &self.backdrops[&size]
     }
     /// Group 1 of the quad pipelines: the viewport `uniform` and `regions`.
     fn viewport_group(
@@ -4049,7 +4160,11 @@ impl GpuRenderer {
             || self.frame_draws.iter().any(|draw| {
                 matches!(
                     draw.shading,
-                    Shading::Fill(_) | Shading::Filter(_) | Shading::Polyline
+                    Shading::Fill(_)
+                        | Shading::Filter(_)
+                        | Shading::Blend
+                        | Shading::FilterBlend(_)
+                        | Shading::Polyline
                 )
             })
         {
@@ -4702,7 +4817,11 @@ impl GpuRenderer {
             && !self.frame_draws.iter().any(|draw| {
                 matches!(
                     draw.shading,
-                    Shading::Fill(_) | Shading::Filter(_) | Shading::Polyline
+                    Shading::Fill(_)
+                        | Shading::Filter(_)
+                        | Shading::Blend
+                        | Shading::FilterBlend(_)
+                        | Shading::Polyline
                 )
             });
         if !keeps {
@@ -5018,6 +5137,12 @@ impl GpuRenderer {
                 .flatten()
                 .and_then(|layer| Some((layer.shader.clone()?, layer.uniforms)))
                 .filter(|(shader, _)| self.prepare_filter(shader));
+            // And blended with its backdrop, once that compiles.
+            let blend = item
+                .isolated
+                .then(|| scene.blend(item.id))
+                .filter(|mode| *mode != zgx::scene::BlendMode::Normal)
+                .filter(|_| self.prepare_blend(filter.as_ref().map(|(shader, _)| &**shader)));
             // Blurred or masked: composited from its effect slot.
             let effect = (item.isolated
                 && (item.effects.filter_blur > 0. || scene.mask(item.id).is_some()))
@@ -5103,14 +5228,17 @@ impl GpuRenderer {
                         filter.as_ref().map_or(0., |(_, uniforms)| {
                             region_index(&mut clips, Some(Region::uniforms(*uniforms)))
                         }),
-                        0.,
+                        blend.map_or(0., |mode| mode as u8 as f32),
                         0.,
                     ],
                 });
                 draws.push(Draw {
-                    shading: filter
-                        .as_ref()
-                        .map_or(Shading::Full, |(shader, _)| Shading::Filter(shader.id())),
+                    shading: match (&filter, blend) {
+                        (Some((shader, _)), Some(_)) => Shading::FilterBlend(shader.id()),
+                        (None, Some(_)) => Shading::Blend,
+                        (Some((shader, _)), None) => Shading::Filter(shader.id()),
+                        (None, None) => Shading::Full,
+                    },
                     start,
                     end: quads.len() as u32,
                     clip,
@@ -6315,8 +6443,8 @@ impl GpuRenderer {
                     .get_or_init(|| metal_frame::MetalFrame::new(&self.device, &self.queue).ok())
                     .as_ref()
                     .is_some_and(|frame| frame.image_effects()),
-                // Layer shaders take the wgpu path.
-                Shading::Filter(_) => false,
+                // Layer shaders and blend modes take the wgpu path.
+                Shading::Filter(_) | Shading::Blend | Shading::FilterBlend(_) => false,
                 _ => true,
             })
             && effect_jobs.iter().all(|job| {
@@ -6477,7 +6605,26 @@ impl GpuRenderer {
             effect_first,
             &mut stats,
         );
-        let splits: Vec<usize> = batches.iter().map(|(start, _)| *start).collect();
+        // The pass splits at each batch of backdrop filters (blurred between
+        // passes) and at each blended layer a region reaches (the target
+        // under it copied between passes, for it to read): `Some(batch)` or
+        // `None`, by draw.
+        let mut cuts: Vec<(usize, Option<usize>)> = batches
+            .iter()
+            .enumerate()
+            .map(|(batch, (start, _))| (*start, Some(batch)))
+            .chain((0..draws.len()).filter_map(|i| {
+                let draw = &draws[i];
+                (matches!(draw.shading, Shading::Blend | Shading::FilterBlend(_))
+                    && regions
+                        .iter()
+                        .any(|(region, _)| region.intersects(draw.bounds)))
+                .then_some((i, None))
+            }))
+            .collect();
+        // A filter's blur before a blend at the same draw.
+        cuts.sort_by_key(|&(draw, batch)| (draw, batch.is_none()));
+        let splits: Vec<usize> = cuts.iter().map(|(draw, _)| *draw).collect();
         // The window's own frame can be drawn at presentation in the same pass
         // as the drawable (`present_single_pass`). With damaged filters, only
         // the draws after the last one wait: everything before it must land
@@ -6496,7 +6643,11 @@ impl GpuRenderer {
             && !draws.iter().any(|draw| {
                 matches!(
                     draw.shading,
-                    Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect
+                    Shading::Fill(_)
+                        | Shading::Filter(_)
+                        | Shading::Blend
+                        | Shading::FilterBlend(_)
+                        | Shading::ImageEffect
                 )
             })
             && (!self.present_unpremultiplies || self.background.3 == 255)
@@ -6509,8 +6660,10 @@ impl GpuRenderer {
         }
         let mut from = 0;
         // Each batch of filters is drawn back at the start of the pass after
-        // its blur passes.
+        // its blur passes; each blended layer draws first in the pass after
+        // its backdrop's copy (the draw, and the copy's bind group).
         let mut vertical = None;
+        let mut backdrop: Option<(usize, wgpu::BindGroup)> = None;
         for (segment, end) in splits.iter().copied().chain([draws.len()]).enumerate() {
             if defer && end == draws.len() {
                 stats.render_passes += 1;
@@ -6583,6 +6736,17 @@ impl GpuRenderer {
                         pass.draw(0..4, 0..1);
                         stats.draw_calls += 1;
                     }
+                    let mut rest = &draws[from..end];
+                    if let Some((at, bind)) = &backdrop
+                        && *at == from
+                        && let Some(draw) = rest.first()
+                    {
+                        self.encode_blended(&mut pass, *region, draw, bind, &mut stats);
+                        if let Some(points) = &points_bind {
+                            pass.set_bind_group(2, points, &[]);
+                        }
+                        rest = &rest[1..];
+                    }
                     self.encode_draws(
                         &mut pass,
                         &|shading| {
@@ -6590,21 +6754,29 @@ impl GpuRenderer {
                                 .unwrap_or_else(|| quads.get(shading))
                         },
                         *region,
-                        &draws[from..end],
+                        rest,
                         first,
                         &mut stats,
                     );
                 }
             }
-            if segment == batches.len() {
+            if segment == cuts.len() {
                 break;
             }
-            vertical = plans[segment]
-                .as_ref()
-                .zip(ranges[segment])
-                .and_then(|(plan, ranges)| {
-                    self.blur(&mut encoder, plan, &vertices, ranges, &mut stats)
-                });
+            match cuts[segment] {
+                (_, Some(batch)) => {
+                    vertical =
+                        plans[batch]
+                            .as_ref()
+                            .zip(ranges[batch])
+                            .and_then(|(plan, ranges)| {
+                                self.blur(&mut encoder, plan, &vertices, ranges, &mut stats)
+                            });
+                }
+                (at, None) => {
+                    backdrop = Some((at, self.copy_backdrop(&mut encoder, &draws[at], &regions)));
+                }
+            }
             // The first filtered draw's own quads open the next pass.
             from = end;
         }
@@ -7257,6 +7429,80 @@ impl GpuRenderer {
     /// texture and clip become one instanced call; their quads are contiguous,
     /// so paint order holds. A draw entirely outside the region may be folded
     /// into a batch: the scissor discards its quads.
+    /// Copy what the target holds under blended `draw`, within `regions`,
+    /// into the backdrop for its size; the backdrop's bind group.
+    fn copy_backdrop(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        draw: &Draw,
+        regions: &[(Rect, Scissor)],
+    ) -> wgpu::BindGroup {
+        let under = draw.bounds.intersection(draw.clip);
+        let area = regions
+            .iter()
+            .filter_map(|(region, _)| region.intersection(under?))
+            .reduce(Rect::union);
+        let copied = area.and_then(|area| scissor(area, self.scale, self.width, self.height));
+        let target = self.target.clone();
+        let (texture, bind) = self.backdrop();
+        if let Some((x, y, width, height)) = copied {
+            let at = |texture| wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            };
+            encoder.copy_texture_to_texture(
+                at(&target),
+                at(texture),
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        bind.clone()
+    }
+    /// Draw blended `draw` (a layer's composite) within `region`, reading
+    /// the backdrop `bind`: its own pipeline, replacing the target's pixels.
+    fn encode_blended(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        region: Rect,
+        draw: &Draw,
+        bind: &wgpu::BindGroup,
+        stats: &mut GpuStats,
+    ) {
+        let Some(pipeline) = self.fill_pipeline(draw.shading) else {
+            return;
+        };
+        let Some((x, y, w, h)) = region
+            .intersection(draw.clip)
+            .and_then(|rect| rect.intersection(draw.bounds))
+            .and_then(|rect| scissor(rect, self.scale, self.width, self.height))
+        else {
+            return;
+        };
+        pass.set_pipeline(pipeline);
+        pass.set_scissor_rect(x, y, w, h);
+        pass.set_bind_group(
+            0,
+            draw.image.and_then(|id| self.images.get(&id)).map_or_else(
+                || {
+                    draw.layer
+                        .and_then(|id| self.layers.get(&id))
+                        .map_or(&self.bind, |l| &l.bind)
+                },
+                |entry| &entry.0,
+            ),
+            &[],
+        );
+        pass.set_bind_group(2, bind, &[]);
+        pass.draw(0..4, draw.start..draw.end);
+        stats.draw_calls += 1;
+        stats.instances += (draw.end - draw.start) as usize;
+    }
     fn encode_draws<'p>(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -7297,6 +7543,8 @@ impl GpuRenderer {
         for draw in draws {
             let shading = match draw.shading {
                 Shading::Opaque if !unblended => Shading::Basic,
+                // Drawn alone, after their backdrop's copy (`encode_blended`).
+                Shading::Blend | Shading::FilterBlend(_) => continue,
                 shading => shading,
             };
             if !region.intersects(draw.bounds) || draw.end <= draw.start.max(first) {
@@ -9354,8 +9602,9 @@ pub(crate) fn fill_source(user: &str) -> String {
 /// node's box and `point` its untransformed position, so `p` is the node's.
 pub(crate) fn filter_source(user: &str) -> String {
     format!(
-        "{}\nstruct LayerInput {{ color:vec4<f32>, p:vec2<f32>, size:vec2<f32>, time:f32, scale:f32, params:array<vec4<f32>,4> }}\n{}\n{user}\n{}",
+        "{}\n{}\nstruct LayerInput {{ color:vec4<f32>, p:vec2<f32>, size:vec2<f32>, time:f32, scale:f32, params:array<vec4<f32>,4> }}\n{}\n{user}\n{}",
         include_str!("draw.wgsl"),
+        include_str!("blend.wgsl"),
         "var<private> zgx_frame:vec4<f32>;
 // The layer's straight-alpha pixel at logical `p` from the node's top-left.
 fn zgx_sample(p:vec2<f32>)->vec4<f32> {
@@ -9363,7 +9612,7 @@ fn zgx_sample(p:vec2<f32>)->vec4<f32> {
  let t=textureSampleLevel(atlas,tex_sampler,uv,0.);
  return select(vec4(0.),vec4(t.rgb/t.a,t.a),t.a>0.);
 }",
-        "@fragment fn zgx_filter(input:Out)->@location(0) vec4<f32> {
+        "fn zgx_filtered(input:Out)->vec4<f32> {
  var v=input;
  let point=select(v.position.xy/viewport.z,v.point,v.options.z>0.5);
  // The texture's uv per logical point of the node (the quad maps one
@@ -9382,6 +9631,26 @@ fn zgx_sample(p:vec2<f32>)->vec4<f32> {
  zgx_frame=vec4(v.uv-vec2(k[0].x,k[1].y)*p,k[0].x,k[1].y);
  let c=clamp(layer(LayerInput(zgx_sample(p),p,v.fade.zw,u.round0.x,viewport.z,array<vec4<f32>,4>(u.radii0,u.round1,u.radii1,u.fade_box))),vec4(0.),vec4(1.));
  return shade_texel(v,vec4(c.rgb*c.a,c.a),true);
+}
+@fragment fn zgx_filter(input:Out)->@location(0) vec4<f32> { return zgx_filtered(input); }
+@fragment fn zgx_filter_blended(input:Out)->@location(0) vec4<f32> {
+ return zgx_blend(zgx_filtered(input),zgx_beneath(input.position),u32(input.mask.z));
+}"
+    )
+}
+/// The key of the blended layers' plain pipeline in `blend_pipelines`
+/// (layer shaders' ids count up from 1).
+const BLEND_PLAIN: u64 = 0;
+/// The blended layers' module: the quad shader, blend.wgsl, and the
+/// fragment entry `zgx_blended`, which shades a layer's composite quad as
+/// `shade` does and blends it with the backdrop under it by `mask.z`.
+pub(crate) fn blend_source() -> String {
+    format!(
+        "{}\n{}\n{}",
+        include_str!("draw.wgsl"),
+        include_str!("blend.wgsl"),
+        "@fragment fn zgx_blended(input:Out)->@location(0) vec4<f32> {
+ return zgx_blend(shade(input),zgx_beneath(input.position),u32(input.mask.z));
 }"
     )
 }
@@ -10147,6 +10416,45 @@ fn fill_pipeline(
             targets: &[Some(wgpu::ColorTargetState {
                 format: FORMAT,
                 blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+/// A blended layer's pipeline (`prepare_blend`): its quad replaces the
+/// target's pixels with the blend of the layer and the backdrop it read.
+fn blend_pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    entry: &str,
+) -> wgpu::RenderPipeline {
+    let all = wgpu::vertex_attr_array![0=>Float32x4,1=>Float32x4,2=>Float32x4,3=>Float32x4,4=>Float32x4,5=>Float32x4,6=>Float32x4,7=>Float32x4];
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("blended layer"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: 128,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &all,
+            }],
+        },
+        primitive: QUAD_STRIP,
+        depth_stencil: None,
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: FORMAT,
+                blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),

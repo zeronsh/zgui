@@ -424,8 +424,8 @@ impl MetalFrame {
                 .cloned()
                 .flatten()
                 .unwrap_or_else(|| self.full.clone()),
-            // Frames with layer shaders take the wgpu path.
-            Shading::Filter(_) => self.full.clone(),
+            // Frames with layer shaders or blend modes take the wgpu path.
+            Shading::Filter(_) | Shading::Blend | Shading::FilterBlend(_) => self.full.clone(),
         }
     }
 }
@@ -696,6 +696,8 @@ impl Frame {
                 Shading::Full
                 | Shading::Fill(_)
                 | Shading::Filter(_)
+                | Shading::Blend
+                | Shading::FilterBlend(_)
                 | Shading::ImageEffect
                 | Shading::Polyline,
                 true,

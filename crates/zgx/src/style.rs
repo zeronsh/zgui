@@ -738,6 +738,8 @@ pub(crate) struct RareStyles {
     /// `Styled::layer_shader`, `layer_uniforms`.
     pub(crate) layer_shader: Option<Option<std::sync::Arc<crate::decoration::FillShader>>>,
     pub(crate) layer_uniforms: Option<crate::decoration::ShaderUniforms>,
+    /// `Styled::blend`.
+    pub(crate) blend: Option<crate::scene::BlendMode>,
     /// `Styled::relative`: a containing block for absolute descendants.
     pub(crate) relative: Option<bool>,
 }
@@ -775,6 +777,7 @@ impl RareStyles {
         mask: None,
         layer_shader: None,
         layer_uniforms: None,
+        blend: None,
         relative: None,
     };
     /// Overlay explicitly supplied properties, preserving all others.
@@ -868,6 +871,9 @@ impl RareStyles {
         }
         if other.layer_uniforms.is_some() {
             self.layer_uniforms = other.layer_uniforms;
+        }
+        if other.blend.is_some() {
+            self.blend = other.blend;
         }
         if other.relative.is_some() {
             self.relative = other.relative;
@@ -2135,6 +2141,14 @@ pub trait Styled: Sized {
     /// shimmer, a progress fill) only composites it again.
     fn mask(mut self, image: std::sync::Arc<crate::image::ImageData>, size: (f32, f32)) -> Self {
         self.styles_mut().rare_mut().mask = Some(Some((image, size)));
+        self
+    }
+    /// Mix the view with what lies beneath it by `mode`, as CSS
+    /// `mix-blend-mode` (see `crate::scene::BlendMode`): its subtree paints
+    /// once into a cached layer that blends with the backdrop as it
+    /// composites.
+    fn blend(mut self, mode: crate::scene::BlendMode) -> Self {
+        self.styles_mut().rare_mut().blend = Some(mode);
         self
     }
     /// Composite the view's subtree through `shader`'s WGSL `layer`

@@ -357,6 +357,24 @@ export type TextAlign = "start" | "end" | "left" | "center" | "right"
 -- "mono" (or "monospace"), "sans" ("sans-serif"), "serif", or a family name.
 -- A family name, or a font token (`FontToken`).
 export type Font = string
+-- How a node mixes with what lies beneath it: CSS `mix-blend-mode`.
+export type BlendMode =
+	"normal"
+	| "multiply"
+	| "screen"
+	| "overlay"
+	| "darken"
+	| "lighten"
+	| "color-dodge"
+	| "color-burn"
+	| "hard-light"
+	| "soft-light"
+	| "difference"
+	| "exclusion"
+	| "hue"
+	| "saturation"
+	| "color"
+	| "luminosity"
 -- Cursor names, or CSS's spellings of them ("nwse-resize").
 export type Cursor =
 	"default"
@@ -1128,6 +1146,8 @@ export type Styles = {
 	brightness: number?,
 	contrast: number?,
 	saturate: number?,
+	-- Mixes the node with what lies beneath it (CSS `mix-blend-mode`).
+	blend: BlendMode?,
 	blur: number?,
 	backdrop_blur: Num?,
 	fade: Pair?,
@@ -1291,6 +1311,7 @@ export type StyleProps = {
 	brightness: Reactive<number>?,
 	contrast: Reactive<number>?,
 	saturate: Reactive<number>?,
+	blend: Reactive<BlendMode>?,
 	blur: Reactive<number>?,
 	backdrop_blur: Reactive<Num>?,
 	fade: Reactive<Pair>?,

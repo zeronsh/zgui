@@ -596,6 +596,180 @@ impl ImageMask {
         self
     }
 }
+/// How a node's subtree mixes with what lies beneath it as it composites,
+/// as CSS `mix-blend-mode` (`Scene::set_blend`): the subtree paints into a
+/// cached layer, and each of its pixels combines with the backdrop under it
+/// (what its parent's layer, or the window, holds there) by the mode's
+/// formula, as the W3C Compositing and Blending spec defines them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum BlendMode {
+    /// Over the backdrop, as any node composites.
+    #[default]
+    Normal,
+    /// Darkens: the colours multiplied.
+    Multiply,
+    /// Lightens: the inverse of multiplying the inverses.
+    Screen,
+    /// Multiply or screen, by the backdrop: contrast up, its highlights and shadows kept.
+    Overlay,
+    /// The darker of each channel.
+    Darken,
+    /// The lighter of each channel.
+    Lighten,
+    /// Brightens the backdrop toward the source.
+    ColorDodge,
+    /// Darkens the backdrop toward the source.
+    ColorBurn,
+    /// Multiply or screen, by the source: as overlay with the two swapped.
+    HardLight,
+    /// A gentler hard light: darkens or lightens by the source.
+    SoftLight,
+    /// The absolute difference.
+    Difference,
+    /// Difference with lower contrast.
+    Exclusion,
+    /// The source's hue, the backdrop's saturation and luminosity.
+    Hue,
+    /// The source's saturation, the backdrop's hue and luminosity.
+    Saturation,
+    /// The source's hue and saturation, the backdrop's luminosity: tints.
+    Color,
+    /// The source's luminosity, the backdrop's hue and saturation.
+    Luminosity,
+}
+impl BlendMode {
+    /// Every mode, in `as u8` order.
+    pub const ALL: [Self; 16] = [
+        Self::Normal,
+        Self::Multiply,
+        Self::Screen,
+        Self::Overlay,
+        Self::Darken,
+        Self::Lighten,
+        Self::ColorDodge,
+        Self::ColorBurn,
+        Self::HardLight,
+        Self::SoftLight,
+        Self::Difference,
+        Self::Exclusion,
+        Self::Hue,
+        Self::Saturation,
+        Self::Color,
+        Self::Luminosity,
+    ];
+    /// Its CSS name (`"soft-light"`).
+    pub fn name(self) -> &'static str {
+        [
+            "normal",
+            "multiply",
+            "screen",
+            "overlay",
+            "darken",
+            "lighten",
+            "color-dodge",
+            "color-burn",
+            "hard-light",
+            "soft-light",
+            "difference",
+            "exclusion",
+            "hue",
+            "saturation",
+            "color",
+            "luminosity",
+        ][self as usize]
+    }
+    /// The mode a CSS name names (`"soft-light"`, or `"soft_light"`).
+    pub fn parse(name: &str) -> Option<Self> {
+        let name = name.replace('_', "-");
+        Self::ALL.into_iter().find(|mode| mode.name() == name)
+    }
+    /// `B(cb, cs)`: the backdrop's straight colour `cb` and the source's
+    /// `cs` (0 to 1) mixed by this mode, before compositing (as blend.wgsl
+    /// does on the GPU).
+    pub fn mix(self, cb: [f32; 3], cs: [f32; 3]) -> [f32; 3] {
+        fn each(cb: [f32; 3], cs: [f32; 3], f: impl Fn(f32, f32) -> f32) -> [f32; 3] {
+            [f(cb[0], cs[0]), f(cb[1], cs[1]), f(cb[2], cs[2])]
+        }
+        fn hard_light(cb: f32, cs: f32) -> f32 {
+            if cs <= 0.5 {
+                cb * 2. * cs
+            } else {
+                let s = 2. * cs - 1.;
+                cb + s - cb * s
+            }
+        }
+        fn lum(c: [f32; 3]) -> f32 {
+            0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]
+        }
+        fn clip_color(c: [f32; 3]) -> [f32; 3] {
+            let l = lum(c);
+            let n = c[0].min(c[1]).min(c[2]);
+            let x = c[0].max(c[1]).max(c[2]);
+            let mut c = c;
+            if n < 0. {
+                c = c.map(|v| l + (v - l) * l / (l - n).max(1e-6));
+            }
+            if x > 1. {
+                c = c.map(|v| l + (v - l) * (1. - l) / (x - l).max(1e-6));
+            }
+            c
+        }
+        fn set_lum(c: [f32; 3], l: f32) -> [f32; 3] {
+            let d = l - lum(c);
+            clip_color(c.map(|v| v + d))
+        }
+        fn sat(c: [f32; 3]) -> f32 {
+            c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2])
+        }
+        fn set_sat(c: [f32; 3], s: f32) -> [f32; 3] {
+            let n = c[0].min(c[1]).min(c[2]);
+            let x = c[0].max(c[1]).max(c[2]);
+            if x <= n {
+                return [0.; 3];
+            }
+            c.map(|v| (v - n) * s / (x - n))
+        }
+        let mixed = match self {
+            Self::Normal => cs,
+            Self::Multiply => each(cb, cs, |b, s| b * s),
+            Self::Screen => each(cb, cs, |b, s| b + s - b * s),
+            Self::Overlay => each(cb, cs, |b, s| hard_light(s, b)),
+            Self::Darken => each(cb, cs, f32::min),
+            Self::Lighten => each(cb, cs, f32::max),
+            Self::ColorDodge => each(cb, cs, |b, s| match () {
+                _ if b <= 0. => 0.,
+                _ if s >= 1. => 1.,
+                _ => (b / (1. - s)).min(1.),
+            }),
+            Self::ColorBurn => each(cb, cs, |b, s| match () {
+                _ if b >= 1. => 1.,
+                _ if s <= 0. => 0.,
+                _ => 1. - ((1. - b) / s).min(1.),
+            }),
+            Self::HardLight => each(cb, cs, hard_light),
+            Self::SoftLight => each(cb, cs, |b, s| {
+                if s <= 0.5 {
+                    b - (1. - 2. * s) * b * (1. - b)
+                } else {
+                    let d = if b <= 0.25 {
+                        ((16. * b - 12.) * b + 4.) * b
+                    } else {
+                        b.sqrt()
+                    };
+                    b + (2. * s - 1.) * (d - b)
+                }
+            }),
+            Self::Difference => each(cb, cs, |b, s| (b - s).abs()),
+            Self::Exclusion => each(cb, cs, |b, s| b + s - 2. * b * s),
+            Self::Hue => set_lum(set_sat(cs, sat(cb)), lum(cb)),
+            Self::Saturation => set_lum(set_sat(cb, sat(cs)), lum(cb)),
+            Self::Color => set_lum(cs, lum(cb)),
+            Self::Luminosity => set_lum(cb, lum(cs)),
+        };
+        mixed.map(|v| v.clamp(0., 1.))
+    }
+}
 /// A shader a node's subtree composites through (`Scene::set_layer_shader`):
 /// the subtree, painted once as a cached layer, has each of its pixels
 /// passed to the shader's `layer` as it is drawn, so changing the
@@ -1403,6 +1577,9 @@ struct Node {
     /// The shader its layer composites through and that shader's uniforms
     /// (`Scene::set_layer_shader`): a layer while it has a shader.
     layer_shader: Option<Box<LayerShader>>,
+    /// How it mixes with its backdrop (`Scene::set_blend`): a layer unless
+    /// `Normal`.
+    blend: BlendMode,
     /// Its clip inset (`Scene::set_clip_inset`).
     clip_inset: Option<Box<ClipInset>>,
     /// Its shader fill's uniforms (`Scene::set_shader_uniforms`).
@@ -1452,9 +1629,12 @@ impl Node {
             .is_some_and(|layer| layer.shader.is_some())
     }
     /// Whether it paints as a layer for an effect on its content: a content
-    /// blur, a mask or a layer shader.
+    /// blur, a mask, a layer shader or a blend mode.
     fn effect_layer(&self) -> bool {
-        self.filtered() || self.image_mask.is_some() || self.layer_shaded()
+        self.filtered()
+            || self.image_mask.is_some()
+            || self.layer_shaded()
+            || self.blend != BlendMode::Normal
     }
     fn set_local(&mut self, transform: LocalTransform) {
         match &mut self.local {
@@ -2330,6 +2510,7 @@ impl Scene {
                     local: None,
                     image_mask: None,
                     layer_shader: None,
+                    blend: BlendMode::Normal,
                     clip_inset: None,
                     shader_uniforms: None,
                     promoted: false,
@@ -2750,6 +2931,25 @@ impl Scene {
         let node = self.node_mut(id);
         node.image_mask = mask.map(Box::new);
         if node.image_mask.is_some() && !std::mem::replace(&mut node.promoted, true) {
+            self.promoted_count += 1;
+        }
+        self.invalidate(id, COMPOSITE);
+    }
+    /// How `id` mixes with its backdrop.
+    pub fn blend(&self, id: NodeId) -> BlendMode {
+        self.node(id).blend
+    }
+    /// Mix `id`'s subtree with its backdrop by `mode` (see `BlendMode`). A
+    /// blended node paints as a cached layer: changing the mode composites
+    /// again, damaging the subtree, without repainting it.
+    pub fn set_blend(&mut self, id: NodeId, mode: BlendMode) {
+        if self.node(id).blend == mode {
+            return;
+        }
+        self.damage_subtree(id);
+        let node = self.node_mut(id);
+        node.blend = mode;
+        if mode != BlendMode::Normal && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
         self.invalidate(id, COMPOSITE);
@@ -4300,6 +4500,7 @@ impl Scene {
             local: None,
             image_mask: None,
             layer_shader: None,
+            blend: BlendMode::Normal,
             clip_inset: None,
             shader_uniforms: None,
             promoted: false,
