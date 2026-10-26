@@ -276,8 +276,11 @@ pacing at 120 Hz, so those cells need a ProMotion Mac.
 Sampling starts from window readiness: the runner polls for up to five seconds
 until the app has a window that is frontmost and uncovered, then warms it for
 five seconds before the sample. It only activates the benchmark app; system
-dialogs stop the launch without being touched. Apps get six extra seconds of
-lifetime so readiness cannot truncate the sample. Logs retain readiness time,
+dialogs stop the run without being touched. Apps get two extra seconds of
+lifetime; readiness taking over 1.5 seconds is a slow launch, retried once.
+Timeouts and covered windows are retried once too. Exhausted retries are
+recorded without a sample and reject the audit, while other cells continue.
+Logs retain readiness time,
 and the audit records the sampling anchor and actual requested lifetime. A
 shortened sample is rejected. Startup remains a separate measurement.
 

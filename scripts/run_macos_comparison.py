@@ -75,7 +75,7 @@ from staging import CWD, clean_env, stage  # noqa: E402
 REQUESTED, WARMUP, SAMPLED, INTERVAL = 20, 5, 15, 0.05
 # App lifetimes include readiness and sampler setup; samples start after
 # readiness, so a slower framework's startup cannot shorten its sample.
-READY_TIMEOUT, LIFETIME_MARGIN = 5, 6
+READY_TIMEOUT, LIFETIME_MARGIN = 5, 2
 # Idle is sampled 20-35 s after launch, five times: until the Metal driver
 # gives back the memory it holds for any process that used the GPU lately
 # (a ~180 MB floor, returned ~6 or ~8 s after launch for every framework, on
@@ -246,6 +246,22 @@ def environment():
     }
 
 
+class ReadinessFailure(RuntimeError):
+    """A launch that can be tried once more, without counting a sample."""
+
+
+def readiness_error(process, log, detail):
+    attempt = len(list(log.parent.glob(log.stem + '.ready-error.*.json'))) + 1
+    artifact = log.with_suffix(f'.ready-error.{attempt}.json')
+    artifact.write_text(json.dumps(detail, indent=1) + '\n')
+    if process.poll() is None:
+        process.terminate()
+        process.wait(timeout=10)
+    if detail.get('dialogs'):
+        raise SystemExit(f'system dialog on screen; not touching it: {detail["dialogs"]}')
+    raise ReadinessFailure(f'{detail.get("error", "window not ready")}; inspect {artifact}')
+
+
 def launch(binary, mode, seconds, log):
     # A dialog that appeared since the preflight would sit over this window:
     # stop rather than measure under it (never clicked).
@@ -272,18 +288,20 @@ def launch(binary, mode, seconds, log):
         except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
             failure = {'error': str(error), 'stdout': getattr(error, 'stdout', None),
                        'stderr': getattr(error, 'stderr', None)}
-            log.with_suffix('.ready-error.json').write_text(json.dumps(failure, indent=1) + '\n')
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=10)
-            raise SystemExit(f'window readiness failed; inspect {log.with_suffix(".ready-error.json")}') from error
+            try:
+                decoded = json.loads(getattr(error, 'stdout', '') or '{}')
+                if isinstance(decoded, dict):
+                    failure.update(decoded)
+            except json.JSONDecodeError:
+                pass
+            readiness_error(process, log, failure)
         if not ready.get('ready'):
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=10)
-            raise SystemExit(f'window readiness failed: {ready}')
+            readiness_error(process, log, ready)
         process.benchmark_ready_seconds = time.monotonic() - started
         log.with_suffix('.ready.json').write_text(json.dumps({**ready, 'spawn_to_ready_seconds': process.benchmark_ready_seconds}, indent=1) + '\n')
+        if process.benchmark_ready_seconds > LIFETIME_MARGIN - 0.5:
+            readiness_error(process, log, {'error': 'readiness exceeded the sample lifetime budget',
+                                          'ready_seconds': process.benchmark_ready_seconds})
     return process
 
 
@@ -319,6 +337,7 @@ def power_of(process):
 # each kind (`LAUNCHES`).
 CRASHES = []
 LAUNCHES = {}
+READINESS_FAILURES = []
 
 
 def abnormal(exit_code, terminated):
@@ -335,17 +354,31 @@ def crash(scene, framework, mode, kind, exit_code):
     print(f"{framework} {mode}: exited abnormally ({exit_code}) in a {kind} launch; once more", flush=True)
 
 
+def failed_readiness(scene, framework, mode, kind, attempt, error):
+    READINESS_FAILURES.append(dict(scene=scene, framework=framework, mode=mode, kind=kind,
+                                   attempt=attempt + 1, exhausted=bool(attempt), error=str(error)))
+    print(f'{framework} {mode}: readiness failed ({error}); ' + ('skipping this sample' if attempt else 'once more'), flush=True)
+
+
 def trial(scene, framework, mode, repeat, out, power, paced=None):
-    """`one_trial`, once more if the app exits abnormally."""
-    row = one_trial(scene, framework, mode, repeat, out, power, paced)
-    if framework != 'desktop':
-        counted(framework, 'trial')
-        if abnormal(row['exit_code'], row['terminated_after_report']):
-            crash(scene, framework, mode, 'trial', row['exit_code'])
-            time.sleep(2)
+    """Try once more after an abnormal exit or a retryable readiness failure."""
+    for attempt in range(2):
+        if framework != 'desktop':
             counted(framework, 'trial')
+        try:
             row = one_trial(scene, framework, mode, repeat, out, power, paced)
-    return row
+        except ReadinessFailure as error:
+            failed_readiness(scene, framework, mode, 'trial', attempt, error)
+            if attempt:
+                raise
+            time.sleep(2)
+            continue
+        if framework == 'desktop' or not abnormal(row['exit_code'], row['terminated_after_report']):
+            return row
+        crash(scene, framework, mode, 'trial', row['exit_code'])
+        if attempt:
+            return row
+        time.sleep(2)
 
 
 def one_trial(scene, framework, mode, repeat, out, power, paced=None):
@@ -431,7 +464,14 @@ def pacing(scene, framework, mode, repeat, out):
     # An app that exits abnormally while captured gets one more launch too.
     for attempt in range(2):
         counted(framework, 'pacing')
-        process = launch(SCENES[scene]['binaries'][framework], mode, seconds, out / f'{framework}.{mode}.{repeat}.pacing.log')
+        try:
+            process = launch(SCENES[scene]['binaries'][framework], mode, seconds, out / f'{framework}.{mode}.{repeat}.pacing.log')
+        except ReadinessFailure as error:
+            failed_readiness(scene, framework, mode, 'pacing', attempt, error)
+            if attempt:
+                raise
+            time.sleep(2)
+            continue
         try:
             result = json.loads(run([str(PACER), str(process.pid), str(WARMUP), str(PACING_SECONDS)]))
         except subprocess.CalledProcessError as error:
@@ -470,7 +510,14 @@ def blank(scene, framework, mode, repeat, out):
     seconds = WARMUP + BLANK_SECONDS + 1 + LIFETIME_MARGIN
     for attempt in range(2):
         counted(framework, 'blank')
-        process = launch(SCENES[scene]['binaries'][framework], mode, seconds, out / f'{framework}.{mode}.{repeat}.blank.log')
+        try:
+            process = launch(SCENES[scene]['binaries'][framework], mode, seconds, out / f'{framework}.{mode}.{repeat}.blank.log')
+        except ReadinessFailure as error:
+            failed_readiness(scene, framework, mode, 'blank', attempt, error)
+            if attempt:
+                raise
+            time.sleep(2)
+            continue
         try:
             result = json.loads(run([str(BLANK), str(process.pid), str(WARMUP), str(BLANK_SECONDS), str(BLANK_RATE)]))
         except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
@@ -661,7 +708,10 @@ def measure(args, frameworks, modes, repeats, commit, found):
             # Into a published run: its own desktop baselines stay, this run's apart.
             place = out / 'idle-rerun-baselines' if args.into and framework == 'desktop' else out
             place.mkdir(exist_ok=True)
-            row = trial(args.scene, framework, mode, repeat, place, args.powermetrics, paced if args.quick else None)
+            try:
+                row = trial(args.scene, framework, mode, repeat, place, args.powermetrics, paced if args.quick else None)
+            except ReadinessFailure:
+                continue
             print(f"{framework:8} {mode:8} {repeat}: cpu {row['cpu_percent_one_core']:6.2f}% {row['cpu_watts'] * 1000:6.0f} mW "
                   f"gpu {row['gpu_system_watts'] * 1000:5.1f} mW {row['gpu_mcycles_per_second']:5.1f} Mcyc/s server cpu {row['windowserver_cpu_percent']:5.1f}% gpu {row['windowserver_gpu_percent']:5.1f}% "
                   f"footprint {row['mean_footprint_bytes'] / 2**20:6.1f} MiB ticks {row['workload_ticks']}", flush=True)
@@ -675,7 +725,10 @@ def measure(args, frameworks, modes, repeats, commit, found):
                 if max(spread_of(rows, f, m, 'cpu_percent_one_core'), spread_of(rows, f, m, 'gpu_system_watts')) > SPREAD]
         for extra in range(EXTRA):
             for framework, mode in wide:
-                row = trial(args.scene, framework, mode, repeats + extra, out, args.powermetrics)
+                try:
+                    row = trial(args.scene, framework, mode, repeats + extra, out, args.powermetrics)
+                except ReadinessFailure:
+                    continue
                 print(f"{framework:8} {mode:8} {repeats + extra}: cpu {row['cpu_percent_one_core']:6.2f}% "
                       f"gpu {row['gpu_system_watts'] * 1000:5.1f} mW (extra: wide spread)", flush=True)
                 rows.append(row)
@@ -685,7 +738,10 @@ def measure(args, frameworks, modes, repeats, commit, found):
     if args.scene == 'vlist' and not args.no_pacing:
         for framework in frameworks:
             for mode in [m for m in modes if m in BLANK_MODES]:
-                row = blank(args.scene, framework, mode, 0, out)
+                try:
+                    row = blank(args.scene, framework, mode, 0, out)
+                except ReadinessFailure:
+                    continue
                 print(f"{framework:8} {mode:8}: blank {row.get('blank_captures', '?')}/{row.get('captures', '?')} captures, "
                       f"longest {row.get('longest_blank_points', '?')} pt", flush=True)
                 blanks.append(row)
@@ -694,7 +750,10 @@ def measure(args, frameworks, modes, repeats, commit, found):
         order = frameworks[repeat % len(frameworks):] + frameworks[:repeat % len(frameworks)]
         for mode in [m for m in modes if m != 'idle']:
             for framework in order:
-                row = pacing(args.scene, framework, mode, repeat, out)
+                try:
+                    row = pacing(args.scene, framework, mode, repeat, out)
+                except ReadinessFailure:
+                    continue
                 print(f"{framework:8} {mode:8} {repeat}: pacing {row.get('frames_per_second', 0):6.1f} fps p99 "
                       f"{row.get('interval_p99_ms', 0):5.1f} ms long {row.get('long_interval_fraction', 0):.3f}", flush=True)
                 paced.append(row)
@@ -736,7 +795,7 @@ def measure(args, frameworks, modes, repeats, commit, found):
     accepted = gated and all(r['exit_code'] == 0 or r['terminated_after_report'] for r in apps)
     # Every trial as long as asked, its ticks what that length makes.
     invalid = [f"{r['framework']}/{r['mode']}/{r['repeat']}" for r in apps if 'ran_seconds' in r and not valid(r, args.scene)]
-    accepted = accepted and not invalid
+    accepted = accepted and not invalid and not any(r['exhausted'] for r in READINESS_FAILURES)
     binaries = {name: {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'bytes': path.stat().st_size}
                 for name, path in SCENES[args.scene]['binaries'].items() if name in frameworks}
     audit = {'accepted': accepted, 'trials': len(rows), 'samples': sum(r['samples'] for r in rows),
@@ -752,6 +811,7 @@ def measure(args, frameworks, modes, repeats, commit, found):
              'environment': environment(), 'preflight': found, 'binaries': binaries,
              'toolchains': toolchains(frameworks), 'invalid_trials': invalid,
              'abnormal_exits': CRASHES, 'launches': LAUNCHES,
+             'readiness_failures': READINESS_FAILURES,
              'protocol': {'requested_seconds': REQUESTED + LIFETIME_MARGIN, 'warmup_seconds': WARMUP, 'sampled_seconds': SAMPLED,
                           'sampling_anchor': 'window frontmost and uncovered', 'readiness_timeout_seconds': READY_TIMEOUT,
                           'lifetime_margin_seconds': LIFETIME_MARGIN,
