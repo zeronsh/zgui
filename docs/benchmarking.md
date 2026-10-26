@@ -308,6 +308,24 @@ Within zgx's start, `ZGX_PROFILE=1` prints the process's instructions and millis
 
 `crates/zgx-gpu/examples/startup_bench.rs` isolates the renderer's share headless: the GPU device, the system font database and the first text in four styles.
 
+Measured again in October 2026 (dist builds, instructions retired, the lab window at rest), zgx's start against GPUI Fast's:
+- **Overall:** over the first 2.5 s, zgx retires about 966 M instructions and GPUI Fast about 902 M (7% more for zgx). zgx's peak footprint is lower, 229.6 against 241 MB, and the wall time to content is the same within noise.
+- **zgx to its first present, about 754 M:**
+  - the loader and Rust start: 55 M;
+  - wgpu's adapter, 40–52 M, and its device, about 65 M, both on a background thread while AppKit launches;
+  - the event loop and menus: about 114 M;
+  - AppKit's launch up to the window request: about 88 M;
+  - AppKit making the `NSWindow`: about 217 M;
+  - the first frame: about 145 M.
+- **Inside the GPU steps:**
+  - `BufferWrites::new` (vendor/wgpu-hal), about 12 M, is the process's first shader compile.
+  - `MetalFrame::new` in the first frame is about 15 M. naga translating `draw.wgsl` and `copy_offset.wgsl` to MSL is about 10.5 M of it, and Metal's `newLibraryWithSource` 0.4 M in-process; Metal compiles out of process and caches binaries itself.
+- **What doesn't account for the gap:**
+  - Linking WebKit, AVFoundation and CoreMedia: about 2 M at launch.
+  - The accessibility adapter: 2–5 M.
+  - A disk cache of naga's MSL would save about 10 M a launch.
+- **What does:** the gap with GPUI's direct Metal is mostly wgpu's adapter and device setup.
+
 ## On Windows
 
 `scripts/windows_compare.py` runs the comparison scenes (`comparisons/README.md`) for zgx, GPUI Fast, MyGo and the older GPUI adapter in turn on the same desktop, the Windows counterpart of the macOS runner:
