@@ -76,7 +76,7 @@ impl Base {
 
 /// A damped spring, solved in closed form (anime.js `createSpring`). Its
 /// settling time becomes the duration of tweens using it.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct Spring {
     zeta: f64,
     w0: f64,
@@ -84,6 +84,17 @@ pub(crate) struct Spring {
     b: f64,
     /// Seconds until it settles.
     pub settle: f64,
+    /// The last time it was solved at (its bits) and the value then. The
+    /// tracks of one tween share its spring and its timing: a list's rows
+    /// moving together ask for the same time in turn, a thousand of them a
+    /// frame.
+    last: std::cell::Cell<Option<(u64, f64)>>,
+}
+impl PartialEq for Spring {
+    fn eq(&self, other: &Self) -> bool {
+        (self.zeta, self.w0, self.wd, self.b, self.settle)
+            == (other.zeta, other.w0, other.wd, other.b, other.settle)
+    }
 }
 impl Spring {
     pub fn new(mass: f64, stiffness: f64, damping: f64, velocity: f64) -> Self {
@@ -108,6 +119,7 @@ impl Spring {
             wd,
             b,
             settle: 0.,
+            last: std::cell::Cell::new(None),
         };
         // Settled once it stays within a thousandth of rest for a sixth of a
         // second, sampled at 120 Hz (the fastest displays animate at).
@@ -131,6 +143,17 @@ impl Spring {
         let stiffness = (2. * PI / duration).powi(2);
         let ratio = (1. - bounce.clamp(-1., 0.99)).max(0.01);
         Self::new(1., stiffness, 2. * ratio * stiffness.sqrt(), 0.)
+    }
+    /// `solve`, remembering the last answer.
+    fn at(&self, time: f64) -> f64 {
+        if let Some((bits, value)) = self.last.get()
+            && bits == time.to_bits()
+        {
+            return value;
+        }
+        let value = self.solve(time);
+        self.last.set(Some((time.to_bits(), value)));
+        value
     }
     fn solve(&self, time: f64) -> f64 {
         let t = if self.zeta < 1. {
@@ -219,7 +242,7 @@ impl Ease {
                 if t >= 1. {
                     1.
                 } else {
-                    spring.solve(t * spring.settle)
+                    spring.at(t * spring.settle)
                 }
             }
             Ease::Mirror(inner) => 1. - inner.at(1. - t, vm),
@@ -480,6 +503,16 @@ mod tests {
         // v3 and snake-case spellings.
         close(at("easeInOutQuad", 0.75), 0.875);
         close(at("in_out_quad", 0.75), 0.875);
+    }
+    /// Its last answer, kept for tracks asking for the same time in turn,
+    /// is the one solving it again gives, bit for bit.
+    #[test]
+    fn a_spring_answers_a_time_asked_again_as_solved() {
+        let spring = Spring::perceptual(0.1, 0.4);
+        for time in [0.1, 0.1, 0.2, 0.1, -0., 0., f64::NAN, f64::NAN, 0.35, 0.35] {
+            let (kept, solved) = (spring.at(time), spring.solve(time));
+            assert_eq!(kept.to_bits(), solved.to_bits(), "{time}");
+        }
     }
     #[test]
     fn springs_settle_and_end_at_one() {
