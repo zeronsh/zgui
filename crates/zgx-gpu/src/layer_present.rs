@@ -399,6 +399,80 @@ pub(crate) struct Layer {
     /// Full-rate frames presented as `CAMetalLayer` drawables
     /// (`ZGX_PRESENT_DRAWABLE`), above the plain layer.
     drawables: Option<Drawables>,
+    /// DIAGNOSTIC (`ZGX_TILE_PROBE`): a 1×1 drawable presented in each tile
+    /// flip's transaction, whose presented time says when that flip reached
+    /// the screen (tiles have no feedback of their own).
+    probe: Option<Probe>,
+}
+/// See `Layer::probe`.
+struct Probe {
+    layer: Retained<CAMetalLayer>,
+    queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    feedback: std::sync::Arc<Feedback>,
+}
+impl Probe {
+    fn new(
+        host: &CALayer,
+        device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
+        queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    ) -> Self {
+        let layer = CAMetalLayer::new();
+        layer.setDevice(Some(device));
+        layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        layer.setPresentsWithTransaction(true);
+        layer.setDrawableSize(CGSize::new(1., 1.));
+        layer.setOpaque(false);
+        layer.setFrame(objc2_core_foundation::CGRect::new(
+            objc2_core_foundation::CGPoint::new(0., 0.),
+            CGSize::new(1., 1.),
+        ));
+        transaction(|| host.addSublayer(&layer));
+        crate::present_log::log(|| "tile-probe-start".into());
+        Self {
+            layer,
+            queue,
+            feedback: Default::default(),
+        }
+    }
+    /// Present a cleared (transparent) drawable in the caller's transaction,
+    /// its work scheduled first, recording when it showed.
+    fn present(&self) {
+        let Some(drawable) = self.layer.nextDrawable() else {
+            return;
+        };
+        let Some(buffer) = self.queue.commandBuffer() else {
+            return;
+        };
+        let pass = objc2_metal::MTLRenderPassDescriptor::new();
+        // SAFETY: Index 0 of a render pass descriptor's colour attachments.
+        let color = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
+        color.setTexture(Some(&drawable.texture()));
+        color.setLoadAction(objc2_metal::MTLLoadAction::Clear);
+        color.setClearColor(objc2_metal::MTLClearColor {
+            red: 0.,
+            green: 0.,
+            blue: 0.,
+            alpha: 0.,
+        });
+        color.setStoreAction(objc2_metal::MTLStoreAction::Store);
+        if let Some(encoder) = buffer.renderCommandEncoderWithDescriptor(&pass) {
+            use objc2_metal::MTLCommandEncoder;
+            encoder.endEncoding();
+        }
+        let feedback = self.feedback.clone();
+        let handler = block2::RcBlock::new(
+            move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
+                // SAFETY: Metal passes the drawable presented, alive for the call.
+                feedback.record(unsafe { shown.as_ref() }.presentedTime());
+            },
+        );
+        // SAFETY: A live block taking the drawable, as the handler's type
+        // declares; Metal copies it.
+        unsafe { drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
+        buffer.commit();
+        buffer.waitUntilScheduled();
+        drawable.present();
+    }
 }
 /// When the window server showed each drawable (`addPresentedHandler`), as
 /// the gaps between successive presented drawables and the count it skipped:
@@ -806,7 +880,22 @@ impl Layer {
             tiles: Vec::new(),
             opaque: Cell::new(false),
             drawables: None,
+            probe: None,
         }
+    }
+    /// Start the tile probe (`Layer::probe`), if not yet.
+    pub fn start_probe(
+        &mut self,
+        device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
+        queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    ) {
+        if self.probe.is_none() {
+            self.probe = Some(Probe::new(&self.host, device, queue));
+        }
+    }
+    /// What the tile probe saw, if it runs.
+    pub fn probe_feedback(&self) -> Option<std::sync::Arc<Feedback>> {
+        self.probe.as_ref().map(|probe| probe.feedback.clone())
     }
     /// The next drawable for a full-rate frame of `width` by `height`
     /// pixels: its texture and the surface under it (the layer made, above
@@ -1003,6 +1092,9 @@ impl Layer {
         }
         hide_tiles(&self.plain, Some(tile));
         self.hide_drawables();
+        if let Some(probe) = &self.probe {
+            probe.present();
+        }
     }
     /// Drops the tiles of surfaces other than `surfaces` (the renderer's, as
     /// it keeps fewer or makes new ones): a tile holds its surface.
@@ -1142,6 +1234,9 @@ impl Drop for Layer {
             self.plain.removeFromSuperlayer();
             if let Some(drawables) = &self.drawables {
                 drawables.layer.removeFromSuperlayer();
+            }
+            if let Some(probe) = &self.probe {
+                probe.layer.removeFromSuperlayer();
             }
         });
     }

@@ -8168,6 +8168,36 @@ impl GpuRenderer {
         );
         present.frame += 1;
         let frame = present.frame;
+        // DIAGNOSTIC (`ZGX_TILE_PROBE`): a 1×1 drawable in each tile flip's
+        // transaction says when the flip reached the screen.
+        static PROBE: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_TILE_PROBE").is_some());
+        if *PROBE && present.full_rate {
+            // SAFETY: The raw device and queue are only retained; the guards
+            // are dropped at once.
+            let device = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }
+                .map(|hal| hal.raw_device().clone());
+            let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+                use objc2::Message;
+                hal.as_raw().retain()
+            });
+            if let (Some(layer), Some(device), Some(queue)) =
+                (present.layer.as_mut(), device, queue)
+            {
+                layer.start_probe(&device, queue);
+            }
+        }
+        if frame.is_multiple_of(240)
+            && let Some(feedback) = present
+                .layer
+                .as_ref()
+                .and_then(|layer| layer.probe_feedback())
+        {
+            let (shown, skipped, median, p99, late) = feedback.summary();
+            eprintln!(
+                "tile-probe shown={shown} skipped={skipped} gap_p50={median:.2}ms gap_p99={p99:.2}ms late={late}"
+            );
+        }
         // What the screen did with drawables lately (`layer_present::Feedback`).
         if frame.is_multiple_of(240)
             && let Some(feedback) = present
