@@ -4108,10 +4108,13 @@ impl Scene {
             self.invalidate(id, COMPOSITE);
             return;
         }
-        self.damage_subtree(id);
+        // Its old place and its new, under the same ancestors: their
+        // context is worked out once.
+        let mut context = None;
+        self.damage_subtree_with(id, &mut context);
         self.node_mut(id).transform = transform;
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
-        self.damage_subtree(id);
+        self.damage_subtree_with(id, &mut context);
         self.invalidate(id, COMPOSITE);
     }
     /// Apply finite render effects. NaN opacity uses the opaque default;
@@ -4157,8 +4160,9 @@ impl Scene {
         let old = self.node(id).effects;
         let same_area =
             old.blur_radius == effects.blur_radius && old.filter_blur == effects.filter_blur;
+        let mut context = None;
         if !same_area {
-            self.damage_subtree(id);
+            self.damage_subtree_with(id, &mut context);
         }
         let old_filter = self.node(id).filtered();
         if old_filter != (effects.filter_blur > 0.) {
@@ -4173,7 +4177,7 @@ impl Scene {
             }
         }
         self.node_mut(id).effects = effects;
-        self.damage_subtree(id);
+        self.damage_subtree_with(id, &mut context);
         self.invalidate(id, COMPOSITE);
     }
     /// `set_transform` and `set_effects` together, as an animation moving and
@@ -4193,13 +4197,14 @@ impl Scene {
             return;
         }
         self.effects_changing(id, &effects);
-        self.damage_subtree(id);
+        let mut context = None;
+        self.damage_subtree_with(id, &mut context);
         self.filter_changing(id, &effects);
         let node = self.node_mut(id);
         node.transform = transform;
         node.effects = effects;
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
-        self.damage_subtree(id);
+        self.damage_subtree_with(id, &mut context);
         self.invalidate(id, COMPOSITE);
     }
     /// Bookkeeping before a node's effects change, ahead of its old damage.
