@@ -724,10 +724,13 @@ impl Frame {
     pub(crate) fn commit_presenting(
         self,
         drawable: Option<&ProtocolObject<dyn objc2_metal::MTLDrawable>>,
+        at: Option<f64>,
     ) -> CommandBuffer {
         self.encoder.endEncoding();
-        if let Some(drawable) = drawable {
-            self.buffer.presentDrawable(drawable);
+        match (drawable, at) {
+            (Some(drawable), Some(at)) => self.buffer.presentDrawable_atTime(drawable, at),
+            (Some(drawable), None) => self.buffer.presentDrawable(drawable),
+            (None, _) => {}
         }
         self.buffer.commit();
         self.buffer

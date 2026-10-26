@@ -1008,6 +1008,9 @@ struct Latch {
     /// The point the frame rendering after a delay was held for, and frames
     /// left before holding again after one missed it.
     planned: Option<std::time::Instant>,
+    /// The point the frame now rendering hands over at (`hold`), held or
+    /// not: its refresh is a `lead()` after it.
+    point: Option<std::time::Instant>,
     resting: u8,
     /// How long the frame rendering was held (`hold`).
     held: std::time::Duration,
@@ -1145,6 +1148,7 @@ impl Latch {
     ) -> std::time::Instant {
         let ready = now + self.work;
         let (point, _) = self.choose(ready, origin, period);
+        self.point = Some(point);
         self.room = point
             .saturating_duration_since(ready)
             .saturating_sub(Self::KEEP);
@@ -1945,6 +1949,21 @@ impl Host {
                     let _wait = zgx::profile::span(zgx::profile::Phase::Wait);
                     sleep_until(at);
                     self.latch.rendering(std::time::Instant::now());
+                }
+                // PROTOTYPE (`ZGX_DRAWABLE_AT`): a drawable frame on the grid
+                // presents at the refresh the latch chose, not the next one
+                // after its work.
+                #[cfg(target_os = "macos")]
+                {
+                    static AT: std::sync::LazyLock<bool> =
+                        std::sync::LazyLock::new(|| std::env::var_os("ZGX_DRAWABLE_AT").is_some());
+                    let refresh = (*AT && self.refresh_grid().is_some())
+                        .then(|| self.latch.point.take())
+                        .flatten()
+                        .map(|point| point + lead());
+                    if let Some(renderer) = &mut self.renderer {
+                        renderer.set_present_at(refresh);
+                    }
                 }
                 if let Some(renderer) = &mut self.renderer {
                     zgx_gpu::present_log::log(|| {

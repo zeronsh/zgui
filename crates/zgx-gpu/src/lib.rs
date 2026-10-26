@@ -2423,6 +2423,9 @@ pub struct GpuRenderer {
     /// A directly encoded frame, committed, until it is known complete.
     #[cfg(target_os = "macos")]
     metal_inflight: RefCell<Option<metal_frame::CommandBuffer>>,
+    /// The refresh the next drawable frame presents at (`set_present_at`).
+    #[cfg(target_os = "macos")]
+    present_at: Option<std::time::Instant>,
     /// Trimmed, and nothing drawn since: the next input wakes the GPU
     /// (`warm_up`).
     #[cfg(target_os = "macos")]
@@ -2812,6 +2815,8 @@ impl GpuRenderer {
             metal_inflight: RefCell::new(None),
             #[cfg(target_os = "macos")]
             idle: false,
+            #[cfg(target_os = "macos")]
+            present_at: None,
             #[cfg(target_os = "macos")]
             gpu_time: std::cell::Cell::new(None),
             #[cfg(target_os = "macos")]
@@ -6487,10 +6492,17 @@ impl GpuRenderer {
                 })
                 .and_then(|present| present.layer.as_mut())
                 .and_then(|layer| layer.take_drawable());
+            // Its refresh, as host time in seconds (Core Animation's clock).
+            let at = self.present_at.take().map(|at| {
+                let now = std::time::Instant::now();
+                let host = present_log::now_ns() as f64 / 1e9;
+                host + at.saturating_duration_since(now).as_secs_f64()
+            });
             pass.commit_presenting(
                 drawable
                     .as_deref()
                     .map(objc2::runtime::ProtocolObject::<dyn objc2_metal::MTLDrawable>::from_ref),
+                at,
             )
         };
         *self.metal_inflight.get_mut() = Some(committed);
@@ -8564,6 +8576,14 @@ impl GpuRenderer {
             present.drawables = Some(drawables);
             present.plain_only = false;
         }
+    }
+    /// PROTOTYPE: the refresh the next frame should show on, when it draws
+    /// into a drawable (`presentDrawable:atTime:`); `None`, the next after
+    /// its work. Taken by that frame.
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn set_present_at(&mut self, at: Option<std::time::Instant>) {
+        self.present_at = at;
     }
     /// Test hook: drawables the window server presented and skipped so far,
     /// and the latest gaps' median and 99th percentile in ms (macOS).
