@@ -15,8 +15,8 @@ use std::{
 
 static ON: AtomicBool = AtomicBool::new(false);
 
-/// Frames kept, the newest last.
-const KEPT: usize = 120;
+/// Frames kept, the newest last: four seconds at 120 Hz (a fling's).
+const KEPT: usize = 480;
 
 /// Whether runs are being traced.
 #[inline(always)]
@@ -60,10 +60,15 @@ pub struct Frame {
     /// layout, text, damage, paint, encode, submit, present): its name,
     /// instructions (0 where not counted) and microseconds.
     pub phases: Vec<(&'static str, u64, f32)>,
+    /// When it ended (was shown), in milliseconds since tracing began
+    /// ([`now_ms`]'s clock): the time between frames is their pacing.
+    pub ended_ms: f64,
 }
 
 #[derive(Default)]
 struct Log {
+    /// When tracing began: frames' times count from it.
+    began: Option<Instant>,
     index: u64,
     current: Frame,
     frames: VecDeque<Frame>,
@@ -122,11 +127,24 @@ pub fn end_frame(phases: Vec<(&'static str, u64, f32)>) {
         let mut frame = std::mem::take(&mut log.current);
         frame.phases = phases;
         frame.index = log.index;
+        let began = *log.began.get_or_insert_with(Instant::now);
+        frame.ended_ms = began.elapsed().as_secs_f64() * 1e3;
         log.frames.push_back(frame);
         while log.frames.len() > KEPT {
             log.frames.pop_front();
         }
     });
+}
+/// Now, on frames' clock (`Frame::ended_ms`): milliseconds since tracing
+/// began.
+pub fn now_ms() -> f64 {
+    LOG.with_borrow_mut(|log| {
+        log.began
+            .get_or_insert_with(Instant::now)
+            .elapsed()
+            .as_secs_f64()
+            * 1e3
+    })
 }
 /// The last `n` frames that did anything, oldest first.
 pub fn frames(n: usize) -> Vec<Frame> {

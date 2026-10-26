@@ -79,9 +79,25 @@ zgx inspect sleep 500                                  # let the app run
 
 `cmd` is Command on macOS and Control elsewhere, as commands' keys are. A key goes where focus is: `type` or `click` an input first. After an action the interface is laid out again before the next command reads it, so `click` then `tree` shows the result; for what takes time (a fetch, a streamed reply, an animation), `wait` on what it will show rather than sleeping.
 
+## Gestures: record once, replay
+
+`scroll` sends one wheel event straight to the interface. A real gesture is more: a trackpad's fingers and then its momentum, as the platform reports them over a second or two, which the window resamples to its refreshes and which stretches an edge. To see how that feels, record one and play it back through the window's own input path:
+
+```sh
+zgx inspect record                                    # then scroll in the window, by hand
+zgx inspect record stop --out fling.tape              # what the window received, with times and phases
+zgx inspect replay '#messages' fling.tape             # played back there, as if received again
+```
+
+```text
+playing 292 events over 2408 ms: 288 frames, every 8.33 ms (median), longest gap 16.74 ms, 3 over 1.5 frames; work 0.82 ms median, 1.32 ms most (frame 290)
+```
+
+The answer comes once the tape and what follows it (springing back from an edge) have played: how many frames, the time between them, frames shown late (more than half a refresh past their turn), and the work in each. `frames` then has every frame of it. Nothing reaches the desktop: the events go to this window alone, through the same path as the platform's, so the trackpad's phases, resampling and elastic edges run as they do for a hand. A tape is text, an event a line (`8.312 pixel 0 -6.75 moved`: milliseconds, pixel motion in points or wheel `lines`, across and down, the phase), so one can be written or edited too. Desktop windows record and replay; headless hosts and `TestApp` say they cannot.
+
 ## As MCP tools
 
-`zgx inspect mcp` serves the same commands as MCP tools on stdio (`zgx_tree`, `zgx_node`, `zgx_find`, `zgx_state`, `zgx_set_state`, `zgx_click`, `zgx_type`, `zgx_key`, `zgx_scroll`, `zgx_command`, `zgx_errors`, `zgx_lint`, `zgx_frames`, `zgx_snapshot`, `zgx_wait`, `zgx_sleep`, `zgx_apps`), each answering the text the CLI prints, with `isError` when it failed. Every tool takes an optional `app` (a pid) for when several apps run.
+`zgx inspect mcp` serves the same commands as MCP tools on stdio (`zgx_tree`, `zgx_node`, `zgx_find`, `zgx_state`, `zgx_set_state`, `zgx_click`, `zgx_type`, `zgx_key`, `zgx_scroll`, `zgx_command`, `zgx_errors`, `zgx_lint`, `zgx_frames`, `zgx_snapshot`, `zgx_record`, `zgx_replay`, `zgx_wait`, `zgx_sleep`, `zgx_apps`), each answering the text the CLI prints, with `isError` when it failed. Every tool takes an optional `app` (a pid) for when several apps run.
 
 ```sh
 claude mcp add zgx -- zgx inspect mcp      # Claude Code; any MCP client runs the same command

@@ -109,6 +109,7 @@ mod scoped_task;
 mod scroll_resample;
 mod system_colors;
 mod touch;
+mod wheel_tape;
 pub use scoped_task::ScopedTask;
 
 #[cfg(doctest)]

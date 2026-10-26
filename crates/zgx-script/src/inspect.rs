@@ -99,6 +99,67 @@ fn save_png(image: &zgx::image::ImageData) -> Result<std::path::PathBuf, String>
     Ok(path)
 }
 
+/// How frames since `from` (`trace::now_ms`) were paced: how many, the
+/// time between them, and the work in each.
+fn pacing(from: f64) -> (String, Value) {
+    let frames: Vec<_> = zgx::trace::frames(usize::MAX)
+        .into_iter()
+        .filter(|f| f.ended_ms >= from)
+        .collect();
+    if frames.len() < 2 {
+        return (
+            format!("{} frames: nothing to pace", frames.len()),
+            Value::record([("frames", Value::Num(frames.len() as f64))]),
+        );
+    }
+    let median = |mut values: Vec<f64>| {
+        values.sort_by(f64::total_cmp);
+        values[values.len() / 2]
+    };
+    let gaps: Vec<f64> = frames
+        .windows(2)
+        .map(|w| w[1].ended_ms - w[0].ended_ms)
+        .collect();
+    let every = median(gaps.clone());
+    let longest = gaps.iter().copied().fold(0., f64::max);
+    // Later than half a refresh past its turn: a frame shown late.
+    let late = gaps.iter().filter(|g| **g > every * 1.5).count();
+    let work: Vec<f64> = frames
+        .iter()
+        .map(|f| {
+            f.phases
+                .iter()
+                .filter(|p| p.0 != "wait")
+                .map(|p| p.2 as f64)
+                .sum::<f64>()
+                / 1e3
+        })
+        .collect();
+    let (most, at) =
+        work.iter().zip(&frames).fold(
+            (0., 0),
+            |(most, at), (w, f)| {
+                if *w > most { (*w, f.index) } else { (most, at) }
+            },
+        );
+    let text = format!(
+        "{} frames, every {every:.2} ms (median), longest gap {longest:.2} ms, {late} over 1.5 \
+         frames; work {:.2} ms median, {most:.2} ms most (frame {at})",
+        frames.len(),
+        median(work.clone())
+    );
+    let round = |v: f64| Value::Num((v * 100.).round() / 100.);
+    let data = Value::record([
+        ("frames", Value::Num(frames.len() as f64)),
+        ("interval_ms", round(every)),
+        ("longest_gap_ms", round(longest)),
+        ("late", Value::Num(late as f64)),
+        ("work_median_ms", round(median(work))),
+        ("work_most_ms", round(most)),
+    ]);
+    (text, data)
+}
+
 const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   tree    [target] [depth] [budget=200] [all]   the interface, a node a line
   node    target                                 one node: kind, source, role, name, value, box
@@ -110,6 +171,8 @@ const HELP: &str = "commands (one JSON object a line, `cmd` and its fields):
   key     keys                                   e.g. \"Enter\", \"cmd+k\", \"alt+ArrowDown\"
   scroll  target dy                              scroll the viewport under it
   snapshot target [width=4096]                   its pixels as the window last drew them: a PNG, user-only
+  record  [stop]                                 record the window's wheel input; stop answers the tape
+  replay  target tape                            play a tape back through the window's input path: its pacing
   command id                                     run a ui.command
   errors                                         script error, type errors, lint, layout warnings
   lint                                           zgx lint over the app's scripts, file:line
@@ -421,6 +484,54 @@ impl Session {
                 let request = request.clone();
                 return Reply::Later(Box::pin(async move { session.wait(&request).await }));
             }
+            "record" => {
+                let stop = field("stop").is_some_and(|v| v.truthy());
+                if stop {
+                    ui.wheel_tape(zgx::widgets::WheelTape::Stop).map(|tape| {
+                        let events = tape.lines().filter(|l| !l.starts_with('#')).count();
+                        (
+                            format!("recorded {events} wheel events"),
+                            Value::record([("tape", Value::from(tape.as_str()))]),
+                        )
+                    })
+                } else {
+                    ui.wheel_tape(zgx::widgets::WheelTape::Record).map(|_| {
+                        (
+                            "recording wheel input: scroll in the window, then `record stop`"
+                                .to_string(),
+                            Value::Nil,
+                        )
+                    })
+                }
+            }
+            "replay" => {
+                let played = (|| {
+                    let node = target(&ui)?;
+                    let tape = text("tape").ok_or("replay takes a `tape` (its text)")?;
+                    // How long it plays: its last event's time.
+                    let length = tape
+                        .lines()
+                        .rev()
+                        .find(|l| !l.trim().is_empty() && !l.starts_with('#'))
+                        .and_then(|l| l.split_whitespace().next()?.parse::<f64>().ok())
+                        .unwrap_or(0.)
+                        .clamp(0., 60_000.);
+                    let b = ui.scene.borrow().bounds(node);
+                    let at = (b.x + b.width / 2., b.y + b.height / 2.);
+                    let from = zgx::trace::now_ms();
+                    let said = ui.wheel_tape(zgx::widgets::WheelTape::Play { tape, at })?;
+                    Ok::<_, String>((said, from, length))
+                })();
+                return match played {
+                    Err(error) => Reply::Now(failed(error)),
+                    Ok((said, from, length)) => Reply::Later(Box::pin(async move {
+                        // Its frames, and the momentum and edges' after it.
+                        zgx::timer::sleep(Duration::from_millis(length as u64 + 400)).await;
+                        let (text, data) = pacing(from);
+                        ok(format!("{said}: {text}"), data)
+                    })),
+                };
+            }
             "sleep" => {
                 let ms = number("ms").unwrap_or(100.).clamp(0., 60_000.);
                 return Reply::Later(Box::pin(async move {
@@ -589,6 +700,10 @@ impl Session {
             text.push(line);
             data.push(Value::record([
                 ("frame", Value::Num(frame.index as f64)),
+                (
+                    "ended_ms",
+                    Value::Num((frame.ended_ms * 100.).round() / 100.),
+                ),
                 (
                     "writes",
                     Value::List(

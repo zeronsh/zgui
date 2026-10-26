@@ -116,6 +116,7 @@ SMOKES = [
     ("clipboard-shutdown", "cargo test -p zgx-desktop --lib retained_window_factory_releases_native_clipboard_after_manager_shutdown --locked -- --ignored --test-threads=1", True),
     ("host-suspend", "cargo test -p zgx-desktop --lib host_suspend_recreates_native_resources_and_retains_editor_state --locked -- --ignored --test-threads=1", True),
     ("exit-closes-windows", "cargo test -p zgx-desktop --lib windows_still_open_close_before_the_event_loop_ends --locked -- --ignored --test-threads=1", True),
+    ("wheel-tape", "cargo test -p zgx-desktop --lib a_wheel_tape_plays_back_through_the_windows_input_path --locked -- --ignored --test-threads=1", True),
     ("atspi", "/usr/bin/python3 scripts/atspi_smoke.py {bin}/atspi --output {out}", False),
     ("components-atspi", "/usr/bin/python3 scripts/components_atspi_smoke.py {bin}/components_probe --output {out}", False),
     ("image-fit", "python3 scripts/image_fit_smoke.py {bin}/image_fit --output {out}", False),

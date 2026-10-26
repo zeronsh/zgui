@@ -280,3 +280,76 @@ fn a_snapshot_is_a_png_of_the_node_only_its_user_reads() {
     );
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn a_tape_records_and_replays_through_the_host_saying_how_frames_were_paced() {
+    let (mut app, session) = app();
+    // Without a host's recorder, it says why.
+    let refused = error(&ask(&app, &session, r#"{"cmd":"record"}"#));
+    assert!(refused.contains("no wheel input"), "{refused}");
+    // A host's: it keeps what devtools asked of it.
+    let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = asked.clone();
+    app.ui.on_wheel_tape(move |request| {
+        seen.borrow_mut().push(request.clone());
+        match request {
+            zgx::widgets::WheelTape::Record => Ok("recording".into()),
+            zgx::widgets::WheelTape::Stop => {
+                Ok("# zgx wheel tape 1\n0.000 pixel 0 -4 started\n8.000 pixel 0 -6 moved\n".into())
+            }
+            zgx::widgets::WheelTape::Play { .. } => Ok("playing 2 events over 8 ms".into()),
+        }
+    });
+    text(&ask(&app, &session, r#"{"cmd":"record"}"#));
+    let stopped = ask(&app, &session, r#"{"cmd":"record","stop":true}"#);
+    assert_eq!(text(&stopped), "recorded 2 wheel events");
+    let tape = stopped
+        .field("data")
+        .and_then(|d| d.field("tape"))
+        .map(Value::to_string)
+        .unwrap();
+    // Played back at the target's middle, it answers once the tape and what
+    // follows it have played: the frames' pacing.
+    let request = Value::record([
+        ("cmd", Value::from("replay")),
+        ("target", Value::from("#add")),
+        ("tape", Value::from(tape.as_str())),
+    ]);
+    let Reply::Later(later) = session.answer(&request.to_json()) else {
+        panic!("a replay answers once played");
+    };
+    let out = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let into = out.clone();
+    app.executor.borrow_mut().spawn(async move {
+        *into.borrow_mut() = Some(later.await);
+    });
+    // Frames meanwhile, each doing something (idle ones are not kept).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while out.borrow().is_none() {
+        assert!(Instant::now() < deadline, "the replay never answered");
+        app.click("add");
+        app.frame();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let replayed = Value::from_json(&out.borrow_mut().take().unwrap()).unwrap();
+    let said = text(&replayed);
+    assert!(
+        said.starts_with("playing 2 events over 8 ms: ") && said.contains("frames, every"),
+        "{said}"
+    );
+    let frames = replayed
+        .field("data")
+        .and_then(|d| d.field("frames"))
+        .and_then(Value::as_f64)
+        .unwrap();
+    assert!(frames >= 2., "{said}");
+    let add = app.handle.find("add").unwrap();
+    let b = app.ui.scene.borrow().bounds(add);
+    assert_eq!(
+        asked.borrow().last(),
+        Some(&zgx::widgets::WheelTape::Play {
+            tape,
+            at: (b.x + b.width / 2., b.y + b.height / 2.)
+        })
+    );
+}

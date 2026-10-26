@@ -1254,6 +1254,8 @@ struct Host {
     /// Where the trackpad's scroll gesture is: what its phases report
     /// (`InputEvent::ScrollGesture`, for elastic scrolling).
     trackpad: Trackpad,
+    /// Devtools' wheel recordings, and what they play back (`Ui::wheel_tape`).
+    wheel_tape: std::rc::Rc<std::cell::RefCell<crate::wheel_tape::Tape>>,
     /// Native views (web pages) over and under this window's zgx content.
     native: crate::native_host::NativeHost,
     /// Popups shown past the window, in windows of their own.
@@ -1365,6 +1367,35 @@ impl Host {
                 crate::thumbnail::image(&bgra, w, h, w * 4, max_width as usize)
             });
         }
+        // Devtools record and replay wheel input through this window's own
+        // path (`Ui::wheel_tape`); asked nothing, it does nothing.
+        let wheel_tape: std::rc::Rc<std::cell::RefCell<crate::wheel_tape::Tape>> =
+            std::rc::Rc::default();
+        {
+            let tape = wheel_tape.clone();
+            let handle = handle.clone();
+            ui.on_wheel_tape(move |request| {
+                let mut tape = tape.borrow_mut();
+                match request {
+                    zgx::widgets::WheelTape::Record => {
+                        tape.record();
+                        Ok("recording".into())
+                    }
+                    zgx::widgets::WheelTape::Stop => tape.stop(),
+                    zgx::widgets::WheelTape::Play { tape: text, at } => {
+                        let entries = crate::wheel_tape::parse(&text)?;
+                        let (count, last) = (entries.len(), entries.last().map(|e| e.after));
+                        tape.play(std::time::Instant::now(), entries, at);
+                        // The loop wakes for the first event.
+                        handle.request_redraw();
+                        Ok(format!(
+                            "playing {count} events over {:.0} ms",
+                            last.unwrap_or_default().as_secs_f64() * 1e3
+                        ))
+                    }
+                }
+            });
+        }
         let inspector = zgx::inspect::Inspector::new();
         {
             let handle = handle.clone();
@@ -1433,6 +1464,7 @@ impl Host {
             #[cfg(windows)]
             touch_keyboard: false,
             trackpad: Trackpad::Idle,
+            wheel_tape,
             pending_file_drops: Default::default(),
             modifiers: Modifiers::default(),
             ime_active: false,
@@ -3242,6 +3274,12 @@ impl Host {
                 })?;
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
+                self.wheel_tape.borrow_mut().received(
+                    std::time::Instant::now(),
+                    delta,
+                    self.scale_factor,
+                    phase,
+                );
                 // A trackpad gesture's phase: its start goes before its
                 // motion, its end after all of it.
                 let gesture = if cfg!(target_os = "macos")
@@ -3776,6 +3814,23 @@ impl Host {
             .ui
             .next_interaction_deadline()
             .is_some_and(|at| at <= std::time::Instant::now());
+        // A tape playing back: its events due, as the platform's.
+        loop {
+            let due = {
+                let mut tape = self.wheel_tape.borrow_mut();
+                let due = tape.due(std::time::Instant::now(), self.scale_factor);
+                due.map(|due| (due, tape.at))
+            };
+            let Some(((delta, phase), at)) = due else {
+                break;
+            };
+            self.cursor = at;
+            self.window_event(WindowEvent::MouseWheel {
+                device_id: winit::event::DeviceId::dummy(),
+                delta,
+                phase,
+            })?;
+        }
         if self.scroll.pending() {
             // Each refresh applies the motion due by then; with no refreshes
             // coming (hidden, minimized), everything applies at once.
@@ -5228,6 +5283,7 @@ impl WindowManager {
                     host.trim_at,
                     host.frame_save_at,
                     host.accessibility_pacer.deadline(),
+                    host.wheel_tape.borrow().deadline(),
                     match host.startup_trim {
                         StartupTrim::At(at) => Some(at),
                         _ => None,
@@ -6283,6 +6339,104 @@ mod tests {
         };
         event_loop.run_app(&mut probe).unwrap();
         assert!(probe.completed);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires an owned X11 display and GPU; run alone with --test-threads=1"]
+    fn a_wheel_tape_plays_back_through_the_windows_input_path() {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        // Applied as it arrives: no display refreshes come while the probe
+        // holds the loop (resampling has tests of its own).
+        // SAFETY: This test runs alone (`--test-threads=1`), before any
+        // thread reads the environment.
+        unsafe { std::env::set_var("ZGX_SCROLL_RESAMPLE", "0") };
+        use zgx::compose::prelude::*;
+        struct Probe {
+            factory: WindowFactory,
+            scrolled: Option<f32>,
+            step: f32,
+        }
+        impl ApplicationHandler<Event> for Probe {
+            fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+                let options = WindowOptions {
+                    bounds: Some(crate::WindowBounds::new(400, 300)),
+                    ..Default::default()
+                };
+                let mut host = Host::new(options, self.factory.allocate(), self.factory.clone());
+                host.create_window(event_loop).unwrap();
+                let offset = host.context.ui.signal(0_f32);
+                host.context
+                    .render(scroll(offset.clone()).w(300.).h(200.).child(div().h(5000.)));
+                host.context.ui.prepare_frame();
+                // A two-finger motion: pixels (points), then wheel lines.
+                let tape = "# zgx wheel tape 1\n\
+                    0 pixel 0 -12.5 moved\n\
+                    8.4 pixel 0 -20.25 moved\n\
+                    16.6 pixel 0 -7.25 moved\n\
+                    40 lines 0 -1 moved\n";
+                let said = host
+                    .context
+                    .ui
+                    .wheel_tape(zgx::widgets::WheelTape::Play {
+                        tape: tape.into(),
+                        at: (100., 100.),
+                    })
+                    .unwrap();
+                assert_eq!(said, "playing 4 events over 40 ms");
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while host.wheel_tape.borrow().deadline().is_some() || host.scroll.pending() {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "the tape never finished"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    host.update().unwrap();
+                }
+                host.context.ui.prepare_frame();
+                self.scrolled = Some(offset.get());
+                self.step = crate::scrollers::wheel_step(host.context.viewport.get()).1;
+                host.suspend();
+                event_loop.exit();
+            }
+            fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
+        }
+        let event_loop = EventLoop::<Event>::with_user_event()
+            .with_x11()
+            .with_any_thread(true)
+            .build()
+            .unwrap();
+        let factory = WindowFactory {
+            fonts: Rc::new(Vec::new()),
+            file_routes: Default::default(),
+            application_id: None,
+            activation: Rc::default(),
+            menus: Rc::new(RefCell::new(Vec::new())),
+            pending: Rc::new(RefCell::new(VecDeque::new())),
+            next: Rc::new(Cell::new(1)),
+            alive: Rc::new(Cell::new(true)),
+            clipboard: Rc::new(RefCell::new(None)),
+            gpu_contexts: Rc::new(RefCell::new(Vec::new())),
+            #[cfg(target_os = "macos")]
+            early_gpu: Rc::default(),
+            proxy: event_loop.create_proxy(),
+            runtime: zgx::reactive::Runtime::new(),
+        };
+        let mut probe = Probe {
+            factory,
+            scrolled: None,
+            step: 0.,
+        };
+        event_loop.run_app(&mut probe).unwrap();
+        // Every event arrived as the platform's would: 40 points of motion
+        // and a wheel line's step (down is positive in zgx).
+        let step = probe.step;
+        let scrolled = probe.scrolled.unwrap();
+        assert!(
+            (scrolled - (40. + step)).abs() < 0.01,
+            "{scrolled} vs {}",
+            40. + step
+        );
     }
 
     #[cfg(target_os = "linux")]

@@ -187,6 +187,8 @@ ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
   errors               lint               frames [n]
   wait <target> [--text T] [--gone] [--timeout MS]
   snapshot <target> [--width PX] [--out file.png]
+  record               record stop [--out gesture.tape]
+  replay <target> <gesture.tape>         its pacing, through the window's input
   sleep <ms>           raw <json>
   help                 what the app answers
   mcp                  serve these as MCP tools on stdio, for agents
@@ -201,7 +203,7 @@ fn inspect(args: Vec<String>) -> ExitCode {
     let mut json = false;
     let mut words: Vec<String> = Vec::new();
     let mut flags: Vec<(String, Option<String>)> = Vec::new();
-    // Where `snapshot` copies its picture.
+    // Where `snapshot` copies its picture, or `record stop` writes its tape.
     let mut out: Option<String> = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -258,6 +260,27 @@ fn inspect(args: Vec<String>) -> ExitCode {
     };
     match cmd.as_str() {
         "tree" | "node" | "find" | "click" | "wait" | "snapshot" => put("target", arg(1)),
+        "record" => {
+            if arg(1).as_deref() == Some("stop") {
+                fields.push(("stop".into(), Value::Bool(true)));
+            }
+        }
+        "replay" => {
+            put("target", arg(1));
+            match arg(2)
+                .map(|path| std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}")))
+            {
+                Some(Ok(tape)) => put("tape", Some(tape)),
+                Some(Err(error)) => {
+                    eprintln!("zgx inspect: {error}");
+                    return ExitCode::from(2);
+                }
+                None => {
+                    eprintln!("zgx inspect: replay takes a target and a tape file");
+                    return ExitCode::from(2);
+                }
+            }
+        }
         "type" => {
             put("target", arg(1));
             put("text", arg(2));
@@ -338,14 +361,16 @@ fn inspect(args: Vec<String>) -> ExitCode {
     }
     let parsed = Value::from_json(&answer).unwrap_or_default();
     if parsed.field("ok").is_some_and(Value::truthy) {
-        // A snapshot where it was asked for.
-        if let (Some(out), Some(from)) = (
-            &out,
-            parsed
-                .field("data")
-                .and_then(|d| d.field("path"))
-                .map(Value::to_string),
-        ) && let Err(error) = std::fs::copy(&from, out)
+        // A snapshot, or a recorded tape, where it was asked for.
+        let data = parsed.field("data");
+        let picture = data.and_then(|d| d.field("path")).map(Value::to_string);
+        let tape = data.and_then(|d| d.field("tape")).map(Value::to_string);
+        if let Some(out) = &out
+            && let Err(error) = match (picture, tape) {
+                (Some(from), _) => std::fs::copy(&from, out).map(|_| ()),
+                (None, Some(tape)) => std::fs::write(out, tape),
+                (None, None) => Ok(()),
+            }
         {
             eprintln!("zgx inspect: {out}: {error}");
             return ExitCode::FAILURE;
@@ -484,6 +509,18 @@ const TOOLS: &[Tool] = &[
         "A picture of a node as the window last drew it (a PNG, at most width pixels wide): to see what it looks like.",
     ),
     (
+        "zgx_record",
+        "record",
+        &[("stop", "boolean", false), ("out", "string", false)],
+        "Record the window's wheel input (a person scrolls it meanwhile); with stop, end and answer the tape, written to out (a file) if given.",
+    ),
+    (
+        "zgx_replay",
+        "replay",
+        &[("target", "string", true), ("tape_file", "string", true)],
+        "Play a recorded wheel tape (a file) back at a node, through the window's own input path: answers the frames' pacing and work.",
+    ),
+    (
         "zgx_sleep",
         "sleep",
         &[("ms", "number", true)],
@@ -589,17 +626,30 @@ fn mcp() -> ExitCode {
                     Some((_, "list", _, _)) => Ok(inspect_client::apps().iter().map(|a| format!("{} {}", a.pid, a.app)).collect::<Vec<_>>().join("\n")),
                     Some((_, cmd, params, _)) => {
                         let mut fields: Vec<(String, Value)> = vec![("cmd".into(), Value::from(*cmd))];
+                        let mut read: Result<(), String> = Ok(());
                         for (arg, _, _) in params.iter() {
-                            if let Some(v) = args.field(arg) {
-                                fields.push((arg.to_string(), v.clone()));
+                            match (*arg, args.field(arg)) {
+                                // A tape is sent as its text.
+                                ("tape_file", Some(path)) => match std::fs::read_to_string(path.to_string()) {
+                                    Ok(tape) => fields.push(("tape".into(), Value::from(tape.as_str()))),
+                                    Err(e) => read = Err(format!("{path}: {e}")),
+                                },
+                                ("out", _) => {}
+                                (_, Some(v)) => fields.push((arg.to_string(), v.clone())),
+                                (_, None) => {}
                             }
                         }
+                        let out = args.field("out").map(Value::to_string);
                         let pid = args.field("app").and_then(Value::as_f64).map(|p| p as u32);
-                        inspect_client::pick(pid)
+                        read.and_then(|()| inspect_client::pick(pid))
                             .and_then(|pid| inspect_client::request(pid, &Value::record(fields)))
                             .and_then(|answer| {
                                 let answer = Value::from_json(&answer).unwrap_or_default();
                                 if answer.field("ok").is_some_and(Value::truthy) {
+                                    // A recorded tape, written where asked.
+                                    if let (Some(out), Some(tape)) = (&out, answer.field("data").and_then(|d| d.field("tape")).map(Value::to_string)) {
+                                        std::fs::write(out, tape).map_err(|e| format!("{out}: {e}"))?;
+                                    }
                                     let text = answer.field("text").map(Value::to_string).unwrap_or_default();
                                     // A snapshot's picture, beside its text.
                                     if let Some(path) = answer.field("data").and_then(|d| d.field("path")).map(Value::to_string) {

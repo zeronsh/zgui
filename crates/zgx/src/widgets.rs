@@ -841,6 +841,20 @@ impl EditorDrag {
 }
 /// The host's picture of a region of what the window last showed.
 type Snapshotter = Rc<dyn Fn(Rect, u32) -> Option<std::sync::Arc<crate::image::ImageData>>>;
+/// The host's recorder and player of wheel input (`Ui::on_wheel_tape`).
+type WheelTaper = Rc<dyn Fn(WheelTape) -> Result<String, String>>;
+/// What devtools ask of the host's wheel input (`Ui::wheel_tape`): to record
+/// what the window receives, or to play a recording back as if received.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum WheelTape {
+    /// Start recording (what was recorded before is dropped).
+    Record,
+    /// Stop: the recording, as text (`zgx_desktop`'s tape format).
+    Stop,
+    /// Play `tape` back, its events at their times, at `at` (in points).
+    Play { tape: String, at: (f32, f32) },
+}
 pub(crate) struct UiStorage {
     runtime: Runtime,
     pub(crate) themes: Rc<Themes>,
@@ -865,6 +879,8 @@ pub(crate) struct UiStorage {
     popup_soon_sent: Cell<bool>,
     /// The host's way to picture what the window last showed (`Ui::on_snapshot`).
     snapshotter: RefCell<Option<Snapshotter>>,
+    /// The host's wheel recorder and player (`Ui::on_wheel_tape`).
+    wheel_taper: RefCell<Option<WheelTaper>>,
     /// The host shows drag previews in windows of their own (`set_popup_previews`).
     popup_previews: Cell<bool>,
     pub(crate) scene: Rc<RefCell<Scene>>,
@@ -1094,6 +1110,7 @@ impl Ui {
             popup_soon: RefCell::new(None),
             popup_soon_sent: Cell::new(false),
             snapshotter: RefCell::new(None),
+            wheel_taper: RefCell::new(None),
             popup_previews: Cell::new(false),
             runtime,
             scene: Rc::new(RefCell::new(Scene::new(width, height))),
@@ -2187,6 +2204,23 @@ impl Ui {
             return None;
         }
         take(bounds, max_width.max(1))
+    }
+    /// How the host records and plays back wheel input for devtools (`zgx
+    /// inspect`'s gesture replays): its input path, the trackpad's phases,
+    /// resampling and edges included, runs as for the platform's events.
+    #[doc(hidden)]
+    pub fn on_wheel_tape(&self, tape: impl Fn(WheelTape) -> Result<String, String> + 'static) {
+        *self.storage.wheel_taper.borrow_mut() = Some(Rc::new(tape));
+    }
+    /// Ask the host's wheel recorder or player (`on_wheel_tape`); an error
+    /// if the host has none.
+    #[doc(hidden)]
+    pub fn wheel_tape(&self, request: WheelTape) -> Result<String, String> {
+        let taper = self.storage.wheel_taper.borrow().clone();
+        match taper {
+            Some(taper) => taper(request),
+            None => Err("this host records and plays no wheel input".into()),
+        }
     }
     /// Call `soon` as the pointer reaches something that opens a popup (a
     /// popover's or menu's trigger, a view with a tooltip or context menu),
