@@ -221,7 +221,10 @@ impl TextSpan {
     }
     /// Italic, or upright.
     pub fn italic(mut self, italic: bool) -> Self {
-        self.styles.fields_mut(crate::style::bit::ITALIC).italic = Some(italic);
+        self.styles
+            .fields_mut(crate::style::bit::ITALIC)
+            .overflow_mut()
+            .italic = Some(italic);
         self
     }
     /// A bold span (weight 700).

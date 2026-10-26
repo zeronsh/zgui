@@ -296,16 +296,17 @@ impl Paint {
                 }
             };
         }
+        let o = styles.take_overflow_paint(set);
         Self {
             opacity: taken!(opacity, OPACITY),
-            blur: taken!(blur, BLUR),
-            edge_fade: taken!(edge_fade, EDGE_FADE),
-            filter_blur: taken!(filter_blur, FILTER_BLUR),
-            brightness: taken!(brightness, BRIGHTNESS),
-            contrast: taken!(contrast, CONTRAST),
-            saturate: taken!(saturate, SATURATE),
-            mask_offset: taken!(mask_offset, MASK_OFFSET),
-            clip_inset: taken!(clip_inset, CLIP_INSET),
+            blur: o.blur,
+            edge_fade: o.edge_fade,
+            filter_blur: o.filter_blur,
+            brightness: o.brightness,
+            contrast: o.contrast,
+            saturate: o.saturate,
+            mask_offset: o.mask_offset,
+            clip_inset: o.clip_inset,
             transform: taken!(transform, TRANSFORM),
             local: taken!(local_transform, LOCAL_TRANSFORM),
             text_color: taken!(text_color, TEXT_COLOR),
@@ -318,17 +319,46 @@ impl Paint {
         }
         let styles = styles.fields_mut(Self::BITS);
         styles.opacity = self.opacity;
-        styles.blur = self.blur;
-        styles.edge_fade = self.edge_fade;
-        styles.filter_blur = self.filter_blur;
-        styles.brightness = self.brightness;
-        styles.contrast = self.contrast;
-        styles.saturate = self.saturate;
-        styles.mask_offset = self.mask_offset;
-        styles.clip_inset = self.clip_inset;
+        // Paint is put back where it came from: into the styles it was
+        // taken out of, or into those the full application last resolved
+        // from the same sources (a style effect's fast path), which merged
+        // in whatever of `Overflow`'s they set, allocating it. So unallocated,
+        // none is set here: the box alone is tested, not its eight fields.
+        debug_assert!(styles.overflow.is_allocated() || self.overflow_unset());
+        if styles.overflow.is_allocated() {
+            self.put_overflow(styles);
+        }
         styles.transform = self.transform;
         styles.local_transform = self.local;
         styles.text_color = self.text_color;
+    }
+    /// Out of line: inline, it kept `put` from being inlined into the
+    /// style effect (style +1.1%), nearly always unset as it is.
+    #[inline(never)]
+    fn put_overflow(&self, styles: &mut crate::style::StylesFields) {
+        styles.write_overflow_paint(crate::style::OverflowPaint {
+            blur: self.blur,
+            edge_fade: self.edge_fade,
+            filter_blur: self.filter_blur,
+            brightness: self.brightness,
+            contrast: self.contrast,
+            saturate: self.saturate,
+            mask_offset: self.mask_offset,
+            clip_inset: self.clip_inset,
+        });
+    }
+    /// None of `crate::style::Overflow`'s set: tested in place, a field at
+    /// a time (building the group to test it cost every run).
+    #[inline(always)]
+    fn overflow_unset(&self) -> bool {
+        self.blur.is_none()
+            & self.edge_fade.is_none()
+            & self.filter_blur.is_none()
+            & self.brightness.is_none()
+            & self.contrast.is_none()
+            & self.saturate.is_none()
+            & self.mask_offset.is_none()
+            & self.clip_inset.is_none()
     }
     /// Which properties are set, whatever their values.
     fn set(&self) -> ([bool; 11], u8) {
@@ -378,16 +408,17 @@ impl Paint {
         if styles.set_bits() & Self::BITS == 0 {
             return Self::default();
         }
+        let o = styles.overflow();
         Self {
             opacity: styles.opacity,
-            blur: styles.blur,
-            edge_fade: styles.edge_fade,
-            filter_blur: styles.filter_blur,
-            brightness: styles.brightness,
-            contrast: styles.contrast,
-            saturate: styles.saturate,
-            mask_offset: styles.mask_offset,
-            clip_inset: styles.clip_inset,
+            blur: o.blur,
+            edge_fade: o.edge_fade,
+            filter_blur: o.filter_blur,
+            brightness: o.brightness,
+            contrast: o.contrast,
+            saturate: o.saturate,
+            mask_offset: o.mask_offset,
+            clip_inset: o.clip_inset,
             transform: styles.transform,
             local: styles.local_transform,
             text_color: styles.text_color,
@@ -406,7 +437,7 @@ fn apply_mask(
     scene: &mut crate::scene::Scene,
     node: NodeId,
     resolved: &Styles,
-    original: &Option<crate::scene::ImageMask>,
+    original: Option<&crate::scene::ImageMask>,
 ) {
     let mask = match &resolved.rare().mask {
         Some(mask) => mask.as_ref().map(|(image, size)| crate::scene::ImageMask {
@@ -415,10 +446,10 @@ fn apply_mask(
             size: *size,
         }),
         None if original.is_none() => return,
-        None => original.clone(),
+        None => original.cloned(),
     };
     let mask = mask.map(|mask| crate::scene::ImageMask {
-        offset: resolved.mask_offset.unwrap_or(mask.offset),
+        offset: resolved.overflow().mask_offset.unwrap_or(mask.offset),
         ..mask
     });
     scene.set_mask(node, mask);
@@ -440,9 +471,9 @@ fn show_moved_and_faded(
     inset_kept: bool,
 ) {
     scene.set_transform_and_effects(node, transform, effects);
-    apply_mask(scene, node, applied, &originals.mask);
+    apply_mask(scene, node, applied, originals.mask());
     if !inset_kept {
-        scene.set_clip_inset(node, applied.clip_inset.or(originals.inset));
+        scene.set_clip_inset(node, applied.overflow().clip_inset.or(originals.inset()));
     }
 }
 /// The inputs of the last full application besides paint: the dynamic
@@ -719,8 +750,12 @@ pub(crate) fn mount_style_with_intrinsic(
         transform: ui.scene.borrow().transform(node),
         local: ui.scene.borrow().local_transform(node),
         isolated: ui.scene.borrow().is_isolated(node),
-        mask: ui.scene.borrow().mask(node).cloned(),
-        inset: ui.scene.borrow().clip_inset(node),
+        clipped: Some(Clipped {
+            mask: ui.scene.borrow().mask(node).cloned(),
+            inset: ui.scene.borrow().clip_inset(node),
+        })
+        .filter(|clipped| clipped.mask.is_some() || clipped.inset.is_some())
+        .map(Box::new),
         kind: ui.scene.borrow().kind(node).clone(),
     };
     let mut previous_disabled = None;
@@ -1012,7 +1047,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 }
                 let mut scene = storage.scene.borrow_mut();
                 let transform = resolved.transform.unwrap_or(originals.transform);
-                let inset = applied.0.clip_inset.or(originals.inset);
+                let inset = applied.0.overflow().clip_inset.or(originals.inset());
                 let local = resolved.local.resolve(originals.local);
                 let (inset_kept, transform_kept, local_kept) =
                     scene.paint_kept(node, inset, transform, local);
@@ -1022,7 +1057,7 @@ pub(crate) fn mount_style_with_intrinsic(
                     );
                 } else {
                     scene.set_effects(node, effects);
-                    apply_mask(&mut scene, node, &applied.0, &originals.mask);
+                    apply_mask(&mut scene, node, &applied.0, originals.mask());
                     if !inset_kept {
                         scene.set_clip_inset(node, inset);
                     }
@@ -1071,7 +1106,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 .untracked(|| ui.set_disabled(node, is_disabled));
         }
         if let Some(output) = &object_fit {
-            output.set(resolved.object_fit.unwrap_or_default());
+            output.set(resolved.overflow().object_fit.unwrap_or_default());
         }
         // Only observe inherited typography when a field is actually inherited
         // (and from then on: a later run setting every field is rare).
@@ -1085,7 +1120,7 @@ pub(crate) fn mount_style_with_intrinsic(
             || resolved.text_align.is_none()
             || resolved.rare().font_fallbacks.is_none()
             || resolved.font_weight.is_none()
-            || resolved.italic.is_none()
+            || resolved.overflow().italic.is_none()
             || resolved.line_height.is_none()
             || resolved.rare().letter_spacing.is_none()
             || resolved.rare().underline.is_none()
@@ -1145,7 +1180,7 @@ pub(crate) fn mount_style_with_intrinsic(
                         .clone()
                         .unwrap_or_else(|| parent.font.fallbacks.clone()),
                     weight: resolved.font_weight.unwrap_or(parent.font.weight),
-                    italic: resolved.italic.unwrap_or(parent.font.italic),
+                    italic: resolved.overflow().italic.unwrap_or(parent.font.italic),
                     line_height: resolved.line_height.unwrap_or(parent.font.line_height),
                     letter_spacing: resolved
                         .rare()
@@ -1261,44 +1296,15 @@ pub(crate) fn mount_style_with_intrinsic(
             );
             let before = (
                 previous.0.opacity,
-                previous.0.blur,
-                previous.0.edge_fade,
-                previous.0.filter_blur,
-                previous.0.brightness,
-                previous.0.contrast,
-                previous.0.saturate,
-                previous.0.mask_offset,
-                previous.0.clip_inset,
+                previous.0.overflow_paint(),
                 previous.0.transform,
                 previous.0.local_transform,
             );
             let next = &inputs.0;
             let fields = previous.0.fields_mut(Paint::BITS);
-            (
-                fields.opacity,
-                fields.blur,
-                fields.edge_fade,
-                fields.filter_blur,
-                fields.brightness,
-                fields.contrast,
-                fields.saturate,
-                fields.mask_offset,
-                fields.clip_inset,
-                fields.transform,
-                fields.local_transform,
-            ) = (
-                next.opacity,
-                next.blur,
-                next.edge_fade,
-                next.filter_blur,
-                next.brightness,
-                next.contrast,
-                next.saturate,
-                next.mask_offset,
-                next.clip_inset,
-                next.transform,
-                next.local_transform,
-            );
+            fields.set_overflow_paint(next.overflow_paint());
+            (fields.opacity, fields.transform, fields.local_transform) =
+                (next.opacity, next.transform, next.local_transform);
             if previous.0 == *next {
                 // Written here from the resolved styles, not a dynamic paint.
                 *painted = false;
@@ -1320,27 +1326,27 @@ pub(crate) fn mount_style_with_intrinsic(
                 if let Some(value) = next.opacity.get() {
                     effects.opacity = value;
                 }
-                if let Some(value) = next.blur.get() {
+                if let Some(value) = next.overflow().blur.get() {
                     effects.blur_radius = value;
                 }
-                if let Some(value) = next.edge_fade.get() {
+                if let Some(value) = next.overflow().edge_fade.get() {
                     effects.edge_fade = value;
                 }
-                if let Some(value) = next.filter_blur.get() {
+                if let Some(value) = next.overflow().filter_blur.get() {
                     effects.filter_blur = value;
                 }
-                if let Some(value) = next.brightness.get() {
+                if let Some(value) = next.overflow().brightness.get() {
                     effects.brightness = value;
                 }
-                if let Some(value) = next.contrast.get() {
+                if let Some(value) = next.overflow().contrast.get() {
                     effects.contrast = value;
                 }
-                if let Some(value) = next.saturate.get() {
+                if let Some(value) = next.overflow().saturate.get() {
                     effects.saturate = value;
                 }
                 scene.set_effects(node, effects);
-                apply_mask(&mut scene, node, next, &originals.mask);
-                scene.set_clip_inset(node, next.clip_inset.or(originals.inset));
+                apply_mask(&mut scene, node, next, originals.mask());
+                scene.set_clip_inset(node, next.overflow().clip_inset.or(originals.inset()));
                 scene.set_transform(node, next.transform.unwrap_or(originals.transform));
                 scene.set_local_transform(node, next.local_transform.resolve(originals.local));
                 return;
@@ -1360,19 +1366,10 @@ pub(crate) fn mount_style_with_intrinsic(
                 fields.margin,
             ) = sizes;
             let fields = previous.0.fields_mut(Paint::BITS);
-            (
-                fields.opacity,
-                fields.blur,
-                fields.edge_fade,
-                fields.filter_blur,
-                fields.brightness,
-                fields.contrast,
-                fields.saturate,
-                fields.mask_offset,
-                fields.clip_inset,
-                fields.transform,
-                fields.local_transform,
-            ) = before;
+            let (opacity, overflow, transform, local_transform) = before;
+            fields.set_overflow_paint(overflow);
+            (fields.opacity, fields.transform, fields.local_transform) =
+                (opacity, transform, local_transform);
         }
         let mut first: Option<AppliedInputs> = None;
         let (resolved, current, _, _) = match &mut memo {
@@ -1408,9 +1405,25 @@ struct Originals {
     transform: crate::scene::Transform,
     local: crate::scene::LocalTransform,
     isolated: bool,
+    /// `None` for a node without a mask or clip inset of its own, as nearly
+    /// every node is: inline, every node's style effect carried them.
+    clipped: Option<Box<Clipped>>,
+    kind: NodeKind,
+}
+/// A node's own mask and clip inset (`Originals`).
+struct Clipped {
     mask: Option<crate::scene::ImageMask>,
     inset: Option<crate::scene::ClipInset>,
-    kind: NodeKind,
+}
+impl Originals {
+    fn mask(&self) -> Option<&crate::scene::ImageMask> {
+        self.clipped
+            .as_ref()
+            .and_then(|clipped| clipped.mask.as_ref())
+    }
+    fn inset(&self) -> Option<crate::scene::ClipInset> {
+        self.clipped.as_ref().and_then(|clipped| clipped.inset)
+    }
 }
 /// Write a fully resolved style to the scene: the style effect's slow path
 /// (layout, kind and paint), out of line so that the paint-only path every
@@ -1424,7 +1437,12 @@ struct Originals {
 /// it is opaque. (In place: a 440-byte style moved in and out again was
 /// copied twice by every full application.)
 fn opaque_glass(ui: &Ui, resolved: &mut Styles, kind: &NodeKind) -> Option<bool> {
-    if !resolved.blur.get().is_some_and(|sigma| sigma > 0.) {
+    if !resolved
+        .overflow()
+        .blur
+        .get()
+        .is_some_and(|sigma| sigma > 0.)
+    {
         return None;
     }
     if !ui.theme().system_preferences().reduced_transparency {
@@ -1441,7 +1459,7 @@ fn opaque_glass(ui: &Ui, resolved: &mut Styles, kind: &NodeKind) -> Option<bool>
     });
     let fields = resolved.fields_mut(crate::style::bit::BACKGROUND | crate::style::bit::BLUR);
     fields.background = background;
-    fields.blur = Some(0.).into();
+    fields.overflow_mut().blur = Some(0.).into();
     Some(true)
 }
 #[allow(clippy::too_many_arguments)]
@@ -1567,22 +1585,22 @@ fn apply_resolved(
     if let Some(value) = resolved.opacity.get() {
         effects.opacity = value;
     }
-    if let Some(value) = resolved.blur.get() {
+    if let Some(value) = resolved.overflow().blur.get() {
         effects.blur_radius = value;
     }
-    if let Some(value) = resolved.edge_fade.get() {
+    if let Some(value) = resolved.overflow().edge_fade.get() {
         effects.edge_fade = value;
     }
-    if let Some(value) = resolved.filter_blur.get() {
+    if let Some(value) = resolved.overflow().filter_blur.get() {
         effects.filter_blur = value;
     }
-    if let Some(value) = resolved.brightness.get() {
+    if let Some(value) = resolved.overflow().brightness.get() {
         effects.brightness = value;
     }
-    if let Some(value) = resolved.contrast.get() {
+    if let Some(value) = resolved.overflow().contrast.get() {
         effects.contrast = value;
     }
-    if let Some(value) = resolved.saturate.get() {
+    if let Some(value) = resolved.overflow().saturate.get() {
         effects.saturate = value;
     }
     let mut scene = ui.scene.borrow_mut();
@@ -1598,18 +1616,21 @@ fn apply_resolved(
         content_style.layout_options =
             (!content_options.is_empty()).then(|| std::sync::Arc::new(content_options));
         scene.set_style(content, content_style);
-        if let Some(layout) = resolved.layout {
+        if let Some(layout) = resolved.overflow().layout {
             scene.set_kind(content, NodeKind::Container(layout));
         }
     }
 
     scene.set_cursor(node, resolved.cursor);
     scene.set_effects(node, effects);
-    apply_mask(&mut scene, node, resolved, &originals.mask);
-    scene.set_clip_inset(node, resolved.clip_inset.or(originals.inset));
+    apply_mask(&mut scene, node, resolved, originals.mask());
+    scene.set_clip_inset(node, resolved.overflow().clip_inset.or(originals.inset()));
     scene.set_transform(node, resolved.transform.unwrap_or(originals.transform));
     scene.set_local_transform(node, resolved.local_transform.resolve(originals.local));
-    scene.set_isolated(node, resolved.isolated.unwrap_or(originals.isolated));
+    scene.set_isolated(
+        node,
+        resolved.overflow().isolated.unwrap_or(originals.isolated),
+    );
     let kind = match &originals.kind {
         NodeKind::Container(layout) | NodeKind::Panel { layout, .. } => {
             let mut quad = match &originals.kind {
@@ -1684,14 +1705,14 @@ fn apply_resolved(
                 NodeKind::Container(if layout_target {
                     *layout
                 } else {
-                    resolved.layout.unwrap_or(*layout)
+                    resolved.overflow().layout.unwrap_or(*layout)
                 })
             } else {
                 NodeKind::Panel {
                     layout: if layout_target {
                         *layout
                     } else {
-                        resolved.layout.unwrap_or(*layout)
+                        resolved.overflow().layout.unwrap_or(*layout)
                     },
                     quad,
                 }
@@ -1929,6 +1950,23 @@ mod tests {
         paint.put(&mut styles);
         assert!(styles == made());
         assert!(Paint::take(&mut Styles::new().w(1.)) == Paint::default());
+        // The rare ones too, kept apart (`crate::style::Overflow`).
+        let made = || {
+            Styles::new()
+                .w(10.)
+                .blur(2.)
+                .brightness(0.5)
+                .mask_offset(1., 2.)
+        };
+        let mut styles = made();
+        let paint = Paint::take(&mut styles);
+        assert_eq!(
+            (paint.blur.get(), paint.brightness.get(), paint.mask_offset),
+            (Some(2.), Some(0.5), Some((1., 2.)))
+        );
+        assert!(styles == Styles::new().w(10.));
+        paint.put(&mut styles);
+        assert!(styles == made());
     }
     /// A paint-only run writes the node's whole paint again: what else set
     /// its translation, clip or local transform since is undone, whether
@@ -2208,6 +2246,38 @@ mod tests {
             calls.get() - settled
         );
     }
+    #[test]
+    fn animated_rare_paint_follows_every_frame() {
+        use crate::{compose::div, style::Styled};
+        let mut ui = Ui::new(300., 200.);
+        let t = ui.signal(0.5_f32);
+        let read = t.clone();
+        let view = ui.mount(div().size(20., 20.).reactive_style(move || {
+            let v = read.get();
+            Styles::new()
+                .opacity(v)
+                .blur(v * 4.)
+                .edge_fade(v)
+                .filter_blur(v * 2.)
+                .brightness(v)
+                .contrast(v)
+                .saturate(v)
+        }));
+        ui.scene.borrow_mut().flush();
+        // Each frame after the first takes the style effect's fast path,
+        // putting the paint back with `Paint::put`.
+        for v in [0.6, 0.7, 0.8, 0.9] {
+            t.set(v);
+            ui.scene.borrow_mut().flush();
+            let e = ui.scene.borrow().effects(view.node());
+            assert_eq!(
+                (e.opacity, e.blur_radius, e.edge_fade, e.filter_blur),
+                (v, v * 4., v, v * 2.)
+            );
+            assert_eq!((e.brightness, e.contrast, e.saturate), (v, v, v));
+        }
+    }
+
     #[test]
     fn animated_text_colour_repaints_without_layout() {
         use crate::{compose::text, style::Styled};
