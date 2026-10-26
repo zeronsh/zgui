@@ -327,8 +327,8 @@ pub(crate) struct Vm {
     /// Whether nodes record the script line that creates them (for the
     /// layout inspector): shared with the host, off unless it records.
     pub(crate) locate: Rc<Cell<bool>>,
-    /// Calls into the script so far, shared with the host (`script_calls`).
-    calls: Rc<Cell<u64>>,
+    /// The host's live lint mode, warnings and script call count.
+    pub(crate) warnings: SharedWarnings,
 }
 impl Vm {
     /// Runs `f` with its own budget. A nested call (a component built
@@ -339,7 +339,7 @@ impl Vm {
         f: impl FnOnce() -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         let _span = zgx::profile::span(zgx::profile::Phase::Script);
-        self.calls.set(self.calls.get() + 1);
+        self.warnings.calls.set(self.warnings.calls.get() + 1);
         // Outermost, nothing shifts by this start: a recent reading will do.
         let started = match self.deadline.get() {
             None => Deadline::start_recent(budget),
@@ -457,7 +457,23 @@ pub(crate) struct Warnings {
     /// `ZGX_DESIGN_LINT` chose it: scripts do not change it.
     pub(crate) design_forced: bool,
 }
-pub(crate) type SharedWarnings = Rc<RefCell<Warnings>>;
+/// Host diagnostics shared by every VM. Both handles were already shared
+/// by the host and its VMs; one allocation lets retained computeds read
+/// the live lint mode without looking up the Lua environment.
+#[derive(Default)]
+pub(crate) struct Diagnostics {
+    calls: Cell<u64>,
+    warnings: RefCell<Warnings>,
+}
+impl Diagnostics {
+    pub(crate) fn borrow(&self) -> std::cell::Ref<'_, Warnings> {
+        self.warnings.borrow()
+    }
+    pub(crate) fn borrow_mut(&self) -> std::cell::RefMut<'_, Warnings> {
+        self.warnings.borrow_mut()
+    }
+}
+pub(crate) type SharedWarnings = Rc<Diagnostics>;
 /// Where script warnings go: stderr and the host's list
 /// ([`ScriptHost::warnings`]). Everything that warns comes through here, so
 /// a host can show them elsewhere too.
@@ -875,8 +891,6 @@ struct Inner {
     warnings: SharedWarnings,
     /// Nodes record where scripts create them (see `Vm::locate`).
     locate: Rc<Cell<bool>>,
-    /// Calls into scripts so far (`script_calls`).
-    calls: Rc<Cell<u64>>,
     /// The window's layout inspector, from the mounted view's services.
     inspector: Rc<RefCell<Option<zgx::inspect::Inspector>>>,
     /// `inspect(true)` before the view mounted.
@@ -1011,7 +1025,6 @@ impl ScriptHost {
             timers: Rc::default(),
             warnings,
             locate: Rc::new(Cell::new(diagnostics_requested())),
-            calls: Rc::default(),
             inspector: Rc::default(),
             inspect: Cell::new(false),
             relocate: Rc::default(),
@@ -1352,7 +1365,7 @@ impl ScriptHost {
     /// a test reads before and after an interaction to check that it runs
     /// no script (a resize the layout engine handles alone).
     pub fn script_calls(&self) -> u64 {
-        self.0.calls.get()
+        self.0.warnings.calls.get()
     }
     /// Bytes the loaded scripts' VMs hold after a full collection (each is
     /// capped at `Limits::memory` or `Limits::plugin_memory`): what a test reads over many updates to
@@ -2175,7 +2188,7 @@ impl ScriptHost {
             errors: self.0.error.clone(),
             layout_ids: Default::default(),
             locate: self.0.locate.clone(),
-            calls: self.0.calls.clone(),
+            warnings: self.0.warnings.clone(),
         });
         let store = self
             .0
@@ -2341,7 +2354,7 @@ mod tests {
             errors: runtime.signal(None),
             layout_ids: Default::default(),
             locate: Rc::default(),
-            calls: Rc::default(),
+            warnings: Rc::default(),
         };
         let host = vm
             .lua
