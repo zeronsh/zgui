@@ -286,6 +286,10 @@ enum Shading {
     /// A shader fill (`FillShader`, by id): its pipeline, `shade` for
     /// whatever else the draw holds.
     Fill(u64),
+    /// A cached layer composited through its layer shader
+    /// (`zgx::scene::LayerShader`, by shader id): its pipeline, `shade` for
+    /// the rest. Never batched with other shadings.
+    Filter(u64),
     /// An image drawn with an effect (`ImageEffect`): image_effects.wgsl's
     /// pipeline, compiled when one first draws, `shade` for whatever else
     /// the draw holds.
@@ -357,7 +361,9 @@ impl QuadPipelines {
     /// The pipeline drawing quads of `shading`.
     fn get(&self, shading: Shading) -> &wgpu::RenderPipeline {
         let (cell, basic, blend) = match shading {
-            Shading::Full | Shading::Fill(_) | Shading::ImageEffect => (&self.full, false, true),
+            Shading::Full | Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect => {
+                (&self.full, false, true)
+            }
             Shading::Basic => (&self.basic, true, true),
             Shading::Opaque => (&self.basic_clear, true, false),
             Shading::Polyline => return &self.polylines().pipeline,
@@ -464,7 +470,10 @@ fn push_draw(
     let split = split
         && draw.blur.is_none()
         && draw.layer.is_none()
-        && !matches!(draw.shading, Shading::Fill(_) | Shading::ImageEffect);
+        && !matches!(
+            draw.shading,
+            Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect
+        );
     if !(split || polylines) || draw.end <= draw.start {
         draws.push(draw);
         return;
@@ -1890,7 +1899,9 @@ struct Picks<'p> {
 impl<'p> Picks<'p> {
     fn get(&self, shading: Shading) -> &'p wgpu::RenderPipeline {
         match shading {
-            Shading::Full | Shading::Fill(_) | Shading::ImageEffect => self.full,
+            Shading::Full | Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect => {
+                self.full
+            }
             Shading::Basic => self.basic,
             Shading::Opaque => self.opaque,
             Shading::Polyline => self.polyline.expect("made for a frame with polylines"),
@@ -1931,7 +1942,7 @@ fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
         Shading::Opaque => Some(0),
         Shading::Basic => Some(1),
         Shading::Full => Some(2),
-        Shading::Fill(_) | Shading::ImageEffect | Shading::Polyline => None,
+        Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect | Shading::Polyline => None,
     };
     Some(if cost(a)? >= cost(b)? { a } else { b })
 }
@@ -2614,6 +2625,8 @@ pub struct GpuRenderer {
     /// first draws with one.
     image_effect_pipeline: std::cell::OnceCell<wgpu::RenderPipeline>,
     fill_shaders: FxHashMap<u64, Arc<zgx::decoration::FillShader>>,
+    /// Layer shaders' pipelines by shader id (`None`: it failed to compile).
+    filter_pipelines: FxHashMap<u64, Option<wgpu::RenderPipeline>>,
     /// The presentation plane drawn around native views (planes.rs).
     plane: Option<planes::PlaneState>,
 }
@@ -3081,6 +3094,7 @@ impl GpuRenderer {
             effect_pipelines: None,
             effect_jobs: Vec::new(),
             fill_pipelines: FxHashMap::default(),
+            filter_pipelines: FxHashMap::default(),
             image_effect_pipeline: Default::default(),
             fill_shaders: FxHashMap::default(),
             plane: None,
@@ -3846,6 +3860,7 @@ impl GpuRenderer {
     fn fill_pipeline(&self, shading: Shading) -> Option<&wgpu::RenderPipeline> {
         match shading {
             Shading::Fill(id) => self.fill_pipelines.get(&id)?.as_ref(),
+            Shading::Filter(id) => self.filter_pipelines.get(&id)?.as_ref(),
             Shading::ImageEffect => self.image_effect_pipeline.get(),
             _ => None,
         }
@@ -3890,6 +3905,29 @@ impl GpuRenderer {
         self.fill_shaders.insert(shader.id(), shader.clone());
         self.fill_pipelines.insert(shader.id(), pipeline);
         self.fill_pipelines[&shader.id()].is_some()
+    }
+    /// Compile layer shader `shader`'s pipeline if new; whether it can draw.
+    fn prepare_filter(&mut self, shader: &zgx::decoration::FillShader) -> bool {
+        if let Some(compiled) = self.filter_pipelines.get(&shader.id()) {
+            return compiled.is_some();
+        }
+        let source = filter_source(shader.source());
+        let pipeline = fill_validates(&source).then(|| {
+            let module = self
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("layer shader"),
+                    source: wgpu::ShaderSource::Wgsl(source.into()),
+                });
+            fill_pipeline(
+                &self.device,
+                &module,
+                &self.context.inner.quad_layout,
+                "zgx_filter",
+            )
+        });
+        self.filter_pipelines.insert(shader.id(), pipeline);
+        self.filter_pipelines[&shader.id()].is_some()
     }
     /// Group 1 of the quad pipelines: the viewport `uniform` and `regions`.
     fn viewport_group(
@@ -4008,10 +4046,12 @@ impl GpuRenderer {
         if ranges.len() != ids.len()
             || inherited.len() != ids.len()
             || !self.frame_points.is_empty()
-            || self
-                .frame_draws
-                .iter()
-                .any(|draw| matches!(draw.shading, Shading::Fill(_) | Shading::Polyline))
+            || self.frame_draws.iter().any(|draw| {
+                matches!(
+                    draw.shading,
+                    Shading::Fill(_) | Shading::Filter(_) | Shading::Polyline
+                )
+            })
         {
             self.item_ranges = ranges;
             let mut drawn = self.render_flat::<FRAME>(scene, Vec::new(), damage, merged, false)?;
@@ -4659,10 +4699,12 @@ impl GpuRenderer {
         let ranges = std::mem::take(&mut self.item_ranges);
         let keeps = ranges.len() == ids.len()
             && self.frame_points.is_empty()
-            && !self
-                .frame_draws
-                .iter()
-                .any(|draw| matches!(draw.shading, Shading::Fill(_) | Shading::Polyline));
+            && !self.frame_draws.iter().any(|draw| {
+                matches!(
+                    draw.shading,
+                    Shading::Fill(_) | Shading::Filter(_) | Shading::Polyline
+                )
+            });
         if !keeps {
             self.item_ranges = ranges;
             return Ok(None);
@@ -4968,6 +5010,13 @@ impl GpuRenderer {
                     .then(matrix)
                     .then(zgx::affine::Affine::translation(-x, -y))
             });
+            // A layer composited through its layer shader, once that compiles.
+            let filter = item
+                .isolated
+                .then(|| scene.layer_shader(item.id))
+                .flatten()
+                .and_then(|layer| Some((layer.shader.clone()?, layer.uniforms)))
+                .filter(|(shader, _)| self.prepare_filter(shader));
             // Blurred or masked: composited from its effect slot.
             let effect = (item.isolated
                 && (item.effects.filter_blur > 0. || scene.mask(item.id).is_some()))
@@ -5041,10 +5090,19 @@ impl GpuRenderer {
                         Some(_) => [m.tx, m.ty, 0., 0.],
                         None => [0.; 4],
                     },
-                    mask: [region_index(&mut clips, Region::of(&item)), 0., 0., 0.],
+                    mask: [
+                        region_index(&mut clips, Region::of(&item)),
+                        filter.as_ref().map_or(0., |(_, uniforms)| {
+                            region_index(&mut clips, Some(Region::uniforms(*uniforms)))
+                        }),
+                        0.,
+                        0.,
+                    ],
                 });
                 draws.push(Draw {
-                    shading: Shading::Full,
+                    shading: filter
+                        .as_ref()
+                        .map_or(Shading::Full, |(shader, _)| Shading::Filter(shader.id())),
                     start,
                     end: quads.len() as u32,
                     clip,
@@ -6249,6 +6307,8 @@ impl GpuRenderer {
                     .get_or_init(|| metal_frame::MetalFrame::new(&self.device, &self.queue).ok())
                     .as_ref()
                     .is_some_and(|frame| frame.image_effects()),
+                // Layer shaders take the wgpu path.
+                Shading::Filter(_) => false,
                 _ => true,
             })
             && effect_jobs.iter().all(|job| {
@@ -6425,9 +6485,12 @@ impl GpuRenderer {
         // Shader fills and image effects have no pipelines writing two
         // targets at once.
         let defer = !self.in_layer
-            && !draws
-                .iter()
-                .any(|draw| matches!(draw.shading, Shading::Fill(_) | Shading::ImageEffect))
+            && !draws.iter().any(|draw| {
+                matches!(
+                    draw.shading,
+                    Shading::Fill(_) | Shading::Filter(_) | Shading::ImageEffect
+                )
+            })
             && (!self.present_unpremultiplies || self.background.3 == 255)
             && self.single_pass_format.is_some()
             && !self.copy_present
@@ -9275,13 +9338,61 @@ pub(crate) fn fill_source(user: &str) -> String {
 }"
     )
 }
+/// A layer shader's module (`zgx::scene::LayerShader`): the quad shader,
+/// the `LayerInput` its `layer` takes, `zgx_sample`, the user's source and
+/// the fragment entry `zgx_filter`, which passes the layer's texel under a
+/// layer's composite quad (`mask.y`: its uniforms' record, plus one) through
+/// `layer` and shades the result as `shade` does. The quad's `fade` is the
+/// node's box and `point` its untransformed position, so `p` is the node's.
+pub(crate) fn filter_source(user: &str) -> String {
+    format!(
+        "{}\nstruct LayerInput {{ color:vec4<f32>, p:vec2<f32>, size:vec2<f32>, time:f32, scale:f32, params:array<vec4<f32>,4> }}\n{}\n{user}\n{}",
+        include_str!("draw.wgsl"),
+        "var<private> zgx_frame:vec4<f32>;
+// The layer's straight-alpha pixel at logical `p` from the node's top-left.
+fn zgx_sample(p:vec2<f32>)->vec4<f32> {
+ let uv=zgx_frame.xy+p*zgx_frame.zw;
+ let t=textureSampleLevel(atlas,tex_sampler,uv,0.);
+ return select(vec4(0.),vec4(t.rgb/t.a,t.a),t.a>0.);
+}",
+        "@fragment fn zgx_filter(input:Out)->@location(0) vec4<f32> {
+ var v=input;
+ let point=select(v.position.xy/viewport.z,v.point,v.options.z>0.5);
+ // The texture's uv per logical point of the node (the quad maps one
+ // linearly to the other), so `zgx_sample` reaches any p: from the
+ // screen derivatives of both, taken before any branch.
+ let du=mat2x2(dpdx(v.uv),dpdy(v.uv)); let dp=mat2x2(dpdx(point),dpdy(point));
+ let det=dp[0].x*dp[1].y-dp[1].x*dp[0].y;
+ let inverse=mat2x2(vec2(dp[1].y,-dp[0].y),vec2(-dp[1].x,dp[0].x))*(1./select(det,1e-6,abs(det)<1e-12));
+ let k=du*inverse;
+ if v.mask.y<.5 {return shade(v);}
+ let u=regions[u32(v.mask.y)-1u];
+ let p=point-v.fade.xy;
+ // The shader runs over the node's box; the layer's margin past it (its
+ // resampling edge, overflow) composites as painted.
+ if any(p<vec2(0.))||any(p>=v.fade.zw) {return shade(v);}
+ zgx_frame=vec4(v.uv-vec2(k[0].x,k[1].y)*p,k[0].x,k[1].y);
+ let c=clamp(layer(LayerInput(zgx_sample(p),p,v.fade.zw,u.round0.x,viewport.z,array<vec4<f32>,4>(u.radii0,u.round1,u.radii1,u.fade_box))),vec4(0.),vec4(1.));
+ return shade_texel(v,vec4(c.rgb*c.a,c.a),true);
+}"
+    )
+}
+/// Checks a layer shader's source (the user's part) as the renderer will
+/// compile it, as `check_fill_shader` does a fill's.
+pub fn check_layer_shader(user: &str) -> Result<(), String> {
+    check_module(user, filter_source)
+}
 /// Checks a shader fill's source (the user's part, as `FillShader` holds
 /// it) as the renderer will compile it: `Err` reads like a compiler
 /// message, with lines counted in `user`, for an app or script to show.
 pub fn check_fill_shader(user: &str) -> Result<(), String> {
-    let source = fill_source(user);
-    // Lines before the user's code in the module `fill_source` builds.
-    let template = fill_source("\u{1}");
+    check_module(user, fill_source)
+}
+/// Checks `user` in the module `module` builds around it.
+fn check_module(user: &str, module: fn(&str) -> String) -> Result<(), String> {
+    let source = module(user);
+    // Lines before the user's code in the module `module` builds.
+    let template = module("\u{1}");
     let before = template[..template.find('\u{1}').unwrap_or(0)]
         .matches('\n')
         .count();

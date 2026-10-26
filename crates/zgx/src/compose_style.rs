@@ -1735,6 +1735,12 @@ fn apply_resolved(
     if let Some(uniforms) = resolved.rare().shader_uniforms {
         scene.set_shader_uniforms(node, uniforms);
     }
+    if let Some(shader) = &resolved.rare().layer_shader {
+        scene.set_layer_shader(node, shader.clone());
+    }
+    if let Some(uniforms) = resolved.rare().layer_uniforms {
+        scene.set_layer_uniforms(node, uniforms);
+    }
     style
 }
 

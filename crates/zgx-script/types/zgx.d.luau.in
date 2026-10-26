@@ -499,6 +499,8 @@ declare extern type Bitmap with
 end
 declare extern type Shader with
 end
+declare extern type LayerShader with
+end
 declare extern type Brush with
 end
 
@@ -1461,6 +1463,11 @@ export type NodeProps = {
 	bg_shader: Shader?,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: { read [number]: Color | { number } }?,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: LayerShader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: { read [number]: Color | { number } }?,
 	-- Events.
 	on_click: (ClickHandler | Handler | Action)?,
 	-- Primary pointer down and up.
@@ -2460,6 +2467,11 @@ declare ui: {
 	-- A WGSL fill: `fn fill(input: FillInput) -> vec4<f32>`, with input.p,
 	-- input.size, input.time, input.scale and input.params (four vec4s).
 	shader: (source: string, opts: { fps: number? }?) -> Shader,
+	-- A WGSL layer shader: `fn layer(input: LayerInput) -> vec4<f32>`, with
+	-- input.color (the layer's pixel, straight alpha), input.p, input.size,
+	-- input.time, input.scale and input.params; `zgx_sample(p)` reads the
+	-- layer at another point of the box.
+	layer_shader: (source: string, opts: { fps: number? }?) -> LayerShader,
 	-- Sorts `list` in place, stably, by a field of each item (`"price"`) or
 	-- a function of it (called once an item); returns it. Use it over
 	-- `table.sort` with a comparator for long lists: that calls Luau some
@@ -2623,6 +2635,24 @@ export type ElementKeys = {
 	shaderParam13: AnimValue?,
 	shaderParam14: AnimValue?,
 	shaderParam15: AnimValue?,
+	layerTime: AnimValue?,
+	layer_time: AnimValue?,
+	layerParam0: AnimValue?,
+	layerParam1: AnimValue?,
+	layerParam2: AnimValue?,
+	layerParam3: AnimValue?,
+	layerParam4: AnimValue?,
+	layerParam5: AnimValue?,
+	layerParam6: AnimValue?,
+	layerParam7: AnimValue?,
+	layerParam8: AnimValue?,
+	layerParam9: AnimValue?,
+	layerParam10: AnimValue?,
+	layerParam11: AnimValue?,
+	layerParam12: AnimValue?,
+	layerParam13: AnimValue?,
+	layerParam14: AnimValue?,
+	layerParam15: AnimValue?,
 	clipBottom: AnimValue?,
 	clipLeft: AnimValue?,
 	clipRight: AnimValue?,
@@ -2773,6 +2803,24 @@ export type ElementParams = {
 	shaderParam13: AnimValue?,
 	shaderParam14: AnimValue?,
 	shaderParam15: AnimValue?,
+	layerTime: AnimValue?,
+	layer_time: AnimValue?,
+	layerParam0: AnimValue?,
+	layerParam1: AnimValue?,
+	layerParam2: AnimValue?,
+	layerParam3: AnimValue?,
+	layerParam4: AnimValue?,
+	layerParam5: AnimValue?,
+	layerParam6: AnimValue?,
+	layerParam7: AnimValue?,
+	layerParam8: AnimValue?,
+	layerParam9: AnimValue?,
+	layerParam10: AnimValue?,
+	layerParam11: AnimValue?,
+	layerParam12: AnimValue?,
+	layerParam13: AnimValue?,
+	layerParam14: AnimValue?,
+	layerParam15: AnimValue?,
 	clipBottom: AnimValue?,
 	clipLeft: AnimValue?,
 	clipRight: AnimValue?,

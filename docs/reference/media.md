@@ -99,7 +99,7 @@ return ui.overlay {
 
 ## Masks and shaders
 
-Any node can show its content through a bitmap's alpha, or have its box filled by a WGSL function; see [properties](properties.md#paint):
+Any node can show its content through a bitmap's alpha, have its box filled by a WGSL function, or composite its content through one; see [properties](properties.md#paint):
 
 | | |
 | --- | --- |
@@ -107,6 +107,8 @@ Any node can show its content through a bitmap's alpha, or have its box filled b
 | `mask = bitmap` or `mask = { bitmap, w = …, h = …, x = …, y = …, sweep = … }` | the content shows through the bitmap's alpha, drawn `w` by `h` (the bitmap's size) from (`x`, `y`), unsmoothed; `maskX` and `maskY` animate its place, and `sweep = { x, y, duration, frame_rate }` moves it by (`x`, `y`) every `duration` ms, over and over, on the engine's own clock (a text shimmer: no script, style pass or layout per step, only the masked node composites again; 4 steps a second while it doesn't show) |
 | `ui.shader(wgsl, { fps })` | a fill: the source defines `fn fill(input: FillInput) -> vec4<f32>` (straight alpha), reading `input.p` (points from the box's top left), `input.size`, `input.time` (seconds), `input.scale` (pixels per point) and `input.params` (four `vec4`s); `fps` caps how often time repaints it |
 | `bg_shader = shader`, `shader_params = { … }` | fill the box with it, over `bg` and under the border and children; parameters are colors (0 to 1) or lists of four numbers; `shaderTime` and `shaderParam0` to `shaderParam15` animate |
+| `ui.layer_shader(wgsl, { fps })` | a layer shader: the source defines `fn layer(input: LayerInput) -> vec4<f32>` (straight alpha), reading `input.color` (the content's pixel there, straight alpha), `input.p`, `input.size`, `input.time`, `input.scale` and `input.params` as a fill does; `zgx_sample(p)` reads the content at another point of the box |
+| `layer_shader = shader`, `layer_params = { … }` | the node and its children paint once into a cached layer, and each pixel of the box passes through the shader as the layer composites (a foil sheen, a recolour, a ripple); past the box the layer shows as painted. `layerTime` and `layerParam0` to `layerParam15` animate it without repainting the content |
 
 ## Example
 

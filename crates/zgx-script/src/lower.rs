@@ -1927,6 +1927,10 @@ fn styled(
             node.shader_params
                 .map(|params| zgx::decoration::ShaderUniforms { time: 0., params }),
         );
+        element.set_base_layer(
+            node.layer_params
+                .map(|params| zgx::decoration::ShaderUniforms { time: 0., params }),
+        );
         element.set_base_clip(statics.iter().find_map(|(p, l)| match (p, l) {
             (Prop::ClipInset, Lit::Corners(c)) => {
                 Some([c.top_left, c.top_right, c.bottom_right, c.bottom_left])
@@ -1969,11 +1973,17 @@ fn styled(
     // Parameters with no fill of their own: an image's (its `characters`
     // reveal), set on its node all the same.
     let params_only = node.shader_params.filter(|_| node.shader.is_none());
+    // A layer shader, with its literal parameters unless animated.
+    let layer = node
+        .layer_shader
+        .clone()
+        .map(|shader| (shader, node.layer_params.unwrap_or_default()));
     if !dynamic.is_empty()
         || element.is_some()
         || bg_image.is_some()
         || shader.is_some()
         || params_only.is_some()
+        || layer.is_some()
     {
         let vm = vm.clone();
         let element = element.clone();
@@ -1997,6 +2007,18 @@ fn styled(
             });
             let styles = match image {
                 Some((image, fit)) => styles.bg_image(image, fit),
+                None => styles,
+            };
+            let styles = match &layer {
+                Some((shader, params)) => {
+                    let animated = element.as_ref().and_then(|e| e.animated.borrow().layer);
+                    styles
+                        .layer_shader(shader.clone())
+                        .layer_uniforms(animated.unwrap_or(zgx::decoration::ShaderUniforms {
+                            time: 0.,
+                            params: *params,
+                        }))
+                }
                 None => styles,
             };
             // A shader fill, with its literal parameters unless animated.

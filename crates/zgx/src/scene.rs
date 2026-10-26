@@ -546,6 +546,31 @@ impl ImageMask {
         self
     }
 }
+/// A shader a node's subtree composites through (`Scene::set_layer_shader`):
+/// the subtree, painted once as a cached layer, has each of its pixels
+/// passed to the shader's `layer` as it is drawn, so changing the
+/// uniforms composites again without repainting the subtree. The shader is
+/// a `FillShader` whose source defines
+///
+/// ```wgsl
+/// fn layer(input: LayerInput) -> vec4<f32>
+/// ```
+///
+/// returning a straight-alpha colour. `LayerInput` holds `color` (the
+/// layer's straight-alpha pixel there), `p` (the pixel's logical position
+/// from the node's top-left, in its own untransformed space), `size` (the
+/// node's logical size), `time`, `scale` and `params` as `FillInput` has
+/// them. It may call `zgx_sample(p)` for the layer's pixel at another
+/// logical position. It runs over the node's box, which its ink then always
+/// covers: the layer past the box composites as painted. Applied after any
+/// content blur and mask, under the node's opacity.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LayerShader {
+    /// The shader; `None` while only uniforms are set.
+    pub shader: Option<Arc<crate::decoration::FillShader>>,
+    /// Its time and parameters.
+    pub uniforms: crate::decoration::ShaderUniforms,
+}
 /// A clip that cuts nothing, as `clipped_bounds` starts from.
 const UNCLIPPED: Rect = Rect {
     x: -f32::MAX / 4.,
@@ -1325,6 +1350,9 @@ struct Node {
     local: Option<Box<LocalTransform>>,
     /// An alpha mask over the subtree (`Scene::set_mask`): a layer too.
     image_mask: Option<Box<ImageMask>>,
+    /// The shader its layer composites through and that shader's uniforms
+    /// (`Scene::set_layer_shader`): a layer while it has a shader.
+    layer_shader: Option<Box<LayerShader>>,
     /// Its clip inset (`Scene::set_clip_inset`).
     clip_inset: Option<Box<ClipInset>>,
     /// Its shader fill's uniforms (`Scene::set_shader_uniforms`).
@@ -1367,10 +1395,16 @@ impl Node {
     fn filtered(&self) -> bool {
         self.effects.filter_blur > 0.
     }
+    /// Whether it composites through a layer shader.
+    fn layer_shaded(&self) -> bool {
+        self.layer_shader
+            .as_deref()
+            .is_some_and(|layer| layer.shader.is_some())
+    }
     /// Whether it paints as a layer for an effect on its content: a content
-    /// blur or a mask.
+    /// blur, a mask or a layer shader.
     fn effect_layer(&self) -> bool {
-        self.filtered() || self.image_mask.is_some()
+        self.filtered() || self.image_mask.is_some() || self.layer_shaded()
     }
     fn set_local(&mut self, transform: LocalTransform) {
         match &mut self.local {
@@ -2245,6 +2279,7 @@ impl Scene {
                     isolated: false,
                     local: None,
                     image_mask: None,
+                    layer_shader: None,
                     clip_inset: None,
                     shader_uniforms: None,
                     promoted: false,
@@ -2665,6 +2700,67 @@ impl Scene {
         let node = self.node_mut(id);
         node.image_mask = mask.map(Box::new);
         if node.image_mask.is_some() && !std::mem::replace(&mut node.promoted, true) {
+            self.promoted_count += 1;
+        }
+        self.invalidate(id, COMPOSITE);
+    }
+    /// `id`'s layer shader and its uniforms, if either is set.
+    pub fn layer_shader(&self, id: NodeId) -> Option<&LayerShader> {
+        self.node(id).layer_shader.as_deref()
+    }
+    /// Composite `id`'s subtree through `shader` (see `LayerShader`), or
+    /// with `None` as it is, keeping its uniforms. A node with a layer
+    /// shader paints as a cached layer: changing the shader composites
+    /// again, damaging the subtree, without repainting it.
+    pub fn set_layer_shader(
+        &mut self,
+        id: NodeId,
+        shader: Option<Arc<crate::decoration::FillShader>>,
+    ) {
+        let uniforms = self
+            .node(id)
+            .layer_shader
+            .as_deref()
+            .map(|layer| layer.uniforms)
+            .unwrap_or_default();
+        self.set_layer(id, LayerShader { shader, uniforms });
+    }
+    /// Set the uniforms `id`'s layer shader draws with: its time (quantized
+    /// to the shader's frame rate) and user parameters. Composites only, as
+    /// `set_mask` does. Nonfinite values are zeroed.
+    pub fn set_layer_uniforms(
+        &mut self,
+        id: NodeId,
+        mut uniforms: crate::decoration::ShaderUniforms,
+    ) {
+        fn finite(value: f32) -> f32 {
+            if value.is_finite() { value } else { 0. }
+        }
+        uniforms.time = finite(uniforms.time);
+        uniforms.params = uniforms.params.map(|row| row.map(finite));
+        let shader = self
+            .node(id)
+            .layer_shader
+            .as_deref()
+            .and_then(|layer| layer.shader.clone());
+        if let Some(fps) = shader.as_deref().and_then(|shader| shader.fps()) {
+            uniforms.time = (uniforms.time * fps).floor() / fps;
+        }
+        self.set_layer(id, LayerShader { shader, uniforms });
+    }
+    fn set_layer(&mut self, id: NodeId, layer: LayerShader) {
+        let old = self.node(id).layer_shader.as_deref();
+        if old.map_or(layer == LayerShader::default(), |old| *old == layer) {
+            return;
+        }
+        let shaded = |layer: Option<&LayerShader>| layer.is_some_and(|l| l.shader.is_some());
+        // What it shades lies within what the subtree paints anyway.
+        if shaded(old) || layer.shader.is_some() {
+            self.damage_subtree(id);
+        }
+        let node = self.node_mut(id);
+        node.layer_shader = (layer != LayerShader::default()).then(|| Box::new(layer));
+        if shaded(node.layer_shader.as_deref()) && !std::mem::replace(&mut node.promoted, true) {
             self.promoted_count += 1;
         }
         self.invalidate(id, COMPOSITE);
@@ -4153,6 +4249,7 @@ impl Scene {
             isolated: false,
             local: None,
             image_mask: None,
+            layer_shader: None,
             clip_inset: None,
             shader_uniforms: None,
             promoted: false,
@@ -5340,6 +5437,11 @@ impl Scene {
         let ink = match (own, held) {
             (Some(own), Some(held)) => Some(own.union(held)),
             (own, held) => own.or(held),
+        };
+        // A layer shader may paint anywhere in its box.
+        let ink = match node.layer_shaded() {
+            true => Some(ink.map_or(node.bounds, |ink| ink.union(node.bounds))),
+            false => ink,
         };
         let ink = ink
             .map(|ink| match node.filtered() {

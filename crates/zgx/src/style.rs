@@ -722,6 +722,9 @@ pub(crate) struct RareStyles {
     pub(crate) font_fallbacks: Option<std::sync::Arc<[crate::text_layout::FontFamily]>>,
     /// A mask image and the size it is drawn at (`Styled::mask`).
     pub(crate) mask: Option<Option<MaskImage>>,
+    /// `Styled::layer_shader`, `layer_uniforms`.
+    pub(crate) layer_shader: Option<Option<std::sync::Arc<crate::decoration::FillShader>>>,
+    pub(crate) layer_uniforms: Option<crate::decoration::ShaderUniforms>,
     /// `Styled::relative`: a containing block for absolute descendants.
     pub(crate) relative: Option<bool>,
 }
@@ -757,6 +760,8 @@ impl RareStyles {
         font_features: None,
         font_fallbacks: None,
         mask: None,
+        layer_shader: None,
+        layer_uniforms: None,
         relative: None,
     };
     /// Overlay explicitly supplied properties, preserving all others.
@@ -844,6 +849,12 @@ impl RareStyles {
         }
         if other.mask.is_some() {
             self.mask = other.mask.clone();
+        }
+        if other.layer_shader.is_some() {
+            self.layer_shader = other.layer_shader.clone();
+        }
+        if other.layer_uniforms.is_some() {
+            self.layer_uniforms = other.layer_uniforms;
         }
         if other.relative.is_some() {
             self.relative = other.relative;
@@ -2111,6 +2122,20 @@ pub trait Styled: Sized {
     /// shimmer, a progress fill) only composites it again.
     fn mask(mut self, image: std::sync::Arc<crate::image::ImageData>, size: (f32, f32)) -> Self {
         self.styles_mut().rare_mut().mask = Some(Some((image, size)));
+        self
+    }
+    /// Composite the view's subtree through `shader`'s WGSL `layer`
+    /// function (see `crate::scene::LayerShader`): painted once into a
+    /// cached layer, each pixel of its box passes through the shader as it
+    /// composites, so animating its uniforms costs no repaint.
+    fn layer_shader(mut self, shader: std::sync::Arc<crate::decoration::FillShader>) -> Self {
+        self.styles_mut().rare_mut().layer_shader = Some(Some(shader));
+        self
+    }
+    /// The uniforms its `layer_shader` draws with: time and user parameters
+    /// (or set them with `Scene::set_layer_uniforms` directly).
+    fn layer_uniforms(mut self, uniforms: crate::decoration::ShaderUniforms) -> Self {
+        self.styles_mut().rare_mut().layer_uniforms = Some(uniforms);
         self
     }
     /// Clip the view and its descendants to its box inset by these pixels

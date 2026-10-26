@@ -808,13 +808,13 @@ fn anime_functions_are_typed() {
 #[test]
 fn animatable_keys_are_typed() {
     let mut keys = quoted(TARGET, "pub fn for_element", "pub fn unit");
-    // `shaderParam0` to `shaderParam15` share a prefix in the engine.
-    assert!(
-        keys.iter().any(|k| k == "shaderParam"),
-        "the shader parameter keys moved"
-    );
-    keys.retain(|k| k != "shaderParam");
-    keys.extend((0..16).map(|i| format!("shaderParam{i}")));
+    // `shaderParam0` to `shaderParam15` (and `layerParam…`) share a prefix
+    // in the engine.
+    for prefix in ["shaderParam", "layerParam"] {
+        assert!(keys.iter().any(|k| k == prefix), "the {prefix} keys moved");
+        keys.retain(|k| k != prefix);
+        keys.extend((0..16).map(|i| format!("{prefix}{i}")));
+    }
     for ty in ["ElementKeys", "ElementParams"] {
         let gaps = missing(&keys, &table(ty));
         assert!(gaps.is_empty(), "animatable keys not in {ty}: {gaps:?}");

@@ -499,6 +499,8 @@ declare extern type Bitmap with
 end
 declare extern type Shader with
 end
+declare extern type LayerShader with
+end
 declare extern type Brush with
 end
 
@@ -1493,6 +1495,11 @@ export type NodeProps = {
 	bg_shader: Shader?,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: { read [number]: Color | { number } }?,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: LayerShader?,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: { read [number]: Color | { number } }?,
 	-- Events.
 	on_click: (ClickHandler | Handler | Action)?,
 	-- Primary pointer down and up.
@@ -1803,6 +1810,11 @@ export type Props = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -2037,6 +2049,8 @@ export type Props_layout_clip = boolean?
 export type Props_mask = (Bitmap | MaskOptions)?
 export type Props_bg_shader = Shader?
 export type Props_shader_params = { read [number]: Color | { number } }?
+export type Props_layer_shader = LayerShader?
+export type Props_layer_params = { read [number]: Color | { number } }?
 export type Props_on_click = (ClickHandler | Handler | Action)?
 export type Props_on_press = (((e: PointerEvent) -> ...unknown) | Action)?
 export type Props_on_release = (((e: PointerEvent) -> ...unknown) | Action)?
@@ -2303,6 +2317,11 @@ export type ContainerProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -2613,6 +2632,11 @@ export type ScrollProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -2930,6 +2954,11 @@ export type TextProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -3239,6 +3268,11 @@ export type MarkdownViewProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -3596,6 +3630,11 @@ export type RichProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -3899,6 +3938,11 @@ export type ImageProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -4212,6 +4256,11 @@ export type SvgProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -4517,6 +4566,11 @@ export type CanvasProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -4852,6 +4906,11 @@ export type CheckboxProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -5163,6 +5222,11 @@ export type InputProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -5530,6 +5594,11 @@ export type ProgressProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -5834,6 +5903,11 @@ export type SliderProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -6151,6 +6225,11 @@ export type SegmentedProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -6464,6 +6543,11 @@ export type StepperProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -6778,6 +6862,11 @@ export type DisclosureProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -7091,6 +7180,11 @@ export type AccordionProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -7392,6 +7486,11 @@ export type SectionProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -7704,6 +7803,11 @@ export type SeparatorProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -8013,6 +8117,11 @@ export type TabsProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -8330,6 +8439,11 @@ export type TreeProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -8657,6 +8771,11 @@ export type DataGridProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -8980,6 +9099,11 @@ export type CalendarProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -9295,6 +9419,11 @@ export type DatePickerProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -9608,6 +9737,11 @@ export type TimeFieldProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -9920,6 +10054,11 @@ export type ComboboxProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -10241,6 +10380,11 @@ export type CommandPaletteProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -10550,6 +10694,11 @@ export type SelectProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -10862,6 +11011,11 @@ export type SplitProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -11186,6 +11340,11 @@ export type ListProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -11549,6 +11708,11 @@ export type LayerProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -11858,6 +12022,11 @@ export type ModalProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -12182,6 +12351,11 @@ export type PopoverProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -12507,6 +12681,11 @@ export type MenuItemProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -12819,6 +12998,11 @@ export type SubmenuProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -13131,6 +13315,11 @@ export type WebViewProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -13457,6 +13646,11 @@ export type TerminalProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -13761,6 +13955,11 @@ export type SlotProps = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -14070,6 +14269,11 @@ export type EachOptions = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -14382,6 +14586,11 @@ export type PresenceOptions = {
 	bg_shader: Props_bg_shader,
 	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
 	shader_params: Props_shader_params,
+	-- The subtree, cached as a layer, composites through it: each pixel of
+	-- the box passes through its `layer` function.
+	layer_shader: Props_layer_shader,
+	-- Up to four vec4s: lists of numbers, or colors (0 to 1).
+	layer_params: Props_layer_params,
 	-- Events.
 	on_click: Props_on_click,
 	-- Primary pointer down and up.
@@ -14749,6 +14958,11 @@ declare ui: {
 	-- A WGSL fill: `fn fill(input: FillInput) -> vec4<f32>`, with input.p,
 	-- input.size, input.time, input.scale and input.params (four vec4s).
 	shader: (source: string, opts: { fps: number? }?) -> Shader,
+	-- A WGSL layer shader: `fn layer(input: LayerInput) -> vec4<f32>`, with
+	-- input.color (the layer's pixel, straight alpha), input.p, input.size,
+	-- input.time, input.scale and input.params; `zgx_sample(p)` reads the
+	-- layer at another point of the box.
+	layer_shader: (source: string, opts: { fps: number? }?) -> LayerShader,
 	-- Sorts `list` in place, stably, by a field of each item (`"price"`) or
 	-- a function of it (called once an item); returns it. Use it over
 	-- `table.sort` with a comparator for long lists: that calls Luau some
@@ -14912,6 +15126,24 @@ export type ElementKeys = {
 	shaderParam13: AnimValue?,
 	shaderParam14: AnimValue?,
 	shaderParam15: AnimValue?,
+	layerTime: AnimValue?,
+	layer_time: AnimValue?,
+	layerParam0: AnimValue?,
+	layerParam1: AnimValue?,
+	layerParam2: AnimValue?,
+	layerParam3: AnimValue?,
+	layerParam4: AnimValue?,
+	layerParam5: AnimValue?,
+	layerParam6: AnimValue?,
+	layerParam7: AnimValue?,
+	layerParam8: AnimValue?,
+	layerParam9: AnimValue?,
+	layerParam10: AnimValue?,
+	layerParam11: AnimValue?,
+	layerParam12: AnimValue?,
+	layerParam13: AnimValue?,
+	layerParam14: AnimValue?,
+	layerParam15: AnimValue?,
 	clipBottom: AnimValue?,
 	clipLeft: AnimValue?,
 	clipRight: AnimValue?,
@@ -15062,6 +15294,24 @@ export type ElementParams = {
 	shaderParam13: AnimValue?,
 	shaderParam14: AnimValue?,
 	shaderParam15: AnimValue?,
+	layerTime: AnimValue?,
+	layer_time: AnimValue?,
+	layerParam0: AnimValue?,
+	layerParam1: AnimValue?,
+	layerParam2: AnimValue?,
+	layerParam3: AnimValue?,
+	layerParam4: AnimValue?,
+	layerParam5: AnimValue?,
+	layerParam6: AnimValue?,
+	layerParam7: AnimValue?,
+	layerParam8: AnimValue?,
+	layerParam9: AnimValue?,
+	layerParam10: AnimValue?,
+	layerParam11: AnimValue?,
+	layerParam12: AnimValue?,
+	layerParam13: AnimValue?,
+	layerParam14: AnimValue?,
+	layerParam15: AnimValue?,
 	clipBottom: AnimValue?,
 	clipLeft: AnimValue?,
 	clipRight: AnimValue?,

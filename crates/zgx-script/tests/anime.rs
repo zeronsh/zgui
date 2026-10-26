@@ -1011,6 +1011,40 @@ fn shader_fills_take_params_and_animate_their_uniforms() {
 }
 
 #[test]
+fn layer_shaders_take_params_and_animate_their_uniforms() {
+    let mut h = Harness::inline(
+        r##"local sheen = ui.layer_shader("fn layer(input: LayerInput) -> vec4<f32> { return input.color * input.params[0]; }")
+        return ui.div { id = "d", w = 40, h = 40, bg = "#336699", layer_shader = sheen, layer_params = { "#ffffff80", { 1, 2, 3, 4 } },
+            on_mount = function(el)
+                anime.animate(el, { layerTime = { 0, 2 }, layerParam4 = { 1, 3 }, duration = 100, ease = "linear" })
+            end }"##,
+    );
+    let node = h.find("d").unwrap();
+    assert!(
+        h.ui.scene.borrow().is_layer(node),
+        "a layer shader caches the subtree as a layer"
+    );
+    let start = h.ui.scene.borrow().layer_shader(node).cloned().unwrap();
+    assert!(start.shader.is_some());
+    close(
+        start.uniforms.params[0][0],
+        1.,
+        "a color parameter is 0 to 1",
+    );
+    close(start.uniforms.params[0][3], 128. / 255., "with its alpha");
+    h.frame();
+    h.run_ms(50.);
+    let mid = h.ui.scene.borrow().layer_shader(node).unwrap().uniforms;
+    close(mid.time, 1., "time half way");
+    close(
+        mid.params[1][0],
+        2.,
+        "layerParam4 is the second vec4's first value",
+    );
+    close(mid.params[1][1], 2., "the rest keep their literal values");
+}
+
+#[test]
 fn color_filters_animate_on_the_compositor() {
     let mut h = Harness::inline(
         r##"return ui.div { id = "d", w = 20, h = 20, bg = "#336699", saturate = 0.5, on_mount = function(el)

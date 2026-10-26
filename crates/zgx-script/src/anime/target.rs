@@ -44,6 +44,8 @@ pub(crate) enum Key {
     ClipLeft,
     /// A shader fill's time (0) or parameter (1 to 16).
     Shader(u8),
+    /// A layer shader's time (0) or parameter (1 to 16).
+    Layer(u8),
     Style(Prop),
     /// A state's value or a table field.
     Field(Rc<str>),
@@ -91,6 +93,14 @@ impl Key {
                     return None;
                 }
                 Key::Shader(n + 1)
+            }
+            "layerTime" | "layer_time" => Key::Layer(0),
+            name if name.starts_with("layerParam") => {
+                let n: u8 = name["layerParam".len()..].parse().ok()?;
+                if n > 15 {
+                    return None;
+                }
+                Key::Layer(n + 1)
             }
             "maskY" | "mask_y" => Key::MaskY,
             "scale" => Key::Scale,
@@ -147,7 +157,8 @@ impl Key {
             Key::ClipTop | Key::ClipBottom => Unit::Length(Basis::OwnHeight),
             Key::ClipLeft | Key::ClipRight => Unit::Length(Basis::OwnWidth),
             Key::Y => Unit::Length(Basis::OwnHeight),
-            Key::Opacity | Key::Scale | Key::ScaleX | Key::ScaleY | Key::Shader(_) => Unit::Factor,
+            Key::Opacity | Key::Scale | Key::ScaleX | Key::ScaleY => Unit::Factor,
+            Key::Shader(_) | Key::Layer(_) => Unit::Factor,
             Key::Brightness | Key::Contrast | Key::Saturate => Unit::Factor,
             Key::Rotate | Key::Skew | Key::SkewX | Key::SkewY => Unit::Angle,
             Key::Style(prop) => match prop.ty() {
@@ -291,6 +302,13 @@ fn read_element(e: &Element, key: &Key) -> V {
                 n => u.params[(n as usize - 1) / 4][(n as usize - 1) % 4],
             } as f64)
         }
+        Key::Layer(slot) => {
+            let u = e.layer_uniforms();
+            V::Num(match *slot {
+                0 => u.time,
+                n => u.params[(n as usize - 1) / 4][(n as usize - 1) % 4],
+            } as f64)
+        }
         Key::Scale | Key::ScaleX => V::Num(local().scale.0 as f64),
         Key::ScaleY => V::Num(local().scale.1 as f64),
         Key::Rotate => V::Num(local().rotate as f64),
@@ -407,6 +425,7 @@ fn write_element(e: &Element, key: &Key, v: &V) {
         Key::ClipBottom => e.set_clip_side(2, n()),
         Key::ClipLeft => e.set_clip_side(3, n()),
         Key::Shader(slot) => e.set_shader_slot(*slot as usize, n()),
+        Key::Layer(slot) => e.set_layer_slot(*slot as usize, n()),
         Key::Scale => e.set_local(crate::transform::LocalTransform {
             scale: (n(), n()),
             ..local()

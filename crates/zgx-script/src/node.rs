@@ -69,6 +69,11 @@ pub(crate) struct Node {
     /// Parameters given as theme colours (`"$accent"`): resolved where the
     /// node is styled, and again when the theme changes.
     pub shader_tokens: [Option<zgx::theme::TokenId>; 4],
+    /// `layer_shader = ui.layer_shader(...)`: the subtree composites
+    /// through a WGSL function.
+    pub layer_shader: Option<Arc<zgx::decoration::FillShader>>,
+    /// `layer_params`: the layer shader's sixteen values, as four vec4s.
+    pub layer_params: Option<[[f32; 4]; 4]>,
     /// `window_drag = true`: a press on it moves the window.
     pub window_drag: bool,
     /// `selectable = true`: the pointer selects the text in it (`false`
@@ -375,7 +380,65 @@ fn web_options(table: &Table) -> mlua::Result<zgx::web_view::WebViewOptions> {
 #[derive(Clone)]
 pub(crate) struct ShaderUd(pub Arc<zgx::decoration::FillShader>);
 impl UserData for ShaderUd {}
+/// `ui.layer_shader(source, opts)`: a compiled layer shader, for
+/// `layer_shader` (see `zgx::scene::LayerShader`).
+pub(crate) struct LayerShaderUd(pub Arc<zgx::decoration::FillShader>);
+impl UserData for LayerShaderUd {}
 
+/// `shader_params` and `layer_params`: up to four vec4s, lists of numbers
+/// or colors (0 to 1); theme colours (`"$accent"`) bind to `tokens`' slots
+/// where it has them.
+fn shader_params(
+    lua: &Lua,
+    value: &mlua::Value,
+    name: &str,
+    mut tokens: Option<&mut [Option<zgx::theme::TokenId>; 4]>,
+) -> mlua::Result<[[f32; 4]; 4]> {
+    let mlua::Value::Table(list) = value else {
+        return Err(mlua::Error::runtime(format!(
+            "`{name}` takes a list of up to four vec4s"
+        )));
+    };
+    let mut params = [[0.; 4]; 4];
+    for (i, entry) in list.sequence_values::<mlua::Value>().enumerate().take(4) {
+        params[i] = match entry? {
+            mlua::Value::Table(v) => {
+                let mut out = [0.; 4];
+                for (j, n) in v.sequence_values::<f32>().enumerate().take(4) {
+                    out[j] = n?;
+                }
+                out
+            }
+            mlua::Value::String(token)
+                if token
+                    .to_str()
+                    .is_ok_and(|t| t.starts_with('$') && t.len() > 1) =>
+            {
+                let Some(tokens) = tokens.as_deref_mut() else {
+                    return Err(mlua::Error::runtime(format!(
+                        "`{name}` takes numbers or colors, not theme tokens"
+                    )));
+                };
+                let token = token.to_string_lossy();
+                tokens[i] = Some(zgx::theme::token(&token[1..]));
+                [0.; 4]
+            }
+            other => {
+                let value: Value = lua.unpack(other)?;
+                let c = color_of(&value).ok_or_else(|| {
+                    mlua::Error::runtime("a shader parameter is a list of numbers or a color")
+                })?;
+                [
+                    c.0 as f32 / 255.,
+                    c.1 as f32 / 255.,
+                    c.2 as f32 / 255.,
+                    c.3 as f32 / 255.,
+                ]
+            }
+        };
+    }
+    Ok(params)
+}
 /// `ui.bitmap(w, h, fn)`: pixels made by a script, for masks.
 #[derive(Clone)]
 pub(crate) struct BitmapUd(pub Arc<zgx::image::ImageData>);
@@ -424,6 +487,8 @@ impl Node {
             shader: None,
             shader_params: None,
             shader_tokens: [None; 4],
+            layer_shader: None,
+            layer_params: None,
             window_drag: false,
             selectable: None,
             selection_colors: None,
@@ -2389,48 +2454,23 @@ fn fill_from(
                 node.shader = Some(ud.borrow::<ShaderUd>()?.0.clone());
             }
             "shader_params" => {
-                // Up to four vec4s: lists of numbers, or colors (0 to 1).
-                let mlua::Value::Table(list) = &value else {
+                node.shader_params = Some(shader_params(
+                    lua,
+                    &value,
+                    "shader_params",
+                    Some(&mut node.shader_tokens),
+                )?);
+            }
+            "layer_shader" => {
+                let mlua::Value::UserData(ud) = &value else {
                     return Err(mlua::Error::runtime(
-                        "`shader_params` takes a list of up to four vec4s",
+                        "`layer_shader` takes a ui.layer_shader",
                     ));
                 };
-                let mut params = [[0.; 4]; 4];
-                for (i, entry) in list.sequence_values::<mlua::Value>().enumerate().take(4) {
-                    params[i] = match entry? {
-                        mlua::Value::Table(v) => {
-                            let mut out = [0.; 4];
-                            for (j, n) in v.sequence_values::<f32>().enumerate().take(4) {
-                                out[j] = n?;
-                            }
-                            out
-                        }
-                        mlua::Value::String(token)
-                            if token
-                                .to_str()
-                                .is_ok_and(|t| t.starts_with('$') && t.len() > 1) =>
-                        {
-                            let name = token.to_string_lossy();
-                            node.shader_tokens[i] = Some(zgx::theme::token(&name[1..]));
-                            [0.; 4]
-                        }
-                        other => {
-                            let value: Value = lua.unpack(other)?;
-                            let c = color_of(&value).ok_or_else(|| {
-                                mlua::Error::runtime(
-                                    "a shader parameter is a list of numbers or a color",
-                                )
-                            })?;
-                            [
-                                c.0 as f32 / 255.,
-                                c.1 as f32 / 255.,
-                                c.2 as f32 / 255.,
-                                c.3 as f32 / 255.,
-                            ]
-                        }
-                    };
-                }
-                node.shader_params = Some(params);
+                node.layer_shader = Some(ud.borrow::<LayerShaderUd>()?.0.clone());
+            }
+            "layer_params" => {
+                node.layer_params = Some(shader_params(lua, &value, "layer_params", None)?);
             }
             "mask" => {
                 let (bitmap, t) = match &value {
@@ -4157,6 +4197,35 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     .clone()
             });
             Ok(ShaderUd(shader))
+        })?,
+    )?;
+    ui.set(
+        "layer_shader",
+        lua.create_function(|_, (source, opts): (String, Option<Table>)| {
+            let fps = match &opts {
+                Some(t) => t.get::<Option<f32>>("fps")?,
+                None => None,
+            };
+            // One shader per source and rate: rebuilding a view does not
+            // compile it again.
+            type Shaders =
+                std::collections::HashMap<(String, Option<u32>), Arc<zgx::decoration::FillShader>>;
+            thread_local! {
+                static LAYER_SHADERS: RefCell<Shaders> = RefCell::default();
+            }
+            // A shader that does not compile is the script's error, shown
+            // with its line, not a layer composited as painted.
+            zgx_gpu::check_layer_shader(&source)
+                .map_err(|e| mlua::Error::runtime(format!("ui.layer_shader: {e}")))?;
+            let key = (source, fps.map(f32::to_bits));
+            let shader = LAYER_SHADERS.with(|shaders| {
+                shaders
+                    .borrow_mut()
+                    .entry(key.clone())
+                    .or_insert_with(|| zgx::decoration::FillShader::new(key.0.clone(), fps))
+                    .clone()
+            });
+            Ok(LayerShaderUd(shader))
         })?,
     )?;
     ui.set(

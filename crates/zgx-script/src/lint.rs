@@ -123,6 +123,7 @@ const NOT_ELEMENTS: &[&str] = &[
     "toast",
     "dismiss_toast",
     "shader",
+    "layer_shader",
     "bitmap",
     "raw",
     "tween",
