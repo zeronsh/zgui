@@ -110,6 +110,56 @@ fn the_window_titlebar_area_and_controls_follow_what_the_host_says() {
     assert!(texts(&h.ui).contains(&"none".to_owned()));
 }
 
+/// `ui.window.zoom` follows the window's zoom and sets it; `zoomable`
+/// turns its keys off. Neither is made until a script reads it.
+#[test]
+fn the_window_zoom_is_a_state_a_script_reads_and_sets() {
+    let mut h = Harness::inline(
+        r##"return ui.column {
+            ui.text { id = "zoom", function() return `zoom {ui.window.zoom:get()}` end },
+            ui.button { id = "larger", on_click = function() ui.window.zoom:set(2) end, "Larger" },
+            ui.button { id = "lock", on_click = function() ui.window.zoomable:set(false) end, "Lock" },
+        }"##,
+    );
+    h.host.window_zoom(&h.ui);
+    h.frames(1);
+    assert!(
+        texts(&h.ui).contains(&"zoom 1".to_owned()),
+        "{:?}",
+        texts(&h.ui)
+    );
+    // The keys (or the View menu) zoom the window: the state follows.
+    h.ui.set_zoom(1.25);
+    h.frames(1);
+    assert!(
+        texts(&h.ui).contains(&"zoom 1.25".to_owned()),
+        "{:?}",
+        texts(&h.ui)
+    );
+    // The script zooms it.
+    h.click("larger");
+    assert_eq!(h.ui.zoom(), 2.);
+    assert!(h.ui.zoomable());
+    h.click("lock");
+    assert!(!h.ui.zoomable());
+}
+
+/// A script that never reads `ui.window.zoom` makes no state for it.
+#[test]
+fn the_window_zoom_is_made_on_first_read() {
+    let h = Harness::inline(
+        r##"return ui.text { id = "plain", function()
+            return tostring(rawget(ui.window, "zoom") == nil)
+        end }"##,
+    );
+    h.frames(1);
+    assert!(
+        texts(&h.ui).contains(&"true".to_owned()),
+        "{:?}",
+        texts(&h.ui)
+    );
+}
+
 /// A window's frame name and tabbing reach its host; a tabbing it does not
 /// know is an error.
 #[test]

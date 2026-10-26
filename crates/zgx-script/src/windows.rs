@@ -107,6 +107,11 @@ impl Windows {
 /// `ui.window.controls` read.
 pub(crate) const TITLEBAR_AREA: &str = "zgx.window.titlebar_area";
 pub(crate) const CONTROLS: &str = "zgx.window.controls";
+/// The shared keys holding the app's window's zoom (1 at 100%) and whether
+/// its keys zoom it (`ScriptHost::window_zoom`): `ui.window.zoom` and
+/// `ui.window.zoomable`, which a script reads and sets.
+pub(crate) const ZOOM: &str = "zgx.window.zoom";
+pub(crate) const ZOOMABLE: &str = "zgx.window.zoomable";
 
 /// Installs `ui.window`: called, it declares a window; its
 /// `titlebar_area` and `controls` are the app's own window's.
@@ -114,7 +119,7 @@ pub(crate) fn install(
     lua: &Lua,
     ui: &Table,
     windows: Rc<Windows>,
-    shared: &Store,
+    shared: &Rc<Store>,
 ) -> mlua::Result<()> {
     let window = lua.create_table()?;
     // The app's own window's title bar: the app's, not a plugin's to read
@@ -129,6 +134,23 @@ pub(crate) fn install(
         window.set("controls", State::new(shared.state(CONTROLS, Value::Nil)))?;
     }
     let meta = lua.create_table()?;
+    // `zoom` and `zoomable` made as a script first reads them: a script that
+    // never does makes neither.
+    if !plugin {
+        let shared = shared.clone();
+        meta.set(
+            "__index",
+            lua.create_function(move |_, (window, key): (Table, mlua::Value)| {
+                let state = match key.as_string().map(|key| key.to_string_lossy()) {
+                    Some(name) if name == "zoom" => shared.state(ZOOM, Value::Num(1.)),
+                    Some(name) if name == "zoomable" => shared.state(ZOOMABLE, Value::Bool(true)),
+                    _ => return Ok(mlua::Value::Nil),
+                };
+                window.raw_set(key.clone(), State::new(state))?;
+                window.raw_get::<mlua::Value>(key)
+            })?,
+        )?;
+    }
     meta.set(
         "__call",
         lua.create_function(move |lua, (_, table): (Table, Table)| {

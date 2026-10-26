@@ -333,6 +333,8 @@ pub fn run_hosting(
             cx.window_info.titlebar_area.clone(),
             cx.window_info.controls.clone(),
         );
+        // `ui.window.zoom`: the window's zoom, as its keys or the script set it.
+        host.window_zoom(&cx.ui);
         configure(&host);
         let _ = host.reload();
         cx.tasks.spawn(host.watch(Duration::from_millis(250)));

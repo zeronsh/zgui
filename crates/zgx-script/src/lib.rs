@@ -848,6 +848,8 @@ struct Inner {
     /// Keeps `ui.window.titlebar_area` and `controls` as the window's
     /// (`window_chrome`).
     chrome: RefCell<Option<zgx::reactive::Effect>>,
+    /// Keeps the window's zoom and `ui.window.zoom` the same (`window_zoom`).
+    zoom: RefCell<Option<zgx::reactive::Effect>>,
     elements: Rc<element::Elements>,
     engine: Rc<anime::Engine>,
     assets: Rc<lower::Assets>,
@@ -996,6 +998,7 @@ impl ScriptHost {
             assets: Rc::default(),
             shared: Rc::new(Store::new(runtime)),
             chrome: RefCell::default(),
+            zoom: RefCell::default(),
             actions: Actions::default(),
             functions: Functions::default(),
             current: RefCell::default(),
@@ -1294,6 +1297,45 @@ impl ScriptHost {
             buttons.set(rect(controls.get()));
         });
         *self.0.chrome.borrow_mut() = Some(effect);
+    }
+    /// Keep `ui.window.zoom` and `ui.window.zoomable` as window `ui` has
+    /// them, and its zoom as a script sets them: the zoom's keys and menu
+    /// items show in the state, and a script's `zoom:set(1.5)` zooms the
+    /// window (Chrome's 25% to 500%), `zoomable:set(false)` turns its keys
+    /// off.
+    pub fn window_zoom(&self, ui: &zgx::widgets::Ui) {
+        let zoom = self.0.shared.state(windows::ZOOM, Value::Num(ui.zoom()));
+        let zoomable = self
+            .0
+            .shared
+            .state(windows::ZOOMABLE, Value::Bool(ui.zoomable()));
+        // The window's zoom, as its keys change it.
+        {
+            let (zoom, weak) = (zoom.clone(), ui.downgrade());
+            ui.on_zoom(move || {
+                if let Some(ui) = weak.upgrade() {
+                    let now = Value::Num(ui.zoom());
+                    if zoom.with_untracked(|was| *was != now) {
+                        zoom.set(now);
+                    }
+                }
+            });
+        }
+        // The script's, as it sets it.
+        let weak = ui.downgrade();
+        let effect = self.0.runtime.effect_now(move || {
+            let (wanted, able) = (zoom.get(), zoomable.get());
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            ui.set_zoomable(!matches!(able, Value::Bool(false)));
+            if let Value::Num(wanted) = wanted
+                && wanted != ui.zoom()
+            {
+                ui.set_zoom(wanted);
+            }
+        });
+        *self.0.zoom.borrow_mut() = Some(effect);
     }
     /// The app commands scripts declare (`ui.command`), in declaration
     /// order, as of the last successful load: show them as menu items.

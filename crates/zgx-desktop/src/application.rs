@@ -2569,6 +2569,17 @@ impl Host {
         let mut renderer = self.make_renderer(&window)?;
         zgx::profile::mark("renderer made");
         self.display_scale = window.scale_factor();
+        // At the zoom it was left at, kept with its frame (before the zoom's
+        // host is told of changes: nothing to apply yet).
+        if let Some(zoom) = self
+            .options
+            .frame_autosave
+            .as_deref()
+            .and_then(crate::zoom_store::load)
+        {
+            self.context.ui.set_zoom(zoom);
+            crate::popup_window::set_zoom(window.id(), self.context.ui.zoom());
+        }
         self.scale_factor = self.content_scale();
         renderer.set_scale_factor(self.scale_factor as f32);
         self.context
@@ -3765,6 +3776,10 @@ impl Host {
         let anchors = self.context.ui.zoom_anchors();
         if let Some(window) = &self.window {
             crate::popup_window::set_zoom(window.id(), self.context.ui.zoom());
+        }
+        // Kept with its frame, for the next time it opens.
+        if let Some(name) = &self.options.frame_autosave {
+            crate::zoom_store::save(name, self.context.ui.zoom());
         }
         let ratio = (self.scale_factor / scale) as f32;
         self.cursor.0 *= ratio;

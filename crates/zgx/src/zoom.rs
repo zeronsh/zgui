@@ -41,9 +41,9 @@ impl Ui {
         if self.storage.zoom.replace(zoom) == zoom {
             return;
         }
-        let host = self.storage.zoom_host.borrow().clone();
-        if let Some(host) = host {
-            host();
+        let told = self.storage.zoom_host.borrow().clone();
+        for tell in told {
+            tell();
         }
     }
     /// One of Chrome's levels in: the next above the zoom.
@@ -80,10 +80,11 @@ impl Ui {
     pub fn zoomable(&self) -> bool {
         !self.storage.zoom_off.get()
     }
-    /// The host, told each time the zoom changes, to apply it.
+    /// `told` each time the zoom changes: the host, to apply it; a script,
+    /// to show it.
     #[doc(hidden)]
-    pub fn on_zoom(&self, apply: impl Fn() + 'static) {
-        *self.storage.zoom_host.borrow_mut() = Some(Rc::new(apply));
+    pub fn on_zoom(&self, told: impl Fn() + 'static) {
+        self.storage.zoom_host.borrow_mut().push(Rc::new(told));
     }
     /// What each scrolled view shows at its top, to keep there through a
     /// zoom (`restore_zoom_anchors`).
@@ -173,7 +174,7 @@ pub(crate) fn after_dispatch(ui: &Ui, event: &InputEvent) -> bool {
     let InputEvent::KeyDown { key, modifiers, .. } = event else {
         return false;
     };
-    if !is_zoom_key(key, *modifiers) || !ui.zoomable() || ui.storage.zoom_host.borrow().is_none() {
+    if !is_zoom_key(key, *modifiers) || !ui.zoomable() || ui.storage.zoom_host.borrow().is_empty() {
         return false;
     }
     match key {

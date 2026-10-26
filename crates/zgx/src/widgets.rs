@@ -925,8 +925,8 @@ pub(crate) struct UiStorage {
     pub(crate) zoom: Cell<f64>,
     /// The app turned zoom off (`set_zoomable`).
     pub(crate) zoom_off: Cell<bool>,
-    /// The host, told the zoom changed (`on_zoom`).
-    pub(crate) zoom_host: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Who is told the zoom changed (`on_zoom`): the host, a script.
+    pub(crate) zoom_host: RefCell<Vec<Rc<dyn Fn()>>>,
     /// The host's wheel recorder and player (`Ui::on_wheel_tape`).
     wheel_taper: RefCell<Option<WheelTaper>>,
     /// The display's refresh period (`Ui::set_refresh_interval`).
@@ -1168,7 +1168,7 @@ impl Ui {
             snapshotter: RefCell::new(None),
             zoom: Cell::new(1.),
             zoom_off: Cell::new(false),
-            zoom_host: RefCell::new(None),
+            zoom_host: RefCell::new(Vec::new()),
             wheel_taper: RefCell::new(None),
             refresh_interval: Cell::new(std::time::Duration::from_micros(16_667)),
             popup_previews: Cell::new(false),

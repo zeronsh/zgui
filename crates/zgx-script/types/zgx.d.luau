@@ -955,10 +955,15 @@ export type WindowRect = { x: number, y: number, width: number, height: number }
 -- inset or hidden title bar leaves (nil for a standard title bar, in
 -- fullscreen, and where the platform does not say), and `controls`, the
 -- window's own buttons in it (nil where there are none). Both follow
--- resizes, scale and fullscreen.
+-- resizes, scale and fullscreen. `zoom` is the window's zoom, as a
+-- browser's page zoom (1 at 100%; Cmd/Ctrl +, - and 0 change it, and
+-- setting it zooms the window, within 0.25 to 5); `zoomable` false turns
+-- the keys off.
 export type WindowApi = ((opts: WindowOptions) -> ()) & {
 	titlebar_area: State<WindowRect?>,
 	controls: State<WindowRect?>,
+	zoom: State<number>,
+	zoomable: State<boolean>,
 }
 
 ---------------------------------------------------------------------------
