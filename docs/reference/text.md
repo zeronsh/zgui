@@ -125,7 +125,7 @@ To draw blocks your own way, take them from `ui.markdown`:
 ui.markdown(text: string, opts: MarkdownOptions?) -> { MarkdownBlock }
 ```
 
-`ui.markdown` parses markdown (CommonMark with tables, strikethrough and task lists; raw HTML dropped) into blocks for a script to draw its own way. A block has `t`: `p` (`s`: runs), `h` (`l`: level, `s`), `code` (`lang`, `text`), `ul` and `ol` (`start`, `items`: each item a list of blocks), `quote` (`b`: blocks), `hr`, `table` (`head`: cells, `rows`: rows of cells, a cell being runs) and `img` (`src`, `alt`). A tight list item's text is a `p` with `tight`. Quotes and lists nest 64 levels at most (a list level counts two); deeper ones show as the deepest level's blocks. A run is `{ x = text, b?, i?, c? (code), s? (strike), a? (link), f? (a file) }`.
+`ui.markdown` parses markdown (CommonMark with tables, strikethrough and task lists; raw HTML dropped) into blocks for a script to draw its own way. A block has `t`: `p` (`s`: runs), `h` (`l`: level, `s`), `code` (`lang`, `text`), `ul` and `ol` (`start`, `items`: each item a list of blocks), `quote` (`b`: blocks), `hr`, `table` (`head`: cells, `rows`: rows of cells, a cell being runs) and `img` (`src`, `alt`). A tight list item's text is a `p` with `tight`. Quotes and lists nest 64 levels at most (a list level counts two); deeper ones show as the deepest level's blocks. A run is `{ x = text, b?, i?, c? (code), s? (strike), a? (link), f? (a file) }`. The types say so: a `MarkdownBlock` is a union by `t`, so `if b.t == "code" then … b.lang … end` is checked, and a run is a `MarkdownRun`.
 
 | Option | Type | Default | |
 |---|---|---|---|
@@ -138,7 +138,7 @@ Without a `key`, the same text gives the same blocks. Rust hosts parse with `zgx
 ```lua
 local reply = ui.state("reply", "A **streaming** reply.\n\n- one\n- two")
 
-local function runs(list: { any }): Node
+local function runs(list: { MarkdownRun }): Node
 	local props: RichProps = { wrap = true }
 	for _, r in list do
 		table.insert(props, ui.span { r.x, literal = true, weight = if r.b then 600 else nil })
@@ -157,11 +157,16 @@ return ui.column {
 		if b.t == "ul" then
 			local items: { Child } = {}
 			for _, item in b.items do
-				table.insert(items, runs(item[1].s))
+				local first = item[1]
+				if first and first.t == "p" then
+					table.insert(items, runs(first.s))
+				end
 			end
 			return ui.column { gap = 4, items }
+		elseif b.t == "p" or b.t == "h" then
+			return runs(b.s)
 		end
-		return runs(b.s or {})
+		return ui.div {}
 	end),
 }
 ```
@@ -173,7 +178,7 @@ Text is not selectable unless asked, as in native apps. `selectable = true` on a
 ## Gotchas
 
 - Text from data is a template too: a commit message with `{id}` in it looks for state named `id` (an error if there is none), and `{{` shows as `{`. Pass `literal = true` (on `ui.text`, `ui.rich` or a span) for text the script didn't write.
-- A template names state by its key, not by its Luau variable: `"{count}"` shows `ui.state("count", …)` whatever the local is called, and `"{state.count}"` is state `state`'s field `count`, not a module's state. A name no state has is an error when the text is built.
+- A template names state by its key, not by its Luau variable: `"{count}"` shows `ui.state("count", …)` whatever the local is called (a component's `ui.use_state` has no key: give `ui.text` the state itself, `ui.text { count }`), and `"{state.count}"` is state `state`'s field `count`, not a module's state. A name no state has is an error when the text is built.
 - Text does not wrap by default, and a row shrinks it no narrower than it is (its min-content, unwrapped): `wrap = true` (in a box with a width) lets it wrap down to its longest word, or `min_w = 0, truncate = true` ends it with "…" in a row.
 - Span options are plain values, read once: a state or function there is not followed (its value at build time is used). Only the run's text follows state. To restyle a run, build the paragraph in a function, or use two texts.
 - A span's `font` only knows `"mono"`; any other family is ignored (`ui.text`'s `font` takes names).

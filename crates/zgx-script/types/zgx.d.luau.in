@@ -737,7 +737,22 @@ export type MarkdownOptions = {
 	-- Repository paths (`src/main.rs:12`) are files: runs with `f`.
 	paths: boolean?,
 }
-export type MarkdownBlock = { t: string, [string]: any }
+-- A run of a block's text: `x`, and whether it is bold (`b`), italic
+-- (`i`), code (`c`), struck (`s`), a link (`a`, where to) or a repository
+-- file (`f`, with `paths`).
+export type MarkdownRun = { x: string, b: boolean?, i: boolean?, c: boolean?, s: boolean?, a: string?, f: string? }
+-- A block of `ui.markdown`'s, by its `t`: refine on it (`if b.t == "code"`)
+-- and its fields are typed.
+export type MarkdownBlock =
+	{ t: "p", s: { MarkdownRun }, tight: boolean? }
+	| { t: "h", l: number, s: { MarkdownRun } }
+	| { t: "code", lang: string, text: string, [string]: any }
+	| { t: "ul", items: { { MarkdownBlock } } }
+	| { t: "ol", start: number, items: { { MarkdownBlock } } }
+	| { t: "quote", b: { MarkdownBlock } }
+	| { t: "hr" }
+	| { t: "table", head: { { MarkdownRun } }, rows: { { { MarkdownRun } } } }
+	| { t: "img", src: string, alt: string }
 
 export type StrokeOptions = Merge<LineOptions, { draw: Pair? }>
 -- What a canvas's `draw(c, w, h)` paints with.

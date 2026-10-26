@@ -99,8 +99,10 @@ local function block(b: MarkdownBlock): Node
 			line(cells, false)
 		end
 		return ui.column { gap = 4, rows }
+	elseif b.t == "p" then
+		return runs(b.s)
 	end
-	return runs(b.s or {})
+	return ui.div {}
 end
 
 local blocks: { Child } = {}
