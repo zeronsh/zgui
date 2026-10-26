@@ -660,6 +660,66 @@ impl TextEditor {
         };
         self.move_to(pos, extend);
     }
+    /// Move the text at `from` to `to` (a byte offset outside it), as a
+    /// drag of a selection drops it: one undo step, the moved text
+    /// selected after. False when `to` is within it or it is empty.
+    pub fn move_text(&mut self, from: Range<usize>, to: usize) -> bool {
+        let (from, to) = (self.clamp(from.start)..self.clamp(from.end), self.clamp(to));
+        if from.is_empty() || (to > from.start && to < from.end) {
+            return false;
+        }
+        let moved = self.text.slice(from.clone()).into_owned();
+        // One replacement of the stretch it crosses, its parts swapped.
+        let (span, value, at) = if to >= from.end {
+            let between = self.text.slice(from.end..to).into_owned();
+            (
+                from.start..to,
+                between.clone() + &moved,
+                from.start + between.len(),
+            )
+        } else {
+            let between = self.text.slice(to..from.start).into_owned();
+            (to..from.end, moved.clone() + &between, to)
+        };
+        self.selection = Selection {
+            anchor: span.start,
+            focus: span.end,
+        };
+        if !self.replace(&value, None) {
+            return false;
+        }
+        self.select_edited(at..at + moved.len());
+        true
+    }
+    /// Insert `text` at `at`, as a drop of dragged text puts it: one undo
+    /// step, the dropped text selected after.
+    pub fn insert_dropped(&mut self, at: usize, text: &str) -> bool {
+        let at = self.clamp(at);
+        self.selection = Selection {
+            anchor: at,
+            focus: at,
+        };
+        if !self.replace(text, None) {
+            return false;
+        }
+        let end = self.selection.focus;
+        self.select_edited(at..end);
+        true
+    }
+    /// After an edit, `range` selected, as the step undone and redone.
+    fn select_edited(&mut self, range: Range<usize>) {
+        self.selection = Selection {
+            anchor: range.start,
+            focus: range.end,
+        };
+        if let Some(last) = self.undo.back_mut() {
+            last.after = self.selection;
+        }
+    }
+    /// `at` within the text, on a grapheme boundary.
+    fn clamp(&self, at: usize) -> usize {
+        self.boundary(at.min(self.text.len()))
+    }
     /// Move the caret to the start of the text. `extend` moves only the
     /// focus.
     pub fn move_document_start(&mut self, extend: bool) {
@@ -1294,6 +1354,34 @@ mod undo_run_tests {
         );
         e.move_paragraph(false, false);
         assert_eq!(e.selection().focus, 18, "the text's end stays");
+    }
+
+    #[test]
+    fn dragged_text_moves_and_drops_in_one_undo_step() {
+        let mut e = TextEditor::new("one two three");
+        // "two " after "three".
+        assert!(e.move_text(4..8, 13));
+        assert_eq!(e.text(), "one threetwo ");
+        assert_eq!(e.selected_text(), "two ", "the moved text stays selected");
+        assert!(e.undo());
+        assert_eq!(e.text(), "one two three", "one step puts it back");
+        assert!(e.redo());
+        assert_eq!(e.text(), "one threetwo ");
+        assert_eq!(e.selected_text(), "two ");
+        // Back before "one".
+        let mut e = TextEditor::new("one two three");
+        assert!(e.move_text(8..13, 0));
+        assert_eq!(e.text(), "threeone two ");
+        assert_eq!(e.selected_text(), "three");
+        // Into itself: nothing.
+        assert!(!e.move_text(0..5, 2));
+        assert_eq!(e.text(), "threeone two ");
+        // Dropped from elsewhere: inserted, selected, one step.
+        let mut e = TextEditor::new("ab");
+        assert!(e.insert_dropped(1, "XY"));
+        assert_eq!((&*e.text(), &*e.selected_text()), ("aXYb", "XY"));
+        assert!(e.undo());
+        assert_eq!(e.text(), "ab");
     }
 
     #[test]

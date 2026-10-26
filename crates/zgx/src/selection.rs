@@ -202,6 +202,10 @@ pub(crate) struct State {
     /// held the press: the region takes the pointer from it at the next
     /// move, so it hears a cancel and never activates.
     take_from: Option<NodeId>,
+    /// A press on the selection in a region, and where: moved far enough it
+    /// drags the selected text (as browsers drag a selection); let go, it
+    /// is a click.
+    text_press: Option<(NodeId, f32, f32)>,
     /// The region last pressed in: what select-all selects.
     active_root: Option<NodeId>,
     /// The window is in the background: highlights take the inactive colour.
@@ -495,8 +499,35 @@ pub(crate) fn mount_root(ui: &mut Ui, root: NodeId, mut style: SelectionStyle) {
                     return;
                 }
                 let modifiers = cx.pointer_modifiers();
+                if !modifiers.shift && cx.click_count() <= 1 && ui.on_selection(root, x, y) {
+                    ui.selection_state().borrow_mut().text_press = Some((root, x, y));
+                    cx.capture_pointer();
+                    return;
+                }
                 if ui.press_selection(root, x, y, cx.click_count().max(1), modifiers) {
                     cx.capture_pointer();
+                }
+            }
+            InputEvent::PointerMove { x, y }
+                if ui
+                    .selection_state()
+                    .borrow()
+                    .text_press
+                    .is_some_and(|(at, ..)| at == root) =>
+            {
+                let (_, px, py) = ui.selection_state().borrow().text_press.unwrap();
+                if (x - px).hypot(y - py) > cx.drag_threshold() {
+                    ui.selection_state().borrow_mut().text_press = None;
+                    let text = ui.selected_text();
+                    cx.start_drag_from(crate::input::DraggedText::new(text), px, py);
+                }
+            }
+            // Out of the region: other apps take it as text.
+            InputEvent::Drag(ref drag)
+                if drag.phase == crate::input::DragPhase::Start && drag.source == root =>
+            {
+                if let Some(text) = drag.payload.downcast_ref::<crate::input::DraggedText>() {
+                    cx.set_drag_export(vec![crate::input::DragItem::Text(text.text().to_owned())]);
                 }
             }
             InputEvent::PointerMove { x, y } => {
@@ -526,10 +557,20 @@ pub(crate) fn mount_root(ui: &mut Ui, root: NodeId, mut style: SelectionStyle) {
                 }
             }
             InputEvent::PointerUp {
+                x,
+                y,
                 button: PointerButton::Primary,
-                ..
             } => {
                 ui.selection_state().borrow_mut().pending = None;
+                // Pressed on the selection and let go: a click there.
+                let pressed = ui
+                    .selection_state()
+                    .borrow_mut()
+                    .text_press
+                    .take_if(|(at, ..)| *at == root);
+                if pressed.is_some() {
+                    ui.press_selection(root, x, y, 1, Modifiers::default());
+                }
                 // A press that selected (dragged) does not also click.
                 if ui.end_selection_gesture(root) {
                     cx.prevent_default();
@@ -538,6 +579,7 @@ pub(crate) fn mount_root(ui: &mut Ui, root: NodeId, mut style: SelectionStyle) {
             // Cancelled under it (another press took the pointer), or here.
             InputEvent::PointerCancel if cx.target == root => {
                 ui.selection_state().borrow_mut().pending = None;
+                ui.selection_state().borrow_mut().text_press = None;
                 ui.end_selection_gesture(root);
             }
             _ => {}
@@ -568,6 +610,34 @@ impl Ui {
             .take_while(|id| *id != root)
             .find_map(|id| semantics.get(id).map(|node| node.role))
             .is_some_and(|role| matches!(role, Role::Link | Role::Button))
+    }
+    /// Whether `x`, `y` in `root` falls inside its selection, not at an edge.
+    fn on_selection(&self, root: NodeId, x: f32, y: f32) -> bool {
+        let (anchor, focus) = {
+            let state = self.selection_state().borrow();
+            if state.root != Some(root) {
+                return false;
+            }
+            match (state.anchor, state.focus) {
+                (Some(anchor), Some(focus)) if anchor != focus => (anchor, focus),
+                _ => return false,
+            }
+        };
+        let Some(hit) = self.point_at(root, x, y) else {
+            return false;
+        };
+        let scene = self.scene.borrow();
+        // An end recycled with its row (a virtual list's): a press begins
+        // a selection, as it would.
+        if !scene.contains(anchor.node) || !scene.contains(focus.node) {
+            return false;
+        }
+        let (start, end) = if order(&scene, anchor, focus).is_le() {
+            (anchor, focus)
+        } else {
+            (focus, anchor)
+        };
+        order(&scene, start, hit.point).is_lt() && order(&scene, hit.point, end).is_lt()
     }
     /// A primary press at `x`, `y` in `root`: begin a selection. Returns
     /// whether a gesture began (the pointer is wanted).

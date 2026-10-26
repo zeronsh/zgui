@@ -125,8 +125,14 @@ fn an_address_bar_selects_all_on_focus() {
     assert_eq!(h.ui.input.focused(), Some(node));
     assert_eq!(editor.editor.borrow().text(), "https://example.com/");
     assert_eq!(editor.selection(), (0, "https://example.com/".len()));
-    // Not a double click: a caret where the second click lands.
+    // Not a double click: a caret where the second click lands, as it is
+    // let go (pressed, the selection could be dragged, as a browser's).
     h.ui.dispatch(InputEvent::PointerDown {
+        x,
+        y,
+        button: PointerButton::Primary,
+    });
+    h.ui.dispatch(InputEvent::PointerUp {
         x,
         y,
         button: PointerButton::Primary,

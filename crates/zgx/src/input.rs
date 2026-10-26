@@ -1544,8 +1544,9 @@ impl InputDispatcher {
         if count != 0 {
             self.state.borrow_mut().clicks.0 = None;
         }
-        // An activation carries the keys held as it was made (a ⌘-click).
-        let held = if matches!(event, InputEvent::Activate) {
+        // An activation carries the keys held as it was made (a ⌘-click),
+        // and a drag's phases the keys held over it (Option to copy).
+        let held = if matches!(event, InputEvent::Activate | InputEvent::Drag(_)) {
             self.state.borrow().modifiers
         } else {
             Modifiers::default()
@@ -1580,6 +1581,9 @@ impl InputDispatcher {
                 | InputEvent::PointerLeave
                 | InputEvent::PointerCancel
                 | InputEvent::Activate
+                // A drop says what keys are held (Option copies a dragged
+                // selection rather than moving it).
+                | InputEvent::Drag(_)
         ) {
             modifiers
         } else {
@@ -3495,4 +3499,4 @@ mod disabled_observer_tests {
 
 #[path = "input_drag.rs"]
 mod drag;
-pub use drag::{DragEnded, DragEvent, DragItem, DragPhase, DragState, SPRING_DELAY};
+pub use drag::{DragEnded, DragEvent, DragItem, DragPhase, DragState, DraggedText, SPRING_DELAY};

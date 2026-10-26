@@ -42,6 +42,8 @@ mod editor_selection_theme;
 mod editor_shape_reuse;
 #[path = "../editor_streaming_history.rs"]
 mod editor_streaming_history;
+#[path = "../editor_text_drag.rs"]
+mod editor_text_drag;
 #[path = "../editor_undo_keys.rs"]
 mod editor_undo_keys;
 #[path = "../editor_wrap_navigation.rs"]

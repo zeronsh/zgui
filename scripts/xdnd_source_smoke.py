@@ -15,7 +15,9 @@ Checks that:
   hears it not accepted;
 - Escape over the target cancels: nothing is dropped, not accepted;
 - over a target that refuses it (and hears its positions), let go there,
-  nothing is dropped, not accepted."""
+  nothing is dropped, not accepted;
+- a text field's selected words, pressed on and dragged out onto the target,
+  arrive there as text."""
 import argparse
 import json
 import os
@@ -194,14 +196,34 @@ def main():
         checks["refused: heard positions"] = "MOTION" in refuses_log.read_text()
         checks["refused: nothing dropped"] = "RECEIVED" not in refuses_log.read_text()
         checks["refused: not accepted"] = count(r"^DRAG_END accepted=false$", app_log) == 3
+
+        # A field's selected words (focused, it selects them all), pressed
+        # on and dragged out onto the target: it takes them as text, as a
+        # browser's selection drags.
+        field = (sx + 10 + 40, sy + 104 + 15)
+        run("xdotool", "mousemove", *field, "click", 1)
+        # Past the double-click time: a press of its own, on the selection.
+        time.sleep(1)
+        press = (field[0] + 10, field[1])
+        run("xdotool", "mousemove", *press, "mousedown", 1)
+        run("xdotool", "mousemove", press[0] + 12, press[1] + 4)
+        time.sleep(.05)
+        glide((press[0] + 12, press[1] + 4), centre(target))
+        time.sleep(.3)
+        assert over(target), "the pointer is not over the test target"
+        run("xdotool", "mouseup", 1)
+        until("the words dropped", lambda: count(r"^RECEIVED", takes_log) == 2)
+        texts = re.findall(r"^RECEIVED (\S+) '(.*)'$", takes_log.read_text(), re.M)
+        checks["selected words: received"] = texts[-1] if texts else None
+        checks["the target takes a field's selected words"] = bool(texts) and texts[-1][1] == "drag these words"
         checks["app alive"] = app.poll() is None
 
         (args.output / "result.json").write_text(json.dumps(checks, indent=2) + "\n")
         failed = [key for key, value in checks.items() if value is False]
         failed += [key for key in ("window renders as it moves out", "preview draws as it moves out") if checks[key]]
         assert not failed, f"failed: {failed}\n{json.dumps(checks, indent=2)}"
-        print("PASS: X11 drags out of zgx: a GTK target takes the text; back home, Escape and a refusing "
-              "target drop nothing")
+        print("PASS: X11 drags out of zgx: a GTK target takes the text, and a field's selected words; back "
+              "home, Escape and a refusing target drop nothing")
     finally:
         for process in reversed(processes):
             stop(process)

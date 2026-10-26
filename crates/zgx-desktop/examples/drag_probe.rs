@@ -130,6 +130,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .h(8.)
                 .bg(rgb(0x3d7ef7))
                 .reactive_style(move || zgx::style::Styles::new().ml((clock.get() * 200.) % 300.));
+            // Words to drag out as text: focused, they are all selected.
+            let words = text_input("Words", cx.ui.signal(String::from("drag these words")))
+                .id("words")
+                .size(240., 30.)
+                .select_on_focus(true);
             cx.render(
                 column()
                     .w_full()
@@ -138,7 +143,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .gap(10.)
                     .child(chip)
                     .child(tab("tab"))
-                    .child(bar),
+                    .child(bar)
+                    .child(words),
             );
             #[cfg(target_os = "macos")]
             cx.tasks.spawn(async move {

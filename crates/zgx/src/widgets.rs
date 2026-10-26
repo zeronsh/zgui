@@ -836,10 +836,17 @@ struct EditorDrag {
     /// selection they made: a shift-click extending it, while it stands,
     /// goes by those units too, as AppKit's text views do.
     units: Cell<Option<(EditorPointerSelection, (usize, usize))>>,
+    /// A press on the selection, where and on what byte: moved far enough
+    /// it drags the selected text; released, the caret goes there.
+    text_press: Cell<Option<(f32, f32, usize)>>,
+    /// The selection while a drag of text shows where it would drop (the
+    /// caret there): back as it leaves, or before the drop.
+    drop_restore: Cell<Option<crate::text_edit::Selection>>,
 }
 impl EditorDrag {
     fn cancel(&self) {
         self.mode.set(None);
+        self.text_press.set(None);
         self.generation.set(self.generation.get().wrapping_add(1));
     }
 }
@@ -4098,6 +4105,34 @@ impl Ui {
         });
         let scene = self.scene.clone();
         let input_storage = Rc::downgrade(&self.storage);
+        // The byte a drop at `x`, `y` (the window's points) goes in at.
+        let drop_point: Rc<dyn Fn(f32, f32) -> usize> = {
+            let scene = scene.clone();
+            let editor = editor.clone();
+            let scroll = scroll.clone();
+            let typography = typography.clone();
+            let wrap = wrap.clone();
+            let input_storage = input_storage.clone();
+            Rc::new(move |x, y| {
+                let s = scene.borrow();
+                let bounds = s.bounds(viewport);
+                let offset = *scroll.borrow();
+                let (_, size, font) = typography.borrow().clone();
+                let edit = editor.borrow();
+                let layout = committed_layout(
+                    &input_storage,
+                    &s,
+                    root,
+                    &edit,
+                    size,
+                    wrap.get().then_some(bounds.width.max(1.)),
+                    &font,
+                );
+                let x = (x - bounds.x).clamp(0., bounds.width.max(0.)) + offset.0;
+                let y = (y - bounds.y).clamp(0., (bounds.height - 0.01).max(0.)) + offset.1;
+                layout.hit_position(x, y).byte_offset
+            })
+        };
         let drag_select: Rc<dyn Fn()> = {
             let scene = scene.clone();
             let gesture = gesture.clone();
@@ -4425,6 +4460,22 @@ impl Ui {
                     let x = x - bounds.x + scroll.0;
                     let y = y - bounds.y + scroll.1;
                     let hit = layout.hit_position(x, y);
+                    // A press on the selection may drag it (as AppKit's text
+                    // views and browsers do): it stays until the pointer
+                    // moves or lets go.
+                    let selected_range = edit.selection().range();
+                    if !cx.pointer_modifiers().shift
+                        && cx.click_count() == 1
+                        && !hint.secure.get()
+                        && !selected_range.is_empty()
+                        && selected_range.start < hit.byte_offset
+                        && hit.byte_offset < selected_range.end
+                    {
+                        gesture.cancel();
+                        let (px, py) = gesture.pointer.get();
+                        gesture.text_press.set(Some((px, py, hit.byte_offset)));
+                        return;
+                    }
                     let selected = (edit.selection().anchor, edit.selection().focus);
                     let units = gesture
                         .units
@@ -4537,6 +4588,21 @@ impl Ui {
                     }
                     gesture.cancel();
                 }
+                InputEvent::PointerMove { x, y } if gesture.text_press.get().is_some() => {
+                    let (px, py, _) = gesture.text_press.get().unwrap();
+                    if (x - px).hypot(y - py) > cx.drag_threshold() {
+                        gesture.text_press.set(None);
+                        let edit = editor.borrow();
+                        let range = edit.selection().range();
+                        let text = edit.slice(range.clone()).into_owned();
+                        drop(edit);
+                        cx.start_drag_from(
+                            crate::input::DraggedText::from_editor(text, root, range),
+                            px,
+                            py,
+                        );
+                    }
+                }
                 InputEvent::PointerMove { x, y } if gesture.mode.get().is_some() => {
                     gesture.pointer.set((x, y));
                     drag_select();
@@ -4547,8 +4613,106 @@ impl Ui {
                     ..
                 }
                 | InputEvent::PointerCancel => {
+                    // Pressed on the selection and let go: the caret there.
+                    if let Some((_, _, at)) = gesture.text_press.take()
+                        && matches!(event, InputEvent::PointerUp { .. })
+                    {
+                        editor.borrow_mut().set_selection(at, at);
+                        position.set(TextPosition {
+                            byte_offset: at,
+                            affinity: TextAffinity::After,
+                        });
+                        changed = true;
+                    }
                     gesture.cancel();
                     cx.release_pointer();
+                }
+                InputEvent::Drag(drag) => {
+                    let dragged = drag.payload.downcast_ref::<crate::input::DraggedText>();
+                    match (drag.phase, dragged) {
+                        // Out of this editor: other apps take it as text.
+                        (crate::input::DragPhase::Start, Some(text))
+                            if text.from.as_ref().is_some_and(|(from, _)| *from == root) =>
+                        {
+                            cx.set_drag_export(vec![crate::input::DragItem::Text(
+                                text.text().to_owned(),
+                            )]);
+                        }
+                        // Over it: the caret where it would drop.
+                        (crate::input::DragPhase::Over, Some(_)) if !read_only.get() => {
+                            cx.accept_drag();
+                            let at = drop_point(drag.x, drag.y);
+                            let mut edit = editor.borrow_mut();
+                            if gesture.drop_restore.get().is_none() {
+                                gesture.drop_restore.set(Some(edit.selection()));
+                            }
+                            if edit.selection() != (crate::text_edit::Selection { anchor: at, focus: at }) {
+                                edit.set_selection(at, at);
+                                position.set(TextPosition {
+                                    byte_offset: at,
+                                    affinity: TextAffinity::After,
+                                });
+                                changed = true;
+                            }
+                        }
+                        (crate::input::DragPhase::Leave, Some(_)) => {
+                            if let Some(was) = gesture.drop_restore.take()
+                                && !drag.accepted
+                            {
+                                editor.borrow_mut().set_selection(was.anchor, was.focus);
+                                changed = true;
+                            }
+                        }
+                        (crate::input::DragPhase::Drop, Some(text))
+                            if !read_only.get() && !cx.default_prevented() =>
+                        {
+                            let at = drop_point(drag.x, drag.y);
+                            let mut edit = editor.borrow_mut();
+                            if let Some(was) = gesture.drop_restore.take() {
+                                edit.set_selection(was.anchor, was.focus);
+                            }
+                            let modifiers = cx.pointer_modifiers();
+                            let copy = if cfg!(target_os = "macos") {
+                                modifiers.alt
+                            } else {
+                                modifiers.control
+                            };
+                            let moved_here = !copy
+                                && text.from.as_ref().is_some_and(|(from, range)| {
+                                    *from == root && edit.slice(range.clone()) == text.text()
+                                });
+                            let dropped = match &text.from {
+                                Some((_, range)) if moved_here => edit.move_text(range.clone(), at),
+                                _ => edit.insert_dropped(at, text.text()),
+                            };
+                            if dropped {
+                                // From another editor, moved: it lets it go.
+                                if !copy && !moved_here && text.from.is_some() {
+                                    text.taken.set(true);
+                                }
+                                position.set(TextPosition {
+                                    byte_offset: edit.selection().focus,
+                                    affinity: TextAffinity::After,
+                                });
+                                changed = true;
+                            }
+                            cx.prevent_default();
+                            cx.stop_propagation();
+                        }
+                        // Dragged out of here and moved elsewhere: let it go.
+                        (crate::input::DragPhase::End, Some(text)) if text.taken.get() => {
+                            if let Some((from, range)) = &text.from
+                                && *from == root
+                            {
+                                let mut edit = editor.borrow_mut();
+                                if edit.slice(range.clone()) == text.text() {
+                                    edit.set_selection(range.start, range.end);
+                                    changed = edit.backspace();
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 InputEvent::KeyUp {
                     key: Key::Space, ..

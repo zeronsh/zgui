@@ -1072,7 +1072,10 @@ fn a_selection_across_a_scroll_viewport_takes_what_it_scrolled_away() {
         ui.selected_text(),
         "Above\nRow 0\nRow 1\nRow 2\nRow 3\nRow 4\nBelow"
     );
-    // From inside the viewport out past its bottom, onto the text there.
+    // From inside the viewport out past its bottom, onto the text there
+    // (a click first: a drag from inside the selection would drag its text).
+    press(&mut ui, 200., 290., false);
+    release(&mut ui, 200., 290.);
     drag(&mut ui, (0., 30.), (12., 70.));
     assert_eq!(ui.selected_text(), "Row 2\nRow 3\nRow 4\nBe");
 }
@@ -1272,6 +1275,9 @@ fn copying_takes_rows_a_virtual_list_has_not_mounted_from_its_row_text() {
     // where it was: no more than was selected.
     offset.set(0.);
     ui.prepare_frame();
+    // A click first: a drag from inside the selection drags its text.
+    press(&mut ui, 200., 290., false);
+    release(&mut ui, 200., 290.);
     drag(&mut ui, (6., 50.), (18., 90.));
     assert_eq!(ui.selected_text(), "ow 1\nRow 2\nRow");
     offset.set(10_000.);
@@ -1280,6 +1286,8 @@ fn copying_takes_rows_a_virtual_list_has_not_mounted_from_its_row_text() {
     // One end scrolled away, the other in view.
     offset.set(0.);
     ui.prepare_frame();
+    press(&mut ui, 200., 290., false);
+    release(&mut ui, 200., 290.);
     drag(&mut ui, (12., 50.), (12., 110.));
     assert_eq!(ui.selected_text(), "w 1\nRow 2\nRow 3\nRo");
     // Row 1 is two rows above the view, past the overscan.
@@ -1354,4 +1362,61 @@ fn long_document_select_all_and_copy_timings() {
         ui.prepare_frame();
     }
     eprintln!("scroll frame, nothing selected: {:?}", start.elapsed() / 10);
+}
+
+/// Selected text drags out of a selectable region as browsers drag a
+/// selection: into a field it copies (the region's text stays), to other
+/// apps as plain text; a press on the selection let go is a click there.
+#[test]
+fn a_selection_drags_into_a_field_and_a_press_on_it_let_go_clicks() {
+    use zgx::input::{DragItem, DraggedText};
+    let mut ui = Ui::new(400., 300.);
+    let value = ui.signal(String::new());
+    let view = ui.mount(
+        column()
+            .w(300.)
+            .text_size(10.)
+            .line_height(20.)
+            .child(column().selectable(true).child(text("Hello world")))
+            .child(
+                text_input("Field", value.clone())
+                    .id("field")
+                    .size(200., 30.),
+            ),
+    );
+    ui.prepare_frame();
+    // Characters 6 points wide: "world" spans 36 to 66.
+    for _ in 0..2 {
+        press(&mut ui, 50., 10., false);
+        release(&mut ui, 50., 10.);
+    }
+    assert_eq!(ui.selected_text(), "world");
+    // Pressed elsewhere on it than the double click (so not a third click).
+    press(&mut ui, 62., 10., false);
+    ui.dispatch(InputEvent::PointerMove { x: 72., y: 10. });
+    let state = ui.input.drag_state().expect("dragging the selection");
+    assert_eq!(
+        state.payload.downcast_ref::<DraggedText>().unwrap().text(),
+        "world"
+    );
+    assert_eq!(
+        state.export.as_deref(),
+        Some(&[DragItem::Text("world".into())][..])
+    );
+    let field = ui.scene.borrow().bounds(view.find("field").unwrap());
+    let (x, y) = (field.x + 20., field.y + field.height / 2.);
+    ui.dispatch(InputEvent::PointerMove { x, y });
+    release(&mut ui, x, y);
+    ui.prepare_frame();
+    assert_eq!(value.get(), "world", "dropped into the field");
+    assert_eq!(
+        ui.selected_text(),
+        "world",
+        "the region's text stays, still selected"
+    );
+    // Pressed on the selection and let go without moving: a click there.
+    press(&mut ui, 50., 10., false);
+    assert_eq!(ui.selected_text(), "world", "kept while pressed");
+    release(&mut ui, 50., 10.);
+    assert_eq!(ui.selected_text(), "", "a click collapses it");
 }

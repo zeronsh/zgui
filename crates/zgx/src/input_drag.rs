@@ -75,6 +75,40 @@ pub struct DragEvent {
     /// `source` and the grab point are not this window's.
     pub visiting: bool,
 }
+/// Text dragged out of an editor or selectable text, as AppKit's text views
+/// and browsers drag a selection: an editor takes it where it is dropped (a
+/// view accepts it with `View::on_drop::<DraggedText>`), and other apps take
+/// it as plain text.
+#[derive(Debug)]
+pub struct DraggedText {
+    text: String,
+    /// The editor it was selected in, and where: a drop there moves it.
+    pub(crate) from: Option<(NodeId, std::ops::Range<usize>)>,
+    /// A destination took it to keep (moved, not copied): its source lets
+    /// it go as the drag ends.
+    pub(crate) taken: std::cell::Cell<bool>,
+}
+impl DraggedText {
+    /// Dragged text that no editor gives up: copied wherever it is dropped.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            from: None,
+            taken: std::cell::Cell::new(false),
+        }
+    }
+    pub(crate) fn from_editor(text: String, editor: NodeId, range: std::ops::Range<usize>) -> Self {
+        Self {
+            text,
+            from: Some((editor, range)),
+            taken: std::cell::Cell::new(false),
+        }
+    }
+    /// The text.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
 /// What a drag carries to other apps, when a host hands it to the platform
 /// as it leaves the window (`View::drag_export`).
 #[derive(Clone, Debug, PartialEq)]
