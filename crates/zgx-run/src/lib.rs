@@ -336,21 +336,9 @@ pub fn run_hosting(
         configure(&host);
         let _ = host.reload();
         cx.tasks.spawn(host.watch(Duration::from_millis(250)));
-        // The script's commands are the menu bar; their keys work wherever
-        // focus is.
-        let commands = host.commands();
-        let windows = cx.windows.clone();
-        let menus_follow = cx.ui.runtime.effect(move || {
-            if let Err(error) = windows.set_menus(menus(&commands.get())) {
-                eprintln!("zgx run: menus: {error}");
-            }
-        });
+        let menus_follow = serve_commands(&host, cx);
         // The script's windows (`ui.window`): each open while its state is.
         let windows_follow = follow_windows(&host, cx);
-        let run = host.clone();
-        cx.on_menu_action(move |action| {
-            run.run_command(&action.0);
-        });
         let saving = host.clone();
         let keep = std::cell::RefCell::new(Some((menus_follow, windows_follow)));
         cx.on_closed(move || {
@@ -360,6 +348,29 @@ pub fn run_hosting(
         cx.render(host.view());
     })?;
     Ok(())
+}
+
+/// `host`'s commands (`ui.command`) as the application's menu bar, kept
+/// current as a reload changes them, each item running its command: their
+/// shortcuts work wherever focus is, as `run` gives them. For a Rust host
+/// that makes its own window; keep the effect it returns while the window
+/// lives.
+pub fn serve_commands(
+    host: &ScriptHost,
+    cx: &mut zgx_desktop::WindowContext,
+) -> zgx::reactive::Effect {
+    let commands = host.commands();
+    let windows = cx.windows.clone();
+    let follow = cx.ui.runtime.effect(move || {
+        if let Err(error) = windows.set_menus(menus(&commands.get())) {
+            eprintln!("zgx run: menus: {error}");
+        }
+    });
+    let run = host.clone();
+    cx.on_menu_action(move |action| {
+        run.run_command(&action.0);
+    });
+    follow
 }
 
 /// Open and close `host`'s windows (`ui.window`) as their `open` states

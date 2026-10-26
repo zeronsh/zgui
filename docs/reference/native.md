@@ -76,6 +76,8 @@ A `Term`'s `id`, `title`, `pwd`, `process`, `pid`, `focused`, `bell` (it rang si
 | `run` | `() -> ()` | required | called when it is chosen |
 | `separator` | `boolean` | `false` | a separator line in `menu` instead of a command (`id` and `run` are not needed) |
 
+Commands are the app's menu bar, and their keys are its menu items' shortcuts: `zgx run` (and `zgx_run::run_hosting`, for a Rust host serving its script a fetcher or actions) installs them. A Rust host that makes its own window gets the same with `zgx_run::serve_commands(&host, cx)` in its `Application::run`, keeping the effect it returns; headless, a test runs a command with `ScriptHost::run_command(id)`.
+
 ## Windows
 
 ```luau
