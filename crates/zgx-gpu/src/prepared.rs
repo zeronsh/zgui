@@ -1322,13 +1322,15 @@ impl TextCache {
     }
     /// Spare lines for a text of `text`'s lines: long ones for long lines.
     fn spare_for(&mut self, text: &str) -> Vec<BufferLine> {
+        // Lines counted at \n: a short text breaking at \r alone or a bidi
+        // paragraph separator gets too little room and grows its list once.
         let lines = text.bytes().filter(|byte| *byte == b'\n').count() + 1;
         let long = text.len() > lines * SPARE_TEXT;
         let mut taken = match lines {
             1 => self.spare_lists.pop().unwrap_or_default(),
             _ => Vec::new(),
         };
-        taken.reserve(lines);
+        taken.reserve_exact(lines);
         for pool in if long {
             [&mut self.spare_long, &mut self.spare]
         } else {
@@ -1410,6 +1412,55 @@ mod tests {
         RichText::new(text, runs).unwrap()
     }
 
+    /// A one-line text's list of lines is made with room for one, so the
+    /// pool of them (`spare_lists`, which keeps only such lists) takes it
+    /// back and the next one-line text reuses it (research B5a: lists made
+    /// with room for four were freed instead).
+    #[test]
+    fn a_one_line_texts_list_goes_back_to_its_pool() {
+        let mut cache = TextCache::default();
+        let list = cache.spare_for("one line");
+        assert_eq!(list.capacity(), 1);
+        let at = list.as_ptr();
+        cache.recycle(Some(list));
+        assert_eq!(cache.spare_lists.len(), 1);
+        let again = cache.spare_for("another line");
+        assert_eq!(again.as_ptr(), at);
+    }
+    /// Text breaking other than at \n (\r alone, \r\n, a bidi paragraph
+    /// separator) is given room for fewer lines than it has, from the pool
+    /// of one-line lists or not: its list grows, and it lays out as it would
+    /// in a fresh cache.
+    #[test]
+    fn text_breaking_other_than_at_newlines_lays_out_the_same_from_the_pool() {
+        let mut fonts = FontSystem::new();
+        let font = FontStyle::default();
+        let texts = [
+            "a\rb",
+            "a\r\nb\rc",
+            "a\u{2029}b",
+            "a\u{85}b",
+            "a\x1eb",
+            "a\rb\nc",
+        ];
+        let lines = |cache: &mut TextCache, fonts: &mut FontSystem, text: &Arc<str>| {
+            let laid = cache.layout_plain(fonts, text, 14., &font, None);
+            laid.lines
+                .iter()
+                .map(|line| (line.text().to_owned(), line.layout_opt().map(Vec::len)))
+                .collect::<Vec<_>>()
+        };
+        for text in texts {
+            let text: Arc<str> = text.into();
+            let mut pooled = TextCache::default();
+            let spare = pooled.spare_for("one line");
+            pooled.recycle(Some(spare));
+            let fresh = lines(&mut TextCache::default(), &mut fonts, &text);
+            assert_eq!(lines(&mut pooled, &mut fonts, &text), fresh, "{text:?}");
+        }
+        let text: Arc<str> = "a\rb".into();
+        assert_eq!(lines(&mut TextCache::default(), &mut fonts, &text).len(), 2);
+    }
     /// Plain text as one run, laid out as rich text is.
     fn plain(text: &Arc<str>, font_size: f32, font: &FontStyle) -> RichText {
         let run = zgx::rich_text::TextRun {
