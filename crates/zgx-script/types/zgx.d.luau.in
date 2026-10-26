@@ -1494,6 +1494,18 @@ export type TextProps = Merge<Props, {
 	-- (code, titles, messages) that might hold `{name}`.
 	literal: boolean?,
 }>
+-- `ui.markdown_view`'s: the markdown first (a string, a template, a state's
+-- text or a function), the rest a column's styles.
+export type MarkdownViewProps = Merge<Props, {
+	[number]: Text,
+	literal: boolean?,
+	-- Single newlines break lines, as people's messages show them.
+	breaks: boolean?,
+	-- Repository paths (`src/main.rs:12`) are files.
+	paths: boolean?,
+	-- A Copy button on code blocks (true).
+	copy: boolean?,
+}>
 -- `ui.span`'s options are plain values.
 export type SpanProps = {
 	-- The text first.
@@ -2270,6 +2282,12 @@ declare ui: {
 	-- reply's id), text growing under it parses only its new end, and its
 	-- earlier blocks are the same tables as before.
 	markdown: (text: string, opts: MarkdownOptions?) -> { MarkdownBlock },
+	-- Markdown drawn: paragraphs, headings, lists, quotes, tables, and code
+	-- blocks with a Copy button, in the theme's colours and sizes,
+	-- selectable. As its text changes it parses only what changed and
+	-- builds only the blocks that did: a reply streaming in grows by its
+	-- last block.
+	markdown_view: (props: MarkdownViewProps) -> Node,
 	effect: (f: () -> ...unknown) -> (),
 	-- One update for many writes; returns what `f` returns.
 	batch: <R...>(f: () -> R...) -> R...,

@@ -22,6 +22,7 @@
 //! `ui.each` over them, a reconciling [`crate::Shared`]) skips them at a
 //! pointer's glance.
 mod mend;
+pub(crate) mod view;
 
 pub use mend::PENDING_LINK_URL;
 

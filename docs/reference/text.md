@@ -109,6 +109,19 @@ return ui.column {
 ## Markdown
 
 ```luau
+ui.markdown_view(props: MarkdownViewProps) -> Node
+```
+
+`ui.markdown_view { text }` draws markdown: paragraphs and headings of styled runs (bold, italic, struck, `code`, links), lists, quotes, rules, tables, and code blocks with their language and a Copy button, in the theme's colours and sizes (`$surface.sunken`, `$border.subtle`, `$text.tertiary`, `$font.size.*`), selectable as prose is. Its text is a string, a template, a state's (`"{reply}"`) or a function. As the text changes it parses only what changed and builds only the blocks whose value changed, so a reply streaming in grows by its last block, and every block before it keeps its nodes, layout and paint. Options: `breaks` (single newlines break lines), `paths` (repository paths are files), `copy = false` (no Copy buttons); the rest are a column's styles (`gap` between blocks is 10).
+
+```lua
+local reply = ui.state("reply", "Some **bold** text, then code:\n\n```lua\nprint(1)\n```")
+return ui.markdown_view { "{reply}", w = 520, text_size = 15 }
+```
+
+To draw blocks your own way, take them from `ui.markdown`:
+
+```luau
 ui.markdown(text: string, opts: MarkdownOptions?) -> { MarkdownBlock }
 ```
 

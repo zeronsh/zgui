@@ -119,6 +119,7 @@ The component library's elements (`ui.data_grid`, `ui.tree`, `ui.calendar`, `ui.
 | `scroll`, `scroll_x` | scroll views; `offset = state` binds the position in points; `follow = true` keeps the view at its end while the content grows, until it is scrolled away (a transcript) |
 | `text "…"`, `text { "…", … }`, `text(fn)` | `{name}` interpolates state in Rust; `{{` `}}` are literal braces |
 | `rich { "plain", span { "bold", bold = true, on_click = … } }` | inline runs: `color bg text_size weight bold italic underline strike font on_click href` |
+| `markdown_view { text, breaks, paths, copy }` | markdown drawn (code blocks with Copy, the theme's colours), parsed as its text changes and only its changed blocks built again: a streaming reply's view ([reference](reference/text.md#markdown)) |
 | `markdown(text, { key, breaks, paths })` | markdown parsed into blocks of runs to draw your own way; with `key`, text that grows (a streaming reply) parses only its new end and keeps its earlier blocks the same tables ([reference](reference/text.md#markdown)) |
 | `image { src = "a.png", fit = "cover" }` | PNG or JPEG, relative to the script; `src` may be state |
 | `svg { src = "icon.svg" }`, `svg { code = "<svg…>" }` | `tint = color` (a state or function re-tints it); `tint = "currentColor"` follows the text color it inherits (a button's, hover included) |

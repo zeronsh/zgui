@@ -503,6 +503,7 @@ impl Node {
             Kind::Button => "button",
             Kind::Scroll { .. } => "scroll",
             Kind::Text(_) => "text",
+            Kind::Markdown { .. } => "markdown_view",
             Kind::Rich(_) => "rich",
             Kind::Image { .. } => "image",
             Kind::Svg { .. } => "svg",
@@ -671,6 +672,12 @@ pub(crate) enum Kind {
         scrollbar: bool,
     },
     Text(Text),
+    /// `ui.markdown_view { text }`: markdown drawn, parsed as the text
+    /// changes and only its changed blocks built again.
+    Markdown {
+        text: Text,
+        options: crate::markdown::view::ViewOptions,
+    },
     Rich(Vec<Span>),
     Image {
         label: String,
@@ -2954,6 +2961,37 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             fill_from(lua, &mut node, &table, Some(&mut args))?;
             let literal = args.literal.unwrap_or(false);
             node.kind = Kind::Text(text_of(lua, args.content, "ui.text", literal)?);
+            node_ud(lua, node)
+        })?,
+    )?;
+    ui.set(
+        "markdown_view",
+        lua.create_function(|lua, table: Table| {
+            // Its own options, read before the styles are.
+            let flag = |name: &str, default: bool| -> mlua::Result<bool> {
+                let value = table.get::<Option<bool>>(name)?.unwrap_or(default);
+                table.raw_set(name, mlua::Value::Nil)?;
+                Ok(value)
+            };
+            let options = crate::markdown::view::ViewOptions {
+                parse: crate::markdown::Options {
+                    breaks: flag("breaks", false)?,
+                    paths: flag("paths", false)?,
+                    code: None,
+                },
+                copy: flag("copy", true)?,
+            };
+            let mut args = TextArgs::default();
+            let empty = Kind::Text(Text::Literal(String::new()));
+            let mut node = Node::new(owner(lua)?, empty);
+            fill_from(lua, &mut node, &table, Some(&mut args))?;
+            let literal = args.literal.unwrap_or(false);
+            let text = text_of(lua, args.content, "ui.markdown_view", literal)?;
+            node.kind = Kind::Markdown { text, options };
+            // Prose: selectable as a web page's is, unless asked not to be.
+            if node.selectable.is_none() {
+                node.selectable = Some(true);
+            }
             node_ud(lua, node)
         })?,
     )?;

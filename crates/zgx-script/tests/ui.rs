@@ -3032,3 +3032,45 @@ fn a_list_of_data_takes_no_count() {
     let error = host.reload().unwrap_err();
     assert!(error.contains("not with `count`"), "{error}");
 }
+#[test]
+fn a_markdown_view_draws_blocks_and_builds_again_only_those_that_change() {
+    let mut h = Harness::with_desktop(|runtime| {
+        zgx_script::ScriptHost::inline(
+            runtime,
+            "app",
+            r##"local reply = ui.state("reply", "# Title\n\nSome **bold** words.\n\n```lua\nprint(1)\n```\n\nThen")
+            ui.command { id = "more", run = function() reply:set(reply:peek() .. " more") end }
+            return ui.column { w = 300, h = 280, ui.markdown_view { "{reply}", w_full = true } }"##,
+        )
+    });
+    h.frames(1);
+    let texts = h.texts();
+    for want in [
+        "Title",
+        "Some bold words.",
+        "lua",
+        "print(1)",
+        "Copy",
+        "Then",
+    ] {
+        assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
+    }
+    // The code block before the growing paragraph keeps its nodes.
+    let copy = h.find("copy").unwrap();
+    assert!(h.host.run_command("more"));
+    h.frames(1);
+    assert!(h.texts().iter().any(|t| t == "Then more"));
+    assert_eq!(
+        h.find("copy"),
+        Some(copy),
+        "the code block was not built again"
+    );
+    // Copy puts the code on the clipboard.
+    h.click("copy");
+    h.frames(1);
+    assert_eq!(h.desktop.as_ref().unwrap().clipboard(), "print(1)");
+    h.frames(1);
+    assert!(h.texts().iter().any(|t| t == "Copied"));
+    assert_eq!(h.error(), None);
+}
+

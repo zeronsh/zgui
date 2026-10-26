@@ -1065,6 +1065,10 @@ fn kind_view(
             }
         }
         Kind::Text(text) => lower_text(text, vm),
+        Kind::Markdown { text, options } => {
+            let (text, vm) = (copy_text(text), vm.clone());
+            crate::markdown::view::view(move || render_text(&text, &vm), options.clone())
+        }
         Kind::Rich(spans) => lower_rich(spans, vm, low),
         Kind::Image { .. } => lower_image(&node.kind, vm, low),
         Kind::Svg { label, src } => {
@@ -3589,6 +3593,22 @@ fn render_text(text: &Text, vm: &Vm) -> String {
                 "⚠".into()
             }
         },
+    }
+}
+/// `text`, owned: what a closure that renders it keeps.
+fn copy_text(text: &Text) -> Text {
+    match text {
+        Text::Literal(s) => Text::Literal(s.clone()),
+        Text::Template(segments) => Text::Template(
+            segments
+                .iter()
+                .map(|s| match s {
+                    Segment::Literal(l) => Segment::Literal(l.clone()),
+                    Segment::State(s, path) => Segment::State(s.clone(), path.clone()),
+                })
+                .collect(),
+        ),
+        Text::Computed(f) => Text::Computed(f.clone()),
     }
 }
 fn lower_text(text: &Text, vm: &Rc<Vm>) -> View {
