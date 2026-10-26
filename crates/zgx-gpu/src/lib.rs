@@ -1566,14 +1566,23 @@ struct LayerPresent {
     /// Full-rate frames draw into drawables (`PRESENT_DRAWABLE`, or a test's
     /// `debug_present_drawable`).
     drawables: Option<bool>,
+    /// Where this window is in the full-rate paths' trial (`PRESENT_AUTO`).
+    trial: Trial,
 }
 #[cfg(target_os = "macos")]
 impl LayerPresent {
     /// Whether the next frame draws into a drawable: full rate, and nothing
     /// asking for the plain layer (as `present_layer` decides it).
     fn drawable_frame(&self) -> bool {
-        self.drawables.unwrap_or(*PRESENT_DRAWABLE)
-            && (self.full_rate || *PRESENT_DRAWABLE_ALL)
+        let auto = self.drawables.is_none()
+            && *PRESENT_AUTO
+            && self.full_rate
+            && match VERDICT.load(std::sync::atomic::Ordering::Relaxed) {
+                2 => true,
+                1 => false,
+                _ => matches!(self.trial, Trial::Drawables { .. }),
+            };
+        (auto || self.drawables.unwrap_or(*PRESENT_DRAWABLE) && (self.full_rate || *PRESENT_DRAWABLE_ALL))
             // DIAGNOSTIC (ZGX_DRAWABLE_ALT): drawables on even Unix seconds,
             // tiles on odd, for paired-second WindowServer measurement.
             && (!*DRAWABLE_ALT
@@ -1685,8 +1694,42 @@ static WARM_AFTER_IDLE: std::sync::LazyLock<bool> =
 /// instead of surfaces of the renderer's own shown as tiles. PROTOTYPE for
 /// the M1 Max's pacing (2026-10-26).
 #[cfg(target_os = "macos")]
-static PRESENT_DRAWABLE: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_PRESENT_DRAWABLE").is_some_and(|v| v != "0"));
+static PRESENT_DRAWABLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    zgx::env::var_os("ZGX_PRESENT_DRAWABLE").is_some_and(|v| v != "0" && v != "auto")
+});
+/// PROTOTYPE `ZGX_PRESENT_DRAWABLE=auto`: full-rate frames take whichever
+/// path loses fewer frames on this machine, tried once per process
+/// (`Trial`); slower frames stay tiles.
+#[cfg(target_os = "macos")]
+static PRESENT_AUTO: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    zgx::env::var_os("ZGX_PRESENT_DRAWABLE").is_some_and(|v| v == "auto")
+});
+/// The trial's verdict for the process: 0 not yet, 1 tiles, 2 drawables.
+#[cfg(target_os = "macos")]
+static VERDICT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// Full-rate frames each half of the trial lasts (about a second at 120 Hz).
+#[cfg(target_os = "macos")]
+const TRIAL_FRAMES: u32 = 120;
+/// The once-per-process comparison of the full-rate paths (`PRESENT_AUTO`):
+/// tiles with the probe that says which flips the window server skipped
+/// (`layer_present::Layer::start_probe`), then drawables with their own
+/// presented feedback; the path that skipped the smaller share wins.
+#[cfg(target_os = "macos")]
+#[derive(Default, Clone, Copy)]
+enum Trial {
+    #[default]
+    Untried,
+    Tiles {
+        frames: u32,
+        from: (u64, u64),
+    },
+    Drawables {
+        frames: u32,
+        from: (u64, u64),
+        tiles: f64,
+    },
+    Done,
+}
 /// DIAGNOSTIC (not for main): `ZGX_DRAWABLE_ALT`, drawables on even Unix
 /// seconds and tiles on odd (`LayerPresent::drawable_frame`).
 #[cfg(target_os = "macos")]
@@ -7952,6 +7995,15 @@ impl GpuRenderer {
             if present.buffers.iter().any(|(buffer, _)| buffer.drawable) {
                 present.retain_buffers(|_, buffer| !buffer.drawable);
             }
+            // Tiles won the trial: their pool goes once a tile shows.
+            if VERDICT.load(std::sync::atomic::Ordering::Relaxed) == 1
+                && present
+                    .shown
+                    .is_none_or(|shown| !present.buffers[shown].0.drawable)
+                && let Some(layer) = present.layer.as_mut()
+            {
+                layer.release_drawables();
+            }
             None
         };
         let index = match drawable {
@@ -8180,6 +8232,95 @@ impl GpuRenderer {
         );
         present.frame += 1;
         let frame = present.frame;
+        // The full-rate paths' trial (`Trial`), a frame at a time.
+        if *PRESENT_AUTO
+            && present.drawables.is_none()
+            && present.full_rate
+            && VERDICT.load(std::sync::atomic::Ordering::Relaxed) == 0
+        {
+            // Frames handed over and lost (`Feedback::lost`), and the share
+            // lost since a start.
+            let counts = |feedback: Option<std::sync::Arc<layer_present::Feedback>>| {
+                feedback.map_or((0, 0), |feedback| feedback.lost())
+            };
+            let share = |(handed, lost): (u64, u64), (from_handed, from_lost): (u64, u64)| {
+                (lost - from_lost) as f64 / (handed - from_handed).max(1) as f64
+            };
+            present.trial = match present.trial {
+                Trial::Untried => {
+                    // SAFETY: The raw device and queue are only retained; the
+                    // guards are dropped at once.
+                    let device = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }
+                        .map(|hal| hal.raw_device().clone());
+                    let queue =
+                        unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+                            use objc2::Message;
+                            hal.as_raw().retain()
+                        });
+                    if let (Some(layer), Some(device), Some(queue)) =
+                        (present.layer.as_mut(), device, queue)
+                    {
+                        layer.start_probe(&device, queue);
+                    }
+                    let from = counts(
+                        present
+                            .layer
+                            .as_ref()
+                            .and_then(|layer| layer.probe_feedback()),
+                    );
+                    Trial::Tiles { frames: 0, from }
+                }
+                Trial::Tiles { frames, from } if frames + 1 >= TRIAL_FRAMES => {
+                    let layer = present.layer.as_mut().expect("attached");
+                    let tiles = share(counts(layer.probe_feedback()), from);
+                    layer.stop_probe();
+                    let from = counts(layer.drawable_feedback());
+                    Trial::Drawables {
+                        frames: 0,
+                        from,
+                        tiles,
+                    }
+                }
+                Trial::Tiles { frames, from } => Trial::Tiles {
+                    frames: frames + 1,
+                    from,
+                },
+                Trial::Drawables {
+                    frames,
+                    from,
+                    tiles,
+                } if frames + 1 >= TRIAL_FRAMES => {
+                    let drawables = share(
+                        counts(
+                            present
+                                .layer
+                                .as_ref()
+                                .and_then(|layer| layer.drawable_feedback()),
+                        ),
+                        from,
+                    );
+                    let verdict = if drawables < tiles { 2 } else { 1 };
+                    VERDICT.store(verdict, std::sync::atomic::Ordering::Relaxed);
+                    eprintln!(
+                        "zgx: full-rate frames take {} (lost: tiles {:.1}%, drawables {:.1}%)",
+                        if verdict == 2 { "drawables" } else { "tiles" },
+                        tiles * 100.,
+                        drawables * 100.
+                    );
+                    Trial::Done
+                }
+                Trial::Drawables {
+                    frames,
+                    from,
+                    tiles,
+                } => Trial::Drawables {
+                    frames: frames + 1,
+                    from,
+                    tiles,
+                },
+                Trial::Done => Trial::Done,
+            };
+        }
         // DIAGNOSTIC (`ZGX_TILE_PROBE`): a 1×1 drawable in each tile flip's
         // transaction says when the flip reached the screen.
         static PROBE: std::sync::LazyLock<bool> =

@@ -488,6 +488,10 @@ struct FeedbackState {
     /// The last presented time (host seconds), and the latest gaps (ms).
     last: f64,
     gaps: std::collections::VecDeque<f64>,
+    /// Refreshes that showed no new drawable between two that did (a gap of
+    /// n refreshes misses n - 1), on the shortest gap seen as the refresh.
+    missed: u64,
+    refresh: f64,
 }
 impl Feedback {
     fn record(&self, presented: f64) {
@@ -499,12 +503,27 @@ impl Feedback {
         state.presented += 1;
         if state.last > 0. && presented > state.last {
             let gap = (presented - state.last) * 1e3;
+            if gap > 4. && (state.refresh == 0. || gap < state.refresh) {
+                state.refresh = gap;
+            }
+            if state.refresh > 0. {
+                state.missed += ((gap / state.refresh).round() as u64).saturating_sub(1);
+            }
             state.gaps.push_back(gap);
             if state.gaps.len() > 600 {
                 state.gaps.pop_front();
             }
         }
         state.last = presented;
+    }
+    /// Frames handed over so far (shown or skipped), and those lost: skipped,
+    /// or a refresh that showed none (`missed`).
+    pub(crate) fn lost(&self) -> (u64, u64) {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        (
+            state.presented + state.skipped,
+            state.skipped + state.missed,
+        )
     }
     /// Drawables presented and skipped so far, and the latest gaps' median,
     /// 99th percentile and count over 1.5 of the median (a refresh missed).
@@ -891,6 +910,13 @@ impl Layer {
     ) {
         if self.probe.is_none() {
             self.probe = Some(Probe::new(&self.host, device, queue));
+        }
+    }
+    /// Stop the tile probe and drop its layer.
+    pub fn stop_probe(&mut self) {
+        if let Some(probe) = self.probe.take() {
+            transaction(|| probe.layer.removeFromSuperlayer());
+            crate::present_log::log(|| "tile-probe-stop".into());
         }
     }
     /// What the tile probe saw, if it runs.
