@@ -4878,6 +4878,66 @@ fn scroll_copies_match_a_fresh_render_and_decline_when_inexact() {
     }
 }
 
+/// A trackpad's fractional offsets, with the scene on the device-pixel grid
+/// (`Scene::set_pixel_scale`, as a window sets it): the content moves by whole
+/// pixels, so each move copies, and the frames match a fresh render.
+#[test]
+fn fractional_scrolls_on_the_pixel_grid_copy_and_match_a_fresh_render() {
+    let _gpu_fixture = gpu_fixture();
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let mut gpu = GpuRenderer::new(160, 120).unwrap();
+    let mut ui = Ui::new(160., 120.);
+    ui.scene.borrow_mut().set_pixel_scale(1.);
+    let offset = ui.signal(0_f32);
+    ui.mount(
+        overlay().w(160.).h(120.).bg(rgb(0x000000)).child(
+            virtual_list(
+                offset.clone(),
+                24.,
+                2,
+                || 1000,
+                |i| i,
+                |_, key, _| {
+                    div()
+                        .size(144., 24.)
+                        .bg(if key % 2 == 0 {
+                            rgb(0x223344)
+                        } else {
+                            rgb(0x334455)
+                        })
+                        .child(div().size(144., 1.).bg(rgb(0xffffff)))
+                },
+            )
+            .w(160.)
+            .h(100.)
+            .p(8.)
+            .bg(rgb(0x101820)),
+        ),
+    );
+    let mut copies = 0;
+    for scroll in [0., 14.3, 28.6, 31.45, 60.2] {
+        offset.set(scroll);
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        copies += gpu
+            .render(&ui.scene.borrow(), &damage)
+            .unwrap()
+            .scroll_copies;
+        let mut fresh = GpuRenderer::new(160, 120).unwrap();
+        fresh
+            .render(&ui.scene.borrow(), &[Rect::new(0., 0., 160., 120.)])
+            .unwrap();
+        assert_eq!(
+            gpu.readback().unwrap(),
+            fresh.readback().unwrap(),
+            "scroll {scroll}"
+        );
+    }
+    // Texture blits cost Apple GPUs graphics memory; macOS repaints.
+    let expected = if cfg!(target_os = "macos") { 0 } else { 4 };
+    assert_eq!(copies, expected);
+}
+
 /// A chat transcript: a measured, end-anchored virtual list of wrapped text
 /// rows with estimated heights, fading edges and a scrollbar. Scrolling in
 /// uneven steps mounts, measures and unmounts rows; every partial frame must

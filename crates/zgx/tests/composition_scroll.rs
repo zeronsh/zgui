@@ -141,3 +141,42 @@ fn disabled_scroll_blocks_input_and_unmount_releases_observers() {
     ui.prepare_frame();
     assert_eq!(offset.get(), 900.);
 }
+#[test]
+fn fractional_scrolling_moves_content_by_whole_device_pixels() {
+    // A trackpad's deltas are fractions of a point: the offset keeps them,
+    // while what shows moves by whole device pixels (as Safari's does), so
+    // edges and hairlines never straddle pixels and the renderer can move
+    // what it drew by copying it.
+    let mut ui = Ui::new(500., 300.);
+    ui.scene.borrow_mut().set_pixel_scale(2.);
+    let offset = ui.signal(0.);
+    let view = ui.mount(
+        scroll(offset.clone())
+            .w(200.)
+            .h(100.)
+            .child(div().id("row").h(500.)),
+    );
+    ui.prepare_frame();
+    ui.scene.borrow_mut().flush();
+    let row = view.find("row").unwrap();
+    let top = ui.scene.borrow().bounds(row).y;
+    let mut moved = 0.;
+    for delta in [0.3, 1.45, 2.8, 0.15, 3.3] {
+        wheel(&mut ui, 20., 20., delta);
+        moved += delta;
+        ui.prepare_frame();
+        let report = ui.scene.borrow_mut().flush();
+        assert!((offset.get() - moved).abs() < 1e-4, "{}", offset.get());
+        let shown = top - ui.scene.borrow().bounds(row).y;
+        assert_eq!(shown, (moved * 2_f32).round() / 2., "after {moved}");
+        let moves = ui.scene.borrow().scroll_moves().to_vec();
+        for m in moves {
+            assert_eq!((m.dy * 2.).fract(), 0., "{m:?}");
+        }
+        assert!(report.layout_nodes == 0);
+    }
+    // At another scale, what shows moves to its grid.
+    ui.scene.borrow_mut().set_pixel_scale(1.);
+    ui.prepare_frame();
+    assert_eq!(top - ui.scene.borrow().bounds(row).y, moved.round());
+}

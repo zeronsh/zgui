@@ -2033,6 +2033,9 @@ pub struct Scene {
     /// Scroll content translated since the last flush: its transform before
     /// the first move, and whether it moved again (see `resolve_moves`).
     pending_moves: Vec<(NodeId, Transform, bool)>,
+    /// Device pixels a point (`set_pixel_scale`): scroll content moves by
+    /// whole ones. 0 until a host says.
+    pixel_scale: f32,
     /// The moves reported by the last flush, and that flush's serial.
     moves: Vec<ScrollMove>,
     flush_serial: u64,
@@ -2153,6 +2156,7 @@ impl Scene {
             overflow_fades: Vec::new(),
             platform_nodes: Vec::new(),
             pending_moves: Vec::new(),
+            pixel_scale: 0.,
             moves: Vec::new(),
             flush_serial: 0,
             repaints: Vec::new(),
@@ -4091,6 +4095,9 @@ impl Scene {
         };
         transform.x = coordinate(transform.x);
         transform.y = coordinate(transform.y);
+        if self.node(id).scroll_copy {
+            transform = self.on_pixels(transform);
+        }
         if self.node(id).transform == transform {
             return;
         }
@@ -6511,9 +6518,53 @@ impl Scene {
         }
     }
     /// Mark `id` as scroll content: translating it reports a `ScrollMove`
-    /// instead of damaging everything it paints.
+    /// instead of damaging everything it paints, and it moves by whole
+    /// device pixels (`set_pixel_scale`).
     pub fn set_scroll_copy(&mut self, id: NodeId, enabled: bool) {
         self.node_mut(id).scroll_copy = enabled;
+    }
+    /// How many device pixels a point is (the window's scale factor).
+    /// Scroll content then moves by whole device pixels, as Safari's and
+    /// AppKit's do: a trackpad's fractional offsets would leave its edges
+    /// and hairlines straddling pixels (blurred, shimmering as they move)
+    /// while its text snaps to them on its own, and the renderer could not
+    /// move what it drew by copying it. Offsets stay exact; only what shows
+    /// is rounded. Unset (0), nothing is rounded.
+    pub fn set_pixel_scale(&mut self, scale: f32) {
+        let scale = if scale.is_finite() && scale > 0. {
+            scale
+        } else {
+            0.
+        };
+        if scale == self.pixel_scale {
+            return;
+        }
+        self.pixel_scale = scale;
+        // What scrolled before is put on the new grid.
+        let mut contents = Vec::new();
+        let mut stack = vec![self.root()];
+        while let Some(id) = stack.pop() {
+            if self.node(id).scroll_copy {
+                contents.push(id);
+            }
+            stack.extend_from_slice(self.children(id));
+        }
+        for id in contents {
+            let transform = self.node(id).transform;
+            self.set_transform(id, transform);
+        }
+    }
+    /// `transform` moved to the nearest whole device pixels.
+    fn on_pixels(&self, mut transform: Transform) -> Transform {
+        let scale = self.pixel_scale;
+        if scale > 0. {
+            transform.x = (transform.x * scale).round() / scale;
+            transform.y = (transform.y * scale).round() / scale;
+            // No negative zero: an unmoved view stays as it was.
+            transform.x += 0.;
+            transform.y += 0.;
+        }
+        transform
     }
     /// Moves reported by the most recent flush.
     pub fn scroll_moves(&self) -> &[ScrollMove] {

@@ -2441,6 +2441,11 @@ impl Host {
         zgx::profile::mark("renderer made");
         self.scale_factor = window.scale_factor();
         renderer.set_scale_factor(self.scale_factor as f32);
+        self.context
+            .ui
+            .scene
+            .borrow_mut()
+            .set_pixel_scale(self.scale_factor as f32);
         // Its first frame lays out at the size it opened at (a display it
         // covers, bounds, a saved frame, the platform's choice), not at the
         // size asked for and again as `Resized` reports it: one layout, and
@@ -3049,6 +3054,11 @@ impl Host {
                 if let Some(renderer) = &mut self.renderer {
                     renderer.set_scale_factor(scale_factor as f32);
                 }
+                self.context
+                    .ui
+                    .scene
+                    .borrow_mut()
+                    .set_pixel_scale(scale_factor as f32);
                 // The native resize follows this notification. Applying the
                 // new scale to the old physical size creates a false logical resize.
                 self.context.ui.refresh_text_geometry();
