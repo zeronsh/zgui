@@ -1409,7 +1409,13 @@ pub(crate) fn expect_node(value: mlua::Value, what: &str) -> mlua::Result<Rc<Nod
 }
 
 pub(crate) fn parse_color(text: &str) -> Option<Color> {
-    crate::anime::value::parse_color(text).map(crate::anime::target::v_to_color)
+    let text = text.trim();
+    if let Some(hex) = text.strip_prefix('#') {
+        let [r, g, b, a] = crate::anime::value::parse_hex_color(hex)?;
+        Some(Color(r, g, b, a))
+    } else {
+        crate::anime::value::parse_non_hex_color(text).map(crate::anime::target::v_to_color)
+    }
 }
 /// A colour or a theme token (`"$text.secondary"`).
 pub(crate) fn themed_color(value: &Value) -> Option<Themed<Color>> {
@@ -4616,6 +4622,40 @@ pub(crate) fn retain(env: &Env, resource: Box<dyn Any>) {
 
 #[cfg(test)]
 mod tests {
+    /// A hex colour read as bytes is the colour its animation value
+    /// (channels as `f64`, alpha a fraction) rounds back to, in each form
+    /// and at every channel value; and what is not hex is no colour.
+    #[test]
+    fn hex_colours_as_bytes_match_their_animation_values() {
+        let animated = |text: &str| {
+            crate::anime::value::parse_color(text).map(crate::anime::target::v_to_color)
+        };
+        for v in 0..=255_u8 {
+            let d = v >> 4;
+            for text in [
+                format!("#{v:02x}{:02x}{:02X}{:02x}", 255 - v, v / 3, v ^ 0x5a),
+                format!("#{v:02x}{:02x}{:02x}", 255 - v, v / 7),
+                format!("#{d:x}{:x}{:X}{:x}", 15 - d, d / 2, d ^ 5),
+                format!("#{d:x}{:x}{:x}", 15 - d, d / 3),
+                format!("  #{v:02x}{v:02x}{v:02x}  "),
+            ] {
+                assert_eq!(super::parse_color(&text), animated(&text), "{text}");
+                assert!(super::parse_color(&text).is_some(), "{text}");
+            }
+        }
+        for text in [
+            "#",
+            "#12",
+            "#12345",
+            "#1234567",
+            "#123456789",
+            "#12g",
+            "#１２３",
+        ] {
+            assert_eq!(super::parse_color(text), None, "{text}");
+            assert_eq!(animated(text), None, "{text}");
+        }
+    }
     /// A walk's borrowed key and value (`for_each_borrowed`, as `fill_from`
     /// reads properties) read the same from a callback nested in the walk's,
     /// whose stack frame holds other values at the pair's indices.

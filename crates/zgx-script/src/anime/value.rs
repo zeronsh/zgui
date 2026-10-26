@@ -237,22 +237,34 @@ pub(crate) fn format_color(c: [f64; 4]) -> String {
 pub(crate) fn parse_color(text: &str) -> Option<[f64; 4]> {
     let text = text.trim();
     if let Some(hex) = text.strip_prefix('#') {
-        let mut digits = [0u8; 8];
-        let mut len = 0;
-        for c in hex.chars() {
-            *digits.get_mut(len)? = c.to_digit(16)? as u8;
-            len += 1;
-        }
-        let pair = |i: usize| (digits[i] * 16 + digits[i + 1]) as f64;
-        let single = |i: usize| (digits[i] * 17) as f64;
-        return Some(match len {
-            3 => [single(0), single(1), single(2), 1.],
-            4 => [single(0), single(1), single(2), single(3) / 255.],
-            6 => [pair(0), pair(2), pair(4), 1.],
-            8 => [pair(0), pair(2), pair(4), pair(6) / 255.],
-            _ => return None,
-        });
+        let [r, g, b, a] = parse_hex_color(hex)?;
+        return Some([r as f64, g as f64, b as f64, a as f64 / 255.]);
     }
+    parse_non_hex_color(text)
+}
+
+/// Hex channels as bytes: style colours need no floating-point conversion
+/// or rounding back from the animation representation.
+pub(crate) fn parse_hex_color(hex: &str) -> Option<[u8; 4]> {
+    let mut digits = [0u8; 8];
+    let mut len = 0;
+    for c in hex.chars() {
+        *digits.get_mut(len)? = c.to_digit(16)? as u8;
+        len += 1;
+    }
+    let pair = |i: usize| digits[i] * 16 + digits[i + 1];
+    let single = |i: usize| digits[i] * 17;
+    Some(match len {
+        3 => [single(0), single(1), single(2), 255],
+        4 => [single(0), single(1), single(2), single(3)],
+        6 => [pair(0), pair(2), pair(4), 255],
+        8 => [pair(0), pair(2), pair(4), pair(6)],
+        _ => return None,
+    })
+}
+
+/// The non-hex forms of a colour, after its surrounding whitespace is trimmed.
+pub(crate) fn parse_non_hex_color(text: &str) -> Option<[f64; 4]> {
     let lower = text.to_ascii_lowercase();
     let args = |prefix: &str| -> Option<Vec<(f64, bool)>> {
         let inner = lower
