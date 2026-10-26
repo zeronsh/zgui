@@ -82,6 +82,9 @@ struct DamageGrid {
     /// row's last word fills as the others.
     full_before: usize,
 }
+/// Runs of marked cells still growing down: first and end column, first
+/// row (`DamageGrid::rects`).
+type Runs = Vec<(usize, usize, usize)>;
 impl DamageGrid {
     fn new(viewport: Rect) -> Self {
         let columns = (viewport.width / DAMAGE_CELL).ceil().max(1.) as usize;
@@ -201,10 +204,27 @@ impl DamageGrid {
     }
     /// Each row's runs of marked cells, a run repeated straight down the
     /// next rows joining them as one rectangle.
+    /// Out of line: only a frame with the grid gets here, and inlined it
+    /// weighed on every flush.
+    #[inline(never)]
     fn rects(&self, viewport: Rect) -> Vec<Rect> {
-        let mut done = Vec::new();
+        thread_local! {
+            /// Room for the runs still growing down, kept from flush to
+            /// flush (a few times a grid's columns at most), and how many
+            /// rectangles the last grid made: a steady frame grows no list.
+            static ROOM: std::cell::RefCell<([Runs; 2], usize)> = Default::default();
+        }
+        ROOM.with_borrow_mut(|(runs, last)| {
+            let done = self.rects_in(viewport, runs, *last);
+            *last = done.len();
+            done
+        })
+    }
+    fn rects_in(&self, viewport: Rect, [open, next]: &mut [Runs; 2], made: usize) -> Vec<Rect> {
+        let mut done = Vec::with_capacity(made);
         // Runs still growing down: first and end column, first row.
-        let (mut open, mut next) = (Vec::<(usize, usize, usize)>::new(), Vec::new());
+        open.clear();
+        next.clear();
         for row in 0..=self.rows {
             let columns = if row < self.rows { self.columns } else { 0 };
             // Runs are found left to right and never overlap, so both lists
@@ -226,7 +246,7 @@ impl DamageGrid {
                 next.push((start, column, top));
             }
             let mut at = 0;
-            for &(left, right, top) in &open {
+            for &(left, right, top) in open.iter() {
                 while at < next.len() && next[at].0 < left {
                     at += 1;
                 }
@@ -240,7 +260,7 @@ impl DamageGrid {
                     done.extend(rect.intersection(viewport));
                 }
             }
-            std::mem::swap(&mut open, &mut next);
+            std::mem::swap(open, next);
             next.clear();
         }
         done
