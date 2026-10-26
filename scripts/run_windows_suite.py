@@ -110,6 +110,8 @@ FIELDS = ['framework', 'mode', 'repeat', 'ran_seconds', 'requested_seconds', 're
 GRAPHICS_MODULES = {'d3d11.dll', 'd3d12.dll', 'vulkan-1.dll', 'opengl32.dll'}
 PACING = ['frames_per_second', 'interval_p50_ms', 'interval_p95_ms', 'interval_p99_ms', 'interval_max_ms',
           'long_interval_fraction']
+PACING_FIELDS = ['framework', 'mode', 'repeat', 'display_hz', 'frames', *PACING, 'long_intervals', 'composed',
+                 'merged_frames']
 # Processes whose presence means the machine is not quiet.
 HEAVY = ('cargo', 'rustc', 'link', 'cl', 'go', 'msbuild', 'devenv', 'TiWorker')
 
@@ -604,6 +606,68 @@ def quiet(threshold=75.0, timeout=900, log=print):
             raise SystemExit('the machine did not quiet down')
 
 
+def capture_pacing(scene, binaries, modes, out, pacer):
+    """PACING_REPEATS captures of each active cell, the frameworks rotating."""
+    frameworks, paced = list(binaries), []
+    for repeat in range(PACING_REPEATS):
+        order = frameworks[repeat % len(frameworks):] + frameworks[:repeat % len(frameworks)]
+        for mode in [m for m in modes if m != 'idle']:
+            for framework in order:
+                try:
+                    row = pacing(scene, binaries[framework], framework, mode, repeat, out, pacer)
+                except ReadinessFailure:
+                    continue
+                print(f"{framework:9} {mode:7} {repeat}: pacing {row['frames_per_second']:6.1f} fps p99 "
+                      f"{row['interval_p99_ms']:5.1f} ms long {row['long_interval_fraction']:.3f} "
+                      f"merged {row.get('merged_frames', 0)}", flush=True)
+                paced.append(row)
+                time.sleep(2)
+    return paced
+
+
+def retake_pacing(run, binaries_by_scene, pacer):
+    """A published run's pacing captured again (every scene, every
+    framework, the run's binaries), its trials kept: pacing.csv, the
+    summary's pacing groups and the audit's pacing fields replaced, and the
+    audit saying when and with which capture tool."""
+    for scene in SCENES:
+        out = run / scene
+        if not (out / 'audit.json').exists():
+            continue
+        audit = json.loads((out / 'audit.json').read_text())
+        frameworks, modes = audit['protocol']['frameworks'], audit['protocol']['modes']
+        binaries = {f: binaries_by_scene[scene][f] for f in frameworks}
+        for f, path in binaries.items():
+            recorded = audit['binaries'][f]['sha256']
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == recorded, f'{scene}/{f}: not the run\'s binary'
+        print(f'== {scene}: pacing again', flush=True)
+        started = datetime.datetime.now(datetime.timezone.utc)
+        paced = capture_pacing(scene, binaries, modes, out, pacer)
+        write_csv(out / 'pacing.csv', PACING_FIELDS, paced)
+        summary = json.loads((out / 'summary.json').read_text())
+        summary['pacing'] = [group(paced, PACING, f, m) for f in frameworks for m in modes if m != 'idle']
+        (out / 'summary.json').write_text(json.dumps(summary, indent=1) + '\n', newline='\n')
+        complete = all(len([r for r in paced if (r['framework'], r['mode']) == (f, m)]) == PACING_REPEATS
+                       for f in frameworks for m in modes if m != 'idle')
+        audit['pacing_trials'] = len(paced)
+        audit['accepted'] = audit['accepted'] and complete
+        audit['pacing_retaken'] = {
+            'started_utc': started.isoformat(),
+            'finished_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'framepace_sha256': hashlib.sha256(Path(pacer).read_bytes()).hexdigest(),
+            'merged_frames': sum(r.get('merged_frames', 0) for r in paced),
+            'why': 'framepace hashed byte by byte and fell behind at 1280x800, merging compositions '
+                   '(AccumulatedFrames > 1) that then read as long frames, for every framework; '
+                   'it now hashes words and reports merged frames',
+        }
+        (out / 'audit.json').write_text(json.dumps(audit, indent=1) + '\n', newline='\n')
+        print(f"== {scene}: {'complete' if complete else 'INCOMPLETE'}, merged frames "
+              f"{audit['pacing_retaken']['merged_frames']}", flush=True)
+    manifest = json.loads((run / 'manifest.json').read_text())
+    manifest['pacing_retaken_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    (run / 'manifest.json').write_text(json.dumps(manifest, indent=1) + '\n', newline='\n')
+
+
 def measure_scene(scene, binaries, out, pacer, commit, preflight, tools):
     started = datetime.datetime.now(datetime.timezone.utc)
     out.mkdir(parents=True, exist_ok=True)
@@ -611,7 +675,7 @@ def measure_scene(scene, binaries, out, pacer, commit, preflight, tools):
     frameworks = list(binaries)
     if scene == 'vlist':
         probe(scene, binaries, out)
-    rows, paced = [], []
+    rows = []
     for repeat in range(max(REPEATS, IDLE_REPEATS) if 'idle' in modes else REPEATS):
         order = frameworks[repeat % len(frameworks):] + frameworks[:repeat % len(frameworks)]
         chosen = [m for m in modes if repeat < (IDLE_REPEATS if m == 'idle' else REPEATS)]
@@ -644,20 +708,9 @@ def measure_scene(scene, binaries, out, pacer, commit, preflight, tools):
                   f"gpu {row.get('gpu_ms_per_second', 0):6.2f} ms/s (extra: wide spread)", flush=True)
             rows.append(row)
             time.sleep(2)
-    for repeat in range(PACING_REPEATS):
-        order = frameworks[repeat % len(frameworks):] + frameworks[:repeat % len(frameworks)]
-        for mode in [m for m in modes if m != 'idle']:
-            for framework in order:
-                try:
-                    row = pacing(scene, binaries[framework], framework, mode, repeat, out, pacer)
-                except ReadinessFailure:
-                    continue
-                print(f"{framework:9} {mode:7} {repeat}: pacing {row['frames_per_second']:6.1f} fps p99 "
-                      f"{row['interval_p99_ms']:5.1f} ms long {row['long_interval_fraction']:.3f}", flush=True)
-                paced.append(row)
-                time.sleep(2)
+    paced = capture_pacing(scene, binaries, modes, out, pacer)
     write_csv(out / 'current.csv', FIELDS, rows)
-    write_csv(out / 'pacing.csv', ['framework', 'mode', 'repeat', 'display_hz', 'frames', *PACING, 'long_intervals'], paced)
+    write_csv(out / 'pacing.csv', PACING_FIELDS, paced)
     groups = [group(rows, METRICS, 'desktop', 'baseline')]
     groups += [group(rows, METRICS + ['reported_fps'], f, m) for f in frameworks for m in modes]
     pacing_groups = [group(paced, PACING, f, m) for f in frameworks for m in modes if m != 'idle']
@@ -752,6 +805,8 @@ def main():
     parser.add_argument('--scenes', default='heavy,lab,animate,vlist,startup')
     parser.add_argument('--frameworks', default=','.join(FRAMEWORKS))
     parser.add_argument('--out', type=Path)
+    parser.add_argument('--pacing-into', type=Path,
+                        help="a published run: capture its pacing again (its trials kept)")
     parser.add_argument('--preflight-threshold', type=float, default=75.,
                         help='percent of a core the rest of the machine may use (a desktop streamed by a remote '
                              'display host uses more than a core of its own)')
@@ -781,6 +836,9 @@ def main():
     with compare.PowerPlan(compare.HIGH_PERFORMANCE), compare.Minimized(['Zeron']) as hidden:
         # Zeron minimized first: its window's drawing is what the run hides.
         found = quiet(args.preflight_threshold, log=lambda line: print(line, flush=True))
+        if args.pacing_into:
+            retake_pacing(args.pacing_into, binaries, args.framepace)
+            return
         for scene in scenes:
             began = time.monotonic()
             print(f'== {scene}', flush=True)

@@ -52,5 +52,6 @@
   "PACING_REPEATS": 3,
   "spread_for_extra_trials": 0.1,
   "extra_trials": 1
- }
+ },
+ "pacing_retaken_utc": "2026-10-26T23:50:21.288531+00:00"
 }

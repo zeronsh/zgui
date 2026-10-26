@@ -168,5 +168,12 @@
   ],
   "power_plan": "High performance",
   "font_fnv64": "ce252980ec1255ff"
+ },
+ "pacing_retaken": {
+  "started_utc": "2026-10-26T23:08:05.492196+00:00",
+  "finished_utc": "2026-10-26T23:19:50.899479+00:00",
+  "framepace_sha256": "4e8828b7b44a0022edb432b0e5c264a2a51ee488a986aa17804b3618b9d2f877",
+  "merged_frames": 51,
+  "why": "framepace hashed byte by byte and fell behind at 1280x800, merging compositions (AccumulatedFrames > 1) that then read as long frames, for every framework; it now hashes words and reports merged frames"
  }
 }

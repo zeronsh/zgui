@@ -3,13 +3,14 @@
  "mode": "both",
  "repeat": 1,
  "display_hz": 60,
- "frames": 479,
- "composed": 480,
- "frames_per_second": 59.875,
- "interval_p50_ms": 16.628000000000043,
- "interval_p95_ms": 17.164000000000215,
- "interval_p99_ms": 17.423999999999978,
- "interval_max_ms": 17.625,
- "long_intervals": 0,
- "long_interval_fraction": 0.0
+ "frames": 478,
+ "composed": 479,
+ "merged_frames": 1,
+ "frames_per_second": 59.75,
+ "interval_p50_ms": 16.615999999999985,
+ "interval_p95_ms": 17.136000000000422,
+ "interval_p99_ms": 17.37700000000018,
+ "interval_max_ms": 50.086999999999534,
+ "long_intervals": 1,
+ "long_interval_fraction": 0.0020964360587002098
 }

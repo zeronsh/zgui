@@ -7,9 +7,13 @@
 //!     cargo build --release -p zgx-gpu --example framepace
 //!     framepace <x> <y> <width> <height> <seconds>
 //!
-//! Prints `HZ <refresh rate>`, then `FRAME <ms>` for each composed frame
-//! whose pixels in the rectangle changed (the compositor's present time,
-//! from the start), then `COMPOSED <frames composed>`.
+//! Prints `HZ <refresh rate>`, then `FRAME <ms> <compositions>` for each
+//! composed frame whose pixels in the rectangle changed (the compositor's
+//! present time, from the start, and how many compositions it covers: more
+//! than one when the capture fell behind and missed some), then `COMPOSED
+//! <frames composed>` and `MERGED <frames that covered several>`. A capture
+//! keeps up when MERGED is about 0: an interval ending on a merged frame
+//! may hold frames it never saw.
 
 #[cfg(windows)]
 mod pace {
@@ -133,7 +137,7 @@ mod pace {
             let start = qpc();
             let end = start + seconds * frequency;
             let mut previous: Option<u64> = None;
-            let mut composed = 0u64;
+            let (mut composed, mut merged) = (0u64, 0u64);
             while qpc() < end {
                 let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
                 let mut resource: Option<IDXGIResource> = None;
@@ -146,6 +150,7 @@ mod pace {
                 // the rectangle's pixels.
                 if info.LastPresentTime != 0 {
                     composed += 1;
+                    merged += u64::from(info.AccumulatedFrames > 1);
                     let texture: ID3D11Texture2D = resource.unwrap().cast()?;
                     context.CopySubresourceRegion(&staging, 0, 0, 0, 0, &texture, 0, Some(&region));
                     let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
@@ -156,20 +161,25 @@ mod pace {
                             (mapped.pData as *const u8).add(row * mapped.RowPitch as usize),
                             w as usize * 4,
                         );
-                        for &b in line {
-                            hash = (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+                        // Eight bytes at a time: byte by byte, a 1280x800
+                        // window's 4 MB took long enough that compositions
+                        // piled up between frames (MERGED).
+                        for word in line.chunks_exact(8) {
+                            let word = u64::from_le_bytes(word.try_into().expect("8 bytes"));
+                            hash = (hash ^ word).wrapping_mul(0x0100_0000_01b3);
                         }
                     }
                     context.Unmap(&staging, 0);
                     if previous.is_some_and(|p| p != hash) {
                         let at = (info.LastPresentTime - start) as f64 * 1000. / frequency as f64;
-                        println!("FRAME {at:.3}");
+                        println!("FRAME {at:.3} {}", info.AccumulatedFrames);
                     }
                     previous = Some(hash);
                 }
                 duplication.ReleaseFrame()?;
             }
             println!("COMPOSED {composed}");
+            println!("MERGED {merged}");
         }
         Ok(())
     }

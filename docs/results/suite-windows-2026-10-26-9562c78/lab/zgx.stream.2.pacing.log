@@ -1,3 +1,3 @@
 font_family=DejaVu Sans font_file_fnv64=ce252980ec1255ff
 accessibility: a placeholder for an MSAA request (object id -4)
-{"framework":"zgx","adapter":"components","renderer":"gpu","ticks":1018,"mounted_rows":17,"elapsed_seconds":17.005}
+{"framework":"zgx","adapter":"components","renderer":"gpu","ticks":1017,"mounted_rows":17,"elapsed_seconds":17.005}

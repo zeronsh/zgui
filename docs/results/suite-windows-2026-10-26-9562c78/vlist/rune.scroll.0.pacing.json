@@ -5,11 +5,12 @@
  "display_hz": 60,
  "frames": 479,
  "composed": 480,
+ "merged_frames": 1,
  "frames_per_second": 59.875,
- "interval_p50_ms": 16.635000000000105,
- "interval_p95_ms": 17.345000000000027,
- "interval_p99_ms": 17.831999999999425,
- "interval_max_ms": 18.143999999999778,
- "long_intervals": 0,
- "long_interval_fraction": 0.0
+ "interval_p50_ms": 16.61999999999989,
+ "interval_p95_ms": 17.208000000000084,
+ "interval_p99_ms": 17.438000000000102,
+ "interval_max_ms": 33.775000000000546,
+ "long_intervals": 1,
+ "long_interval_fraction": 0.0020920502092050207
 }

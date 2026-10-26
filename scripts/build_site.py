@@ -674,6 +674,7 @@ def windows_facts(by, e, env, display, tools, mygo_build, commit, protocol, anch
 <li>Memory includes the graphics driver&#8217;s own floor, which differs by API. The processes had these loaded: {e(graphics_note)}.</li>
 <li>DWM&#8217;s CPU is read through performance counters in scheduler ticks (its cycles need administrator rights), so its trials spread widely: read it with its range.</li>
 {f'<li>A remote display host ({e(", ".join(hosts))}) streamed the desktop throughout, capturing and encoding the screen: work beside every framework&#8217;s, in the desktop baseline too, which is why the run accepted up to {e(fmt(heavy["preflight"]["threshold_percent"], 0))}% of a core of other use.</li>' if hosts and heavy.get('preflight') else ''}
+<li>The list&#8217;s fling ends slowly, under a pixel a refresh for its last ticks (160 px a tick decaying to 0.6). zgx scrolls in whole device pixels, as Chrome and Windows&#8217; own lists do, to keep text crisp, so in that tail some refreshes move nothing on screen and the capture counts them as long frames: zgx presented on every refresh, its GPU work done within 0.2 ms of each present. Scrolled at a steady 12 or 3 px a tick it shows none; at 0.6 px a tick, 36 frames a second of whole-pixel steps. Rune draws at fractional positions, which change its pixels on every tick.</li>
 <li>The list scene&#8217;s unfilled-row captures are macOS&#8217;s only.</li>
 {crash_note}
 <li>Binary size is not compared.</li>

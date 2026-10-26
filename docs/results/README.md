@@ -7,20 +7,33 @@ CPU is the process's cycles (Windows' CPU time counts 15.6 ms scheduler ticks: t
 | Scene, mode | CPU (M cycles/s) | App GPU (ms/s) | Private memory (MB) | Frame time p99 (ms) |
 | --- | --- | --- | --- | --- |
 | heavy idle | 1.7 / 9.5 / 0.9 / 4.1 | 0 / 0 / 0 / 0 | 152 / 107 / 131 / 396 | - |
-| heavy stream | 279 / 550 / 730 / 1106 | 11.0 / 12.6 / 19.2 / 10.3 | 155 / 112 / 152 / 389 | 17.4 / 33.7 / 17.4 / 17.3 |
-| heavy scroll | 109 / 265 / 643 / 1194 | 2.1 / 12.6 / 17.0 / 10.3 | 152 / 110 / 143 / 396 | 17.3 / 33.6 / 33.3 / 17.8 |
-| heavy both | 322 / 572 / 791 / 1384 | 13.4 / 12.7 / 18.6 / 10.2 | 156 / 113 / 153 / 395 | 17.3 / 33.5 / 33.0 / 17.4 |
-| lab stream | 101 / 163 / 397 / 254 | 3.2 / 6.3 / 6.4 / 7.3 | 130 / 94 / 136 / 377 | 17.3 / 33.5 / 17.4 / 17.4 |
-| lab scroll | 87 / 120 / 311 / 221 | 1.8 / 4.8 / 8.9 / 7.0 | 129 / 92 / 125 / 374 | 17.3 / 33.6 / 17.4 / 17.4 |
-| lab both | 106 / 174 / 405 / 251 | 3.4 / 6.4 / 11.6 / 7.2 | 130 / 95 / 134 / 380 | 17.4 / 33.6 / 17.4 / 17.4 |
-| animate | 96 / 100 / 260 / 135 | 2.0 / 3.4 / 3.4 / 5.3 | 129 / 91 / 121 / 373 | 17.3 / 17.3 / 17.4 / 17.4 |
-| vlist scroll | 87 / 91 / 137 / 434 / 290 | 2.6 / 2.6 / 7.6 / 12.2 / 6.6 | 141 / 143 / 109 / 144 / 391 | 17.4 / 33.3 / 33.6 / 17.4 / 17.4 |
-| vlist fling | 95 / 94 / 140 / 446 / 357 | 2.8 / 2.8 / 7.5 / 12.3 / 6.6 | 143 / 145 / 109 / 144 / 394 | 33.4 / 33.6 / 33.7 / 33.8 / 17.5 |
-| vlist jump | 93 / 98 / 149 / 430 / 416 | 2.9 / 2.9 / 7.7 / 13.1 / 6.7 | 135 / 139 / 110 / 149 / 394 | 17.3 / 17.3 / 33.6 / 33.9 / 17.8 |
+| heavy stream | 279 / 550 / 730 / 1106 | 11.0 / 12.6 / 19.2 / 10.3 | 155 / 112 / 152 / 389 | 17.3 / 33.6 / 17.3 / 17.4 |
+| heavy scroll | 109 / 265 / 643 / 1194 | 2.1 / 12.6 / 17.0 / 10.3 | 152 / 110 / 143 / 396 | 17.3 / 33.8 / 17.3 / 17.4 |
+| heavy both | 322 / 572 / 791 / 1384 | 13.4 / 12.7 / 18.6 / 10.2 | 156 / 113 / 153 / 395 | 17.3 / 33.6 / 17.4 / 17.4 |
+| lab stream | 101 / 163 / 397 / 254 | 3.2 / 6.3 / 6.4 / 7.3 | 130 / 94 / 136 / 377 | 17.4 / 34.1 / 17.4 / 17.5 |
+| lab scroll | 87 / 120 / 311 / 221 | 1.8 / 4.8 / 8.9 / 7.0 | 129 / 92 / 125 / 374 | 33.4 / 33.6 / 17.5 / 17.6 |
+| lab both | 106 / 174 / 405 / 251 | 3.4 / 6.4 / 11.6 / 7.2 | 130 / 95 / 134 / 380 | 17.3 / 33.6 / 17.6 / 17.4 |
+| animate | 96 / 100 / 260 / 135 | 2.0 / 3.4 / 3.4 / 5.3 | 129 / 91 / 121 / 373 | 17.3 / 17.4 / 17.4 / 17.4 |
+| vlist scroll | 87 / 91 / 137 / 434 / 290 | 2.6 / 2.6 / 7.6 / 12.2 / 6.6 | 141 / 143 / 109 / 144 / 391 | 17.4 / 17.3 / 33.5 / 33.4 / 17.4 |
+| vlist fling | 95 / 94 / 140 / 446 / 357 | 2.8 / 2.8 / 7.5 / 12.3 / 6.6 | 143 / 145 / 109 / 144 / 394 | 33.4 / 33.4 / 33.6 / 33.6 / 17.4 |
+| vlist jump | 93 / 98 / 149 / 430 / 416 | 2.9 / 2.9 / 7.7 / 13.1 / 6.7 | 135 / 139 / 110 / 149 / 394 | 17.4 / 17.4 / 33.5 / 17.5 / 17.4 |
 
 Startup (lab, in the suite's font, medians of 10 launches, measured after the suite): first content at 323 / 299 / 234 / 605 ms, 947 / 891 / 724 / 1902 M cycles by then. zgx shows its window with its first frame (253 ms); MyGo and Rune show theirs at 38–40 ms and draw into it later. Creating the Direct3D device takes most of zgx's: 190 ms for a bare Direct3D 12 device on this machine, 170 ms for Direct3D 11.
 
-zgx uses the fewest CPU cycles in all 10 active tests and the least app GPU time in 8. Where it is not best, its worst ratio against the best rival per metric: idle CPU 1.95× MyGo's (1.7 against 0.9 M cycles/s: zgx's own threads use none at rest; it is NVIDIA's Direct3D 12 driver's background thread, which a bare Direct3D 12 device runs too, and which only developer mode can turn off); frame time p99 1.91× Rune's in the vlist fling (33.4 against 17.5 ms: its fling captures had 1.5, 2.4 and 14.6% long frames, where scroll and jump are clean); memory 1.43× GPUI Fast's (152 against 107 MB; zgx and Rune load Direct3D 12, GPUI Fast and MyGo Direct3D 11, whose drivers' floors differ); app GPU time 1.31× Rune's in heavy both (13.4 against 10.2 ms/s); long frames 5× Rune's in heavy stream (1.1 against 0.2%); DWM CPU 1.63× (tick-counted, wide ranges) and DWM GPU 1.06×; startup to first content 1.38× MyGo's (323 against 234 ms). The animation runs at this display's 60 Hz, not the Mac's 120.
+zgx uses the fewest CPU cycles in all 10 active tests and the least app GPU time in 8. Where it is not best, its worst ratio against the best rival per metric: idle CPU 1.95× MyGo's (1.7 against 0.9 M cycles/s: zgx's own threads use none at rest; it is NVIDIA's Direct3D 12 driver's background thread, which a bare Direct3D 12 device runs too, and which only developer mode can turn off); frame time p99 1.92× Rune's in the vlist fling (33.4 against 17.4 ms: whole-pixel scrolling in the fling's slow tail, below); memory 1.43× GPUI Fast's (152 against 107 MB; zgx and Rune load Direct3D 12, GPUI Fast and MyGo Direct3D 11, whose drivers' floors differ); app GPU time 1.31× Rune's in heavy both (13.4 against 10.2 ms/s); long frames 8.2× MyGo's in lab scroll (3.5 against 0.4%: some of zgx's captures miss refreshes for seconds at a time, with nothing merged: 84 long frames in one lab stream capture, 35 in one heavy both; under investigation); DWM CPU 1.63× (tick-counted, wide ranges) and DWM GPU 1.06×; startup to first content 1.38× MyGo's (323 against 234 ms). The animation runs at this display's 60 Hz, not the Mac's 120.
+
+The vlist fling's long frames are whole-pixel scrolling, not missed frames. The fling is 160 px a tick decaying ×0.94 a tick over 90 ticks, so its last ticks move under a pixel. zgx scrolls in whole device pixels (as Chrome and Windows' own lists do, for crisp text), so in that tail some refreshes change nothing on screen. Captured alongside zgx's own logs: every refresh had one tick, one render and one present the compositor took; each frame's GPU work was done 0.1–0.2 ms after its present; and the capture saw no composition at all in each long interval. The present mode made no difference (own swap chain at sync interval 0 or 1, wgpu mailbox or FIFO: 1.1–3.3% long frames each). Steady scrolling at a fixed step decides it:
+
+| Step a tick | Long frames (two captures) | Frames a second |
+| --- | --- | --- |
+| 12 px | 2.1%, 0% | 58–60 |
+| 3 px | 0.2%, 0% | 60 |
+| 1.3 px | 2.2%, 0.6% | 58–60 |
+| 0.6 px | 66.8%, 66.6% | 36 |
+
+Rune draws at fractional positions, so its pixels change every tick. (These captures predate `framepace`'s word hash; the 12 and 1.3 px residue is its old merging, below.)
+
+The pacing captures were taken again (`--pacing-into`, the trials kept, the same binaries): `framepace` first hashed each frame byte by byte and fell behind at the dashboard's 1280×800, merging compositions (`AccumulatedFrames` > 1) that then read as long frames, for every framework (heavy stream: zgx 1.1%, all merged). It now hashes words and reports merged frames (`merged_frames`), about 0 since.
 
 # Republished (2026-10-25): every macOS scene on `282bfc0`
 
