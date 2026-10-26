@@ -3338,7 +3338,7 @@ fn resolve_owned(source: &Source) -> Owned {
 /// lint, unless it is `ui.raw`.
 fn resolve_style(source: &Owned, prop: Prop, scalar: Option<&Signal<f32>>, vm: &Vm) -> Option<Lit> {
     if let Owned::Computed(f) = source
-        && crate::design::mode(&vm.lua) != crate::DesignLint::Off
+        && vm.warnings.borrow().design != crate::DesignLint::Off
     {
         let value = vm
             .call::<mlua::Value>(f, ())

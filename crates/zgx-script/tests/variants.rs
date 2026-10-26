@@ -344,3 +344,67 @@ fn a_computed_colour_that_fails_reports_and_the_rest_update() {
     h.settle();
     assert_eq!(h.fill("bad"), Color(0x11, 0x22, 0x33, 255));
 }
+
+/// A retained computed reads the current lint mode after host and script changes.
+#[test]
+fn a_retained_computed_observes_design_lint_changes() {
+    let mut h = Harness::new(|runtime| {
+        zgx_script::ScriptHost::inline(
+            runtime,
+            "app",
+            r##"local tick = ui.shared("tick", 0)
+            return ui.column {
+                ui.div { id = "computed", w = 10, h = 10, bg = function()
+                    local n = tick:get()
+                    if n == 5 then ui.theme.strict("off") end
+                    if n == 6 then ui.theme.strict("error") end
+                    return if n % 2 == 0 then "#123456" else "#abcdef"
+                end },
+                ui.text { id = "last", function() return tostring(tick:get()) end },
+                ui.button { id = "warn", on_click = function()
+                    ui.theme.strict("warn"); tick:set(4)
+                end, "Warn" },
+            }"##,
+        )
+        .error_banner(false)
+    });
+    assert!(h.host.warnings().is_empty());
+    assert_eq!(h.fill("computed"), Color(0x12, 0x34, 0x56, 255));
+    h.host.design_lint(zgx_script::DesignLint::Warn);
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(1.));
+    h.settle();
+    assert_eq!(h.warned("#abcdef").len(), 1);
+    assert_eq!(h.fill("computed"), Color(0xab, 0xcd, 0xef, 255));
+    h.host.design_lint(zgx_script::DesignLint::Error);
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(2.));
+    h.settle();
+    let error = h.error().expect("the failing computed is reported");
+    assert!(error.contains("the function for `bg` returns"), "{error}");
+    assert_eq!(h.text("last"), "2");
+    h.host.design_lint(zgx_script::DesignLint::Off);
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(3.));
+    h.settle();
+    assert_eq!(h.fill("computed"), Color(0xab, 0xcd, 0xef, 255));
+    h.click("warn");
+    assert_eq!(h.warned("#123456").len(), 1);
+    assert_eq!(h.fill("computed"), Color(0x12, 0x34, 0x56, 255));
+    let errors = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let reported = errors.clone();
+    h.host
+        .on_error(move |error| reported.borrow_mut().push(error.to_owned()));
+    let before = errors.borrow().len();
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(5.));
+    h.settle();
+    assert_eq!(h.fill("computed"), Color(0xab, 0xcd, 0xef, 255));
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(6.));
+    h.settle();
+    assert_eq!(h.fill("computed"), Color(0x12, 0x34, 0x56, 255));
+    assert_eq!(
+        errors.borrow().len(),
+        before,
+        "the call entered with lint off"
+    );
+    h.host.shared("tick", 0.).set(zgx_script::Value::Num(7.));
+    h.settle();
+    assert_eq!(errors.borrow().len(), before + 1);
+}
