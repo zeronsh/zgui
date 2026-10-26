@@ -254,6 +254,34 @@ fn shift_press_extends_from_the_anchor() {
     assert_eq!(ui.selected_text(), "cdefghij\nklmno");
 }
 
+/// After a double or triple press, a shift-press extends by words or
+/// paragraphs, as Safari and AppKit do.
+#[test]
+fn a_shift_press_after_a_word_selection_extends_by_words() {
+    let mut ui = Ui::new(400., 300.);
+    document(&mut ui, vec![text("one two three"), text("four five six")]);
+    // Characters 6 points wide: "two" spans 24 to 42.
+    for _ in 0..2 {
+        press(&mut ui, 30., 10., false);
+        release(&mut ui, 30., 10.);
+    }
+    assert_eq!(ui.selected_text(), "two");
+    press(&mut ui, 40., 34., true);
+    release(&mut ui, 40., 34.);
+    assert_eq!(
+        ui.selected_text(),
+        "two three\nfour five",
+        "to the whole word pressed"
+    );
+    press(&mut ui, 4., 10., true);
+    release(&mut ui, 4., 10.);
+    assert_eq!(
+        ui.selected_text(),
+        "one two",
+        "back past the first, from its far edge"
+    );
+}
+
 #[test]
 fn select_all_and_presses_elsewhere() {
     let mut ui = Ui::new(400., 300.);

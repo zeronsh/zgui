@@ -83,6 +83,8 @@ impl Hit {
     }
 }
 
+/// Two places: a unit's edges, or a selection's anchor and focus.
+type Edges = (TextPoint, TextPoint);
 /// What a drag extends by: the unit its press selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Unit {
@@ -188,6 +190,10 @@ pub(crate) struct State {
     root: Option<NodeId>,
     anchor: Option<TextPoint>,
     focus: Option<TextPoint>,
+    /// The words or paragraphs the last presses selected by (their first
+    /// unit), and the selection they made: a shift-press extending it, while
+    /// it stands, goes by those units too.
+    units: Option<(Unit, Edges, Edges)>,
     shown: Vec<Shown>,
     layouts: Vec<Shaped>,
     gesture: Option<Gesture>,
@@ -582,6 +588,21 @@ impl Ui {
             return false;
         };
         let extend = modifiers.shift && state.root == Some(root) && state.anchor.is_some();
+        // A shift-press extending words or paragraphs selected: by those.
+        let units = state.units.filter(|(_, _, made)| {
+            extend && Some(made.0) == state.anchor && Some(made.1) == state.focus
+        });
+        if let Some((unit, edges, _)) = units {
+            state.gesture = Some(Gesture {
+                root,
+                unit,
+                edges,
+                dragged: false,
+                pointer: (x, y),
+            });
+            drop(state);
+            return self.drag_selection(root, x, y);
+        }
         let unit = match count {
             _ if extend => Unit::Character,
             2 => Unit::Word,
@@ -601,6 +622,7 @@ impl Ui {
             dragged: false,
             pointer: (x, y),
         });
+        state.units = (unit != Unit::Character).then_some((unit, edges, (anchor, edges.1)));
         drop(state);
         self.set_selection(Some(root), Some(anchor), Some(edges.1));
         true
@@ -642,6 +664,10 @@ impl Ui {
                 edges
             }
         };
+        if unit != Unit::Character {
+            let mut state = self.selection_state().borrow_mut();
+            state.units = Some((unit, edges, (anchor, focus)));
+        }
         self.set_selection(Some(root), Some(anchor), Some(focus));
         self.arm_selection_scroll();
         true

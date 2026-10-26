@@ -74,3 +74,39 @@ fn macos_line_deletion_and_control_keys() {
     key(&mut ui, Key::Character("h".into()), control);
     assert_eq!(value.get(), "first line\n");
 }
+
+/// Option-Up and Option-Down go by paragraphs on macOS, Shift extending, as
+/// AppKit's text views do.
+#[cfg(target_os = "macos")]
+#[test]
+fn option_arrows_move_by_paragraphs_on_macos() {
+    let (mut ui, value) = field("one\ntwo three\nfour");
+    let editor = ui.focused_editor().unwrap();
+    editor.editor.borrow_mut().set_selection(8, 8);
+    editor.refresh();
+    let option = Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    };
+    let focus = |ui: &Ui| ui.focused_editor().unwrap().editor.borrow().selection();
+    key(&mut ui, Key::ArrowUp, option);
+    assert_eq!(focus(&ui).focus, 4, "the paragraph's start");
+    key(&mut ui, Key::ArrowUp, option);
+    assert_eq!(focus(&ui).focus, 0, "then the one before's");
+    key(&mut ui, Key::ArrowDown, option);
+    key(
+        &mut ui,
+        Key::ArrowDown,
+        Modifiers {
+            shift: true,
+            ..option
+        },
+    );
+    let selection = focus(&ui);
+    assert_eq!(
+        (selection.anchor, selection.focus),
+        (3, 13),
+        "Shift extends"
+    );
+    assert_eq!(value.get(), "one\ntwo three\nfour", "nothing typed");
+}

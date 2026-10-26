@@ -120,25 +120,61 @@ fn double_click_selects_complete_unicode_graphemes_and_separator_segments() {
     }
 }
 
+/// A triple press selects the paragraph, its break included, as AppKit's
+/// text views and browsers' text areas do: not the wrapped row it is on.
+/// Dragging on goes by paragraphs.
 #[test]
-fn triple_click_drag_selects_visual_lines_without_consuming_next_wrap_row() {
+fn triple_click_selects_the_paragraph_and_drags_by_paragraphs() {
     let (mut ui, editor) = fixture("abcdefghijklmnopqrst", 50., true);
-    click(&mut ui, 22., 40., false);
-    click(&mut ui, 22., 40., false);
-    down(&mut ui, 22., 40., false);
-    assert_eq!(editor.copy(), "fghij");
-    move_to(&mut ui, 22., 60.);
-    assert_eq!(editor.copy(), "fghijklmno");
-    move_to(&mut ui, 22., 20.);
-    assert_eq!(editor.copy(), "abcdefghij");
-    assert_eq!(editor.editor.borrow().selection().anchor, 10);
-    assert_eq!(editor.editor.borrow().selection().focus, 0);
-    up(&mut ui, 22., 20.);
-    let (mut ui, editor) = fixture("first\nsecond\nthird", 200., false);
     for _ in 0..3 {
         click(&mut ui, 22., 40., false);
     }
-    assert_eq!(editor.copy(), "second", "hard newline is excluded");
+    assert_eq!(
+        editor.copy(),
+        "abcdefghijklmnopqrst",
+        "every wrapped row of it"
+    );
+    let (mut ui, editor) = fixture("first\nsecond\nthird", 200., false);
+    click(&mut ui, 22., 40., false);
+    click(&mut ui, 22., 40., false);
+    down(&mut ui, 22., 40., false);
+    assert_eq!(editor.copy(), "second\n", "its break included");
+    move_to(&mut ui, 22., 60.);
+    assert_eq!(editor.copy(), "second\nthird");
+    move_to(&mut ui, 22., 20.);
+    assert_eq!(editor.copy(), "first\nsecond\n");
+    assert_eq!(editor.editor.borrow().selection().anchor, 13);
+    assert_eq!(editor.editor.borrow().selection().focus, 0);
+    up(&mut ui, 22., 20.);
+}
+
+/// After a double or triple press, a shift-click extends by the same units
+/// (words, paragraphs), as AppKit's text views do; after a single press, or
+/// once the selection moved otherwise, by characters.
+#[test]
+fn a_shift_click_extends_by_the_units_the_selection_was_made_in() {
+    let (mut ui, editor) = fixture("one two three four", 300., false);
+    click(&mut ui, 40., 20., false);
+    click(&mut ui, 40., 20., false);
+    assert_eq!(editor.copy(), "two");
+    click(&mut ui, 152., 20., true);
+    assert_eq!(editor.copy(), "two three four", "to the whole word clicked");
+    // Back before the first word: from its far edge.
+    click(&mut ui, 4., 20., true);
+    assert_eq!(editor.copy(), "one two");
+    // Paragraphs.
+    let (mut ui, editor) = fixture("first\nsecond\nthird", 200., false);
+    for _ in 0..3 {
+        click(&mut ui, 22., 20., false);
+    }
+    assert_eq!(editor.copy(), "first\n");
+    click(&mut ui, 22., 60., true);
+    assert_eq!(editor.copy(), "first\nsecond\nthird");
+    // A single press, then shift: characters.
+    let (mut ui, editor) = fixture("one two three", 300., false);
+    click(&mut ui, 4., 20., false);
+    click(&mut ui, 40., 20., true);
+    assert!(editor.copy().len() < "one two".len(), "{:?}", editor.copy());
 }
 
 #[test]

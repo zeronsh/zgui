@@ -121,10 +121,12 @@ def main():
                 assert (reports["reverse_word_drag"]["anchor"],reports["reverse_word_drag"]["focus"]) == (10,0), reports
                 capture("word-drag")
                 click(target["line_x"],target["line_y"],3)
-                reports["visual_line"] = report()
-                line = reports["visual_line"]
-                assert (line["anchor"],line["focus"]) == (target["line_start"],target["line_end"]), reports
-                assert line["focus"] > line["anchor"] > 0, reports
+                # The paragraph, break included (as NSTextView and browsers'
+                # text areas select one): more than the wrapped row clicked.
+                reports["paragraph"] = report()
+                line = reports["paragraph"]
+                assert (line["anchor"],line["focus"]) == (target["paragraph_start"],target["paragraph_end"]), reports
+                assert line["focus"] - line["anchor"] > target["line_end"] - target["line_start"], reports
                 capture("triple-click")
                 click(target["bx"],target["y"],4)
                 reports["fourth_click"] = report()

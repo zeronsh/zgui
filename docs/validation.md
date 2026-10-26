@@ -583,15 +583,17 @@ checked against the workspace; full command logs are retained beside them.
 ## Editor pointer selection and native click metadata
 
 Editors now support Shift-click anchor extension, Unicode word-boundary segment
-selection on double-click, and visual-line selection on triple-click. Dragging
-extends whole selected units and reverses around the original opposite edge.
-Single-line triple-click selects all text; line selections exclude hard newline
-terminators. Selection remains available read-only, cancels preedit, and leaves
+selection on double-click, and paragraph selection on triple-click (its break
+included, as NSTextView and browsers' text areas select one, not the wrapped
+row it was clicked on). Dragging extends whole selected units and reverses
+around the original opposite edge, and a Shift-click after a double or triple
+click extends by those units too. Single-line triple-click selects all text. Selection remains available read-only, cancels preedit, and leaves
 committed text and undo/redo history intact. Ordinary synthetic dispatch remains
 unmodified single-click input; native/custom-host modifier dispatch supplies
 per-event metadata and a target/button-specific 500 ms, four-logical-pixel
 click chain. Counts cycle 1/2/3/1 and reset with the documented interaction
-lifecycle. OS-specific multi-click preferences are not queried.
+lifecycle. The system's double-click time and distance are queried (see the
+platform services above).
 
 Seven new editor integration tests exercise Shift and unit dragging, grapheme-safe
 combining/emoji selection, punctuation/whitespace, right-half glyph hits,

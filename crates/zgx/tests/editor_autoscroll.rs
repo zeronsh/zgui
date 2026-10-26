@@ -83,7 +83,7 @@ fn tick(ui: &mut Ui) {
 }
 
 #[test]
-fn stationary_character_word_and_visual_line_selection_advance_without_reshaping() {
+fn stationary_character_word_and_paragraph_selection_advance_without_reshaping() {
     for count in 1..=3 {
         let (mut ui, editor, calls) = fixture(false, true);
         down(&mut ui, count);
@@ -100,7 +100,11 @@ fn stationary_character_word_and_visual_line_selection_advance_without_reshaping
             assert_eq!(later.focus % 10, 4, "whole word edge");
         }
         if count == 3 {
-            assert_eq!(later.focus % 10, 9, "whole visual line, excluding newline");
+            assert_eq!(
+                later.focus % 10,
+                0,
+                "whole paragraphs, their breaks included"
+            );
         }
         assert_eq!(
             calls.get(),

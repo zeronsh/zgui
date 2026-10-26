@@ -832,6 +832,10 @@ struct EditorDrag {
     mode: Cell<Option<EditorPointerSelection>>,
     pointer: Cell<(f32, f32)>,
     generation: Cell<u64>,
+    /// The words or paragraphs the last presses selected by, and the
+    /// selection they made: a shift-click extending it, while it stands,
+    /// goes by those units too, as AppKit's text views do.
+    units: Cell<Option<(EditorPointerSelection, (usize, usize))>>,
 }
 impl EditorDrag {
     fn cancel(&self) {
@@ -4138,17 +4142,17 @@ impl Ui {
                             line,
                             multiline,
                         );
-                        if current.0.byte_offset < edges.0.byte_offset {
-                            (edges.1.byte_offset, current.0)
-                        } else if current.1.byte_offset > edges.1.byte_offset {
-                            (edges.0.byte_offset, current.1)
-                        } else {
-                            (edges.0.byte_offset, edges.1)
-                        }
+                        extend_by_units(edges, current)
                     }
                 };
                 edit.set_selection(anchor, focus.byte_offset);
                 position.set(focus);
+                if let EditorPointerSelection::Unit { .. } = mode {
+                    gesture.units.set(Some((
+                        mode,
+                        (edit.selection().anchor, edit.selection().focus),
+                    )));
+                }
             })
         };
         let velocity: Rc<dyn Fn() -> (f32, f32)> = {
@@ -4418,8 +4422,14 @@ impl Ui {
                     let x = x - bounds.x + scroll.0;
                     let y = y - bounds.y + scroll.1;
                     let hit = layout.hit_position(x, y);
+                    let selected = (edit.selection().anchor, edit.selection().focus);
+                    let units = gesture
+                        .units
+                        .get()
+                        .filter(|(_, made)| *made == selected)
+                        .map(|(units, _)| units);
                     let mode = if cx.pointer_modifiers().shift {
-                        EditorPointerSelection::Character(edit.selection().anchor)
+                        units.unwrap_or(EditorPointerSelection::Character(edit.selection().anchor))
                     } else {
                         match cx.click_count() {
                             2 => {
@@ -4435,12 +4445,21 @@ impl Ui {
                     };
                     let (anchor, focus) = match mode {
                         EditorPointerSelection::Character(anchor) => (anchor, hit),
+                        EditorPointerSelection::Unit { edges, line } if cx.pointer_modifiers().shift => {
+                            let current = editor_pointer_unit(edit.around(hit.byte_offset), layout.as_ref(), hit, x, y, line, multiline);
+                            extend_by_units(edges, current)
+                        }
                         EditorPointerSelection::Unit { edges, .. } => (edges.0.byte_offset, edges.1),
                     };
                     edit.set_selection(anchor, focus.byte_offset);
                     position.set(focus);
                     gesture.cancel();
                     gesture.mode.set(Some(mode));
+                    let made = (edit.selection().anchor, edit.selection().focus);
+                    gesture.units.set(match mode {
+                        EditorPointerSelection::Unit { .. } => Some((mode, made)),
+                        EditorPointerSelection::Character(_) => None,
+                    });
                 }
                 // Middle-click paste, where the desktop has a primary
                 // selection: the caret goes under the pointer, and the host
@@ -4584,7 +4603,7 @@ impl Ui {
                         _ => None,
                     };
                     let directional = paging || (matches!(key, Key::ArrowUp | Key::ArrowDown)
-                        && !(cfg!(target_os = "macos") && modifiers.meta));
+                        && !(cfg!(target_os = "macos") && (modifiers.meta || modifiers.alt)));
                     if !directional {
                         preferred_x.set(None);
                     }
@@ -4632,6 +4651,12 @@ impl Ui {
                             }
                             Key::ArrowDown if cfg!(target_os = "macos") && modifiers.meta => {
                                 e.move_document_end(modifiers.shift)
+                            }
+                            // By paragraphs, as AppKit's text views go.
+                            Key::ArrowUp | Key::ArrowDown
+                                if cfg!(target_os = "macos") && modifiers.alt =>
+                            {
+                                e.move_paragraph(key == Key::ArrowUp, modifiers.shift)
                             }
                             // Right-to-left text: the arrows go the way it
                             // shows (the macOS way), by its layout.
@@ -4927,6 +4952,22 @@ enum EditorPointerSelection {
     },
 }
 
+/// A selection by units (`edges`, the first selected) reaching the unit at
+/// the pointer (`current`): from the far edge of the first, to the near edge
+/// of the one reached, either way.
+fn extend_by_units(
+    edges: (TextPosition, TextPosition),
+    current: (TextPosition, TextPosition),
+) -> (usize, TextPosition) {
+    if current.0.byte_offset < edges.0.byte_offset {
+        (edges.1.byte_offset, current.0)
+    } else if current.1.byte_offset > edges.1.byte_offset {
+        (edges.0.byte_offset, current.1)
+    } else {
+        (edges.0.byte_offset, edges.1)
+    }
+}
+
 pub(crate) fn editor_pointer_unit(
     around: (usize, std::borrow::Cow<'_, str>),
     layout: &dyn TextLayout,
@@ -4936,13 +4977,19 @@ pub(crate) fn editor_pointer_unit(
     line: bool,
     multiline: bool,
 ) -> (TextPosition, TextPosition) {
-    if line && multiline {
-        return layout.visual_line_range(hit);
-    }
     // The text around the hit (its line, in a long text) from where it
     // starts in the whole.
     let (base, text) = (around.0, &*around.1);
-    let (start, end) = if line {
+    let (start, end) = if line && multiline {
+        // Its paragraph, break included, as AppKit's text views and
+        // browsers' text areas select one (not the wrapped row).
+        let offset = hit.byte_offset.saturating_sub(base).min(text.len());
+        let start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
+        let end = text[offset..]
+            .find('\n')
+            .map_or(text.len(), |i| offset + i + 1);
+        (base + start, base + end)
+    } else if line {
         (base, base + text.len())
     } else {
         // A hit is the nearest caret, not necessarily the grapheme underneath

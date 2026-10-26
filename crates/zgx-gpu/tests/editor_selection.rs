@@ -8,7 +8,7 @@ use zgx::{
 use zgx_gpu::text::ShapedText;
 
 #[test]
-fn triple_click_selects_full_logical_row_in_mixed_direction_text() {
+fn triple_click_selects_the_whole_paragraph_in_mixed_direction_text() {
     let fonts = Rc::new(RefCell::new(cosmic_text::FontSystem::new()));
     for text in ["abc אבג", "אבג abc", "abc אבג xyz דהו", "abc אבג  "] {
         let mut ui = Ui::new(500., 200.);
@@ -56,11 +56,11 @@ fn triple_click_selects_full_logical_row_in_mixed_direction_text() {
         }
         assert_eq!(
             editor.copy(),
-            text,
-            "complete bidi row including trailing spaces"
+            format!("{text}\n"),
+            "the whole bidi paragraph, trailing spaces and break included"
         );
         assert_eq!(editor.editor.borrow().selection().anchor, 0);
-        assert_eq!(editor.editor.borrow().selection().focus, text.len());
+        assert_eq!(editor.editor.borrow().selection().focus, text.len() + 1);
     }
 }
 
