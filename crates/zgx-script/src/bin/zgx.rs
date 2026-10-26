@@ -188,6 +188,8 @@ ZGX_INSPECT_SOCKET=1): with one running, --app is not needed.
   wait <target> [--text T] [--gone] [--timeout MS]
   sleep <ms>           raw <json>
   help                 what the app answers
+  mcp                  serve these as MCP tools on stdio, for agents
+                       (claude mcp add zgx -- zgx inspect mcp)
 
 Targets: #id, \"label or text\", role:button, @12, row 3, [2], a >> b.
 Text by default, compact; --json prints the answer as JSON.";
@@ -224,6 +226,9 @@ fn inspect(args: Vec<String>) -> ExitCode {
         eprintln!("{INSPECT_USAGE}");
         return ExitCode::from(2);
     };
+    if cmd == "mcp" {
+        return mcp();
+    }
     if cmd == "list" {
         let apps = inspect_client::apps();
         if apps.is_empty() {
@@ -341,4 +346,247 @@ fn inspect(args: Vec<String>) -> ExitCode {
         }
         ExitCode::FAILURE
     }
+}
+
+/// The MCP tools: each a devtools command, its arguments (all strings
+/// unless said), and what it does.
+/// A tool's argument: its name, its JSON type, and whether it is required.
+type Arg = (&'static str, &'static str, bool);
+/// A tool: its name, the command it runs, its arguments and what it does.
+type Tool = (&'static str, &'static str, &'static [Arg], &'static str);
+const TOOLS: &[Tool] = &[
+    (
+        "zgx_apps",
+        "list",
+        &[],
+        "The running zgx apps serving devtools: pid and script.",
+    ),
+    (
+        "zgx_tree",
+        "tree",
+        &[
+            ("target", "string", false),
+            ("depth", "number", false),
+            ("budget", "number", false),
+            ("all", "boolean", false),
+        ],
+        "The interface, a node a line in document order: `@n #id role \"name\" =\"value\" x,y wxh`. Give a target to see a part, depth to see less.",
+    ),
+    (
+        "zgx_node",
+        "node",
+        &[("target", "string", true)],
+        "One node: kind, the script line that made it, role, name, value, state, box, text.",
+    ),
+    (
+        "zgx_find",
+        "find",
+        &[("target", "string", true)],
+        "Every node a target matches.",
+    ),
+    (
+        "zgx_state",
+        "state",
+        &[("name", "string", false), ("full", "boolean", false)],
+        "Named states (ui.state, ui.persist, ui.shared) and their values; long values are cut unless full.",
+    ),
+    (
+        "zgx_set_state",
+        "set",
+        &[("name", "string", true), ("value", "any", true)],
+        "Set a named state to a JSON value.",
+    ),
+    (
+        "zgx_click",
+        "click",
+        &[("target", "string", true)],
+        "Click a node.",
+    ),
+    (
+        "zgx_type",
+        "type",
+        &[("target", "string", true), ("text", "string", true)],
+        "Click a node (an input), then type text into it.",
+    ),
+    (
+        "zgx_key",
+        "key",
+        &[("keys", "string", true)],
+        "Press keys where focus is: Enter, Escape, Tab, cmd+k, alt+ArrowDown.",
+    ),
+    (
+        "zgx_scroll",
+        "scroll",
+        &[("target", "string", true), ("dy", "number", true)],
+        "Scroll the viewport under a node by dy points (down is positive).",
+    ),
+    (
+        "zgx_command",
+        "command",
+        &[("id", "string", true)],
+        "Run a ui.command, as its menu item or shortcut does.",
+    ),
+    (
+        "zgx_errors",
+        "errors",
+        &[],
+        "The script error, type errors, lint findings and layout warnings, or none.",
+    ),
+    (
+        "zgx_lint",
+        "lint",
+        &[],
+        "zgx lint over the app's scripts: file:line:col rule message.",
+    ),
+    (
+        "zgx_frames",
+        "frames",
+        &[("n", "number", false)],
+        "What ran in the last frames that did anything, and why: states written, the runs they caused, costs.",
+    ),
+    (
+        "zgx_wait",
+        "wait",
+        &[
+            ("target", "string", true),
+            ("text", "string", false),
+            ("gone", "boolean", false),
+            ("timeout_ms", "number", false),
+        ],
+        "Wait until a node shows (holding text, if given), or is gone; fails with why after the timeout.",
+    ),
+    (
+        "zgx_sleep",
+        "sleep",
+        &[("ms", "number", true)],
+        "Let the app run for ms milliseconds.",
+    ),
+];
+
+const TARGETS: &str = "Targets: #id, \"label or text\" (in quotes), role:button, @12 (a tree number), #list row 3, \"Copy\"[2], #a >> \"b\" (inside).";
+
+/// `zgx inspect mcp`: devtools as MCP tools, JSON-RPC on stdin and stdout.
+fn mcp() -> ExitCode {
+    use std::io::{BufRead, Write};
+    use zgx_script::{Value, inspect_client};
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout();
+    let text = |t: String| {
+        Value::record([
+            ("type", Value::from("text")),
+            ("text", Value::from(t.as_str())),
+        ])
+    };
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        let Some(message) = Value::from_json(line.trim()) else {
+            continue;
+        };
+        let method = message
+            .field("method")
+            .map(Value::to_string)
+            .unwrap_or_default();
+        let Some(id) = message.field("id").cloned() else {
+            // A notification (`notifications/initialized`): no answer.
+            continue;
+        };
+        let result = match method.as_str() {
+            "initialize" => Ok(Value::record([
+                ("protocolVersion", message.field("params").and_then(|p| p.field("protocolVersion")).cloned().unwrap_or(Value::from("2025-06-18"))),
+                // (An empty table is written as a list: give each object a field.)
+                ("capabilities", Value::record([("tools", Value::record([("listChanged", Value::Bool(false))]))])),
+                ("serverInfo", Value::record([("name", Value::from("zgx")), ("version", Value::from(env!("CARGO_PKG_VERSION")))])),
+                ("instructions", Value::from(format!("Drive a running zgx Luau app (started with `zgx-run --inspect`). Read with zgx_tree, zgx_node, zgx_state, zgx_errors, zgx_frames; act with zgx_click, zgx_type, zgx_key, zgx_command, zgx_set_state; zgx_wait for what takes time. {TARGETS} Pass `app` (a pid) when several apps run.").as_str())),
+            ])),
+            "ping" => Ok(Value::record([("ok", Value::Bool(true))])),
+            "tools/list" => Ok(Value::record([(
+                "tools",
+                Value::List(
+                    TOOLS
+                        .iter()
+                        .map(|(name, _, args, about)| {
+                            let mut properties: Vec<(&str, Value)> = args
+                                .iter()
+                                .map(|(arg, ty, _)| {
+                                    let schema = if *ty == "any" {
+                                        Value::record([("description", Value::from("any JSON value"))])
+                                    } else {
+                                        Value::record([("type", Value::from(*ty))])
+                                    };
+                                    (*arg, schema)
+                                })
+                                .collect();
+                            properties.push(("app", Value::record([("type", Value::from("number")), ("description", Value::from("the app's pid, when several run"))])));
+                            let required: Vec<Value> = args.iter().filter(|a| a.2).map(|a| Value::from(a.0)).collect();
+                            Value::record([
+                                ("name", Value::from(*name)),
+                                ("description", Value::from(if args.iter().any(|a| a.0 == "target") { format!("{about} {TARGETS}") } else { about.to_string() }.as_str())),
+                                ("inputSchema", Value::record([
+                                    ("type", Value::from("object")),
+                                    ("properties", Value::record(properties)),
+                                    ("required", Value::List(required.into())),
+                                ])),
+                            ])
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                ),
+            )])),
+            "tools/call" => {
+                let params = message.field("params").cloned().unwrap_or_default();
+                let name = params.field("name").map(Value::to_string).unwrap_or_default();
+                let args = params.field("arguments").cloned().unwrap_or_default();
+                let answer = match TOOLS.iter().find(|t| t.0 == name) {
+                    None => Err(format!("no tool {name}")),
+                    Some((_, "list", _, _)) => Ok(inspect_client::apps().iter().map(|a| format!("{} {}", a.pid, a.app)).collect::<Vec<_>>().join("\n")),
+                    Some((_, cmd, params, _)) => {
+                        let mut fields: Vec<(String, Value)> = vec![("cmd".into(), Value::from(*cmd))];
+                        for (arg, _, _) in params.iter() {
+                            if let Some(v) = args.field(arg) {
+                                fields.push((arg.to_string(), v.clone()));
+                            }
+                        }
+                        let pid = args.field("app").and_then(Value::as_f64).map(|p| p as u32);
+                        inspect_client::pick(pid)
+                            .and_then(|pid| inspect_client::request(pid, &Value::record(fields)))
+                            .and_then(|answer| {
+                                let answer = Value::from_json(&answer).unwrap_or_default();
+                                if answer.field("ok").is_some_and(Value::truthy) {
+                                    Ok(answer.field("text").map(Value::to_string).unwrap_or_default())
+                                } else {
+                                    Err(answer.field("error").map(Value::to_string).unwrap_or_default())
+                                }
+                            })
+                    }
+                };
+                Ok(match answer {
+                    Ok(t) => Value::record([("content", Value::List(vec![text(if t.is_empty() { "ok".into() } else { t })].into())), ("isError", Value::Bool(false))]),
+                    Err(e) => Value::record([("content", Value::List(vec![text(e)].into())), ("isError", Value::Bool(true))]),
+                })
+            }
+            other => Err(format!("no method {other}")),
+        };
+        let reply = match result {
+            Ok(result) => Value::record([
+                ("jsonrpc", Value::from("2.0")),
+                ("id", id),
+                ("result", result),
+            ]),
+            Err(message) => Value::record([
+                ("jsonrpc", Value::from("2.0")),
+                ("id", id),
+                (
+                    "error",
+                    Value::record([
+                        ("code", Value::Num(-32601.)),
+                        ("message", Value::from(message.as_str())),
+                    ]),
+                ),
+            ]),
+        };
+        if writeln!(out, "{}", reply.to_json()).is_err() || out.flush().is_err() {
+            break;
+        }
+    }
+    ExitCode::SUCCESS
 }

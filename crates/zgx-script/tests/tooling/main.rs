@@ -9,6 +9,8 @@ mod check;
 mod diagnostics;
 #[path = "../input_hints.rs"]
 mod input_hints;
+#[path = "../inspect_cli.rs"]
+mod inspect_cli;
 #[path = "../lint_cli.rs"]
 mod lint_cli;
 #[path = "../reference_docs.rs"]
