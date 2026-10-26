@@ -231,6 +231,11 @@ impl Projective {
     }
     /// Apply `self`, then `next`.
     pub fn then(self, next: Self) -> Self {
+        // Affine maps compose as `Affine` does: in f32, rounded the same,
+        // and at its cost (every layout transform takes this path).
+        if let (Some(first), Some(second)) = (self.affine(), next.affine()) {
+            return first.then(second).into();
+        }
         let (a, b) = (next.rows(), self.rows());
         let mut m = [[0.; 3]; 3];
         for (i, row) in m.iter_mut().enumerate() {
@@ -265,6 +270,9 @@ impl Projective {
     }
     /// Where it moves the point `x`, `y` (non-finite behind the eye).
     pub fn point(self, x: f32, y: f32) -> (f32, f32) {
+        if let Some(affine) = self.affine() {
+            return affine.point(x, y);
+        }
         let w = self.w(x, y);
         if w < MIN_W {
             return (f32::NAN, f32::NAN);
@@ -276,6 +284,9 @@ impl Projective {
     }
     /// Singular or non-finite maps have no usable inverse.
     pub fn inverse(self) -> Option<Self> {
+        if let Some(affine) = self.affine() {
+            return affine.inverse().map(Self::from);
+        }
         if !self.is_finite() {
             return None;
         }
