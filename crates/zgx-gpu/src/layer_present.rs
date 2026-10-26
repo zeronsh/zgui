@@ -918,8 +918,12 @@ impl Layer {
             let count = std::env::var("ZGX_DRAWABLES")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(2usize);
-            // 2 or 3, as CAMetalLayer accepts.
+                .unwrap_or(3usize);
+            // 2 or 3, as CAMetalLayer accepts. 3: with 2 the pool is full and
+            // the window server hands every image back at once, which cost it
+            // 3-4 points of CPU per window (2026-10-26, M5, paired seconds
+            // against tiles: heavy stream +4.4 with 2, -0.3 with 3; animate
+            // +2.8, 0.0). Frames below the display's rate still use 2.
             layer.setMaximumDrawableCount(count.clamp(2, 3));
             // sRGB, as the tiles' surfaces are tagged.
             // SAFETY: CoreGraphics' constant CFString, read only.
