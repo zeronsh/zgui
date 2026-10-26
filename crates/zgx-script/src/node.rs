@@ -2186,7 +2186,7 @@ impl std::hash::Hasher for AddressHasher {
 /// Fills a node's properties, pseudo-states, handlers and children.
 pub(crate) fn fill(lua: &Lua, mut node: Node, table: Option<&Table>) -> mlua::Result<Node> {
     if let Some(table) = table {
-        fill_from(lua, &mut node, table, None)?;
+        fill_from(lua, &mut node, table, None, crate::design::mode(lua))?;
     }
     Ok(node)
 }
@@ -2204,6 +2204,7 @@ fn fill_from(
     node: &mut Node,
     table: &Table,
     mut text: Option<&mut TextArgs>,
+    lint: crate::DesignLint,
 ) -> mlua::Result<()> {
     let mut layout_given = false;
     let mut variants = None;
@@ -2211,7 +2212,7 @@ fn fill_from(
     // put in order after.
     let mut items = Vec::new();
     let keys = lua.app_data_ref::<StyleKeys>();
-    let lint = Some(crate::design::mode(lua));
+    let lint = Some(lint);
     // Keys are read where they lie on the stack (a string key's identity
     // finds its property): no reference is made for them.
     table.for_each_borrowed(|borrowed, value| {
@@ -2869,6 +2870,12 @@ fn placement_of(value: mlua::Value) -> mlua::Result<Option<zgx::compose::Placeme
 pub(crate) fn owner(lua: &Lua) -> mlua::Result<Weak<Vm>> {
     Ok(env(lua)?.vm.clone())
 }
+/// `owner`, and the mode its design lint runs in (`design::mode`), from one
+/// look at the script's environment: an element took one for each.
+fn owner_and_lint(lua: &Lua) -> mlua::Result<(Weak<Vm>, crate::DesignLint)> {
+    let env = env(lua)?;
+    Ok((env.vm.clone(), env.warnings.borrow().design))
+}
 pub(crate) fn label(table: &Table) -> mlua::Result<String> {
     Ok(table.get::<Option<String>>("label")?.unwrap_or_default())
 }
@@ -2967,9 +2974,11 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     let ui = lua.create_table()?;
     let container = |kind: fn() -> Kind| {
         lua.create_function(move |lua, table: Option<Table>| {
-            let mut node = Node::new(owner(lua)?, kind());
+            // The script's owner and lint mode, looked up once a call.
+            let (owner, lint) = owner_and_lint(lua)?;
+            let mut node = Node::new(owner, kind());
             if let Some(table) = &table {
-                fill_from(lua, &mut node, table, None)?;
+                fill_from(lua, &mut node, table, None, lint)?;
             }
             node_ud(lua, node)
         })
@@ -2983,10 +2992,11 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set(
         "button",
         lua.create_function(|lua, table: Option<Table>| {
-            let mut node = Node::new(owner(lua)?, Kind::Button);
+            let (owner, lint) = owner_and_lint(lua)?;
+            let mut node = Node::new(owner, Kind::Button);
             if let Some(table) = &table {
                 button_look(lua, table)?;
-                fill_from(lua, &mut node, table, None)?;
+                fill_from(lua, &mut node, table, None, lint)?;
             }
             node_ud(lua, node)
         })?,
@@ -3040,7 +3050,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set(
         "text",
         lua.create_function(|lua, arg: mlua::Value| {
-            let owner = owner(lua)?;
+            let (owner, lint) = owner_and_lint(lua)?;
             let mlua::Value::Table(table) = arg else {
                 let text = text_of(lua, arg, "ui.text", false)?;
                 return node_ud(lua, Node::new(owner, Kind::Text(text)));
@@ -3048,7 +3058,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             // The content is element 1; the rest are styles.
             let mut args = TextArgs::default();
             let mut node = Node::new(owner, Kind::Text(Text::Literal(String::new())));
-            fill_from(lua, &mut node, &table, Some(&mut args))?;
+            fill_from(lua, &mut node, &table, Some(&mut args), lint)?;
             let literal = args.literal.unwrap_or(false);
             node.kind = Kind::Text(text_of(lua, args.content, "ui.text", literal)?);
             node_ud(lua, node)
@@ -3073,8 +3083,9 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let mut args = TextArgs::default();
             let empty = Kind::Text(Text::Literal(String::new()));
-            let mut node = Node::new(owner(lua)?, empty);
-            fill_from(lua, &mut node, &table, Some(&mut args))?;
+            let (owner, lint) = owner_and_lint(lua)?;
+            let mut node = Node::new(owner, empty);
+            fill_from(lua, &mut node, &table, Some(&mut args), lint)?;
             let literal = args.literal.unwrap_or(false);
             let text = text_of(lua, args.content, "ui.markdown_view", literal)?;
             node.kind = Kind::Markdown { text, options };
