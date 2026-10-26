@@ -1713,6 +1713,13 @@ struct Slot {
     dead: bool,
     node: Option<Node>,
 }
+/// A node id no longer in the scene was used (`Scene::node`).
+#[cold]
+#[inline(never)]
+#[track_caller]
+fn stale() -> ! {
+    panic!("stale scene node")
+}
 /// Where a parent's children are damaged (`Scene::damage_context`).
 type DamageContext = Option<(Transform, Option<Rect>)>;
 /// What a [`Scene::flush`] did, for renderers and diagnostics.
@@ -2388,13 +2395,36 @@ impl Scene {
     pub fn is_empty(&self) -> bool {
         false
     } // A scene always retains its root.
+    /// `id`'s node: one look at its slot, which must still hold it.
     fn node(&self, id: NodeId) -> &Node {
-        assert!(self.contains(id), "stale scene node");
-        self.slots[id.index as usize].node.as_ref().unwrap()
+        match self.slots.get(id.index as usize) {
+            Some(Slot {
+                generation,
+                node: Some(node),
+                ..
+            }) if *generation == id.generation => node,
+            _ => stale(),
+        }
+    }
+    /// A node the tree itself led to (a live node's parent, an id checked
+    /// just before): in the scene by the tree's invariant, so its
+    /// generation is checked in debug builds only. Hot walks (`world`,
+    /// `bounds`, `world_clip`, `shown`, `flush`'s dirty nodes) take it.
+    #[inline(always)]
+    fn tree_node(&self, id: NodeId) -> &Node {
+        let slot = &self.slots[id.index as usize];
+        debug_assert!(slot.generation == id.generation, "stale scene node");
+        slot.node.as_ref().unwrap_or_else(|| stale())
     }
     fn node_mut(&mut self, id: NodeId) -> &mut Node {
-        assert!(self.contains(id), "stale scene node");
-        self.slots[id.index as usize].node.as_mut().unwrap()
+        match self.slots.get_mut(id.index as usize) {
+            Some(Slot {
+                generation,
+                node: Some(node),
+                ..
+            }) if *generation == id.generation => node,
+            _ => stale(),
+        }
     }
     /// `id`'s box as laid out, translated by its own and its ancestors'
     /// translations, in window points.
@@ -2406,7 +2436,7 @@ impl Scene {
         let mut transform = node.transform;
         let mut parent = node.parent;
         while let Some(id) = parent {
-            let ancestor = self.node(id);
+            let ancestor = self.tree_node(id);
             transform.x += ancestor.transform.x;
             transform.y += ancestor.transform.y;
             parent = ancestor.parent;
@@ -4667,7 +4697,7 @@ impl Scene {
         }
         let mut parent = node.parent;
         while let Some(id) = parent {
-            let ancestor = self.node(id);
+            let ancestor = self.tree_node(id);
             transform.x += ancestor.transform.x;
             transform.y += ancestor.transform.y;
             effects.opacity *= if own_visible(&ancestor.style) {
@@ -4685,21 +4715,23 @@ impl Scene {
     /// its ancestors' translations, summed from it upwards.
     fn world_clip(&self, id: NodeId) -> Option<Rect> {
         let mut clip = Some(self.viewport);
-        let mut current = Some(id);
-        while let Some(id) = current {
-            let ancestor = self.node(id);
+        let mut ancestor = self.node(id);
+        loop {
             if clip_axes(&ancestor.style) != (false, false) {
                 let mut offset = ancestor.transform;
                 let mut parent = ancestor.parent;
                 while let Some(parent_id) = parent {
-                    let p = self.node(parent_id);
+                    let p = self.tree_node(parent_id);
                     offset.x += p.transform.x;
                     offset.y += p.transform.y;
                     parent = p.parent;
                 }
                 clip = clipped_bounds(clip, ancestor.bounds.translated(offset), &ancestor.style);
             }
-            current = ancestor.parent;
+            let Some(parent) = ancestor.parent else {
+                break;
+            };
+            ancestor = self.tree_node(parent);
         }
         clip
     }
@@ -5092,15 +5124,16 @@ impl Scene {
     /// nothing, so its changes damage nothing. Hiding one damages what it
     /// painted before the change.
     fn shown(&self, id: NodeId) -> bool {
-        let mut current = Some(id);
-        while let Some(node) = current {
-            let node = self.node(node);
+        let mut node = self.node(id);
+        loop {
             if !own_visible(&node.style) {
                 return false;
             }
-            current = node.parent;
+            let Some(parent) = node.parent else {
+                return true;
+            };
+            node = self.tree_node(parent);
         }
-        true
     }
     fn damage_node(&mut self, id: NodeId) {
         if self.damage_is_full() || !self.shown(id) {
@@ -6598,7 +6631,7 @@ impl Scene {
             if !self.contains(*id) {
                 continue;
             }
-            let flags = self.node(*id).dirty;
+            let flags = self.tree_node(*id).dirty;
             if flags & (PAINT | PAINTED) != 0 {
                 report.paint_nodes += 1;
             }
