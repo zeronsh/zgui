@@ -460,9 +460,9 @@ pub struct WindowFactory {
     alive: Rc<Cell<bool>>,
     clipboard: Rc<RefCell<Option<crate::clipboard::Clipboard>>>,
     gpu_contexts: Rc<RefCell<Vec<GpuContext>>>,
-    /// macOS: the first GPU context, made on a thread of its own while
-    /// AppKit makes the first window (`make_renderer` takes it).
-    #[cfg(target_os = "macos")]
+    /// macOS and Windows: the first GPU context, made on a thread of its
+    /// own while the first window is (`make_renderer` takes it).
+    #[cfg(any(target_os = "macos", windows))]
     early_gpu: Rc<RefCell<Option<zgx_gpu::PendingGpuContext>>>,
     proxy: EventLoopProxy<Event>,
     /// What every window's `Ui` runs on: one runtime, so state one window
@@ -765,13 +765,15 @@ impl Application {
     /// return once the application quits.
     pub fn run(self, build: impl FnOnce(&mut WindowContext)) -> Result<(), Box<dyn Error>> {
         zgx::profile::mark("run");
-        // The GPU device, its pipelines and the fonts are made beside
-        // AppKit's launch and first window, which hold the main thread
-        // meanwhile. Metal's adapter draws to any window, so it needs none
-        // to be found. Windows and Linux make it with the first window, as
-        // they choose an adapter by its surface (and Linux's GL needs its
-        // display).
-        #[cfg(target_os = "macos")]
+        // The GPU device, its pipelines and the fonts are made beside the
+        // launch and the first window, which hold the main thread
+        // meanwhile. Metal's adapter draws to any window, and Windows takes
+        // the adapter DXGI ranks first, so neither needs a window to find
+        // it: on Windows, opening the device is most of a start (190 ms of
+        // 300 on an RTX 4090), and this put the first content 16 to 24 ms
+        // sooner. Linux makes it with the first window, as it chooses an
+        // adapter by its surface (and GL needs its display).
+        #[cfg(any(target_os = "macos", windows))]
         let early_gpu = zgx_gpu::GpuContext::prepare_in_background();
         let mut event_loop = EventLoop::<Event>::with_user_event();
         // zgx installs a menu bar of its own (`app_menu`) as it resumes:
@@ -828,7 +830,7 @@ impl Application {
             alive: Rc::new(Cell::new(true)),
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             early_gpu: Rc::new(RefCell::new(Some(early_gpu))),
             proxy: proxy.clone(),
             runtime: zgx::reactive::Runtime::new(),
@@ -2298,9 +2300,9 @@ impl Host {
         // The context made while the window was (`Application::run`): the
         // first shared one. Failing, a context is made for the window as
         // without it, so errors come as they always did.
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         let early = self.context.windows.early_gpu.borrow_mut().take();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(Ok(context)) = early.map(zgx_gpu::PendingGpuContext::join) {
             for font in self.context.windows.fonts.iter() {
                 font.install(&mut context.text_system().borrow_mut());
@@ -6667,7 +6669,7 @@ mod tests {
                 .unwrap(),
             ))),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             early_gpu: Rc::default(),
             proxy: event_loop.create_proxy(),
             runtime: zgx::reactive::Runtime::new(),
@@ -6811,7 +6813,7 @@ mod tests {
             alive: Rc::new(Cell::new(true)),
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             early_gpu: Rc::default(),
             proxy: event_loop.create_proxy(),
             runtime: zgx::reactive::Runtime::new(),
@@ -6900,7 +6902,7 @@ mod tests {
             alive: Rc::new(Cell::new(true)),
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             early_gpu: Rc::default(),
             proxy: event_loop.create_proxy(),
             runtime: zgx::reactive::Runtime::new(),
@@ -6971,7 +6973,7 @@ mod tests {
             alive: Rc::new(Cell::new(true)),
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             early_gpu: Rc::default(),
             proxy: event_loop.create_proxy(),
             runtime: zgx::reactive::Runtime::new(),
@@ -7036,7 +7038,7 @@ mod tests {
             alive: Rc::new(Cell::new(true)),
             clipboard: Rc::new(RefCell::new(None)),
             gpu_contexts: Rc::new(RefCell::new(Vec::new())),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             early_gpu: Rc::default(),
             proxy: event_loop.create_proxy(),
             runtime: zgx::reactive::Runtime::new(),
