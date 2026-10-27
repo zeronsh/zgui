@@ -225,6 +225,34 @@ impl Region {
             tint: [0.; 4],
         }
     }
+    /// Whether it leaves every pixel of `bounds` as it is: no colour filter,
+    /// and `bounds` inside each rounded box past its largest corner, its
+    /// feather and half a device pixel's antialiasing, and inside every fade
+    /// band (draw.wgsl's `region` is exactly 1 there).
+    fn covers(&self, bounds: Rect, scale: f32) -> bool {
+        // (Slack past the edges, so rounding never reads a band's last step.)
+        const SLACK: f32 = 1e-3;
+        let inside = |round: [f32; 4], radii: [f32; 4], feather: f32| {
+            if round[2] < 0. {
+                return true;
+            }
+            let corner = radii.into_iter().fold(0f32, f32::max);
+            let margin = corner + (0.5 / scale).max(feather) + SLACK;
+            bounds.x >= round[0] + margin
+                && bounds.y >= round[1] + margin
+                && bounds.x + bounds.width <= round[0] + round[2] - margin
+                && bounds.y + bounds.height <= round[1] + round[3] - margin
+        };
+        let [x0, y0, x1, y1] = self.fade_box;
+        let [top, right, bottom, left] = self.fade;
+        self.tint[0] == 0.
+            && inside(self.round0, self.radii0, self.tint[1])
+            && inside(self.round1, self.radii1, self.tint[2])
+            && (top <= 0. || bounds.y >= y0 + top + SLACK)
+            && (right <= 0. || bounds.x + bounds.width <= x1 - right - SLACK)
+            && (bottom <= 0. || bounds.y + bounds.height <= y1 - bottom - SLACK)
+            && (left <= 0. || bounds.x >= x0 + left + SLACK)
+    }
     /// `item`'s, if it lies in one.
     fn of(item: &zgx::scene::PaintItem<'_>) -> Option<Self> {
         if item.mask().is_none()
@@ -4987,8 +5015,9 @@ impl GpuRenderer {
         }
         let at = kept_item.start as usize;
         let mut quad = kept.quads[at];
-        // (Made whole and untransformed: its box is its rectangle and fade.)
-        if quad.rect != quad.fade || quad.options[2] >= 0.5 {
+        // (Made whole and untransformed: its box is its rectangle and fade.
+        // Not drawn without its region for where it was: `Region::covers`.)
+        if quad.rect != quad.fade || quad.options[2] >= 0.5 || quad.mask[3] > 0. {
             return false;
         }
         let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
@@ -6586,11 +6615,24 @@ impl GpuRenderer {
                 }
             };
             // Inside rounded clips or a `fade_edges` container: cut and faded
-            // in the shader.
-            let region = region_index(&mut clips, Region::of(&item));
+            // in the shader, unless the item lies wholly where the region
+            // changes nothing (a row well inside a rounded card): then drawn
+            // without it, as the plain quads it is. `mask.w` marks those, so
+            // a box moved alone (`patch_box_moved`) is made again instead.
+            let item_quads = &mut quads[start as usize..];
+            let in_region = Region::of(&item);
+            let drawn_in = in_region.filter(|region| {
+                !(item_quads.iter().all(|quad| quad.options[2] < 0.5)
+                    && region.covers(quad_bounds(item_quads), self.scale))
+            });
+            let region = region_index(&mut clips, drawn_in);
             if region > 0. {
-                for quad in &mut quads[start as usize..] {
+                for quad in item_quads {
                     quad.mask[0] = region;
+                }
+            } else if in_region.is_some() {
+                for quad in item_quads {
+                    quad.mask[3] = 1.;
                 }
             }
             // When the clip only culls whole quads, apply it on the CPU and
