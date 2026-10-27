@@ -226,22 +226,40 @@ impl Region {
         }
     }
     /// Whether it leaves every pixel of `bounds` as it is: no colour filter,
-    /// and `bounds` inside each rounded box past its largest corner, its
-    /// feather and half a device pixel's antialiasing, and inside every fade
-    /// band (draw.wgsl's `region` is exactly 1 there).
+    /// every pixel centre in `bounds` fully inside each rounded box, and
+    /// `bounds` inside every fade band (draw.wgsl's `region` is exactly 1
+    /// there).
     fn covers(&self, bounds: Rect, scale: f32) -> bool {
         // (Slack past the edges, so rounding never reads a band's last step.)
         const SLACK: f32 = 1e-3;
+        let (end_x, end_y) = (bounds.x + bounds.width, bounds.y + bounds.height);
         let inside = |round: [f32; 4], radii: [f32; 4], feather: f32| {
-            if round[2] < 0. {
+            let [x0, y0, width, height] = round;
+            if width < 0. {
                 return true;
             }
+            let (x1, y1) = (x0 + width, y0 + height);
             let corner = radii.into_iter().fold(0f32, f32::max);
-            let margin = corner + (0.5 / scale).max(feather) + SLACK;
-            bounds.x >= round[0] + margin
-                && bounds.y >= round[1] + margin
-                && bounds.x + bounds.width <= round[0] + round[2] - margin
-                && bounds.y + bounds.height <= round[1] + round[3] - margin
+            if feather > 0. || corner > width.min(height) * 0.5 {
+                let margin = corner + (0.5 / scale).max(feather) + SLACK;
+                return bounds.x >= x0 + margin
+                    && bounds.y >= y0 + margin
+                    && end_x <= x1 - margin
+                    && end_y <= y1 - margin;
+            }
+            // Clear of its corner squares a box's distance is its nearest
+            // edge's, and coverage is 1 half a device pixel inside it: at
+            // every pixel centre within the device pixels the box spans
+            // whole, even an edge it shares.
+            let [top_left, top_right, bottom_right, bottom_left] = radii;
+            bounds.x * scale >= (x0 * scale).ceil()
+                && bounds.y * scale >= (y0 * scale).ceil()
+                && end_x * scale <= (x1 * scale).floor()
+                && end_y * scale <= (y1 * scale).floor()
+                && (bounds.x >= x0 + top_left || bounds.y >= y0 + top_left)
+                && (end_x <= x1 - top_right || bounds.y >= y0 + top_right)
+                && (end_x <= x1 - bottom_right || end_y <= y1 - bottom_right)
+                && (bounds.x >= x0 + bottom_left || end_y <= y1 - bottom_left)
         };
         let [x0, y0, x1, y1] = self.fade_box;
         let [top, right, bottom, left] = self.fade;
@@ -6671,11 +6689,12 @@ impl GpuRenderer {
                 let split = self.split_shading;
                 // A glyph's quad (`glyph_quad`) is plain unless faded or in a
                 // clip region, and textured: one shading for all of them.
-                let glyphs =
-                    glyphs_alone.then_some(match item.effects.edge_fade != 0. || in_region.is_some() {
+                let glyphs = glyphs_alone.then_some(
+                    match item.effects.edge_fade != 0. || in_region.is_some() {
                         true => Shading::Full,
                         false => Shading::Basic,
-                    });
+                    },
+                );
                 push_draw(
                     &mut draws, &quads, draw, split, polylines, self.scale, glyphs,
                 );
@@ -12132,5 +12151,133 @@ mod kept_index_tests {
             std::mem::size_of::<KeptIndex>(),
             std::mem::size_of::<FxHashMap<NodeId, u32>>()
         );
+    }
+}
+
+#[cfg(test)]
+mod region_cover_tests {
+    use super::*;
+
+    /// draw.wgsl's `rounded`, at logical point `p`.
+    fn rounded(b: [f32; 4], r: [f32; 4], feather: f32, p: [f32; 2], scale: f32) -> f32 {
+        if b[2] < 0. {
+            return 1.;
+        }
+        let half = [b[2] * 0.5, b[3] * 0.5];
+        let q = [p[0] - b[0] - half[0], p[1] - b[1] - half[1]];
+        let radius = match (q[1] < 0., q[0] > 0.) {
+            (true, false) => r[0],
+            (true, true) => r[1],
+            (false, true) => r[2],
+            (false, false) => r[3],
+        };
+        let d = [q[0].abs() - half[0] + radius, q[1].abs() - half[1] + radius];
+        let sdf = d[0].max(0.).hypot(d[1].max(0.)) + d[0].max(d[1]).min(0.) - radius;
+        if feather > 0. {
+            let t = (-sdf / feather).clamp(0., 1.);
+            return t * t * (3. - 2. * t);
+        }
+        (0.5 - sdf * scale).clamp(0., 1.)
+    }
+
+    fn region(round: [f32; 4], radii: [f32; 4], feather: f32) -> Region {
+        Region {
+            round0: round,
+            radii0: radii,
+            round1: [0., 0., -1., -1.],
+            radii1: [0.; 4],
+            fade_box: [0.; 4],
+            fade: [0.; 4],
+            color: [[0.; 4]; 3],
+            tint: [0., feather, 0., 0.],
+        }
+    }
+
+    /// The least coverage at the pixel centres a quad on `bounds` draws.
+    fn least(region: &Region, bounds: Rect, scale: f32) -> f32 {
+        let span = |from: f32, to: f32| {
+            ((from * scale - 0.5).ceil() as i32)..((to * scale - 0.5).ceil() as i32)
+        };
+        let mut least = 1f32;
+        for y in span(bounds.y, bounds.y + bounds.height) {
+            for x in span(bounds.x, bounds.x + bounds.width) {
+                let p = [(x as f32 + 0.5) / scale, (y as f32 + 0.5) / scale];
+                least = least.min(rounded(
+                    region.round0,
+                    region.radii0,
+                    region.tint[1],
+                    p,
+                    scale,
+                ));
+            }
+        }
+        least
+    }
+
+    #[test]
+    fn rows_flush_with_a_cards_straight_edges_leave_its_region() {
+        // A card's zebra rows (heavy's), right edges on the card's.
+        let card = region([793., 121., 470., 550.], [7.; 4], 0.);
+        for y in (131..640).step_by(24) {
+            let row = Rect::new(795., y as f32, 468., 20.);
+            assert!(card.covers(row, 1.), "row at {y}");
+            assert_eq!(least(&card, row, 1.), 1.);
+        }
+        // Into a corner's square, or a fractional edge's last pixel: kept.
+        assert!(!card.covers(Rect::new(795., 123., 468., 24.), 1.));
+        assert!(!card.covers(Rect::new(795., 659., 468., 20.), 1.));
+        let fractional = region([793., 121.4, 470.3, 550.], [7.; 4], 0.);
+        assert!(!fractional.covers(Rect::new(795., 131., 468.3, 20.), 1.));
+        assert!(fractional.covers(Rect::new(795., 131., 468., 20.), 1.));
+    }
+
+    #[test]
+    fn a_covered_quad_draws_every_pixel_at_full_coverage() {
+        let mut seed = 0x2545_f491_u32;
+        let mut next = |steps: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % steps
+        };
+        let mut covered = 0;
+        for _ in 0..20_000 {
+            let scale = [1., 1.25, 1.5, 2.][next(4) as usize];
+            let quarter = |n: u32| n as f32 * 0.25;
+            let round = [
+                quarter(next(80)),
+                quarter(next(80)),
+                8. + quarter(next(160)),
+                8. + quarter(next(160)),
+            ];
+            let radii = [0, 1, 2, 3].map(|_| [0., 2., 4., 7., 12.][next(5) as usize]);
+            let feather = [0., 0., 0., 1.5][next(4) as usize];
+            let region = region(round, radii, feather);
+            // Bounds near the box's edges, often on them.
+            let edge = |at: f32, size: f32, far: bool, n: u32| {
+                let base = if far { at + size } else { at };
+                match n % 3 {
+                    0 => base,
+                    _ => base + if far { -1. } else { 1. } * quarter(n % 48),
+                }
+            };
+            let x0 = edge(round[0], round[2], false, next(1000));
+            let y0 = edge(round[1], round[3], false, next(1000));
+            let x1 = edge(round[0], round[2], true, next(1000));
+            let y1 = edge(round[1], round[3], true, next(1000));
+            if x1 <= x0 || y1 <= y0 {
+                continue;
+            }
+            let bounds = Rect::new(x0, y0, x1 - x0, y1 - y0);
+            if region.covers(bounds, scale) {
+                covered += 1;
+                let least = least(&region, bounds, scale);
+                assert!(
+                    least >= 1. - 1e-5,
+                    "{bounds:?} in {round:?} radii {radii:?} feather {feather} at {scale}: {least}"
+                );
+            }
+        }
+        assert!(covered > 500, "only {covered} covered");
     }
 }
