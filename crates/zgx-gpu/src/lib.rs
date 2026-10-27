@@ -11182,8 +11182,9 @@ fn blur_corners(kind: &NodeKind, bounds: Rect) -> [f32; 4] {
     }
 }
 fn scissor(r: Rect, scale: f32, width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
-    let x = (r.x * scale).floor().max(0.) as u32;
-    let y = (r.y * scale).floor().max(0.) as u32;
+    // (A cast floors what is past zero and saturates the rest.)
+    let x = (r.x * scale) as u32;
+    let y = (r.y * scale) as u32;
     let right = ((r.x + r.width) * scale).ceil().min(width as f32) as u32;
     let bottom = ((r.y + r.height) * scale).ceil().min(height as f32) as u32;
     (right > x && bottom > y).then(|| (x, y, right - x, bottom - y))
