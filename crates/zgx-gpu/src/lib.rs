@@ -329,10 +329,8 @@ fn shading(quad: &Quad, scale: f32) -> Shading {
     // bit for bit, except for the coverage of a translucent square panel (an
     // extra divide and multiply): those stay full, so either shader draws the
     // same bytes. No edge fade, transform, shadow or region:
-    let alone = quad.options[0] == 0.
-        && quad.options[2] < 0.5
-        && quad.shape[2] <= 0.
-        && quad.mask[0] <= 0.;
+    let alone =
+        quad.options[0] == 0. && quad.options[2] < 0.5 && quad.shape[2] <= 0. && quad.mask[0] <= 0.;
     let plain = alone && (quad.shape[3] <= 0.5 || (quad.color[3] >= 1. && square()));
     if !plain {
         // Then a box (`shape.w`): what `round_box` draws as `shade` does,
@@ -500,7 +498,11 @@ fn push_draw(
     }
     // Quads of one shading, known already (a text's glyphs): one run.
     if let Some(shading) = glyphs.filter(|_| split && !polylines) {
-        draws.push(Draw { shading, ..draw });
+        draws.push(Draw {
+            shading,
+            rounded: false,
+            ..draw
+        });
         return;
     }
     // A polyline stroke's quad holds its point count in `mask.z`.
@@ -509,18 +511,25 @@ fn push_draw(
         false if split => shading(quad, scale),
         false => draw.shading,
     };
-    // Each run ends where the shading changes, so runs alternate shadings.
+    // Each run ends where the shading changes, so runs alternate shadings
+    // (a plain box's is full's, the run `rounded` while all its quads are).
     // Each quad is classified once: the one ending a run starts the next.
+    let full = |kind: Shading| match kind {
+        Shading::Rounded => Shading::Full,
+        kind => kind,
+    };
     let mut start = draw.start;
     let mut kind = kind_of(&quads[start as usize]);
     while start < draw.end {
         let mut end = start + 1;
         let mut next = kind;
+        let mut rounded = kind == Shading::Rounded;
         while end < draw.end {
             next = kind_of(&quads[end as usize]);
-            if next != kind {
+            if full(next) != full(kind) {
                 break;
             }
+            rounded &= next == Shading::Rounded;
             end += 1;
         }
         // One run (the usual item): the draw's own bounds.
@@ -532,7 +541,8 @@ fn push_draw(
             start,
             end,
             bounds,
-            shading: kind,
+            shading: full(kind),
+            rounded,
             // A backdrop filter goes under the first run alone.
             blur: draw.blur.clone().filter(|_| start == draw.start),
             ..draw.clone()
@@ -1415,6 +1425,10 @@ struct Draw {
     bounds: Rect,
     image: Option<u64>,
     layer: Option<NodeId>,
+    /// `Shading::Full`, and its quads are all plain boxes (`Shading::Rounded`
+    /// classifies them): its batch may draw them with the box pipeline.
+    /// Batches merge as full quads do, so the rest of a frame is unchanged.
+    rounded: bool,
 }
 /// A frame's damage, encoded at presentation so it can be drawn into the
 /// next retained target and the drawable in one pass (see `present_single_pass`).
@@ -1991,6 +2005,18 @@ struct Batch {
     /// costlier shader than their own (see `merged_shading`).
     pixels: f32,
     promoted: f32,
+    /// Its every draw's quads are plain boxes (`Draw::rounded`): drawn with
+    /// `Shading::Rounded`'s pipeline.
+    rounded: bool,
+}
+impl Batch {
+    /// The shading whose pipeline draws it.
+    fn pipeline(&self) -> Shading {
+        match self.rounded {
+            true => Shading::Rounded,
+            false => self.shading,
+        }
+    }
 }
 /// Device pixels a batch may draw with a costlier shader than they need, to
 /// join neighbours of another shading into one draw call: a draw costs the
@@ -2010,19 +2036,12 @@ const PROMOTED_FULL_PIXELS: f32 = 1024.;
 /// every basic quad, and blending every opaque one, to the same bytes (see
 /// `shading`). Shader fills and image effects keep their own pipelines.
 fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
-    // The rounded box shader draws no texture: with a basic quad (a glyph,
-    // an image), only the full one draws both.
-    if matches!(
-        (a, b),
-        (Shading::Rounded, Shading::Basic) | (Shading::Basic, Shading::Rounded)
-    ) {
-        return Some(Shading::Full);
-    }
     let cost = |shading| match shading {
         Shading::Opaque => Some(0),
         Shading::Basic => Some(1),
-        Shading::Rounded => Some(2),
-        Shading::Full => Some(3),
+        Shading::Full => Some(2),
+        // Never a draw's: a batch's pipeline (see `Draw::rounded`).
+        Shading::Rounded => None,
         Shading::Fill(_)
         | Shading::Filter(_)
         | Shading::Blend
@@ -4692,9 +4711,14 @@ impl GpuRenderer {
         kept.quads[at] = quad;
         kept.upload.wrote(at as u32, at as u32 + 1);
         let draw = &mut kept.draws[kept_item.draws.start as usize];
-        draw.shading = match self.split_shading {
+        let kind = match self.split_shading {
             true => shading(&quad, self.scale),
             false => Shading::Full,
+        };
+        draw.rounded = kind == Shading::Rounded;
+        draw.shading = match kind {
+            Shading::Rounded => Shading::Full,
+            kind => kind,
         };
         draw.clip = match rect_inside(rect, limit) {
             true => viewport,
@@ -4774,11 +4798,16 @@ impl GpuRenderer {
                             .fill(bytemuck::Zeroable::zeroed());
                     }
                     kept_item.len = 1;
+                    let kind = match self.split_shading {
+                        true => shading(&quad, self.scale),
+                        false => Shading::Full,
+                    };
                     kept.draws[kept_item.draws.start as usize] = Draw {
-                        shading: match self.split_shading {
-                            true => shading(&quad, self.scale),
-                            false => Shading::Full,
+                        shading: match kind {
+                            Shading::Rounded => Shading::Full,
+                            kind => kind,
                         },
+                        rounded: kind == Shading::Rounded,
                         layer: None,
                         blur: None,
                         start: at as u32,
@@ -4796,6 +4825,7 @@ impl GpuRenderer {
                 if !quads.is_empty() {
                     let draw = Draw {
                         shading: Shading::Full,
+                        rounded: false,
                         layer: None,
                         blur: None,
                         start: 0,
@@ -5298,6 +5328,7 @@ impl GpuRenderer {
                     ],
                 });
                 draws.push(Draw {
+                    rounded: false,
                     shading: match (&filter, blend) {
                         (Some((shader, _)), Some(_)) => Shading::FilterBlend(shader.id()),
                         (None, Some(_)) => Shading::Blend,
@@ -6289,6 +6320,7 @@ impl GpuRenderer {
             if quads.len() as u32 > start || item.effects.blur_radius > 0. {
                 let draw = Draw {
                     shading: fill_shading.unwrap_or(Shading::Full),
+                    rounded: false,
                     layer: None,
                     blur: (item.effects.blur_radius > 0.).then(|| {
                         Box::new((bounds, item.effects, blur_corners(item.kind, item.bounds)))
@@ -7016,7 +7048,7 @@ impl GpuRenderer {
                             sampled = batch.source;
                         }
                         pass.scissor(rect);
-                        pass.quads(frame, batch.shading, false, batch.start..batch.end);
+                        pass.quads(frame, batch.pipeline(), false, batch.start..batch.end);
                         stats.draw_calls += 1;
                         stats.instances += (batch.end - batch.start) as usize;
                     });
@@ -7691,18 +7723,13 @@ impl GpuRenderer {
                     true => Some((shading, open.promoted)),
                     false => match merged_shading(open.shading, shading) {
                         Some(merged) => {
-                            // A rounded box drawn by the full shader is no
-                            // promotion: they were one shading until boxes
-                            // had their own, and batch as they did.
-                            let as_full =
-                                |own: Shading| own == merged || own == Shading::Rounded;
-                            let promoted = if as_full(open.shading) {
+                            let promoted = if merged == open.shading {
                                 open.promoted
                             } else {
                                 open.pixels
-                            } + if as_full(shading) { 0. } else { pixels };
+                            } + if merged == shading { 0. } else { pixels };
                             let budget = match merged {
-                                Shading::Full | Shading::Rounded => PROMOTED_FULL_PIXELS,
+                                Shading::Full => PROMOTED_FULL_PIXELS,
                                 _ => PROMOTED_PIXELS,
                             };
                             (promoted <= budget).then_some((merged, promoted))
@@ -7711,6 +7738,9 @@ impl GpuRenderer {
                     },
                 };
                 if let Some((merged, promoted)) = merged {
+                    // Boxes alone keep their pipeline; joined by another
+                    // shading's quads, the batch is the full shader's.
+                    open.rounded &= draw.rounded && shading == open.shading;
                     open.shading = merged;
                     open.promoted = promoted;
                     open.pixels += pixels;
@@ -7729,6 +7759,7 @@ impl GpuRenderer {
                 end: draw.end,
                 pixels,
                 promoted: 0.,
+                rounded: draw.rounded,
             });
         }
         if let Some(done) = batch.take() {
@@ -7746,9 +7777,10 @@ impl GpuRenderer {
         let Some((x, y, w, h)) = scissor(batch.rect, self.scale, self.width, self.height) else {
             return;
         };
-        if *current != Some(batch.shading) {
-            pass.set_pipeline(pipelines(batch.shading));
-            *current = Some(batch.shading);
+        let shading = batch.pipeline();
+        if *current != Some(shading) {
+            pass.set_pipeline(pipelines(shading));
+            *current = Some(shading);
         }
         pass.set_scissor_rect(x, y, w, h);
         let (image, layer) = batch.source;
