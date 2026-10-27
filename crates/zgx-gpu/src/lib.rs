@@ -273,7 +273,10 @@ fn region_index(regions: &mut Vec<Region>, region: Option<Region>) -> f32 {
     let Some(region) = region else {
         return 0.;
     };
-    if let Some(at) = regions.iter().rev().take(8).position(|r| *r == region) {
+    // (By bits, which compare as whole words: equal bits shade alike.)
+    let bits = |region: &Region| *bytemuck::cast_ref::<Region, [u32; 40]>(region);
+    let wanted = bits(&region);
+    if let Some(at) = regions.iter().rev().take(8).position(|r| bits(r) == wanted) {
         return (regions.len() - at) as f32;
     }
     regions.push(region);
@@ -12130,5 +12133,42 @@ mod kept_index_tests {
             std::mem::size_of::<KeptIndex>(),
             std::mem::size_of::<FxHashMap<NodeId, u32>>()
         );
+    }
+}
+
+#[cfg(test)]
+mod region_index_tests {
+    use super::*;
+
+    #[test]
+    fn regions_share_an_index_when_their_bits_match() {
+        let region = |tint: f32| Region {
+            round0: [1., 2., 30., 40.],
+            radii0: [4.; 4],
+            round1: [0., 0., -1., -1.],
+            radii1: [0.; 4],
+            fade_box: [0.; 4],
+            fade: [0.; 4],
+            color: [[0.; 4]; 3],
+            tint: [0., 0., 0., tint],
+        };
+        let mut regions = Vec::new();
+        assert_eq!(region_index(&mut regions, None), 0.);
+        assert_eq!(region_index(&mut regions, Some(region(0.))), 1.);
+        assert_eq!(region_index(&mut regions, Some(region(1.))), 2.);
+        // Equal bits, even behind another: the same index.
+        assert_eq!(region_index(&mut regions, Some(region(0.))), 1.);
+        // The last word differs, or only its zero's sign: another.
+        assert_eq!(region_index(&mut regions, Some(region(2.))), 3.);
+        assert_eq!(region_index(&mut regions, Some(region(-0.))), 4.);
+        // NaN bits equal NaN bits: one entry, which the shader reads alike
+        // whichever index it is drawn through.
+        assert_eq!(region_index(&mut regions, Some(region(f32::NAN))), 5.);
+        assert_eq!(region_index(&mut regions, Some(region(f32::NAN))), 5.);
+        // Only the last eight are looked through.
+        for tint in 3..11 {
+            region_index(&mut regions, Some(region(tint as f32)));
+        }
+        assert_eq!(region_index(&mut regions, Some(region(0.))), 14.);
     }
 }
