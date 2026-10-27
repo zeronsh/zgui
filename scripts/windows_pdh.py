@@ -1,7 +1,8 @@
 """Performance counters (PDH) for what a process can't read of another: the
 Desktop Window Manager's CPU time (`dwm.exe` opens to no other user's
-process) and any process's GPU engine time. Raw cumulative values, so a span
-is the difference of two samples; no administrator rights needed.
+process) and any process's GPU engine time; and any process's CPU cycles
+(`cycles_of`). Raw cumulative values, so a span is the difference of two
+samples; no administrator rights needed.
 
     with Counters([dwm_cpu(), gpu_time(pid)]) as counters:
         first = counters.sample()
@@ -40,6 +41,35 @@ def pid_of(image):
 def dwm_cpu():
     """The compositor's CPU time, in 100 ns units."""
     return r"\Process(dwm)\% Processor Time"
+
+
+ntdll = ctypes.WinDLL("ntdll")
+_processes = ctypes.create_string_buffer(1 << 20)
+
+
+def cycles_of(pid):
+    """`pid`'s CPU cycles so far, any process's: from the system's process
+    list (`SystemProcessInformation`), as `QueryProcessCycleTime` needs a
+    handle `dwm.exe` gives no other user. None if it is not running."""
+    global _processes
+    while True:
+        needed = wintypes.ULONG()
+        status = ntdll.NtQuerySystemInformation(5, _processes, len(_processes), ctypes.byref(needed)) & 0xFFFFFFFF
+        if status != 0xC0000004:  # STATUS_INFO_LENGTH_MISMATCH: a bigger buffer
+            break
+        _processes = ctypes.create_string_buffer(needed.value + (1 << 16))
+    if status:
+        raise OSError(f"NtQuerySystemInformation: {status:#x}")
+    # SYSTEM_PROCESS_INFORMATION (64-bit): NextEntryOffset at 0, CycleTime
+    # at 24, UniqueProcessId at 80.
+    offset = 0
+    while True:
+        if int.from_bytes(_processes[offset + 80:offset + 88], "little") == pid:
+            return int.from_bytes(_processes[offset + 24:offset + 32], "little")
+        step = int.from_bytes(_processes[offset:offset + 4], "little")
+        if not step:
+            return None
+        offset += step
 
 
 def gpu_time(pid, engine="3D"):
@@ -130,8 +160,9 @@ if __name__ == "__main__":
     import time
     dwm = pid_of("dwm.exe")
     with Counters([dwm_cpu(), gpu_time(dwm)]) as counters:
-        first, start = counters.sample(), time.perf_counter()
+        first, cycles, start = counters.sample(), cycles_of(dwm), time.perf_counter()
         time.sleep(2)
-        last, wall = counters.sample(), time.perf_counter() - start
+        last, cycles, wall = counters.sample(), cycles_of(dwm) - cycles, time.perf_counter() - start
     cpu, gpu = ((b - a) / 1e7 for a, b in zip(first, last))
-    print(f"dwm over {wall:.1f} s: CPU {100 * cpu / wall:.2f}%  GPU 3D {1000 * gpu / wall:.1f} ms/s")
+    print(f"dwm over {wall:.1f} s: {cycles / wall / 1e6:.1f} M cycles/s (CPU time {100 * cpu / wall:.2f}%)  "
+          f"GPU 3D {1000 * gpu / wall:.1f} ms/s")

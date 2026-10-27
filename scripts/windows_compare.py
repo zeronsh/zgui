@@ -24,8 +24,8 @@ was asked and did its work: it must report its ticks (`workload_ticks`,
 second outside `idle`; an invalid run is run again once. Cycles are also
 given per tick or frame, so a run that did less work cannot look cheaper.
 
-The compositor's share is sampled with it, through performance counters
-(`windows_pdh`): `dwm.exe`'s CPU time and its GPU time on the 3D engines,
+The compositor's share is sampled with it (`windows_pdh`): `dwm.exe`'s CPU
+cycles (and its tick-counted CPU time) and its GPU time on the 3D engines,
 and the app's own GPU time, each also per tick or frame. `--desktop` adds
 a run of nothing to each round, the desktop's own compositor cost, to
 subtract.
@@ -210,11 +210,13 @@ def desktop(seconds, warmup):
     dwm = windows_pdh.pid_of("dwm.exe")
     with windows_pdh.Counters([windows_pdh.dwm_cpu(), windows_pdh.gpu_time(dwm)]) as counters:
         time.sleep(warmup)
-        first, start = counters.sample(), time.perf_counter()
+        first, start, cycles = counters.sample(), time.perf_counter(), windows_pdh.cycles_of(dwm)
         time.sleep(seconds)
         last, wall = counters.sample(), time.perf_counter() - start
+        cycles = windows_pdh.cycles_of(dwm) - cycles
     cpu, gpu = ((b - a) / 1e7 for a, b in zip(first, last))
-    return {"dwm_cpu_percent": 100 * cpu / wall, "dwm_gpu_ms_per_second": 1000 * gpu / wall}
+    return {"dwm_cpu_percent": 100 * cpu / wall, "dwm_mcycles_per_second": cycles / wall / 1e6,
+            "dwm_gpu_ms_per_second": 1000 * gpu / wall}
 
 
 def run(path, mode, seconds, warmup, log_path):
@@ -244,7 +246,7 @@ def run(path, mode, seconds, warmup, log_path):
                         private, working = win.memory(proc.pid)
                         samples.append((time.perf_counter(), win.cpu_seconds(proc.pid), win.cycles(proc.pid),
                                         working, private))
-                        compositor.append(counters.sample())
+                        compositor.append(counters.sample() + [windows_pdh.cycles_of(dwm)])
                         clocks.append(clock.sample())
                     except OSError:
                         pass
@@ -280,13 +282,15 @@ def run(path, mode, seconds, warmup, log_path):
     # The work over the sampled span, of the whole run's.
     sampled_units = done * wall / total if done else 0
     # 100 ns units: the compositor's CPU, its GPU and the app's GPU.
-    dwm_cpu, dwm_gpu, app_gpu = ((b - a) / 1e7 for a, b in zip(compositor[0], compositor[-1]))
+    dwm_cpu, dwm_gpu, app_gpu = ((b - a) / 1e7 for a, b in zip(compositor[0][:3], compositor[-1][:3]))
+    dwm_cycles = compositor[-1][3] - compositor[0][3]
 
     def per_unit(value):
         return 1e6 * value / sampled_units if sampled_units else None
 
     return {
         "dwm_cpu_percent": 100 * dwm_cpu / wall,
+        "dwm_mcycles_per_second": dwm_cycles / wall / 1e6,
         "dwm_gpu_ms_per_second": 1000 * dwm_gpu / wall,
         "gpu_ms_per_second": 1000 * app_gpu / wall,
         "dwm_cpu_us_per_unit": per_unit(dwm_cpu),
@@ -356,7 +360,7 @@ def main():
         if args.desktop:
             row = desktop(args.seconds, args.warmup)
             results.setdefault((scene, mode, "desktop"), []).append(row)
-            print(f"{scene:7} {mode:6} {'desktop':9} dwm CPU {row['dwm_cpu_percent']:5.2f}%  "
+            print(f"{scene:7} {mode:6} {'desktop':9} dwm CPU {row['dwm_mcycles_per_second']:6.1f} Mcyc/s  "
                   f"dwm GPU {row['dwm_gpu_ms_per_second']:6.2f} ms/s", flush=True)
         for name in frameworks[shift:] + frameworks[:shift]:
             path = binaries[f"{scene}/{name}"]
@@ -376,7 +380,7 @@ def main():
             print(f"{scene:7} {mode:6} {name:9} CPU {row['cpu_percent']:6.2f}%  "
                   f"{row['mcycles_per_second']:8.1f} Mcyc/s  {(row['mcycles_per_unit'] or 0):7.2f} Mcyc/unit  "
                   f"units {row['units']:5}  WS {row['working_set_mib']:6.1f}  private {row['private_mib']:6.1f} MiB  "
-                  f"dwm CPU {row['dwm_cpu_percent']:5.2f}%  dwm GPU {row['dwm_gpu_ms_per_second']:6.2f} ms/s  "
+                  f"dwm CPU {row['dwm_mcycles_per_second']:6.1f} Mcyc/s  dwm GPU {row['dwm_gpu_ms_per_second']:6.2f} ms/s  "
                   f"GPU {row['gpu_ms_per_second']:6.2f} ms/s"
                   f"{'  UIA client attached' if row['uia_client_attached'] else ''}", flush=True)
 
@@ -443,7 +447,8 @@ def main():
     for scene in args.scenes.split(","):
         for mode in SCENES[scene][0]:
             for key in ("mcycles_per_unit", "mcycles_per_second", "cpu_percent", "private_mib", "working_set_mib",
-                        "dwm_cpu_percent", "dwm_gpu_ms_per_second", "gpu_ms_per_second", "dwm_gpu_us_per_unit",
+                        "dwm_mcycles_per_second", "dwm_cpu_percent", "dwm_gpu_ms_per_second", "gpu_ms_per_second",
+                        "dwm_gpu_us_per_unit",
                         "gpu_us_per_unit"):
                 cells = [by.get((scene, mode, n), {}).get(key) for n in shown]
                 if sum(c is not None for c in cells) < 2:

@@ -78,8 +78,8 @@ WINDOWS_METRICS = {
     'cpu': ('CPU', 'million cycles a second, the app\'s process', 1, 1, 'mcycles_per_second', 'all'),
     'cycles': ('CPU cycles per frame', 'million cycles of the app\'s process per update (the animation: per frame drawn)',
                2, 1, 'mcycles_per_frame', 'active'),
-    'server': ('DWM CPU', '% of one core: the system compositor (Desktop Window Manager), while the app runs', 1, 1,
-               'dwm_cpu_percent', 'all'),
+    'server': ('DWM CPU', 'million cycles a second of the system compositor (Desktop Window Manager), while the app runs',
+               1, 1, 'dwm_mcycles_per_second', 'all'),
     'gpu_time': ('App GPU time', 'ms a second on the GPU\'s 3D engines, the app\'s own', 2, 1, 'gpu_ms_per_second', 'active'),
     'dwm_gpu': ('DWM GPU time', 'ms a second on the GPU\'s 3D engines, the compositor\'s, while the app runs', 2, 1,
                 'dwm_gpu_ms_per_second', 'active'),
@@ -89,7 +89,7 @@ WINDOWS_METRICS = {
     'memory': ('Memory', 'MB, private bytes (committed memory)', 0, 1e-6, 'mean_private_bytes', 'all'),
 }
 WINDOWS_TRIAL_KEYS = ['mcycles_per_second', 'cpu_percent_one_core', 'mcycles_per_frame', 'gpu_ms_per_second', 'dwm_cpu_percent',
-                      'dwm_gpu_ms_per_second', 'mean_private_bytes', 'mean_working_set_bytes']
+                      'dwm_mcycles_per_second', 'dwm_gpu_ms_per_second', 'mean_private_bytes', 'mean_working_set_bytes']
 PLATFORM = 'macos'
 PLATFORM_NAMES = {'macos': 'macOS', 'windows': 'Windows'}
 # Windows: whether the board's power is published (--board-power).
@@ -211,7 +211,7 @@ def load_windows(directory, audit, summary, trials, paced, extended, desktop_row
                 for f in frameworks}
     return {
         'graphics_modules': graphics,
-        'desktop_server': median('dwm_cpu_percent'), 'desktop_dwm_gpu': median('dwm_gpu_ms_per_second'),
+        'desktop_server': median('dwm_mcycles_per_second'), 'desktop_dwm_gpu': median('dwm_gpu_ms_per_second'),
         'desktop_board_w': desktop_board,
         'scene': audit['scene'], 'run': directory.relative_to(ROOT).as_posix(), 'commit': audit['commit'],
         'started_utc': audit['started_utc'], 'frameworks': frameworks, 'modes': modes, 'cells': cells,
@@ -750,8 +750,8 @@ def windows_facts(by, e, env, display, tools, mygo_build, commit, protocol, anch
     active = [(s, m) for s in by.values() for m in s['modes'] if m != 'idle']
     rivals = [f for f in heavy['frameworks'] if not f.startswith('zgx')]
     # How far above the cheapest rival's window zgx's costs DWM, per test.
-    server_gaps = [value(s, 'zgx', m, 'dwm_cpu_percent')
-                   - min(value(s, r, m, 'dwm_cpu_percent') for r in rivals if r in s['frameworks'])
+    server_gaps = [value(s, 'zgx', m, 'dwm_mcycles_per_second')
+                   - min(value(s, r, m, 'dwm_mcycles_per_second') for r in rivals if r in s['frameworks'])
                    for s, m in active]
     server_more = sum(gap > 0 for gap in server_gaps)
     hz = sorted({d['resolution'].rsplit('@ ', 1)[-1] for d in env['displays'] if d['main']})
@@ -759,7 +759,7 @@ def windows_facts(by, e, env, display, tools, mygo_build, commit, protocol, anch
              'counter, read at the sample&#8217;s two ends), in watts, less the desktop alone (beside each chart&#8217;s title). '
              'It is the whole board, compositing included, as macOS&#8217;s GPU power is the whole GPU&#8217;s.</li>' if BOARD_POWER else '')
     ratios = worst_ratios(by)
-    short = {'cpu': ' M cycles/s', 'cycles': ' M cycles', 'server': '%', 'gpu_time': ' ms/s', 'dwm_gpu': ' ms/s',
+    short = {'cpu': ' M cycles/s', 'cycles': ' M cycles', 'server': ' M cycles/s', 'gpu_time': ' ms/s', 'dwm_gpu': ' ms/s',
              'board': ' W', 'p99': ' ms', 'long': '%', 'memory': ' MB'}
 
     def shown(metric, scene, framework, mode):
@@ -785,7 +785,7 @@ def windows_facts(by, e, env, display, tools, mygo_build, commit, protocol, anch
 <li><strong>Trials:</strong> each a fresh launch, the first {protocol['warmup_seconds']} s {anchor} discarded and the next {protocol['sampled_seconds']} s sampled; {protocol['repeats']} trials of each mode, in alternating order, and {protocol['extra_trials']} more of any whose CPU cycles or app GPU time spread past {protocol['spread_for_extra_trials'] * 100:.0f}% of its median; idle {protocol['idle_repeats']} times in the dashboard, {protocol['idle_window_seconds'][0]}–{protocol['idle_window_seconds'][1]} s {anchor_short}. Every trial had to run as long as asked, at 60 updates a second, its window uncovered as its sample began and ended. Medians are shown, the trials' range beside them. Frame timing is {protocol['pacing_repeats']} separate {protocol['pacing_seconds']} s captures of each mode.</li>
 <li><strong>CPU:</strong> the app process&#8217;s CPU cycles over the sample (<code>QueryProcessCycleTime</code>), in millions a second. Windows counts CPU time in scheduler ticks of 15.6 ms, too coarse for these loads (one app&#8217;s same animation read 0.9% and 0.3% of a core in two trials of equal cycles), so cycles are the figure; CPU time stays in the raw data.</li>
 <li><strong>CPU cycles per frame:</strong> the same cycles per update, or in the animation per frame drawn: what each frame costs, whatever the frame rate.</li>
-<li><strong>DWM CPU:</strong> the CPU of the Desktop Window Manager, Windows&#8217; compositor, over the same sample: what showing the app costs the system beside the app&#8217;s own CPU. It includes what DWM does anyway (the desktop alone, measured each repeat, is beside each chart&#8217;s title).</li>
+<li><strong>DWM CPU:</strong> the CPU cycles of the Desktop Window Manager (<code>dwm.exe</code>), Windows&#8217; compositor, over the same sample, in millions a second: what showing the app costs the system beside the app&#8217;s own CPU. Read from the system&#8217;s process list (<code>SystemProcessInformation</code>&#8217;s cycle time), which needs no administrator rights where <code>QueryProcessCycleTime</code> needs a handle DWM gives no other user. It includes what DWM does anyway (the desktop alone, measured each repeat, is beside each chart&#8217;s title).</li>
 <li><strong>App GPU time:</strong> the time the GPU&#8217;s 3D engines ran the app&#8217;s work, from Windows&#8217; GPU engine counters, in milliseconds a second. Windows reads no system GPU power, so this is the GPU figure here: how long the GPU was held, not what it spent.</li>
 <li><strong>DWM GPU time:</strong> the compositor&#8217;s time on the GPU&#8217;s 3D engines over the same sample: the GPU cost of putting the app&#8217;s frames on screen, plus what DWM does anyway (the desktop alone is beside each chart&#8217;s title).</li>
 {board}<li><strong>Frame time:</strong> the 99th percentile of the intervals between frames shown on screen, read through Desktop Duplication (each frame the compositor put on screen in which the window&#8217;s pixels changed); at 60 updates a second, 16.7 ms is on time. <strong>Long frames</strong> are intervals over 25 ms.</li>
@@ -797,9 +797,9 @@ def windows_facts(by, e, env, display, tools, mygo_build, commit, protocol, anch
 <li>Where zgx is furthest behind the best rival in each metric (zgx&#8217;s median over the lowest rival&#8217;s, in its worst test; under 1 is less than every rival there):<ul>{ratio_items}</ul></li>
 <li>MyGo is immediate mode: each frame it draws builds and draws its whole window, which is how MyGo apps work.</li>
 {'' if luau else '<li>zgx through Luau is not in the list scene.</li>'}
-{f'<li>DWM spends more CPU on zgx&#8217;s window than on the cheapest rival&#8217;s in {server_more} of {len(active)} tests, by at most {fmt(max(server_gaps), 1)} points of a core (its chart follows CPU in each scene).</li>' if server_more else ''}
+{f'<li>DWM spends more CPU on zgx&#8217;s window than on the cheapest rival&#8217;s in {server_more} of {len(active)} tests, by at most {fmt(max(server_gaps), 1)} M cycles a second (its chart follows CPU in each scene).</li>' if server_more else ''}
 <li>Memory includes the graphics driver&#8217;s own floor, which differs by API. The processes had these loaded: {e(graphics_note)}.</li>
-<li>DWM&#8217;s CPU is read through performance counters in scheduler ticks (its cycles need administrator rights), so its trials spread widely: read it with its range.</li>
+<li>Until 2026-10-27 this page&#8217;s DWM CPU was DWM&#8217;s CPU time from performance counters, in % of a core. Windows counts that time in 15.6 ms scheduler ticks, so its trials spread widely and its ratios moved with the rivals&#8217; noise. It is now DWM&#8217;s CPU cycles, in millions a second (see How this was measured); the tick-counted figure stays in the raw data.</li>
 {f'<li>A remote display host ({e(", ".join(hosts))}) streamed the desktop throughout, capturing and encoding the screen: work beside every framework&#8217;s, in the desktop baseline too, which is why the run accepted up to {e(fmt(heavy["preflight"]["threshold_percent"], 0))}% of a core of other use.</li>' if hosts and heavy.get('preflight') else ''}
 <li>The list&#8217;s fling ends slowly, under a pixel a refresh for its last ticks (160 px a tick decaying to 0.6). zgx scrolls in whole device pixels, as Chrome and Windows&#8217; own lists do, to keep text crisp, so in that tail some refreshes move nothing on screen and the capture counts them as long frames: zgx presented on every refresh, its GPU work done within 0.2 ms of each present. Scrolled at a steady 12 or 3 px a tick it shows none; at 0.6 px a tick, 36 frames a second of whole-pixel steps. Rune draws at fractional positions, which change its pixels on every tick.</li>
 <li>The list scene&#8217;s unfilled-row captures are macOS&#8217;s only.</li>
