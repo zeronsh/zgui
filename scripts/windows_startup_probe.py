@@ -13,13 +13,17 @@ The comparison adapters (zgx, GPUI Fast, MyGo) all draw "zgx performance
 lab" at (20, 20) logical pixels, 20 px. The window is read as it drew
 itself (`PrintWindow`), so another window covering it cannot pass for its
 text. Medians of cycles say more than wall times, which swing with the
-system and the compositor.
+system and the compositor. A zgx launch also says what its kept shaders did
+by its first present (its startup marks, `ZGX_PROFILE`): a start that
+compiled them is slower by about 45 ms, and says so.
 """
 import argparse
 import os
 import pathlib
+import re
 import statistics
 import subprocess
+import tempfile
 import time
 
 import windows_input as win
@@ -37,12 +41,27 @@ def drawn(window, scale):
     return light > 30
 
 
+SHADERS = re.compile(r"first frame presented \(shaders: (\d+) read, (\d+) compiled, (\d+) not kept\)")
+
+
+def shaders_of(log):
+    """What zgx's kept shaders did by its first present, from its startup
+    mark (`ZGX_PROFILE`): None for another framework, or a zgx without it."""
+    found = SHADERS.search(pathlib.Path(log).read_text(errors="replace"))
+    return dict(zip(("read", "compiled", "not_kept"), map(int, found.groups()))) if found else None
+
+
 def launch(binary, settle):
-    # ZGUI_*: adapters built before the rename read those alone.
+    """(window ms, first text ms, CPU ms, M cycles, shaders[, private MiB,
+    working set MiB]): `shaders` is what zgx's kept shaders did by its first
+    present (`shaders_of`), so a start slowed by compiling them says so."""
+    # ZGUI_*: adapters built before the rename read those alone. ZGX_PROFILE:
+    # zgx's startup marks, the shaders' among them, on stderr.
     env = dict(os.environ, ZGX_MODE="idle", ZGX_SECONDS=str(settle + 8), ZGX_INITIAL_TICKS="0",
-               ZGUI_MODE="idle", ZGUI_SECONDS=str(settle + 8), ZGUI_INITIAL_TICKS="0")
+               ZGUI_MODE="idle", ZGUI_SECONDS=str(settle + 8), ZGUI_INITIAL_TICKS="0", ZGX_PROFILE="1")
+    log = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False)
     started = time.perf_counter()
-    proc = subprocess.Popen([binary], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([binary], env=env, stdout=subprocess.DEVNULL, stderr=log)
     try:
         window = None
         while window is None:
@@ -57,14 +76,16 @@ def launch(binary, settle):
                 raise RuntimeError(f"{binary}: the header never drew")
         first = time.perf_counter() - started
         startup = (shown * 1000, first * 1000, win.cpu_seconds(proc.pid) * 1000, win.cycles(proc.pid) / 1e6)
-        if not settle:
-            return startup
-        time.sleep(settle)
-        private, working = win.memory(proc.pid)
-        return (*startup, private / 2**20, working / 2**20)
+        if settle:
+            time.sleep(settle)
+            private, working = win.memory(proc.pid)
     finally:
         proc.kill()
         proc.wait()
+        log.close()
+    shaders = shaders_of(log.name)
+    os.unlink(log.name)
+    return (*startup, shaders, private / 2**20, working / 2**20) if settle else (*startup, shaders)
 
 
 def main():
@@ -84,10 +105,12 @@ def main():
             time.sleep(0.5)
     for binary, runs in results.items():
         column = lambda i: statistics.median(run[i] for run in runs)
-        memory = (f", at rest {column(4):.1f} MiB private, {column(5):.1f} MiB working set"
+        memory = (f", at rest {column(5):.1f} MiB private, {column(6):.1f} MiB working set"
                   if args.settle else "")
+        compiled = [run[4]["compiled"] for run in runs if run[4]]
+        shaders = f"; shaders compiled in {sum(c > 0 for c in compiled)} of {len(compiled)}" if compiled else ""
         print(f"{pathlib.Path(binary).name}: window {column(0):.0f} ms, first text {column(1):.0f} ms, "
-              f"CPU {column(2):.0f} ms, {column(3):.0f} M cycles by then{memory} (medians of {len(runs)})")
+              f"CPU {column(2):.0f} ms, {column(3):.0f} M cycles by then{memory} (medians of {len(runs)}){shaders}")
 
 
 if __name__ == "__main__":

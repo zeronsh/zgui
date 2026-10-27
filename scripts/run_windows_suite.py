@@ -776,18 +776,21 @@ def measure_startup(binaries, out, commit):
     for index in range(STARTUP_LAUNCHES):
         shift = index % len(names)
         for framework in names[shift:] + names[:shift]:
-            window, content, cpu, mcycles = startup.launch(str(binaries[framework]), 0)
+            window, content, cpu, mcycles, shaders = startup.launch(str(binaries[framework]), 0)
             found[framework].append({'window_ms': round(window, 1), 'content_ms': round(content, 1),
-                                     'cycles': round(mcycles * 1e6), 'cpu_ms': round(cpu, 1)})
+                                     'cycles': round(mcycles * 1e6), 'cpu_ms': round(cpu, 1),
+                                     **({'shaders': shaders} if shaders else {})})
             time.sleep(0.5)
+    timed = ('window_ms', 'content_ms', 'cycles', 'cpu_ms')
     medians = {f: {k: {'median': statistics.median(r[k] for r in runs), 'min': min(r[k] for r in runs),
-                       'max': max(r[k] for r in runs)} for k in runs[0]} for f, runs in found.items()}
+                       'max': max(r[k] for r in runs)} for k in timed} for f, runs in found.items()}
     machine = environment()
     record = {
         'commit': commit,
         'machine': f"{machine['chip']}, {machine['gpu']}",
         'probe': 'scripts/windows_startup_probe.py: spawn, window, the header strip until its text has drawn '
-                 '(PrintWindow); CPU time and cycles of the process at content',
+                 '(PrintWindow); CPU time and cycles of the process at content; for zgx, what its kept shaders '
+                 'did by its first present (read, compiled, not kept: its startup marks, ZGX_PROFILE)',
         'apps': {f: f'{p.name} (lab), ZGX_MODE=idle' for f, p in binaries.items()},
         'protocol': f"{STARTUP_LAUNCHES} rounds, the frameworks rotating; the suite's font",
         'launches': found,
@@ -795,8 +798,10 @@ def measure_startup(binaries, out, commit):
     }
     (out / 'startup.json').write_text(json.dumps(record, indent=1) + '\n', newline='\n')
     for f, m in medians.items():
+        compiled = [r['shaders']['compiled'] for r in found[f] if 'shaders' in r]
+        shaders = f", shaders compiled in {sum(c > 0 for c in compiled)} of {len(compiled)}" if compiled else ''
         print(f"startup {f:9}: window {m['window_ms']['median']:5.0f} ms, content {m['content_ms']['median']:5.0f} ms, "
-              f"cpu {m['cpu_ms']['median']:5.0f} ms, {m['cycles']['median'] / 1e6:6.0f} M cycles", flush=True)
+              f"cpu {m['cpu_ms']['median']:5.0f} ms, {m['cycles']['median'] / 1e6:6.0f} M cycles{shaders}", flush=True)
 
 
 def main():

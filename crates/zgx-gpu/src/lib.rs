@@ -2445,6 +2445,36 @@ fn keep_compiled_shaders() {
 }
 #[cfg(not(all(windows, zgx_wgpu_hal_patched)))]
 fn keep_compiled_shaders() {}
+/// What the shaders kept between launches (Windows) did in this process.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShaderCacheCounts {
+    /// Shaders read back from the cache.
+    pub read: u32,
+    /// Shaders compiled (none kept for them yet).
+    pub compiled: u32,
+    /// Shaders compiled that could not be kept: they compile again next
+    /// launch.
+    pub unwritten: u32,
+}
+/// What the shaders kept between launches did so far in this process, so a
+/// start's marks say whether it compiled them: `None` where none are kept
+/// (other platforms, or crates.io's wgpu-hal).
+#[cfg(all(windows, zgx_wgpu_hal_patched))]
+pub fn shader_cache_counts() -> Option<ShaderCacheCounts> {
+    let counts = wgpu::hal::dx12::shader_cache_counts();
+    Some(ShaderCacheCounts {
+        read: counts.read,
+        compiled: counts.compiled,
+        unwritten: counts.unwritten,
+    })
+}
+/// What the shaders kept between launches did so far in this process, so a
+/// start's marks say whether it compiled them: `None` where none are kept
+/// (other platforms, or crates.io's wgpu-hal).
+#[cfg(not(all(windows, zgx_wgpu_hal_patched)))]
+pub fn shader_cache_counts() -> Option<ShaderCacheCounts> {
+    None
+}
 /// What a `GpuContext` holds that another thread can make (`GpuContext::prepare`).
 struct Prepared {
     lost: Arc<std::sync::Mutex<Option<String>>>,

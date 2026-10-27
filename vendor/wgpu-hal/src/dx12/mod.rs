@@ -84,8 +84,8 @@ mod pipeline_desc;
 mod sampler;
 mod shader_compilation;
 mod shader_disk_cache;
-// zgx patch: FXC's compiled shaders kept between launches.
-pub use shader_disk_cache::set_shader_cache_dir;
+// zgx patch: FXC's compiled shaders kept between launches, and counted.
+pub use shader_disk_cache::{set_shader_cache_dir, shader_cache_counts, ShaderCacheCounts};
 mod suballocation;
 mod types;
 mod view;

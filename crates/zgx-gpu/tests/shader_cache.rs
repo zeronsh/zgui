@@ -82,7 +82,14 @@ fn compiled_shaders_are_kept_and_read_back_by_the_next_device() {
         "@vertex fn vs() -> @builtin(position) vec4<f32> {{ return vec4<f32>(0.{nonce}, 0.0, 0.0, 1.0); }}
          @fragment fn fs() -> @location(0) vec4<f32> {{ return vec4<f32>(1.0); }}"
     );
+    let before = zgx_gpu::shader_cache_counts().expect("counted on Windows");
     assert_eq!(pipeline(&source), None);
+    let after = zgx_gpu::shader_cache_counts().unwrap();
+    assert!(
+        after.compiled >= before.compiled + 2,
+        "the new shaders counted as compiled: {before:?} then {after:?}"
+    );
+    assert_eq!(after.unwritten, 0, "every compiled shader kept");
     let mut files = kept(&dir);
     files.retain(|file| !own.contains(file));
     assert_eq!(
@@ -109,8 +116,18 @@ fn compiled_shaders_are_kept_and_read_back_by_the_next_device() {
     for (file, bytes) in files.iter().zip(&originals) {
         std::fs::write(file, bytes).unwrap();
     }
+    let before = zgx_gpu::shader_cache_counts().unwrap();
     assert_eq!(pipeline(&source), None, "read back intact, they work");
+    let after = zgx_gpu::shader_cache_counts().unwrap();
     assert_eq!(kept(&dir).len(), own.len() + 2, "nothing compiled again");
+    assert_eq!(
+        after.compiled, before.compiled,
+        "counted as nothing compiled"
+    );
+    assert!(
+        after.read >= before.read + 2,
+        "the shaders counted as read back: {before:?} then {after:?}"
+    );
     wgpu::hal::dx12::set_shader_cache_dir(None);
     let _ = std::fs::remove_dir_all(&dir);
 }

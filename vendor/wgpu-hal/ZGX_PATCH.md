@@ -106,3 +106,9 @@ alternating launches), sooner than GPUI Fast's 307 ms, whose shaders are
 compiled when it is built. Tested by `crates/zgx-gpu/tests/shader_cache.rs`:
 a second device reads the shaders the first compiled (spoilt on disk, its
 pipeline fails; restored, it works) and compiles none again.
+
+`dx12::shader_cache_counts()` says what the cache did in the process: the
+shaders it read back, those FXC compiled, and those compiled that it could
+not keep (which compile again next launch). zgx's first-present startup
+mark carries them (`ZGX_PROFILE=1`: `first frame presented (shaders: 6
+read, 0 compiled, 0 not kept)`), so a start slowed by compiling says so.

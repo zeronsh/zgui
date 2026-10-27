@@ -9,14 +9,40 @@
 //! match byte for byte, so a hash collision or another version's file is
 //! compiled again rather than used. A file is written whole and renamed into
 //! place, so another process never reads half of one. DXC's output is not
-//! kept: its DLL is the app's own, of any version.
+//! kept: its DLL is the app's own, of any version. What the cache did is
+//! counted (`shader_cache_counts`), for a start's marks.
 use alloc::{string::String, vec::Vec};
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::{
     path::{Path, PathBuf},
     sync::RwLock,
 };
 
 static DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
+static READ: AtomicU32 = AtomicU32::new(0);
+static COMPILED: AtomicU32 = AtomicU32::new(0);
+static UNWRITTEN: AtomicU32 = AtomicU32::new(0);
+
+/// What FXC's disk cache did in this process.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShaderCacheCounts {
+    /// Shaders read back from the cache.
+    pub read: u32,
+    /// Shaders FXC compiled (none there, or no cache set).
+    pub compiled: u32,
+    /// Shaders compiled that the cache could not keep: they compile again
+    /// next launch.
+    pub unwritten: u32,
+}
+
+/// What FXC's disk cache has done in this process so far.
+pub fn shader_cache_counts() -> ShaderCacheCounts {
+    ShaderCacheCounts {
+        read: READ.load(Ordering::Relaxed),
+        compiled: COMPILED.load(Ordering::Relaxed),
+        unwritten: UNWRITTEN.load(Ordering::Relaxed),
+    }
+}
 
 const MAGIC: &[u8] = b"wgpu-hal dx12 fxc cache 1\n";
 
@@ -51,7 +77,9 @@ fn dir() -> Option<PathBuf> {
 /// The bytecode compiled for `key` before, if the cache holds it.
 pub(super) fn read(key: &str) -> Option<Vec<u8>> {
     let bytes = std::fs::read(path(&dir()?, key)).ok()?;
-    decode(&bytes, key)
+    let code = decode(&bytes, key)?;
+    READ.fetch_add(1, Ordering::Relaxed);
+    Some(code)
 }
 
 fn decode(bytes: &[u8], key: &str) -> Option<Vec<u8>> {
@@ -72,9 +100,10 @@ fn encode(key: &str, code: &[u8]) -> Vec<u8> {
     bytes
 }
 
-/// Keep `code`, compiled for `key`. A cache that cannot be written is
-/// passed over: the shader compiles again next launch.
+/// Keep `code`, just compiled for `key`. A cache that cannot be written is
+/// passed over (counted): the shader compiles again next launch.
 pub(super) fn write(key: &str, code: &[u8]) {
+    COMPILED.fetch_add(1, Ordering::Relaxed);
     let Some(dir) = dir() else {
         return;
     };
@@ -84,6 +113,7 @@ pub(super) fn write(key: &str, code: &[u8]) {
         && std::fs::write(&partial, encode(key, code)).is_ok()
         && std::fs::rename(&partial, &path).is_ok();
     if !written {
+        UNWRITTEN.fetch_add(1, Ordering::Relaxed);
         let _ = std::fs::remove_file(&partial);
     }
 }

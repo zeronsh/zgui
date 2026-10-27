@@ -2122,7 +2122,7 @@ impl Host {
                     self.scale_factor,
                 );
                 self.native.apply();
-                first_mark(&FIRST_PRESENT, "first frame presented");
+                FIRST_PRESENT.call_once(|| zgx::profile::mark(&first_present_mark()));
                 // Commits the transaction (macOS; elsewhere there is none).
                 #[allow(dropping_copy_types)]
                 drop(transaction);
@@ -6403,6 +6403,17 @@ const MENU_BAR_LATEST: std::time::Duration = std::time::Duration::from_secs(1);
 /// A `zgx::profile::mark` the first time only (the process's first frame).
 fn first_mark(once: &std::sync::Once, what: &str) {
     once.call_once(|| zgx::profile::mark(what));
+}
+/// The first present's mark, with what the shaders kept between launches
+/// did by then (Windows): a start that compiled them says so.
+fn first_present_mark() -> String {
+    match zgx_gpu::shader_cache_counts() {
+        Some(counts) => format!(
+            "first frame presented (shaders: {} read, {} compiled, {} not kept)",
+            counts.read, counts.compiled, counts.unwritten
+        ),
+        None => "first frame presented".into(),
+    }
 }
 /// The pixels of a window's frame at `scale` that `rect` (in points) covers:
 /// `(x, y, width, height)`, less any part off its left or top edge (the
