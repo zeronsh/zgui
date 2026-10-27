@@ -24,6 +24,8 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 **A fourth click keeps a triple click's paragraph selected**, as Chrome's do: presses in a row count on past three (Rust `EventContext::click_count`, Luau's `clicks`), where they went round to 1 again, and selection takes three and on as a paragraph.
 - *Migrate:* a handler that relied on the count going back to 1 after three reads `(clicks - 1) % 3 + 1`.
 
+**Shift-Right extends back through right-to-left text**, as Chrome does: Shift with Left or Right extends a page's selection the way its block runs (`direction`), so in a right-to-left paragraph Shift-Right grows it rightward on screen.
+
 ## 0.1.3 (2026-10-27)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.2 is an addition), unless it writes one of the three structs below field by field. Some defaults change, each below with what to check: zoom and find in page are on, keys and cursors behave as a browser's and AppKit's, and Windows presents and serves assistive technology differently.
