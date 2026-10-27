@@ -148,6 +148,45 @@ animate the widest (zgx 114.7–121.2 mW, MyGo 117.0–122.3, GPUI Fast
 median 1% above), so the site says it is not a clear lead; the page lists
 every cell where zgx's range reaches a rival's.
 
+### Frame pacing: a capture changes it
+
+The suite's frame times and frames shown (`framepace`) watch the window
+through ScreenCaptureKit, and the capture itself makes macOS skip frames it
+would otherwise show, by an amount that depends on the Mac and on how the app
+presents. On 2026-10-27 one zgx build (branch present-drawable, `e3f971ea`,
+animate at 120 Hz, macOS 26) ran with frameseq capturing its window and with
+nothing attached, in alternating launches. Frames were counted by the system
+itself: a presented frame's presented time, 0 when the window server skipped
+it (`addPresentedHandler` of a `CAMetalLayer` drawable; for tiles, a 1×1
+drawable presented in each tile flip's transaction). Frames skipped, median
+[range]:
+
+| | M1 Max, captured | M1 Max, not | M5, captured | M5, not |
+| --- | --- | --- | --- | --- |
+| launches | 6 | 6 | 3 | 3 |
+| tiles (shipped) | 12.19% [10.45–13.80] | 0.16% [0.06–0.35] | 3.69% [1.25–3.76] | 0.25% [0.21–0.35] |
+| `CAMetalLayer` drawables | 0.14% [0.07–0.35] | 0.07% [0.07–0.07] | 6.18% [1.25–8.44] | 0.08% [0.07–0.08] |
+
+With nothing attached both paths show nearly every frame on both Macs (the
+presented intervals' p99 8.33 ms: every refresh). Captured, the M1 Max drops
+one tile frame in eight and almost no drawables; the M5 drops both, drawables
+more. The M1 Max's tiles losing to GPUI Fast at 120 Hz (p99 15.0 ms against
+11.5, 105 changes a second against 114, 2026-10-26) was the capture's doing.
+
+So:
+
+- A captured frame time says how a window paces while it is captured
+  (screen sharing, a recording), not otherwise. Frameworks compared on it are
+  compared under a capture, which perturbs each present path differently:
+  GPUI Fast's, MyGo's and Rune's figures are captured too.
+- For an app's own pacing, use the system's feedback: presented times
+  (`ZGX_DRAWABLE_FEEDBACK=1` on that branch prints them as shown and skipped
+  frames and presented-interval percentiles). Instruments' Animation Hitches
+  reported no hitch in any run, captured or not, so it does not tell them
+  apart.
+- CPU, GPU power, memory and WindowServer CPU come from the timed trials,
+  which run with nothing attached; the capture does not touch them.
+
 Blank rows (`scripts/blankprobe.swift`): during a capture of the window, a
 run down the rows' left padding that is closer to the window's background
 than to either row colour, longer than 24 points, is a place no row was

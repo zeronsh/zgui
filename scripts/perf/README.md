@@ -104,12 +104,18 @@ only about **110 frames a second on a 120 Hz panel** (home-laptop's M5,
 2026-10-26, measured with stamped frames, the same for every present path).
 Between two captures a frame can come and go unseen. So at 120 Hz they
 cannot tell apart paths whose frame loss differs by 5–10%, and an M5
-120 Hz cell must not be ranked on their changed fps or p99 alone. Larger
-differences (the M1 Max's tiles at 100 changes a second against 107 for
-drawables) are still real. framepace's stride-2 grid also over-counted a
-drawable window on the M1 (107 changes a second where the app presented
-60). For finer judgement use the system's own feedback (a drawable's
-presented time, 0 when skipped) or stamped frames.
+120 Hz cell must not be ranked on their changed fps or p99 alone.
+framepace's stride-2 grid also over-counted a drawable window on the M1
+(107 changes a second where the app presented 60).
+
+Worse, a capture changes what it measures: while ScreenCaptureKit captures
+a window, macOS skips some of its frames, by an amount that depends on the
+Mac and the present path. zgx's tiles skip 12% of frames on the M1 Max
+captured and 0.2% not; the M1's tiles at 100 changes a second against 107
+for drawables were the capture's doing (tables in `docs/benchmarking.md`,
+"Frame pacing: a capture changes it"). A capture says how a window paces
+under capture, and stamped frames don't escape it. For an app's own pacing
+use the system's feedback (a drawable's presented time, 0 when skipped).
 
 ## The window server
 
