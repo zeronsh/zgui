@@ -14,7 +14,7 @@ lab" at (20, 20) logical pixels, 20 px. The window is read as it drew
 itself (`PrintWindow`), so another window covering it cannot pass for its
 text. Medians of cycles say more than wall times, which swing with the
 system and the compositor. A zgx launch also says what its kept shaders did
-by its first present (its startup marks, `ZGX_PROFILE`): a start that
+by its first present (`ZGX_SHADER_LOG`): a start that
 compiled them is slower by about 45 ms, and says so.
 """
 import argparse
@@ -46,7 +46,7 @@ SHADERS = re.compile(r"first frame presented \(shaders: (\d+) read, (\d+) compil
 
 def shaders_of(log):
     """What zgx's kept shaders did by its first present, from its startup
-    mark (`ZGX_PROFILE`): None for another framework, or a zgx without it."""
+    line (`ZGX_SHADER_LOG`): None for another framework, or a zgx without it."""
     found = SHADERS.search(pathlib.Path(log).read_text(errors="replace"))
     return dict(zip(("read", "compiled", "not_kept"), map(int, found.groups()))) if found else None
 
@@ -55,10 +55,12 @@ def launch(binary, settle):
     """(window ms, first text ms, CPU ms, M cycles, shaders[, private MiB,
     working set MiB]): `shaders` is what zgx's kept shaders did by its first
     present (`shaders_of`), so a start slowed by compiling them says so."""
-    # ZGUI_*: adapters built before the rename read those alone. ZGX_PROFILE:
-    # zgx's startup marks, the shaders' among them, on stderr.
+    # ZGUI_*: adapters built before the rename read those alone.
+    # ZGX_SHADER_LOG: zgx's first-present line with what its kept shaders did,
+    # on stderr (ZGX_PROFILE, which prints it among its marks, slows a start
+    # by about 25 ms).
     env = dict(os.environ, ZGX_MODE="idle", ZGX_SECONDS=str(settle + 8), ZGX_INITIAL_TICKS="0",
-               ZGUI_MODE="idle", ZGUI_SECONDS=str(settle + 8), ZGUI_INITIAL_TICKS="0", ZGX_PROFILE="1")
+               ZGUI_MODE="idle", ZGUI_SECONDS=str(settle + 8), ZGUI_INITIAL_TICKS="0", ZGX_SHADER_LOG="1")
     log = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False)
     started = time.perf_counter()
     proc = subprocess.Popen([binary], env=env, stdout=subprocess.DEVNULL, stderr=log)

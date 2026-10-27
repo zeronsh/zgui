@@ -790,7 +790,7 @@ def measure_startup(binaries, out, commit):
         'machine': f"{machine['chip']}, {machine['gpu']}",
         'probe': 'scripts/windows_startup_probe.py: spawn, window, the header strip until its text has drawn '
                  '(PrintWindow); CPU time and cycles of the process at content; for zgx, what its kept shaders '
-                 'did by its first present (read, compiled, not kept: its startup marks, ZGX_PROFILE)',
+                 'did by its first present (read, compiled, not kept: ZGX_SHADER_LOG)',
         'apps': {f: f'{p.name} (lab), ZGX_MODE=idle' for f, p in binaries.items()},
         'protocol': f"{STARTUP_LAUNCHES} rounds, the frameworks rotating; the suite's font",
         'launches': found,

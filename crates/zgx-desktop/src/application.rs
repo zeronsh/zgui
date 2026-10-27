@@ -2122,7 +2122,15 @@ impl Host {
                     self.scale_factor,
                 );
                 self.native.apply();
-                FIRST_PRESENT.call_once(|| zgx::profile::mark(&first_present_mark()));
+                FIRST_PRESENT.call_once(|| {
+                    let mark = first_present_mark();
+                    zgx::profile::mark(&mark);
+                    // `ZGX_SHADER_LOG=1`: the same line alone, for a probe
+                    // timing starts (ZGX_PROFILE's spans would slow them).
+                    if zgx::env::var_os("ZGX_SHADER_LOG").is_some_and(|v| v != "0") {
+                        eprintln!("zgx: {mark}");
+                    }
+                });
                 // Commits the transaction (macOS; elsewhere there is none).
                 #[allow(dropping_copy_types)]
                 drop(transaction);
