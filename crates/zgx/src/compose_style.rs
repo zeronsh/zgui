@@ -505,16 +505,50 @@ fn show_moved_and_faded(
     scene: &mut crate::scene::Scene,
     node: NodeId,
     transform: crate::scene::Transform,
-    effects: crate::scene::Effects,
     applied: &Styles,
     originals: &Originals,
     inset_kept: bool,
 ) {
-    scene.set_transform_and_effects(node, transform, effects);
+    let effects = finite_style_effects(applied, originals.effects);
+    scene.set_transform_and_finite_effects(node, transform, effects);
     apply_mask(scene, node, applied, originals.mask());
     if !inset_kept {
         scene.set_clip_inset(node, applied.overflow().clip_inset.or(originals.inset()));
     }
+}
+/// The node's original effects are normalized already. Only fields supplied
+/// by a style need normalizing when they replace those original components.
+/// Computed where they are written: the style effect then holds no effects
+/// across the rest of its run.
+#[inline(never)]
+fn finite_style_effects(
+    resolved: &Styles,
+    mut effects: crate::scene::Effects,
+) -> crate::scene::Effects {
+    use crate::scene::{finite_factor, finite_opacity, finite_radius};
+    if let Some(value) = resolved.opacity.get() {
+        effects.opacity = finite_opacity(value);
+    }
+    let overflow = resolved.overflow();
+    if let Some(value) = overflow.blur.get() {
+        effects.blur_radius = finite_radius(value);
+    }
+    if let Some(value) = overflow.edge_fade.get() {
+        effects.edge_fade = finite_radius(value);
+    }
+    if let Some(value) = overflow.filter_blur.get() {
+        effects.filter_blur = finite_radius(value);
+    }
+    if let Some(value) = overflow.brightness.get() {
+        effects.brightness = finite_factor(value);
+    }
+    if let Some(value) = overflow.contrast.get() {
+        effects.contrast = finite_factor(value);
+    }
+    if let Some(value) = overflow.saturate.get() {
+        effects.saturate = finite_factor(value);
+    }
+    effects
 }
 /// The inputs of the last full application besides paint: the dynamic
 /// styles without their paint properties, the interaction and disabled
@@ -1041,28 +1075,6 @@ pub(crate) fn mount_style_with_intrinsic(
                 let paint_color = resolved.text_color;
                 let bound = theme.as_ref().is_some_and(|theme| theme.themed())
                     || produced.as_ref().is_some_and(Styles::has_tokens);
-                let mut effects = originals.effects;
-                if let Some(value) = resolved.opacity.get() {
-                    effects.opacity = value;
-                }
-                if let Some(value) = resolved.overflow().blur.get() {
-                    effects.blur_radius = value;
-                }
-                if let Some(value) = resolved.overflow().edge_fade.get() {
-                    effects.edge_fade = value;
-                }
-                if let Some(value) = resolved.overflow().filter_blur.get() {
-                    effects.filter_blur = value;
-                }
-                if let Some(value) = resolved.overflow().brightness.get() {
-                    effects.brightness = value;
-                }
-                if let Some(value) = resolved.overflow().contrast.get() {
-                    effects.contrast = value;
-                }
-                if let Some(value) = resolved.overflow().saturate.get() {
-                    effects.saturate = value;
-                }
                 // The text colour matters to text, and to what inherits it:
                 // the last patch that sets it decides it, a token if it
                 // bound one (only patches with tokens need looking at).
@@ -1117,10 +1129,13 @@ pub(crate) fn mount_style_with_intrinsic(
                     scene.paint_kept(node, inset, transform, local);
                 if last.moves_and_fades {
                     show_moved_and_faded(
-                        &mut scene, node, transform, effects, &applied.0, &originals, inset_kept,
+                        &mut scene, node, transform, &applied.0, &originals, inset_kept,
                     );
                 } else {
-                    scene.set_effects(node, effects);
+                    scene.set_finite_effects(
+                        node,
+                        finite_style_effects(&applied.0, originals.effects),
+                    );
                     apply_mask(&mut scene, node, &applied.0, originals.mask());
                     if !inset_kept {
                         scene.set_clip_inset(node, inset);
@@ -1821,6 +1836,130 @@ mod tests {
     use super::*;
     use crate::scene::{Layout, Style};
     use crate::style::Styled;
+
+    /// Resolving a partial effect patch preserves the public setter's
+    /// normalization, including special values and untouched originals.
+    #[test]
+    fn supplied_effect_fields_normalize_as_the_public_setter_does() {
+        use crate::scene::{Effects, Scene, finite_factor, finite_opacity, finite_radius};
+        let bits = |effects: Effects| {
+            [
+                effects.opacity,
+                effects.blur_radius,
+                effects.edge_fade,
+                effects.filter_blur,
+                effects.brightness,
+                effects.contrast,
+                effects.saturate,
+            ]
+            .map(f32::to_bits)
+        };
+        let originals = [
+            Effects::default(),
+            Effects {
+                opacity: 0.25,
+                blur_radius: 2.,
+                edge_fade: 3.,
+                filter_blur: 4.,
+                brightness: 1.25,
+                contrast: 0.75,
+                saturate: 0.5,
+            },
+            Effects {
+                opacity: -0.,
+                blur_radius: f32::from_bits(1),
+                edge_fade: -0.,
+                filter_blur: f32::NEG_INFINITY,
+                brightness: -0.,
+                contrast: f32::NAN,
+                saturate: f32::INFINITY,
+            },
+        ];
+        let values = [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            -2.,
+            -0.,
+            0.,
+            f32::from_bits(1),
+            -f32::from_bits(1),
+            0.4,
+            1.,
+            2.,
+        ];
+        // The combined setter's fallback can apply the normalized value
+        // directly: another normalization would preserve every bit.
+        for normalize in [finite_opacity, finite_radius, finite_factor] {
+            for value in values {
+                let once = normalize(value);
+                assert_eq!(normalize(once).to_bits(), once.to_bits());
+            }
+        }
+        for original in originals {
+            let mut scene = Scene::new(100., 100.);
+            let node = scene.root();
+            scene.set_effects(node, original);
+            let original = scene.effects(node);
+            for mask in 0..128 {
+                for value in values {
+                    let mut styles = Styles::new();
+                    if mask & 1 != 0 {
+                        styles = styles.opacity(value);
+                    }
+                    if mask & 2 != 0 {
+                        styles = styles.blur(value);
+                    }
+                    if mask & 4 != 0 {
+                        styles = styles.edge_fade(value);
+                    }
+                    if mask & 8 != 0 {
+                        styles = styles.filter_blur(value);
+                    }
+                    if mask & 16 != 0 {
+                        styles = styles.brightness(value);
+                    }
+                    if mask & 32 != 0 {
+                        styles = styles.contrast(value);
+                    }
+                    if mask & 64 != 0 {
+                        styles = styles.saturate(value);
+                    }
+                    let overflow = styles.overflow();
+                    let raw = Effects {
+                        opacity: styles.opacity.get().unwrap_or(original.opacity),
+                        blur_radius: overflow.blur.get().unwrap_or(original.blur_radius),
+                        edge_fade: overflow.edge_fade.get().unwrap_or(original.edge_fade),
+                        filter_blur: overflow.filter_blur.get().unwrap_or(original.filter_blur),
+                        brightness: overflow.brightness.get().unwrap_or(original.brightness),
+                        contrast: overflow.contrast.get().unwrap_or(original.contrast),
+                        saturate: overflow.saturate.get().unwrap_or(original.saturate),
+                    };
+                    // Force the public setter to store its normalized value,
+                    // even when only the sign of a zero differs.
+                    scene.set_effects(
+                        node,
+                        Effects {
+                            opacity: 0.125,
+                            blur_radius: 17.,
+                            edge_fade: 19.,
+                            filter_blur: 23.,
+                            brightness: 2.25,
+                            contrast: 3.25,
+                            saturate: 4.25,
+                        },
+                    );
+                    scene.set_effects(node, raw);
+                    assert_eq!(
+                        bits(finite_style_effects(&styles, original)),
+                        bits(scene.effects(node)),
+                        "mask {mask}, value {value:?}, original {original:?}"
+                    );
+                }
+            }
+        }
+    }
+
     fn color(value: u8) -> Styles {
         Styles::from(crate::style::StylesFields {
             background: Some(Color(value, 0, 0, 255)),

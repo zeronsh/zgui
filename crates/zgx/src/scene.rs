@@ -5384,26 +5384,26 @@ impl Scene {
     /// infinite opacity clamps to its endpoint. Non-finite filter radii disable
     /// their filter, and negative radii clamp to zero.
     pub fn set_effects(&mut self, id: NodeId, mut effects: Effects) {
-        effects.opacity = if effects.opacity.is_nan() {
-            1.0
-        } else {
-            effects.opacity.clamp(0.0, 1.0).max(0.0)
-        };
-        let radius = |value: f32| {
-            if value.is_finite() && value > 0.0 {
-                value
-            } else {
-                0.0
-            }
-        };
-        effects.blur_radius = radius(effects.blur_radius);
-        effects.edge_fade = radius(effects.edge_fade);
-        effects.filter_blur = radius(effects.filter_blur);
-        // Colour filters: nonfinite values change nothing; none is negative.
-        let factor = |value: f32| if value.is_finite() { value.max(0.) } else { 1. };
-        effects.brightness = factor(effects.brightness);
-        effects.contrast = factor(effects.contrast);
-        effects.saturate = factor(effects.saturate);
+        effects.opacity = finite_opacity(effects.opacity);
+        effects.blur_radius = finite_radius(effects.blur_radius);
+        effects.edge_fade = finite_radius(effects.edge_fade);
+        effects.filter_blur = finite_radius(effects.filter_blur);
+        effects.brightness = finite_factor(effects.brightness);
+        effects.contrast = finite_factor(effects.contrast);
+        effects.saturate = finite_factor(effects.saturate);
+        self.write_effects(id, effects);
+    }
+    /// Apply effects whose components were normalized while resolving a style.
+    /// Out of line: inlined into the style effect, its body grew the effect,
+    /// costing every run of it (a mount's too).
+    #[inline(never)]
+    pub(crate) fn set_finite_effects(&mut self, id: NodeId, effects: Effects) {
+        self.write_effects(id, effects);
+    }
+    // Both entry points keep their own body: public calls do not pay for
+    // another call, and styles do not normalize inherited fields again.
+    #[inline(always)]
+    fn write_effects(&mut self, id: NodeId, effects: Effects) {
         if self.node(id).effects == effects {
             return;
         }
@@ -5453,10 +5453,25 @@ impl Scene {
         effects: Effects,
     ) {
         let (transform, effects) = (finite_translation(transform), finite_effects(effects));
+        self.write_transform_and_effects(id, transform, effects);
+    }
+    /// The style resolver has already normalized `effects`; the translation
+    /// keeps the public setter's normalization and scroll-copy behavior.
+    pub(crate) fn set_transform_and_finite_effects(
+        &mut self,
+        id: NodeId,
+        transform: Transform,
+        effects: Effects,
+    ) {
+        self.write_transform_and_effects(id, finite_translation(transform), effects);
+    }
+    /// Apply normalized translation and effects through either entry point.
+    #[inline(always)]
+    fn write_transform_and_effects(&mut self, id: NodeId, transform: Transform, effects: Effects) {
         let node = self.node(id);
         if node.scroll_copy || node.transform == transform || node.effects == effects {
             self.set_transform(id, transform);
-            self.set_effects(id, effects);
+            self.set_finite_effects(id, effects);
             return;
         }
         self.effects_changing(id, &effects);
@@ -5471,6 +5486,9 @@ impl Scene {
         self.invalidate(id, COMPOSITE);
     }
     /// Bookkeeping before a node's effects change, ahead of its old damage.
+    // Keep bookkeeping in each entry even when its application body is shared,
+    // so the public setter does not gain calls from the style specialization.
+    #[inline(always)]
     fn effects_changing(&mut self, id: NodeId, effects: &Effects) {
         if (self.node(id).effects.opacity <= 0.) != (effects.opacity <= 0.) {
             self.geometry_revision = self.geometry_revision.wrapping_add(1);
@@ -5484,6 +5502,7 @@ impl Scene {
         }
     }
     /// Bookkeeping between a node's old damage and its new effects.
+    #[inline(always)]
     fn filter_changing(&mut self, id: NodeId, effects: &Effects) {
         let old_filter = self.node(id).filtered();
         if old_filter != (effects.filter_blur > 0.) {
@@ -11326,28 +11345,38 @@ fn finite_translation(mut transform: Transform) -> Transform {
     transform.y = coordinate(transform.y);
     transform
 }
-/// `set_effects`'s effects, made finite.
-fn finite_effects(mut effects: Effects) -> Effects {
-    effects.opacity = if effects.opacity.is_nan() {
+/// NaN opacity is opaque; infinite opacity clamps to its endpoint.
+#[inline(always)]
+pub(crate) fn finite_opacity(value: f32) -> f32 {
+    if value.is_nan() {
         1.0
     } else {
-        effects.opacity.clamp(0.0, 1.0).max(0.0)
-    };
-    let radius = |value: f32| {
-        if value.is_finite() && value > 0.0 {
-            value
-        } else {
-            0.0
-        }
-    };
-    effects.blur_radius = radius(effects.blur_radius);
-    effects.edge_fade = radius(effects.edge_fade);
-    effects.filter_blur = radius(effects.filter_blur);
-    // Colour filters: nonfinite values change nothing; none is negative.
-    let factor = |value: f32| if value.is_finite() { value.max(0.) } else { 1. };
-    effects.brightness = factor(effects.brightness);
-    effects.contrast = factor(effects.contrast);
-    effects.saturate = factor(effects.saturate);
+        value.clamp(0.0, 1.0).max(0.0)
+    }
+}
+/// Nonfinite and nonpositive radii disable their filter.
+#[inline(always)]
+pub(crate) fn finite_radius(value: f32) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        0.0
+    }
+}
+/// Nonfinite colour factors change nothing; negative factors clamp to zero.
+#[inline(always)]
+pub(crate) fn finite_factor(value: f32) -> f32 {
+    if value.is_finite() { value.max(0.) } else { 1. }
+}
+/// `set_effects`'s effects, made finite.
+fn finite_effects(mut effects: Effects) -> Effects {
+    effects.opacity = finite_opacity(effects.opacity);
+    effects.blur_radius = finite_radius(effects.blur_radius);
+    effects.edge_fade = finite_radius(effects.edge_fade);
+    effects.filter_blur = finite_radius(effects.filter_blur);
+    effects.brightness = finite_factor(effects.brightness);
+    effects.contrast = finite_factor(effects.contrast);
+    effects.saturate = finite_factor(effects.saturate);
     effects
 }
 /// The indices of a longest strictly increasing subsequence of `values`
