@@ -6513,7 +6513,9 @@ impl GpuRenderer {
             }
         }
         // Polyline strokes read their points (group 2, or Metal's `POINTS`).
-        let polylines = draws.iter().any(|draw| draw.shading == Shading::Polyline);
+        // Every stroke appends at least two points before making its quad.
+        let polylines =
+            !points.is_empty() && draws.iter().any(|draw| draw.shading == Shading::Polyline);
         // Frames of quads (images the CPU wrote, layer composites, nothing
         // else recorded, any filters mixed by dual-source blending) skip
         // wgpu: see `metal_frame`. Layers repainted this frame were submitted
@@ -6728,14 +6730,23 @@ impl GpuRenderer {
             .iter()
             .enumerate()
             .map(|(batch, (start, _))| (*start, Some(batch)))
-            .chain((0..draws.len()).filter_map(|i| {
-                let draw = &draws[i];
-                (matches!(draw.shading, Shading::Blend | Shading::FilterBlend(_))
-                    && regions
-                        .iter()
-                        .any(|(region, _)| region.intersects(draw.bounds)))
-                .then_some((i, None))
-            }))
+            // A blended draw is made only once `prepare_blend` made its
+            // pipeline: with none made, no draw splits the pass.
+            .chain(
+                (0..if self.blend_pipelines.is_empty() {
+                    0
+                } else {
+                    draws.len()
+                })
+                    .filter_map(|i| {
+                        let draw = &draws[i];
+                        (matches!(draw.shading, Shading::Blend | Shading::FilterBlend(_))
+                            && regions
+                                .iter()
+                                .any(|(region, _)| region.intersects(draw.bounds)))
+                        .then_some((i, None))
+                    }),
+            )
             .collect();
         // A filter's blur before a blend at the same draw.
         cuts.sort_by_key(|&(draw, batch)| (draw, batch.is_none()));
