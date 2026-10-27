@@ -2464,6 +2464,8 @@ impl Ui {
         if self.storage.find.borrow().is_some() {
             crate::find::sync(self);
         }
+        // Whether the host draws the caret, now that it is laid out.
+        crate::caret_blink::settle(self);
         Ok(())
     }
     fn prepare_frame_once(&self) -> Result<(), LayoutFeedbackError> {
@@ -3798,11 +3800,18 @@ impl Ui {
             let caret_shown = *focus.borrow()
                 && !draw_read_only.get()
                 && e.preedit().is_none_or(|preedit| preedit.cursor.is_some());
-            effects.opacity = if caret_shown { 1. } else { 0. };
+            // Shown, it paints unless the host draws it (`Ui::native_caret`).
+            effects.opacity = if caret_shown && !draw_blink.drawn_natively() {
+                1.
+            } else {
+                0.
+            };
             s.set_effects(caret, effects);
             // Drawn again (typed, selected, moved): solid, then blinking.
             if caret_shown {
-                draw_blink.restart(caret, color, Instant::now());
+                // A bare insertion point: no composition, no selection.
+                let bare = e.preedit().is_none() && selection.range().is_empty();
+                draw_blink.restart(caret, color, Instant::now(), bare);
             } else {
                 draw_blink.release(caret);
             }

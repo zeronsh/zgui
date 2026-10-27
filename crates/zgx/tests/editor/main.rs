@@ -28,6 +28,8 @@ mod editor_ingress_normalization;
 mod editor_long_documents;
 #[path = "../editor_model_normalization.rs"]
 mod editor_model_normalization;
+#[path = "../editor_native_caret.rs"]
+mod editor_native_caret;
 #[path = "../editor_paging.rs"]
 mod editor_paging;
 #[path = "../editor_pointer_selection.rs"]

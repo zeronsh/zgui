@@ -3024,6 +3024,112 @@ impl Scene {
                 .chain(self.ancestors(id))
                 .all(|id| own_visible(&self.node(id).style))
     }
+    /// Where `id`'s box shows exactly as laid out, in window points: its box
+    /// cut by its clips, when nothing in its ancestry changes how it
+    /// composites (no opacity below 1, filter, edge fade, blend, mask, layer
+    /// shader, scale, rotation, skew, tilt or zoom; nor in `id` itself, but
+    /// for its opacity) and no rounded clip reaches it. A host drawing the node
+    /// itself (the caret, `Ui::native_caret`) draws that rectangle, as the
+    /// node's paint would show; `None` when it can't, or nothing shows.
+    pub fn plain_box(&self, id: NodeId) -> Option<Rect> {
+        let plain = |node: &Node| {
+            !node.layered && !node.filtered() && !node.transformed() && own_visible(&node.style)
+        };
+        let node = self.node(id);
+        let effects = Effects {
+            opacity: 1.,
+            ..node.effects
+        };
+        if !plain(node) || effects != Effects::default() {
+            return None;
+        }
+        let bounds = self.bounds(id).intersection(self.world_clip(id)?)?;
+        let inside = |outer: Rect| {
+            bounds.x >= outer.x
+                && bounds.y >= outer.y
+                && bounds.x + bounds.width <= outer.x + outer.width
+                && bounds.y + bounds.height <= outer.y + outer.height
+        };
+        for ancestor in self.ancestors(id) {
+            let node = self.tree_node(ancestor);
+            if !plain(node) || node.effects != Effects::default() {
+                return None;
+            }
+            // A rounded clip cuts its corners: the box keeps clear of them.
+            if clip_axes(&node.style) == (true, true)
+                && let NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } = &node.kind
+            {
+                let corners = quad
+                    .decoration
+                    .as_deref()
+                    .and_then(|detail| detail.corners)
+                    .unwrap_or(crate::decoration::Corners::all(quad.radius));
+                let radius = corners
+                    .top_left
+                    .max(corners.top_right)
+                    .max(corners.bottom_right)
+                    .max(corners.bottom_left)
+                    .max(0.);
+                let feather = quad
+                    .decoration
+                    .as_deref()
+                    .map_or(0., |detail| detail.clip_feather);
+                if radius > 0. || feather > 0. {
+                    let outer = self.bounds(ancestor);
+                    let inset = radius + feather + quad.border_width.max(0.);
+                    let across = Rect::new(
+                        outer.x + inset,
+                        outer.y,
+                        outer.width - 2. * inset,
+                        outer.height,
+                    );
+                    let down = Rect::new(
+                        outer.x,
+                        outer.y + inset,
+                        outer.width,
+                        outer.height - 2. * inset,
+                    );
+                    if !inside(across) && !inside(down) {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(bounds)
+    }
+    /// Whether anything painted after `id` (its later siblings', and its
+    /// ancestors' later siblings' subtrees) can land on `rect`, in window
+    /// points: what a host drawing `id` above the window's content would
+    /// wrongly cover.
+    pub fn painted_over(&self, id: NodeId, rect: Rect) -> bool {
+        let mut node = id;
+        while let Some(parent) = self.node(node).parent {
+            // Ink is in the parent's space: its ancestors' translations added.
+            let mut offset = Transform::default();
+            let mut up = Some(parent);
+            while let Some(at) = up {
+                let ancestor = self.tree_node(at);
+                offset.x += ancestor.transform.x;
+                offset.y += ancestor.transform.y;
+                up = ancestor.parent;
+            }
+            let children = &self.tree_node(parent).children;
+            let after = children
+                .iter()
+                .position(|child| *child == node)
+                .map_or(0, |at| at + 1);
+            for later in &children[after..] {
+                if self
+                    .ink(*later)
+                    .is_some_and(|ink| ink.translated(offset).intersects(rect))
+                {
+                    return true;
+                }
+            }
+            node = parent;
+        }
+        false
+    }
     /// The part of `id`'s box that shows: inside its clips and not fully
     /// transparent; `None` when nothing does.
     pub fn visible_bounds(&self, id: NodeId) -> Option<Rect> {
@@ -5303,12 +5409,14 @@ impl Scene {
         }
         // A content blur's spread damages under the old effects, then the new.
         // Opacity and colour filters paint where the node painted before:
-        // that place is damaged once (an animated fade, every frame).
+        // that place is damaged once (an animated fade, every frame), under
+        // the old effects when the new paint nothing (a transparent node
+        // damages nothing).
         let old = self.node(id).effects;
         let same_area =
             old.blur_radius == effects.blur_radius && old.filter_blur == effects.filter_blur;
         let mut context = None;
-        if !same_area {
+        if !same_area || effects.opacity <= 0. {
             self.damage_subtree_with(id, &mut context);
         }
         let old_filter = self.node(id).filtered();
@@ -5829,12 +5937,17 @@ impl Scene {
     /// is worked out by the first and kept for the rest. Valid while the
     /// ancestors keep their places, clips and visibility.
     fn damage_subtree_with(&mut self, id: NodeId, context: &mut Option<DamageContext>) {
-        // Hidden, or never laid out (a mounting row's nodes, each closing in
-        // turn): it damages nothing (`damage_subtree_in`), so its ancestors
-        // need no working out.
+        // Hidden, fully transparent (it paints nothing, wherever it is: a
+        // caret the host draws, moving), or never laid out (a mounting row's
+        // nodes, each closing in turn): it damages nothing
+        // (`damage_subtree_in`), so its ancestors need no working out.
         let node = self.node(id);
         let unplaced = node.measurement.is_none() && node.bounds == Rect::default();
-        if !own_visible(&node.style) || unplaced || self.damage_is_full() {
+        if !own_visible(&node.style)
+            || node.effects.opacity <= 0.
+            || unplaced
+            || self.damage_is_full()
+        {
             return;
         }
         // Resolve the ancestors once, then carry translation and clipping down
@@ -11723,12 +11836,52 @@ mod local_transform_tests {
             let (t, s) = (together.flush(), apart.flush());
             assert_eq!(together.is_layer(a), apart.is_layer(b));
             assert_eq!(t.composite_nodes, s.composite_nodes);
-            assert_eq!(
-                union(&t.damage),
-                union(&s.damage),
-                "{transform:?} {effects:?}"
-            );
+            if effects.opacity > 0. {
+                assert_eq!(
+                    union(&t.damage),
+                    union(&s.damage),
+                    "{transform:?} {effects:?}"
+                );
+            } else {
+                // Moved and gone at once, only its old place: the setters
+                // also damage the new, where they show it in between.
+                let (t, s) = (union(&t.damage), union(&s.damage));
+                assert!(s.intersection(t) == Some(t), "{t:?} within {s:?}");
+            }
         }
+    }
+    #[test]
+    fn fading_in_or_out_damages_where_the_node_shows_and_a_transparent_one_moves_freely() {
+        let at = |x, y| Transform { x, y };
+        let faded = |opacity| Effects {
+            opacity,
+            ..Effects::default()
+        };
+        let place = |scene: &Scene, id| scene.bounds(id);
+        // Shown, then fading out in place: where it showed repaints.
+        let (mut scene, id) = placed(40., 20.);
+        let shown = place(&scene, id);
+        scene.set_effects(id, faded(0.));
+        assert_eq!(union(&scene.flush().damage), shown, "fading out");
+        // Transparent, it moves and damages nothing: it paints nothing.
+        scene.set_transform(id, at(200., 150.));
+        assert!(scene.flush().damage.is_empty(), "a transparent node moving");
+        // Fading in where it now is: that place repaints.
+        let there = place(&scene, id);
+        scene.set_effects(id, faded(1.));
+        assert_eq!(union(&scene.flush().damage), there, "fading in");
+        // Shown and moving: its old place and its new.
+        scene.set_transform(id, at(20., 30.));
+        let both = there.union(place(&scene, id));
+        assert_eq!(union(&scene.flush().damage), both, "moving shown");
+        // Moving and fading at once, either way: the place it showed.
+        let (mut scene, id) = placed(40., 20.);
+        let old = place(&scene, id);
+        scene.set_transform_and_effects(id, at(250., 40.), faded(0.));
+        assert_eq!(union(&scene.flush().damage), old, "moved and faded out");
+        scene.set_transform_and_effects(id, at(60., 200.), faded(0.5));
+        let new = place(&scene, id);
+        assert_eq!(union(&scene.flush().damage), new, "moved and faded in");
     }
     #[test]
     fn matrix_is_css_order_about_the_origin() {

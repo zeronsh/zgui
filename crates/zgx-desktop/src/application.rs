@@ -933,6 +933,52 @@ const ALIGN_AT: std::time::Duration = std::time::Duration::from_micros(1600);
 const ALIGN_PERIOD: std::time::Duration = std::time::Duration::from_millis(12);
 /// How long a frame paced by the display link, `left` before the next
 /// refresh point of a refresh `period` long, waits before it is handed over
+/// `ZGX_NATIVE_CARET=0`: the editor paints the caret, blinking through
+/// frames, as before Core Animation drew it (2026-10-27).
+#[cfg(target_os = "macos")]
+static NATIVE_CARET: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_NATIVE_CARET").is_none_or(|v| v != "0"));
+
+/// Give the renderer the caret Core Animation draws (`Ui::native_caret`),
+/// once for each change: its box from window points to the view's (the
+/// window's zoom undone) on the pixels the editor's would fill (those whose
+/// centres it covers, as the GPU fills a rectangle), its blink's start in
+/// Core Animation's clock.
+#[cfg(target_os = "macos")]
+fn sync_caret(
+    ui: &zgx::widgets::Ui,
+    renderer: &mut GpuRenderer,
+    applied: &mut Option<u64>,
+    scale: f64,
+) {
+    let (serial, caret) = ui.native_caret();
+    if *applied == Some(serial) {
+        return;
+    }
+    *applied = Some(serial);
+    // `scale`, the window's pixels a point, holds its zoom: a view point is
+    // `scale / zoom` pixels.
+    let view = scale / ui.zoom();
+    // A pixel's edge: where pixels from `at` (window points) on are filled.
+    let edge = |at: f32| (f64::from(at) * scale - 0.5).ceil() / view;
+    renderer.set_caret(caret.map(|caret| {
+        let rect = caret.rect;
+        let zgx::scene::Color(r, g, b, a) = caret.color;
+        let (left, top) = (edge(rect.x), edge(rect.y));
+        let (right, bottom) = (edge(rect.x + rect.width), edge(rect.y + rect.height));
+        zgx_gpu::present_log::log(|| {
+            format!("caret {rect:?} scale={scale} -> {left},{top} {right},{bottom}")
+        });
+        zgx_gpu::Caret {
+            rect: (left, top, right - left, bottom - top),
+            color: [r, g, b, a].map(|channel| f64::from(channel) / 255.),
+            on: caret.on.as_secs_f64(),
+            off: caret.off.as_secs_f64(),
+            began: zgx_gpu::media_time() - caret.since.elapsed().as_secs_f64(),
+        }
+    }));
+}
+
 /// (see `ALIGN_EARLY`).
 #[cfg(any(target_os = "macos", test))]
 fn align_wait(
@@ -1265,6 +1311,10 @@ struct Host {
     /// (see `Host::refresh_grid`).
     #[cfg(target_os = "macos")]
     presented_at: Option<std::time::Instant>,
+    /// The `Ui::native_caret` change the renderer was last given
+    /// (`sync_caret`): each is applied once.
+    #[cfg(target_os = "macos")]
+    caret_applied: Option<u64>,
     /// When the window last changed size: live-resize frames are drawn
     /// inside AppKit's resize transaction, which shows them with the new
     /// frame, so they skip the refresh-point wait (`refresh_grid`) that
@@ -1597,6 +1647,8 @@ impl Host {
             #[cfg(target_os = "macos")]
             presented_at: None,
             #[cfg(target_os = "macos")]
+            caret_applied: None,
+            #[cfg(target_os = "macos")]
             resized_at: None,
             #[cfg(target_os = "macos")]
             reported_size: None,
@@ -1872,6 +1924,17 @@ impl Host {
             self.context.ui.cancel_interactions();
             return Ok(());
         }
+        // The caret is Core Animation's where frames show through the
+        // renderer's layer and no native view splits them into planes.
+        #[cfg(target_os = "macos")]
+        self.context.ui.set_native_caret(
+            *NATIVE_CARET
+                && !self.native.active()
+                && self
+                    .renderer
+                    .as_ref()
+                    .is_some_and(GpuRenderer::shows_carets),
+        );
         self.context
             .ui
             .advance_interactions(std::time::Instant::now())?;
@@ -2042,6 +2105,15 @@ impl Host {
                         std::thread::sleep(wait);
                     }
                 })?;
+                // In the frame's transaction: the editor's caret and Core
+                // Animation's never show together, nor neither.
+                #[cfg(target_os = "macos")]
+                sync_caret(
+                    &self.context.ui,
+                    renderer,
+                    &mut self.caret_applied,
+                    self.scale_factor,
+                );
                 self.native.apply();
                 first_mark(&FIRST_PRESENT, "first frame presented");
                 // Commits the transaction (macOS; elsewhere there is none).
@@ -2075,6 +2147,16 @@ impl Host {
                 self.presentation
                     .completed(status, std::time::Instant::now());
             }
+        }
+        // A caret moved or restarted with nothing to draw: alone.
+        #[cfg(target_os = "macos")]
+        if let Some(renderer) = &mut self.renderer {
+            sync_caret(
+                &self.context.ui,
+                renderer,
+                &mut self.caret_applied,
+                self.scale_factor,
+            );
         }
         // Popups past the window: their own frames, in their own windows
         // (nothing at all while none shows).
@@ -2455,6 +2537,10 @@ impl Host {
             return;
         };
         self.renderer = None;
+        #[cfg(target_os = "macos")]
+        {
+            self.caret_applied = None;
+        }
         self.context
             .windows
             .gpu_contexts

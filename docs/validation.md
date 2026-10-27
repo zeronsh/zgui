@@ -933,6 +933,23 @@ that the viewport in points follows the zoom (480×360 at 100%, 384×288 at
 125%), and that text keeps its size in points. Passed on macOS 26 (M5),
 2026-10-26.
 
+## macOS caret (Core Animation's)
+
+`scripts/macos_caret_probe.py` runs the caret_idle example, a focused field
+left alone, with the caret Core Animation draws and with the editor's own
+(`ZGX_NATIVE_CARET=0`), and captures the window at its full pixel size
+(`scripts/window_pixels.swift`, ScreenCaptureKit). With the system's blink
+held shown, the two match pixel for pixel at the start, middle and end of
+the text, in mixed and right-to-left text, and zoomed to 90%, 125% and
+175%; held hidden, the two match again and differ from shown at the caret's
+two columns alone, so the editor paints nothing under Core Animation's.
+Blinking as the system does, captures over two seconds see it show and
+hide while the app presents no frame, and 15 s on the app's footprint is
+30 MB against the editor caret's 210 (the Metal driver holds about 176 MB
+for a command queue some 8 s after it last ran). Needs Screen Recording
+permission for the shell, which it only checks. Passed on macOS 26 (M5),
+2026-10-27.
+
 ## macOS full-rate animation (the display's refresh)
 
 `scripts/macos_full_rate_probe.py` runs the animation_workload example three

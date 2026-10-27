@@ -20,6 +20,9 @@ mod font_cache;
 pub mod iosurface;
 #[cfg(target_os = "macos")]
 mod layer_present;
+/// A caret Core Animation draws over the frames (`GpuRenderer::set_caret`).
+#[cfg(target_os = "macos")]
+pub use layer_present::{Caret, media_time};
 #[cfg(target_os = "macos")]
 mod metal_frame;
 #[cfg(target_os = "macos")]
@@ -1708,6 +1711,10 @@ type OwnSurface = dxgi_present::Buffer;
 struct LayerPresent {
     #[cfg(target_os = "macos")]
     layer: Option<layer_present::Layer>,
+    /// The caret the host draws over the frames (`GpuRenderer::set_caret`),
+    /// for the layer made after it is set.
+    #[cfg(target_os = "macos")]
+    caret: Option<layer_present::Caret>,
     /// Windows: the swap chain whose buffers are the surfaces.
     #[cfg(windows)]
     chain: Option<dxgi_present::Chain>,
@@ -3250,6 +3257,27 @@ impl GpuRenderer {
     /// ignores its alpha). None offscreen.
     pub fn presents_opaque(&self) -> Option<bool> {
         (self.config.as_ref()).map(|c| c.alpha_mode == wgpu::CompositeAlphaMode::Opaque)
+    }
+    /// Show `caret` over the window's frames, drawn and blinked by Core
+    /// Animation (`zgx::caret_blink::NativeCaret`), or none. Call inside the
+    /// transaction that presents the frame which stops (or starts) drawing
+    /// the caret itself, so the two never show together; alone, it makes
+    /// its own. Nothing where frames show through a layer of the
+    /// renderer's own.
+    #[cfg(target_os = "macos")]
+    pub fn set_caret(&mut self, caret: Option<Caret>) {
+        if let Some(present) = self.layer_present.as_mut() {
+            present.caret = caret;
+            if let Some(layer) = present.layer.as_mut() {
+                layer.set_caret(caret);
+            }
+        }
+    }
+    /// Whether a caret set with `set_caret` can show: frames show through
+    /// a layer the renderer presents to.
+    #[cfg(target_os = "macos")]
+    pub fn shows_carets(&self) -> bool {
+        self.layer_present.is_some()
     }
     /// The colour the target clears to where nothing is drawn.
     pub fn set_background(&mut self, color: Color) {
@@ -8707,6 +8735,9 @@ impl GpuRenderer {
             let hal = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }
                 .ok_or_else(|| GpuError("not a Metal surface".into()))?;
             present.layer = Some(layer_present::Layer::attach(&hal.render_layer().lock()));
+        }
+        if let Some(layer) = present.layer.as_mut() {
+            layer.set_caret(present.caret);
         }
         let Some(index) = present.current.take() else {
             // Nothing drawn since: the shown frame stands.

@@ -21,13 +21,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let window = cx.window.clone();
             cx.tasks.spawn(async move {
                 let start = std::time::Instant::now();
+                let mut blinks = 0_u64;
                 loop {
                     sleep(Duration::from_millis(PHASE_MS)).await;
                     if seconds > 0. && start.elapsed().as_secs_f64() >= seconds {
+                        eprintln!("blink_frames={blinks}");
                         window.close();
                         return;
                     }
                     flip.update(|s| *s = !*s);
+                    blinks += 1;
                 }
             });
             let (x, y, w, h) = CARET;

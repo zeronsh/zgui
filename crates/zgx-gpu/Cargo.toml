@@ -73,8 +73,8 @@ objc2-metal = { version = "0.3.2", features = ["objc2-io-surface"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSError"] }
 # Presentation through IOSurfaces shown as a layer's contents (layer_present.rs).
 objc2-io-surface = "0.3.2"
-objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace"] }
-objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace", "CGColor"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation", "objc2-core-graphics"] }
 
 # `d3d12_device_churn` and `d3d_frame_floor`, examples on Direct3D without
 # wgpu (see docs/validation.md, docs/windows.md); only examples and tests

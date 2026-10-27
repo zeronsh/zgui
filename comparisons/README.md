@@ -32,14 +32,19 @@ Report, once, as the run ends, on stdout or stderr (the runner logs both and che
 | --- | --- |
 | lab, heavy, vlist | `workload_ticks=N` (or lab's `{"framework":…,"ticks":N}`) |
 | animate | `animation_frames=N fps=F` |
+| blink | `blink_frames=N` |
 
 `N` is the ticks run (0 in idle); a run that reports none, or exits
 otherwise, fails its trial.
 
 Binaries: zgx's are examples (`heavy_workload`, `component_workload`,
-`animation_workload`, `vlist_workload`; in Luau, zgx-script's `vlist_luau`); GPUI Fast's are `heavy`,
-`zgx-compare-gpui-fast` (lab), `animate`, `vlist`; MyGo's are
-`comparisons/mygo/bin/{heavy,lab,animate,vlist}`.
+`animation_workload`, `vlist_workload`, `blink_workload`; in Luau, zgx-script's `vlist_luau`); GPUI Fast's are `heavy`,
+`zgx-compare-gpui-fast` (lab), `animate`, `vlist`, `blink`; MyGo's are
+`comparisons/mygo/bin/{heavy,lab,animate,vlist,blink}`.
+
+blink is a caret blinking in a still window (`zgx_workload::blink`): a 2 ×
+20 point bar shown and hidden every 530 ms, nothing else changing, for an
+idle focused field's memory and wakes.
 
 Blank rows (vlist) are counted from outside, by a probe capturing the
 window: no adapter needs a hook for it.
