@@ -45,10 +45,12 @@ pub static SCROLL_COPY: Switch = Switch::new(
     "scrolls copy what is drawn and paint the strip scrolled in; off, they repaint the view",
 );
 /// Steady frames hand over at a set point before a refresh (macOS's refresh
-/// grid and its latch); off, at once, as the display link's own frames do.
+/// grid and its latch), and on Windows clear of the compositor's latch
+/// (`frame_source::latch_wait`); off, at once, as the display link's own
+/// frames do.
 pub static REFRESH_GRID: Switch = Switch::new(
     "refresh_grid",
-    "steady frames present at a set point before a refresh (macOS); off, as soon as drawn",
+    "steady frames present at a set point before a refresh (macOS), or clear of the compositor's latch (Windows); off, as soon as drawn",
 );
 /// A frame paints only what changed (its damage); off, the whole window.
 pub static PARTIAL_REPAINT: Switch = Switch::new(

@@ -1227,6 +1227,13 @@ struct Host {
     /// than at the next tick (Windows: any input; macOS: typing).
     #[cfg(any(target_os = "macos", windows))]
     input_arrived: bool,
+    /// Windows: the frame being drawn shows input (it presents at once).
+    #[cfg(windows)]
+    input_draw: bool,
+    /// Windows: the last frame waited out the compositor's latch
+    /// (`frame_source::latch_wait`).
+    #[cfg(windows)]
+    latch_holding: bool,
     present_ready: bool,
     frames: FrameClock,
     #[cfg(any(target_os = "macos", windows))]
@@ -1565,6 +1572,10 @@ impl Host {
             input_until: None,
             #[cfg(any(target_os = "macos", windows))]
             input_arrived: false,
+            #[cfg(windows)]
+            input_draw: false,
+            #[cfg(windows)]
+            latch_holding: false,
             present_ready: false,
             gpu_stats: crate::gpu_stats::GpuStatsLog::from_env(),
             damage_check: zgx::env::var_os("ZGX_DAMAGE_CHECK").map(|_| 0),
@@ -1986,8 +1997,29 @@ impl Host {
                 // Checked above; `self` is borrowed in between, so no `if let`.
                 #[allow(clippy::unnecessary_unwrap)]
                 let renderer = self.renderer.as_mut().expect("checked above");
+                // Windows: a frame of the app's own timing ready near the
+                // compositor's latch waits until just past it, as macOS's
+                // steady frames keep to the refresh grid (input shows at
+                // once; `zgx inspect switch refresh_grid off`: never waits).
+                #[cfg(windows)]
+                let hold = (!std::mem::take(&mut self.input_draw)
+                    && zgx::switches::REFRESH_GRID.on())
+                .then(crate::frame_source::refresh_phase)
+                .flatten()
+                .and_then(|(phase, period)| {
+                    crate::frame_source::latch_wait(phase, period, self.latch_holding)
+                });
+                #[cfg(windows)]
+                {
+                    self.latch_holding = hold.is_some();
+                }
                 let status = renderer.present_with_notify(|| {
                     window.pre_present_notify();
+                    #[cfg(windows)]
+                    if let Some(wait) = hold {
+                        let _wait = zgx::profile::span(zgx::profile::Phase::Wait);
+                        crate::frame_source::sleep_precisely(wait);
+                    }
                     #[cfg(target_os = "macos")]
                     if let Some((origin, period)) = grid {
                         let at = latch.decide(std::time::Instant::now(), origin, period);
@@ -4184,7 +4216,13 @@ impl Host {
         // compositor takes the newest (`present_mode`), so a key typed
         // mid-refresh shows on the next, as it does at rest.
         #[cfg(windows)]
-        let paced = !std::mem::take(&mut self.input_arrived)
+        let input = std::mem::take(&mut self.input_arrived);
+        #[cfg(windows)]
+        {
+            self.input_draw = input;
+        }
+        #[cfg(windows)]
+        let paced = !input
             && self
                 .display_link
                 .as_ref()

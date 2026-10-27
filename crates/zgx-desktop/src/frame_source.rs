@@ -38,6 +38,48 @@ pub(crate) fn refresh_period(nominal: Duration, spacings: &[u64; PERIOD_SAMPLES]
         false => nominal,
     }
 }
+/// How long before the compositor's vblank (Windows) a present may miss
+/// the refresh it was meant for: DWM latches frames for a refresh shortly
+/// before its vblank. Measured on a 60 Hz display, the share of presents
+/// followed by a missed refresh against the time since the vblank they were
+/// made at: none from 0 to 9.5 ms, about 2% from 13.5 to 15 ms, 13% in the
+/// last 1.5 ms.
+#[cfg(any(windows, test))]
+pub(crate) const LATCH_BEFORE: Duration = Duration::from_micros(3500);
+/// Held frames present this long past the vblank, clear of it.
+#[cfg(any(windows, test))]
+pub(crate) const LATCH_AFTER: Duration = Duration::from_micros(1000);
+/// While frames are held, the window widens by this much: a timer whose
+/// phase sits at the window's edge does not alternate between held frames
+/// (shown a refresh later) and frames presented at once, each switch a
+/// refresh with no new frame.
+#[cfg(any(windows, test))]
+pub(crate) const LATCH_KEEP: Duration = Duration::from_micros(1000);
+
+/// Whether a frame of the app's own timing, ready `phase` after the
+/// compositor's last vblank in a refresh of `period`, waits before it
+/// presents, and how long: one ready near the latch (`LATCH_BEFORE` before
+/// the vblank, or `LATCH_AFTER` after it) waits until `LATCH_AFTER` past the
+/// vblank, so that every frame of a steady run lands on one side of the
+/// latch. A timer drifting slowly against the display otherwise sits near
+/// the latch for seconds, and frames alternately make and miss it: in
+/// captures, a launch in eight lost about 60 refreshes in 8 s. `holding`:
+/// the last frame waited.
+#[cfg(any(windows, test))]
+pub(crate) fn latch_wait(phase: Duration, period: Duration, holding: bool) -> Option<Duration> {
+    let before = LATCH_BEFORE + if holding { LATCH_KEEP } else { Duration::ZERO };
+    if phase >= period || period <= before + LATCH_AFTER {
+        return None;
+    }
+    if phase + before >= period {
+        Some(period - phase + LATCH_AFTER)
+    } else if phase < LATCH_AFTER {
+        Some(LATCH_AFTER - phase)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn interval_for(refresh_hz: Option<f64>) -> Duration {
     refresh_hz
         .filter(|hz| hz.is_finite() && *hz >= 1.)
@@ -109,7 +151,7 @@ impl FrameTimer {
 pub(crate) const VSYNC_RESYNC: Duration = Duration::from_secs(1);
 
 #[cfg(windows)]
-pub(crate) use compositor_clock::DisplayLink;
+pub(crate) use compositor_clock::{DisplayLink, refresh_phase, sleep_precisely};
 #[cfg(target_os = "macos")]
 pub(crate) use display_link::DisplayLink;
 
@@ -730,6 +772,26 @@ mod compositor_clock {
         (now, frequency.max(1))
     }
 
+    /// Where the compositor's refresh is now: the time since its last
+    /// vblank, and the refresh period.
+    pub(crate) fn refresh_phase() -> Option<(Duration, Duration)> {
+        let (vblank, period) = timing()?;
+        let (now, frequency) = qpc();
+        let time = |ticks: i64| {
+            Duration::from_nanos((ticks as i128 * 1_000_000_000 / frequency as i128) as u64)
+        };
+        Some((time((now - vblank).rem_euclid(period)), time(period)))
+    }
+
+    /// Sleep on a high-resolution timer of this thread's: a millisecond's
+    /// wait from `std::thread::sleep` ends up to a timer tick (15.6 ms) late.
+    pub(crate) fn sleep_precisely(duration: Duration) {
+        thread_local! {
+            static TIMER: Timer = Timer::new();
+        }
+        TIMER.with(|timer| timer.sleep(duration));
+    }
+
     /// Blocks until the compositor's next frame.
     fn wait_for_tick(timer: &Timer) {
         if let Some(wait) = compositor_clock() {
@@ -924,6 +986,47 @@ mod compositor_clock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const REFRESH: Duration = Duration::from_nanos(16_666_667);
+    fn ms(ms: f64) -> Duration {
+        Duration::from_secs_f64(ms / 1000.)
+    }
+
+    #[test]
+    fn a_frame_clear_of_the_latch_presents_at_once() {
+        for phase in [1.5, 4., 8.3, 12.] {
+            assert_eq!(latch_wait(ms(phase), REFRESH, false), None, "at {phase} ms");
+        }
+    }
+
+    #[test]
+    fn a_frame_near_the_latch_waits_until_just_past_the_vblank() {
+        // 2 ms before the vblank: until 1 ms after it.
+        let wait = latch_wait(REFRESH - ms(2.), REFRESH, false).unwrap();
+        assert_eq!(wait, ms(2.) + LATCH_AFTER);
+        // Just after the vblank: the rest of LATCH_AFTER.
+        assert_eq!(
+            latch_wait(ms(0.3), REFRESH, false),
+            Some(LATCH_AFTER - ms(0.3))
+        );
+    }
+
+    #[test]
+    fn holding_widens_the_window_so_frames_at_its_edge_do_not_alternate() {
+        // 4 ms before the vblank: outside the window, inside it while holding.
+        let phase = REFRESH - ms(4.);
+        assert_eq!(latch_wait(phase, REFRESH, false), None);
+        assert_eq!(latch_wait(phase, REFRESH, true), Some(ms(4.) + LATCH_AFTER));
+        // Further out, holding no longer applies.
+        assert_eq!(latch_wait(REFRESH - ms(5.), REFRESH, true), None);
+    }
+
+    #[test]
+    fn a_period_too_short_for_the_window_never_waits() {
+        // 240 Hz: 4.2 ms, no room for the window and a frame between.
+        let fast = Duration::from_nanos(4_166_667);
+        assert_eq!(latch_wait(ms(3.5), fast, false), None);
+    }
 
     #[test]
     fn the_refresh_period_is_what_the_link_delivers_not_what_the_mode_says() {

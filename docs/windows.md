@@ -200,6 +200,40 @@ screen that every buffer is brought up to date; with
 `ZGX_DXGI_PRESENT_WHOLE=1` each present covers its whole buffer, which the
 compositor otherwise takes only within the dirty rectangles.
 
+Frames of an app's own timing (a 60 Hz stream, a timer) are drawn as their
+timer fires, at whatever phase it has against the display's refresh. DWM
+latches a frame for a refresh shortly before its vblank. Measured as each
+present's time after the compositor's vblank against whether the screen then
+missed a refresh (lab stream, 60 Hz, Desktop Duplication captures):
+
+| Present after the vblank | Followed by a missed refresh |
+| --- | --- |
+| 0 to 9.5 ms | none (of about 5,000) |
+| 13.5 to 15 ms | about 2% |
+| the last 1.5 ms | 13% |
+
+A timer drifts slowly against the display, so a launch whose timer sits near
+the latch keeps there for seconds: in captures, about one launch in eight lost
+about 60 refreshes in 8 s. A frame of the app's own timing ready within 3.5 ms
+before the vblank (or 1 ms after it) now waits, on a high-resolution timer,
+until 1 ms past it (`frame_source::latch_wait`; the window widens by 1 ms
+while frames wait, so a timer at its edge does not alternate). Input presents
+at once. With the lab stream's ticks pinned to a phase (alternating runs of
+one binary, 6 captures each):
+
+| Ticks at | Missed refreshes per capture, waiting | Not waiting |
+| --- | --- | --- |
+| 15.5 ms (near the latch) | 0, 1, 0, 0, 0, 0 | 76, 72, 54, 70, 53, 45 |
+| 13 ms (the window's edge) | 0 each | 1, 0, 4, 0, 5, 0 |
+| 6 ms | 0 each | 0, 0, 0, 0, 2, 0 |
+
+The app's cycles, its GPU time and the compositor's are the same within the
+runs' spread (lab stream +1.9%, heavy +0.5%, animate −1.8%), and a window at
+rest does no work. Keeping the compositor's clock running for such frames
+instead fixed the misses too but cost 6 to 8% more cycles on the lab stream (a
+second wake a frame). `zgx inspect switch refresh_grid off` presents at once,
+as before.
+
 `ZGX_PRESENT_LOG=1` logs each shown present as DXGI reports it. The probes
 measure the same things on any machine:
 
