@@ -1002,8 +1002,27 @@ impl Layer {
         if drawables.layer.drawableSize() != size {
             drawables.layer.setDrawableSize(size);
         }
+        // DIAGNOSTIC (`ZGX_DRAWABLE_TOGGLE=opaque|detach`), on odd Unix seconds:
+        // `opaque` leaves the drawable layer not opaque (as MyGo's is), `detach`
+        // takes the hidden tiles' plain layer out of the tree while drawables
+        // show; for paired-second WindowServer measurement
+        // (scripts/windowserver_alternate.py). Not for main.
+        let alt = std::env::var("ZGX_DRAWABLE_TOGGLE").ok();
+        let odd = alt.is_some()
+            && std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .is_ok_and(|d| d.as_secs() % 2 == 1);
+        let opaque = opaque && !(odd && alt.as_deref() == Some("opaque"));
         if drawables.layer.isOpaque() != opaque {
             transaction(|| drawables.layer.setOpaque(opaque));
+        }
+        if alt.as_deref() == Some("detach") && drawables.shown {
+            let attached = self.plain.superlayer().is_some();
+            if odd && attached {
+                transaction(|| self.plain.removeFromSuperlayer());
+            } else if !odd && !attached {
+                transaction(|| self.host.insertSublayer_atIndex(&self.plain, 0));
+            }
         }
         let drawable = drawables.layer.nextDrawable()?;
         // Feedback only while it is read (the trial, a log): a handler a
