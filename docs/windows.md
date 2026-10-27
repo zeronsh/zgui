@@ -82,6 +82,17 @@ Most of the rest is the GPU driver opening its device (about 160 ms for a
 Direct3D 11 device and 180 ms for Direct3D 12, alone in a process), a floor
 any app on this GPU pays.
 
+A zgx window appears with its content, never empty: it draws through a
+DirectComposition visual with no redirection bitmap, so the compositor has
+nothing of it to show until its first frame is presented, and showing the
+window before drawing costs nothing. `scripts/windows_first_frame_probe.py`
+guards it: it reads every composition of the window's header on screen as it
+opens (Desktop Duplication) and fails on one that shows the window's
+background alone. Windows fades and scales a new window in; those
+compositions show the text, however faint, and pass. Two of the comparison
+frameworks' windows, MyGo's and Rune's, each show one empty composition
+every launch.
+
 ### What a frame costs below zgx
 
 Much of an animating zgx frame's CPU is spent below zgx. On an RTX 4090
@@ -618,7 +629,16 @@ python scripts/windows_contrast_smoke.py target/debug/examples/text_selection.ex
 python scripts/windows_caret_blink_probe.py target/release/examples/text_selection.exe
 cargo build --release -p zgx-gpu --example present_check
 python scripts/windows_present_probe.py target/release/examples/present_check.exe --lose
+cargo build --release -p zgx-gpu --example framepace
+cargo build --release -p zgx-desktop --example component_workload
+python scripts/windows_first_frame_probe.py target/release/examples/component_workload.exe target/release/examples/framepace.exe
 ```
+
+- `windows_first_frame_probe.py` (`component_workload`, idle): five launches
+  at the same place; from before the window opens, no composition of its
+  header strip is the background alone (luminance spread under 2 of 255)
+  where the settled header shows text. Each launch prints the strip's spread
+  per composition.
 
 - `windows_present_probe.py` (`present_check`): a mark moves along a row
   over 30 frames, each drawing its damage alone; on screen every place it

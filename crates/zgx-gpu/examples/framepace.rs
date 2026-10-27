@@ -5,7 +5,7 @@
 //! counterpart of scripts/framepace.swift, run by scripts/windows_framepace.py.
 //!
 //!     cargo build --release -p zgx-gpu --example framepace
-//!     framepace <x> <y> <width> <height> <seconds>
+//!     framepace <x> <y> <width> <height> <seconds> [<folder>]
 //!
 //! Prints `HZ <refresh rate>`, then `FRAME <ms> <compositions>` for each
 //! composed frame whose pixels in the rectangle changed (the compositor's
@@ -14,6 +14,11 @@
 //! <frames composed>` and `MERGED <frames that covered several>`. A capture
 //! keeps up when MERGED is about 0: an interval ending on a merged frame
 //! may hold frames it never saw.
+//!
+//! With a folder, the rectangle's pixels of the first composition and of
+//! each that changed (up to `SAVED_MAX`) are saved there as `<n>.bgra`, rows
+//! packed, each with a line `SAVED <n> <ms>` (scripts/windows_first_frame_probe.py
+//! reads what a window shows as it appears).
 
 #[cfg(windows)]
 mod pace {
@@ -39,6 +44,9 @@ mod pace {
         core::Interface,
     };
 
+    /// Compositions saved to a folder at most.
+    const SAVED_MAX: usize = 120;
+
     fn qpc() -> i64 {
         let mut now = 0;
         // SAFETY: writes one integer into a local.
@@ -47,13 +55,17 @@ mod pace {
     }
 
     pub fn main() -> windows::core::Result<()> {
-        let args: Vec<i64> = std::env::args()
-            .skip(1)
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let numbers: Vec<i64> = args
+            .iter()
+            .take(5)
             .map(|a| a.parse().expect("a number"))
             .collect();
-        let [x, y, w, h, seconds] = args[..] else {
-            panic!("framepace <x> <y> <width> <height> <seconds>")
+        let [x, y, w, h, seconds] = numbers[..] else {
+            panic!("framepace <x> <y> <width> <height> <seconds> [<folder>]")
         };
+        let folder = args.get(5).map(std::path::PathBuf::from);
+        let mut saved = 0;
         // SAFETY: DXGI and Direct3D 11 calls on objects made here; the
         // mapped staging texture is read within its size and row pitch.
         unsafe {
@@ -156,11 +168,15 @@ mod pace {
                     let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
                     context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
                     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+                    let mut pixels = Vec::new();
                     for row in 0..h as usize {
                         let line = std::slice::from_raw_parts(
                             (mapped.pData as *const u8).add(row * mapped.RowPitch as usize),
                             w as usize * 4,
                         );
+                        if folder.is_some() && saved < SAVED_MAX {
+                            pixels.extend_from_slice(line);
+                        }
                         // Eight bytes at a time: byte by byte, a 1280x800
                         // window's 4 MB took long enough that compositions
                         // piled up between frames (MERGED).
@@ -170,9 +186,18 @@ mod pace {
                         }
                     }
                     context.Unmap(&staging, 0);
+                    let at = (info.LastPresentTime - start) as f64 * 1000. / frequency as f64;
                     if previous.is_some_and(|p| p != hash) {
-                        let at = (info.LastPresentTime - start) as f64 * 1000. / frequency as f64;
                         println!("FRAME {at:.3} {}", info.AccumulatedFrames);
+                    }
+                    if let Some(folder) = &folder
+                        && saved < SAVED_MAX
+                        && previous != Some(hash)
+                    {
+                        std::fs::write(folder.join(format!("{saved}.bgra")), &pixels)
+                            .expect("the folder writable");
+                        println!("SAVED {saved} {at:.3}");
+                        saved += 1;
                     }
                     previous = Some(hash);
                 }
