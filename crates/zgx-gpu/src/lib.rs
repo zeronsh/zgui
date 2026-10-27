@@ -1327,6 +1327,28 @@ impl KeptBox {
         })
     }
 }
+/// A moved box's clip, and whether it is the whole viewport. The render
+/// viewport starts at zero and has finite, positive extents: intersected
+/// with itself it keeps its bits, and a box anywhere in it needs no scissor.
+#[inline(always)]
+fn moved_box_clip(clip: Option<Rect>, viewport: Rect, bounds: Rect) -> Option<(Rect, bool)> {
+    // (Bits apart in any coordinate: one test of all four.)
+    let apart = |a: Rect, b: Rect| {
+        (a.x.to_bits() ^ b.x.to_bits())
+            | (a.y.to_bits() ^ b.y.to_bits())
+            | (a.width.to_bits() ^ b.width.to_bits())
+            | (a.height.to_bits() ^ b.height.to_bits())
+    };
+    if clip.is_none_or(|clip| apart(clip, viewport) == 0) {
+        return viewport.intersects(bounds).then_some((viewport, true));
+    }
+    // (A clip that meets the viewport lies in it: the viewport starts at
+    // zero, so their overlap's start is in it and its width positive.)
+    clip.unwrap()
+        .intersection(viewport)
+        .filter(|_| viewport.intersects(bounds))
+        .map(|clip| (clip, false))
+}
 /// Whether `kind` paints as a plain box would (`plain_box`): a box without
 /// decoration, shadows or a pass over its content.
 #[inline(always)]
@@ -5043,11 +5065,7 @@ impl GpuRenderer {
         if quad.shape[3] > 0.5 && !panel_whole(&quad, self.split_shading) {
             return false;
         }
-        let Some(clip) = clip
-            .unwrap_or(viewport)
-            .intersection(viewport)
-            .filter(|clip| viewport.intersects(*clip) && viewport.intersects(bounds))
-        else {
+        let Some((clip, whole_clip)) = moved_box_clip(clip, viewport, bounds) else {
             return false;
         };
         let rect = quad_rect(&quad);
@@ -5065,7 +5083,7 @@ impl GpuRenderer {
             true => shading(stored, self.scale),
             false => Shading::Full,
         };
-        draw.clip = match rect_inside(rect, limit) {
+        draw.clip = match whole_clip || rect_inside(rect, limit) {
             true => viewport,
             false => clip,
         };
@@ -12181,5 +12199,76 @@ mod region_index_tests {
             region_index(&mut regions, Some(region(tint as f32)));
         }
         assert_eq!(region_index(&mut regions, Some(region(0.))), 14.);
+    }
+}
+
+#[cfg(test)]
+mod moved_box_clip_tests {
+    use super::*;
+
+    #[test]
+    fn a_viewport_clip_prepares_and_scissors_as_before() {
+        fn bits(r: Rect) -> [u32; 4] {
+            [
+                r.x.to_bits(),
+                r.y.to_bits(),
+                r.width.to_bits(),
+                r.height.to_bits(),
+            ]
+        }
+        for scale in [0.1, 0.5, 1., 1.25, 2., 3.1, 30., f32::MAX] {
+            for pixels in [(1u32, 1u32), (701, 503), (16384, 8192)] {
+                let viewport = Rect::new(0., 0., pixels.0 as f32 / scale, pixels.1 as f32 / scale);
+                let clips = [
+                    None,
+                    Some(viewport),
+                    Some(Rect::new(-0., 0., viewport.width, viewport.height)),
+                    Some(Rect::new(-13.5, 9.2, 300., 80.1)),
+                    Some(Rect::new(500., 10., 2., 3.)),
+                    Some(Rect::new(0., 0., -2., 3.)),
+                    Some(Rect::new(f32::NAN, 2., 4., 5.)),
+                    Some(Rect::new(2., 3., f32::INFINITY, 5.)),
+                ];
+                let boxes = [
+                    Rect::new(0., 0., viewport.width, viewport.height),
+                    Rect::new(10., 10., 15., 16.),
+                    Rect::new(-1., -1., 3., 4.),
+                    Rect::new(500., 0., 20., 20.),
+                    Rect::new(0., 0., 0., 0.),
+                    Rect::new(f32::NAN, 10., 20., 20.),
+                    Rect::new(-f32::INFINITY, 0., f32::INFINITY, 1.),
+                ];
+                for source in clips {
+                    for bounds in boxes {
+                        let before =
+                            source
+                                .unwrap_or(viewport)
+                                .intersection(viewport)
+                                .filter(|clip| {
+                                    viewport.intersects(*clip) && viewport.intersects(bounds)
+                                });
+                        let now = moved_box_clip(source, viewport, bounds);
+                        assert_eq!(now.map(|(clip, _)| bits(clip)), before.map(bits));
+                        if let (Some((clip, whole)), Some(old)) = (now, before) {
+                            let quad = Quad {
+                                rect: [bounds.x, bounds.y, bounds.width, bounds.height],
+                                ..bytemuck::Zeroable::zeroed()
+                            };
+                            let rect = quad_rect(&quad);
+                            let limit = snap_out(old, scale);
+                            let scissor_before = match rect_inside(rect, limit) {
+                                true => viewport,
+                                false => old,
+                            };
+                            let scissor = match whole || rect_inside(rect, limit) {
+                                true => viewport,
+                                false => clip,
+                            };
+                            assert_eq!(bits(scissor_before), bits(scissor));
+                        }
+                    }
+                }
+            }
+        }
     }
 }
