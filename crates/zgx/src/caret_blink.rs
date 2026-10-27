@@ -89,6 +89,9 @@ pub(crate) struct Blink {
     native: Cell<bool>,
     /// The caret the host draws, while it does (`settle`).
     drawn: Cell<Option<NativeCaret>>,
+    /// `drawn` is some: what the paths every frame or wake runs test, a
+    /// byte rather than the caret copied out.
+    hosted: Cell<bool>,
     /// Counts changes of `drawn`, for the host to apply them once.
     serial: Cell<u64>,
 }
@@ -138,7 +141,7 @@ impl Blink {
     /// Whether the host draws the caret now: the editor paints its own
     /// transparent (`settle` gives it back otherwise, whichever editor's).
     pub(crate) fn drawn_natively(&self) -> bool {
-        self.drawn.get().is_some()
+        self.hosted.get()
     }
 
     fn show(&self, ui: &Ui, caret: NodeId, color: Color) {
@@ -197,11 +200,17 @@ impl Ui {
 /// After layout, before the frame's damage: whether the host draws the
 /// caret (`Ui::native_caret`), changing the editor's caret between painted
 /// and transparent where that changes. Nothing while no host can.
+#[inline]
 pub(crate) fn settle(ui: &Ui) {
     let blink = ui.caret_blink();
-    if !blink.native.get() && blink.drawn.get().is_none() {
-        return;
+    if blink.native.get() || blink.hosted.get() {
+        settle_hosted(ui);
     }
+}
+/// `settle`, where a host draws carets or did.
+#[inline(never)]
+fn settle_hosted(ui: &Ui) {
+    let blink = ui.caret_blink();
     let want = (|| {
         if !blink.native.get() || !blink.bare.get() || !ui.is_presented() {
             return None;
@@ -251,6 +260,7 @@ pub(crate) fn settle(ui: &Ui) {
     if want != was {
         blink.serial.set(blink.serial.get().wrapping_add(1));
         blink.drawn.set(want);
+        blink.hosted.set(want.is_some());
     }
     let Some(caret) = blink.caret.get() else {
         return;
@@ -293,7 +303,7 @@ pub(crate) fn settle(ui: &Ui) {
 pub(crate) fn next(ui: &Ui) -> Option<Instant> {
     let blink = ui.caret_blink();
     // The host's blinks by itself.
-    if blink.drawn.get().is_some() {
+    if blink.hosted.get() {
         return None;
     }
     let caret = blink.caret.get()?;
@@ -307,7 +317,7 @@ pub(crate) fn next(ui: &Ui) -> Option<Instant> {
 /// timeout. Whether it changed.
 pub(crate) fn advance(ui: &Ui, now: Instant) -> bool {
     let blink = ui.caret_blink();
-    if blink.drawn.get().is_some() {
+    if blink.hosted.get() {
         return false;
     }
     let (Some(caret), Some(color), Some(settings)) =
