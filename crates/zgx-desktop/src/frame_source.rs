@@ -134,7 +134,11 @@ mod display_link {
     //! stop only on the main thread and never while the registry lock is held,
     //! since the callback takes that lock under CoreVideo's own locks.
     use super::*;
-    use objc2::{msg_send, rc::Retained, runtime::AnyObject};
+    use objc2::{
+        DeclaredClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
+        runtime::AnyObject, sel,
+    };
+    use objc2_foundation::{NSObject, NSObjectProtocol};
     use std::{
         collections::HashMap,
         ffi::c_void,
@@ -402,6 +406,165 @@ mod display_link {
         true
     }
 
+    /// PROTOTYPE (`ZGX_CA_DISPLAY_LINK=1`, not for main): the window's view's
+    /// `CADisplayLink` (macOS 14) drives its frames on the main thread, as
+    /// MyGo's do, instead of the display's `CVDisplayLink` thread: for
+    /// measuring what each costs the window server (M1 Max, 2026-10-27).
+    static CA_LINK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        zgx::env::var_os("ZGX_CA_DISPLAY_LINK").is_some_and(|v| v != "0")
+    });
+    /// A `CADisplayLink` target's state: the window's subscription and the
+    /// grid its ticks report.
+    struct Tick {
+        subscriber: Arc<Subscriber>,
+        grid: Arc<Grid>,
+    }
+    // SAFETY: an NSObject subclass, main-thread only (a display link made
+    // from a view calls back on the run loop it is added to, the main one),
+    // with nothing to clean up beyond its ivars; `tick:` takes the link.
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[thread_kind = MainThreadOnly]
+        #[ivars = Tick]
+        struct LinkTarget;
+        unsafe impl NSObjectProtocol for LinkTarget {}
+        impl LinkTarget {
+            #[unsafe(method(tick:))]
+            fn tick(&self, link: &AnyObject) {
+                self.deliver(link);
+            }
+        }
+    );
+    impl LinkTarget {
+        fn deliver(&self, link: &AnyObject) {
+            let tick = self.ivars();
+            // SAFETY: CADisplayLink's -timestamp (the refresh that started),
+            // -targetTimestamp (the next) and -duration, CFTimeIntervals in
+            // seconds on the host clock (CACurrentMediaTime's).
+            let (timestamp, target, duration): (f64, f64, f64) = unsafe {
+                (
+                    msg_send![link, timestamp],
+                    msg_send![link, targetTimestamp],
+                    msg_send![link, duration],
+                )
+            };
+            let interval = match duration > 0. && duration.is_finite() {
+                true => Duration::from_secs_f64(duration),
+                false => DEFAULT_INTERVAL,
+            };
+            // Host ticks from host seconds: the inverse of `nanos`.
+            let ns_per_tick = nanos(1_000_000_000) as f64 / 1e9;
+            let ticks = |seconds: f64| (seconds * 1e9 / ns_per_tick).max(0.) as u64;
+            tick.grid
+                .refreshed
+                .store(ticks(timestamp), Ordering::Release);
+            tick.grid
+                .period
+                .store(interval.as_nanos() as u64, Ordering::Release);
+            // SAFETY: reads the monotonic host clock.
+            let now = nanos(unsafe { mach_absolute_time() } as i128) as f64 / 1e9;
+            let ahead = (target - now).clamp(0., 1.);
+            let index = (target / interval.as_secs_f64()).round().max(0.) as u64;
+            let frame = Frame {
+                index,
+                time: Instant::now() + Duration::from_secs_f64(ahead),
+                interval,
+            };
+            let subscriber = &tick.subscriber;
+            if std::env::var_os("ZGX_CA_LINK_TRACE").is_some() {
+                eprintln!(
+                    "ca tick ts={timestamp:.4} target={target:.4} dur={duration:.5} index={index} active={} pending={}",
+                    subscriber.active.load(Ordering::Acquire),
+                    subscriber.pending.load(Ordering::Acquire)
+                );
+            }
+            if !subscriber.active.load(Ordering::Acquire) {
+                return;
+            }
+            let max_rate = subscriber.max_rate.load(Ordering::Relaxed);
+            if max_rate > 0 {
+                let refresh = 1. / interval.as_secs_f64();
+                let divisor = zgx::frame::divisor(refresh, max_rate as f64 / 1000.);
+                if !index.is_multiple_of(divisor) {
+                    return;
+                }
+            }
+            if !subscriber.pending.swap(true, Ordering::AcqRel) {
+                (subscriber.deliver)(frame);
+            }
+        }
+    }
+    /// The view's `CADisplayLink` and its target (`CA_LINK`).
+    struct CaLink {
+        link: Retained<AnyObject>,
+        _target: Retained<LinkTarget>,
+    }
+    impl CaLink {
+        fn new(view: &AnyObject, subscriber: Arc<Subscriber>, grid: Arc<Grid>) -> Option<Self> {
+            let mtm = MainThreadMarker::new()?;
+            // SAFETY: NSObject's -respondsToSelector:, on the main thread.
+            let has: bool = unsafe {
+                msg_send![view, respondsToSelector: sel!(displayLinkWithTarget:selector:)]
+            };
+            if !has {
+                return None;
+            }
+            let target = LinkTarget::alloc(mtm).set_ivars(Tick { subscriber, grid });
+            // SAFETY: NSObject's `init`, on a fresh allocation with its ivars set.
+            let target: Retained<LinkTarget> = unsafe { msg_send![super(target), init] };
+            // SAFETY: NSView -displayLinkWithTarget:selector: (macOS 14) returns a
+            // CADisplayLink calling `tick:` on `target` (which it retains, until
+            // -invalidate); -setPaused: and -addToRunLoop:forMode: are its own,
+            // with the main run loop and its common modes.
+            unsafe {
+                let link: Option<Retained<AnyObject>> =
+                    msg_send![view, displayLinkWithTarget: &*target, selector: sel!(tick:)];
+                let link = link?;
+                let _: () = msg_send![&*link, setPaused: true];
+                let run_loop: Retained<AnyObject> =
+                    msg_send![objc2::class!(NSRunLoop), mainRunLoop];
+                // Added in the common modes alone it never fired (2026-10-27).
+                for mode in ["kCFRunLoopCommonModes", "kCFRunLoopDefaultMode"] {
+                    let mode = objc2_foundation::NSString::from_str(mode);
+                    let _: () = msg_send![&*link, addToRunLoop: &*run_loop, forMode: &*mode];
+                }
+                Some(Self {
+                    link,
+                    _target: target,
+                })
+            }
+        }
+        fn set_paused(&self, paused: bool) {
+            // SAFETY: CADisplayLink's -setPaused:, on the main thread.
+            let _: () = unsafe { msg_send![&*self.link, setPaused: paused] };
+            if std::env::var_os("ZGX_CA_LINK_TRACE").is_some() {
+                // SAFETY: CADisplayLink's -isPaused and -duration, NSObject's -description.
+                let (now, duration, description): (
+                    bool,
+                    f64,
+                    Retained<objc2_foundation::NSString>,
+                ) = unsafe {
+                    (
+                        msg_send![&*self.link, isPaused],
+                        msg_send![&*self.link, duration],
+                        msg_send![&*self.link, description],
+                    )
+                };
+                eprintln!(
+                    "ca paused={paused} isPaused={now} duration={duration} {description} main={}",
+                    MainThreadMarker::new().is_some()
+                );
+            }
+        }
+    }
+    impl Drop for CaLink {
+        fn drop(&mut self) {
+            // SAFETY: CADisplayLink's -invalidate: removes it from its run loop
+            // and releases its target.
+            let _: () = unsafe { msg_send![&*self.link, invalidate] };
+        }
+    }
+
     /// A window's subscription to its display's refreshes.
     pub(crate) struct DisplayLink {
         view: Retained<AnyObject>,
@@ -411,6 +574,8 @@ mod display_link {
         grid: Arc<Grid>,
         /// When the window's display was last checked (an AppKit round trip).
         checked: Instant,
+        /// The view's own link instead of the display's (`CA_LINK`).
+        ca: Option<CaLink>,
     }
     impl DisplayLink {
         /// `deliver` runs on the link's thread, at most once per consumed
@@ -430,6 +595,25 @@ mod display_link {
             let view: Retained<AnyObject> =
                 unsafe { Retained::retain(handle.ns_view.as_ptr().cast())? };
             let display = display_of(&view)?;
+            if *CA_LINK {
+                let subscriber = Arc::new(Subscriber {
+                    id: 0,
+                    active: AtomicBool::new(false),
+                    pending: AtomicBool::new(false),
+                    max_rate: AtomicU64::new(0),
+                    deliver: Box::new(deliver),
+                });
+                let grid = Arc::new(Grid::default());
+                let ca = CaLink::new(&view, subscriber.clone(), grid.clone())?;
+                return Some(Self {
+                    view,
+                    display,
+                    subscriber,
+                    grid,
+                    checked: Instant::now(),
+                    ca: Some(ca),
+                });
+            }
             if !ensure_link(display) {
                 return None;
             }
@@ -454,12 +638,21 @@ mod display_link {
                 subscriber,
                 grid,
                 checked: Instant::now(),
+                ca: None,
             })
         }
         pub(crate) fn running(&self) -> bool {
             self.subscriber.active.load(Ordering::Acquire)
         }
         pub(crate) fn set_running(&mut self, running: bool) {
+            if let Some(ca) = &self.ca {
+                // A view's link follows its window between displays itself.
+                if self.subscriber.active.swap(running, Ordering::AcqRel) != running {
+                    self.subscriber.pending.store(false, Ordering::Release);
+                    ca.set_paused(!running);
+                }
+                return;
+            }
             // Recheck the display when starting, and about once a second while
             // running, in case the window moved to another screen.
             if running && (!self.running() || self.checked.elapsed() > Duration::from_secs(1)) {
@@ -536,6 +729,9 @@ mod display_link {
     impl Drop for DisplayLink {
         fn drop(&mut self) {
             self.subscriber.active.store(false, Ordering::Release);
+            if self.ca.take().is_some() {
+                return;
+            }
             if let Some(registry) = registry().as_mut()
                 && let Some(entry) = registry.displays.get_mut(&self.display)
             {
