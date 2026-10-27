@@ -2994,7 +2994,9 @@ impl GpuRenderer {
             1,
             "lazy glyph atlas placeholder",
         );
-        let split_shading = true;
+        // SCRATCH (render-win-draws): ZGX_EXP_NO_SPLIT=1 draws every quad
+        // with the full shader, for a Windows pipeline-switch A/B.
+        let split_shading = std::env::var_os("ZGX_EXP_NO_SPLIT").is_none();
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("atlas"),
             layout: &context.inner.texture_layout,
