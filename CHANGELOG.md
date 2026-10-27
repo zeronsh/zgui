@@ -21,6 +21,9 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 **Editor keys go by words and paragraphs as each platform's text fields do.** On Windows, Control-Right and Control-Delete stop at the next word's start (past the spaces), not the end of the word. On Windows and Linux, Control-Up and Control-Down go to the start of a paragraph, not up or down a line. On macOS, Control-A and Control-E go to a wrapped paragraph's edges rather than its row's. Control-K kills into a buffer that Control-Y yanks back, and Control-T swaps characters.
 
+**A fourth click keeps a triple click's paragraph selected**, as Chrome's do: presses in a row count on past three (Rust `EventContext::click_count`, Luau's `clicks`), where they went round to 1 again, and selection takes three and on as a paragraph.
+- *Migrate:* a handler that relied on the count going back to 1 after three reads `(clicks - 1) % 3 + 1`.
+
 ## 0.1.3 (2026-10-27)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.2 is an addition), unless it writes one of the three structs below field by field. Some defaults change, each below with what to check: zoom and find in page are on, keys and cursors behave as a browser's and AppKit's, and Windows presents and serves assistive technology differently.
