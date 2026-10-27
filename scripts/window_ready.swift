@@ -17,6 +17,20 @@ func bounds(_ window: [String: Any]) -> CGRect {
     guard let raw = window[kCGWindowBounds as String] as? NSDictionary else { return .zero }
     return CGRect(dictionaryRepresentation: raw) ?? .zero
 }
+// The app's windows by layer, on screen and in all: on macOS 26 an app's menu
+// bar is windows of its own (8 more at layer 0 on 26.4, 4 on 26.0), which the
+// window server composites, so the suite records whether each framework shows one.
+func windowCounts() -> [String: Any] {
+    func count(_ option: CGWindowListOption) -> [String: Int] {
+        let all = CGWindowListCopyWindowInfo(option, kCGNullWindowID) as? [[String: Any]] ?? []
+        var layers: [String: Int] = [:]
+        for window in all where (window[kCGWindowOwnerPID as String] as? Int32) == pid {
+            layers[String(window[kCGWindowLayer as String] as? Int ?? 0), default: 0] += 1
+        }
+        return layers
+    }
+    return ["on_screen": count([.optionOnScreenOnly]), "all": count([.optionAll])]
+}
 var last: [String: Any] = [:]
 var usedFallback = false
 while Date().timeIntervalSince(began) < timeout {
@@ -43,7 +57,7 @@ while Date().timeIntervalSince(began) < timeout {
         last = ["window_exists": true, "frontmost": front, "covering": covering]
         if front && covering.isEmpty {
             emit(["ready": true, "pid": pid, "window_id": normal[index][kCGWindowNumber as String] ?? 0,
-                  "activation_fallback": usedFallback,
+                  "activation_fallback": usedFallback, "windows": windowCounts(),
                   "ready_ms": Date().timeIntervalSince(began) * 1000], 0)
         }
         NSRunningApplication(processIdentifier: pid)?.activate()
