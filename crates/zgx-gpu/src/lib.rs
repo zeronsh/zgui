@@ -27,6 +27,63 @@ pub mod present_log;
 mod surface;
 #[cfg(target_os = "macos")]
 mod trial_energy;
+/// DIAGNOSTIC (`ZGX_PHASE_LOG`, not for main): the last display-link tick's
+/// refresh and target, host seconds as f64 bits (`diag_tick`).
+#[cfg(target_os = "macos")]
+static DIAG_TICK: [std::sync::atomic::AtomicU64; 2] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
+/// DIAGNOSTIC: the frame source's tick (`timestamp`, `target`: host seconds).
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn diag_tick(timestamp: f64, target: f64) {
+    use std::sync::atomic::Ordering;
+    DIAG_TICK[0].store(timestamp.to_bits(), Ordering::Relaxed);
+    DIAG_TICK[1].store(target.to_bits(), Ordering::Relaxed);
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn diag_last_tick() -> (f64, f64) {
+    use std::sync::atomic::Ordering;
+    (
+        f64::from_bits(DIAG_TICK[0].load(Ordering::Relaxed)),
+        f64::from_bits(DIAG_TICK[1].load(Ordering::Relaxed)),
+    )
+}
+
+/// DIAGNOSTIC (`ZGX_PHASE_LOG`): a drawable presenting now, after the last tick.
+#[cfg(target_os = "macos")]
+pub(crate) fn diag_phase() {
+    // DIAGNOSTIC (`ZGX_PHASE_LOG`): each present's time after the
+    // display-link tick's refresh and before its target, every 240.
+    static PHASE: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("ZGX_PHASE_LOG").is_some());
+    if *PHASE {
+        thread_local! {
+            static SEEN: std::cell::RefCell<Vec<(f64, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        let (tick, target) = diag_last_tick();
+        let now = crate::present_log::now_ns() as f64 / 1e9;
+        if tick > 0. {
+            SEEN.with_borrow_mut(|seen| {
+                seen.push(((now - tick) * 1e3, (target - now) * 1e3));
+                if seen.len() >= 240 {
+                    let quantiles = |mut v: Vec<f64>| {
+                        v.sort_by(f64::total_cmp);
+                        let at = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
+                        format!("p10 {:.2} p50 {:.2} p90 {:.2}", at(0.1), at(0.5), at(0.9))
+                    };
+                    eprintln!(
+                        "phase after tick ms {} | before target ms {}",
+                        quantiles(seen.iter().map(|x| x.0).collect()),
+                        quantiles(seen.iter().map(|x| x.1).collect())
+                    );
+                    seen.clear();
+                }
+            });
+        }
+    }
+}
 mod upload;
 pub use font_cache::set_desktop_sans_serif;
 pub use surface::PresentationStatus;
@@ -6608,6 +6665,9 @@ impl GpuRenderer {
                 let host = present_log::now_ns() as f64 / 1e9;
                 host + at.saturating_duration_since(now).as_secs_f64()
             });
+            if drawable.is_some() {
+                diag_phase();
+            }
             pass.commit_presenting(
                 drawable
                     .as_deref()

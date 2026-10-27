@@ -1227,6 +1227,7 @@ impl Layer {
         let Some(drawables) = &mut self.drawables else {
             return;
         };
+
         if let Some(drawable) = drawables.pending.take() {
             if drawables.transactional {
                 transaction(|| drawable.present());
@@ -1296,7 +1297,9 @@ impl Layer {
                 let now: Option<Retained<AnyObject>> = msg_send![&*self.host, contents];
                 if odd && now.is_some() {
                     if self.tile_saved_host.is_none() {
-                        eprintln!("zgx diag: the host layer holds contents under tiles; emptied on odd seconds");
+                        eprintln!(
+                            "zgx diag: the host layer holds contents under tiles; emptied on odd seconds"
+                        );
                     }
                     self.tile_saved_host = now;
                     let _: () = msg_send![&*self.host, setContents: std::ptr::null::<AnyObject>()];

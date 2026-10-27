@@ -448,6 +448,7 @@ mod display_link {
                     msg_send![link, duration],
                 )
             };
+            zgx_gpu::diag_tick(timestamp, target);
             let interval = match duration > 0. && duration.is_finite() {
                 true => Duration::from_secs_f64(duration),
                 false => DEFAULT_INTERVAL,
