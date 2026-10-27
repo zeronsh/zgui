@@ -4732,11 +4732,14 @@ impl GpuRenderer {
         if rect_outside(rect, limit) {
             return false;
         }
-        kept.quads[at] = quad;
+        // Only its geometry moved: the rest of the quad stays in place.
+        let stored = &mut kept.quads[at];
+        stored.rect = quad.rect;
+        stored.fade = quad.fade;
         kept.upload.wrote(at as u32, at as u32 + 1);
         let draw = &mut kept.draws[kept_item.draws.start as usize];
         draw.shading = match self.split_shading {
-            true => shading(&quad, self.scale),
+            true => shading(stored, self.scale),
             false => Shading::Full,
         };
         draw.clip = match rect_inside(rect, limit) {
