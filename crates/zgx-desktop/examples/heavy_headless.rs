@@ -62,6 +62,10 @@ fn main() {
     let mut work = Heavy::from_env();
     let mode = work.mode;
     let mut ui = Ui::new(WIDTH, HEIGHT);
+    // SCRATCH (not for main): a desktop with no reader.
+    if std::env::var_os("ZGX_A11Y_OFF").is_some() {
+        ui.set_assistive_technology(false);
+    }
     if env("RENDER", 1) == 0 {
         return without_rendering(ui, work, ticks);
     }
