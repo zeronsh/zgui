@@ -71,7 +71,18 @@ fn shade_texel(input:Out, given:vec4<f32>, has_texel:bool)->vec4<f32> {
  var v=input;
  if v.options.z<0.5 {v.point=v.position.xy/viewport.z;}
  var color=v.color;
- if v.options.z<0.5 && (v.shape.w>0.5 || v.shape.z>0.) {
+ // A box (no ring, no shadow) is its fill well inside its inner edge: past
+ // any corner, its border and the widest antialiasing band (half of two
+ // slopes of at most a pixel each). Tested for the pixel's 2×2 block, whose
+ // derivatives the edge needs: a block decides as one, and shades the fill
+ // as the edge would with both coverages 1. Most of a bar's or a panel's
+ // pixels skip the distance, its derivatives and the border mix.
+ let block=(floor(v.position.xy*0.5)*2.+vec2(1.))/viewport.z;
+ let largest=select(v.shape.x,max(max(v.border.x,v.border.y),max(v.border.z,v.border.w)),v.options.w>0.5);
+ let reach=max(largest,0.)+v.shape.y+max(1./viewport.z,0.25)+0.5/viewport.z+0.01;
+ if v.options.z<0.5 && v.shape.w>0.5 && v.shape.y>=0. && v.shape.z<=0. && all(abs(block-v.fade.xy-v.fade.zw*0.5)<=v.fade.zw*0.5-vec2(reach)) {
+   let inner=1.;let outer=1.;let alpha=color.a*inner+v.border.a*(outer-inner);let rgb=select(vec3(0.),(color.rgb*color.a*inner+v.border.rgb*v.border.a*(outer-inner))/max(alpha,0.00001),alpha>0.);color=vec4(rgb,alpha);
+ } else if v.options.z<0.5 && (v.shape.w>0.5 || v.shape.z>0.) {
    var corner=v.shape.x;
    if v.options.w>0.5 {
      let right=v.point.x>v.fade.x+v.fade.z*0.5; let bottom=v.point.y>v.fade.y+v.fade.w*0.5;
