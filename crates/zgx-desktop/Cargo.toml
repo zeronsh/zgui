@@ -12,7 +12,9 @@ categories = ["gui"]
 
 [features]
 # Image formats (see zgx-gpu): all by default.
-default = ["svg", "png", "jpeg", "gif", "private-api"]
+default = ["svg", "png", "jpeg", "gif", "private-api", "cjk-thai-words"]
+# Words in Chinese, Japanese and Thai by dictionary (zgx's `cjk-thai-words`).
+cjk-thai-words = ["zgx/cjk-thai-words"]
 svg = ["zgx-gpu/svg"]
 png = ["zgx-gpu/png"]
 jpeg = ["zgx-gpu/jpeg"]
@@ -42,7 +44,7 @@ webview2 = ["dep:webview2-com", "zgx-gpu/composition", "windows/Win32_Graphics_D
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
-zgx = { path = "../zgx", version = "0.1.3" }
+zgx = { path = "../zgx", version = "0.1.3", default-features = false }
 mimalloc = { version = "0.1", default-features = false, optional = true }
 zgx-gpu = { path = "../zgx-gpu", version = "0.1.3", default-features = false }
 winit = "0.30.13"

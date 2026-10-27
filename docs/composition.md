@@ -302,6 +302,20 @@ in whole word/line units and reverses around the original unit's opposite edge.
 Shift takes precedence over the click count. Selection remains available in
 read-only editors and cancels preedit without editing the committed model.
 
+Chinese, Japanese and Thai put no spaces between words, so Unicode's
+boundaries alone take each character for a word. With zgx's `cjk-thai-words`
+feature, on by default, a double click there selects the word ICU4X's
+dictionaries find, as Chrome's ICU does: 北京 in 我们在北京大学, สวัสดี in
+สวัสดีครับ. Only the run of those scripts around the click is segmented, when
+it is clicked. The dictionaries are static data in the binary: about 2.2 MB of
+a release build (2.0 MB Chinese and Japanese, 0.13 MB Thai), paged in only
+when first read. They add no startup work or memory, and nothing per frame.
+An app that doesn't need them turns the feature off in every zgx crate it
+depends on (`zgx`, `zgx-desktop`, `zgx-script`, with `default-features =
+false` and the defaults it keeps); those scripts then select a character at a
+time. Lao, Khmer and Burmese, which also need dictionaries, select by Unicode's
+boundaries either way.
+
 Holding a captured selection pointer outside an editor autoscrolls the document
 and extends the selection even without further pointer movement. Single-line
 fields scroll horizontally; multiline fields also scroll vertically, with
@@ -322,8 +336,8 @@ captured gestures when a host becomes inactive. The fallible advance method
 returns whether a tick ran. Idle editors schedule no interaction wakeups.
 
 The native host forwards pointer modifiers and tracks clicks per target and
-button within the system's double-click time and distance, cycling
-through counts 1, 2, 3, then 1. The distance is Windows' double-click box
+button within the system's double-click time and distance, counting
+1, 2, 3 and on (presses past the third select as a triple's, as Chrome's do). The distance is Windows' double-click box
 (`SM_CXDOUBLECLK` by `SM_CYDOUBLECLK`, centred on the last press, 4 by 4 by
 default, `InputDispatcher::set_double_click_area`), and elsewhere four logical
 pixels in any direction. The time is the person's setting, as native

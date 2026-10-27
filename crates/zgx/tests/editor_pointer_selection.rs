@@ -285,3 +285,25 @@ fn a_press_and_a_drag_in_a_zoomed_editor_land_where_they_show() {
         assert!(!plain.is_empty());
     }
 }
+
+/// A double click selects a word of Chinese, Japanese or Thai, which put no
+/// spaces between words, by dictionary (`cjk-thai-words`, on by default);
+/// without it, by Unicode's word boundaries: a character at a time.
+#[test]
+fn a_double_click_selects_a_chinese_japanese_or_thai_word() {
+    let on = cfg!(feature = "cjk-thai-words");
+    for (text, at, word, fallback) in [
+        // We / at / Beijing / university / study.
+        ("我们在北京大学学习。", 4, "北京", "京"),
+        // Tokyo / to / go.
+        ("東京に行きます", 1, "東京", "京"),
+        // Hello / (polite), by grapheme: ส วั ส ดี ค รั บ.
+        ("สวัสดีครับ", 3, "สวัสดี", "ดี"),
+    ] {
+        let (mut ui, editor) = fixture(text, 200., false);
+        let x = 13. + 6. * at as f32;
+        click(&mut ui, x, 20., false);
+        click(&mut ui, x, 20., false);
+        assert_eq!(editor.copy(), if on { word } else { fallback }, "{text}");
+    }
+}

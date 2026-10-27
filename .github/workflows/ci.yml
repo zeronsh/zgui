@@ -108,6 +108,9 @@ jobs:
           echo "LUAU_LSP=$dir/luau-lsp" >> "$GITHUB_ENV"
           LUAU_LSP="$dir/luau-lsp" cargo run -q -p zgx-script --bin zgx --locked -- check crates/zgx-script/examples crates/zgx-desktop/examples
       - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --locked
+      # Words in Chinese, Japanese and Thai with `cjk-thai-words` off:
+      # Unicode's word boundaries, as before the dictionaries.
+      - run: cargo test -p zgx --no-default-features --lib --test editor --test text --locked -- words:: chinese_japanese_or_thai
       - run: cargo test --workspace --doc --locked
       # The API docs build without a warning (a broken link, a name collision).
       - run: cargo doc --workspace --no-deps --locked

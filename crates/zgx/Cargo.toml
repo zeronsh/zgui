@@ -4,7 +4,8 @@ autotests = false
 name = "zgx"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+# zgx's code is MIT; the Thai word dictionary in data/ is Unicode's.
+license = "MIT AND Unicode-3.0"
 repository.workspace = true
 readme.workspace = true
 rust-version.workspace = true
@@ -15,6 +16,15 @@ categories = ["gui"]
 [dependencies]
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.12"
+# Words in Chinese, Japanese and Thai, which put no spaces between them
+# (`cjk-thai-words`).
+# The Thai dictionary in data/ is this minor version's (see
+# scripts/extract_thai_dictionary.py).
+icu_segmenter = { version = "~2.4", default-features = false, features = ["compiled_data"], optional = true }
+icu_provider = { version = "~2.4", default-features = false, optional = true }
+icu_collections = { version = "~2.4", default-features = false, features = ["alloc"], optional = true }
+zerotrie = { version = "0.2.5", default-features = false, optional = true }
+zerovec = { version = "0.11.7", default-features = false, optional = true }
 # Find in page folds accents and composed forms (`find`).
 unicode-normalization = "0.1.24"
 taffy = { package = "zgx-taffy", version = "=0.9.0", path = "../../vendor/taffy", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
@@ -24,6 +34,12 @@ rustc-hash = "2.1"
 foldhash = { version = "0.2", default-features = false }
 
 [features]
+default = ["cjk-thai-words"]
+# A double click selects a word in Chinese, Japanese and Thai, which put no
+# spaces between words, by ICU4X's dictionaries (Chrome's, from ICU): about
+# 2.25 MB of a release binary, paged in only when used. Off, those scripts
+# select by Unicode's word boundaries (UAX #29): a character at a time.
+cjk-thai-words = ["dep:icu_segmenter", "dep:icu_provider", "dep:icu_collections", "dep:zerotrie", "dep:zerovec"]
 # `ZGX_PROFILE=1` also times styles and text within their phases: a check
 # in every style and text run, so only in builds that ask for it.
 profile-nested = []

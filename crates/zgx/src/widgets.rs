@@ -5537,12 +5537,15 @@ pub(crate) fn editor_pointer_unit(
 }
 
 fn editor_word_segment(text: &str, index: usize) -> (usize, usize) {
-    let (start, segment) = text
-        .split_word_bound_indices()
-        .find(|(start, segment)| index < start + segment.len())
-        .or_else(|| text.split_word_bound_indices().next_back())
-        .unwrap_or((0, ""));
-    let end = start + segment.len();
+    // Chinese, Japanese and Thai by dictionary; else Unicode's boundaries.
+    let (start, end) = crate::words::dictionary_word(text, index).unwrap_or_else(|| {
+        let (start, segment) = text
+            .split_word_bound_indices()
+            .find(|(start, segment)| index < start + segment.len())
+            .or_else(|| text.split_word_bound_indices().next_back())
+            .unwrap_or((0, ""));
+        (start, start + segment.len())
+    });
     let start = text
         .grapheme_indices(true)
         .map(|(i, _)| i)

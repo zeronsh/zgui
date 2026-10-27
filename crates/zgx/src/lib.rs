@@ -12,6 +12,7 @@ pub mod input;
 pub mod semantics;
 pub mod text;
 pub mod text_edit;
+mod words;
 
 pub mod widgets;
 

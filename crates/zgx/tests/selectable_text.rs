@@ -165,6 +165,32 @@ fn double_and_triple_presses_select_words_and_paragraphs_and_drag_by_them() {
     }
 }
 
+/// A double press selects a word of Chinese, Japanese or Thai by
+/// dictionary (`cjk-thai-words`, on by default), as Chrome does; without it,
+/// by Unicode's word boundaries: a character at a time.
+#[test]
+fn a_double_press_selects_a_chinese_japanese_or_thai_word() {
+    let on = cfg!(feature = "cjk-thai-words");
+    for (line, at, word, fallback) in [
+        ("我们在北京大学学习。", 4, "北京", "京"),
+        ("東京に行きます", 1, "東京", "京"),
+        ("สวัสดีครับ", 3, "สวัสดี", "ดี"),
+    ] {
+        let mut ui = Ui::new(400., 300.);
+        document(&mut ui, vec![text(line)]);
+        let x = 3. + 6. * at as f32;
+        for _ in 0..2 {
+            press(&mut ui, x, 10., false);
+            release(&mut ui, x, 10.);
+        }
+        assert_eq!(
+            ui.selected_text(),
+            if on { word } else { fallback },
+            "{line}"
+        );
+    }
+}
+
 #[test]
 fn a_word_at_a_point_selects_as_a_double_press_does() {
     // A touch screen's long press.
