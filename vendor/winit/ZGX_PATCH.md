@@ -125,6 +125,15 @@ X server answers): owned by no one, the input method counts as destroyed,
 as the callback would have it (`ime/mod.rs`, `InputMethod::server_name` in
 `ime/input_method.rs`).
 
+## X11: a wheel button counts on its press
+
+XInput2 reports a pointer's wheel buttons (4 to 7) as presses and releases;
+winit made a `MouseWheel` of each, so a pointer with no scroll valuators
+(XTEST's, a remote desktop's) scrolled two lines a notch and Control with
+the wheel zoomed two levels (zgx's zoom smoke). A wheel button's release is
+dropped (`xinput2_button_input` in `x11/event_processor.rs`); an evdev
+wheel's buttons are emulated and skipped as before, its valuators scroll.
+
 ## macOS: the Services menu on a window's selection
 
 AppKit offers a view's selection to the Services menu (a translator, Make

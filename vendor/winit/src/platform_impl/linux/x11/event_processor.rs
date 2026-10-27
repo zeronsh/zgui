@@ -1187,6 +1187,13 @@ impl EventProcessor {
             return;
         }
 
+        // zgx patch: a wheel button is a notch when pressed; its release is
+        // not another (a pointer without scroll valuators, XTEST's or a
+        // remote desktop's, scrolled two lines a notch).
+        if (4..=7).contains(&event.detail) && state == ElementState::Released {
+            return;
+        }
+
         let event = match event.detail as u32 {
             xlib::Button1 => {
                 WindowEvent::MouseInput { device_id, state, button: MouseButton::Left }

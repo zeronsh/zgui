@@ -67,12 +67,12 @@ def main():
             for keys, zoom in [("ctrl+equal", "1.10"), ("ctrl+equal", "1.25"), ("ctrl+minus", "1.10"), ("ctrl+0", "1.00")]:
                 run("xdotool", "key", "--window", window, "--clearmodifiers", keys)
                 until(f"{zoom} after {keys}", lambda: lines()[-1].get("zoom") == zoom)
-            # Control with the wheel: a level a notch.
+            # Control with the wheel: a level a notch. Xvfb's own pointer and
+            # keyboard (XTEST, no `--window`): winit reads the pointer through
+            # XInput2, which never sees a sent (`--window`) button event.
             run("xdotool", "mousemove", "--window", window, "200", "150")
             for button, zoom in [("4", "1.10"), ("5", "1.00")]:
-                run("xdotool", "keydown", "--window", window, "ctrl")
-                run("xdotool", "click", "--window", window, button)
-                run("xdotool", "keyup", "--window", window, "ctrl")
+                run("xdotool", "keydown", "ctrl", "click", button, "keyup", "ctrl")
                 until(f"{zoom} after ctrl+wheel {button}", lambda: lines()[-1].get("zoom") == zoom)
             checks["control-wheel steps a level a notch"] = True
             seen = lines()
