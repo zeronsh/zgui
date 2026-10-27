@@ -25,6 +25,8 @@ mod native_surface;
 mod planes;
 pub mod present_log;
 mod surface;
+#[cfg(target_os = "macos")]
+mod trial_energy;
 mod upload;
 pub use font_cache::set_desktop_sans_serif;
 pub use surface::PresentationStatus;
@@ -1570,6 +1572,9 @@ struct LayerPresent {
     trial: Trial,
     /// When the trial started, for its cost (`Trial`).
     trial_started: Option<std::time::Instant>,
+    /// PROTOTYPE: the energy terms at the trial's start, its switch to
+    /// drawables and its end (`trial_energy`).
+    trial_samples: Vec<trial_energy::Sample>,
     /// The machine the verdict is for (GPU, display and refresh, OS build),
     /// and its verdict (`verdicts`): 0 untried, 1 tiles, 2 drawables.
     verdict_key: String,
@@ -8353,8 +8358,12 @@ impl GpuRenderer {
                             use objc2::Message;
                             hal.as_raw().retain()
                         });
+                    // PROTOTYPE: by energy, tiles run as they ship, without
+                    // the probe (its own drawable a flip costs CPU and GPU).
+                    let by_energy = std::env::var("ZGX_TRIAL_RULE").is_ok_and(|v| v == "energy");
                     if let (Some(layer), Some(device), Some(queue)) =
                         (present.layer.as_mut(), device, queue)
+                        && !by_energy
                     {
                         layer.start_probe(&device, queue);
                     }
@@ -8365,12 +8374,14 @@ impl GpuRenderer {
                             .and_then(|layer| layer.probe_feedback()),
                     );
                     present.trial_started = Some(std::time::Instant::now());
+                    present.trial_samples = vec![trial_energy::Sample::now()];
                     Trial::Tiles { frames: 0, from }
                 }
                 Trial::Tiles { frames, from } if frames + 1 >= TRIAL_FRAMES => {
                     let layer = present.layer.as_mut().expect("attached");
                     let tiles = share(layer.probe_feedback(), from);
                     layer.stop_probe();
+                    present.trial_samples.push(trial_energy::Sample::now());
                     let from = counts(layer.drawable_feedback());
                     Trial::Drawables {
                         frames: 0,
@@ -8397,11 +8408,55 @@ impl GpuRenderer {
                     // Drawables only where they skip clearly fewer: on the M1
                     // Max tiles' flips skip 16-18% against drawables' 0.3%;
                     // on the M5 both skip 4-9%, and tiles stay.
-                    let verdict = if tiles - drawables > TRIAL_MARGIN {
+                    let mut verdict = if tiles - drawables > TRIAL_MARGIN {
                         2
                     } else {
                         1
                     };
+                    // PROTOTYPE: each path's energy terms, and with
+                    // `ZGX_TRIAL_RULE=energy` the verdict by them: drawables
+                    // only where their watts (GPU time weighed at
+                    // `ZGX_TRIAL_GPU_WATTS` a busy second) are under the
+                    // tiles' by `ZGX_TRIAL_ENERGY_MARGIN` (a share).
+                    present.trial_samples.push(trial_energy::Sample::now());
+                    if let [start, switch, end] = present.trial_samples[..] {
+                        let number = |name: &str, default: f64| {
+                            std::env::var(name)
+                                .ok()
+                                .and_then(|v| v.parse::<f64>().ok())
+                                .unwrap_or(default)
+                        };
+                        let gpu_watts = number("ZGX_TRIAL_GPU_WATTS", 5.);
+                        let margin = number("ZGX_TRIAL_ENERGY_MARGIN", 0.1);
+                        let (on_tiles, on_drawables) = (start.to(&switch), switch.to(&end));
+                        let (tiles_watts, drawables_watts) =
+                            (on_tiles.watts(gpu_watts), on_drawables.watts(gpu_watts));
+                        let by_energy = if drawables_watts < tiles_watts * (1. - margin) {
+                            2
+                        } else {
+                            1
+                        };
+                        let term = |cost: &trial_energy::Cost| {
+                            format!(
+                                "{:.3} s cpu {:.1} mW gpu {:.1} ms/s window server gpu {:.1} ms/s",
+                                cost.seconds,
+                                cost.cpu_joules / cost.seconds.max(1e-3) * 1e3,
+                                cost.gpu_seconds / cost.seconds.max(1e-3) * 1e3,
+                                cost.window_server_gpu_seconds / cost.seconds.max(1e-3) * 1e3,
+                            )
+                        };
+                        eprintln!(
+                            "zgx trial energy: tiles {} = {:.1} mW; drawables {} = {:.1} mW (gpu at {gpu_watts} W, margin {margin}): energy says {}",
+                            term(&on_tiles),
+                            tiles_watts * 1e3,
+                            term(&on_drawables),
+                            drawables_watts * 1e3,
+                            if by_energy == 2 { "drawables" } else { "tiles" },
+                        );
+                        if std::env::var("ZGX_TRIAL_RULE").is_ok_and(|v| v == "energy") {
+                            verdict = by_energy;
+                        }
+                    }
                     present.verdict = verdict;
                     verdicts::set(&present.verdict_key, verdict);
                     eprintln!(
