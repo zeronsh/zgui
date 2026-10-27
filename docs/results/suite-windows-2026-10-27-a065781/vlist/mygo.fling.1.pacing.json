@@ -1,0 +1,16 @@
+{
+ "framework": "mygo",
+ "mode": "fling",
+ "repeat": 1,
+ "display_hz": 60,
+ "frames": 421,
+ "composed": 422,
+ "merged_frames": 6,
+ "frames_per_second": 52.625,
+ "interval_p50_ms": 16.699999999999818,
+ "interval_p95_ms": 33.422999999999774,
+ "interval_p99_ms": 33.98900000000049,
+ "interval_max_ms": 116.70499999999993,
+ "long_intervals": 49,
+ "long_interval_fraction": 0.11666666666666667
+}

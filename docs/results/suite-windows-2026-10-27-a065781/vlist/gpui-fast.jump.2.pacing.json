@@ -1,0 +1,16 @@
+{
+ "framework": "gpui-fast",
+ "mode": "jump",
+ "repeat": 2,
+ "display_hz": 60,
+ "frames": 452,
+ "composed": 453,
+ "merged_frames": 1,
+ "frames_per_second": 56.5,
+ "interval_p50_ms": 16.692999999999984,
+ "interval_p95_ms": 33.17700000000059,
+ "interval_p99_ms": 33.54600000000005,
+ "interval_max_ms": 66.95299999999952,
+ "long_intervals": 27,
+ "long_interval_fraction": 0.0598669623059867
+}

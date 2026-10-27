@@ -1,3 +1,39 @@
+# Windows suite (2026-10-27): every scene on `a065781`
+
+[`suite-windows-2026-10-27-a065781`](suite-windows-2026-10-27-a065781/): the same protocol, machine and display as the run below, on `a065781`, after Windows opened its GPU device beside the first window (#714) and presented timed frames clear of the compositor's latch (#734). Every scene accepted, no app exiting abnormally. GPUI Fast was rebuilt (its comparison app now sets the lab's menu bar, `03a9d895`); MyGo's and Rune's sources are unchanged, and their binaries too. `python scripts/build_site.py docs/results/suite-windows-2026-10-27-a065781 --platform windows --startup docs/results/suite-windows-2026-10-27-a065781/startup/startup.json` publishes it to `site/windows/`.
+
+Medians, zgx / GPUI Fast / MyGo / Rune (vlist: zgx / zgx in Luau / GPUI Fast / MyGo / Rune):
+
+| Scene, mode | CPU (M cycles/s) | App GPU (ms/s) | Private memory (MB) | Frame time p99 (ms) |
+| --- | --- | --- | --- | --- |
+| heavy idle | 1.3 / 10 / 0.8 / 4.1 | 0 / 0 / 0 / 0 | 153 / 106 / 132 / 378 | - |
+| heavy stream | 255 / 548 / 798 / 1051 | 11.1 / 12.6 / 19.0 / 10.3 | 159 / 112 / 153 / 391 | 17.2 / 33.6 / 17.4 / 17.4 |
+| heavy scroll | 107 / 256 / 629 / 1161 | 2.3 / 12.7 / 17.0 / 10.2 | 155 / 109 / 143 / 394 | 17.3 / 33.5 / 17.3 / 17.4 |
+| heavy both | 299 / 563 / 775 / 1327 | 13.3 / 12.6 / 18.7 / 10.3 | 160 / 112 / 152 / 396 | 17.4 / 33.6 / 17.3 / 17.4 |
+| lab stream | 125 / 177 / 414 / 242 | 3.4 / 6.3 / 6.4 / 7.1 | 133 / 94 / 135 / 378 | 17.2 / 33.6 / 17.3 / 17.5 |
+| lab scroll | 90 / 127 / 317 / 213 | 1.9 / 4.8 / 8.9 / 6.9 | 132 / 91 / 127 / 375 | 17.4 / 33.5 / 17.6 / 17.4 |
+| lab both | 107 / 177 / 404 / 247 | 3.5 / 6.6 / 11.6 / 7.2 | 133 / 95 / 135 / 379 | 33.2 / 33.6 / 17.3 / 17.4 |
+| animate | 98 / 102 / 268 / 149 | 2.0 / 3.3 / 3.4 / 5.2 | 131 / 91 / 121 / 370 | 17.3 / 17.3 / 17.4 / 17.5 |
+| vlist scroll | 94 / 99 / 140 / 409 / 274 | 2.6 / 2.8 / 7.3 / 12.6 / 6.5 | 146 / 147 / 109 / 142 / 392 | 17.3 / 17.3 / 33.5 / 33.6 / 17.5 |
+| vlist fling | 97 / 104 / 151 / 449 / 364 | 2.8 / 2.8 / 7.5 / 12.3 / 6.6 | 146 / 148 / 110 / 144 / 395 | 33.2 / 33.4 / 33.7 / 33.6 / 17.4 |
+| vlist jump | 102 / 112 / 154 / 427 / 438 | 2.9 / 2.9 / 7.7 / 13.3 / 6.7 | 141 / 144 / 110 / 150 / 396 | 17.3 / 17.3 / 33.5 / 33.4 / 17.4 |
+
+Startup (lab, medians of 10 launches): first content at 290 / 312 / 261 / 625 ms, 818 / 918 / 768 / 1937 M cycles by then. zgx's went from 323 ms and 947 M cycles: its GPU device now opens beside the first window (#714). It shows its window with its first frame (249 ms); MyGo and Rune show theirs at 45–51 ms and draw into it later.
+
+zgx uses the fewest CPU cycles in all 10 active tests and the least app GPU time in 8. Where it is not best, its worst ratio against the best rival per metric:
+- **Idle CPU:** 1.58× MyGo's (1.3 against 0.8 M cycles/s; NVIDIA's Direct3D 12 driver thread, below).
+- **Frame time p99:** 1.92× MyGo's in lab both (33.2 against 17.3 ms), and long frames 7.1× there (1.5 against 0.2%). These are the capture's misses, not zgx's: two of the three captures merged compositions (8 and 6 merged frames), and their long intervals (8 and 7) all but match them, so at most one was a refresh zgx missed. Merged frames come up for every framework, 6–23 in each scene's captures.
+- **Memory:** 1.44× GPUI Fast's (Direct3D 12 against Direct3D 11, below).
+- **App GPU time:** 1.29× Rune's in heavy both.
+- **DWM:** CPU 1.29× and GPU 1.04×.
+- **Startup to first content:** 1.11× MyGo's.
+
+Against `9562c78`, for zgx:
+- The heavy scene takes 7–9% fewer cycles (stream 279 → 255, both 322 → 299).
+- Long frames: lab stream 0.6 → 0%, lab scroll 3.5 → 0.2%. The latch (#734) ended the runs of missed refreshes.
+- DWM's CPU while zgx runs did not move with #734 (animate 2.79 → 2.80%). Its worst ratio fell from 1.63× because the rivals' tick-counted readings moved.
+- Lab stream's median reads 125 M cycles/s against 101, but that is between launches, not builds. Its repeats here were 100, 123, 128 and 132. Alternating `9562c78`'s binary with this one, six rounds each, read 110 and 108 (all twelve within 102–113).
+
 # Windows suite (2026-10-26): every scene on `9562c78`
 
 [`suite-windows-2026-10-26-9562c78`](suite-windows-2026-10-26-9562c78/): the macOS suite's scenes, frameworks and protocol on Windows (`scripts/run_windows_suite.py`, `docs/benchmarking.md`, On Windows), every scene accepted, no app exiting abnormally. An i7-12700KF with an RTX 4090 (driver 617.42), Windows 11 build 26200, a 60 Hz 1920×1080 display at 100%, the High performance plan held; a remote display host (Apollo) streamed the desktop throughout. `python scripts/build_site.py --platform windows` publishes it to `site/windows/`.

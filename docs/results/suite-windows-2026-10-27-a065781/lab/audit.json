@@ -1,0 +1,176 @@
+{
+ "accepted": true,
+ "platform": "windows",
+ "trials": 48,
+ "samples": 4086,
+ "pacing_trials": 36,
+ "active_ticks_per_requested_second": {
+  "min": 59.72222222222222,
+  "max": 59.94444444444444
+ },
+ "scene": "lab",
+ "commit": "a0657815e80506eeea2197ac5a6a15b44aaf2f0c",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-27T06:45:41.844438+00:00",
+ "finished_utc": "2026-10-27T07:13:38.061916+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "SudoMaker Virtual Display Adapter",
+    "resolution": "1920 x 1080 @ 60Hz",
+    "main": true
+   }
+  ],
+  "display_count": 1,
+  "power_plan": "High performance",
+  "on_battery": false,
+  "windows": "11 (10.0.26200)",
+  "uptime_hours": 80.0,
+  "chip": "12th Gen Intel(R) Core(TM) i7-12700KF",
+  "cores": 20,
+  "memory_bytes": 34194051072,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "gpu_driver": "617.42",
+  "power": "AC Power",
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "screen_reader_running": false,
+  "uia_client_processes_running": [
+   "TextInputHost"
+  ],
+  "remote_display_hosts_running": [
+   "sunshine"
+  ]
+ },
+ "preflight": {
+  "heavy": [],
+  "other_cpu_percent": 72.8,
+  "threshold_percent": 200.0,
+  "busiest": [
+   "zeron 20.3%",
+   "zeron 1.9%",
+   "claude 0.6%",
+   "zeron 0.0%",
+   "zeron 0.0%",
+   "vctip 0.0%"
+  ]
+ },
+ "binaries": {
+  "zgx": {
+   "sha256": "91cd3ed9a7dba41df3b28254700fbafbcc5a46bd614d1fad29d33a438d9899df",
+   "bytes": 14417408
+  },
+  "gpui-fast": {
+   "sha256": "d7564ef4bffb51a9f3c84541270e8649a5aca38ffbd2aa4df9d370950ca7355d",
+   "bytes": 9263104
+  },
+  "mygo": {
+   "sha256": "1aa039996199e83fbb72778f4c00827d693300ab5d45543d30fde6ece4e5587c",
+   "bytes": 9989120
+  },
+  "rune": {
+   "sha256": "fd700935f05637d5baebee43416d943c220b24e77108e3585871d541012d648a",
+   "bytes": 13607936
+  }
+ },
+ "toolchains": {
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "rust_profile": "dist (release, lto = \"fat\", codegen-units = 1)",
+  "go": "go version go1.27.1 windows/amd64",
+  "mygo": {
+   "mygo_version": "v0.6.3",
+   "mygo_commit": "15242900157b77228d35ca071f43e94a11bc90a0",
+   "mygo_license": "MIT",
+   "mygo_source": "https://github.com/egoist/mygo",
+   "go": "go1.27.1 windows/amd64",
+   "flags": "-trimpath -ldflags=-s -w",
+   "cgo": false
+  },
+  "rune": {
+   "rune_rev": "",
+   "rune_branch": "dev",
+   "rune_license": "MIT",
+   "rune_source": "https://github.com/anomalyco/rune",
+   "rune_patch": "PATCH.md: Tx::wheel (sha256 17d01a2fb86e35e619947368e307e43a82272956200fc94ae7910b7a7eb05535)",
+   "profile": "dist (Rune's perf with fat LTO and codegen-units 1)"
+  }
+ },
+ "invalid_trials": [],
+ "abnormal_exits": [],
+ "launches": {
+  "zgx": {
+   "trial": 24,
+   "pacing": 18
+  },
+  "gpui-fast": {
+   "trial": 23,
+   "pacing": 18
+  },
+  "mygo": {
+   "trial": 22,
+   "pacing": 18
+  },
+  "rune": {
+   "trial": 23,
+   "pacing": 18
+  }
+ },
+ "readiness_failures": [],
+ "protocol": {
+  "requested_seconds": 18,
+  "warmup_seconds": 5,
+  "sampled_seconds": 10,
+  "sampling_anchor": "window frontmost and uncovered",
+  "readiness_timeout_seconds": 2.5,
+  "lifetime_margin_seconds": 3,
+  "interval_seconds": 0.1,
+  "repeats": 3,
+  "idle_repeats": 2,
+  "idle_window_seconds": [
+   20,
+   30
+  ],
+  "idle_requested_seconds": 34,
+  "quick": false,
+  "pgo": false,
+  "frameworks": [
+   "zgx",
+   "gpui-fast",
+   "mygo",
+   "rune"
+  ],
+  "modes": [
+   "stream",
+   "scroll",
+   "both"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 3,
+  "pacing_during_trials": false,
+  "pacing_capture": "Desktop Duplication (framepace)",
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ],
+  "suite": true,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 1,
+  "extended_cells": [
+   "zgx/stream",
+   "gpui-fast/stream",
+   "mygo/stream",
+   "rune/stream",
+   "zgx/scroll",
+   "gpui-fast/scroll",
+   "rune/scroll",
+   "mygo/both",
+   "rune/both"
+  ],
+  "spread_metrics": [
+   "mcycles_per_second",
+   "gpu_ms_per_second"
+  ],
+  "power_plan": "High performance",
+  "font_fnv64": "ce252980ec1255ff"
+ }
+}

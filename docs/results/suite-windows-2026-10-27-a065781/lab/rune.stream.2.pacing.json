@@ -1,0 +1,16 @@
+{
+ "framework": "rune",
+ "mode": "stream",
+ "repeat": 2,
+ "display_hz": 60,
+ "frames": 473,
+ "composed": 474,
+ "merged_frames": 2,
+ "frames_per_second": 59.125,
+ "interval_p50_ms": 16.616999999999962,
+ "interval_p95_ms": 17.163000000000466,
+ "interval_p99_ms": 17.479,
+ "interval_max_ms": 100.27199999999993,
+ "long_intervals": 2,
+ "long_interval_fraction": 0.00423728813559322
+}

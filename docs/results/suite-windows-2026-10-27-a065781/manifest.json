@@ -1,0 +1,56 @@
+{
+ "commit": "a0657815e80506eeea2197ac5a6a15b44aaf2f0c",
+ "platform": "windows",
+ "started_utc": "2026-10-27T06:14:49.589093+00:00",
+ "finished_utc": "2026-10-27T07:55:40.504993+00:00",
+ "preflight": {
+  "heavy": [],
+  "other_cpu_percent": 72.8,
+  "threshold_percent": 200.0,
+  "busiest": [
+   "zeron 20.3%",
+   "zeron 1.9%",
+   "claude 0.6%",
+   "zeron 0.0%",
+   "zeron 0.0%",
+   "vctip 0.0%"
+  ]
+ },
+ "windows_minimized": [
+  "Zeron"
+ ],
+ "scenes": {
+  "heavy": {
+   "accepted": true,
+   "minutes": 30.8
+  },
+  "lab": {
+   "accepted": true,
+   "minutes": 27.9
+  },
+  "animate": {
+   "accepted": true,
+   "minutes": 8.8
+  },
+  "vlist": {
+   "accepted": true,
+   "minutes": 32.6
+  }
+ },
+ "frameworks": [
+  "zgx",
+  "zgx-luau",
+  "gpui-fast",
+  "mygo",
+  "rune"
+ ],
+ "protocol": {
+  "REQUESTED": 15,
+  "WARMUP": 5,
+  "SAMPLED": 10,
+  "IDLE_REPEATS": 2,
+  "PACING_REPEATS": 3,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 1
+ }
+}
