@@ -7691,11 +7691,16 @@ impl GpuRenderer {
                     true => Some((shading, open.promoted)),
                     false => match merged_shading(open.shading, shading) {
                         Some(merged) => {
-                            let promoted = if merged == open.shading {
+                            // A rounded box drawn by the full shader is no
+                            // promotion: they were one shading until boxes
+                            // had their own, and batch as they did.
+                            let as_full =
+                                |own: Shading| own == merged || own == Shading::Rounded;
+                            let promoted = if as_full(open.shading) {
                                 open.promoted
                             } else {
                                 open.pixels
-                            } + if merged == shading { 0. } else { pixels };
+                            } + if as_full(shading) { 0. } else { pixels };
                             let budget = match merged {
                                 Shading::Full | Shading::Rounded => PROMOTED_FULL_PIXELS,
                                 _ => PROMOTED_PIXELS,
