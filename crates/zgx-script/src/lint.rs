@@ -33,6 +33,9 @@
 //!   `view` places what it drew instead.
 //! - `draw-item-state`: a `ui.canvas` `draw_item` reading state. Each item's
 //!   drawing is kept until that item is written, so what it read goes stale.
+//! - `animated-zoom`: a `zoom` given a tween or a spring, or animated by
+//!   `anime`: a zoom lays its subtree out again, so every frame of the
+//!   animation does; `scale` only composites.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -86,6 +89,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "draw-item-state",
         "a ui.canvas draw_item reading state, kept until its item changes",
+    ),
+    (
+        "animated-zoom",
+        "a zoom animated frame by frame lays its subtree out on every frame",
     ),
 ];
 
@@ -820,6 +827,30 @@ impl Linter<'_> {
                 }
             }
         }
+        // `zoom = ui.tween(…)` or `ui.spring(…)`, or `zoom` animated by `anime`.
+        if self.is(at, "zoom") && self.is(at + 1, "=") && self.field(at + 2).is_some() {
+            let tweened = self.is(at + 2, "ui")
+                && self.is(at + 3, ".")
+                && (self.is(at + 4, "tween") || self.is(at + 4, "spring"))
+                && self.is(at + 5, "(");
+            let animated = stack.len() >= 2
+                && stack[stack.len() - 1].open == Open::Brace
+                && matches!(
+                    stack[stack.len() - 2].callee.as_deref(),
+                    Some("anime.animate" | "anime.createAnimatable")
+                );
+            if tweened || animated {
+                self.report(
+                    at,
+                    "animated-zoom",
+                    "an animated `zoom` lays its subtree out again on every frame of the \
+                     animation, as CSS's does: text wraps anew and everything inside moves. \
+                     Animate `scale` instead (drawn scaled, without layout), and set `zoom` \
+                     once, where it settles."
+                        .into(),
+                );
+            }
+        }
         // `ui.state(...)` inside a component, `each` row or `list` row.
         // A key built from the instance (`\`file:{pane}\``) is deliberate.
         let literal_key = self.tokens.get(at + 4).is_some_and(|t| {
@@ -1147,6 +1178,28 @@ mod tests {
     }
     fn one(line: u32, rule: &str) -> Vec<(u32, String)> {
         vec![(line, rule.to_string())]
+    }
+
+    #[test]
+    fn an_animated_zoom_is_reported_and_a_set_one_is_not() {
+        let source = r##"
+local big = ui.state("big", false)
+ui.div { zoom = ui.tween(function() return big:get() and 2 or 1 end) }
+ui.div { zoom = ui.spring(function() return big:get() and 2 or 1 end) }
+anime.animate("#panel", { zoom = 2, duration = 300 })
+ui.div { zoom = 1.5, zoom_fixed = true }
+ui.div { zoom = function() return big:get() and 2 or 1 end }
+ui.div { scale = ui.tween(function() return big:get() and 2 or 1 end) }
+local zoom = ui.tween(big)
+"##;
+        assert_eq!(
+            rules(source),
+            [
+                (3, "animated-zoom".to_string()),
+                (4, "animated-zoom".to_string()),
+                (5, "animated-zoom".to_string()),
+            ]
+        );
     }
 
     #[test]

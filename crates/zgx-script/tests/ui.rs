@@ -3444,3 +3444,36 @@ return ui.column {{
         }
     }
 }
+
+#[test]
+fn an_element_zooms_from_a_script_and_follows_its_state() {
+    let mut h = Harness::inline(
+        r##"local big = ui.state("big", false)
+        return ui.column {
+            ui.row {
+                ui.column { id = "panel", zoom = function() return big:get() and 2 or 1 end,
+                    ui.div { w = 50, h = 20 },
+                    ui.div { id = "fixed", zoom_fixed = true, w = 30, h = 10 } },
+                ui.div { id = "after", w = 10, h = 10 } },
+            ui.button { id = "b", on_click = function() big:set(true) end, "zoom" } }"##,
+    );
+    h.frames(2);
+    h.ui.prepare_frame();
+    let shown = |h: &mut Harness, id: &str| {
+        let node = h.find(id).unwrap();
+        h.ui.scene.borrow().transformed_bounds(node)
+    };
+    assert_eq!(shown(&mut h, "panel").width, 50.);
+    assert_eq!(shown(&mut h, "after").x, 50.);
+    h.click("b");
+    h.frames(2);
+    h.ui.prepare_frame();
+    // Twice as large, laid out again: what follows moves past it. Its
+    // fixed child takes 5 of its points, 10 on screen.
+    let panel = shown(&mut h, "panel");
+    assert_eq!((panel.width, panel.height), (100., 50.));
+    assert_eq!(shown(&mut h, "after").x, 100.);
+    // A fixed node keeps its own size inside it.
+    let fixed = shown(&mut h, "fixed");
+    assert_eq!((fixed.width, fixed.height), (30., 10.));
+}

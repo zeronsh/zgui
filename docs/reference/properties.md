@@ -143,6 +143,27 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 
 `x`, `y` (`number`, points), `scale`, `scale_x`, `scale_y` (`number`, `1`), `rotate`, `skew`, `skew_x`, `skew_y`, `rotate_x`, `rotate_y` (`number`, degrees), `perspective` (`number`, points, `0`: none) and `origin` (`Pair`, fractions of the node, `{ 0.5, 0.5 }`). They apply after layout: the node keeps its place in the flow, and hit testing follows the transform. Rotation, scale, skew and tilt paint the subtree into a cached layer. `rotate_x` and `rotate_y` tilt it about the axes through `origin` (CSS `rotateX`, `rotateY`), seen from `perspective` points away (CSS `perspective()`): the nearer side shows larger, the layer composited as a projected quad; without a perspective a tilt only narrows it.
 
+## Zoom
+
+| Property | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `zoom` | `number` | `1` | shows the subtree this many times as large, as CSS's `zoom`: it lays out again in its own points (its parent's room divided by the zoom) and takes the zoom times the room it needs there, so its siblings move; text and borders draw crisply at the size they show at. Zooms multiply with its ancestors' and the window's (`ui.window.zoom`); hit testing follows. Nonfinite or nonpositive zooms are `1` |
+| `zoom_fixed` | `boolean` | `false` | keeps it at its own size whatever zooms are around it, the window's included (a toolbar that stays put while the page zooms) |
+
+Unlike `scale`, which draws the laid-out subtree larger and leaves its place in the flow alone, a zoom changes layout: give `zoom` a value or a function of state, and animate `scale` instead. An animated zoom lays the subtree out on every frame (`zgx lint`'s `animated-zoom`). More in [styling](../styling.md#zoom).
+
+```lua
+local big = ui.state("big", false)
+return ui.column {
+	zoom = function()
+		return big:get() and 1.5 or 1
+	end,
+	ui.button { on_click = function() big:set(not big:peek()) end, "Zoom" },
+	ui.text { "Zoomed with what it holds" },
+	ui.row { zoom_fixed = true, ui.text { "Kept at its own size" } },
+}
+```
+
 ## Pseudo-states, window dragging, identity
 
 | Property | Type | Default | |
