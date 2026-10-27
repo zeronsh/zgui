@@ -193,16 +193,17 @@ pub(crate) struct Deadline {
 /// call back more than it spent, every time.
 const CPU_READING_AGE: Duration = Duration::from_millis(1);
 thread_local! {
-    /// The thread's last CPU-time reading, and when it was taken.
-    static CPU_READING: Cell<Option<(Instant, Duration)>> = const { Cell::new(None) };
+    /// The thread's last CPU-time reading, and the last instant it is fresh.
+    /// An unrepresentable expiry is beyond every representable instant.
+    static CPU_READING: Cell<Option<(Option<Instant>, Duration)>> = const { Cell::new(None) };
 }
 /// The thread's CPU time, or a reading of it at most `CPU_READING_AGE` old.
 fn recent_thread_cpu(now: Instant) -> Duration {
     CPU_READING.with(|reading| match reading.get() {
-        Some((at, cpu)) if now.saturating_duration_since(at) <= CPU_READING_AGE => cpu,
+        Some((until, cpu)) if until.is_none_or(|until| now <= until) => cpu,
         _ => {
             let cpu = thread_cpu();
-            reading.set(Some((now, cpu)));
+            reading.set(Some((now.checked_add(CPU_READING_AGE), cpu)));
             cpu
         }
     })
@@ -2376,6 +2377,42 @@ async fn wake(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The CPU reading lasts through the exact one-millisecond boundary;
+    /// a reversed timestamp is still fresh, as with saturating subtraction.
+    #[test]
+    fn the_recent_cpu_reading_expires_after_its_inclusive_boundary() {
+        struct Restore(Option<(Option<Instant>, Duration)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                CPU_READING.set(self.0);
+            }
+        }
+        let _restore = Restore(CPU_READING.replace(None));
+        let at = Instant::now();
+        let until = at.checked_add(CPU_READING_AGE).unwrap();
+        let cached = Duration::MAX;
+        for now in [
+            at.checked_sub(Duration::from_secs(1)).unwrap(),
+            at,
+            until.checked_sub(Duration::from_nanos(1)).unwrap(),
+            until,
+        ] {
+            CPU_READING.set(Some((Some(until), cached)));
+            assert_eq!(recent_thread_cpu(now), cached);
+        }
+        CPU_READING.set(Some((Some(until), cached)));
+        let after = until.checked_add(Duration::from_nanos(1)).unwrap();
+        assert_ne!(recent_thread_cpu(after), cached);
+        assert_eq!(
+            CPU_READING.get().unwrap().0,
+            after.checked_add(CPU_READING_AGE)
+        );
+        // An expiry that checked_add could not represent lies after every
+        // possible timestamp, so the reading remains fresh.
+        CPU_READING.set(Some((None, cached)));
+        assert_eq!(recent_thread_cpu(after), cached);
+    }
 
     /// A host function's panic unwinding out of a call (caught by the app's
     /// turn) leaves no call running: none whose budget would pass for good,
