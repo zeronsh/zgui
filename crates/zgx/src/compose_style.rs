@@ -8,6 +8,7 @@ use crate::{
     theme::{ThemeScope, Themed, tok},
     widgets::Ui,
 };
+use std::num::NonZeroU32;
 
 /// What text inherits. A colour, size or family that comes from a theme
 /// token stays the token: each text node resolves it from its own theme
@@ -573,6 +574,69 @@ struct Settled {
     /// paint-only run resolves them again, to follow their tokens.
     text: Option<(Themed<f32>, Option<crate::theme::TokenId>)>,
 }
+/// A dynamic style setting box sizes alone (a bar growing): its shape, so
+/// that a run in the same shape compares its five size fields directly.
+/// Made from a run that compared everything (no paint, the same fields
+/// and margin sides as last time, no interaction style setting a box);
+/// any run in another shape compares in full again.
+#[derive(Clone, Copy)]
+struct BoxPlan(
+    /// The shape (`key`): the dynamic style's set fields, which of the five
+    /// size fields hold a value and its margin sides, in four bytes so the
+    /// memo keeps its size.
+    NonZeroU32,
+);
+impl BoxPlan {
+    /// The fields a plan may cover: box sizes and margin sides alone, and
+    /// layout options marked but unset (a margin builder marks them while
+    /// clearing their margins, which a style without them doesn't have).
+    const BITS: u64 = {
+        use crate::style::bit;
+        bit::LAYOUT_OPTIONS
+            | bit::WIDTH
+            | bit::WIDTH_PERCENT
+            | bit::HEIGHT
+            | bit::HEIGHT_PERCENT
+            | bit::MARGIN
+            | bit::MARGIN_SIDES
+    };
+    /// The shape of a style setting `BITS` alone: their set bits (the low
+    /// byte, and margin sides' bit 30 moved to bit 8), which size fields
+    /// hold a value (bits 9 to 13) and the margin sides (bits 16 to 23).
+    #[inline(always)]
+    fn key(styles: &Styles) -> NonZeroU32 {
+        const _: () = assert!(BoxPlan::BITS & !0xff == crate::style::bit::MARGIN_SIDES);
+        const _: () = assert!(crate::style::bit::MARGIN_SIDES == 1 << 30);
+        const MARK: NonZeroU32 = NonZeroU32::new(1 << 31).unwrap();
+        let set = styles.set_bits();
+        let present = u32::from(styles.width.is_some())
+            | u32::from(styles.width_percent.is_some()) << 1
+            | u32::from(styles.height.is_some()) << 2
+            | u32::from(styles.height_percent.is_some()) << 3
+            | u32::from(styles.margin.is_some()) << 4;
+        MARK | u32::from(set as u8)
+            | (set >> 22) as u32 & 0x100
+            | present << 9
+            | u32::from(styles.margin_sides) << 16
+    }
+    /// The plan of a resized run (`now` over `then`, compared in full):
+    /// none unless both set box fields alone and no paint was set.
+    fn of(now: &Styles, then: &Styles, paint: Option<([bool; 11], u8)>) -> Option<Self> {
+        ((now.set_bits() | then.set_bits()) & !Self::BITS == 0
+            && now.layout_options.is_none()
+            && then.layout_options.is_none()
+            && paint == Some(([false; 11], 0))
+            && now.margin_sides == then.margin_sides)
+            .then(|| Self(Self::key(now)))
+    }
+    /// Whether `now` has the plan's shape.
+    #[inline(always)]
+    fn fits(&self, now: &Styles) -> bool {
+        now.set_bits() & !Self::BITS == 0
+            && now.layout_options.is_none()
+            && Self::key(now) == self.0
+    }
+}
 /// What a re-run compares against: the inputs last applied to the scene
 /// (unchanged results skip rebuilding and rewriting the node) and, for
 /// paint-only changes, the last full application's other inputs.
@@ -592,6 +656,10 @@ struct Memo {
     /// What `Scene::set_box` left from patching `shown`'s box: `None` once
     /// `shown` is made or written another way.
     boxed: Option<u32>,
+    /// A dynamic style that changes only box sizes, found so once compared
+    /// in full (`BoxPlan`): `None` again with every full application. In the
+    /// memo's padding, where `Settled` has no room.
+    box_plan: Option<BoxPlan>,
 }
 /// Which box fields `styles` sets (width, height, margins), whatever their
 /// values: a run that sets the same ones, with other values, changes only
@@ -887,6 +955,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 shown: None,
                 painted: false,
                 boxed: None,
+                box_plan: None,
             }));
         }
         // Interaction styles that changed take their slots, their tokens
@@ -953,17 +1022,30 @@ pub(crate) fn mount_style_with_intrinsic(
             shown,
             painted,
             boxed,
+            box_plan,
         }) = memo.as_deref_mut()
             && last.state == state
             && last.disabled == is_disabled
             && !themed
             && !swapped
         {
-            let paint = produced.as_ref().map(Paint::set_of);
+            // A box in its plan's shape (`BoxPlan`): its sizes compared
+            // directly, with no paint and nothing else set.
+            let planned =
+                box_plan.is_some_and(|plan| produced.as_ref().is_some_and(|now| plan.fits(now)));
+            let paint = if planned {
+                last.paint
+            } else {
+                produced.as_ref().map(Paint::set_of)
+            };
             // Unchanged, or a box that changes only its size or margins (a
             // bar growing): the same fields set, other values, no interaction
             // style over them, and the rest compared once.
             let (same, resized) = match (&produced, &last.dynamic) {
+                (Some(now), Some(then)) if planned => {
+                    let same = sizes(now) == sizes(then);
+                    (same, !same && shown.is_some())
+                }
                 // Paint alone: nothing else to compare.
                 (Some(now), Some(then))
                     if (now.set_bits() | then.set_bits()) & !Paint::BITS == 0 =>
@@ -1033,6 +1115,9 @@ pub(crate) fn mount_style_with_intrinsic(
                             margin,
                             mask,
                         );
+                    }
+                    if box_plan.is_none() {
+                        *box_plan = BoxPlan::of(now, then, paint);
                     }
                     set_sizes(then, sizes(now));
                     patch_sizes(style, next);
@@ -1303,6 +1388,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 content: content_layout,
                 text: is_text.then_some((current.size, current.family)),
             });
+            memo.box_plan = None;
         }
         // Text shows its colour, size and family resolved in its scope (a
         // token's change re-runs it); other nodes do not show typography.
@@ -2725,6 +2811,83 @@ mod tests {
             assert_eq!(scene.transform(node), transform);
             assert_eq!(scene.local_transform(node), local);
             assert_eq!(scene.clip_inset(node), inset);
+        }
+    }
+
+    /// A bar growing through a box plan (`BoxPlan`) lays out as a full
+    /// application of the same styles would, step by step, through every
+    /// change of shape the plan must notice: pixels to percent, top margin
+    /// to bottom, a NaN, signed zeros and equal sizes between resizes.
+    #[test]
+    fn a_box_plan_lays_out_as_a_full_application() {
+        let steps: Vec<fn() -> Styles> = vec![
+            || Styles::new().h(10.).mt(1.),
+            || Styles::new().h(11.).mt(1.),
+            || Styles::new().h(12.).mt(1.),
+            || Styles::new().h(12.).mt(1.),
+            || Styles::new().h(13.).mt(1.),
+            || Styles::new().h_percent(50.).mt(1.),
+            || Styles::new().h_percent(60.).mt(1.),
+            || Styles::new().h(14.).mb(2.),
+            || Styles::new().h(15.).mb(2.),
+            || Styles::new().h(f32::NAN).mb(2.),
+            || Styles::new().h(f32::NAN).mb(2.),
+            || Styles::new().h(0.).mb(2.),
+            || Styles::new().h(-0.).mb(2.),
+            || Styles::new().w(5.).h(16.).mb(2.),
+            || Styles::new().w(6.).h(17.).mb(2.),
+        ];
+        let mut ui = Ui::new(200., 200.);
+        let node = ui.container(ui.root(), Layout::Column, Style::default());
+        let step = ui.signal(0_usize);
+        let read = step.clone();
+        let made = steps.clone();
+        let parent = inherited(&ui);
+        mount_style(
+            &mut ui,
+            node,
+            color(7),
+            parent,
+            Some(Box::new(move || made[read.get()]())),
+            Variants::default(),
+            None,
+            false,
+        );
+        // As styles compare (`eq_field`): signed zeros are equal, so a
+        // change of sign alone writes nothing, plan or no plan.
+        let bits = |value: f32| if value == 0. { 0 } else { value.to_bits() };
+        let box_of = |style: &Style| {
+            (
+                style.width.map(bits),
+                style.width_percent.map(bits),
+                style.height.map(bits),
+                style.height_percent.map(bits),
+                style.margin,
+            )
+        };
+        for (at, make) in steps.iter().enumerate() {
+            step.set(at);
+            // The same styles applied in full, on a node of their own.
+            let reference = ui.container(ui.root(), Layout::Column, Style::default());
+            let parent = inherited(&ui);
+            let mut full = color(7);
+            full.merge(&make());
+            mount_style(
+                &mut ui,
+                reference,
+                full,
+                parent,
+                None,
+                Variants::default(),
+                None,
+                false,
+            );
+            let scene = ui.scene.borrow();
+            assert_eq!(
+                box_of(&scene.style(node)),
+                box_of(&scene.style(reference)),
+                "step {at}"
+            );
         }
     }
 
