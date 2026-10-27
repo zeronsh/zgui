@@ -1,0 +1,16 @@
+{
+ "framework": "zgx",
+ "mode": "stream",
+ "repeat": 2,
+ "display_hz": 60,
+ "frames": 466,
+ "composed": 467,
+ "merged_frames": 3,
+ "frames_per_second": 58.25,
+ "interval_p50_ms": 16.658000000000357,
+ "interval_p95_ms": 17.086000000000013,
+ "interval_p99_ms": 17.395000000000437,
+ "interval_max_ms": 183.6890000000003,
+ "long_intervals": 3,
+ "long_interval_fraction": 0.0064516129032258064
+}

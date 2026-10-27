@@ -1,0 +1,1110 @@
+﻿diff --git a/.gitattributes b/.gitattributes
+index 69ff993b..745f0074 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -1,3 +1,5 @@
+ # One line ending everywhere: tests and include_str! compare sources byte
+ # for byte, and Windows checkouts would otherwise get CRLF (core.autocrlf).
+ * text=auto eol=lf
++# Shaders compiled ahead (crates/zgx-gpu/src/d3d11_frame.rs), byte for byte.
++*.dxbc binary
+diff --git a/crates/zgx-desktop/Cargo.toml b/crates/zgx-desktop/Cargo.toml
+index 242aba6e..058e24ca 100644
+--- a/crates/zgx-desktop/Cargo.toml
++++ b/crates/zgx-desktop/Cargo.toml
+@@ -19,6 +19,8 @@ jpeg = ["zgx-gpu/jpeg"]
+ gif = ["zgx-gpu/gif"]
+ # Windows: Vulkan where Direct3D 12 has no adapter (see zgx-gpu).
+ vulkan = ["zgx-gpu/vulkan"]
++# Windows: the experimental Direct3D 11 path, with `ZGX_D3D11=1` (see zgx-gpu).
++d3d11 = ["zgx-gpu/d3d11"]
+ # macOS private API, looked up as it is first used and done without where
+ # it is missing: `CGSMoveWindow` moves a drag preview's window (a sixth of
+ # what `setFrameOrigin:` costs). Off for App Store builds, which may not
+diff --git a/crates/zgx-desktop/examples/workload_headless.rs b/crates/zgx-desktop/examples/workload_headless.rs
+index ea9fa381..7993543b 100644
+--- a/crates/zgx-desktop/examples/workload_headless.rs
++++ b/crates/zgx-desktop/examples/workload_headless.rs
+@@ -25,7 +25,11 @@ fn control(value: View, x: f32) -> View {
+         .child(label(value, 12.0, 6.0, 38.0, 20.0))
+ }
+ 
+-fn app(stream: zgx::reactive::Signal<String>, offset: zgx::reactive::Signal<f32>) -> View {
++/// The lab's view (render_parity draws it too).
++pub(crate) fn app(
++    stream: zgx::reactive::Signal<String>,
++    offset: zgx::reactive::Signal<f32>,
++) -> View {
+     let rows = virtual_list(
+         offset,
+         ROW_HEIGHT,
+diff --git a/crates/zgx-gpu/Cargo.toml b/crates/zgx-gpu/Cargo.toml
+index 5fb6d3c5..c4f8006f 100644
+--- a/crates/zgx-gpu/Cargo.toml
++++ b/crates/zgx-gpu/Cargo.toml
+@@ -28,6 +28,10 @@ composition = ["windows/Win32_Graphics_DirectComposition"]
+ # driver has none), so it is off there: 1.1 MiB of every binary. Linux
+ # always has it.
+ vulkan = ["wgpu/vulkan"]
++# Windows, experimental: frames drawn with Direct3D 11 when `ZGX_D3D11=1`
++# (d3d11_frame.rs), wgpu's no-op backend standing in for its device, so no
++# Direct3D 12 device is opened. Off, nothing of it is built.
++d3d11 = ["wgpu/noop", "windows/Win32_Graphics_Direct3D", "windows/Win32_Graphics_Direct3D11"]
+ 
+ [dependencies]
+ smallvec = "1.16"
+@@ -84,7 +88,7 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["
+ harfrust = { package = "zgx-harfrust", version = "0.5.3", path = "../../vendor/harfrust" }
+ 
+ [target.'cfg(windows)'.dev-dependencies]
+-windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D12", "Win32_Graphics_DirectComposition", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
++windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Direct3D12", "Win32_Graphics_DirectComposition", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
+ # The debug layer's errors, collected (tests/d3d12_validation.rs).
+ wgpu-hal = { version = "29.0.4", default-features = false, features = ["validation_canary"] }
+ 
+diff --git a/crates/zgx-gpu/build.rs b/crates/zgx-gpu/build.rs
+index a516c9db..6fd2c387 100644
+--- a/crates/zgx-gpu/build.rs
++++ b/crates/zgx-gpu/build.rs
+@@ -6,6 +6,9 @@
+ //! `own_surfaces` where a window can present through surfaces of the
+ //! renderer's own, which keep what they held (`LayerPresent`): macOS
+ //! (layer_present.rs) and Windows (dxgi_present.rs).
++//!
++//! `d3d11` on Windows with the `d3d11` feature: frames drawn with Direct3D
++//! 11 under `ZGX_D3D11=1` (d3d11_frame.rs).
+ fn main() {
+     println!("cargo::rustc-check-cfg=cfg(zgx_wgpu_hal_patched)");
+     if std::env::var_os("DEP_ZGX_WGPU_HAL_PATCHED").is_some() {
+@@ -16,4 +19,9 @@ fn main() {
+     if os == "macos" || os == "windows" {
+         println!("cargo::rustc-cfg=own_surfaces");
+     }
++    // `d3d11`: Windows with the `d3d11` feature (d3d11_frame.rs).
++    println!("cargo::rustc-check-cfg=cfg(d3d11)");
++    if os == "windows" && std::env::var_os("CARGO_FEATURE_D3D11").is_some() {
++        println!("cargo::rustc-cfg=d3d11");
++    }
+ }
+diff --git a/crates/zgx-gpu/src/dxgi_present.rs b/crates/zgx-gpu/src/dxgi_present.rs
+index e5938368..6d250d66 100644
+--- a/crates/zgx-gpu/src/dxgi_present.rs
++++ b/crates/zgx-gpu/src/dxgi_present.rs
+@@ -44,7 +44,7 @@ use windows::{
+         },
+         System::Threading::WaitForSingleObjectEx,
+     },
+-    core::Interface,
++    core::{IUnknown, Interface},
+ };
+ 
+ /// Buffers in the swap chain: one shown, one drawn (as wgpu's).
+@@ -67,12 +67,31 @@ pub(crate) struct Buffer {
+     pub copy_source: std::cell::OnceCell<wgpu::BindGroup>,
+ }
+ 
++/// What a swap chain presents on: wgpu's Direct3D 12 queue, or (d3d11_frame.rs)
++/// a Direct3D 11 device.
++enum Owner {
++    /// wgpu's queue, which the swap chain presents on, and its device.
++    D3d12 {
++        queue: ID3D12CommandQueue,
++        raw: ID3D12Device,
++    },
++    /// Direct3D 11 rotates a flip-model swap chain's buffers under their
++    /// names: buffer 0 is always the one to draw, and of two, buffer 1 the
++    /// one shown. `presents` counts them, standing in for Direct3D 12's
++    /// buffer index (`current`); `views` are the two buffers', made with
++    /// `buffers`.
++    #[cfg(d3d11)]
++    D3d11 {
++        device: std::rc::Rc<crate::d3d11_frame::Device>,
++        views: std::cell::RefCell<Option<[crate::d3d11_frame::Surface; 2]>>,
++        presents: std::cell::Cell<usize>,
++    },
++}
++
+ /// The window's swap chain and the composition visual showing it.
+ pub(crate) struct Chain {
+     device: wgpu::Device,
+-    /// wgpu's queue, which the swap chain presents on, and its device.
+-    queue: ID3D12CommandQueue,
+-    raw: ID3D12Device,
++    owner: Owner,
+     hwnd: HWND,
+     swap_chain: IDXGISwapChain3,
+     /// Signalled when a frame may start without queueing more than
+@@ -99,7 +118,6 @@ impl Chain {
+         height: u32,
+         transparent: bool,
+     ) -> Result<Self, GpuError> {
+-        let fail = |what: &str, error: windows::core::Error| GpuError(format!("{what}: {error}"));
+         // SAFETY: Reads the raw queue and device only; the guard is dropped before wgpu is
+         // called again.
+         let (queue, raw) = {
+@@ -107,6 +125,53 @@ impl Chain {
+                 .ok_or_else(|| GpuError("not a Direct3D 12 device".into()))?;
+             (hal.raw_queue().clone(), hal.raw_device().clone())
+         };
++        let creator: IUnknown = queue
++            .cast()
++            .map_err(|e| GpuError(format!("IUnknown: {e}")))?;
++        Self::compose(
++            device,
++            Owner::D3d12 { queue, raw },
++            &creator,
++            hwnd,
++            width,
++            height,
++            transparent,
++        )
++    }
++    /// `new` on a Direct3D 11 device (d3d11_frame.rs); `device` is wgpu's
++    /// no-op one, which the buffers' handles are made on.
++    #[cfg(d3d11)]
++    pub fn new_d3d11(
++        device: &wgpu::Device,
++        d3d11: &std::rc::Rc<crate::d3d11_frame::Device>,
++        hwnd: HWND,
++        width: u32,
++        height: u32,
++        transparent: bool,
++    ) -> Result<Self, GpuError> {
++        let creator: IUnknown = d3d11
++            .device
++            .cast()
++            .map_err(|e| GpuError(format!("IUnknown: {e}")))?;
++        let owner = Owner::D3d11 {
++            device: d3d11.clone(),
++            views: Default::default(),
++            presents: Default::default(),
++        };
++        Self::compose(device, owner, &creator, hwnd, width, height, transparent)
++    }
++    /// The swap chain made by `creator` (a queue or device of `owner`'s),
++    /// shown through a visual of `hwnd`'s.
++    fn compose(
++        device: &wgpu::Device,
++        owner: Owner,
++        creator: &IUnknown,
++        hwnd: HWND,
++        width: u32,
++        height: u32,
++        transparent: bool,
++    ) -> Result<Self, GpuError> {
++        let fail = |what: &str, error: windows::core::Error| GpuError(format!("{what}: {error}"));
+         let desc = DXGI_SWAP_CHAIN_DESC1 {
+             Width: width,
+             Height: height,
+@@ -133,7 +198,7 @@ impl Chain {
+             let factory: IDXGIFactory2 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))
+                 .map_err(|e| fail("CreateDXGIFactory2", e))?;
+             let swap_chain: IDXGISwapChain3 = factory
+-                .CreateSwapChainForComposition(&queue, &desc, None)
++                .CreateSwapChainForComposition(creator, &desc, None)
+                 .map_err(|e| fail("CreateSwapChainForComposition", e))?
+                 .cast()
+                 .map_err(|e| fail("IDXGISwapChain3", e))?;
+@@ -156,8 +221,7 @@ impl Chain {
+             dcomp.Commit().map_err(|e| fail("Commit", e))?;
+             Ok(Self {
+                 device: device.clone(),
+-                queue: queue.clone(),
+-                raw,
++                owner,
+                 hwnd,
+                 swap_chain,
+                 waitable,
+@@ -184,6 +248,36 @@ impl Chain {
+             height,
+             depth_or_array_layers: 1,
+         };
++        // Direct3D 11: views of buffers 0 and 1 (see `Owner::D3d11`), and
++        // handles of the shell's standing for them.
++        #[cfg(d3d11)]
++        if let Owner::D3d11 {
++            device: d3d11,
++            views,
++            ..
++        } = &self.owner
++        {
++            let surface = |index: u32| {
++                // SAFETY: A buffer of the swap chain, released before it
++                // resizes or goes (`release`).
++                let texture = unsafe { self.swap_chain.GetBuffer(index) }
++                    .map_err(|e| GpuError(format!("swap chain buffer {index}: {e}")))?;
++                // Buffer 1 and on are read-only: sampled alone.
++                crate::d3d11_frame::Surface::of(&d3d11.device, texture, index == 0, true)
++            };
++            *views.borrow_mut() = Some([surface(0)?, surface(1)?]);
++            for _ in 0..BUFFERS {
++                let texture = crate::texture(device, width, height, "window buffer");
++                let view = texture.create_view(&Default::default());
++                buffers.push(Buffer {
++                    texture,
++                    view,
++                    copy_source: Default::default(),
++                });
++            }
++            self.wrapped = true;
++            return Ok(buffers);
++        }
+         for index in 0..BUFFERS {
+             // SAFETY: A buffer of the swap chain, which outlives the wrapper:
+             // its owner releases the wrappers before `resize` and the chain.
+@@ -246,6 +340,24 @@ impl Chain {
+             buffer.texture.destroy();
+         }
+         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
++        // Direct3D 11: the views go, and the context lets go of whatever
++        // it still binds of them.
++        #[cfg(d3d11)]
++        if let Owner::D3d11 { device, views, .. } = &self.owner {
++            views.borrow_mut().take();
++            // SAFETY: Unbinds everything; each frame binds what it draws with.
++            unsafe { device.context.ClearState() };
++            device.wait_idle();
++        }
++    }
++    /// Direct3D 11: the views of the buffer to draw and the one shown
++    /// (`Owner::D3d11`), once `buffers` made them.
++    #[cfg(d3d11)]
++    pub fn d3d11_views(&self) -> Option<std::cell::Ref<'_, [crate::d3d11_frame::Surface; 2]>> {
++        let Owner::D3d11 { views, .. } = &self.owner else {
++            return None;
++        };
++        std::cell::Ref::filter_map(views.borrow(), Option::as_ref).ok()
+     }
+     /// Resize the buffers, once every wrapper of them was `release`d; take
+     /// the new ones from `buffers`.
+@@ -263,10 +375,18 @@ impl Chain {
+         }
+         .map_err(|e| GpuError(format!("ResizeBuffers: {e}")))?;
+         self.whole = true;
++        #[cfg(d3d11)]
++        if let Owner::D3d11 { presents, .. } = &self.owner {
++            presents.set(0);
++        }
+         Ok(())
+     }
+     /// The buffer the next frame draws into.
+     pub fn current(&self) -> usize {
++        #[cfg(d3d11)]
++        if let Owner::D3d11 { presents, .. } = &self.owner {
++            return presents.get() % BUFFERS as usize;
++        }
+         // SAFETY: Reads the swap chain's index.
+         unsafe { self.swap_chain.GetCurrentBackBufferIndex() as usize }
+     }
+@@ -313,6 +433,10 @@ impl Chain {
+             .ok()
+             .map_err(|e| GpuError(format!("Present1: {e}")))?;
+         self.whole = false;
++        #[cfg(d3d11)]
++        if let Owner::D3d11 { presents, .. } = &self.owner {
++            presents.set(presents.get() + 1);
++        }
+         Ok(result != DXGI_STATUS_OCCLUDED)
+     }
+     /// The chain made again, opaque unless `transparent`, the size it was,
+@@ -323,6 +447,12 @@ impl Chain {
+         // SAFETY: Reads the swap chain's description.
+         let desc = unsafe { self.swap_chain.GetDesc1() }
+             .map_err(|e| GpuError(format!("GetDesc1: {e}")))?;
++        #[cfg(d3d11)]
++        if let Owner::D3d11 { device: d3d11, .. } = &self.owner {
++            let d3d11 = d3d11.clone();
++            drop(self);
++            return Self::new_d3d11(&device, &d3d11, hwnd, desc.Width, desc.Height, transparent);
++        }
+         drop(self);
+         Self::new(&device, hwnd, desc.Width, desc.Height, transparent)
+     }
+@@ -332,16 +462,18 @@ impl Chain {
+     /// that ends the process on Windows Server's Direct3D (CI's runners).
+     /// wgpu waits likewise for its own (`wait_for_present_queue_idle`).
+     fn wait_idle(&self) {
++        let (queue, raw) = match &self.owner {
++            Owner::D3d12 { queue, raw } => (queue, raw),
++            #[cfg(d3d11)]
++            Owner::D3d11 { device, .. } => return device.wait_idle(),
++        };
+         // SAFETY: A fence of our own, signalled on wgpu's queue; a null
+         // event makes SetEventOnCompletion wait until it is reached.
+         unsafe {
+-            let Ok(fence) = self
+-                .raw
+-                .CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE)
+-            else {
++            let Ok(fence) = raw.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE) else {
+                 return;
+             };
+-            if self.queue.Signal(&fence, 1).is_ok() && fence.GetCompletedValue() < 1 {
++            if queue.Signal(&fence, 1).is_ok() && fence.GetCompletedValue() < 1 {
+                 let _ = fence.SetEventOnCompletion(1, HANDLE::default());
+             }
+         }
+diff --git a/crates/zgx-gpu/src/lib.rs b/crates/zgx-gpu/src/lib.rs
+index 1840376f..fc72c88b 100644
+--- a/crates/zgx-gpu/src/lib.rs
++++ b/crates/zgx-gpu/src/lib.rs
+@@ -9,6 +9,8 @@ use zgx::scene::{Color, NodeId, NodeKind, Rect, Scene};
+ 
+ #[cfg(all(windows, feature = "composition"))]
+ mod composition;
++#[cfg(d3d11)]
++mod d3d11_frame;
+ #[cfg(windows)]
+ mod dxgi;
+ #[cfg(windows)]
+@@ -2311,6 +2313,8 @@ struct Prepared {
+     quad_layout: wgpu::PipelineLayout,
+     mapped_uploads: bool,
+     vertex_ring: bool,
++    #[cfg(d3d11)]
++    d3d11: Option<d3d11_frame::Made>,
+ }
+ /// A `GpuContext` being made on another thread (`GpuContext::prepare_in_background`).
+ pub struct PendingGpuContext(Option<std::thread::JoinHandle<Result<Prepared, GpuError>>>);
+@@ -2357,6 +2361,10 @@ struct GpuContextInner {
+     vertex_ring: bool,
+     /// For dual-output (single-pass presentation) pipelines.
+     quad_layout: wgpu::PipelineLayout,
++    /// With `ZGX_D3D11`, the Direct3D 11 device frames are drawn with; wgpu
++    /// then runs on its no-op backend (d3d11_frame.rs).
++    #[cfg(d3d11)]
++    d3d11: Option<Rc<d3d11_frame::Device>>,
+ }
+ impl GpuContext {
+     /// A context on the system's GPU, found without a window.
+@@ -2391,7 +2399,21 @@ impl GpuContext {
+         // Direct3D 12 has no adapter. On Linux, GL stands in where no Vulkan
+         // driver is (VMs and older GPUs without one): made only then, so a
+         // Vulkan system loads no EGL.
+-        let attempts: &[wgpu::Backends] = if cfg!(all(windows, feature = "vulkan")) {
++        // `ZGX_D3D11`: frames are drawn with Direct3D 11, and wgpu runs on
++        // its no-op backend, opening no driver (d3d11_frame.rs).
++        #[cfg(d3d11)]
++        let d3d11 = d3d11_frame::ENABLED
++            .then(d3d11_frame::Device::new)
++            .transpose()?;
++        #[cfg(d3d11)]
++        let window = window.filter(|_| d3d11.is_none());
++        #[cfg(d3d11)]
++        let noop = d3d11.is_some();
++        #[cfg(not(d3d11))]
++        let noop = false;
++        let attempts: &[wgpu::Backends] = if noop {
++            &[wgpu::Backends::NOOP]
++        } else if cfg!(all(windows, feature = "vulkan")) {
+             &[wgpu::Backends::DX12, wgpu::Backends::VULKAN]
+         } else if cfg!(windows) {
+             &[wgpu::Backends::DX12]
+@@ -2410,6 +2432,10 @@ impl GpuContext {
+             // glass windows), where a window's own swap chain is opaque.
+             descriptor.backend_options.dx12.presentation_system =
+                 wgpu::Dx12SwapchainKind::DxgiFromVisual;
++            #[cfg(d3d11)]
++            {
++                descriptor.backend_options.noop.enable = noop;
++            }
+             descriptor.flags = instance_flags(descriptor.flags, !cfg!(debug_assertions));
+             // EGL draws to the window's display, which it must be given.
+             if backends == wgpu::Backends::GL
+@@ -2472,14 +2498,18 @@ impl GpuContext {
+         let mappable = adapter
+             .features()
+             .contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
+-        let mapped_uploads = info.device_type == wgpu::DeviceType::IntegratedGpu && mappable;
++        // (On the no-op backend, Direct3D 11 takes vertices and texels:
++        // neither is written through wgpu.)
++        let mapped_uploads =
++            !noop && info.device_type == wgpu::DeviceType::IntegratedGpu && mappable;
+         // Direct3D 12 also takes vertices written in place, in upload-heap
+         // buffers the GPU reads directly (as Direct3D 11's dynamic buffers
+         // are): a frame then needs no staging copy, and no command list for
+         // it, each of which costs NVIDIA's driver some 30 K cycles. Measured
+         // on an RTX 4090: 0.7 to 3.3% fewer cycles a frame, the GPU's time
+         // the same. Textures and uniforms keep their copies.
+-        let vertex_ring = mappable && (mapped_uploads || info.backend == wgpu::Backend::Dx12);
++        let vertex_ring =
++            !noop && mappable && (mapped_uploads || info.backend == wgpu::Backend::Dx12);
+         zgx::profile::mark("GPU adapter");
+         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+             label: Some("zgx shared device"),
+@@ -2570,6 +2600,8 @@ impl GpuContext {
+             quad_layout,
+             mapped_uploads,
+             vertex_ring,
++            #[cfg(d3d11)]
++            d3d11: d3d11.map(d3d11_frame::Made),
+         })
+     }
+     /// The context of what `prepare` made, on the thread that uses it.
+@@ -2587,6 +2619,8 @@ impl GpuContext {
+             quad_layout,
+             mapped_uploads,
+             vertex_ring,
++            #[cfg(d3d11)]
++            d3d11,
+         } = prepared;
+         let quads = QuadPipelines {
+             device: device.clone(),
+@@ -2616,6 +2650,8 @@ impl GpuContext {
+                 quad_layout,
+                 mapped_uploads,
+                 vertex_ring,
++                #[cfg(d3d11)]
++                d3d11: d3d11.map(|made| Rc::new(made.0)),
+             }),
+         }
+     }
+@@ -2885,8 +2921,12 @@ pub struct GpuRenderer {
+     #[cfg(target_os = "macos")]
+     gpu_time: std::cell::Cell<Option<std::time::Duration>>,
+     /// The viewport uniform `select_viewport` chose last, for direct frames.
+-    #[cfg(target_os = "macos")]
++    #[cfg(any(target_os = "macos", d3d11))]
+     viewport_values: [f32; 4],
++    /// Frames drawn with Direct3D 11 (`ZGX_D3D11`, d3d11_frame.rs): this
++    /// renderer's buffers, atlas and offscreen target there.
++    #[cfg(d3d11)]
++    d3d11: Option<d3d11_frame::State>,
+     /// Shifted texel copies drawn in a render pass (copy_offset.wgsl).
+     #[cfg(own_surfaces)]
+     copy_offset: Option<wgpu::RenderPipeline>,
+@@ -3074,6 +3114,10 @@ impl GpuRenderer {
+         let queue = context.inner.queue.clone();
+         let adapter = &context.inner.adapter;
+         let info = context.inner.info.clone();
++        // Direct3D 11 presents through a swap chain of its own alone (made
++        // below): the no-op backend's surface is let go.
++        #[cfg(d3d11)]
++        let surface = surface.filter(|_| context.inner.d3d11.is_none());
+         if surface
+             .as_ref()
+             .is_some_and(|surface| !adapter.is_surface_supported(surface))
+@@ -3088,23 +3132,51 @@ impl GpuRenderer {
+         // retained frame (dxgi_present.rs); wgpu's surface then stays
+         // unconfigured. Without one, wgpu's.
+         #[cfg(windows)]
++        let hwnd = |window: &Arc<winit::window::Window>| {
++            use wgpu::rwh::HasWindowHandle;
++            let wgpu::rwh::RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw()
++            else {
++                return None;
++            };
++            Some(windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _))
++        };
++        #[cfg(windows)]
+         let own_chain = window
+             .as_ref()
+             .filter(|_| own && *DXGI_PRESENT && info.backend == wgpu::Backend::Dx12)
+             .and_then(|window| {
+-                use wgpu::rwh::HasWindowHandle;
+-                let wgpu::rwh::RawWindowHandle::Win32(handle) =
+-                    window.window_handle().ok()?.as_raw()
+-                else {
+-                    return None;
+-                };
+-                let hwnd = windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _);
++                let hwnd = hwnd(window)?;
+                 dxgi_present::Chain::new(&device, hwnd, width, height, transparent)
+                     .inspect_err(|e| {
+                         eprintln!("zgx: no swap chain of its own ({e}): presenting through wgpu's")
+                     })
+                     .ok()
+             });
++        // Direct3D 11 has no other way to present: a window without one fails.
++        #[cfg(d3d11)]
++        let own_chain = match (&context.inner.d3d11, &window) {
++            (Some(d3d11), Some(window)) => {
++                let hwnd = hwnd(window).filter(|_| own).ok_or_else(|| {
++                    GpuError("Direct3D 11 presents to its own windows alone".into())
++                })?;
++                Some(dxgi_present::Chain::new_d3d11(
++                    &device,
++                    d3d11,
++                    hwnd,
++                    width,
++                    height,
++                    transparent,
++                )?)
++            }
++            _ => own_chain,
++        };
++        #[cfg(d3d11)]
++        let d3d11 = context
++            .inner
++            .d3d11
++            .clone()
++            .map(d3d11_frame::State::new)
++            .transpose()?;
+         #[cfg(windows)]
+         let own_surfaces = own_chain.is_some();
+         #[cfg(not(windows))]
+@@ -3175,6 +3247,28 @@ impl GpuRenderer {
+             }
+             c
+         });
++        // Direct3D 11's swap chain is configured as wgpu's would be on
++        // Direct3D 12 (what is read of it: its alpha, `match_background`).
++        #[cfg(d3d11)]
++        let config = match (&d3d11, own_surfaces) {
++            (Some(_), true) => {
++                translucent_alpha = wgpu::CompositeAlphaMode::PreMultiplied;
++                Some(wgpu::SurfaceConfiguration {
++                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
++                    format: FORMAT,
++                    width,
++                    height,
++                    present_mode: wgpu::PresentMode::Mailbox,
++                    desired_maximum_frame_latency: 2,
++                    alpha_mode: match transparent {
++                        true => translucent_alpha,
++                        false => wgpu::CompositeAlphaMode::Opaque,
++                    },
++                    view_formats: Vec::new(),
++                })
++            }
++            _ => config,
++        };
+         #[cfg(not(windows))]
+         let _ = translucent_alpha;
+         let copy_present = !own_surfaces
+@@ -3320,8 +3414,10 @@ impl GpuRenderer {
+             idle: false,
+             #[cfg(target_os = "macos")]
+             gpu_time: std::cell::Cell::new(None),
+-            #[cfg(target_os = "macos")]
++            #[cfg(any(target_os = "macos", d3d11))]
+             viewport_values: [0.; 4],
++            #[cfg(d3d11)]
++            d3d11,
+             #[cfg(own_surfaces)]
+             copy_offset: None,
+             in_layer: false,
+@@ -3415,6 +3511,13 @@ impl GpuRenderer {
+     }
+     /// What its caches hold now.
+     pub fn debug_cache_stats(&self) -> DebugCacheStats {
++        let vertex_buffers = self.mapped.as_ref().map_or(1, |ring| ring.borrow().len());
++        // Direct3D 11's ring holds them there (d3d11_frame.rs).
++        #[cfg(d3d11)]
++        let vertex_buffers = self
++            .d3d11
++            .as_ref()
++            .map_or(vertex_buffers, |state| state.ring.len());
+         DebugCacheStats {
+             shaped_nodes: self.shapes.len(),
+             shaped_bytes: self.shapes.values().map(Shaped::bytes).sum(),
+@@ -3428,7 +3531,7 @@ impl GpuRenderer {
+             canvas_raster_bytes: self.canvases.bytes(),
+             svg_raster_bytes: self.svgs.bytes(),
+             vertex_buffer_bytes: self.vertex_capacity,
+-            vertex_buffers: self.mapped.as_ref().map_or(1, |ring| ring.borrow().len()),
++            vertex_buffers,
+             layer_textures: self.layers.len(),
+             layer_bytes: self.layers.values().map(|l| l.bytes).sum(),
+         }
+@@ -4339,7 +4442,7 @@ impl GpuRenderer {
+             self.viewports.insert(key, (buffer, bind));
+         }
+         self.viewport_bind = self.viewports.get(&key).map(|(_, bind)| bind.clone());
+-        #[cfg(target_os = "macos")]
++        #[cfg(any(target_os = "macos", d3d11))]
+         {
+             self.viewport_values = [width, height, self.scale, 0.];
+         }
+@@ -6849,6 +6952,28 @@ impl GpuRenderer {
+         // Every stroke appends at least two points before making its quad.
+         let polylines =
+             !points.is_empty() && draws.iter().any(|draw| draw.shading == Shading::Polyline);
++        // `ZGX_D3D11`: every frame is drawn with Direct3D 11 (d3d11_frame.rs),
++        // from the same data `render_direct` takes.
++        #[cfg(d3d11)]
++        if self.d3d11.is_some() {
++            if let Some(lacks) = self.d3d11_lacks(&draws, &batches, polylines, &effect_jobs) {
++                let message = format!(
++                    "ZGX_D3D11 draws no {lacks}: the Direct3D 11 proof draws the Windows \
++                     suite's scenes alone"
++                );
++                eprintln!("zgx: {message}");
++                if cfg!(debug_assertions) {
++                    panic!("{message}");
++                }
++                return Err(GpuError(message));
++            }
++            let catch_up = catch_up.map(|(_, instances)| instances);
++            let stats = self.render_d3d11(
++                quads, draws, &regions, &copies, catch_up, shown, &clips, stats,
++            )?;
++            self.frame_points = points;
++            return Ok(stats);
++        }
+         // Frames of quads (images the CPU wrote, layer composites, nothing
+         // else recorded, any filters mixed by dual-source blending) skip
+         // wgpu: see `metal_frame`. Layers repainted this frame were submitted
+@@ -7458,6 +7583,160 @@ impl GpuRenderer {
+         self.frame_draws = draws;
+         stats
+     }
++    /// What a frame needs that the Direct3D 11 proof does not draw, if
++    /// anything: it draws what the Windows suite's scenes do alone.
++    #[cfg(d3d11)]
++    fn d3d11_lacks(
++        &self,
++        draws: &[Draw],
++        batches: &[(usize, Vec<usize>)],
++        polylines: bool,
++        effect_jobs: &[effects::Job],
++    ) -> Option<&'static str> {
++        if self.in_layer {
++            return Some("isolated or transformed layer");
++        }
++        if !batches.is_empty() {
++            return Some("backdrop filter");
++        }
++        if polylines {
++            return Some("polyline");
++        }
++        if !effect_jobs.is_empty() {
++            return Some("layer effect");
++        }
++        draws
++            .iter()
++            .find_map(|draw| match (draw.source, draw.shading) {
++                (TextureSource::Image(_), _) => Some("image"),
++                (TextureSource::Layer(_), _) => Some("layer"),
++                (_, Shading::Full | Shading::Basic | Shading::Opaque) => None,
++                _ => Some("shader fill, layer shader, blend mode or image effect"),
++            })
++    }
++    /// Record this frame with Direct3D 11 (`d3d11_frame`): the pass the
++    /// wgpu path records for a frame of plain draws, as `render_direct`
++    /// records it with Metal.
++    #[cfg(d3d11)]
++    #[allow(clippy::too_many_arguments)]
++    fn render_d3d11(
++        &mut self,
++        mut quads: Vec<Quad>,
++        mut draws: Vec<Draw>,
++        regions: &[(Rect, Scissor)],
++        copies: &[ScrollCopy],
++        catch_up: Option<std::ops::Range<u32>>,
++        shown: Option<usize>,
++        clips: &[Region],
++        mut stats: GpuStats,
++    ) -> Result<GpuStats, GpuError> {
++        let _span = zgx::profile::span(zgx::profile::Phase::Encode);
++        let (width, height) = (self.width, self.height);
++        let state = self.d3d11.as_mut().expect("checked by the caller");
++        let device = state.device.clone();
++        let parts = [bytemuck::cast_slice(&quads)];
++        let (vertices, allocated) = match &self.kept_upload {
++            Some((kept, bytes)) => {
++                state
++                    .ring
++                    .write_kept(&device, &parts, kept, *bytes, size_of::<Quad>())?
++            }
++            None => state.ring.write_parts(&device, &parts)?,
++        };
++        stats.vertex_buffer_allocations += usize::from(allocated);
++        self.vertex_capacity = state.ring.bytes();
++        state.set_frame(self.viewport_values, bytemuck::cast_slice(clips))?;
++        // Offscreen, the retained target is the renderer's own (and its
++        // spare, for scroll copies), made at its size.
++        let presenting = self.layer_present.is_some();
++        if !presenting
++            && state
++                .target
++                .as_ref()
++                .is_none_or(|t| (t.width, t.height) != (width, height))
++        {
++            state.target = Some(device.surface(width, height, true)?);
++        }
++        if shown.is_none()
++            && !copies.is_empty()
++            && state
++                .spare
++                .as_ref()
++                .is_none_or(|t| (t.width, t.height) != (width, height))
++        {
++            state.spare = Some(device.surface(width, height, true)?);
++        }
++        if state.atlas.is_none() {
++            state.atlas = Some(device.surface(1, 1, false)?);
++        }
++        self.whole_frames = 0;
++        let first = occluded_from(&quads, &draws, regions, self.scale);
++        let state = self.d3d11.as_ref().expect("checked by the caller");
++        let views = self
++            .layer_present
++            .as_ref()
++            .and_then(|present| present.chain.as_ref())
++            .and_then(|chain| chain.d3d11_views());
++        // The swap chain's buffer to draw (buffer 0; 1 is the one shown), or
++        // the renderer's own.
++        let target = match &views {
++            Some(views) => &views[0],
++            None => state.target.as_ref().expect("made above"),
++        };
++        // Scrolled without a shown surface to draw them from, the copies are
++        // made in place, as wgpu's path makes them.
++        if shown.is_none() && !copies.is_empty() {
++            device.scroll(target, state.spare.as_ref().expect("made above"), copies);
++            stats.scroll_copies += copies.len();
++        }
++        let mut frame = device.begin(state, target, &vertices);
++        if let (Some(instances), Some(views)) = (catch_up, &views) {
++            frame.texture(views[1].srv.as_ref().expect("sampled"));
++            frame.copies(instances);
++            stats.draw_calls += 1;
++        }
++        let atlas = state.atlas.as_ref().and_then(|atlas| atlas.srv.as_ref());
++        frame.texture(atlas.expect("made above"));
++        let clear = if self.split_shading {
++            Shading::Basic
++        } else {
++            Shading::Full
++        };
++        for (index, (region, region_scissor)) in regions.iter().enumerate() {
++            frame.scissor(*region_scissor);
++            if first[index] == 0 {
++                frame.quads(clear, true, 0..1);
++                stats.draw_calls += 1;
++            }
++            self.batches(*region, &draws, first[index], |batch| {
++                let Some(rect) = scissor(batch.rect, self.scale, self.width, self.height) else {
++                    return;
++                };
++                frame.scissor(rect);
++                frame.quads(batch.shading, false, batch.start..batch.end);
++                stats.draw_calls += 1;
++                stats.instances += (batch.end - batch.start) as usize;
++            });
++        }
++        {
++            let _span = zgx::profile::span(zgx::profile::Phase::Submit);
++            frame.end();
++        }
++        drop(views);
++        let state = self.d3d11.as_mut().expect("checked by the caller");
++        state.ring.submitted(&device.context);
++        stats.render_passes += 1;
++        self.fresh = false;
++        keep_room(&mut quads, &mut self.frame_peaks.0);
++        keep_room(&mut draws, &mut self.frame_peaks.1);
++        self.frame_quads = quads;
++        // (A kept frame's, lent: given back as they are.)
++        if self.kept_upload.is_none() {
++            draws.clear();
++        }
++        self.frame_draws = draws;
++        Ok(stats)
++    }
+     /// Wait for a directly encoded frame (`render_direct`) to complete.
+     #[cfg(target_os = "macos")]
+     fn finish_direct(&self) -> bool {
+@@ -8586,6 +8865,31 @@ impl GpuRenderer {
+             upload::write_texels(target, (x, y, width, height), rgba);
+             return;
+         }
++        // Direct3D 11: into its atlas, made at the shell's atlas's size.
++        // Images are not drawn there (`d3d11_lacks`).
++        #[cfg(d3d11)]
++        if let Some(state) = &mut self.d3d11 {
++            if *target != self.atlas {
++                return;
++            }
++            let size = (target.width(), target.height());
++            if state
++                .atlas
++                .as_ref()
++                .is_none_or(|a| (a.width, a.height) != size)
++            {
++                match state.device.surface(size.0, size.1, false) {
++                    Ok(atlas) => state.atlas = Some(atlas),
++                    Err(error) => return eprintln!("zgx: no Direct3D 11 glyph atlas: {error}"),
++                }
++            }
++            for pixel in rgba.as_chunks_mut::<4>().0 {
++                pixel.swap(0, 2);
++            }
++            let atlas = state.atlas.as_ref().expect("made above");
++            state.device.write(atlas, (x, y, width, height), rgba);
++            return;
++        }
+         if self.unified {
+             self.texture_uploads
+                 .push(target, (x, y, width, height), rgba);
+@@ -9259,28 +9563,35 @@ impl GpuRenderer {
+             // Nothing drawn since: the shown frame stands.
+             return Ok(PresentationStatus::Presented);
+         };
+-        let mut encoder = self
+-            .pending
+-            .get_mut()
+-            .take()
+-            .unwrap_or_else(|| self.device.create_command_encoder(&Default::default()));
+-        {
+-            let present = self.layer_present.as_ref().expect("presenting");
+-            // Presented, a buffer is in the common state the compositor reads.
+-            encoder.transition_resources(
+-                std::iter::empty(),
+-                std::iter::once(wgpu::TextureTransition {
+-                    texture: &present.buffers[index].0.texture,
+-                    selector: None,
+-                    state: wgpu::TextureUses::PRESENT,
+-                }),
+-            );
+-        }
+-        self.queue.submit([encoder.finish()]);
+-        self.belt.get_mut().recall();
+-        self.submitted();
+-        if let Some(mapped) = self.mapped.as_mut() {
+-            mapped.get_mut().submitted();
++        // Direct3D 11 submitted the frame as it recorded it (d3d11_frame.rs).
++        #[cfg(d3d11)]
++        let recorded = self.d3d11.is_some();
++        #[cfg(not(d3d11))]
++        let recorded = false;
++        if !recorded {
++            let mut encoder = self
++                .pending
++                .get_mut()
++                .take()
++                .unwrap_or_else(|| self.device.create_command_encoder(&Default::default()));
++            {
++                let present = self.layer_present.as_ref().expect("presenting");
++                // Presented, a buffer is in the common state the compositor reads.
++                encoder.transition_resources(
++                    std::iter::empty(),
++                    std::iter::once(wgpu::TextureTransition {
++                        texture: &present.buffers[index].0.texture,
++                        selector: None,
++                        state: wgpu::TextureUses::PRESENT,
++                    }),
++                );
++            }
++            self.queue.submit([encoder.finish()]);
++            self.belt.get_mut().recall();
++            self.submitted();
++            if let Some(mapped) = self.mapped.as_mut() {
++                mapped.get_mut().submitted();
++            }
+         }
+         before_present();
+         let present = self.layer_present.as_mut().expect("presenting");
+@@ -9518,6 +9829,11 @@ impl GpuRenderer {
+         if let Some(mapped) = &mut self.mapped {
+             mapped.get_mut().trim();
+         }
++        #[cfg(d3d11)]
++        if let Some(state) = &mut self.d3d11 {
++            state.ring.trim();
++            state.spare = None;
++        }
+         // Word shapes kept for the next frame, and the table they peaked in
+         // (streaming fills it): the next frame shapes what it needs again.
+         self.fonts.borrow_mut().shape_run_cache = Default::default();
+@@ -9691,6 +10007,14 @@ impl GpuRenderer {
+     /// bytes in RGBA order. Single-pass renderers draw the pending frame
+     /// through a non-sRGB view; others use the present blit, as on screen.
+     pub fn debug_present_offscreen(&mut self) -> Result<Vec<u8>, GpuError> {
++        // Direct3D 11 presents through its own swap chain alone: the no-op
++        // shell would read back nothing.
++        #[cfg(d3d11)]
++        if self.d3d11.is_some() {
++            return Err(GpuError(
++                "ZGX_D3D11 presents through no wgpu surface, offscreen either".into(),
++            ));
++        }
+         let srgb = wgpu::TextureFormat::Bgra8UnormSrgb;
+         let drawable = self.device.create_texture(&wgpu::TextureDescriptor {
+             label: Some("offscreen drawable"),
+@@ -9753,6 +10077,21 @@ impl GpuRenderer {
+         if let Some(reason) = self.context.lost() {
+             return Err(GpuError::device_lost(&reason));
+         }
++        // Direct3D 11: its target, the swap chain's buffer drawn last
++        // (buffer 0 until presented, then 1), or the renderer's own.
++        #[cfg(d3d11)]
++        if let Some(state) = &self.d3d11 {
++            let present = self.layer_present.as_ref();
++            let views = (present.and_then(|present| present.chain.as_ref()))
++                .and_then(|chain| chain.d3d11_views());
++            let drawing = present.is_some_and(|present| present.current.is_some());
++            return match (&views, &state.target) {
++                (Some(views), _) => state.device.read(&views[usize::from(!drawing)]),
++                (None, Some(target)) => state.device.read(target),
++                // Nothing drawn: what wgpu's target holds, cleared.
++                (None, None) => Ok(vec![0; (self.width * self.height * 4) as usize]),
++            };
++        }
+         self.flush_pending();
+         self.read_texture(&self.target)
+     }
+diff --git a/crates/zgx-gpu/src/upload.rs b/crates/zgx-gpu/src/upload.rs
+index 7d515d33..810e90e0 100644
+--- a/crates/zgx-gpu/src/upload.rs
++++ b/crates/zgx-gpu/src/upload.rs
+@@ -154,9 +154,16 @@ impl KeptQuads {
+             _ => self.writing.push((start, end)),
+         }
+     }
++    /// What a buffer written with its quads now holds of them, while its
++    /// writes are remembered: which kept frame, as of which patch
++    /// (d3d11_frame.rs's ring keeps it as `MappedRing` does).
++    #[cfg(d3d11)]
++    pub(crate) fn held(&self) -> Option<(u64, u64)> {
++        (self.generation != 0 && self.tracking).then_some((self.generation, self.version))
++    }
+     /// The runs of quads written after `version`, if it is one it knows
+     /// (no older than the patch before the first it remembers).
+-    fn since(&self, version: u64) -> Option<impl Iterator<Item = (u32, u32)> + '_> {
++    pub(crate) fn since(&self, version: u64) -> Option<impl Iterator<Item = (u32, u32)> + '_> {
+         // (The open patch's writes are remembered too.)
+         let first = self
+             .changes
+diff --git a/scripts/build_site.py b/scripts/build_site.py
+index d4ffdb9a..a8a176bd 100644
+--- a/scripts/build_site.py
++++ b/scripts/build_site.py
+@@ -25,7 +25,10 @@ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ REPO = 'https://github.com/zeronsh/zgx'
+-NAMES = {'zgx': 'zgx', 'zgx-luau': 'zgx (Luau)', 'gpui-fast': 'GPUI Fast', 'mygo': 'MyGo', 'rune': 'Rune'}
++# zgx's variants (named zgx-*) are never counted among the rivals.
++NAMES = {'zgx': 'zgx', 'zgx-luau': 'zgx (Luau)', 'zgx-d3d11': 'zgx (Direct3D 11)',
++         'zgx-d3d11-threaded': 'zgx (Direct3D 11, driver threads on)', 'gpui-fast': 'GPUI Fast', 'mygo': 'MyGo',
++         'rune': 'Rune'}
+ ORDER = ['heavy', 'lab', 'animate', 'vlist']
+ SCENES = {
+     'heavy': ('Heavy dashboard', 'A 1280×800 dashboard: 6 tiles, 30 cards of 26 sparkline bars, a status table '
+diff --git a/scripts/run_windows_suite.py b/scripts/run_windows_suite.py
+index bc000a9d..43a0c661 100644
+--- a/scripts/run_windows_suite.py
++++ b/scripts/run_windows_suite.py
+@@ -77,6 +77,12 @@ SPREAD, EXTRA = 0.10, 1
+ PROBE_TOLERANCE = 2.0
+ STARTUP_LAUNCHES = 10
+ FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune']
++# zgx's binaries run another way, by `--frameworks` alone: the framework
++# whose binaries they are, and what their environment adds. Direct3D 11
++# (zgx-gpu's `d3d11` feature, built into the binaries), with the driver's
++# threading off and on (crates/zgx-gpu/src/d3d11_frame.rs).
++VARIANTS = {'zgx-d3d11': ('zgx', {'ZGX_D3D11': '1'}),
++            'zgx-d3d11-threaded': ('zgx', {'ZGX_D3D11': '1', 'ZGX_D3D11_THREADED': '1'})}
+ # Scene: modes, and each framework's binary.
+ SCENES = {
+     'heavy': (['idle', 'stream', 'scroll', 'both'],
+@@ -168,22 +174,23 @@ def counted(framework, kind):
+     LAUNCHES[framework][kind] += 1
+ 
+ 
+-def environment_for(binary, mode, seconds):
++def environment_for(binary, mode, seconds, framework=None):
+     env = dict(os.environ, ZGX_MODE=mode, ZGX_SECONDS=str(seconds), ZGX_INITIAL_TICKS='0',
+                ZGUI_MODE=mode, ZGUI_SECONDS=str(seconds), ZGUI_INITIAL_TICKS='0',  # rename-to-zgx: keep
+                ZGX_ACCESSIBILITY_LOG='1')
+     if FONT.exists():
+         env['ZGX_FONT_FILE'] = env['ZGUI_FONT_FILE'] = str(FONT)
++    env.update(VARIANTS.get(framework, (None, {}))[1])
+     return env
+ 
+ 
+-def launch(binary, mode, seconds, log):
++def launch(binary, mode, seconds, log, framework=None):
+     """The app, started with its window in front and uncovered (or a
+     ReadinessFailure within the lifetime margin's budget)."""
+     started = time.perf_counter()
+     with log.open('w') as handle:
+         process = subprocess.Popen([str(binary)], stdout=handle, stderr=subprocess.STDOUT,
+-                                   env=environment_for(binary, mode, seconds), cwd=tempfile.gettempdir())
++                                   env=environment_for(binary, mode, seconds, framework), cwd=tempfile.gettempdir())
+     process.started = started
+     if mode == 'probe':
+         return process
+@@ -300,7 +307,7 @@ def one_trial(scene, binary, framework, mode, repeat, out):
+     log = out / f'{framework}.{mode}.{repeat}.log'
+     idle = mode == 'idle'
+     requested = (IDLE_SETTLE + SAMPLED + 1 if idle else REQUESTED) + LIFETIME_MARGIN
+-    process = launch(binary, mode, requested, log)
++    process = launch(binary, mode, requested, log, framework)
+     try:
+         dwm = pdh.pid_of('dwm.exe')
+         with pdh.Counters([pdh.dwm_cpu(), pdh.gpu_time(dwm), pdh.gpu_time(process.pid),
+@@ -390,7 +397,7 @@ def pacing(scene, binary, framework, mode, repeat, out, pacer):
+     for attempt in range(2):
+         counted(framework, 'pacing')
+         try:
+-            process = launch(binary, mode, seconds, log)
++            process = launch(binary, mode, seconds, log, framework)
+         except ReadinessFailure as error:
+             READINESS_FAILURES.append(dict(scene=scene, framework=framework, mode=mode, kind='pacing',
+                                            attempt=attempt + 1, exhausted=bool(attempt), error=str(error)))
+@@ -420,7 +427,7 @@ def probe(scene, binaries, out):
+     found = {}
+     for framework, binary in binaries.items():
+         log = out / f'{framework}.probe.log'
+-        process = launch(binary, 'probe', 30, log)
++        process = launch(binary, 'probe', 30, log, framework)
+         finish(process, 30, log)
+         text = log.read_text(errors='replace')
+         heights = re.search(r'row_heights=(\S+)', text)
+@@ -737,7 +744,8 @@ def measure_scene(scene, binaries, out, pacer, commit, preflight, tools):
+              'source_diff_sha256': source_diff_sha256(),
+              'started_utc': started.isoformat(), 'finished_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'environment': environment(), 'preflight': preflight,
+-             'binaries': {f: {'sha256': hashlib.sha256(p.read_bytes()).hexdigest(), 'bytes': p.stat().st_size}
++             'binaries': {f: {'sha256': hashlib.sha256(p.read_bytes()).hexdigest(), 'bytes': p.stat().st_size,
++                              **({'environment': VARIANTS[f][1]} if f in VARIANTS else {})}
+                           for f, p in binaries.items()},
+              'toolchains': {k: v for k, v in tools.items() if k in ('rust', 'rust_profile', 'go') or k in frameworks},
+              'invalid_trials': invalid,
+@@ -776,7 +784,18 @@ def measure_startup(binaries, out, commit):
+     for index in range(STARTUP_LAUNCHES):
+         shift = index % len(names)
+         for framework in names[shift:] + names[:shift]:
+-            window, content, cpu, mcycles = startup.launch(str(binaries[framework]), 0)
++            # A variant's environment for its launch alone.
++            added = VARIANTS.get(framework, (None, {}))[1]
++            saved = {name: os.environ.get(name) for name in added}
++            os.environ.update(added)
++            try:
++                window, content, cpu, mcycles = startup.launch(str(binaries[framework]), 0)
++            finally:
++                for name, value in saved.items():
++                    if value is None:
++                        os.environ.pop(name, None)
++                    else:
++                        os.environ[name] = value
+             found[framework].append({'window_ms': round(window, 1), 'content_ms': round(content, 1),
+                                      'cycles': round(mcycles * 1e6), 'cpu_ms': round(cpu, 1)})
+             time.sleep(0.5)
+@@ -788,7 +807,9 @@ def measure_startup(binaries, out, commit):
+         'machine': f"{machine['chip']}, {machine['gpu']}",
+         'probe': 'scripts/windows_startup_probe.py: spawn, window, the header strip until its text has drawn '
+                  '(PrintWindow); CPU time and cycles of the process at content',
+-        'apps': {f: f'{p.name} (lab), ZGX_MODE=idle' for f, p in binaries.items()},
++        'apps': {f: f'{p.name} (lab), ZGX_MODE=idle'
++                    + ''.join(f', {k}={v}' for k, v in VARIANTS.get(f, (None, {}))[1].items())
++                 for f, p in binaries.items()},
+         'protocol': f"{STARTUP_LAUNCHES} rounds, the frameworks rotating; the suite's font",
+         'launches': found,
+         'medians': medians,
+@@ -822,7 +843,11 @@ def main():
+     SOURCE, GO = args.source.resolve(), str(args.go)
+     dirs = {'zgx': args.zgx, 'zgx-luau': args.zgx, 'gpui-fast': args.gpui_fast, 'mygo': args.mygo, 'rune': args.rune}
+     wanted = args.frameworks.split(',')
+-    binaries = {scene: {f: dirs[f] / f'{name}.exe' for f, name in SCENES[scene][1].items() if f in wanted}
++    # Each framework's binary by scene, a variant's its framework's.
++    names = {scene: {**programs, **{v: programs[base] for v, (base, _) in VARIANTS.items() if base in programs}}
++             for scene, (_, programs) in SCENES.items()}
++    binaries = {scene: {f: dirs[VARIANTS.get(f, (f,))[0]] / f'{name}.exe' for f, name in names[scene].items()
++                        if f in wanted}
+                 for scene in SCENES}
+     scenes = args.scenes.split(',')
+     missing = [str(p) for s in scenes if s in SCENES for p in binaries[s].values() if not p.exists()]

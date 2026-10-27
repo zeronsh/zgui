@@ -1,0 +1,16 @@
+{
+ "framework": "zgx-d3d11",
+ "mode": "animate",
+ "repeat": 1,
+ "display_hz": 60,
+ "frames": 455,
+ "composed": 456,
+ "merged_frames": 12,
+ "frames_per_second": 56.875,
+ "interval_p50_ms": 16.662999999999997,
+ "interval_p95_ms": 17.123999999999995,
+ "interval_p99_ms": 49.94300000000021,
+ "interval_max_ms": 166.84299999999985,
+ "long_intervals": 12,
+ "long_interval_fraction": 0.02643171806167401
+}

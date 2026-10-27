@@ -1,0 +1,226 @@
+﻿preflight: waiting (builds [], rest of the machine 228% of a core: zeron 31.6%, claude 1.6%, taskhostw 0.6%, tailscale-ipn 0.3%, zeron 0.0%, zeron 0.0%)
+preflight: waiting (builds [], rest of the machine 427% of a core: zeron 70.6%, claude 10.6%, claude 3.8%, taskhostw 0.9%, zeron 0.3%, powershell 0.3%)
+preflight: waiting (builds [], rest of the machine 284% of a core: zeron 49.1%, claude 4.1%, explorer 0.3%, claude 0.3%, zeron 0.0%, zeron 0.0%)
+== heavy
+desktop  baseline 0: dwm cpu    0.2 Mcyc/s gpu  0.00 ms/s board   8.0 W
+zgx       idle    0: cpu     1.7 Mcyc/s   0.00 Mcyc/frame gpu   0.00 ms/s dwm cpu    0.0 Mcyc/s gpu  0.00 ms/s board   7.8 W private  146.1 MiB ticks 0
+zgx-d3d11 idle    0: cpu     1.1 Mcyc/s   0.00 Mcyc/frame gpu   0.00 ms/s dwm cpu    0.0 Mcyc/s gpu  0.00 ms/s board   7.2 W private   66.4 MiB ticks 0
+zgx-d3d11-threaded idle    0: cpu     1.3 Mcyc/s   0.00 Mcyc/frame gpu   0.00 ms/s dwm cpu    0.6 Mcyc/s gpu  0.00 ms/s board   7.1 W private   70.5 MiB ticks 0
+zgx       stream  0: cpu   279.1 Mcyc/s   4.82 Mcyc/frame gpu  11.01 ms/s dwm cpu  119.0 Mcyc/s gpu  2.45 ms/s board  14.5 W private  152.6 MiB ticks 1079
+zgx-d3d11 stream  0: cpu   241.4 Mcyc/s   4.15 Mcyc/frame gpu   9.81 ms/s dwm cpu  125.9 Mcyc/s gpu  2.45 ms/s board  14.4 W private   69.4 MiB ticks 1079
+zgx-d3d11-threaded stream  0: cpu   267.0 Mcyc/s   4.59 Mcyc/frame gpu   9.91 ms/s dwm cpu  123.0 Mcyc/s gpu  2.46 ms/s board  14.8 W private   71.8 MiB ticks 1079
+zgx       scroll  0: cpu   126.0 Mcyc/s   2.18 Mcyc/frame gpu   2.12 ms/s dwm cpu  119.8 Mcyc/s gpu  2.11 ms/s board  14.8 W private  148.5 MiB ticks 1079
+zgx-d3d11 scroll  0: cpu    89.7 Mcyc/s   1.55 Mcyc/frame gpu   2.93 ms/s dwm cpu  118.8 Mcyc/s gpu  2.11 ms/s board  14.2 W private   66.5 MiB ticks 1079
+zgx-d3d11-threaded scroll  0: cpu   125.2 Mcyc/s   2.16 Mcyc/frame gpu   2.83 ms/s dwm cpu  104.4 Mcyc/s gpu  2.10 ms/s board  14.3 W private   68.4 MiB ticks 1079
+zgx       both    0: cpu   318.6 Mcyc/s   5.55 Mcyc/frame gpu  13.15 ms/s dwm cpu  122.9 Mcyc/s gpu  2.48 ms/s board  13.9 W private  154.0 MiB ticks 1079
+zgx-d3d11 both    0: cpu   253.9 Mcyc/s   4.42 Mcyc/frame gpu  11.88 ms/s dwm cpu  107.2 Mcyc/s gpu  2.48 ms/s board  14.6 W private   69.4 MiB ticks 1079
+zgx-d3d11-threaded both    0: cpu   301.0 Mcyc/s   5.17 Mcyc/frame gpu  11.82 ms/s dwm cpu  100.9 Mcyc/s gpu  2.47 ms/s board  14.5 W private   74.6 MiB ticks 1079
+desktop  baseline 1: dwm cpu    0.1 Mcyc/s gpu  0.00 ms/s board   7.5 W
+zgx-d3d11 idle    1: cpu     1.1 Mcyc/s   0.00 Mcyc/frame gpu   0.00 ms/s dwm cpu    0.5 Mcyc/s gpu  0.00 ms/s board   7.5 W private   66.9 MiB ticks 0
+zgx-d3d11-threaded idle    1: cpu     1.5 Mcyc/s   0.00 Mcyc/frame gpu   0.00 ms/s dwm cpu    1.2 Mcyc/s gpu  0.01 ms/s board   8.2 W private   69.0 MiB ticks 0
+zgx       idle    1: cpu     2.4 Mcyc/s   0.00 Mcyc/frame gpu   0.00 ms/s dwm cpu    0.0 Mcyc/s gpu  0.00 ms/s board   7.0 W private  145.3 MiB ticks 0
+zgx-d3d11 stream  1: cpu   234.5 Mcyc/s   4.09 Mcyc/frame gpu   9.80 ms/s dwm cpu  123.7 Mcyc/s gpu  2.46 ms/s board  14.7 W private   68.7 MiB ticks 1079
+zgx-d3d11-threaded stream  1: cpu   294.6 Mcyc/s   5.06 Mcyc/frame gpu   9.69 ms/s dwm cpu  126.1 Mcyc/s gpu  2.49 ms/s board  14.8 W private   73.2 MiB ticks 1079
+zgx       stream  1: cpu   277.3 Mcyc/s   4.79 Mcyc/frame gpu  11.01 ms/s dwm cpu  122.3 Mcyc/s gpu  2.45 ms/s board  14.6 W private  151.5 MiB ticks 1079
+zgx-d3d11 scroll  1: cpu    86.4 Mcyc/s   1.52 Mcyc/frame gpu   2.93 ms/s dwm cpu  119.0 Mcyc/s gpu  2.10 ms/s board  14.9 W private   65.7 MiB ticks 1079
+zgx-d3d11-threaded scroll  1: cpu   116.7 Mcyc/s   2.01 Mcyc/frame gpu   3.03 ms/s dwm cpu  128.5 Mcyc/s gpu  2.11 ms/s board  14.4 W private   68.1 MiB ticks 1079
+zgx       scroll  1: cpu   120.8 Mcyc/s   2.09 Mcyc/frame gpu   2.13 ms/s dwm cpu  123.7 Mcyc/s gpu  2.10 ms/s board  14.7 W private  148.0 MiB ticks 1079
+zgx-d3d11 both    1: cpu   283.9 Mcyc/s   4.88 Mcyc/frame gpu  11.89 ms/s dwm cpu  135.1 Mcyc/s gpu  2.50 ms/s board  14.5 W private   71.3 MiB ticks 1079
+zgx-d3d11-threaded both    1: cpu   326.4 Mcyc/s   5.61 Mcyc/frame gpu  12.02 ms/s dwm cpu  127.0 Mcyc/s gpu  2.46 ms/s board  15.0 W private   74.3 MiB ticks 1079
+zgx       both    1: cpu   339.3 Mcyc/s   5.85 Mcyc/frame gpu  13.57 ms/s dwm cpu  142.2 Mcyc/s gpu  2.56 ms/s board  14.1 W private  153.4 MiB ticks 1079
+desktop  baseline 2: dwm cpu    0.1 Mcyc/s gpu  0.00 ms/s board   7.2 W
+zgx-d3d11-threaded stream  2: cpu   283.0 Mcyc/s   4.86 Mcyc/frame gpu   9.95 ms/s dwm cpu  130.7 Mcyc/s gpu  2.46 ms/s board  15.3 W private   73.8 MiB ticks 1079
+zgx       stream  2: cpu   300.9 Mcyc/s   5.20 Mcyc/frame gpu  11.32 ms/s dwm cpu  141.3 Mcyc/s gpu  2.54 ms/s board  15.0 W private  152.4 MiB ticks 1079
+zgx-d3d11 stream  2: cpu   237.4 Mcyc/s   4.08 Mcyc/frame gpu   9.58 ms/s dwm cpu  125.5 Mcyc/s gpu  2.46 ms/s board  14.5 W private   68.9 MiB ticks 1079
+zgx-d3d11-threaded scroll  2: cpu   118.2 Mcyc/s   2.03 Mcyc/frame gpu   3.02 ms/s dwm cpu  125.9 Mcyc/s gpu  2.10 ms/s board  15.3 W private   68.9 MiB ticks 1079
+zgx       scroll  2: cpu   133.9 Mcyc/s   2.31 Mcyc/frame gpu   2.32 ms/s dwm cpu  124.9 Mcyc/s gpu  2.12 ms/s board  14.1 W private  148.0 MiB ticks 1079
+zgx-d3d11 scroll  2: cpu    84.8 Mcyc/s   1.46 Mcyc/frame gpu   2.93 ms/s dwm cpu  125.2 Mcyc/s gpu  2.09 ms/s board  14.4 W private   66.9 MiB ticks 1079
+zgx-d3d11-threaded both    2: cpu   324.3 Mcyc/s   5.58 Mcyc/frame gpu  12.04 ms/s dwm cpu  131.7 Mcyc/s gpu  2.46 ms/s board  14.7 W private   73.7 MiB ticks 1079
+zgx       both    2: cpu   328.9 Mcyc/s   5.67 Mcyc/frame gpu  13.51 ms/s dwm cpu  133.5 Mcyc/s gpu  2.45 ms/s board  14.3 W private  152.9 MiB ticks 1079
+zgx-d3d11 both    2: cpu   280.0 Mcyc/s   4.81 Mcyc/frame gpu  11.91 ms/s dwm cpu  128.9 Mcyc/s gpu  2.45 ms/s board  14.4 W private   70.7 MiB ticks 1079
+zgx       scroll  3: cpu   110.6 Mcyc/s gpu   2.11 ms/s (extra: wide spread)
+zgx-d3d11 both    3: cpu   241.7 Mcyc/s gpu  11.87 ms/s (extra: wide spread)
+zgx       stream  0: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx-d3d11 stream  0: pacing   59.9 fps p99  17.4 ms long 0.000 merged 0
+zgx-d3d11-threaded stream  0: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx       scroll  0: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx-d3d11 scroll  0: pacing   56.0 fps p99  66.8 ms long 0.020 merged 9
+zgx-d3d11-threaded scroll  0: pacing   59.8 fps p99  17.3 ms long 0.002 merged 1
+zgx       both    0: pacing   57.0 fps p99  49.9 ms long 0.020 merged 9
+zgx-d3d11 both    0: pacing   58.4 fps p99  17.3 ms long 0.009 merged 5
+zgx-d3d11-threaded both    0: pacing   58.0 fps p99  33.2 ms long 0.013 merged 6
+zgx-d3d11 stream  1: pacing   56.9 fps p99  17.2 ms long 0.009 merged 4
+zgx-d3d11-threaded stream  1: pacing   59.9 fps p99  17.3 ms long 0.002 merged 1
+zgx       stream  1: pacing   57.4 fps p99  17.5 ms long 0.009 merged 4
+zgx-d3d11 scroll  1: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx-d3d11-threaded scroll  1: pacing   59.9 fps p99  17.2 ms long 0.000 merged 0
+zgx       scroll  1: pacing   59.5 fps p99  17.2 ms long 0.004 merged 2
+zgx-d3d11 both    1: pacing   59.6 fps p99  17.3 ms long 0.004 merged 3
+zgx-d3d11-threaded both    1: pacing   57.8 fps p99  17.4 ms long 0.009 merged 4
+zgx       both    1: pacing   59.8 fps p99  17.2 ms long 0.002 merged 1
+zgx-d3d11-threaded stream  2: pacing   59.9 fps p99  17.3 ms long 0.000 merged 0
+zgx       stream  2: pacing   57.5 fps p99  17.4 ms long 0.011 merged 5
+zgx-d3d11 stream  2: pacing   58.4 fps p99  17.3 ms long 0.004 merged 3
+zgx-d3d11-threaded scroll  2: pacing   59.8 fps p99  17.2 ms long 0.000 merged 1
+zgx       scroll  2: pacing   58.9 fps p99  17.2 ms long 0.004 merged 2
+zgx-d3d11 scroll  2: pacing   59.1 fps p99  17.3 ms long 0.008 merged 4
+zgx-d3d11-threaded both    2: pacing   57.0 fps p99  50.1 ms long 0.022 merged 10
+zgx       both    2: pacing   60.0 fps p99  17.3 ms long 0.000 merged 0
+zgx-d3d11 both    2: pacing   59.9 fps p99  17.2 ms long 0.000 merged 0
+== heavy: ACCEPTED in 23.3 min
+== lab
+desktop  baseline 0: dwm cpu    0.1 Mcyc/s gpu  0.00 ms/s board   8.3 W
+zgx       stream  0: cpu    91.7 Mcyc/s   1.60 Mcyc/frame gpu   3.15 ms/s dwm cpu   90.1 Mcyc/s gpu  2.02 ms/s board  16.1 W private  126.1 MiB ticks 1079
+zgx-d3d11 stream  0: cpu    64.2 Mcyc/s   1.10 Mcyc/frame gpu   3.97 ms/s dwm cpu   93.8 Mcyc/s gpu  2.01 ms/s board  16.4 W private   61.3 MiB ticks 1079
+zgx-d3d11-threaded stream  0: cpu    90.9 Mcyc/s   1.56 Mcyc/frame gpu   3.97 ms/s dwm cpu  103.9 Mcyc/s gpu  2.03 ms/s board  14.4 W private   67.3 MiB ticks 1079
+zgx       scroll  0: cpu    82.9 Mcyc/s   1.43 Mcyc/frame gpu   2.06 ms/s dwm cpu   87.8 Mcyc/s gpu  2.18 ms/s board  15.5 W private  126.0 MiB ticks 1079
+zgx-d3d11 scroll  0: cpu    59.2 Mcyc/s   1.02 Mcyc/frame gpu   2.27 ms/s dwm cpu   94.6 Mcyc/s gpu  2.21 ms/s board  15.7 W private   60.2 MiB ticks 1079
+zgx-d3d11-threaded scroll  0: cpu   102.9 Mcyc/s   1.77 Mcyc/frame gpu   2.27 ms/s dwm cpu   96.9 Mcyc/s gpu  2.20 ms/s board  15.9 W private   65.5 MiB ticks 1079
+zgx       both    0: cpu   113.0 Mcyc/s   1.98 Mcyc/frame gpu   3.58 ms/s dwm cpu   97.0 Mcyc/s gpu  2.28 ms/s board  15.9 W private  126.7 MiB ticks 1079
+zgx-d3d11 both    0: cpu    72.1 Mcyc/s   1.24 Mcyc/frame gpu   4.23 ms/s dwm cpu   85.0 Mcyc/s gpu  2.26 ms/s board  15.6 W private   60.9 MiB ticks 1079
+zgx-d3d11-threaded both    0: cpu   106.4 Mcyc/s   1.83 Mcyc/frame gpu   4.17 ms/s dwm cpu  101.7 Mcyc/s gpu  2.27 ms/s board  15.6 W private   64.5 MiB ticks 1079
+desktop  baseline 1: dwm cpu    0.6 Mcyc/s gpu  0.02 ms/s board   8.8 W
+zgx-d3d11 stream  1: cpu    62.1 Mcyc/s   1.07 Mcyc/frame gpu   3.98 ms/s dwm cpu   93.8 Mcyc/s gpu  2.01 ms/s board  15.0 W private   61.0 MiB ticks 1079
+zgx-d3d11-threaded stream  1: cpu    87.8 Mcyc/s   1.51 Mcyc/frame gpu   3.96 ms/s dwm cpu   93.2 Mcyc/s gpu  2.02 ms/s board  14.9 W private   65.2 MiB ticks 1079
+zgx       stream  1: cpu    95.6 Mcyc/s   1.66 Mcyc/frame gpu   3.14 ms/s dwm cpu   93.4 Mcyc/s gpu  2.01 ms/s board  15.3 W private  127.8 MiB ticks 1079
+zgx-d3d11 scroll  1: cpu    50.8 Mcyc/s   0.88 Mcyc/frame gpu   2.54 ms/s dwm cpu   91.8 Mcyc/s gpu  2.20 ms/s board  13.9 W private   61.0 MiB ticks 1079
+zgx-d3d11-threaded scroll  1: cpu    84.3 Mcyc/s   1.45 Mcyc/frame gpu   2.57 ms/s dwm cpu   99.7 Mcyc/s gpu  2.17 ms/s board  15.4 W private   64.3 MiB ticks 1079
+zgx       scroll  1: cpu    94.1 Mcyc/s   1.62 Mcyc/frame gpu   2.02 ms/s dwm cpu  101.0 Mcyc/s gpu  2.19 ms/s board  15.2 W private  124.4 MiB ticks 1079
+zgx-d3d11 both    1: cpu    76.6 Mcyc/s   1.32 Mcyc/frame gpu   4.16 ms/s dwm cpu   92.5 Mcyc/s gpu  2.27 ms/s board  15.1 W private   62.1 MiB ticks 1079
+zgx-d3d11-threaded both    1: cpu   120.9 Mcyc/s   2.10 Mcyc/frame gpu   3.84 ms/s dwm cpu   94.3 Mcyc/s gpu  2.26 ms/s board  15.2 W private   64.3 MiB ticks 1079
+zgx       both    1: cpu   106.6 Mcyc/s   1.84 Mcyc/frame gpu   3.39 ms/s dwm cpu  100.9 Mcyc/s gpu  2.27 ms/s board  14.8 W private  126.2 MiB ticks 1079
+desktop  baseline 2: dwm cpu    0.2 Mcyc/s gpu  0.00 ms/s board   7.5 W
+zgx-d3d11-threaded stream  2: cpu    92.6 Mcyc/s   1.59 Mcyc/frame gpu   4.00 ms/s dwm cpu  100.6 Mcyc/s gpu  2.02 ms/s board  14.3 W private   63.8 MiB ticks 1079
+zgx       stream  2: cpu    93.7 Mcyc/s   1.64 Mcyc/frame gpu   3.14 ms/s dwm cpu   90.3 Mcyc/s gpu  2.01 ms/s board  15.2 W private  125.8 MiB ticks 1079
+zgx-d3d11 stream  2: cpu    68.6 Mcyc/s   1.18 Mcyc/frame gpu   3.69 ms/s dwm cpu   96.6 Mcyc/s gpu  2.04 ms/s board  14.4 W private   62.7 MiB ticks 1079
+zgx-d3d11-threaded scroll  2: cpu   103.3 Mcyc/s   1.80 Mcyc/frame gpu   2.27 ms/s dwm cpu   98.1 Mcyc/s gpu  2.18 ms/s board  14.7 W private   63.9 MiB ticks 1079
+zgx       scroll  2: cpu    87.7 Mcyc/s   1.51 Mcyc/frame gpu   2.03 ms/s dwm cpu   88.8 Mcyc/s gpu  2.19 ms/s board  15.1 W private  124.1 MiB ticks 1078
+zgx-d3d11 scroll  2: cpu    54.0 Mcyc/s   0.93 Mcyc/frame gpu   2.57 ms/s dwm cpu   92.1 Mcyc/s gpu  2.18 ms/s board  14.6 W private   59.6 MiB ticks 1079
+zgx-d3d11-threaded both    2: cpu   129.4 Mcyc/s   2.25 Mcyc/frame gpu   3.87 ms/s dwm cpu  105.9 Mcyc/s gpu  2.29 ms/s board  14.6 W private   65.3 MiB ticks 1079
+zgx       both    2: cpu   111.1 Mcyc/s   1.92 Mcyc/frame gpu   3.61 ms/s dwm cpu   96.0 Mcyc/s gpu  2.28 ms/s board  15.4 W private  125.9 MiB ticks 1079
+zgx-d3d11 both    2: cpu    83.2 Mcyc/s   1.43 Mcyc/frame gpu   4.22 ms/s dwm cpu  104.6 Mcyc/s gpu  2.27 ms/s board  14.7 W private   60.8 MiB ticks 1079
+zgx-d3d11 stream  3: cpu    58.9 Mcyc/s gpu   3.96 ms/s (extra: wide spread)
+zgx       scroll  3: cpu    89.5 Mcyc/s gpu   2.02 ms/s (extra: wide spread)
+zgx-d3d11 scroll  3: cpu    62.6 Mcyc/s gpu   2.56 ms/s (extra: wide spread)
+zgx-d3d11-threaded scroll  3: cpu   100.3 Mcyc/s gpu   2.26 ms/s (extra: wide spread)
+zgx-d3d11 both    3: cpu    73.9 Mcyc/s gpu   4.20 ms/s (extra: wide spread)
+zgx-d3d11-threaded both    3: cpu   101.1 Mcyc/s gpu   4.16 ms/s (extra: wide spread)
+zgx       stream  0: pacing   59.1 fps p99  17.4 ms long 0.006 merged 3
+zgx-d3d11 stream  0: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx-d3d11-threaded stream  0: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx       scroll  0: pacing   59.0 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11 scroll  0: pacing   58.9 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11-threaded scroll  0: pacing   59.5 fps p99  17.3 ms long 0.008 merged 4
+zgx       both    0: pacing   58.5 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11 both    0: pacing   59.0 fps p99  17.3 ms long 0.002 merged 1
+zgx-d3d11-threaded both    0: pacing   59.8 fps p99  17.2 ms long 0.004 merged 1
+zgx-d3d11 stream  1: pacing   58.8 fps p99  17.3 ms long 0.006 merged 3
+zgx-d3d11-threaded stream  1: pacing   59.1 fps p99  17.2 ms long 0.004 merged 2
+zgx       stream  1: pacing   59.5 fps p99  18.2 ms long 0.004 merged 2
+zgx-d3d11 scroll  1: pacing   59.2 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11-threaded scroll  1: pacing   59.6 fps p99  17.3 ms long 0.006 merged 3
+zgx       scroll  1: pacing   58.5 fps p99  33.3 ms long 0.013 merged 6
+zgx-d3d11 both    1: pacing   59.1 fps p99  17.4 ms long 0.006 merged 3
+zgx-d3d11-threaded both    1: pacing   59.9 fps p99  17.2 ms long 0.000 merged 0
+zgx       both    1: pacing   59.9 fps p99  17.4 ms long 0.002 merged 0
+zgx-d3d11-threaded stream  2: pacing   55.5 fps p99  66.6 ms long 0.018 merged 8
+zgx       stream  2: pacing   58.2 fps p99  17.4 ms long 0.006 merged 3
+zgx-d3d11 stream  2: pacing   58.6 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11-threaded scroll  2: pacing   59.9 fps p99  17.3 ms long 0.000 merged 0
+zgx       scroll  2: pacing   59.9 fps p99  17.2 ms long 0.002 merged 0
+zgx-d3d11 scroll  2: pacing   54.8 fps p99  66.6 ms long 0.018 merged 8
+zgx-d3d11-threaded both    2: pacing   53.5 fps p99  99.9 ms long 0.033 merged 14
+zgx       both    2: pacing   59.2 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11 both    2: pacing   57.9 fps p99  17.2 ms long 0.009 merged 4
+== lab: ACCEPTED in 21.0 min
+== animate
+desktop  baseline 0: dwm cpu    0.1 Mcyc/s gpu  0.00 ms/s board   8.8 W
+zgx       animate 0: cpu    98.0 Mcyc/s   1.67 Mcyc/frame gpu   2.05 ms/s dwm cpu  101.9 Mcyc/s gpu  2.01 ms/s board  15.4 W private  126.9 MiB ticks 1079
+zgx-d3d11 animate 0: cpu    69.7 Mcyc/s   1.17 Mcyc/frame gpu   2.69 ms/s dwm cpu  102.7 Mcyc/s gpu  2.01 ms/s board  16.0 W private   60.3 MiB ticks 1079
+zgx-d3d11-threaded animate 0: cpu    92.3 Mcyc/s   1.56 Mcyc/frame gpu   2.68 ms/s dwm cpu   95.1 Mcyc/s gpu  2.00 ms/s board  16.2 W private   63.7 MiB ticks 1079
+desktop  baseline 1: dwm cpu    0.1 Mcyc/s gpu  0.00 ms/s board   9.2 W
+zgx-d3d11 animate 1: cpu    59.5 Mcyc/s   1.00 Mcyc/frame gpu   2.68 ms/s dwm cpu   86.7 Mcyc/s gpu  2.01 ms/s board  15.7 W private   59.9 MiB ticks 1079
+zgx-d3d11-threaded animate 1: cpu    97.0 Mcyc/s   1.64 Mcyc/frame gpu   2.69 ms/s dwm cpu  104.7 Mcyc/s gpu  2.00 ms/s board  15.3 W private   63.3 MiB ticks 1079
+zgx       animate 1: cpu    95.0 Mcyc/s   1.61 Mcyc/frame gpu   2.05 ms/s dwm cpu   98.9 Mcyc/s gpu  2.00 ms/s board  15.3 W private  124.3 MiB ticks 1079
+desktop  baseline 2: dwm cpu    0.1 Mcyc/s gpu  0.00 ms/s board   8.4 W
+zgx-d3d11-threaded animate 2: cpu    98.5 Mcyc/s   1.66 Mcyc/frame gpu   2.67 ms/s dwm cpu  106.9 Mcyc/s gpu  1.99 ms/s board  15.3 W private   64.3 MiB ticks 1079
+zgx       animate 2: cpu    89.5 Mcyc/s   1.51 Mcyc/frame gpu   2.06 ms/s dwm cpu   91.2 Mcyc/s gpu  2.01 ms/s board  15.5 W private  125.5 MiB ticks 1079
+zgx-d3d11 animate 2: cpu    65.7 Mcyc/s   1.12 Mcyc/frame gpu   2.69 ms/s dwm cpu   96.2 Mcyc/s gpu  2.01 ms/s board  15.9 W private   59.5 MiB ticks 1079
+zgx-d3d11 animate 3: cpu    67.2 Mcyc/s gpu   2.67 ms/s (extra: wide spread)
+zgx       animate 0: pacing   58.0 fps p99  17.8 ms long 0.011 merged 5
+zgx-d3d11 animate 0: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx-d3d11-threaded animate 0: pacing   59.4 fps p99  17.9 ms long 0.004 merged 2
+zgx-d3d11 animate 1: pacing   56.9 fps p99  49.9 ms long 0.026 merged 12
+zgx-d3d11-threaded animate 1: pacing   59.2 fps p99  17.3 ms long 0.002 merged 1
+zgx       animate 1: pacing   59.9 fps p99  17.2 ms long 0.000 merged 0
+zgx-d3d11-threaded animate 2: pacing   56.4 fps p99  66.5 ms long 0.016 merged 7
+zgx       animate 2: pacing   59.9 fps p99  17.2 ms long 0.002 merged 1
+zgx-d3d11 animate 2: pacing   59.2 fps p99  17.4 ms long 0.002 merged 1
+== animate: ACCEPTED in 7.2 min
+== vlist
+desktop  baseline 0: dwm cpu    0.6 Mcyc/s gpu  0.02 ms/s board   9.1 W
+zgx       scroll  0: cpu    92.0 Mcyc/s   1.59 Mcyc/frame gpu   2.58 ms/s dwm cpu  110.1 Mcyc/s gpu  2.32 ms/s board  15.1 W private  138.8 MiB ticks 1079
+zgx-d3d11 scroll  0: cpu    63.6 Mcyc/s   1.09 Mcyc/frame gpu   3.17 ms/s dwm cpu  112.2 Mcyc/s gpu  2.33 ms/s board  15.5 W private   66.8 MiB ticks 1079
+zgx-d3d11-threaded scroll  0: cpu    81.5 Mcyc/s   1.40 Mcyc/frame gpu   3.16 ms/s dwm cpu  105.0 Mcyc/s gpu  2.33 ms/s board  14.8 W private   69.7 MiB ticks 1079
+zgx       fling   0: cpu    89.6 Mcyc/s   1.56 Mcyc/frame gpu   2.84 ms/s dwm cpu   94.5 Mcyc/s gpu  2.30 ms/s board  15.4 W private  139.5 MiB ticks 1079
+zgx-d3d11 fling   0: cpu    65.1 Mcyc/s   1.12 Mcyc/frame gpu   3.47 ms/s dwm cpu   95.5 Mcyc/s gpu  2.29 ms/s board  14.8 W private   65.6 MiB ticks 1079
+zgx-d3d11-threaded fling   0: cpu    93.8 Mcyc/s   1.63 Mcyc/frame gpu   3.47 ms/s dwm cpu   99.4 Mcyc/s gpu  2.29 ms/s board  14.5 W private   69.2 MiB ticks 1078
+zgx       jump    0: cpu    87.0 Mcyc/s   1.50 Mcyc/frame gpu   2.95 ms/s dwm cpu   95.2 Mcyc/s gpu  2.33 ms/s board  15.4 W private  134.3 MiB ticks 1079
+zgx-d3d11 jump    0: cpu    66.3 Mcyc/s   1.14 Mcyc/frame gpu   3.55 ms/s dwm cpu  106.9 Mcyc/s gpu  2.31 ms/s board  14.7 W private   66.1 MiB ticks 1079
+zgx-d3d11-threaded jump    0: cpu    96.6 Mcyc/s   1.66 Mcyc/frame gpu   3.56 ms/s dwm cpu  108.4 Mcyc/s gpu  2.33 ms/s board  15.6 W private   70.0 MiB ticks 1079
+desktop  baseline 1: dwm cpu    0.1 Mcyc/s gpu  0.00 ms/s board   8.3 W
+zgx-d3d11 scroll  1: cpu    58.5 Mcyc/s   1.01 Mcyc/frame gpu   3.16 ms/s dwm cpu  112.6 Mcyc/s gpu  2.31 ms/s board  14.8 W private   65.1 MiB ticks 1079
+zgx-d3d11-threaded scroll  1: cpu    81.1 Mcyc/s   1.39 Mcyc/frame gpu   3.17 ms/s dwm cpu   98.1 Mcyc/s gpu  2.33 ms/s board  14.9 W private   69.5 MiB ticks 1079
+zgx       scroll  1: cpu    98.4 Mcyc/s   1.70 Mcyc/frame gpu   2.82 ms/s dwm cpu  110.8 Mcyc/s gpu  2.33 ms/s board  15.4 W private  138.5 MiB ticks 1079
+zgx-d3d11 fling   1: cpu    76.0 Mcyc/s   1.31 Mcyc/frame gpu   3.16 ms/s dwm cpu  107.4 Mcyc/s gpu  2.30 ms/s board  15.9 W private   66.2 MiB ticks 1079
+zgx-d3d11-threaded fling   1: cpu    98.3 Mcyc/s   1.69 Mcyc/frame gpu   3.44 ms/s dwm cpu  105.5 Mcyc/s gpu  2.28 ms/s board  14.9 W private   68.2 MiB ticks 1079
+zgx       fling   1: cpu    92.2 Mcyc/s   1.61 Mcyc/frame gpu   2.85 ms/s dwm cpu   96.4 Mcyc/s gpu  2.30 ms/s board  15.0 W private  139.2 MiB ticks 1079
+zgx-d3d11 jump    1: cpu    66.1 Mcyc/s   1.14 Mcyc/frame gpu   3.55 ms/s dwm cpu  105.0 Mcyc/s gpu  2.33 ms/s board  15.1 W private   67.9 MiB ticks 1079
+zgx-d3d11-threaded jump    1: cpu    95.0 Mcyc/s   1.63 Mcyc/frame gpu   3.54 ms/s dwm cpu  106.7 Mcyc/s gpu  2.33 ms/s board  15.3 W private   69.1 MiB ticks 1079
+zgx       jump    1: cpu    86.2 Mcyc/s   1.51 Mcyc/frame gpu   2.93 ms/s dwm cpu   97.3 Mcyc/s gpu  2.33 ms/s board  15.3 W private  133.2 MiB ticks 1079
+desktop  baseline 2: dwm cpu    0.1 Mcyc/s gpu  0.00 ms/s board   8.7 W
+zgx-d3d11-threaded scroll  2: cpu    78.6 Mcyc/s   1.36 Mcyc/frame gpu   3.18 ms/s dwm cpu   95.5 Mcyc/s gpu  2.32 ms/s board  14.7 W private   69.3 MiB ticks 1079
+zgx       scroll  2: cpu    91.0 Mcyc/s   1.58 Mcyc/frame gpu   2.77 ms/s dwm cpu  100.7 Mcyc/s gpu  2.35 ms/s board  15.4 W private  138.3 MiB ticks 1079
+zgx-d3d11 scroll  2: cpu    60.9 Mcyc/s   1.05 Mcyc/frame gpu   2.86 ms/s dwm cpu  100.3 Mcyc/s gpu  2.32 ms/s board  14.6 W private   67.0 MiB ticks 1079
+zgx-d3d11-threaded fling   2: cpu    91.0 Mcyc/s   1.61 Mcyc/frame gpu   3.45 ms/s dwm cpu   96.2 Mcyc/s gpu  2.30 ms/s board  14.2 W private   69.9 MiB ticks 1079
+zgx       fling   2: cpu    92.8 Mcyc/s   1.60 Mcyc/frame gpu   2.85 ms/s dwm cpu   97.4 Mcyc/s gpu  2.29 ms/s board  14.6 W private  138.7 MiB ticks 1079
+zgx-d3d11 fling   2: cpu    65.6 Mcyc/s   1.13 Mcyc/frame gpu   3.46 ms/s dwm cpu   93.7 Mcyc/s gpu  2.28 ms/s board  14.7 W private   67.7 MiB ticks 1079
+zgx-d3d11-threaded jump    2: cpu   110.3 Mcyc/s   1.90 Mcyc/frame gpu   3.26 ms/s dwm cpu  105.9 Mcyc/s gpu  2.36 ms/s board  14.4 W private   70.8 MiB ticks 1079
+zgx       jump    2: cpu    96.3 Mcyc/s   1.66 Mcyc/frame gpu   2.93 ms/s dwm cpu  106.1 Mcyc/s gpu  2.33 ms/s board  15.4 W private  134.4 MiB ticks 1079
+zgx-d3d11 jump    2: cpu    65.5 Mcyc/s   1.13 Mcyc/frame gpu   3.29 ms/s dwm cpu   98.0 Mcyc/s gpu  2.34 ms/s board  14.4 W private   66.5 MiB ticks 1079
+zgx-d3d11 fling   3: cpu    73.0 Mcyc/s gpu   3.49 ms/s (extra: wide spread)
+zgx       jump    3: cpu   100.6 Mcyc/s gpu   3.15 ms/s (extra: wide spread)
+zgx-d3d11-threaded jump    3: cpu    90.9 Mcyc/s gpu   3.59 ms/s (extra: wide spread)
+zgx       scroll  0: pacing   56.0 fps p99  50.0 ms long 0.011 merged 5
+zgx-d3d11 scroll  0: pacing   59.0 fps p99  17.3 ms long 0.008 merged 4
+zgx-d3d11-threaded scroll  0: pacing   59.0 fps p99  17.4 ms long 0.004 merged 4
+zgx       fling   0: pacing   57.4 fps p99  33.5 ms long 0.026 merged 6
+zgx-d3d11 fling   0: pacing   59.1 fps p99  33.4 ms long 0.017 merged 0
+zgx-d3d11-threaded fling   0: pacing   57.8 fps p99  33.4 ms long 0.024 merged 5
+zgx       jump    0: pacing   59.8 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11 jump    0: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx-d3d11-threaded jump    0: pacing   59.9 fps p99  17.3 ms long 0.000 merged 1
+zgx-d3d11 scroll  1: pacing   59.2 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11-threaded scroll  1: pacing   56.9 fps p99  33.5 ms long 0.015 merged 7
+zgx       scroll  1: pacing   60.0 fps p99  17.2 ms long 0.000 merged 0
+zgx-d3d11 fling   1: pacing   59.1 fps p99  30.7 ms long 0.015 merged 0
+zgx-d3d11-threaded fling   1: pacing   59.1 fps p99  27.0 ms long 0.013 merged 0
+zgx       fling   1: pacing   58.5 fps p99  33.1 ms long 0.017 merged 1
+zgx-d3d11 jump    1: pacing   59.1 fps p99  17.5 ms long 0.008 merged 4
+zgx-d3d11-threaded jump    1: pacing   59.8 fps p99  17.2 ms long 0.002 merged 1
+zgx       jump    1: pacing   58.8 fps p99  17.2 ms long 0.002 merged 1
+zgx-d3d11-threaded scroll  2: pacing   59.4 fps p99  17.3 ms long 0.008 merged 4
+zgx       scroll  2: pacing   59.0 fps p99  17.3 ms long 0.004 merged 2
+zgx-d3d11 scroll  2: pacing   59.8 fps p99  17.2 ms long 0.002 merged 1
+zgx-d3d11-threaded fling   2: pacing   59.2 fps p99  31.5 ms long 0.013 merged 0
+zgx       fling   2: pacing   59.2 fps p99  29.6 ms long 0.013 merged 0
+zgx-d3d11 fling   2: pacing   59.0 fps p99  33.0 ms long 0.017 merged 0
+zgx-d3d11-threaded jump    2: pacing   59.9 fps p99  17.4 ms long 0.002 merged 1
+zgx       jump    2: pacing   59.9 fps p99  17.3 ms long 0.002 merged 1
+zgx-d3d11 jump    2: pacing   59.9 fps p99  17.2 ms long 0.002 merged 1
+== vlist: ACCEPTED in 20.1 min
+== startup
+startup zgx      : window   237 ms, content   280 ms, cpu   234 ms,    814 M cycles
+startup zgx-d3d11: window   193 ms, content   227 ms, cpu   203 ms,    683 M cycles
+startup zgx-d3d11-threaded: window   214 ms, content   245 ms, cpu   188 ms,    703 M cycles
+ACCEPTED C:\Users\wing_\imescratch\d3d11\suite-20261027-1156

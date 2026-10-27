@@ -158,6 +158,44 @@ cycles, the empty loop's too, once doubled together and then came back: the
 processor clocked down. Hold High performance, and compare only modes run in
 alternation.
 
+### Direct3D 11 (experimental)
+
+zgx-desktop's (and zgx-gpu's) `d3d11` feature, off by default, builds in a
+renderer path drawing with Direct3D 11; `ZGX_D3D11=1` at run time takes it,
+and without it nothing changes. No Direct3D 12 device is opened then: wgpu
+runs on its no-op backend, keeping the renderer's handles without a driver,
+and frames, the glyph atlas and the window's swap chain (the same
+flip-sequential chain, dirty rectangles and pacing) are Direct3D 11's
+(`crates/zgx-gpu/src/d3d11_frame.rs`). `ZGX_D3D11_THREADED=1` leaves the
+driver's own threading on, which on NVIDIA costs the CPU win below.
+
+```powershell
+cargo build --release -p zgx-desktop --features d3d11 --example component_workload
+$env:ZGX_D3D11 = "1"; target\release\examples\component_workload.exe
+```
+
+It draws what the Windows suite's scenes do: quads (borders, rounded
+corners, shadows' shading), text, clip regions with their rounded corners
+and fades, kept frames, and scroll copies. Images, isolated and transformed
+layers, backdrop blur, polylines and shader fills are not drawn yet: a frame
+needing one fails with an error naming it (and panics in a debug build),
+since there is no Direct3D 12 to fall back to. What it draws is Direct3D 12's
+frame byte for byte (`tests/d3d11_parity.rs`).
+
+What it trades, measured with the Windows suite on an RTX 4090
+([results](results/d3d11-proof-windows-2026-10-27/)):
+- **Memory:** about half. The lab scene at rest takes 61 MiB of private
+  memory against 124, 6 MiB over a bare Direct3D 11 window; GPU shared memory
+  goes from 31 MiB to 2.
+- **CPU:** 15 to 36% fewer cycles in every animating scene, 47% fewer at
+  rest. Startup to the first text: 227 ms against 280.
+- **GPU:** about 10 µs more a frame (0.4 to 0.8 ms a second at 60 Hz, at the
+  GPU's lowest clock). That is Direct3D 11's own: `d3d_frame_floor`, which
+  only clears and presents, pays the same against Direct3D 12.
+- Pacing, the compositor's work and board power are level.
+
+These are NVIDIA's numbers; AMD's and Intel's drivers have not been measured.
+
 ## Presentation
 
 wgpu runs on Direct3D 12 alone (`WGPU_BACKEND` still overrides, among the

@@ -1,0 +1,34 @@
+﻿0 bare d3d11       cyc   1.72 M/s private   55.2 ws   39.1 gpu ded   16.3 shared    0.8 MiB first 207.0
+0 bare d3d12       cyc   1.88 M/s private   93.2 ws   71.3 gpu ded   28.1 shared   25.2 MiB first 267.2
+0 zgx lab d3d12    cyc   1.84 M/s private  125.7 ws  104.1 gpu ded   38.5 shared   31.2 MiB first None
+0 zgx lab d3d11    cyc   1.42 M/s private   61.3 ws   54.7 gpu ded   20.2 shared    2.2 MiB first None
+0 zgx lab d3d11 thr cyc   1.51 M/s private   65.6 ws   57.8 gpu ded   20.2 shared    2.4 MiB first None
+0 zgx heavy d3d12  cyc   2.18 M/s private  147.2 ws  124.3 gpu ded   41.7 shared   47.2 MiB first None
+0 zgx heavy d3d11  cyc   1.50 M/s private   67.1 ws   59.1 gpu ded   23.4 shared    2.6 MiB first None
+0 zgx heavy d3d11 thr cyc   1.31 M/s private   70.4 ws   62.6 gpu ded   23.4 shared    3.3 MiB first None
+1 bare d3d12       cyc   1.72 M/s private   93.6 ws   71.3 gpu ded   28.1 shared   25.2 MiB first 258.3
+1 zgx lab d3d12    cyc   1.67 M/s private  123.3 ws   93.7 gpu ded   38.5 shared   31.2 MiB first None
+1 zgx lab d3d11    cyc   1.43 M/s private   60.4 ws   50.9 gpu ded   20.2 shared    2.2 MiB first None
+1 zgx lab d3d11 thr cyc   1.24 M/s private   63.5 ws   53.5 gpu ded   20.2 shared    2.4 MiB first None
+1 zgx heavy d3d12  cyc   1.74 M/s private  145.1 ws  114.2 gpu ded   41.7 shared   47.2 MiB first None
+1 zgx heavy d3d11  cyc   1.25 M/s private   66.2 ws   56.0 gpu ded   23.4 shared    2.6 MiB first None
+1 zgx heavy d3d11 thr cyc   1.23 M/s private   71.2 ws   62.6 gpu ded   23.4 shared    3.3 MiB first None
+1 bare d3d11       cyc   1.01 M/s private   54.2 ws   38.5 gpu ded   16.3 shared    0.8 MiB first 188.3
+2 zgx lab d3d12    cyc   1.47 M/s private  124.4 ws   93.6 gpu ded   38.5 shared   31.2 MiB first None
+2 zgx lab d3d11    cyc   1.48 M/s private   61.1 ws   50.7 gpu ded   20.2 shared    2.2 MiB first None
+2 zgx lab d3d11 thr cyc   1.31 M/s private   63.3 ws   53.1 gpu ded   20.2 shared    2.4 MiB first None
+2 zgx heavy d3d12  cyc   1.85 M/s private  144.4 ws  114.0 gpu ded   41.7 shared   47.2 MiB first None
+2 zgx heavy d3d11  cyc   1.38 M/s private   67.0 ws   55.5 gpu ded   23.4 shared    2.6 MiB first None
+2 zgx heavy d3d11 thr cyc   1.46 M/s private   71.4 ws   59.3 gpu ded   23.4 shared    3.3 MiB first None
+2 bare d3d11       cyc   1.45 M/s private   55.7 ws   38.6 gpu ded   16.3 shared    0.8 MiB first 195.4
+2 bare d3d12       cyc   1.96 M/s private   92.7 ws   71.3 gpu ded   28.1 shared   25.2 MiB first 258.8
+
+medians: | target | Mcyc/s | private MiB | working set MiB | GPU dedicated MiB | GPU shared MiB | first present ms |
+| bare d3d11 | 1.45 | 55.2 | 38.6 | 16.3 | 0.8 | 195 |
+| bare d3d12 | 1.88 | 93.2 | 71.3 | 28.1 | 25.2 | 259 |
+| zgx lab d3d12 | 1.67 | 124.4 | 93.7 | 38.5 | 31.2 | nan |
+| zgx lab d3d11 | 1.43 | 61.1 | 50.9 | 20.2 | 2.2 | nan |
+| zgx lab d3d11 thr | 1.31 | 63.5 | 53.5 | 20.2 | 2.4 | nan |
+| zgx heavy d3d12 | 1.85 | 145.1 | 114.2 | 41.7 | 47.2 | nan |
+| zgx heavy d3d11 | 1.38 | 67.0 | 56.0 | 23.4 | 2.6 | nan |
+| zgx heavy d3d11 thr | 1.31 | 71.2 | 62.6 | 23.4 | 3.3 | nan |
