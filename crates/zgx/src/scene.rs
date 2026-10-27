@@ -4533,6 +4533,7 @@ impl Scene {
     /// Reorders an exact permutation of a parent's children, retaining every ID.
     /// Invalid parents, foreign nodes, omissions, and duplicates return `false`
     /// without modifying the scene. An unchanged order is a successful no-op.
+    #[inline(never)]
     pub fn reorder_children(&mut self, parent: NodeId, children: &[NodeId]) -> bool {
         self.settle_children();
         if !self.contains(parent) {
@@ -4545,8 +4546,15 @@ impl Scene {
         if current.len() != children.len() {
             return false;
         }
-        let place: std::collections::HashMap<NodeId, usize> =
-            current.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        self.reorder_changed_children(parent, children)
+    }
+    // Keep unchanged-order calls independent of the map and damage work:
+    // cold, so that the entry keeps no register for it.
+    #[cold]
+    #[inline(never)]
+    fn reorder_changed_children(&mut self, parent: NodeId, children: &[NodeId]) -> bool {
+        let current = self.children_raw(self.tree_node(parent));
+        let place: NodeMap<usize> = current.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         let Some(places) = children
             .iter()
             .map(|id| place.get(id).copied())
