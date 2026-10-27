@@ -26,6 +26,8 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 **Shift-Right extends back through right-to-left text**, as Chrome does: Shift with Left or Right extends a page's selection the way its block runs (`direction`), so in a right-to-left paragraph Shift-Right grows it rightward on screen.
 
+**Copied HTML keeps code blocks and colours**: a selection copied from a page (`View::selectable`) puts monospace text of more than one line in `<pre>`, and runs coloured apart from the text the selection starts in carry their colour (`<span style="color:…">`); body text and links carry none, so a dark theme's white text doesn't paste invisible.
+
 ## 0.1.3 (2026-10-27)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.2 is an addition), unless it writes one of the three structs below field by field. Some defaults change, each below with what to check: zoom and find in page are on, keys and cursors behave as a browser's and AppKit's, and Windows presents and serves assistive technology differently.
