@@ -119,6 +119,115 @@ fn scattered_damage_presented_through_surfaces_matches_drawing_whole() {
     assert!(window.patched > 0, "no frame patched");
 }
 
+/// A rounded panel (overflow hidden) whose scroll view, filled opaque and
+/// square, sits beside a divider, as an app's sidebar: scrolled down and
+/// back up in a wheel's uneven steps, presented through the window's
+/// surfaces, each step a copy of the shown frame's pixels. The panel's
+/// corners stay where they are: a copy must not carry their edge, or what
+/// lies outside it, down the view (a user's report: a trail of corners).
+#[cfg(target_os = "macos")]
+fn panel(offset: Signal<f32>) -> View {
+    let mut cards = column().gap(6.).p(6.);
+    for i in 0..40 {
+        cards = cards.child(div().w(300.).h(36.).bg(if i % 2 == 0 {
+            Color(34, 51, 68, 255)
+        } else {
+            Color(42, 58, 74, 255)
+        }));
+    }
+    overlay()
+        .size(SIZE.0, SIZE.1)
+        .bg(Color(47, 107, 58, 255))
+        .child(
+            row()
+                .w(600.)
+                .h(380.)
+                .left(20.)
+                .top(10.)
+                .rounded(16.)
+                .bg(Color(17, 17, 17, 255))
+                .overflow_hidden()
+                // Its own opaque fill, square: the panel's corners round it.
+                .child(
+                    scroll(offset)
+                        .w(330.)
+                        .h(380.)
+                        .bg(Color(17, 17, 17, 255))
+                        .child(cards),
+                )
+                .child(div().w(1.).h(380.).bg(Color(51, 51, 51, 255)))
+                .child(div().w(260.).h(380.).bg(Color(22, 22, 22, 255))),
+        )
+}
+#[cfg(target_os = "macos")]
+fn rounded_panel_scrolled_through_surfaces_matches_drawing_whole() {
+    let renderer = |host: &objc2::rc::Retained<objc2_quartz_core::CALayer>| {
+        let mut gpu =
+            GpuRenderer::debug_for_layer(host.clone(), (SIZE.0 * 2.) as u32, (SIZE.1 * 2.) as u32)
+                .unwrap();
+        gpu.set_scale_factor(2.);
+        gpu
+    };
+    let host = objc2_quartz_core::CALayer::new();
+    let mut gpu = renderer(&host);
+    let mut ui = Ui::new(SIZE.0, SIZE.1);
+    ui.scene.borrow_mut().set_pixel_scale(2.);
+    gpu.install_text(&mut ui.scene.borrow_mut());
+    let offset = ui.signal(0.);
+    ui.mount(panel(offset.clone()));
+    let mut copies = 0;
+    for at in [
+        0., 3.5, 9.25, 17., 30.5, 48., 71.75, 90., 120.5, 150., 200., 260., 200.5, 150., 95.5,
+        61.25, 40., 22.5, 8.75, 2., 0.,
+    ] {
+        offset.set(at);
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        copies += gpu
+            .render(&ui.scene.borrow(), &damage)
+            .unwrap()
+            .scroll_copies;
+        gpu.present().unwrap();
+        let shown = gpu.shown_pixels().expect("a surface shown").2;
+        // The same scene drawn whole, by a renderer of its own.
+        let whole_host = objc2_quartz_core::CALayer::new();
+        let mut whole = renderer(&whole_host);
+        whole
+            .render(
+                &ui.scene.borrow(),
+                &[zgx::scene::Rect::new(0., 0., SIZE.0, SIZE.1)],
+            )
+            .unwrap();
+        whole.present().unwrap();
+        let expected = whole.shown_pixels().expect("a surface shown").2;
+        if shown != expected {
+            let width = (SIZE.0 * 2.) as usize;
+            let spots: Vec<(usize, usize)> = shown
+                .chunks(4)
+                .zip(expected.chunks(4))
+                .enumerate()
+                .filter(|(_, (a, b))| a != b)
+                .map(|(i, _)| (i % width, i / width))
+                .collect();
+            let xs = (
+                spots.iter().map(|s| s.0).min(),
+                spots.iter().map(|s| s.0).max(),
+            );
+            let ys = (
+                spots.iter().map(|s| s.1).min(),
+                spots.iter().map(|s| s.1).max(),
+            );
+            eprintln!("DIFF scroll {at}: {} px, x {xs:?} y {ys:?}", spots.len());
+        }
+        assert!(
+            shown == expected,
+            "scroll {at}: the surface shown differs from the scene drawn whole"
+        );
+    }
+    // Each step moved by whole pixels: each copied, its corners repainted.
+    assert!(copies > 0, "no scroll copied");
+}
+
 /// The plain layer's tiles (one per surface shown, `Layer::tiles`): each
 /// one's contents, as an address, and whether it is hidden.
 #[cfg(target_os = "macos")]
@@ -351,5 +460,7 @@ fn main() {
         println!("layer_frames: full-rate frames show as tiles without a video layer");
         input_after_idle_wakes_the_gpu_once();
         println!("layer_frames: input after idle wakes the GPU once");
+        rounded_panel_scrolled_through_surfaces_matches_drawing_whole();
+        println!("layer_frames: a rounded panel scrolled through surfaces matches drawing whole");
     }
 }

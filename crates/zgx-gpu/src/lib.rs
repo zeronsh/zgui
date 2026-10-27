@@ -7741,12 +7741,44 @@ impl GpuRenderer {
             };
             match refused {
                 Ok(copy) => match copy_blocker(scene, scroll, damage, self.scale) {
-                    None => {
-                        zgx::profile::note(|| {
-                            format!("scroll @{} copied its pixels", scroll.node.number())
-                        });
-                        copies.push(copy);
-                    }
+                    None => match scene.scroll_corners(scroll.node) {
+                        // Rounded clips around it that stay where they are:
+                        // the copy moves their edges and what lies outside
+                        // them, so their corners repaint, where they are and
+                        // where the copy took their pixels.
+                        Some(corners) => {
+                            zgx::profile::note(|| {
+                                format!("scroll @{} copied its pixels", scroll.node.number())
+                            });
+                            for corner in corners {
+                                let moved = Rect::new(
+                                    corner.x + scroll.dx,
+                                    corner.y + scroll.dy,
+                                    corner.width,
+                                    corner.height,
+                                );
+                                repaint.extend(
+                                    [
+                                        corner.intersection(scroll.clip),
+                                        moved.intersection(scroll.clip),
+                                    ]
+                                    .into_iter()
+                                    .flatten(),
+                                );
+                            }
+                            copies.push(copy);
+                        }
+                        None => {
+                            zgx::profile::note(|| {
+                                format!(
+                                    "scroll @{} repainted its view: a rounded clip around it \
+                                     fades or is inset",
+                                    scroll.node.number()
+                                )
+                            });
+                            repaint.push(scroll.clip);
+                        }
+                    },
                     Some(blocker) => {
                         zgx::profile::note(|| {
                             format!(

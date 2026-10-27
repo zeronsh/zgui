@@ -8610,6 +8610,48 @@ impl Scene {
         let found = self.overflow_fades.iter().find(|(entry, _)| *entry == id);
         Some(found.map_or([0.; 4], |(_, past)| *past))
     }
+    /// The corner squares of the rounded clips around `id`, a scroll's
+    /// moving content (`ScrollMove::node`), that stay where they are as it
+    /// moves (its ancestors'; its own moves with it), in window points: a
+    /// copy of the content's pixels moves
+    /// their edges and what lies outside them, so a renderer copying them
+    /// repaints these and where the copy took them (`ScrollMove`). `None`
+    /// if one fades (a feathered clip, soft along its whole edge) or is
+    /// inset, which a copy cannot keep.
+    pub fn scroll_corners(&self, id: NodeId) -> Option<Vec<Rect>> {
+        let mut corners = Vec::new();
+        for node_id in self.ancestors(id) {
+            let node = self.tree_node(node_id);
+            let [Some(own), _] = rounded_clip(RoundedClip::default(), node, self.bounds(node_id))
+            else {
+                continue;
+            };
+            if node.clip_inset.is_some() || own.feather != Feather::NONE {
+                return None;
+            }
+            let r = own.rect;
+            let [top_left, top_right, bottom_right, bottom_left] = own.radii;
+            // A pixel more: its antialiased edge.
+            let square = |x: f32, y: f32, radius: f32| {
+                (radius > 0.).then(|| Rect::new(x - 1., y - 1., radius + 2., radius + 2.))
+            };
+            corners.extend(
+                [
+                    square(r.x, r.y, top_left),
+                    square(r.x + r.width - top_right, r.y, top_right),
+                    square(
+                        r.x + r.width - bottom_right,
+                        r.y + r.height - bottom_right,
+                        bottom_right,
+                    ),
+                    square(r.x, r.y + r.height - bottom_left, bottom_left),
+                ]
+                .into_iter()
+                .flatten(),
+            );
+        }
+        Some(corners)
+    }
     /// Turn this frame's scroll translations into moves: damage what a copy
     /// cannot supply, or everything the content painted where a copy is
     /// unsafe (isolated ancestors, backdrop filters over the clip, nested or

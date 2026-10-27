@@ -4842,8 +4842,11 @@ fn scroll_copies_match_a_fresh_render_and_decline_when_inexact() {
         Plain,
         Faded,
         Covered,
+        // The list clips at rounded corners: its corners' edge and what lies
+        // outside them must not move with the rows.
+        Rounded,
     }
-    for case in [Case::Plain, Case::Faded, Case::Covered] {
+    for case in [Case::Plain, Case::Faded, Case::Covered, Case::Rounded] {
         let mut gpu = GpuRenderer::new(160, 120).unwrap();
         let mut ui = Ui::new(160., 120.);
         let offset = ui.signal(0_f32);
@@ -4872,10 +4875,10 @@ fn scroll_copies_match_a_fresh_render_and_decline_when_inexact() {
         .h(100.)
         .p(8.)
         .bg(rgb(0x101820));
-        let rows = if case == Case::Faded {
-            rows.fade_edges(12., 12.)
-        } else {
-            rows
+        let rows = match case {
+            Case::Faded => rows.fade_edges(12., 12.),
+            Case::Rounded => rows.rounded(14.),
+            _ => rows,
         };
         let mut root = overlay().w(160.).h(120.).bg(rgb(0x000000)).child(rows);
         if case == Case::Covered {
@@ -4890,7 +4893,8 @@ fn scroll_copies_match_a_fresh_render_and_decline_when_inexact() {
         }
         ui.mount(root);
         let mut copies = 0;
-        for scroll in [0., 14., 28., 100., 101.5, 150., 40.] {
+        // Down, then back up: what a move left behind shows on the way back.
+        for scroll in [0., 14., 28., 100., 101.5, 150., 40., 26., 12., 0.] {
             offset.set(scroll);
             ui.prepare_frame();
             let damage = ui.scene.borrow_mut().flush().damage;
@@ -4916,8 +4920,9 @@ fn scroll_copies_match_a_fresh_render_and_decline_when_inexact() {
         match case {
             // 0→14, 14→28 and 28→100 copy. 100→101.5 and 101.5→150 shift by
             // fractions of a pixel; 150→40 jumps past the viewport.
-            Case::Plain => assert_eq!(copies, 3),
+            Case::Plain => assert!(copies >= 3, "{copies}"),
             Case::Faded => assert_eq!(copies, 0),
+            Case::Rounded => assert!(copies >= 3, "{copies}"),
             // Only 28→100 copies: its 72 px exposed strip repaints the whole
             // overlay, which the smaller moves would have shifted.
             Case::Covered => assert_eq!(copies, 1),
@@ -4983,6 +4988,75 @@ fn fractional_scrolls_on_the_pixel_grid_copy_and_match_a_fresh_render() {
     // Texture blits cost Apple GPUs graphics memory; macOS repaints.
     let expected = if cfg!(target_os = "macos") { 0 } else { 4 };
     assert_eq!(copies, expected);
+}
+
+/// A rounded panel, overflow hidden, holding a scroll view beside a divider
+/// (an app's sidebar), scrolled down and back up in a wheel's uneven steps
+/// on a 2x pixel grid: a copy of the view's pixels must not carry the
+/// panel's corners, which stay where they are, down the view.
+#[test]
+fn rounded_panel_scrolled_down_and_up_matches_a_fresh_render() {
+    let _gpu_fixture = gpu_fixture();
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let (w, h) = (160., 120.);
+    let renderer = || {
+        let mut gpu = GpuRenderer::new(320, 240).unwrap();
+        gpu.set_scale_factor(2.);
+        gpu
+    };
+    let mut gpu = renderer();
+    let mut ui = Ui::new(w, h);
+    ui.scene.borrow_mut().set_pixel_scale(2.);
+    let offset = ui.signal(0_f32);
+    let mut cards = column().gap(6.).p(6.);
+    for i in 0..30 {
+        cards = cards.child(div().w(96.).h(28.).bg(if i % 2 == 0 {
+            rgb(0x223344)
+        } else {
+            rgb(0x2a3a4a)
+        }));
+    }
+    ui.mount(
+        overlay().w(w).h(h).bg(rgb(0x2f6b3a)).child(
+            row()
+                .w(150.)
+                .h(110.)
+                .left(5.)
+                .top(5.)
+                .rounded(14.)
+                .bg(rgb(0x111111))
+                .overflow_hidden()
+                // Filled opaque and square: its moves copy where copying is
+                // allowed, and the panel's corners round it.
+                .child(
+                    scroll(offset.clone())
+                        .w(110.)
+                        .h(110.)
+                        .bg(rgb(0x111111))
+                        .child(cards),
+                )
+                .child(div().w(1.).h(110.).bg(rgb(0x333333)))
+                .child(div().w(38.).h(110.).bg(rgb(0x161616))),
+        ),
+    );
+    let steps = [
+        0., 3.5, 9.25, 17.0, 30.5, 48.0, 71.75, 90.0, 120.5, 150.0, 120.0, 95.5, 61.25, 40.0, 22.5,
+        8.75, 2.0, 0.,
+    ];
+    for scroll_to in steps {
+        offset.set(scroll_to);
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+        let mut fresh = renderer();
+        fresh
+            .render(&ui.scene.borrow(), &[Rect::new(0., 0., w, h)])
+            .unwrap();
+        assert!(
+            gpu.readback().unwrap() == fresh.readback().unwrap(),
+            "scroll {scroll_to}: differs from a fresh render"
+        );
+    }
 }
 
 /// A chat transcript: a measured, end-anchored virtual list of wrapped text
