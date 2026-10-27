@@ -698,8 +698,8 @@ fn spans_cover(clip: Rect, rects: impl Iterator<Item = Rect>, scale: f32) -> boo
     };
     covered(rows, clip.y, clip.y + clip.height) || covered(columns, clip.x, clip.x + clip.width)
 }
-/// Positioned glyphs of laid-out runs; rich text takes each glyph's colour
-/// from its run (it is shaped without colours, see `rich_buffer_raw`).
+/// Positioned glyphs of laid-out runs; rich text keeps each glyph's run.
+/// Its colour is read when quads are made, from the retained rich text.
 #[inline]
 fn glyphs_of<'a>(
     glyphs: Vec<Glyph>,
@@ -719,35 +719,28 @@ fn glyphs_of<'a>(
                 if !rich.runs()[current].range.contains(&byte) {
                     current = text::run_at(rich, byte);
                 }
-                (current, Some(rich.runs()[current].color))
+                current
             })
         }
-        None => styled_glyphs(glyphs, runs, scale, |_, glyph| {
-            (
-                0,
-                glyph
-                    .color_opt
-                    .map(|c| zgx::scene::Color(c.r(), c.g(), c.b(), c.a())),
-            )
-        }),
+        // Every plain buffer here uses text::attrs, without colour spans.
+        None => styled_glyphs(glyphs, runs, scale, |_, _| 0),
     }
 }
-/// `glyphs_of`, each glyph's run and colour from `style` (given its line).
+/// `glyphs_of`, each glyph's run from `style` (given its line).
 fn styled_glyphs<'a>(
     mut glyphs: Vec<Glyph>,
     runs: impl Iterator<Item = cosmic_text::LayoutRun<'a>>,
     scale: f32,
-    mut style: impl FnMut(usize, &cosmic_text::LayoutGlyph) -> (usize, Option<zgx::scene::Color>),
+    mut style: impl FnMut(usize, &cosmic_text::LayoutGlyph) -> usize,
 ) -> Vec<Glyph> {
     for run in runs {
         // Most texts are one line: one allocation at its size.
         glyphs.reserve(run.glyphs.len());
         for glyph in run.glyphs {
             let p = glyph.physical((0., 0.), scale);
-            let (run_index, color) = style(run.line_i, glyph);
+            let run_index = style(run.line_i, glyph);
             glyphs.push(Glyph {
                 key: p.cache_key,
-                color,
                 run: run_index,
                 x: p.x as f32,
                 // Each line's baseline on a whole device pixel too.
@@ -819,8 +812,7 @@ fn occluded_from(
 #[derive(Clone)]
 struct Glyph {
     key: CacheKey,
-    color: Option<zgx::scene::Color>,
-    /// The rich run it was shaped from, to recolour paint-only changes.
+    /// The rich run it was shaped from, including paint-only changes.
     run: usize,
     x: f32,
     y: f32,
@@ -862,6 +854,15 @@ fn place_text_quads(
         mask: NO_MASK,
     }));
 }
+// Keep the former glyph charge so compaction cannot retain more entries.
+#[allow(dead_code)]
+struct GlyphCharge {
+    key: CacheKey,
+    color: Option<zgx::scene::Color>,
+    run: usize,
+    x: f32,
+    y: f32,
+}
 struct Shaped {
     rich: Option<Arc<zgx::rich_text::RichText>>,
     text_options: zgx::text_layout::TextOptions,
@@ -888,7 +889,7 @@ impl Shaped {
             .map_or(self.text.len(), |r| r.storage_bytes())
             + self.font.storage_bytes()
             + self.decorations.capacity() * std::mem::size_of::<text::RichDecoration>()
-            + self.glyphs.capacity() * std::mem::size_of::<Glyph>()
+            + self.glyphs.capacity() * std::mem::size_of::<GlyphCharge>()
             // (Charged as the GPU quads they are placed as: the cache keeps
             // as many shapes as when it held those.)
             + self.quads.capacity() * std::mem::size_of::<Quad>()
@@ -6199,9 +6200,6 @@ impl GpuRenderer {
                         && shaped.text_options == item.text_options
                         && shaped.font == *item.font
                     {
-                        for glyph in &mut shaped.glyphs {
-                            glyph.color = Some(new.runs()[glyph.run].color);
-                        }
                         for decoration in &mut shaped.decorations {
                             decoration.color = decoration.color_in(new);
                         }
@@ -6579,7 +6577,9 @@ impl GpuRenderer {
                                             a.width as f32 / self.atlas_size as f32,
                                             a.height as f32 / self.atlas_size as f32,
                                         ],
-                                        color: glyph.color.map_or([0.; 4], |c| rgba(c, 1.)),
+                                        color: shaped.rich.as_ref().map_or([0.; 4], |rich| {
+                                            rgba(rich.runs()[glyph.run].color, 1.)
+                                        }),
                                         paint: [0., 1., 0., 0.],
                                     });
                                 }
@@ -8685,7 +8685,11 @@ impl GpuRenderer {
                 None => self.raster_glyph(glyph.key, stats)?,
             };
             if let Some(entry) = entry {
-                visible.push(glyph_quad(glyph, entry, self.scale, self.atlas_size));
+                let color = shaped
+                    .rich
+                    .as_ref()
+                    .map_or([0.; 4], |rich| rgba(rich.runs()[glyph.run].color, 1.));
+                visible.push(glyph_quad(glyph, entry, self.scale, self.atlas_size, color));
             }
         }
         visible.extend(decorations(false));
@@ -10025,7 +10029,13 @@ fn texture(device: &wgpu::Device, width: u32, height: u32, label: &str) -> wgpu:
 /// into the loops building a text's quads: called, its return copied each
 /// glyph's quad again.
 #[inline(always)]
-fn glyph_quad(glyph: &Glyph, a: AtlasEntry, scale: f32, atlas_size: u32) -> TextQuad {
+fn glyph_quad(
+    glyph: &Glyph,
+    a: AtlasEntry,
+    scale: f32,
+    atlas_size: u32,
+    color: [f32; 4],
+) -> TextQuad {
     TextQuad {
         rect: [
             (glyph.x + a.left as f32) / scale,
@@ -10039,7 +10049,7 @@ fn glyph_quad(glyph: &Glyph, a: AtlasEntry, scale: f32, atlas_size: u32) -> Text
             a.width as f32 / atlas_size as f32,
             a.height as f32 / atlas_size as f32,
         ],
-        color: glyph.color.map_or([0.; 4], |c| rgba(c, 1.)),
+        color,
         paint: [0., 1., 0., 0.],
     }
 }
