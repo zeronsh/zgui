@@ -380,37 +380,56 @@ impl Paint {
         ];
         (set, self.local.set)
     }
-    /// What `self` sets laid over `styles`, as `Styles::merge` does: on the
+    /// The presence proof read in place, without copying out the paint.
+    fn set_of(styles: &Styles) -> ([bool; 11], u8) {
+        let o = styles.overflow();
+        let set = [
+            o.brightness.is_some(),
+            o.contrast.is_some(),
+            o.saturate.is_some(),
+            o.clip_inset.is_some(),
+            styles.opacity.is_some(),
+            o.blur.is_some(),
+            o.edge_fade.is_some(),
+            o.filter_blur.is_some(),
+            o.mask_offset.is_some(),
+            styles.transform.is_some(),
+            styles.text_color.is_some(),
+        ];
+        (set, styles.local_transform.set)
+    }
+    /// What `source` sets laid over `styles`, as `Styles::merge` does: on the
     /// paint a style effect resolved last time, whose other fields still
     /// hold while which paint is set and the variants are the same.
-    fn lay_on(&self, styles: &mut Styles) {
+    fn lay_from(source: &Styles, styles: &mut Styles) {
         use crate::style::bit;
         macro_rules! lay {
             ($($field:ident $bit:ident),*) => {$(
-                if self.$field.is_some() {
-                    styles.fields_mut(bit::$bit).$field = self.$field;
+                if source.$field.is_some() {
+                    styles.fields_mut(bit::$bit).$field = source.$field;
                 }
             )*};
         }
         lay!(opacity OPACITY, transform TRANSFORM, text_color TEXT_COLOR);
         // The full application allocated it if any source set a rare paint
         // property, and which are set is the same here.
-        debug_assert!(styles.overflow.is_allocated() || self.overflow_unset());
+        debug_assert!(styles.overflow.is_allocated() || Self::of(source).overflow_unset());
         if styles.overflow.is_allocated() {
-            self.lay_overflow_on(styles);
+            Self::lay_overflow_from(source, styles);
         }
-        if self.local.set != 0 {
-            let local = styles.local_transform.over(self.local);
+        if source.local_transform.set != 0 {
+            let local = styles.local_transform.over(source.local_transform);
             styles.fields_mut(bit::LOCAL_TRANSFORM).local_transform = local;
         }
     }
     #[inline(never)]
-    fn lay_overflow_on(&self, styles: &mut Styles) {
+    fn lay_overflow_from(source: &Styles, styles: &mut Styles) {
         use crate::style::bit;
+        let source = source.overflow();
         macro_rules! lay {
             ($($field:ident $bit:ident),*) => {$(
-                if self.$field.is_some() {
-                    styles.fields_mut(bit::$bit).overflow_mut().$field = self.$field;
+                if source.$field.is_some() {
+                    styles.fields_mut(bit::$bit).overflow_mut().$field = source.$field;
                 }
             )*};
         }
@@ -904,7 +923,7 @@ pub(crate) fn mount_style_with_intrinsic(
             && !themed
             && !swapped
         {
-            let paint = produced.as_ref().map(Paint::of);
+            let paint = produced.as_ref().map(Paint::set_of);
             // Unchanged, or a box that changes only its size or margins (a
             // bar growing): the same fields set, other values, no interaction
             // style over them, and the rest compared once.
@@ -935,7 +954,7 @@ pub(crate) fn mount_style_with_intrinsic(
             };
             let unchanged = glass.is_none_or(|opaque| {
                 opaque == storage.themes.system_preferences().reduced_transparency
-            }) && paint.map(|p| p.set()) == last.paint
+            }) && paint == last.paint
                 && (same || resized)
                 && (!last.parent || inherited.version() == last.parent_version)
                 && intrinsic.as_ref().map(|size| size.get()) == last.intrinsic
@@ -985,19 +1004,19 @@ pub(crate) fn mount_style_with_intrinsic(
                 }
                 // The paint written last time, from the same inputs.
                 // Resized with no dynamic paint, as last time: nothing to write.
-                let none = resized && paint.is_none_or(|paint| paint.set() == ([false; 11], 0));
+                let none = resized && paint.is_none_or(|paint| paint == ([false; 11], 0));
                 if std::mem::replace(painted, none) && none {
                     return;
                 }
                 // The paint resolved last time, with this run's laid over it:
                 // the base and the variants on are the same, and so is which
                 // paint the style sets.
-                if let Some(paint) = &paint {
-                    paint.lay_on(&mut applied.0);
+                if let Some(produced) = &produced {
+                    Paint::lay_from(produced, &mut applied.0);
                 }
                 for (enabled, variant) in active_variants {
                     if enabled && let Some(variant) = variant {
-                        Paint::of(variant).lay_on(&mut applied.0);
+                        Paint::lay_from(variant, &mut applied.0);
                     }
                 }
                 // Frosted glass painted opaque (`opaque_glass`) stays so,
@@ -1054,7 +1073,7 @@ pub(crate) fn mount_style_with_intrinsic(
                         Some(value) => {
                             let mut color = themed_color(&base);
                             if let (Some(value), Some(produced)) =
-                                (paint.and_then(|p| p.text_color), &produced)
+                                (produced.as_ref().and_then(|p| p.text_color), &produced)
                             {
                                 color = Some(
                                     match token_of(produced, crate::theme::Field::TextColor) {
@@ -2314,7 +2333,7 @@ mod tests {
         }));
         ui.scene.borrow_mut().flush();
         // Each frame after the first takes the style effect's fast path,
-        // putting the paint back with `Paint::put`.
+        // laying the new paint over the resolved style.
         for v in [0.6, 0.7, 0.8, 0.9] {
             t.set(v);
             ui.scene.borrow_mut().flush();
@@ -2613,6 +2632,39 @@ mod tests {
         }
     }
 
+    /// Reading the presence proof in place matches copying the paint out,
+    /// including fields whose may-set bits remain after their values clear.
+    #[test]
+    fn paint_presence_in_place_matches_the_copied_paint() {
+        let cases = [
+            Styles::new(),
+            Styles::new().w(10.),
+            Styles::new().opacity(0.5),
+            Styles::new().opacity(f32::NAN),
+            Styles::new().blur(3.),
+            Styles::new().edge_fade(2.),
+            Styles::new().filter_blur(2.),
+            Styles::new().brightness(0.8),
+            Styles::new().contrast(0.8),
+            Styles::new().saturate(0.8),
+            Styles::new().mask_offset(2., 3.),
+            Styles::new().clip_inset(1., 2., 3., 4.),
+            Styles::new().translate(2., 3.),
+            Styles::new().text_color(Color(1, 2, 3, 4)),
+            Styles::new()
+                .rotate(f32::NAN)
+                .rotate_x(0.2)
+                .perspective(400.),
+        ];
+        for mut styles in cases {
+            assert_eq!(Paint::set_of(&styles), Paint::of(&styles).set());
+            styles.fields_mut(Paint::BITS);
+            assert_eq!(Paint::set_of(&styles), Paint::of(&styles).set());
+            Paint::take(&mut styles);
+            assert_eq!(Paint::set_of(&styles), ([false; 11], 0));
+        }
+    }
+
     /// Reusing paint follows the same component precedence as rebuilding
     /// it from the base, including variants that cover only part of a transform.
     #[test]
@@ -2652,8 +2704,9 @@ mod tests {
                     kept.merge(variant);
                     for v in [0.25, 0.5, 0.1, 0.75] {
                         let next = dynamic(v);
-                        Paint::of(&next).lay_on(&mut kept);
-                        Paint::of(variant).lay_on(&mut kept);
+                        assert_eq!(Paint::set_of(&next), Paint::of(&next).set());
+                        Paint::lay_from(&next, &mut kept);
+                        Paint::lay_from(variant, &mut kept);
                         let mut rebuilt = base.clone();
                         rebuilt.merge(&next);
                         rebuilt.merge(variant);
