@@ -2631,6 +2631,10 @@ pub struct GpuRenderer {
     layers: FxHashMap<NodeId, LayerCache>,
     /// Counts rendered frames, to age parked layers (`LAYER_PARK_FRAMES`).
     layer_frame: u64,
+    /// A layer prepared last (`prepare_layer`), or one nested in it, drew
+    /// its texture from another corner than it had: all of it may differ
+    /// where it shows, not only where the scene's damage says.
+    layer_shifted: bool,
     layer_origin: (f32, f32),
     shapes: FxHashMap<NodeId, Shaped>,
     /// For text the prepared cache doesn't lay out, a node shaped from each
@@ -3183,6 +3187,7 @@ impl GpuRenderer {
             swash: SwashCache::new(),
             layers: FxHashMap::default(),
             layer_frame: 0,
+            layer_shifted: false,
             layer_origin: (0., 0.),
             shapes: FxHashMap::default(),
             shaped_like: FxHashMap::default(),
@@ -3704,11 +3709,34 @@ impl GpuRenderer {
         let items = self.plane_items(items);
         let mut layer_stats = GpuStats::default();
         self.layer_frame += 1;
+        // Where layers drawn from another corner show: damaged whole.
+        let mut shifted = Vec::new();
         for item in &items {
             if item.isolated && item.effects.opacity > 0. {
                 let shown = self.shown(item, damage, viewport);
+                self.layer_shifted = false;
                 self.prepare_layer(scene, item.id, 1., true, shown, &mut layer_stats)?;
+                if std::mem::take(&mut self.layer_shifted)
+                    && let Some(cache) = self.layers.get(&item.id)
+                {
+                    let content = cache.content.expand(1.);
+                    let window = item.projective().map_or(content, |map| map.bounds(content));
+                    if let Some(window) = window.intersection(item.clip.unwrap_or(viewport)) {
+                        shifted.push(window);
+                    }
+                }
             }
+        }
+        // The frame again with those damaged too: its layers are current
+        // now, drawn from the same corners, so it goes this way once.
+        if !shifted.is_empty() && self.plane.is_none() {
+            let damage: Vec<Rect> = damage.iter().copied().chain(shifted).collect();
+            let mut stats = self.render_once(scene, &damage)?;
+            add_layer_stats(&mut stats, &layer_stats);
+            stats.layer_repaints += layer_stats.layer_repaints - 1;
+            stats.layer_partial_repaints += layer_stats.layer_partial_repaints;
+            stats.layer_texture_allocations += layer_stats.layer_texture_allocations;
+            return Ok(stats);
         }
         // Damaged where it shows but not drawn (hidden, culled): what changed
         // in it then is known nowhere, so it repaints whole next.
@@ -3951,11 +3979,26 @@ impl GpuRenderer {
             });
         let mut items = scene.layer_items(Some(id));
         self.plane_filter(&mut items);
+        // A layer nested in it drawn from another corner differs anywhere
+        // in it, and so does it.
+        let mut shifted = false;
         for item in &items {
             if item.isolated && item.effects.opacity > 0. {
+                self.layer_shifted = false;
                 self.prepare_layer(scene, item.id, magnification, exact, None, stats)?;
+                shifted |= self.layer_shifted;
             }
         }
+        // Drawn from another corner (its content grew left or up): its
+        // texels round otherwise, and what didn't change shows a level off
+        // where the window keeps its last frame (`render_once`).
+        shifted |= self.layers.get(&id).is_some_and(|cache| {
+            (
+                cache.bounds.x - cache.root_origin.0,
+                cache.bounds.y - cache.root_origin.1,
+            ) != (bounds.x - root.x, bounds.y - root.y)
+        });
+        self.layer_shifted = shifted;
         self.prepare_effects(scene, &items)?;
         if let Some(damage) = partial {
             let cache = self.layers.remove(&id).expect("kept above");

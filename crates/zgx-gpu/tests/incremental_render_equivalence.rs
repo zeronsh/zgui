@@ -236,7 +236,11 @@ fn matches_a_fresh_render(layers: bool) {
     again.flush();
     whole.render(&again, &window).unwrap();
     let mut partial = 0;
-    for step in 0..60 {
+    // Layered, past step 84: a child of the zoomed group goes past its
+    // box's left edge, its layer drawn from another corner (and every
+    // pixel of it to be shown again, not only the child's).
+    let steps = if layers { 130 } else { 60 };
+    for step in 0..steps {
         mutate(&mut live, &tree, step);
         let report = live.flush();
         partial += renderer
