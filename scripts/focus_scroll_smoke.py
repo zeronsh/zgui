@@ -75,7 +75,8 @@ def main():
         xdo("key", "--clearmodifiers", *("shift+Tab",)*7)
         time.sleep(.2)
         report(2,range(76,116))
-        xdo("mousemove", "--window", window, 100,150,"click","--repeat",2,"--delay",100,5)
+        # Four wheel notches of 40 points (XTEST: a click is a notch).
+        xdo("mousemove", "--window", window, 100,150,"click","--repeat",4,"--delay",100,5)
         time.sleep(.2)
         report(3,range(0))
         # Closed as a user closes it (Openbox's Alt+F4), not by the app's

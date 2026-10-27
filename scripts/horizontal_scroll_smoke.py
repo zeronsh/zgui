@@ -75,7 +75,8 @@ def main():
         xdo("key", "--clearmodifiers", *("shift+Tab",)*7)
         time.sleep(.2)
         report(2,range(32,112))
-        xdo("mousemove", "--window", window, 150,100,"click","--repeat",2,"--delay",100,7)
+        # Four wheel notches of 40 points (XTEST: a click is a notch).
+        xdo("mousemove", "--window", window, 150,100,"click","--repeat",4,"--delay",100,7)
         time.sleep(.2)
         report(3,range(0))
         xdo("key", "--clearmodifiers", *("Tab",)*7)
