@@ -40,7 +40,7 @@ func main() {
 			for {
 				time.Sleep(w.BlinkPhase)
 				if seconds > 0 && time.Since(start).Seconds() >= seconds {
-					mygo.RunOnMain(func() { fmt.Fprintf(os.Stderr, "blink_frames=%d\n", s.frames) })
+					mygo.RunOnMain(func() { fmt.Fprintf(os.Stderr, "blink_frames=%d workload_ticks=0\n", s.frames) })
 					mygo.App.Quit()
 					return
 				}

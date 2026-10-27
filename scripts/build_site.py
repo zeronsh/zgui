@@ -538,7 +538,33 @@ def release_section(release, e):
     return '\n'.join(out)
 
 
-def page(by, verdict, cards, micro=None, startup=None, release=None):
+# The field scene: each framework's own text field, focused, left alone;
+# how its caret draws, which is what decides its memory.
+FIELD_CARETS = {
+    'zgx': 'zgx&#8217;s text input: its caret blinks as the system&#8217;s, drawn by Core Animation, so the window draws no frame while it blinks',
+    'gpui-fast': 'GPUI has no text field of its own: a 2 &#215; 20 point bar shown and hidden every 530 ms in a still window, as a caret blinks',
+    'mygo': 'MyGo&#8217;s <code>TextInput</code>: its caret blinks every 530 ms, a frame each time',
+    'rune': 'Rune&#8217;s <code>text_input</code>: its caret does not blink, so the window draws no frame while it is left alone',
+}
+
+
+def field_section(field, e):
+    """A focused field left alone: memory first, then CPU and WindowServer."""
+    charts = ''.join(chart(field, metric) for metric in ('memory', 'cpu', 'server'))
+    carets = ''.join(f'<li><strong>{e(NAMES[f])}:</strong> {FIELD_CARETS[f]}.</li>' for f in field['frameworks'] if f in FIELD_CARETS)
+    return (
+        '<section id="field" aria-labelledby="field-h"><h2 id="field-h">A focused field, left alone</h2>'
+        '<p class="scene-note">The window most apps show most of the time: a text field with the focus, its user reading. '
+        f'Each framework&#8217;s own field in a 960 &#215; 720 window, sampled {field["protocol"]["idle_window_seconds"][0]}&#8211;'
+        f'{field["protocol"]["idle_window_seconds"][1]} s after launch, {field["protocol"]["idle_repeats"]} launches each. '
+        'A window that draws a frame every few seconds keeps the Metal driver&#8217;s memory for its command queue, about 176 MB, '
+        f'for as long as it does. Measured separately from the suite, at <code>{e(field["commit"][:7])}</code>.</p>'
+        f'<ul class="facts">{carets}</ul>'
+        f'<div class="charts">{charts}</div></section>'
+    )
+
+
+def page(by, verdict, cards, micro=None, startup=None, release=None, field=None):
     heavy = by['heavy']
     env, protocol, commit = heavy['environment'], heavy['protocol'], heavy['commit']
     # Since 2026-10-26 (#637), samples start from the window's readiness,
@@ -602,7 +628,8 @@ def page(by, verdict, cards, micro=None, startup=None, release=None):
         else:
             crash_note = '<li>No app exited abnormally during the run.</li>'
     nav = ' '.join(f'<a href="#{n}">{SCENES[n][0]}</a>' for n in ORDER) + (' <a href="#micro">Microbenchmarks</a>' if micro else '') + (
-        f' <a href="#release">Since {e(release["gate"]["from"]["version"])}</a>' if release else '')
+        f' <a href="#release">Since {e(release["gate"]["from"]["version"])}</a>' if release else '') + (
+        ' <a href="#field">A focused field</a>' if field else '')
     mygo_build = (f"MyGo {e(mygo.get('mygo_version', '?'))} (<code>{e(mygo.get('mygo_commit', '?')[:7])}</code>, "
                   f"{e(mygo.get('mygo_license', '?'))}) built with {e(mygo.get('go', tools.get('go', 'Go')))}, "
                   f"<code>go build {e(mygo.get('flags', ''))}</code>, cgo {'on' if mygo.get('cgo') else 'off'}") + rune_build
@@ -633,6 +660,7 @@ def page(by, verdict, cards, micro=None, startup=None, release=None):
 </header>
 <main>
 {''.join(sections)}
+{field_section(field, e) if field else ''}
 {release_section(release, e) if release else ''}
 {startup_section(startup, e) if startup else ''}
 {micro_section(micro, e) if micro else ''}
@@ -807,6 +835,7 @@ def main():
     parser.add_argument('--startup', type=Path, help='a startup run (docs/results/startup-macos-*/startup.json), shown in its own section')
     parser.add_argument('--gate', type=Path, help='the instruction gate\'s counts for two releases (from, to, scenes: name → [from, to]), shown with --previous')
     parser.add_argument('--previous', type=Path, help='the last published suite run, compared with this one per cell, for zgx')
+    parser.add_argument('--field', type=Path, help='a run of the field scene (a focused field left alone), shown in its own section')
     parser.add_argument('--rebuilt', help='which rival builds differ between the two runs (said beside the comparison)')
     parser.add_argument('--board-power', action='store_true',
                         help='Windows: publish the NVIDIA board\'s power (only where it held still across repeats)')
@@ -844,6 +873,10 @@ def main():
                    'previous_date': previous['heavy']['started_utc'][:10], 'rebuilt': args.rebuilt,
                    'modes': {n: by[n]['modes'] for n in ORDER}, 'changes': release_changes(previous, by)}
         data['release'] = {k: release[k] for k in ('gate', 'previous_commit', 'previous_date', 'rebuilt', 'changes')}
+    field = load(args.field.resolve()) if args.field else None
+    if field:
+        data['field'] = {k: field[k] for k in ('scene', 'run', 'commit', 'started_utc', 'frameworks', 'modes', 'trials',
+                                               'protocol', 'environment', 'toolchains', 'cells')}
     keys = (WINDOWS_TRIAL_KEYS + (['gpu_board_power_w'] if BOARD_POWER else []) if PLATFORM == 'windows'
             else TRIAL_KEYS) + PACING_KEYS + BLANK_KEYS
     args.output.mkdir(parents=True, exist_ok=True)
@@ -861,7 +894,7 @@ def main():
     micro = load_micro(args.micro) if args.micro else None
     if micro:
         shutil.copy(args.micro, args.output / 'micro.jsonl')
-    (args.output / 'index.html').write_text(page(by, verdict, cards, micro, startup, release), encoding='utf-8', newline='\n')
+    (args.output / 'index.html').write_text(page(by, verdict, cards, micro, startup, release, field), encoding='utf-8', newline='\n')
     counts = ', '.join(f"{n} ({by[n]['trials']} trials)" for n in ORDER)
     print(f"Published {counts} at {by['heavy']['commit'][:7]} to {args.output}")
 

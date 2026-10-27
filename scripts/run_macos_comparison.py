@@ -149,6 +149,19 @@ SCENES = {
             'rune': RUNE / 'vlist',
         },
     },
+    # A focused text field left alone, idle (zgx_workload::blink): each
+    # framework's own field, its caret as it draws it (MyGo's blinks every
+    # 530 ms, Rune's does not blink, zgx's blinks as the system's); GPUI has
+    # no field, so its caret is a bar blinking as one would.
+    'field': {
+        'modes': ['idle'],
+        'binaries': {
+            'zgx': ROOT / 'target/dist/examples/field_workload',
+            'gpui-fast': ROOT / 'comparisons/gpui-fast/target/dist/blink',
+            'mygo': MYGO / 'field',
+            'rune': RUNE / 'field',
+        },
+    },
 }
 # The suite's frameworks: zgx (in Rust, and in Luau where a scene has it),
 # the stronger GPUI, MyGo and Rune.
@@ -624,9 +637,14 @@ def main():
     frameworks, modes = list(SCENES[args.scene]['binaries']), SCENES[args.scene]['modes']
     if args.suite:
         use_suite()
+        # The field is nothing but idle, whose memory is two-level launch to
+        # launch (the driver returns its pool or keeps part of it): five.
+        if args.scene == 'field':
+            globals()['IDLE_REPEATS'] = 5
         frameworks = [f for f in SUITE_FRAMEWORKS if f in SCENES[args.scene]['binaries']]
-        # Idle once, in heavy: it is the verdict's idle CPU.
-        if args.scene != 'heavy':
+        # Idle once, in heavy: it is the verdict's idle CPU (and in the
+        # field, which is nothing else).
+        if args.scene not in ('heavy', 'field'):
             modes = [m for m in modes if m != 'idle']
     if not args.quickgui:
         frameworks = [f for f in frameworks if f != 'quickgui']

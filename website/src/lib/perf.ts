@@ -196,3 +196,6 @@ type Release = {
 };
 /** Release over release (data.json's `release`): the gate's exact counts and the suite's per-cell change, when the run has one. */
 export const release = ((perf as Record<string, unknown>).release ?? null) as Release | null;
+
+/** The field scene (data.json's `field`): a focused text field left alone, run apart from the suite, when there is one. */
+export const field = ((perf as Record<string, unknown>).field ?? null) as Scene | null;

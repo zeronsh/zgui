@@ -1,0 +1,43 @@
+---
+// A focused field left alone, from a run's `field` (scripts/build_site.py
+// --field): each framework's own text field, focused, its user reading;
+// how its caret draws decides its memory. The page writes the heading.
+import BarChart from '@/components/perf/BarChart.astro';
+import { field, names, repo } from '@/lib/perf';
+
+const carets: Record<string, string> = {
+  zgx: "zgx's text input: its caret blinks as the system's, drawn by Core Animation, so the window draws no frame while it blinks.",
+  'gpui-fast': 'GPUI has no text field of its own: a 2 × 20 point bar shown and hidden every 530 ms in a still window, as a caret blinks.',
+  mygo: "MyGo's TextInput: its caret blinks every 530 ms, a frame each time.",
+  rune: "Rune's text_input: its caret does not blink, so the window draws no frame while it is left alone.",
+};
+const protocol = (field?.protocol ?? {}) as { idle_window_seconds?: number[]; idle_repeats?: number };
+---
+
+{
+  field ? (
+    <div>
+      <p>
+        The window most apps show most of the time: a text field with the focus, its user reading. Each framework's own field in a
+        960 × 720 window, sampled {protocol.idle_window_seconds?.[0]}–{protocol.idle_window_seconds?.[1]} s after launch,{' '}
+        {protocol.idle_repeats} launches each. A window that draws a frame every few seconds keeps the Metal driver's memory for its
+        command queue, about 176 MB, for as long as it does. Measured apart from the suite, at{' '}
+        <a href={`${repo}/commit/${field.commit}`}><code>{field.commit.slice(0, 7)}</code></a>.
+      </p>
+      <ul>
+        {field.frameworks.filter((f) => carets[f]).map((f) => (
+          <li>
+            <strong>{names[f] ?? f}:</strong> {carets[f]}
+          </li>
+        ))}
+      </ul>
+      <div class="not-prose">
+        <BarChart scene="field" metric="memory" run={field} />
+        <BarChart scene="field" metric="cpu" run={field} />
+        <BarChart scene="field" metric="server" run={field} />
+      </div>
+    </div>
+  ) : (
+    <p>This run has no field measurement.</p>
+  )
+}

@@ -30,7 +30,7 @@ fn view(s: &Scene, _: &mut Cx<Scene>) -> El {
 fn poll(s: &mut Scene, _clock: f64, tx: &mut Tx) -> bool {
     let start = *s.start.get_or_insert_with(Instant::now);
     if s.seconds > 0.0 && start.elapsed().as_secs_f64() >= s.seconds {
-        eprintln!("blink_frames={}", s.frames);
+        eprintln!("blink_frames={} workload_ticks=0", s.frames);
         tx.quit();
         return false;
     }

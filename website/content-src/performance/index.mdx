@@ -9,6 +9,7 @@ import SceneCharts from '@/components/perf/SceneCharts.astro';
 import Method from '@/components/perf/Method.astro';
 import Startup from '@/components/perf/Startup.astro';
 import Release from '@/components/perf/Release.astro';
+import Field from '@/components/perf/Field.astro';
 
 <Headline />
 
@@ -19,6 +20,10 @@ import Release from '@/components/perf/Release.astro';
 These are macOS's figures; Windows is measured on its own, in its own metrics, on [the Windows page](/performance/windows).
 
 **GPUI Fast** is Zed's GPUI with its fast-path optimizations, as apps ship it. **MyGo** is a Go desktop framework, measured through its GPU-drawn native UI. **Rune** is built on Rust, wgpu, Taffy and Parley. Every figure on this page is read at build time from the run that [`scripts/build_site.py`](https://github.com/zeronsh/zgx/blob/main/scripts/build_site.py) accepted, after it recomputed each median and range from the trials and checked them against the run's summaries.
+
+## A focused field, left alone
+
+<Field />
 
 ## Since the last release
 

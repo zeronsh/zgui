@@ -24,7 +24,7 @@ profile=${RUNE_PROFILE:-dist}
 target=${CARGO_TARGET_DIR:-target}
 cargo build --profile "$profile" --locked --bins
 mkdir -p bin
-for scene in heavy lab animate vlist micro; do
+for scene in heavy lab animate vlist micro blink field; do
 	cp "$target/$profile/$scene" "bin/$scene"
 done
 
@@ -37,7 +37,7 @@ cat >build.json <<JSON
   "rune_patch": "PATCH.md: Tx::wheel, Rune's own wheel path (Runtime::wheel_xy) for the app (sha256 $(shasum -a 256 rune-wheel.patch | cut -c1-64))",
   "rustc": "$(rustc --version)",
   "profile": "$profile ($( [ "$profile" = dist ] && echo "Rune's perf with fat LTO and codegen-units 1" || echo "Rune's: release, opt-level 3, codegen-units 16, no LTO, no debug, not incremental"))",
-  "binaries": ["bin/heavy", "bin/lab", "bin/animate", "bin/vlist", "bin/micro"],
+  "binaries": ["bin/heavy", "bin/lab", "bin/animate", "bin/vlist", "bin/micro", "bin/blink", "bin/field"],
   "built_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 JSON
