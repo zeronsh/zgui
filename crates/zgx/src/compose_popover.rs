@@ -189,8 +189,12 @@ fn mount_placement(
             return;
         }
         let previous = scene.transform(position);
-        let dx = desired.0 - current.x;
-        let dy = desired.1 - current.y;
+        // From where it is now, not where it was last published: run twice
+        // before a frame publishes it (a mount's geometry settling), it
+        // moves once.
+        let now = scene.bounds(position);
+        let dx = desired.0 - now.x;
+        let dy = desired.1 - now.y;
         // Avoid introducing an allocation feedback cycle through float rounding.
         if dx.abs() > 0.01 || dy.abs() > 0.01 {
             scene.set_transform(

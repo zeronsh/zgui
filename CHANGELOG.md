@@ -15,8 +15,8 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Changed: what to check in an existing app
 
-**A mount's text inputs are laid out once its static bindings have run, not each as it binds**: a mount of many inputs is linear, not quadratic (the widgets benchmark −93%). An observer in the mount that reads geometry (a reactive style, a binding) sees the layout as it is: a style derived from an input's width of 160 reads 160, where it read an earlier layout's (such as the default 240) and kept it.
-- *Migrate:* nothing, unless an app relied on the earlier width.
+**A mount's text inputs are laid out once, when it ends, and geometry read during a mount is reactive**: a mount of many inputs is linear, not quadratic (the widgets benchmark −93%), including one whose rows each run a callback of the app's own. An observer in the mount that reads geometry (`Scene::bounds` and the boxes made from it, from a reactive style or a binding) runs again once the mount's layout settles, if what it read has moved: a style derived from an input's width of 160 settles on 160, where it read an earlier layout's (such as the default 240) and kept it. One whose reads keep moving runs again at most a few times, then at the next flush.
+- *Migrate:* derive what a callback makes from its geometry read each time it runs. One that keeps only its first read (a `Cell` set once) keeps a value from before layout; an app relying on the earlier width needs nothing else.
 - A `TextMeasurer`, `TextShaper` or `FontTextShaper` is a cached computation: it may be called any number of times, in any order. The signals it reads keep their subscriptions; writing a signal from one is unsupported.
 
 ## 0.1.3 (2026-10-27)

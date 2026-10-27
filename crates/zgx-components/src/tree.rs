@@ -192,10 +192,14 @@ pub fn tree(
                 let Some(handle) = tree_node.borrow().clone() else {
                     return;
                 };
+                // Not laid out yet (a mount reads it again once it is): no
+                // view to bring the row into.
                 if let Some(i) = index
                     && let Some(scene) = handle.scene()
+                    && let height = scene.borrow().bounds(handle.node()).height
+                    && height > 0.
                 {
-                    let height = scene.borrow().bounds(handle.node()).height.max(ROW);
+                    let height = height.max(ROW);
                     let top = i as f32 * ROW;
                     let now = offset.with_untracked(|o| *o);
                     if top < now {

@@ -1386,7 +1386,7 @@ impl Ui {
     }
     /// [`Ui::bind`]. `mount_pure`: `f` reads no layout, so a mount's
     /// deferred input draws need not be made before it runs
-    /// (`draw_inputs_before`).
+    /// (`watch_geometry`).
     pub(crate) fn bind_marked(
         &mut self,
         owner: NodeId,
@@ -1434,21 +1434,15 @@ impl Ui {
                 .push(effect);
         });
     }
-    /// [`Ui::bind`] for a text input's model or typography, which a mount
-    /// deferring its inputs' draws runs without drawing them first
-    /// (`draw_inputs_before`).
+    /// [`Ui::bind`] for a text input's model or typography: `mount_pure`,
+    /// as it reads no geometry before its draw lays out (`watch_geometry`).
     pub(crate) fn bind_input(&mut self, owner: NodeId, f: impl FnMut() + 'static) {
-        self.bind_marked(owner, false, f);
+        self.bind_marked(owner, true, f);
         INPUT_DRAWS.with_borrow_mut(|draws| {
-            let Some(draws) = &mut **draws else {
-                return;
-            };
-            if draws.storage.as_ptr() != Rc::as_ptr(&self.storage) {
-                return;
-            }
-            let owned = self.storage.owned.borrow();
-            if let Some(effect) = owned.get(&owner).and_then(|owned| owned.effects.last()) {
-                draws.inputs.insert(effect.number(), owner);
+            if let Some(draws) = &mut **draws
+                && draws.storage.as_ptr() == Rc::as_ptr(&self.storage)
+            {
+                draws.bound = true;
             }
         });
     }
@@ -2534,7 +2528,7 @@ impl Ui {
                         })
                         .chain(own.iter().filter(|(node, _)| scene.contains(**node)).map(
                             |(node, signal)| {
-                                let b = scene.layout_bounds(*node);
+                                let b = scene.layout_box(*node);
                                 (*node, signal.clone(), (b.width, b.height))
                             },
                         ))
@@ -2548,7 +2542,7 @@ impl Ui {
                         .borrow()
                         .iter()
                         .filter(|(node, _)| scene.contains(**node))
-                        .map(|(node, signal)| (*node, signal.clone(), scene.bounds(*node)))
+                        .map(|(node, signal)| (*node, signal.clone(), scene.world_bounds(*node)))
                         .collect()
                 } else {
                     Vec::new()
@@ -5496,22 +5490,25 @@ impl Ui {
 /// An input waiting to be drawn, with the model effect whose reads its
 /// draw's are.
 type InputDraw = (NodeId, u64, Rc<dyn Fn()>);
-/// A mount's text inputs, drawn once its bindings have run rather than each
-/// as its model binds. A draw lays the scene out (to place the text in the
-/// editor's box), so drawing inputs one by one laid out again a tree that
-/// grew with every row: a mount of n inputs was quadratic. Bindings that
-/// read no layout (static styles, `mount_pure`, and the inputs' own model
-/// and typography bindings) run between; before any other observer, which
-/// may read geometry, the inputs waiting are drawn and the scene laid out
-/// (`draw_inputs_before`), so it reads current geometry. One top-level
+/// A mount's text inputs, drawn once it ends rather than each as its model
+/// binds. A draw lays the scene out (to place the text in the editor's box),
+/// so drawing inputs one by one laid out again a tree that grew with every
+/// row: a mount of n inputs was quadratic, and so was laying out before
+/// each callback of the app's that might read geometry. Instead what such
+/// an observer reads of geometry is kept (`watch_geometry`), and once the
+/// mount has drawn its inputs and laid out, each whose read moved runs
+/// again (`finish_input_draws`), as a `ResizeObserver` does. One top-level
 /// mount at a time, per thread.
 struct InputDraws {
-    /// The model and typography bindings of this mount's inputs, by effect.
-    inputs: std::collections::BTreeMap<u64, NodeId>,
+    /// Whether this mount has bound an input.
+    bound: bool,
     storage: Weak<UiStorage>,
     waiting: Vec<InputDraw>,
     /// Whether a draw was deferred: observers from then on get a layout.
     deferred: bool,
+    /// The observer the scene keeps geometry reads for now
+    /// (`Scene::read_geometry_for`): told only when it changes.
+    reader: Option<u64>,
 }
 thread_local! {
     // `InputDrawScope` takes the value on return and unwind: the slot owns
@@ -5534,10 +5531,11 @@ impl InputDrawScope {
                     return false;
                 }
                 **draws = Some(InputDraws {
-                    inputs: Default::default(),
+                    bound: false,
                     storage: Rc::downgrade(&ui.storage),
                     waiting: Vec::new(),
                     deferred: false,
+                    reader: None,
                 });
                 true
             });
@@ -5579,35 +5577,31 @@ fn defer_input_draw(
         true
     })
 }
-/// Before observer `effect` runs in a mount: unless it reads no layout, draw
-/// the inputs waiting and lay out. Whether it did (the draws may have
-/// queued an older observer).
-pub(crate) fn draw_inputs_before(effect: u64, scene: &Rc<RefCell<Scene>>) -> bool {
-    let drawing = INPUT_DRAWS.with_borrow_mut(|draws| {
+/// As observer `effect` starts (`starts`) and ends in a mount deferring its
+/// inputs' draws: from the first deferred, what an observer (not one marked
+/// `mount_pure`: static styles, inputs' own bindings) reads of
+/// `scene`'s geometry is kept (`Scene::read_geometry_for`), to run it again
+/// once layout settles (`finish_input_draws`).
+pub(crate) fn watch_geometry(effect: u64, starts: bool, scene: &Rc<RefCell<Scene>>) {
+    let changed = INPUT_DRAWS.with_borrow_mut(|draws| {
         let draws = draws.as_mut()?;
-        let storage = draws.storage.upgrade()?;
-        let input = draws.inputs.get(&effect).is_some_and(|owner| {
-            storage
-                .editors
-                .borrow()
-                .get(owner)
-                .is_some_and(|editor| editor.hint.code().is_none())
-        });
-        if input || !draws.deferred {
-            return None;
-        }
-        Some((storage.runtime.clone(), std::mem::take(&mut draws.waiting)))
+        let reader = (starts && draws.deferred).then_some(effect);
+        (reader != draws.reader).then(|| {
+            draws.reader = reader;
+            reader
+        })
     });
-    let Some((runtime, waiting)) = drawing else {
-        return false;
-    };
-    for (_, effect, draw) in waiting {
-        runtime.run_as(effect, &*draw);
+    if let Some(reader) = changed {
+        scene.borrow().read_geometry_for(reader);
     }
-    scene.borrow_mut().prepare_layout();
-    true
 }
-/// The end of a mount whose input draws were deferred: the rest drawn.
+/// Layout passes a mount runs the observers that read its geometry again
+/// in, before any left are let wait for the next flush.
+pub(crate) const GEOMETRY_PASSES: usize = 4;
+/// The end of a mount whose input draws were deferred: the rest drawn and
+/// laid out, then each observer that read geometry layout has since moved
+/// run again, as a `ResizeObserver` is: until nothing it read moves, or for
+/// `GEOMETRY_PASSES` passes.
 pub(crate) fn finish_input_draws(scene: &Rc<RefCell<Scene>>) {
     let Some(draws) = INPUT_DRAWS.with_borrow_mut(|draws| draws.take()) else {
         return;
@@ -5624,11 +5618,31 @@ pub(crate) fn finish_input_draws(scene: &Rc<RefCell<Scene>>) {
         }
         scene.borrow_mut().prepare_layout();
     });
+    let watch = |effect: u64, starts: bool| {
+        scene.borrow().read_geometry_for(starts.then_some(effect));
+    };
+    for pass in 0..GEOMETRY_PASSES {
+        let moved = scene.borrow().changed_geometry_readers();
+        if moved.is_empty() {
+            return;
+        }
+        if pass + 1 == GEOMETRY_PASSES {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "zgx: {} observers' geometry still moved after {GEOMETRY_PASSES} layout passes of a mount; they run again at the next flush",
+                moved.len()
+            );
+            runtime.requeue(&moved);
+            return;
+        }
+        runtime.rerun_watched(&moved, watch);
+        scene.borrow_mut().prepare_layout();
+    }
 }
 /// Whether the mount deferring input draws has bound an input: without one
 /// its observers run as any batch's.
 pub(crate) fn inputs_bound() -> bool {
-    INPUT_DRAWS.with_borrow(|draws| draws.as_ref().is_some_and(|draws| !draws.inputs.is_empty()))
+    INPUT_DRAWS.with_borrow(|draws| draws.as_ref().is_some_and(|draws| draws.bound))
 }
 /// Whether `node`'s draw is the last a mount on `scene` has waiting.
 fn input_draw_pending(node: NodeId, scene: &Rc<RefCell<Scene>>) -> bool {

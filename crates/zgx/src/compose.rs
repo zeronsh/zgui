@@ -5922,9 +5922,9 @@ impl Ui {
             root
         };
         let root = if draws.active {
-            let root = runtime.batch_with_barrier(
+            let root = runtime.batch_watched(
                 build,
-                |effect| crate::widgets::draw_inputs_before(effect, &self.scene),
+                |effect, starts| crate::widgets::watch_geometry(effect, starts, &self.scene),
                 crate::widgets::inputs_bound,
             );
             crate::widgets::finish_input_draws(&self.scene);
@@ -6075,7 +6075,8 @@ mod input_draw_tests {
 
     // Drawn as it bound, the input was last laid out before its width
     // applied: the callback read the default 240, and a style derived from
-    // it stayed 240. Its draws deferred to the callback, it reads 160.
+    // it stayed 240. Its geometry read is reactive now: once the mount's
+    // layout settles, the callback runs again and reads 160.
     #[test]
     fn a_mount_callback_derives_its_style_from_current_input_geometry() {
         let mut ui = Ui::new(1200., 800.);
@@ -6105,6 +6106,73 @@ mod input_draw_tests {
         ui.prepare_frame();
         let derived = mounted.find("derived").unwrap();
         assert_eq!(ui.scene.borrow().bounds(derived).width, 160.);
+    }
+
+    // A callback reading geometry during a mount may run again once its
+    // layout settles: one that keeps only its first read keeps a stale one.
+    #[test]
+    fn a_mount_callback_that_latches_its_first_geometry_read_keeps_it() {
+        let mut ui = Ui::new(1200., 800.);
+        let value = ui.signal(String::from("text"));
+        let scene = ui.scene.clone();
+        let (runs, latched) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(None)));
+        let (count, saved) = (runs.clone(), latched.clone());
+        let input = Rc::new(Cell::new(None));
+        let (source, read) = (input.clone(), input.clone());
+        let _mounted = ui.mount(
+            column().children([
+                row().child(
+                    text_input("Name", value)
+                        .w(160.)
+                        .on_mount(move |handle| source.set(Some(handle.node()))),
+                ),
+                button().child(text("Derived")).reactive_style(move || {
+                    count.set(count.get() + 1);
+                    let width = read
+                        .get()
+                        .map_or(0., |input| scene.borrow().bounds(input).width);
+                    if saved.get().is_none() {
+                        saved.set(Some(width));
+                    }
+                    Styles::default()
+                }),
+            ]),
+        );
+        // Run first before layout, then again on current geometry; its
+        // latch kept the first.
+        assert_eq!(runs.get(), 2);
+        assert_ne!(latched.get(), Some(160.));
+        let input = input.get().unwrap();
+        assert_eq!(ui.scene.borrow().bounds(input).width, 160.);
+    }
+
+    // A callback whose read moves again each time it runs is run again a
+    // few times, then left for the next flush: never a loop.
+    #[test]
+    fn a_mount_callback_whose_geometry_never_settles_stops_after_a_few_passes() {
+        let mut ui = Ui::new(1200., 800.);
+        let value = ui.signal(String::from("text"));
+        let scene = ui.scene.clone();
+        let runs = Rc::new(Cell::new(0));
+        let count = runs.clone();
+        let mounted = ui.mount(
+            column().children([
+                row().child(text_input("Name", value).w(160.)),
+                button()
+                    .id("grows")
+                    .child(text("Grows"))
+                    .reactive_style(move || {
+                        count.set(count.get() + 1);
+                        let scene = scene.borrow();
+                        let column = scene.children(scene.root())[0];
+                        let grows = scene.children(column)[1];
+                        // Wider by a point than it was laid out: never settled.
+                        Styles::default().w(scene.bounds(grows).width + 1.)
+                    }),
+            ]),
+        );
+        assert!(runs.get() <= crate::widgets::GEOMETRY_PASSES + 1);
+        assert!(mounted.find("grows").is_some());
     }
 
     fn picture(ui: &Ui) -> Vec<String> {

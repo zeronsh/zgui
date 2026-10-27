@@ -5576,7 +5576,16 @@ fn presence(
             };
             for id in leaving {
                 let mounted = state.borrow().elements.get(&id).cloned();
-                match (mounted, &exit) {
+                // Laid out, so shown: content never laid out (made in the
+                // mount laying it out) just goes.
+                let shown = mounted.as_ref().is_some_and(|(_, handle)| {
+                    handle.is_mounted()
+                        && handle.scene().is_some_and(|scene| {
+                            scene.borrow().layout_bounds(handle.node())
+                                != zgx::scene::Rect::default()
+                        })
+                });
+                match (mounted.filter(|_| shown), &exit) {
                     (Some((element, handle)), Some(exit)) => {
                         // Out of the flow, where it was and as large: what
                         // replaces it decides the size from now on.

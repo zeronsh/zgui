@@ -33,7 +33,7 @@ struct EffectRecord {
     /// Never to run again (`Effect::stop`); freed when its handle drops.
     stopped: bool,
     /// Reads no layout: a mount runs it without drawing its text inputs
-    /// first (`Runtime::batch_with_barrier`).
+    /// first (`Runtime::batch_watched`).
     mount_pure: bool,
 }
 /// Effect ids are unique integers; a multiplicative hash beats SipHash here.
@@ -438,20 +438,19 @@ impl Runtime {
         let _active = Active::run(&self.inner.active, id);
         f();
     }
-    /// [`Runtime::batch`], whose flush, if `barrier_needed` says it once `f`
-    /// has returned, calls `barrier` before each observer that isn't
-    /// `mount_pure`. A barrier returning true may have queued observers:
-    /// the oldest is taken again. For a mount, whose text inputs draw at
-    /// its barriers.
-    pub(crate) fn batch_with_barrier<R>(
+    /// [`Runtime::batch`], whose flush, if `watched` says it once `f` has
+    /// returned, tells `watch` of each observer that isn't `mount_pure` as
+    /// it starts (`true`) and ends (`false`, a panic's unwinding included).
+    /// For a mount, which keeps what they read of its geometry.
+    pub(crate) fn batch_watched<R>(
         &self,
         f: impl FnOnce() -> R,
-        mut barrier: impl FnMut(EffectId) -> bool,
-        barrier_needed: impl Fn() -> bool,
+        mut watch: impl FnMut(EffectId, bool),
+        watched: impl Fn() -> bool,
     ) -> R {
         self.inner.batch_depth.set(self.inner.batch_depth.get() + 1);
-        struct Guard<'a, F: FnMut(EffectId) -> bool, P: Fn() -> bool>(&'a Runtime, &'a mut F, P);
-        impl<F: FnMut(EffectId) -> bool, P: Fn() -> bool> Drop for Guard<'_, F, P> {
+        struct Guard<'a, F: FnMut(EffectId, bool), P: Fn() -> bool>(&'a Runtime, &'a mut F, P);
+        impl<F: FnMut(EffectId, bool), P: Fn() -> bool> Drop for Guard<'_, F, P> {
             fn drop(&mut self) {
                 self.0
                     .inner
@@ -459,20 +458,37 @@ impl Runtime {
                     .set(self.0.inner.batch_depth.get() - 1);
                 if !std::thread::panicking() {
                     if (self.2)() {
-                        self.0.flush_with_barrier(&mut self.1);
+                        self.0.flush_watched(&mut self.1);
                     } else {
                         self.0.flush();
                     }
                 }
             }
         }
-        let _guard = Guard(self, &mut barrier, barrier_needed);
+        let _guard = Guard(self, &mut watch, watched);
         f()
     }
-    /// [`Runtime::flush`], with `barrier` before each observer that isn't
+    /// Run observers `ids` again, oldest first, and what they queue, telling
+    /// `watch` as `batch_watched` does. One stopped or gone is left alone.
+    pub(crate) fn rerun_watched(&self, ids: &[EffectId], mut watch: impl FnMut(EffectId, bool)) {
+        self.requeue(ids);
+        self.flush_watched(&mut watch);
+    }
+    /// Queue observers `ids` to run again at the next flush, not now.
+    pub(crate) fn requeue(&self, ids: &[EffectId]) {
+        let mut effects = self.inner.effects.borrow_mut();
+        for id in ids {
+            if let Some(record) = effects.get_mut(id).filter(|record| !record.stopped)
+                && !std::mem::replace(&mut record.queued, true)
+            {
+                self.inner.queued.borrow_mut().push(*id);
+            }
+        }
+    }
+    /// [`Runtime::flush`], with `watch` told of each observer that isn't
     /// `mount_pure`. Apart, so that `flush` stays as it is.
     #[inline(never)]
-    fn flush_with_barrier(&self, barrier: &mut impl FnMut(EffectId) -> bool) {
+    fn flush_watched(&self, watch: &mut impl FnMut(EffectId, bool)) {
         if self.inner.batch_depth.get() != 0 || self.inner.flushing.replace(true) {
             return;
         }
@@ -503,36 +519,45 @@ impl Runtime {
             std::mem::take(&mut *self.inner.queued.borrow_mut()),
         );
         newest_first::<false>(&mut sorted.1, &mut self.inner.order.borrow_mut());
-        // The oldest waiting, and whether it is `pending`'s. Left where it
-        // is until it runs: a barrier may queue an older one.
-        let oldest = |sorted: &[EffectId]| {
-            let pending = self.inner.pending.borrow();
-            match (sorted.last(), pending.peek()) {
-                (Some(&old), Some(&Reverse(new))) if new < old => Some((new, true)),
-                (Some(&old), _) => Some((old, false)),
-                (None, Some(&Reverse(new))) => Some((new, true)),
-                (None, None) => None,
+        // Its end told even when it panics.
+        struct Watched<'a, F: FnMut(EffectId, bool)>(&'a mut F, EffectId);
+        impl<F: FnMut(EffectId, bool)> Drop for Watched<'_, F> {
+            fn drop(&mut self) {
+                (self.0)(self.1, false);
             }
-        };
-        while let Some((id, mut from_pending)) = oldest(&sorted.1) {
+        }
+        loop {
+            // The oldest waiting, and whether it is `pending`'s: taken off
+            // once `watch` has been told, so that a panic there leaves it
+            // queued.
+            let (id, from_pending) = {
+                let pending = self.inner.pending.borrow();
+                match (sorted.1.last(), pending.peek()) {
+                    (Some(&old), Some(&Reverse(new))) if new < old => (new, true),
+                    (Some(&old), _) => (old, false),
+                    (None, Some(&Reverse(new))) => (new, true),
+                    (None, None) => break,
+                }
+            };
             let pure = self
                 .inner
                 .effects
                 .borrow()
                 .get(&id)
                 .is_some_and(|record| record.mount_pure);
-            if !pure && barrier(id) {
-                match oldest(&sorted.1) {
-                    Some((next, source)) if next == id => from_pending = source,
-                    Some(_) => continue,
-                    None => break,
-                }
+            if !pure {
+                watch(id, true);
             }
             if from_pending {
                 self.inner.pending.borrow_mut().pop();
             } else {
                 sorted.1.pop();
             }
+            if pure {
+                self.inner.run(id);
+                continue;
+            }
+            let _watched = Watched(watch, id);
             self.inner.run(id);
         }
     }
@@ -1371,62 +1396,47 @@ mod tests {
 }
 
 #[cfg(test)]
-mod barrier_tests {
+mod watched_tests {
     use super::*;
     #[test]
-    fn a_layout_barrier_runs_a_newly_notified_older_observer_first() {
-        for in_pending in [false, true] {
-            let runtime = Runtime::new();
-            let log = Rc::new(RefCell::new(Vec::new()));
-            let older = runtime.signal(0);
-            let later = runtime.signal(0);
-            let driver = runtime.signal(0);
-            let read = older.clone();
-            let out = log.clone();
-            let old_effect = runtime.effect(move || {
-                read.get();
-                out.borrow_mut().push("old");
-            });
-            let read = later.clone();
-            let out = log.clone();
-            let late_effect = runtime.effect(move || {
-                read.get();
-                out.borrow_mut().push("late");
-            });
-            let read = driver.clone();
-            let later_write = later.clone();
-            let driver_effect = runtime.effect(move || {
-                if read.get() != 0 {
-                    later_write.set(1);
-                }
-            });
-            log.borrow_mut().clear();
-            let mut notified = false;
-            runtime.batch_with_barrier(
-                || {
-                    if in_pending {
-                        driver.set(1);
-                    } else {
-                        later.set(1);
-                    }
-                },
-                |id| {
-                    if id == late_effect.number() && !notified {
-                        notified = true;
-                        older.set(1);
-                        true
-                    } else {
-                        false
-                    }
-                },
-                || true,
-            );
-            assert_eq!(*log.borrow(), ["old", "late"]);
-            drop((old_effect, late_effect, driver_effect));
-        }
+    fn a_watched_flush_tells_of_each_observer_as_it_starts_and_ends() {
+        let runtime = Runtime::new();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let value = runtime.signal(0);
+        let read = value.clone();
+        let out = log.clone();
+        let watched = runtime.effect(move || {
+            read.get();
+            out.borrow_mut().push("ran");
+        });
+        let read = value.clone();
+        let out = log.clone();
+        let pure = runtime.effect_marked(true, move || {
+            read.get();
+            out.borrow_mut().push("pure");
+        });
+        log.borrow_mut().clear();
+        let id = watched.number();
+        runtime.batch_watched(
+            || value.set(1),
+            |effect, starts| {
+                assert_eq!(effect, id);
+                log.borrow_mut()
+                    .push(if starts { "starts" } else { "ends" });
+            },
+            || true,
+        );
+        assert_eq!(*log.borrow(), ["starts", "ran", "ends", "pure"]);
+        log.borrow_mut().clear();
+        runtime.rerun_watched(&[id], |_, starts| {
+            log.borrow_mut()
+                .push(if starts { "starts" } else { "ends" });
+        });
+        assert_eq!(*log.borrow(), ["starts", "ran", "ends"]);
+        drop((watched, pure));
     }
     #[test]
-    fn a_panicking_layout_barrier_keeps_the_selected_observer_queued() {
+    fn a_panicking_watch_keeps_the_selected_observer_queued() {
         let runtime = Runtime::new();
         let runs = Rc::new(Cell::new(0));
         let value = runtime.signal(0);
@@ -1438,7 +1448,7 @@ mod barrier_tests {
         });
         assert_eq!(runs.get(), 1);
         let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime.batch_with_barrier(|| value.set(1), |_| panic!("barrier probe"), || true);
+            runtime.batch_watched(|| value.set(1), |_, _| panic!("watch probe"), || true);
         }));
         assert!(failed.is_err());
         assert_eq!(runs.get(), 1);

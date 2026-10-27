@@ -2601,6 +2601,12 @@ pub struct Scene {
     /// `measure` calls, for tests of how much work layout does.
     #[cfg(test)]
     measure_calls: u64,
+    /// While a mount defers its text inputs' layout: the observer running
+    /// now, whose geometry reads (`bounds` and the boxes made from it) are
+    /// kept with what they found (`geometry_reads`), to run it again if
+    /// layout moves them (`changed_geometry_readers`).
+    geometry_reader: std::cell::Cell<Option<u64>>,
+    geometry_reads: std::cell::RefCell<Vec<(u64, NodeId, Rect)>>,
     geometry_revision: u64,
     cursor_styles: usize,
     /// Scroll content translated since the last flush: its transform before
@@ -2786,6 +2792,8 @@ impl Scene {
             escaped: Vec::new(),
             #[cfg(test)]
             measure_calls: 0,
+            geometry_reader: Default::default(),
+            geometry_reads: Default::default(),
             geometry_revision: 0,
             cursor_styles: 0,
             contents_styles: Default::default(),
@@ -2989,7 +2997,20 @@ impl Scene {
     }
     /// `id`'s box as laid out, translated by its own and its ancestors'
     /// translations, in window points.
+    ///
+    /// Read by an observer while a mount lays out its text inputs (from a
+    /// reactive style or a binding), it is a dependency, as is every box made
+    /// from it (`layout_bounds`, `visible_bounds`, `transformed_bounds`):
+    /// the observer runs again once the mount's layout settles, if the box
+    /// has moved. Derive from it each time, rather than keeping a first read.
+    #[inline]
     pub fn bounds(&self, id: NodeId) -> Rect {
+        self.note_geometry_read(id);
+        self.world_bounds(id)
+    }
+    /// `bounds`, read by the scene's and the frame's own work: noted by no
+    /// mount.
+    pub(crate) fn world_bounds(&self, id: NodeId) -> Rect {
         // `world`'s bounds, without the opacity and clip it also works out:
         // observed bounds are read for every observed node on every frame
         // that moves anything.
@@ -3007,8 +3028,46 @@ impl Scene {
     /// Where layout put `id`, in window coordinates, before any translation
     /// (its own or its ancestors', scrolling included): what moves only when
     /// layout moves it.
+    #[inline]
     pub fn layout_bounds(&self, id: NodeId) -> Rect {
+        self.note_geometry_read(id);
         self.node(id).bounds
+    }
+    /// `layout_bounds`, read by the frame's own work: noted by no mount.
+    pub(crate) fn layout_box(&self, id: NodeId) -> Rect {
+        self.node(id).bounds
+    }
+    /// A read of `id`'s geometry by the observer a mount runs now, if one
+    /// is (`geometry_reader`).
+    #[inline(always)]
+    fn note_geometry_read(&self, id: NodeId) {
+        if let Some(effect) = self.geometry_reader.get() {
+            self.keep_geometry_read(effect, id);
+        }
+    }
+    #[cold]
+    #[inline(never)]
+    fn keep_geometry_read(&self, effect: u64, id: NodeId) {
+        let bounds = self.world_bounds(id);
+        self.geometry_reads.borrow_mut().push((effect, id, bounds));
+    }
+    /// The observer whose geometry reads are kept from now on (see
+    /// `geometry_reader`); `None`: none.
+    pub(crate) fn read_geometry_for(&self, effect: Option<u64>) {
+        self.geometry_reader.set(effect);
+    }
+    /// The observers kept reading geometry that layout has moved since,
+    /// oldest first: each once. The reads are let go.
+    pub(crate) fn changed_geometry_readers(&self) -> Vec<u64> {
+        let reads = std::mem::take(&mut *self.geometry_reads.borrow_mut());
+        let mut changed: Vec<u64> = reads
+            .into_iter()
+            .filter(|&(_, id, seen)| !self.contains(id) || self.world_bounds(id) != seen)
+            .map(|(effect, _, _)| effect)
+            .collect();
+        changed.sort_unstable();
+        changed.dedup();
+        changed
     }
     /// Whether `id` itself (not its ancestors) takes part in layout.
     pub(crate) fn shown_in_layout(&self, id: NodeId) -> bool {
@@ -3133,6 +3192,7 @@ impl Scene {
     /// The part of `id`'s box that shows: inside its clips and not fully
     /// transparent; `None` when nothing does.
     pub fn visible_bounds(&self, id: NodeId) -> Option<Rect> {
+        self.note_geometry_read(id);
         let (bounds, effects, clip) = self.world(id);
         if effects.opacity <= 0. {
             return None;
@@ -3154,8 +3214,14 @@ impl Scene {
     /// after its own and its ancestors' local transforms, unclipped. `bounds`
     /// is the box as laid out and translated.
     pub fn transformed_bounds(&self, id: NodeId) -> Rect {
+        self.note_geometry_read(id);
+        self.transformed_world_bounds(id)
+    }
+    /// `transformed_bounds`, read by the scene's and the frame's own work:
+    /// noted by no mount.
+    pub(crate) fn transformed_world_bounds(&self, id: NodeId) -> Rect {
         if self.transformed == 0 {
-            return self.bounds(id);
+            return self.world_bounds(id);
         }
         let (bounds, _, placement) = self.placed(id);
         placement.map_or(bounds, |placement| placement.matrix.bounds(bounds))
@@ -8096,7 +8162,7 @@ impl Scene {
                     // Hide/show still damages both old and new subtree bounds.
                     let bounds = match self.transformed {
                         0 => bounds,
-                        _ => self.transformed_bounds(*id),
+                        _ => self.transformed_world_bounds(*id),
                     };
                     (effects.opacity > 0.0).then_some((bounds, false))
                 })
