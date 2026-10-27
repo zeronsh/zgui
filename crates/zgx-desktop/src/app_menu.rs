@@ -710,8 +710,6 @@ impl NativeMenu {
                     .append_items(&[&muda::PredefinedMenuItem::separator(), &find_submenu()?])
                     .map_err(|e| AppMenuError(e.to_string()))?;
             }
-            menu.append(&submenu)
-                .map_err(|e| AppMenuError(e.to_string()))?;
             // Zoom in the View menu, as a browser's.
             if model.label == "View" && zoom {
                 submenu
@@ -889,6 +887,24 @@ pub fn debug_key_before_menu_bar(menus: &[AppMenu], key: &str) -> Result<bool, A
     )
     .ok_or_else(|| AppMenuError("no key event".into()))?;
     Ok(offer_key(&event))
+}
+/// Test hook: install `menus` as the application's menu bar, and the titles
+/// of the menus it shows, in order. Main thread only.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn debug_menu_bar_titles(menus: &[AppMenu]) -> Result<Vec<String>, AppMenuError> {
+    let menu = NativeMenu::new(menus)?;
+    menu.install();
+    let Some(mtm) = objc2::MainThreadMarker::new() else {
+        return Ok(Vec::new());
+    };
+    let Some(bar) = objc2_app_kit::NSApplication::sharedApplication(mtm).mainMenu() else {
+        return Ok(Vec::new());
+    };
+    Ok((0..bar.numberOfItems())
+        .filter_map(|i| bar.itemAtIndex(i))
+        .map(|item| item.title().to_string())
+        .collect())
 }
 /// Test hook: install `menus` as the application's menu bar, and whether
 /// AppKit then fills the Services submenu shown in it. Main thread only.
