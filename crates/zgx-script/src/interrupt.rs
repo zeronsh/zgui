@@ -337,17 +337,17 @@ impl Installed {
         let set = !slot.is_null() && unsafe { !(*slot).load(Ordering::Acquire).is_null() };
         (self.watch.alarm.due.load(Ordering::SeqCst) != 0, set)
     }
-    /// An outermost call began, with `deadline`, or ended (`None`): tell
+    /// An outermost call began, with its wall-clock expiry, or ended (`None`): tell
     /// the watchdog when it is due. With no call running and nothing to
     /// collect, the interrupt has nothing to do.
     #[inline]
-    pub(crate) fn publish(&self, deadline: Option<Deadline>) {
+    pub(crate) fn publish(&self, deadline: Option<Instant>) {
         let alarm = &self.watch.alarm;
         match deadline {
             Some(deadline) => {
                 // Set early (`EARLY`): the check decides when the budget is
                 // spent, so the stop stays as prompt as the check's.
-                let due = nanos(deadline.due()).saturating_sub(EARLY).max(1);
+                let due = nanos(deadline).saturating_sub(EARLY).max(1);
                 alarm.due.store(due, Ordering::SeqCst);
                 self.watchdog.wake_by(due);
             }
@@ -590,7 +590,7 @@ mod tests {
         let installed = install(&lua, deadline, limit);
         let slot = installed.watch.alarm.slot.load(Ordering::Acquire);
         let set = || unsafe { !(*slot).load(Ordering::Acquire).is_null() };
-        installed.publish(Some(Deadline::start(Duration::from_secs(60))));
+        installed.publish(Some(Deadline::start(Duration::from_secs(60)).due()));
         lua.load("local t = {} for i = 1, 100 do t[i] = i end")
             .exec()
             .unwrap();
@@ -635,11 +635,11 @@ mod tests {
         // Whatever it sleeps until (a call ended keeps it to that call's due
         // time, when it finds none and parks), a call due sooner wakes it.
         let soon = Deadline::start(Duration::from_millis(20));
-        installed.publish(Some(soon));
+        installed.publish(Some(soon.due()));
         installed.publish(None);
         settled(&|until| until == u64::MAX);
         let call = Deadline::start(Duration::from_secs(60));
-        installed.publish(Some(call));
+        installed.publish(Some(call.due()));
         // (`EARLY` before its budget passes.)
         let due = nanos(call.due()) - EARLY;
         settled(&|until| until == due);
@@ -647,7 +647,7 @@ mod tests {
         // It wakes at that call's due time (a minute on), finds no call and
         // parks for good: woken early here by a call due sooner.
         let soon = Deadline::start(Duration::from_millis(20));
-        installed.publish(Some(soon));
+        installed.publish(Some(soon.due()));
         installed.publish(None);
         settled(&|until| until == u64::MAX);
     }
@@ -663,7 +663,7 @@ mod tests {
         let installed = install_on(watchdog, &lua, deadline.clone(), 0);
         let call = Deadline::start(Duration::ZERO);
         deadline.set(Some(call));
-        installed.publish(Some(call));
+        installed.publish(Some(call.due()));
         let start = Instant::now();
         // A scan marks the call fired before it sets the interrupt, and
         // `sleep_until` reads u64::MAX before the first scan too: wait for

@@ -342,24 +342,24 @@ impl Vm {
         let _span = zgx::profile::span(zgx::profile::Phase::Script);
         self.warnings.calls.set(self.warnings.calls.get() + 1);
         // Outermost, nothing shifts by this start: a recent reading will do.
-        let started = match self.deadline.get() {
+        let outer = self.deadline.get();
+        let started = match outer {
             None => Deadline::start_recent(budget),
             Some(_) => Deadline::start(budget),
         };
-        let outer = self.deadline.replace(Some(started));
+        self.deadline.set(Some(started));
         // The watchdog hears of outermost calls alone: nested calls (and
         // work off the clock) only move the budget's end later, and an
         // interrupt set early just checks it sooner.
         if outer.is_none() {
-            self.interrupt.publish(Some(started));
+            self.interrupt.publish(Some(started.due()));
         }
         // Ended as the call returns or a host function's panic unwinds out
         // of it (caught by the app's turn or an effect): no call is left
         // running, with its budget passing for good.
         let _end = CallEnd {
             vm: self,
-            outer,
-            started,
+            nested: outer.map(|outer| (outer, started)),
         };
         f()
     }
@@ -402,16 +402,15 @@ impl Vm {
 /// by the time this one took; with none, the watchdog hears the call ended.
 struct CallEnd<'a> {
     vm: &'a Vm,
-    outer: Option<Deadline>,
-    started: Deadline,
+    nested: Option<(Deadline, Deadline)>,
 }
 impl Drop for CallEnd<'_> {
     #[inline]
     fn drop(&mut self) {
         self.vm
             .deadline
-            .set(self.outer.map(|d| d.shifted(&self.started)));
-        if self.outer.is_none() {
+            .set(self.nested.map(|(outer, started)| outer.shifted(&started)));
+        if self.nested.is_none() {
             self.vm.interrupt.publish(None);
         }
     }
