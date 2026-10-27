@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let label = spinning.clone();
             cx.render(
                 column()
+                    .w_full()
                     .p(24.)
                     .gap(16.)
                     .bg(rgb(0x0f141b))

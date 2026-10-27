@@ -131,7 +131,7 @@ impl GpuRenderer {
                         "visible image and GPU view textures exceed their budget".into(),
                     ));
                 }
-                let texture = self.view_texture(size);
+                let texture = self.view_texture(key, size);
                 let bind = self.texture_bind(&texture.create_view(&Default::default()), "GPU view");
                 (bind, bytes, texture)
             }
@@ -142,11 +142,12 @@ impl GpuRenderer {
             })?;
             let mut painter = painter.borrow_mut();
             let painter = &mut *painter;
-            if painter.device.as_ref() != Some(&self.device) {
+            let (device, queue) = self.view_device();
+            if painter.device.as_ref() != Some(device) {
                 if painter.device.is_some() {
                     painter.viewport.device_changed();
                 }
-                painter.device = Some(self.device.clone());
+                painter.device = Some(device.clone());
             }
             let target = texture.create_view(&Default::default());
             let srgb = self.view_srgb().then(|| {
@@ -155,14 +156,12 @@ impl GpuRenderer {
                     ..Default::default()
                 })
             });
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("GPU view"),
-                });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("GPU view"),
+            });
             painter.viewport.render(&mut ViewportFrame {
-                device: &self.device,
-                queue: &self.queue,
+                device,
+                queue,
                 encoder: &mut encoder,
                 target: &target,
                 target_srgb: srgb.as_ref(),
@@ -173,7 +172,8 @@ impl GpuRenderer {
             });
             // Ahead of the frame sampling it, which is recorded after this
             // and submitted (or committed, drawn with Metal directly) later.
-            self.queue.submit([encoder.finish()]);
+            queue.submit([encoder.finish()]);
+            self.after_view_submit(key);
         }
         self.images.insert(image.id(), (bind, bytes, Some(texture)));
         self.views.as_mut().unwrap().shown.insert(
@@ -185,27 +185,39 @@ impl GpuRenderer {
         );
         Ok(())
     }
-    /// A view's texture: drawn to, sampled, and viewable as sRGB where the
-    /// device allows.
-    fn view_texture(&self, (width, height): (u32, u32)) -> wgpu::Texture {
+    /// The device and queue views draw with: the renderer's own, as it
+    /// draws with wgpu.
+    fn view_device(&self) -> (&wgpu::Device, &wgpu::Queue) {
+        (&self.device, &self.queue)
+    }
+    /// After a view's frame is submitted (`key`: the view and the box
+    /// showing it), before the frame showing it: nothing to do where the
+    /// renderer draws on the same queue.
+    fn after_view_submit(&self, _key: (u64, u64)) {}
+    /// The texture of a view's box (`key`: the view and the box): drawn to
+    /// with the views' device, sampled by the renderer, and viewable as
+    /// sRGB where the device allows.
+    fn view_texture(&self, _key: (u64, u64), (width, height): (u32, u32)) -> wgpu::Texture {
         let srgb = [crate::FORMAT.add_srgb_suffix()];
-        self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("GPU view"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: crate::FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
-            view_formats: if self.view_srgb() { &srgb } else { &[] },
-        })
+        self.view_device()
+            .0
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("GPU view"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: crate::FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: if self.view_srgb() { &srgb } else { &[] },
+            })
     }
     /// Whether textures can be viewed in their sRGB twin format (not on GL).
     fn view_srgb(&self) -> bool {
