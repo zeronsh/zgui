@@ -7634,11 +7634,75 @@ impl Scene {
             if !current {
                 self.measure_full(child, constraints);
             }
+            // A leaf in the grid's walk is placed here, without a call of
+            // its own; in list mode's, a second copy of `arrange`'s work
+            // would outline what it inlines (`add_moved_leaf_damage`).
+            if CELLS && self.tree_node(child).children.is_empty() {
+                let (x, y) = (x + rect.x, y + rect.y);
+                self.place_leaf(child, x, y, report, covered || changed, &mut children);
+                continue;
+            }
             crate::deep(level + 1, || {
                 let covered = covered || changed;
                 let (x, y) = (x + rect.x, y + rect.y);
                 self.arrange::<CELLS>(child, x, y, report, covered, level + 1, &mut children)
             });
+        }
+        if damage && !leaf {
+            self.damage_subtree_with(id, context);
+        }
+        let node = self.tree_node_mut(id);
+        node.dirty &= !LAYOUT;
+        node.arrange_dirty = false;
+    }
+    /// `arrange::<true>` for a leaf: placed, its damage added, with no
+    /// children to walk. The same work in the same order.
+    #[inline(always)]
+    fn place_leaf(
+        &mut self,
+        id: NodeId,
+        x: f32,
+        y: f32,
+        report: &mut FrameReport,
+        covered: bool,
+        context: &mut Option<DamageContext>,
+    ) {
+        self.visit(id);
+        let (x, y) = match self.tree_node(id).style.snap {
+            true => self.snap(id, x, y),
+            false => (x, y),
+        };
+        let node = self.tree_node(id);
+        let cache = node.measurement.as_ref().unwrap();
+        // A leaf's result places no children: measured as it is now.
+        debug_assert!(cache.children.is_empty());
+        let bounds = Rect::new(x, y, cache.size.0, cache.size.1);
+        if !node.arrange_dirty && node.bounds == bounds {
+            return;
+        }
+        let changed = node.bounds != bounds;
+        report.layout_nodes += 1;
+        let damage = changed && !covered;
+        let leaf = damage && self.transformed + self.filtered == 0;
+        match (damage, leaf) {
+            (true, true) => {
+                let was = self.tree_node(id).bounds;
+                let (before, after) = self.leaf_damage::<true>(id, context, was, bounds);
+                match &mut self.damage_grid {
+                    Some(grid) => grid.mark_clipped_pair(before, after),
+                    None => {
+                        for rect in [before, after].into_iter().flatten() {
+                            self.add_damage(rect);
+                        }
+                    }
+                }
+            }
+            (true, false) => self.damage_subtree_with(id, context),
+            _ => {}
+        }
+        if changed {
+            self.tree_node_mut(id).bounds = bounds;
+            self.invalidate(id, PAINTED);
         }
         if damage && !leaf {
             self.damage_subtree_with(id, context);
