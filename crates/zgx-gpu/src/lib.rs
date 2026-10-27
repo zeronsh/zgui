@@ -11652,6 +11652,36 @@ fn exp_full(source: &'static str) -> std::borrow::Cow<'static, str> {
         Ok("noregion") => source.replace("if v.mask.x>.5 {", "if false {").into(),
         // The full pipeline's vertex layout, two varyings: flat's colour
         // without the rest of `Out`.
+        // The rounded-box branch of `shade` alone, with the five flat vec4s it
+        // reads and no interpolated `point` or `uv` (from `position`, as
+        // `shade` does an untransformed quad): what a rounded-box pipeline
+        // would cost. Other Full quads shade wrong.
+        Ok("round") => format!(
+            "{source}
+struct Slim {{ @builtin(position) position:vec4<f32>, @location(0) @interpolate(flat) color:vec4<f32>, @location(1) @interpolate(flat) fade:vec4<f32>, @location(2) @interpolate(flat) options:vec4<f32>, @location(3) @interpolate(flat) shape:vec4<f32>, @location(4) @interpolate(flat) border:vec4<f32> }}
+@vertex fn vs_slim(v:Vertex,@builtin(vertex_index) i:u32)->Slim {{
+ let corner=vec2(f32(i&1u),f32(i>>1u)); let p=v.rect.xy+corner*v.rect.zw;
+ var o:Slim; o.position=vec4(p.x/viewport.x*2.-1.,1.-p.y/viewport.y*2.,0.,1.); o.color=v.color; o.fade=v.fade; o.options=v.options; o.shape=v.shape; o.border=v.border; return o;
+}}
+fn round_shade(v:Slim)->vec4<f32> {{
+ let point=v.position.xy/viewport.z;
+ var color=v.color;
+ var corner=v.shape.x;
+ if v.options.w>0.5 {{
+   let right=point.x>v.fade.x+v.fade.z*0.5; let bottom=point.y>v.fade.y+v.fade.w*0.5;
+   corner=select(select(v.border.x,v.border.y,right),select(v.border.w,v.border.z,right),bottom);
+ }}
+ let radius=clamp(corner,0.,min(v.fade.z,v.fade.w)*0.5);
+ let q=abs(point-v.fade.xy-v.fade.zw*0.5)-(v.fade.zw*0.5-vec2(radius));
+ let distance=length(max(q,vec2(0.)))+min(max(q.x,q.y),0.)-radius;
+ let dx=abs(dpdxFine(distance));let dy=abs(dpdyFine(distance));let aa=max(select(dx+dy,max(dx,dy),radius<=0.),0.5);let outer=clamp(0.5-distance/aa,0.,1.);let inner=clamp(0.5-(distance+v.shape.y)/aa,0.,1.);let alpha=color.a*inner+v.border.a*(outer-inner);let rgb=select(vec3(0.),(color.rgb*color.a*inner+v.border.rgb*v.border.a*(outer-inner))/max(alpha,0.00001),alpha>0.);color=vec4(rgb,alpha);
+ return vec4(color.rgb*color.a,color.a);
+}}
+@fragment fn fs_slim(v:Slim)->@location(0) vec4<f32> {{ return round_shade(v); }}
+@fragment fn fs_both_slim(v:Slim)->Both {{ let c=round_shade(v); return Both(c,c); }}
+"
+        )
+        .into(),
         Ok("slim") => format!(
             "{source}
 struct Slim {{ @builtin(position) position:vec4<f32>, @location(0) @interpolate(flat) color:vec4<f32> }}
@@ -11669,5 +11699,5 @@ struct Slim {{ @builtin(position) position:vec4<f32>, @location(0) @interpolate(
 }
 /// SCRATCH: `ZGX_EXP_FULL=slim`.
 fn exp_slim() -> bool {
-    std::env::var("ZGX_EXP_FULL").as_deref() == Ok("slim")
+    matches!(std::env::var("ZGX_EXP_FULL").as_deref(), Ok("slim" | "round"))
 }
