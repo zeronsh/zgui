@@ -180,7 +180,7 @@ So:
   compared under a capture, which perturbs each present path differently:
   GPUI Fast's, MyGo's and Rune's figures are captured too.
 - For an app's own pacing, use the system's feedback: presented times
-  (`ZGX_DRAWABLE_FEEDBACK=1` on that branch prints them as shown and skipped
+  (with drawables, `ZGX_PRESENT_LOG=1` prints them as shown and skipped
   frames and presented-interval percentiles). Instruments' Animation Hitches
   reported no hitch in any run, captured or not, so it does not tell them
   apart.

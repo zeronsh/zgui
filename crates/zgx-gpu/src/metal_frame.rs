@@ -727,10 +727,17 @@ impl Frame {
                 )
         };
     }
-    /// End the pass and commit: the frame then runs after everything already
-    /// submitted to wgpu's queue.
-    pub(crate) fn commit(self) -> CommandBuffer {
+    /// End the pass and commit (the frame then runs after everything already
+    /// submitted to wgpu's queue), presenting `drawable` once its work
+    /// completes: Metal hands it to the window server for the refresh after.
+    pub(crate) fn commit_presenting(
+        self,
+        drawable: Option<&ProtocolObject<dyn objc2_metal::MTLDrawable>>,
+    ) -> CommandBuffer {
         self.encoder.endEncoding();
+        if let Some(drawable) = drawable {
+            self.buffer.presentDrawable(drawable);
+        }
         self.buffer.commit();
         self.buffer
     }

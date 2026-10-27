@@ -73,12 +73,16 @@ struct Window {
 #[cfg(target_os = "macos")]
 impl Window {
     fn new(live: u32) -> Self {
+        Self::sized(live, SIZE)
+    }
+    /// A window of `size` points at scale 2.
+    fn sized(live: u32, size: (f32, f32)) -> Self {
         let host = objc2_quartz_core::CALayer::new();
         let mut gpu =
-            GpuRenderer::debug_for_layer(host.clone(), (SIZE.0 * 2.) as u32, (SIZE.1 * 2.) as u32)
+            GpuRenderer::debug_for_layer(host.clone(), (size.0 * 2.) as u32, (size.1 * 2.) as u32)
                 .unwrap();
         gpu.set_scale_factor(2.);
-        let mut ui = Ui::new(SIZE.0, SIZE.1);
+        let mut ui = Ui::new(size.0, size.1);
         gpu.install_text(&mut ui.scene.borrow_mut());
         let state = ui.signal(live);
         ui.mount(view(state.clone()));
@@ -420,6 +424,195 @@ fn full_rate_frames_show_as_tiles_without_a_video_layer() {
     assert_eq!(tiles.len(), 1, "at rest: one tile ({tiles:?})");
 }
 
+/// The host's sublayers' class names (the plain layer, a drawable layer).
+#[cfg(target_os = "macos")]
+fn layer_classes(host: &objc2_quartz_core::CALayer) -> Vec<String> {
+    // SAFETY: the host's live sublayer array, read on the main thread.
+    unsafe { host.sublayers() }
+        .map(|subs| {
+            subs.iter()
+                .map(|sub| sub.class().name().to_str().unwrap_or("?").to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Full-rate frames drawn into `CAMetalLayer` drawables show what drawing
+/// the scene whole shows, each drawable brought up to date from the frame
+/// before around what changed; out of full rate frames are tiles again, and
+/// at rest on a tile the drawables go.
+#[cfg(target_os = "macos")]
+fn full_rate_frames_through_drawables_match_drawing_whole() {
+    let mut window = Window::new(1);
+    window.gpu.debug_present_drawable(true);
+    window.show();
+    // Frames show on the plain layer while a resize settles (500 ms).
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    window.gpu.set_full_rate(true);
+    for live in 2..14 {
+        window.live.set(live);
+        assert!(
+            window.show() == Window::new(live).show(),
+            "drawable frame {live}: the frame shown differs from the scene drawn whole"
+        );
+    }
+    assert!(
+        layer_classes(&window.host)
+            .iter()
+            .any(|class| class.contains("CAMetalLayer")),
+        "no drawable layer at full rate ({:?})",
+        layer_classes(&window.host)
+    );
+    // The renderer's own surfaces went (the drawables hold the frames), and
+    // their tiles with them.
+    // SAFETY: the layers' live sublayer arrays, read on the main thread.
+    let shown_tiles = unsafe { window.host.sublayers() }
+        .into_iter()
+        .flat_map(|subs| subs.to_vec())
+        .filter_map(|sub| unsafe { sub.sublayers() })
+        .flat_map(|tiles| tiles.to_vec())
+        .filter(|tile| !tile.isHidden())
+        .count();
+    assert_eq!(shown_tiles, 0, "a tile shows under the drawables");
+    window.gpu.set_full_rate(false);
+    for live in 14..17 {
+        window.live.set(live);
+        assert!(
+            window.show() == Window::new(live).show(),
+            "tile frame {live} after drawables differs from the scene drawn whole"
+        );
+    }
+    assert_eq!(
+        tiles(&window.host)
+            .iter()
+            .filter(|(_, hidden)| !hidden)
+            .count(),
+        1,
+        "one tile shows again"
+    );
+    window.gpu.trim();
+    assert!(
+        layer_classes(&window.host)
+            .iter()
+            .all(|class| !class.contains("CAMetalLayer")),
+        "the drawables outlast rest ({:?})",
+        layer_classes(&window.host)
+    );
+}
+
+/// Switching between tiles and drawables, either way, shows the frame the
+/// scene draws whole at every switch: the first frame on the other path
+/// starts from a surface (or drawable) holding an older frame, brought up to
+/// date around what it draws. So does a switch after the trim released the
+/// surfaces, a trim while drawables show, and a resize mid-animation (whose
+/// settle shows frames on tiles, then drawables again).
+/// Whether a drawable layer (a CAMetalLayer among the host's sublayers)
+/// shows.
+#[cfg(target_os = "macos")]
+fn drawables_show(host: &objc2_quartz_core::CALayer) -> bool {
+    // SAFETY: the host's live sublayer array, read on the main thread.
+    unsafe { host.sublayers() }.is_some_and(|subs| {
+        subs.iter().any(|sub| {
+            let class = sub.class().name().to_str().unwrap_or("").to_owned();
+            class.contains("CAMetalLayer") && !sub.isHidden()
+        })
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn switches_between_tiles_and_drawables_match_drawing_whole() {
+    let mut window = Window::new(1);
+    window.gpu.debug_present_drawable(true);
+    window.show();
+    // Frames show on the plain layer while a resize settles (500 ms).
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let mut live = 2;
+    let mut check = |window: &mut Window, size: (f32, f32), what: &str| {
+        window.live.set(live);
+        assert!(
+            window.show() == Window::sized(live, size).show(),
+            "{what}, frame {live}: the frame shown differs from the scene drawn whole"
+        );
+        live += 1;
+    };
+    for round in 0..3 {
+        window.gpu.set_full_rate(true);
+        for frame in 0..3 {
+            check(
+                &mut window,
+                SIZE,
+                &format!("round {round}, drawable {frame}"),
+            );
+            assert!(
+                drawables_show(&window.host),
+                "round {round}: no drawables at full rate"
+            );
+        }
+        window.gpu.set_full_rate(false);
+        for frame in 0..3 {
+            check(&mut window, SIZE, &format!("round {round}, tile {frame}"));
+            assert!(
+                !drawables_show(&window.host),
+                "round {round}: drawables over the tiles"
+            );
+        }
+    }
+    // At rest on a tile the trim drops the surfaces and the drawables: the
+    // next drawables start with nothing to bring up to date from.
+    window.gpu.trim();
+    window.gpu.set_full_rate(true);
+    for frame in 0..3 {
+        check(
+            &mut window,
+            SIZE,
+            &format!("drawable {frame} after the trim"),
+        );
+        assert!(drawables_show(&window.host), "no drawables after the trim");
+    }
+    // A trim while drawables show.
+    window.gpu.trim();
+    for frame in 0..2 {
+        check(
+            &mut window,
+            SIZE,
+            &format!("drawable {frame} after a trim on drawables"),
+        );
+    }
+    window.gpu.set_full_rate(false);
+    check(&mut window, SIZE, "tile after a trim on drawables");
+    // A resize mid-animation: frames go to tiles while it settles, then back
+    // to drawables.
+    window.gpu.set_full_rate(true);
+    check(&mut window, SIZE, "drawable before the resize");
+    let grown = (SIZE.0 + 160., SIZE.1 + 100.);
+    {
+        use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+        use objc2_quartz_core::CATransaction;
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        window.host.setFrame(CGRect::new(
+            CGPoint::new(0., 0.),
+            CGSize::new(grown.0 as f64, grown.1 as f64),
+        ));
+        CATransaction::commit();
+    }
+    window
+        .gpu
+        .resize((grown.0 * 2.) as u32, (grown.1 * 2.) as u32);
+    window.ui.scene.borrow_mut().resize(grown.0, grown.1);
+    let settle = std::time::Instant::now();
+    let mut frame = 0;
+    while settle.elapsed() < std::time::Duration::from_millis(800) {
+        check(
+            &mut window,
+            grown,
+            &format!("frame {frame} after the resize"),
+        );
+        frame += 1;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Input after a window idled (`trim`) wakes the GPU once (`warm_up`): not
 /// before it idles, not for later input, and again after the next idle; the
 /// frames drawn around it show as before.
@@ -462,5 +655,9 @@ fn main() {
         println!("layer_frames: input after idle wakes the GPU once");
         rounded_panel_scrolled_through_surfaces_matches_drawing_whole();
         println!("layer_frames: a rounded panel scrolled through surfaces matches drawing whole");
+        full_rate_frames_through_drawables_match_drawing_whole();
+        println!("layer_frames: full-rate frames through drawables match drawing whole");
+        switches_between_tiles_and_drawables_match_drawing_whole();
+        println!("layer_frames: switches between tiles and drawables match drawing whole");
     }
 }

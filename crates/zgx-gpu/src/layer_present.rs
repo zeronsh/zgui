@@ -19,7 +19,9 @@
 //! CoreMedia thread wakes about 55 times a second while it lives, and its
 //! queue holds a third surface.
 use crate::{FORMAT, GpuError};
+use objc2::runtime::ProtocolObject;
 use objc2::{Encoding, Message, RefEncode, msg_send, rc::Retained, runtime::AnyObject};
+use objc2_core_foundation::CGSize;
 use objc2_core_foundation::{
     CFDictionary, CFNull, CFNumber, CFRetained, CFString, CFType, kCFNull,
 };
@@ -28,11 +30,14 @@ use objc2_io_surface::{
     IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceColorSpace, kIOSurfaceHeight,
     kIOSurfacePixelFormat, kIOSurfaceWidth,
 };
+use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLDrawable, MTLTexture};
 use objc2_metal::{
     MTLDevice, MTLPixelFormat, MTLStorageMode, MTLTextureDescriptor, MTLTextureType,
     MTLTextureUsage,
 };
-use objc2_quartz_core::{CAAutoresizingMask, CALayer, CATransaction};
+use objc2_quartz_core::{
+    CAAutoresizingMask, CALayer, CAMetalDrawable, CAMetalLayer, CATransaction,
+};
 use std::{cell::Cell, ffi::c_void, ptr::null, rc::Rc};
 
 /// A surface the renderer draws into and a layer shows.
@@ -49,6 +54,9 @@ pub(crate) struct Buffer {
     pub metal: crate::metal_frame::Texture,
     /// Reading it to bring another surface up to date (copy_offset.wgsl).
     pub copy_source: std::cell::OnceCell<wgpu::BindGroup>,
+    /// A `CAMetalLayer` drawable's (`Drawables`): presented by Metal, never a
+    /// tile; the layer's pool reuses it.
+    pub drawable: bool,
 }
 impl Buffer {
     /// The surface as a sample buffer, made on first use.
@@ -111,6 +119,25 @@ impl Buffer {
             .newTextureWithDescriptor_iosurface_plane(&descriptor, &surface, 0)
             .ok_or_else(|| GpuError("Metal texture over an IOSurface failed".into()))?;
         drop(hal);
+        Ok(Self::wrap(device, surface, metal, width, height, false))
+    }
+    /// A drawable's texture (and the surface under it) as a buffer.
+    pub fn from_drawable(
+        device: &wgpu::Device,
+        surface: CFRetained<IOSurfaceRef>,
+        metal: crate::metal_frame::Texture,
+    ) -> Self {
+        let (width, height) = (metal.width() as u32, metal.height() as u32);
+        Self::wrap(device, surface, metal, width, height, true)
+    }
+    fn wrap(
+        device: &wgpu::Device,
+        surface: CFRetained<IOSurfaceRef>,
+        metal: crate::metal_frame::Texture,
+        width: u32,
+        height: u32,
+        drawable: bool,
+    ) -> Self {
         // SAFETY: Metal made this texture on this device with this format and
         // size, one mip level and layer; it retains the IOSurface backing it.
         let raw = unsafe {
@@ -154,14 +181,15 @@ impl Buffer {
             )
         };
         let view = texture.create_view(&Default::default());
-        Ok(Self {
+        Self {
             surface,
             sample: std::cell::OnceCell::new(),
             texture,
             view,
             metal,
             copy_source: Default::default(),
-        })
+            drawable,
+        }
     }
 }
 
@@ -371,6 +399,14 @@ pub(crate) struct Layer {
     /// The caret the host draws itself (`Layer::set_caret`), above the
     /// frames, and what it was last given.
     caret: Option<(Retained<CALayer>, Option<Caret>)>,
+    /// Full-rate frames presented as `CAMetalLayer` drawables
+    /// (`ZGX_PRESENT_DRAWABLE`), above the plain layer.
+    drawables: Option<Drawables>,
+    /// While the full-rate trial judges tiles by frames lost
+    /// (`ZGX_TRIAL_RULE=frames`): a 1×1 drawable presented in each tile
+    /// flip's transaction, whose presented time says when that flip reached
+    /// the screen (tiles have no feedback of their own).
+    probe: Option<Probe>,
 }
 /// A caret drawn by Core Animation over the window's frames
 /// (`zgx::caret_blink::NativeCaret`): a box of one colour, shown or hidden as
@@ -383,6 +419,160 @@ pub struct Caret {
     pub color: [f64; 4],
     /// Whether it shows now (a blink's phase).
     pub shown: bool,
+}
+/// See `Layer::probe`.
+struct Probe {
+    layer: Retained<CAMetalLayer>,
+    queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    feedback: std::sync::Arc<Feedback>,
+}
+impl Probe {
+    fn new(
+        host: &CALayer,
+        device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
+        queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    ) -> Self {
+        let layer = CAMetalLayer::new();
+        layer.setDevice(Some(device));
+        layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        layer.setPresentsWithTransaction(true);
+        layer.setDrawableSize(CGSize::new(1., 1.));
+        layer.setOpaque(false);
+        layer.setFrame(objc2_core_foundation::CGRect::new(
+            objc2_core_foundation::CGPoint::new(0., 0.),
+            CGSize::new(1., 1.),
+        ));
+        transaction(|| host.addSublayer(&layer));
+        crate::present_log::log(|| "tile-probe-start".into());
+        Self {
+            layer,
+            queue,
+            feedback: Default::default(),
+        }
+    }
+    /// Present a cleared (transparent) drawable in the caller's transaction,
+    /// its work scheduled first, recording when it showed.
+    fn present(&self) {
+        let Some(drawable) = self.layer.nextDrawable() else {
+            return;
+        };
+        let Some(buffer) = self.queue.commandBuffer() else {
+            return;
+        };
+        let pass = objc2_metal::MTLRenderPassDescriptor::new();
+        // SAFETY: Index 0 of a render pass descriptor's colour attachments.
+        let color = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
+        color.setTexture(Some(&drawable.texture()));
+        color.setLoadAction(objc2_metal::MTLLoadAction::Clear);
+        color.setClearColor(objc2_metal::MTLClearColor {
+            red: 0.,
+            green: 0.,
+            blue: 0.,
+            alpha: 0.,
+        });
+        color.setStoreAction(objc2_metal::MTLStoreAction::Store);
+        if let Some(encoder) = buffer.renderCommandEncoderWithDescriptor(&pass) {
+            use objc2_metal::MTLCommandEncoder;
+            encoder.endEncoding();
+        }
+        let feedback = self.feedback.clone();
+        let handler = block2::RcBlock::new(
+            move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
+                // SAFETY: Metal passes the drawable presented, alive for the call.
+                feedback.record(unsafe { shown.as_ref() }.presentedTime());
+            },
+        );
+        // SAFETY: A live block taking the drawable, as the handler's type
+        // declares; Metal copies it.
+        unsafe { drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
+        buffer.commit();
+        buffer.waitUntilScheduled();
+        drawable.present();
+    }
+}
+/// When the window server showed each drawable (`addPresentedHandler`), as
+/// the gaps between successive presented drawables and the count it skipped:
+/// what the screen did, not what the renderer handed over.
+#[derive(Default)]
+pub(crate) struct Feedback {
+    state: std::sync::Mutex<FeedbackState>,
+}
+#[derive(Default)]
+struct FeedbackState {
+    presented: u64,
+    skipped: u64,
+    /// The last presented time (host seconds), and the latest gaps (ms).
+    last: f64,
+    gaps: std::collections::VecDeque<f64>,
+}
+/// A point in a `Feedback`'s record (`Feedback::mark`).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Mark {
+    presented: u64,
+    skipped: u64,
+}
+impl Feedback {
+    fn record(&self, presented: f64) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if presented <= 0. {
+            state.skipped += 1;
+            return;
+        }
+        state.presented += 1;
+        if state.last > 0. && presented > state.last {
+            let gap = (presented - state.last) * 1e3;
+            state.gaps.push_back(gap);
+            if state.gaps.len() > 600 {
+                state.gaps.pop_front();
+            }
+        }
+        state.last = presented;
+    }
+    /// Where the record stands now.
+    pub(crate) fn mark(&self) -> Mark {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        Mark {
+            presented: state.presented,
+            skipped: state.skipped,
+        }
+    }
+    /// Since `from`: frames handed over (shown or skipped), and those the
+    /// window server skipped. (Gaps between shown ones are not counted: the
+    /// probe's presented times come with its transaction's, which batch.)
+    pub(crate) fn lost_since(&self, from: Mark) -> (u64, u64) {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let skipped = state.skipped - from.skipped;
+        (state.presented - from.presented + skipped, skipped)
+    }
+    /// Drawables presented and skipped so far, and the latest gaps' median,
+    /// 99th percentile and count over 1.5 of the median (a refresh missed).
+    pub(crate) fn summary(&self) -> (u64, u64, f64, f64, usize) {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut gaps: Vec<f64> = state.gaps.iter().copied().collect();
+        gaps.sort_by(f64::total_cmp);
+        let at = |q: f64| {
+            gaps.get(((gaps.len() as f64 - 1.) * q) as usize)
+                .copied()
+                .unwrap_or(0.)
+        };
+        let median = at(0.5);
+        let late = gaps.iter().filter(|gap| **gap > median * 1.5).count();
+        (state.presented, state.skipped, median, at(0.99), late)
+    }
+}
+/// A `CAMetalLayer` whose drawables are the surfaces full-rate frames draw
+/// into, presented by Metal, which hands each to the window server for the
+/// refresh after its work completes: the system schedules them, as GPUI's.
+/// Each drawable's surface keeps what it held, so a frame repaints what
+/// changed since that drawable was last presented (`Buffer::drawable`).
+struct Drawables {
+    layer: Retained<CAMetalLayer>,
+    /// The drawable the frame being drawn presents.
+    pending: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
+    /// Whether the layer shows (its frames, over the hidden tiles).
+    shown: bool,
+    /// When each drawable was shown (`Feedback`).
+    feedback: std::sync::Arc<Feedback>,
 }
 /// Hides the plain layer's tiles once the video layer above it shows a
 /// frame: until then they show the frame before; after, under a window's
@@ -724,6 +914,149 @@ impl Layer {
             tiles: Vec::new(),
             opaque: Cell::new(false),
             caret: None,
+            drawables: None,
+            probe: None,
+        }
+    }
+    /// Start the tile probe (`Layer::probe`), if not yet.
+    pub fn start_probe(
+        &mut self,
+        device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
+        queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    ) {
+        if self.probe.is_none() {
+            self.probe = Some(Probe::new(&self.host, device, queue));
+        }
+    }
+    /// Stop the tile probe and drop its layer.
+    pub fn stop_probe(&mut self) {
+        if let Some(probe) = self.probe.take() {
+            transaction(|| probe.layer.removeFromSuperlayer());
+            crate::present_log::log(|| "tile-probe-stop".into());
+        }
+    }
+    /// What the tile probe saw, if it runs.
+    pub fn probe_feedback(&self) -> Option<std::sync::Arc<Feedback>> {
+        self.probe.as_ref().map(|probe| probe.feedback.clone())
+    }
+    /// The next drawable for a full-rate frame of `width` by `height`
+    /// pixels: its texture and the surface under it (the layer made, above
+    /// the plain one, on first use). `None` if Metal gives none.
+    pub fn next_drawable(
+        &mut self,
+        device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
+        width: u32,
+        height: u32,
+        feedback: bool,
+    ) -> Option<(crate::metal_frame::Texture, CFRetained<IOSurfaceRef>)> {
+        let opaque = self.opaque.get();
+        let drawables = self.drawables.get_or_insert_with(|| {
+            let layer = CAMetalLayer::new();
+            layer.setDevice(Some(device));
+            layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+            // Read as the shown frame to bring other surfaces up to date.
+            layer.setFramebufferOnly(false);
+            // Metal presents each when its work completes, not in a
+            // transaction: no commit a frame.
+            layer.setPresentsWithTransaction(false);
+            // Three: with 2 the pool is full and
+            // the window server hands every image back at once, which cost it
+            // 3-4 points of CPU per window (2026-10-26, M5, paired seconds
+            // against tiles: heavy stream +4.4 with 2, -0.3 with 3; animate
+            // +2.8, 0.0).
+            layer.setMaximumDrawableCount(3);
+            // sRGB, as the tiles' surfaces are tagged.
+            // SAFETY: CoreGraphics' constant CFString, read only.
+            if let Some(space) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })) {
+                layer.setColorspace(Some(&space));
+            }
+            fill(&layer, &self.host, opaque);
+            layer.setHidden(true);
+            transaction(|| self.host.addSublayer(&layer));
+            crate::present_log::log(|| "drawables-start".into());
+            Drawables {
+                layer,
+                pending: None,
+                shown: false,
+                feedback: Default::default(),
+            }
+        });
+        let size = CGSize::new(width as f64, height as f64);
+        if drawables.layer.drawableSize() != size {
+            drawables.layer.setDrawableSize(size);
+        }
+        if drawables.layer.isOpaque() != opaque {
+            transaction(|| drawables.layer.setOpaque(opaque));
+        }
+        let drawable = drawables.layer.nextDrawable()?;
+        // Feedback only while it is read (the trial, a log): a handler a
+        // frame is work on Core Animation's thread.
+        if feedback {
+            let feedback = drawables.feedback.clone();
+            let handler = block2::RcBlock::new(
+                move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
+                    // SAFETY: Metal passes the drawable presented, alive for the call.
+                    feedback.record(unsafe { shown.as_ref() }.presentedTime());
+                },
+            );
+            // SAFETY: A live block taking the drawable, as the handler's type
+            // declares; Metal copies it.
+            unsafe { drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
+        }
+        let texture = drawable.texture();
+        let surface = texture.iosurface()?;
+        drawables.pending = Some(drawable);
+        Some((texture, surface.into()))
+    }
+    /// The pending drawable, for the frame's own command buffer to present
+    /// (`metal_frame::Frame::commit_presenting`).
+    pub fn take_drawable(&mut self) -> Option<Retained<ProtocolObject<dyn CAMetalDrawable>>> {
+        self.drawables.as_mut()?.pending.take()
+    }
+    /// Present the frame drawn into the pending drawable, if its command
+    /// buffer did not (a frame wgpu encoded), after the work already on
+    /// `queue`; the drawable layer shows over the hidden tiles.
+    pub fn present_drawable(&mut self, queue: Option<&ProtocolObject<dyn MTLCommandQueue>>) {
+        let Some(drawables) = &mut self.drawables else {
+            return;
+        };
+        if let Some(drawable) = drawables.pending.take()
+            && let Some(buffer) = queue.and_then(|queue| queue.commandBuffer())
+        {
+            buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(&*drawable));
+            buffer.commit();
+        }
+        if !drawables.shown {
+            drawables.shown = true;
+            let layer = drawables.layer.clone();
+            transaction(|| {
+                layer.setHidden(false);
+                hide_tiles(&self.plain, None);
+            });
+            self.plain_shows.set(false);
+        }
+    }
+    /// What the window server did with the drawables (`Feedback`), if any.
+    pub fn drawable_feedback(&self) -> Option<std::sync::Arc<Feedback>> {
+        self.drawables
+            .as_ref()
+            .map(|drawables| drawables.feedback.clone())
+    }
+    /// Hide the drawable layer (the plain layer shows frames again), in the
+    /// caller's transaction.
+    fn hide_drawables(&mut self) {
+        if let Some(drawables) = &mut self.drawables
+            && drawables.shown
+        {
+            drawables.shown = false;
+            drawables.layer.setHidden(true);
+        }
+    }
+    /// Drop the drawable layer and its pool (at rest, showing a tile).
+    pub fn release_drawables(&mut self) {
+        if let Some(drawables) = self.drawables.take() {
+            transaction(|| drawables.layer.removeFromSuperlayer());
+            crate::present_log::log(|| "drawables-drop".into());
         }
     }
     /// Show `caret` over the frames, or none; in the caller's transaction
@@ -824,6 +1157,10 @@ impl Layer {
             }
         }
         hide_tiles(&self.plain, Some(tile));
+        self.hide_drawables();
+        if let Some(probe) = &self.probe {
+            probe.present();
+        }
     }
     /// Drops the tiles of surfaces other than `surfaces` (the renderer's, as
     /// it keeps fewer or makes new ones): a tile holds its surface.
@@ -961,6 +1298,12 @@ impl Drop for Layer {
                 video.layer.removeFromSuperlayer();
             }
             self.plain.removeFromSuperlayer();
+            if let Some(drawables) = &self.drawables {
+                drawables.layer.removeFromSuperlayer();
+            }
+            if let Some(probe) = &self.probe {
+                probe.layer.removeFromSuperlayer();
+            }
         });
     }
 }

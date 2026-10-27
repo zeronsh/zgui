@@ -30,6 +30,8 @@ mod native_surface;
 mod planes;
 pub mod present_log;
 mod surface;
+#[cfg(target_os = "macos")]
+mod trial_energy;
 mod upload;
 pub use font_cache::set_desktop_sans_serif;
 pub use surface::PresentationStatus;
@@ -2111,6 +2113,26 @@ struct LayerPresent {
     /// show on the plain layer, in the transaction that moves them.
     #[cfg(target_os = "macos")]
     with_natives: bool,
+    /// Full-rate frames draw into drawables (`PRESENT_DRAWABLE`, or a test's
+    /// `debug_present_drawable`).
+    #[cfg(target_os = "macos")]
+    drawables: Option<bool>,
+    /// Where this window is in the full-rate paths' trial (`PRESENT_AUTO`).
+    #[cfg(target_os = "macos")]
+    trial: Trial,
+    /// When the trial started, for its cost (`Trial`).
+    #[cfg(target_os = "macos")]
+    trial_started: Option<std::time::Instant>,
+    /// The energy terms after each half's warm-up and at its end
+    /// (`trial_energy`).
+    #[cfg(target_os = "macos")]
+    trial_samples: Vec<trial_energy::Sample>,
+    /// The machine the verdict is for (GPU, display and refresh, OS build),
+    /// and its verdict (`verdicts`): 0 untried, 1 tiles, 2 drawables.
+    #[cfg(target_os = "macos")]
+    verdict_key: String,
+    #[cfg(target_os = "macos")]
+    verdict: u8,
 }
 #[cfg(own_surfaces)]
 impl LayerPresent {
@@ -2214,6 +2236,63 @@ impl Drop for LayerPresent {
 }
 #[cfg(target_os = "macos")]
 impl LayerPresent {
+    /// Whether the next frame draws into a drawable: full rate, and nothing
+    /// asking for the plain layer (as `present_layer` decides it).
+    fn drawable_frame(&self) -> bool {
+        let auto = self.drawables.is_none()
+            && *PRESENT_AUTO
+            && self.full_rate
+            && match self.verdict {
+                2 => true,
+                1 => false,
+                _ => matches!(self.trial, Trial::Drawables { .. }),
+            };
+        (auto || self.drawables.unwrap_or(*PRESENT_DRAWABLE) && self.full_rate)
+            && !self.plain_only
+            && !self.with_natives
+            && self
+                .resized_at
+                .is_none_or(|at| at.elapsed() >= RESIZE_SETTLE)
+            && self
+                .plain_until
+                .is_none_or(|until| std::time::Instant::now() >= until)
+    }
+    /// Keep the buffers `keep` says, the shown one's index following.
+    fn retain_buffers(&mut self, keep: impl Fn(usize, &layer_present::Buffer) -> bool) {
+        let mut index = 0;
+        let mut shown = self.shown;
+        let mut kept = 0;
+        self.buffers.retain(|(buffer, _)| {
+            let here = index;
+            index += 1;
+            let keep = Some(here) == self.shown || keep(here, buffer);
+            if keep {
+                if Some(here) == self.shown {
+                    shown = Some(kept);
+                }
+                kept += 1;
+            }
+            keep
+        });
+        self.shown = shown;
+    }
+    /// Attach the layer frames show through, if not yet: `host`'s, or the
+    /// window surface's.
+    fn attach(&mut self, surface: Option<&wgpu::Surface<'static>>) -> Result<(), GpuError> {
+        if self.layer.is_none()
+            && let Some(host) = &self.host
+        {
+            self.layer = Some(layer_present::Layer::attach(host));
+        }
+        if self.layer.is_none() {
+            let surface = surface.ok_or_else(|| GpuError("a window surface".into()))?;
+            // SAFETY: Only the surface's layer is used; nothing destroys it.
+            let hal = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }
+                .ok_or_else(|| GpuError("not a Metal surface".into()))?;
+            self.layer = Some(layer_present::Layer::attach(&hal.render_layer().lock()));
+        }
+        Ok(())
+    }
     /// For `ZGX_PRESENT_LOG`: which plane this presents.
     fn plane(&self) -> &'static str {
         if self.plain_only { "overlay" } else { "base" }
@@ -2278,6 +2357,211 @@ static WARM_AFTER_IDLE: std::sync::LazyLock<bool> =
 #[cfg(windows)]
 static DXGI_PRESENT: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_DXGI_PRESENT").is_none_or(|v| v != "0"));
+/// `ZGX_PRESENT_DRAWABLE`: full-rate frames draw into `CAMetalLayer`
+/// drawables, which Metal presents (`layer_present::Layer::next_drawable`),
+/// instead of surfaces of the renderer's own shown as tiles.
+#[cfg(target_os = "macos")]
+static PRESENT_DRAWABLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    zgx::env::var_os("ZGX_PRESENT_DRAWABLE").is_some_and(|v| v != "0" && v != "auto")
+});
+/// `ZGX_PRESENT_DRAWABLE=auto`: full-rate frames take whichever path costs
+/// less on this machine (`TrialRule`), tried once per machine (`verdicts`);
+/// slower frames stay tiles.
+#[cfg(target_os = "macos")]
+static PRESENT_AUTO: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    zgx::env::var_os("ZGX_PRESENT_DRAWABLE").is_some_and(|v| v == "auto")
+});
+/// The trial's verdicts (1 tiles, 2 drawables), by machine key (`verdict_key`):
+/// kept in the app's defaults, so a machine is tried once, not every launch.
+/// `ZGX_PRESENT_RETRIAL` tries again (and stores the new verdict).
+#[cfg(target_os = "macos")]
+mod verdicts {
+    use objc2_foundation::{NSString, NSUserDefaults};
+    static CACHE: std::sync::Mutex<Vec<(String, u8)>> = std::sync::Mutex::new(Vec::new());
+    fn name(key: &str) -> objc2::rc::Retained<NSString> {
+        NSString::from_str(&format!("zgx.presentPath.{key}"))
+    }
+    /// The verdict for `key`: 0 not tried here yet.
+    pub(crate) fn get(key: &str) -> u8 {
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, verdict)) = cache.iter().find(|(k, _)| k == key) {
+            return *verdict;
+        }
+        let verdict = if zgx::env::var_os("ZGX_PRESENT_RETRIAL").is_some() {
+            0
+        } else {
+            match NSUserDefaults::standardUserDefaults()
+                .stringForKey(&name(key))
+                .map(|v| v.to_string())
+                .as_deref()
+            {
+                Some("tiles") => 1,
+                Some("drawables") => 2,
+                _ => 0,
+            }
+        };
+        cache.push((key.to_owned(), verdict));
+        verdict
+    }
+    /// Keep `verdict` for `key`, here and in the defaults.
+    pub(crate) fn set(key: &str, verdict: u8) {
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache.retain(|(k, _)| k != key);
+        cache.push((key.to_owned(), verdict));
+        let value = NSString::from_str(if verdict == 2 { "drawables" } else { "tiles" });
+        // SAFETY: An NSString value under an NSString key, as defaults store.
+        unsafe {
+            NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&value), &name(key))
+        };
+    }
+    /// The OS's version and build ("Version 26.0.1 (Build 25A362)").
+    pub(crate) fn os() -> String {
+        objc2_foundation::NSProcessInfo::processInfo()
+            .operatingSystemVersionString()
+            .to_string()
+    }
+}
+/// Full-rate frames each half of the trial lasts (about two seconds at 120 Hz).
+#[cfg(target_os = "macos")]
+const TRIAL_FRAMES: u32 = 240;
+/// How much smaller a share of frames drawables must skip than tiles to win
+/// (`TrialRule::Frames`).
+#[cfg(target_os = "macos")]
+const TRIAL_MARGIN: f64 = 0.05;
+/// Frames each half of the trial runs before it counts (a quarter second at
+/// 120 Hz): drawables' layer and pool are made as their half starts.
+#[cfg(target_os = "macos")]
+const TRIAL_WARMUP: u32 = 30;
+/// What a second of GPU work weighs against the CPU's joules
+/// (`TrialRule::Energy`): about an M-series GPU's active power.
+#[cfg(target_os = "macos")]
+const TRIAL_GPU_WATTS: f64 = 5.;
+/// How much less energy drawables must cost than tiles to win
+/// (`TrialRule::Energy`): tiles stay unless drawables clearly save. The
+/// window server's CPU is no term (another user's process; it reads only
+/// for a setuid tool), and on an M5 Max it is what favours tiles.
+#[cfg(target_os = "macos")]
+const TRIAL_ENERGY_MARGIN: f64 = 0.1;
+/// The most frames drawables may skip after warm-up to win by energy: they
+/// skip about 0.1% when presenting works, so this catches a broken path, not
+/// pacing.
+#[cfg(target_os = "macos")]
+const TRIAL_LOSS_BOUND: f64 = 0.01;
+/// How the full-rate trial judges (`ZGX_TRIAL_RULE`): by energy (the
+/// default), or `frames`, by the share of frames each path skips.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TrialRule {
+    Energy,
+    Frames,
+}
+#[cfg(target_os = "macos")]
+static TRIAL_RULE: std::sync::LazyLock<TrialRule> = std::sync::LazyLock::new(|| {
+    match zgx::env::var_os("ZGX_TRIAL_RULE").is_some_and(|v| v == "frames") {
+        true => TrialRule::Frames,
+        false => TrialRule::Energy,
+    }
+});
+/// What the trial measured of each path: shares of frames skipped (tiles'
+/// only with the probe, `TrialRule::Frames`), and watts (`trial_energy`;
+/// none if a sample is missing).
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Default)]
+struct TrialResult {
+    tiles_lost: f64,
+    drawables_lost: f64,
+    /// Drawables' share skipped after their warm-up.
+    drawables_lost_settled: f64,
+    tiles_watts: Option<f64>,
+    drawables_watts: Option<f64>,
+}
+/// The trial's verdict: 2 drawables, 1 tiles.
+#[cfg(target_os = "macos")]
+fn trial_verdict(rule: TrialRule, result: TrialResult) -> u8 {
+    let drawables = match rule {
+        TrialRule::Frames => result.tiles_lost - result.drawables_lost > TRIAL_MARGIN,
+        TrialRule::Energy => match (result.tiles_watts, result.drawables_watts) {
+            (Some(tiles), Some(drawables)) => {
+                drawables < tiles * (1. - TRIAL_ENERGY_MARGIN)
+                    && result.drawables_lost_settled <= TRIAL_LOSS_BOUND
+            }
+            _ => false,
+        },
+    };
+    if drawables { 2 } else { 1 }
+}
+#[cfg(all(test, target_os = "macos"))]
+mod trial_verdict_tests {
+    use super::*;
+    fn energy(tiles: f64, drawables: f64, lost: f64) -> u8 {
+        trial_verdict(
+            TrialRule::Energy,
+            TrialResult {
+                drawables_lost_settled: lost,
+                tiles_watts: Some(tiles),
+                drawables_watts: Some(drawables),
+                ..Default::default()
+            },
+        )
+    }
+    #[test]
+    fn drawables_win_by_energy_only_beyond_the_margin() {
+        // An M1 Max (2026-10-27): tiles 0.71 W, drawables 0.55.
+        assert_eq!(energy(0.710, 0.550, 0.001), 2);
+        // An M5 Max: tiles 0.892 W, drawables 0.830, under 10% less.
+        assert_eq!(energy(0.892, 0.830, 0.001), 1);
+        assert_eq!(energy(0.5, 0.5, 0.), 1);
+    }
+    #[test]
+    fn drawables_that_lose_frames_never_win_by_energy() {
+        assert_eq!(energy(0.710, 0.550, TRIAL_LOSS_BOUND), 2);
+        assert_eq!(energy(0.710, 0.550, 0.02), 1);
+    }
+    #[test]
+    fn an_energy_trial_missing_a_sample_keeps_tiles() {
+        let missing = TrialResult {
+            tiles_watts: Some(0.7),
+            ..Default::default()
+        };
+        assert_eq!(trial_verdict(TrialRule::Energy, missing), 1);
+    }
+    #[test]
+    fn by_frames_drawables_win_where_tiles_skip_clearly_more() {
+        let frames = |tiles_lost, drawables_lost| {
+            trial_verdict(
+                TrialRule::Frames,
+                TrialResult {
+                    tiles_lost,
+                    drawables_lost,
+                    ..Default::default()
+                },
+            )
+        };
+        assert_eq!(frames(0.17, 0.003), 2);
+        assert_eq!(frames(0.06, 0.04), 1);
+    }
+}
+/// The once-per-process comparison of the full-rate paths (`PRESENT_AUTO`):
+/// tiles, then drawables with their presented feedback, each for
+/// `TRIAL_FRAMES`; judged by `TrialRule`.
+#[cfg(target_os = "macos")]
+#[derive(Default, Clone, Copy)]
+enum Trial {
+    #[default]
+    Untried,
+    Tiles {
+        frames: u32,
+        from: layer_present::Mark,
+    },
+    Drawables {
+        frames: u32,
+        from: layer_present::Mark,
+        /// Where drawables' feedback stood after their warm-up.
+        settled: layer_present::Mark,
+        tiles: f64,
+    },
+    Done,
+}
 /// How long the video layer outlasts full-rate frames (`LayerPresent::video_until`).
 #[cfg(target_os = "macos")]
 const VIDEO_LINGER: std::time::Duration = std::time::Duration::from_secs(1);
@@ -3058,6 +3342,10 @@ pub struct GpuRenderer {
     /// A directly encoded frame, committed, until it is known complete.
     #[cfg(target_os = "macos")]
     metal_inflight: RefCell<Option<metal_frame::CommandBuffer>>,
+    /// The display the window shows on and its refresh rate, for the
+    /// full-rate verdict's key (`set_display_key`).
+    #[cfg(target_os = "macos")]
+    display_key: String,
     /// Trimmed, and nothing drawn since: the next input wakes the GPU
     /// (`warm_up`).
     #[cfg(target_os = "macos")]
@@ -3499,6 +3787,9 @@ impl GpuRenderer {
             metal_inflight: RefCell::new(None),
             #[cfg(target_os = "macos")]
             idle: false,
+            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "macos")]
+            display_key: String::new(),
             #[cfg(target_os = "macos")]
             gpu_time: std::cell::Cell::new(None),
             #[cfg(target_os = "macos")]
@@ -7483,6 +7774,10 @@ impl GpuRenderer {
         mut stats: GpuStats,
     ) -> GpuStats {
         let _span = zgx::profile::span(zgx::profile::Phase::Encode);
+        // A drawable frame is not waited for as it presents (Metal presents
+        // it); its ring buffers are free once it completes, normally long
+        // before the next frame starts.
+        self.finish_direct();
         let vertices = {
             use objc2::Message;
             let mapped = self
@@ -7648,7 +7943,22 @@ impl GpuRenderer {
                 from = end;
             }
             let _span = zgx::profile::span(zgx::profile::Phase::Submit);
-            pass.commit()
+            // Into a drawable: presented by this command buffer, once done.
+            let drawable = self
+                .layer_present
+                .as_mut()
+                .filter(|present| {
+                    present
+                        .current
+                        .is_some_and(|index| present.buffers[index].0.drawable)
+                })
+                .and_then(|present| present.layer.as_mut())
+                .and_then(|layer| layer.take_drawable());
+            pass.commit_presenting(
+                drawable
+                    .as_deref()
+                    .map(objc2::runtime::ProtocolObject::<dyn objc2_metal::MTLDrawable>::from_ref),
+            )
         };
         *self.metal_inflight.get_mut() = Some(committed);
         self.metal_frames += 1;
@@ -9223,82 +9533,142 @@ impl GpuRenderer {
             present.shown = None;
             present.history.clear();
         }
-        // Certainly free: not the latest, and no use beyond the layer's own
-        // record of it (one on screen or queued has more). The most recent of
-        // them holds the frame nearest this one.
-        let idle = |present: &LayerPresent| -> Vec<usize> {
-            let mut idle: Vec<usize> = (0..present.buffers.len())
-                .filter(|&i| {
-                    Some(i) != present.shown && present.buffers[i].0.surface.use_count() <= 1
-                })
-                .collect();
-            idle.sort_by_key(|&i| std::cmp::Reverse(present.buffers[i].1));
-            idle
-        };
-        let budget = if present.full_rate { LAYER_BUFFERS } else { 2 };
-        let mut free = idle(present);
-        // Slower again: the third surface goes once free.
-        if present.buffers.len() > budget
-            && let Some(&spare) = free.last()
-        {
-            present.buffers.remove(spare);
-            if let Some(shown) = &mut present.shown
-                && *shown > spare
+        // At full rate through drawables, the next drawable's surface is the
+        // target; the renderer's own surfaces go but the one shown (it brings
+        // the drawable up to date), and out of full rate, the drawables do.
+        let drawable = if present.drawable_frame() {
+            present.attach(self.surface.as_ref())?;
+            present.retain_buffers(|_, buffer| buffer.drawable);
+            // Presented feedback while the trial reads it, or a log does.
+            let wants_feedback =
+                present_log::enabled() || matches!(present.trial, Trial::Drawables { .. });
+            // SAFETY: The raw device is only retained; the guard is dropped
+            // before wgpu is called again.
+            let device = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }
+                .map(|hal| hal.raw_device().clone());
+            let next = device.and_then(|device| {
+                present
+                    .layer
+                    .as_mut()
+                    .expect("attached above")
+                    .next_drawable(&device, width, height, wants_feedback)
+            });
+            next.map(|(texture, surface)| {
+                let id = surface.id();
+                match present
+                    .buffers
+                    .iter()
+                    .position(|(buffer, _)| buffer.drawable && buffer.surface.id() == id)
+                {
+                    Some(index) => index,
+                    None => {
+                        present.buffers.push((
+                            layer_present::Buffer::from_drawable(&self.device, surface, texture),
+                            None,
+                        ));
+                        present_log::log(|| format!("new-drawable surface={id}"));
+                        present.buffers.len() - 1
+                    }
+                }
+            })
+        } else {
+            if present.buffers.iter().any(|(buffer, _)| buffer.drawable) {
+                present.retain_buffers(|_, buffer| !buffer.drawable);
+            }
+            // Tiles won the trial: their pool goes once a tile shows.
+            if present.verdict == 1
+                && present
+                    .shown
+                    .is_none_or(|shown| !present.buffers[shown].0.drawable)
+                && let Some(layer) = present.layer.as_mut()
             {
-                *shown -= 1;
+                layer.release_drawables();
             }
-            free = idle(present);
-        }
-        // None: ask the layer which it no longer shows nor queues (it holds a
-        // surface a while after showing the next; that one is free).
-        let pick = |present: &LayerPresent| {
-            let busy = present.busy();
-            (0..present.buffers.len())
-                .filter(|&i| Some(i) != present.shown && !busy[i])
-                .max_by_key(|&i| present.buffers[i].1)
+            None
         };
-        let mut index = free.first().copied().or_else(|| pick(present));
-        if index.is_none() && present.buffers.len() < budget {
-            present.buffers.push((
-                layer_present::Buffer::new(&self.device, width, height)?,
-                None,
-            ));
-            index = Some(present.buffers.len() - 1);
-            present_log::log(|| {
-                format!(
-                    "new-surface count={} budget={budget}",
-                    present.buffers.len()
-                )
-            });
-        }
-        // Still none: the layer moves on by its next refresh.
-        let started = std::time::Instant::now();
-        let mut asked = started;
-        while index.is_none() && started.elapsed() < std::time::Duration::from_millis(20) {
-            std::thread::sleep(std::time::Duration::from_micros(100));
-            index = idle(present).first().copied();
-            if index.is_none() && asked.elapsed() >= std::time::Duration::from_millis(2) {
-                asked = std::time::Instant::now();
-                index = pick(present);
+        let index = match drawable {
+            Some(index) => index,
+            None => {
+                // Certainly free: not the latest, and no use beyond the layer's own
+                // record of it (one on screen or queued has more). The most recent of
+                // them holds the frame nearest this one.
+                let idle = |present: &LayerPresent| -> Vec<usize> {
+                    let mut idle: Vec<usize> = (0..present.buffers.len())
+                        .filter(|&i| {
+                            Some(i) != present.shown
+                                && present.buffers[i].0.surface.use_count() <= 1
+                        })
+                        .collect();
+                    idle.sort_by_key(|&i| std::cmp::Reverse(present.buffers[i].1));
+                    idle
+                };
+                let budget = if present.full_rate { LAYER_BUFFERS } else { 2 };
+                let mut free = idle(present);
+                // Slower again: the third surface goes once free.
+                if present.buffers.len() > budget
+                    && let Some(&spare) = free.last()
+                {
+                    present.buffers.remove(spare);
+                    if let Some(shown) = &mut present.shown
+                        && *shown > spare
+                    {
+                        *shown -= 1;
+                    }
+                    free = idle(present);
+                }
+                // None: ask the layer which it no longer shows nor queues (it holds a
+                // surface a while after showing the next; that one is free).
+                let pick = |present: &LayerPresent| {
+                    let busy = present.busy();
+                    (0..present.buffers.len())
+                        .filter(|&i| Some(i) != present.shown && !busy[i])
+                        .max_by_key(|&i| present.buffers[i].1)
+                };
+                let mut index = free.first().copied().or_else(|| pick(present));
+                if index.is_none() && present.buffers.len() < budget {
+                    present.buffers.push((
+                        layer_present::Buffer::new(&self.device, width, height)?,
+                        None,
+                    ));
+                    index = Some(present.buffers.len() - 1);
+                    present_log::log(|| {
+                        format!(
+                            "new-surface count={} budget={budget}",
+                            present.buffers.len()
+                        )
+                    });
+                }
+                // Still none: the layer moves on by its next refresh.
+                let started = std::time::Instant::now();
+                let mut asked = started;
+                while index.is_none() && started.elapsed() < std::time::Duration::from_millis(20) {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                    index = idle(present).first().copied();
+                    if index.is_none() && asked.elapsed() >= std::time::Duration::from_millis(2) {
+                        asked = std::time::Instant::now();
+                        index = pick(present);
+                    }
+                }
+                let waited = started.elapsed();
+                let forced = index.is_none();
+                let index = index.unwrap_or_else(|| {
+                    (0..present.buffers.len())
+                        .find(|&i| Some(i) != present.shown)
+                        .expect("more than one surface")
+                });
+                if forced || waited.as_micros() > 500 {
+                    present_log::log(|| {
+                        format!(
+                            "{} acquire index={index} waited_us={} forced_busy={forced} buffers={}",
+                            present.plane(),
+                            waited.as_micros(),
+                            present.buffers.len()
+                        )
+                    });
+                }
+                index
             }
-        }
-        let waited = started.elapsed();
-        let forced = index.is_none();
-        let index = index.unwrap_or_else(|| {
-            (0..present.buffers.len())
-                .find(|&i| Some(i) != present.shown)
-                .expect("more than one surface")
-        });
-        if forced || waited.as_micros() > 500 {
-            present_log::log(|| {
-                format!(
-                    "{} acquire index={index} waited_us={} forced_busy={forced} buffers={}",
-                    present.plane(),
-                    waited.as_micros(),
-                    present.buffers.len()
-                )
-            });
-        }
+        };
         let held = present.buffers[index].1;
         let latest = present.shown.and_then(|shown| present.buffers[shown].1);
         present.catch_up = present.catch_up_for(index, whole, width, height);
@@ -9324,17 +9694,9 @@ impl GpuRenderer {
         before_present: impl FnOnce(),
     ) -> Result<PresentationStatus, GpuError> {
         let mut present = self.layer_present.take().expect("layer presenting");
-        if present.layer.is_none()
-            && let Some(host) = &present.host
-        {
-            present.layer = Some(layer_present::Layer::attach(host));
-        }
-        if present.layer.is_none() {
-            let surface = self.surface.as_ref().expect("a window surface");
-            // SAFETY: Only the surface's layer is used; nothing destroys it.
-            let hal = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }
-                .ok_or_else(|| GpuError("not a Metal surface".into()))?;
-            present.layer = Some(layer_present::Layer::attach(&hal.render_layer().lock()));
+        if let Err(error) = present.attach(self.surface.as_ref()) {
+            self.layer_present = Some(present);
+            return Err(error);
         }
         if let Some(layer) = present.layer.as_mut() {
             layer.set_caret(present.caret);
@@ -9344,9 +9706,12 @@ impl GpuRenderer {
             self.layer_present = Some(present);
             return Ok(PresentationStatus::Presented);
         };
+        // A drawable's frame encoded directly presented as it committed.
+        let presented = present.buffers[index].0.drawable && self.metal_inflight.borrow().is_some();
         // The window server reads the surface from its next composite: the
         // frame must be complete by then.
-        if self.finish_direct() {
+        // (A drawable's direct frame is not waited for: it presents itself.)
+        if presented || self.finish_direct() {
             // wgpu still frees what was dropped once its own work is done.
             if present.frame.is_multiple_of(64) {
                 let _ = self.device.poll(wgpu::PollType::Poll);
@@ -9404,7 +9769,14 @@ impl GpuRenderer {
         });
         let layer = present.layer.as_mut().expect("attached above");
         let buffer = &present.buffers[index].0;
-        if plain {
+        if buffer.drawable {
+            // SAFETY: The raw queue is only retained; the guard is dropped at once.
+            let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+                use objc2::Message;
+                hal.as_raw().retain()
+            });
+            layer.present_drawable(queue.as_deref());
+        } else if plain {
             layer.show_plain(buffer, opaque);
         } else {
             layer.show(buffer, opaque, present.full_rate);
@@ -9416,6 +9788,211 @@ impl GpuRenderer {
                 .map(|(buffer, _)| buffer.surface.id()),
         );
         present.presented(index);
+        let frame = present.frame;
+        // The machine's verdict, looked up once per key (`verdicts`).
+        if *PRESENT_AUTO && present.full_rate {
+            // SAFETY: Only the raw device's registry ID is read.
+            let gpu = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }.map_or(0, |hal| {
+                use objc2_metal::MTLDevice;
+                hal.raw_device().registryID()
+            });
+            static OS: std::sync::LazyLock<String> = std::sync::LazyLock::new(verdicts::os);
+            let key = format!("{gpu:x}.{}.{}", self.display_key, *OS).replace(' ', "_");
+            if key != present.verdict_key {
+                present.verdict = verdicts::get(&key);
+                present.verdict_key = key;
+                if present.verdict == 0 {
+                    present.trial = Trial::Untried;
+                } else {
+                    present.trial = Trial::Done;
+                    eprintln!(
+                        "zgx: full-rate frames take {} (this machine's stored verdict)",
+                        if present.verdict == 2 {
+                            "drawables"
+                        } else {
+                            "tiles"
+                        }
+                    );
+                }
+            }
+        }
+        // The full-rate paths' trial (`Trial`), a frame at a time.
+        if *PRESENT_AUTO && present.drawables.is_none() && present.full_rate && present.verdict == 0
+        {
+            // Where a feedback record stands, and the share of frames lost
+            // since then (`Feedback::lost_since`).
+            let counts =
+                |feedback: Option<std::sync::Arc<layer_present::Feedback>>| -> layer_present::Mark {
+                    feedback.map_or_else(Default::default, |feedback| feedback.mark())
+                };
+            let share = |feedback: Option<std::sync::Arc<layer_present::Feedback>>,
+                         from: layer_present::Mark| {
+                feedback.map_or(0., |feedback| {
+                    let (handed, lost) = feedback.lost_since(from);
+                    lost as f64 / handed.max(1) as f64
+                })
+            };
+            present.trial = match present.trial {
+                Trial::Untried => {
+                    // Tiles judged by the frames they lose need the probe (a
+                    // drawable of its own each flip); by energy they run as
+                    // they ship, without it.
+                    if *TRIAL_RULE == TrialRule::Frames {
+                        // SAFETY: The raw device and queue are only retained;
+                        // the guards are dropped at once.
+                        let device = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }
+                            .map(|hal| hal.raw_device().clone());
+                        let queue =
+                            unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+                                use objc2::Message;
+                                hal.as_raw().retain()
+                            });
+                        if let (Some(layer), Some(device), Some(queue)) =
+                            (present.layer.as_mut(), device, queue)
+                        {
+                            layer.start_probe(&device, queue);
+                        }
+                    }
+                    let from = counts(
+                        present
+                            .layer
+                            .as_ref()
+                            .and_then(|layer| layer.probe_feedback()),
+                    );
+                    present.trial_started = Some(std::time::Instant::now());
+                    present.trial_samples.clear();
+                    Trial::Tiles { frames: 0, from }
+                }
+                Trial::Tiles { frames, from } if frames + 1 >= TRIAL_FRAMES => {
+                    let layer = present.layer.as_mut().expect("attached");
+                    let tiles = share(layer.probe_feedback(), from);
+                    layer.stop_probe();
+                    present.trial_samples.push(trial_energy::Sample::now());
+                    let from = counts(layer.drawable_feedback());
+                    Trial::Drawables {
+                        frames: 0,
+                        from,
+                        settled: from,
+                        tiles,
+                    }
+                }
+                Trial::Tiles { frames, from } => {
+                    if frames + 1 == TRIAL_WARMUP {
+                        present.trial_samples.push(trial_energy::Sample::now());
+                    }
+                    Trial::Tiles {
+                        frames: frames + 1,
+                        from,
+                    }
+                }
+                Trial::Drawables {
+                    frames,
+                    from,
+                    settled,
+                    tiles,
+                } if frames + 1 >= TRIAL_FRAMES => {
+                    let feedback = present
+                        .layer
+                        .as_ref()
+                        .and_then(|layer| layer.drawable_feedback());
+                    let drawables = share(feedback.clone(), from);
+                    let drawables_settled = share(feedback, settled);
+                    present.trial_samples.push(trial_energy::Sample::now());
+                    let costs = match &present.trial_samples[..] {
+                        [tiles_from, tiles_to, drawables_from, drawables_to] => {
+                            Some((tiles_from.to(tiles_to), drawables_from.to(drawables_to)))
+                        }
+                        _ => None,
+                    };
+                    let verdict = trial_verdict(
+                        *TRIAL_RULE,
+                        TrialResult {
+                            tiles_lost: tiles,
+                            drawables_lost: drawables,
+                            drawables_lost_settled: drawables_settled,
+                            tiles_watts: costs.map(|(tiles, _)| tiles.watts(TRIAL_GPU_WATTS)),
+                            drawables_watts: costs
+                                .map(|(_, drawables)| drawables.watts(TRIAL_GPU_WATTS)),
+                        },
+                    );
+                    present.verdict = verdict;
+                    verdicts::set(&present.verdict_key, verdict);
+                    let elapsed = present
+                        .trial_started
+                        .map_or(0, |at| at.elapsed().as_millis());
+                    let path = if verdict == 2 { "drawables" } else { "tiles" };
+                    match (*TRIAL_RULE, costs) {
+                        (TrialRule::Energy, Some((on_tiles, on_drawables))) => {
+                            let term = |cost: &trial_energy::Cost| {
+                                let per_second = |value: f64| value / cost.seconds.max(1e-3) * 1e3;
+                                format!(
+                                    "{:.0} mW (CPU {:.0} mW, GPU {:.0} and the window server's {:.0} ms a second)",
+                                    cost.watts(TRIAL_GPU_WATTS) * 1e3,
+                                    per_second(cost.cpu_joules),
+                                    per_second(cost.gpu_seconds),
+                                    per_second(cost.window_server_gpu_seconds),
+                                )
+                            };
+                            eprintln!(
+                                "zgx: full-rate frames take {path} (tiles {}, drawables {}, drawables lost {:.1}%, {:.1}% after warm-up; trial {elapsed} ms)",
+                                term(&on_tiles),
+                                term(&on_drawables),
+                                drawables * 100.,
+                                drawables_settled * 100.,
+                            );
+                        }
+                        _ => eprintln!(
+                            "zgx: full-rate frames take {path} (lost: tiles {:.1}%, drawables {:.1}% of {} frames each; trial {elapsed} ms)",
+                            tiles * 100.,
+                            drawables * 100.,
+                            TRIAL_FRAMES,
+                        ),
+                    }
+                    Trial::Done
+                }
+                Trial::Drawables {
+                    frames,
+                    from,
+                    settled,
+                    tiles,
+                } => {
+                    let settled = match frames + 1 == TRIAL_WARMUP {
+                        true => {
+                            present.trial_samples.push(trial_energy::Sample::now());
+                            counts(
+                                present
+                                    .layer
+                                    .as_ref()
+                                    .and_then(|layer| layer.drawable_feedback()),
+                            )
+                        }
+                        false => settled,
+                    };
+                    Trial::Drawables {
+                        frames: frames + 1,
+                        from,
+                        settled,
+                        tiles,
+                    }
+                }
+                Trial::Done => Trial::Done,
+            };
+        }
+        // What the screen did with drawables lately (`layer_present::Feedback`).
+        if frame.is_multiple_of(240)
+            && let Some(feedback) = present
+                .layer
+                .as_ref()
+                .and_then(|layer| layer.drawable_feedback())
+        {
+            let line = || {
+                let (shown, skipped, median, p99, late) = feedback.summary();
+                format!(
+                    "drawables shown={shown} skipped={skipped} gap_p50={median:.2}ms gap_p99={p99:.2}ms late={late}"
+                )
+            };
+            present_log::log(line);
+        }
         self.layer_present = Some(present);
         Ok(PresentationStatus::Presented)
     }
@@ -9583,6 +10160,10 @@ impl GpuRenderer {
         let (buffer, _) = present.buffers.get(present.shown?)?;
         Some(ShownFrame {
             surface: buffer.surface.clone(),
+            pending: buffer
+                .drawable
+                .then(|| self.metal_inflight.borrow().clone())
+                .flatten(),
         })
     }
     /// How long the GPU took to run the frame last presented, when it was
@@ -9764,6 +10345,10 @@ impl GpuRenderer {
             if let Some(layer) = &mut present.layer {
                 layer.rest(&present.buffers[0].0);
                 layer.keep(std::iter::once(present.buffers[0].0.surface.id()));
+                // At rest on a tile, the drawables' pool goes too.
+                if !present.buffers[0].0.drawable {
+                    layer.release_drawables();
+                }
             }
         }
         if let Some(mapped) = &mut self.mapped {
@@ -9869,6 +10454,34 @@ impl GpuRenderer {
     /// Frames drawn in one pass with their presentation.
     pub fn debug_single_pass_frames(&self) -> u64 {
         self.single_pass_frames
+    }
+    /// Test hook: full-rate frames draw into `CAMetalLayer` drawables, or
+    /// not (`ZGX_PRESENT_DRAWABLE`); a `debug_for_layer` renderer then
+    /// presents as a window's base plane does, not an overlay's.
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn debug_present_drawable(&mut self, drawables: bool) {
+        if let Some(present) = &mut self.layer_present {
+            present.drawables = Some(drawables);
+            present.plain_only = false;
+        }
+    }
+    /// The display the window shows on and its refresh rate
+    /// (`"<id>@<hz>"`), part of the full-rate verdict's key.
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn set_display_key(&mut self, key: &str) {
+        if self.display_key != key {
+            self.display_key = key.to_owned();
+        }
+    }
+    /// Test hook: drawables the window server presented and skipped so far,
+    /// and the latest gaps' median and 99th percentile in ms (macOS).
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn debug_drawable_feedback(&self) -> Option<(u64, u64, f64, f64, usize)> {
+        let present = self.layer_present.as_ref()?;
+        Some(present.layer.as_ref()?.drawable_feedback()?.summary())
     }
     /// Frames encoded with Metal directly rather than through wgpu (macOS).
     pub fn debug_metal_frames(&self) -> u64 {
@@ -10060,6 +10673,9 @@ impl GpuRenderer {
 #[cfg(target_os = "macos")]
 pub struct ShownFrame {
     surface: objc2_core_foundation::CFRetained<objc2_io_surface::IOSurfaceRef>,
+    /// The frame's work, if it may still run: a drawable's frame is not
+    /// waited for as it presents (`render_direct`), so reading waits.
+    pending: Option<metal_frame::CommandBuffer>,
 }
 #[cfg(target_os = "macos")]
 impl ShownFrame {
@@ -10067,12 +10683,16 @@ impl ShownFrame {
     /// to it) as premultiplied BGRA rows, with its size; `None` for a region
     /// outside it.
     pub fn read(&self, x: u32, y: u32, width: u32, height: u32) -> Option<(u32, u32, Vec<u8>)> {
+        if let Some(pending) = &self.pending {
+            use objc2_metal::MTLCommandBuffer;
+            pending.waitUntilCompleted();
+        }
         let surface = objc2_core_foundation::CFRetained::as_ptr(&self.surface)
             .as_ptr()
             .cast::<std::ffi::c_void>()
             .cast_const();
-        // SAFETY: a live surface (held), BGRA. It was shown, so the GPU
-        // finished drawing it.
+        // SAFETY: a live surface (held), BGRA. It was shown, and its frame's
+        // work is complete (waited for above, or before it was shown).
         unsafe {
             iosurface::with_pixels(surface, |bytes, full_w, full_h, stride| {
                 let (x, y) = (x as usize, y as usize);

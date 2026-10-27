@@ -129,9 +129,40 @@ with a main menu activates (here with 2 displays). So a flip sends one
   thread and costs app CPU (+9.5 to 11.6 MB and +16 to 23% CPU at full rate),
   which is too high a price for 0.45 points.
 
-Open (2026-10-26): drawables presented at the refresh the host's latch picks
-(`presentDrawable:atTime:`), which would pace 60 Hz frames as tiles do. Until
-that test settles it, frames below the display's rate stay on tiles.
+Frames below the display's rate stay on tiles. Drawables presented at the
+refresh the host's latch picks (`presentDrawable:atTime:`) were tried and are
+not in the shipped path.
+
+**Which path, per machine (`ZGX_PRESENT_DRAWABLE=auto`, opt-in).** Which
+present path costs less differs by machine, and neither GPU family nor
+refresh rate predicts it. So `auto` tries both once per GPU, display, refresh
+rate and OS build, keeps the verdict in the app's defaults
+(`ZGX_PRESENT_RETRIAL=1` tries again), and full-rate frames take it. Each
+path runs 240 frames, of which the first 30 don't count. Each is judged by
+what the process can read of itself without privileges: its CPU energy
+(`task_info`), its GPU time and the window server's (each process's GPU
+clients in the I/O Registry). Here GPU time weighs 5 W a busy second.
+Drawables win only if they cost 10% less and skip at most 1% of frames
+after warm-up. They skip about 0.1% when presenting works, so the bound
+catches a broken path. The window server's CPU is no term (it reads only for
+a setuid tool), so the margin keeps tiles where that is their lead. The
+earlier rule, by frames skipped, is `ZGX_TRIAL_RULE=frames`.
+
+| 2026-10-27 | tiles | drawables | verdict |
+| --- | --- | --- | --- |
+| M1 Max, macOS 26.0.1, 4 trials | 686–731 mW | 513–555 mW | drawables 4/4 |
+| M5 Max, macOS 26.4, 3 trials | 891–894 mW | 816–830 mW | tiles 3/3 |
+
+On the M1 Max the window server's GPU is the difference (86–88 against
+49–59 ms a second).
+
+Not final (2026-10-27): on some launches drawables run a refresh deep. The
+pool sits full, each frame waits most of a refresh in `nextDrawable`, and a
+frame shows 8.3 ms later than it could, at more window-server CPU. Which
+launches do is chance, and on an M1 Max with the CVDisplayLink it is most of
+them. A follow-up keeps them in phase. Until then the trial's guard on late
+frames keeps tiles where drawables show late, so don't turn `auto` on
+expecting today's drawables to be the final ones.
 
 ## The heavy dashboard's malloc fragmentation (macOS)
 
