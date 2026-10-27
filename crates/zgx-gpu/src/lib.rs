@@ -10394,7 +10394,13 @@ fn drawable_pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some(if basic { "vs_basic" } else { "vs" }),
+            entry_point: Some(if basic {
+                "vs_basic"
+            } else if exp_slim() {
+                "vs_slim"
+            } else {
+                "vs"
+            }),
             compilation_options: Default::default(),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: 128,
@@ -10407,7 +10413,13 @@ fn drawable_pipeline(
         multisample: Default::default(),
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some(if basic { "fs_basic" } else { "fs" }),
+            entry_point: Some(if basic {
+                "fs_basic"
+            } else if exp_slim() {
+                "fs_slim"
+            } else {
+                "fs"
+            }),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
@@ -10444,7 +10456,13 @@ fn quad_pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some(if basic { "vs_basic" } else { "vs" }),
+            entry_point: Some(if basic {
+                "vs_basic"
+            } else if exp_slim() {
+                "vs_slim"
+            } else {
+                "vs"
+            }),
             compilation_options: Default::default(),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: 128,
@@ -10461,6 +10479,8 @@ fn quad_pipeline(
             entry_point: Some(match (basic, drawable.is_some()) {
                 (true, true) => "fs_basic_both",
                 (true, false) => "fs_basic",
+                (false, true) if exp_slim() => "fs_both_slim",
+                (false, false) if exp_slim() => "fs_slim",
                 (false, true) => "fs_both",
                 (false, false) => "fs",
             }),
@@ -11630,6 +11650,24 @@ fn exp_full(source: &'static str) -> std::borrow::Cow<'static, str> {
             )
             .into(),
         Ok("noregion") => source.replace("if v.mask.x>.5 {", "if false {").into(),
+        // The full pipeline's vertex layout, two varyings: flat's colour
+        // without the rest of `Out`.
+        Ok("slim") => format!(
+            "{source}
+struct Slim {{ @builtin(position) position:vec4<f32>, @location(0) @interpolate(flat) color:vec4<f32> }}
+@vertex fn vs_slim(v:Vertex,@builtin(vertex_index) i:u32)->Slim {{
+ let corner=vec2(f32(i&1u),f32(i>>1u)); let p=v.rect.xy+corner*v.rect.zw;
+ var o:Slim; o.position=vec4(p.x/viewport.x*2.-1.,1.-p.y/viewport.y*2.,0.,1.); o.color=v.color; return o;
+}}
+@fragment fn fs_slim(v:Slim)->@location(0) vec4<f32> {{ return vec4(v.color.rgb*v.color.a,v.color.a); }}
+@fragment fn fs_both_slim(v:Slim)->Both {{ let c=vec4(v.color.rgb*v.color.a,v.color.a); return Both(c,c); }}
+"
+        )
+        .into(),
         _ => source.into(),
     }
+}
+/// SCRATCH: `ZGX_EXP_FULL=slim`.
+fn exp_slim() -> bool {
+    std::env::var("ZGX_EXP_FULL").as_deref() == Ok("slim")
 }
