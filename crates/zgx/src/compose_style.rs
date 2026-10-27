@@ -973,6 +973,11 @@ pub(crate) fn mount_style_with_intrinsic(
                         resolved.lay(&Paint::of(variant));
                     }
                 }
+                // Frosted glass painted opaque (`opaque_glass`) stays so: its
+                // blur is put back from the base above.
+                if glass == Some(true) && resolved.blur.get().is_some_and(|sigma| sigma > 0.) {
+                    resolved.blur = Some(0.).into();
+                }
                 let paint_color = resolved.text_color;
                 let bound = theme.as_ref().is_some_and(|theme| theme.themed())
                     || produced.as_ref().is_some_and(Styles::has_tokens);
@@ -2417,5 +2422,37 @@ mod tests {
         assert!(ui.scene.borrow_mut().flush().layout_nodes > 0);
         bold.set(true);
         assert!(ui.scene.borrow_mut().flush().is_idle());
+    }
+    /// Frosted glass painted opaque (reduced transparency) stays opaque on
+    /// the style's later paint-only runs, as on its first: the blur its
+    /// base sets was put back from the base once a run was memoised.
+    #[test]
+    fn opaque_glass_keeps_no_blur_on_paint_only_runs() {
+        let mut ui = Ui::new(100., 100.);
+        ui.theme()
+            .set_system_preferences(crate::theme::SystemPreferences {
+                reduced_transparency: true,
+                ..Default::default()
+            });
+        let node = ui.container(ui.root(), Layout::Column, Style::default());
+        let value = ui.signal(0.8);
+        let read = value.clone();
+        let inherited = inherited(&ui);
+        mount_style(
+            &mut ui,
+            node,
+            color(1).blur(6.),
+            inherited,
+            Some(Box::new(move || Styles::new().opacity(read.get()))),
+            Variants::default(),
+            None,
+            false,
+        );
+        // The second run makes the memo; the third and later reuse it.
+        for opacity in [0.8, 0.4, 0.6, 0.2] {
+            value.set(opacity);
+            let effects = ui.scene.borrow().effects(node);
+            assert_eq!((effects.opacity, effects.blur_radius), (opacity, 0.));
+        }
     }
 }
