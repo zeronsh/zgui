@@ -776,11 +776,18 @@ impl Layer {
             // A blink's phase, by its opacity (window 28, 2026-10-27: two such
             // changes a second cost the window server what GPUI's blinking
             // frames do, and a Core Animation blink a quarter point more).
-            let opacity = if caret.shown { 1. } else { 0. };
+            // DIAGNOSTIC (`ZGX_CARET_ALT=1`): on odd Unix seconds the phase is the
+            // layer's `hidden` instead, for paired-second WindowServer measurement
+            // (scripts/windowserver_alternate.py). Not for main.
+            let by_hidden = std::env::var_os("ZGX_CARET_ALT").is_some()
+                && std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .is_ok_and(|d| d.as_secs() % 2 == 1);
+            let opacity = if caret.shown || by_hidden { 1. } else { 0. };
             if layer.opacity() != opacity {
                 layer.setOpacity(opacity);
             }
-            layer.setHidden(false);
+            layer.setHidden(by_hidden && !caret.shown);
             *shown = Some(caret);
         });
     }
