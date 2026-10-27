@@ -2442,11 +2442,12 @@ const TRIAL_GPU_WATTS: f64 = 5.;
 /// for a setuid tool), and on an M5 Max it is what favours tiles.
 #[cfg(target_os = "macos")]
 const TRIAL_ENERGY_MARGIN: f64 = 0.1;
-/// The most frames drawables may skip after warm-up to win by energy: they
-/// skip about 0.1% when presenting works, so this catches a broken path, not
-/// pacing.
+/// The most frames drawables may skip or show late after warm-up to win by
+/// energy. When they pace well they lose none of 210 (M5 Max), or one; when
+/// they present as soon as their work is done on an M1 Max at 120 Hz, about
+/// 1% come a refresh late (2026-10-27).
 #[cfg(target_os = "macos")]
-const TRIAL_LOSS_BOUND: f64 = 0.01;
+const TRIAL_LOSS_BOUND: f64 = 0.005;
 /// How the full-rate trial judges (`ZGX_TRIAL_RULE`): by energy (the
 /// default), or `frames`, by the share of frames each path skips.
 #[cfg(target_os = "macos")]
@@ -2470,8 +2471,9 @@ static TRIAL_RULE: std::sync::LazyLock<TrialRule> = std::sync::LazyLock::new(|| 
 struct TrialResult {
     tiles_lost: f64,
     drawables_lost: f64,
-    /// Drawables' share skipped after their warm-up.
+    /// Drawables' share skipped after their warm-up, and shown late.
     drawables_lost_settled: f64,
+    drawables_late_settled: f64,
     tiles_watts: Option<f64>,
     drawables_watts: Option<f64>,
 }
@@ -2483,7 +2485,8 @@ fn trial_verdict(rule: TrialRule, result: TrialResult) -> u8 {
         TrialRule::Energy => match (result.tiles_watts, result.drawables_watts) {
             (Some(tiles), Some(drawables)) => {
                 drawables < tiles * (1. - TRIAL_ENERGY_MARGIN)
-                    && result.drawables_lost_settled <= TRIAL_LOSS_BOUND
+                    && result.drawables_lost_settled + result.drawables_late_settled
+                        <= TRIAL_LOSS_BOUND
             }
             _ => false,
         },
@@ -2516,6 +2519,24 @@ mod trial_verdict_tests {
     fn drawables_that_lose_frames_never_win_by_energy() {
         assert_eq!(energy(0.710, 0.550, TRIAL_LOSS_BOUND), 2);
         assert_eq!(energy(0.710, 0.550, 0.02), 1);
+    }
+    #[test]
+    fn drawables_that_pace_late_never_win_by_energy() {
+        // An M1 Max presenting drawables as soon as their work is done: about
+        // one frame in a hundred a refresh late.
+        let late = |share| {
+            trial_verdict(
+                TrialRule::Energy,
+                TrialResult {
+                    drawables_late_settled: share,
+                    tiles_watts: Some(0.710),
+                    drawables_watts: Some(0.550),
+                    ..Default::default()
+                },
+            )
+        };
+        assert_eq!(late(0.009), 1);
+        assert_eq!(late(0.0), 2);
     }
     #[test]
     fn an_energy_trial_missing_a_sample_keeps_tiles() {
@@ -9896,7 +9917,11 @@ impl GpuRenderer {
                         .as_ref()
                         .and_then(|layer| layer.drawable_feedback());
                     let drawables = share(feedback.clone(), from);
-                    let drawables_settled = share(feedback, settled);
+                    let drawables_settled = share(feedback.clone(), settled);
+                    let drawables_late = feedback.map_or(0., |feedback| {
+                        let (handed, _) = feedback.lost_since(settled);
+                        feedback.late_since(settled) as f64 / handed.max(1) as f64
+                    });
                     present.trial_samples.push(trial_energy::Sample::now());
                     let costs = match &present.trial_samples[..] {
                         [tiles_from, tiles_to, drawables_from, drawables_to] => {
@@ -9910,6 +9935,7 @@ impl GpuRenderer {
                             tiles_lost: tiles,
                             drawables_lost: drawables,
                             drawables_lost_settled: drawables_settled,
+                            drawables_late_settled: drawables_late,
                             tiles_watts: costs.map(|(tiles, _)| tiles.watts(TRIAL_GPU_WATTS)),
                             drawables_watts: costs
                                 .map(|(_, drawables)| drawables.watts(TRIAL_GPU_WATTS)),
@@ -9934,11 +9960,12 @@ impl GpuRenderer {
                                 )
                             };
                             eprintln!(
-                                "zgx: full-rate frames take {path} (tiles {}, drawables {}, drawables lost {:.1}%, {:.1}% after warm-up; trial {elapsed} ms)",
+                                "zgx: full-rate frames take {path} (tiles {}, drawables {}, drawables lost {:.1}%, {:.1}% after warm-up, {:.1}% late; trial {elapsed} ms)",
                                 term(&on_tiles),
                                 term(&on_drawables),
                                 drawables * 100.,
                                 drawables_settled * 100.,
+                                drawables_late * 100.,
                             );
                         }
                         _ => eprintln!(

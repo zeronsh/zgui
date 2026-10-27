@@ -504,12 +504,16 @@ struct FeedbackState {
     /// The last presented time (host seconds), and the latest gaps (ms).
     last: f64,
     gaps: std::collections::VecDeque<f64>,
+    /// Shown frames that came over 1.5 refreshes after the one before: a
+    /// refresh missed (the refresh, the shortest of the 8 gaps before).
+    late: u64,
 }
 /// A point in a `Feedback`'s record (`Feedback::mark`).
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Mark {
     presented: u64,
     skipped: u64,
+    late: u64,
 }
 impl Feedback {
     fn record(&self, presented: f64) {
@@ -521,6 +525,11 @@ impl Feedback {
         state.presented += 1;
         if state.last > 0. && presented > state.last {
             let gap = (presented - state.last) * 1e3;
+            let recent = state.gaps.iter().rev().take(8);
+            let refresh = recent.clone().copied().fold(f64::INFINITY, f64::min);
+            if recent.count() >= 3 && gap > refresh * 1.5 {
+                state.late += 1;
+            }
             state.gaps.push_back(gap);
             if state.gaps.len() > 600 {
                 state.gaps.pop_front();
@@ -534,7 +543,13 @@ impl Feedback {
         Mark {
             presented: state.presented,
             skipped: state.skipped,
+            late: state.late,
         }
+    }
+    /// Shown frames since `from` that came late (`FeedbackState::late`).
+    pub(crate) fn late_since(&self, from: Mark) -> u64 {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.late - from.late
     }
     /// Since `from`: frames handed over (shown or skipped), and those the
     /// window server skipped. (Gaps between shown ones are not counted: the
