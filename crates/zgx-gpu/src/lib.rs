@@ -375,14 +375,14 @@ fn shading(quad: &Quad, scale: f32) -> Shading {
     // bit for bit, except for the coverage of a translucent square panel (an
     // extra divide and multiply): those stay full, so either shader draws the
     // same bytes.
-    let plain = quad.options[0] == 0.
+    // (Drawn without the region it lies in, `mask.w`: full still, batched
+    // as it was. Tested first, as a region's quads are.)
+    let plain = quad.mask[0] <= 0.
+        && quad.mask[3] <= 0.
+        && quad.options[0] == 0.
         && quad.options[2] < 0.5
         && quad.shape[2] <= 0.
-        && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.))
-        && quad.mask[0] <= 0.
-        // Drawn without the region it lies in (`Region::covers`): full
-        // still, batched as it was.
-        && quad.mask[3] <= 0.;
+        && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.));
     if !plain {
         Shading::Full
     } else if quad.options[1] <= 0.5 && quad.color[3] >= 1. {
@@ -2253,6 +2253,29 @@ fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
         | Shading::Polyline => None,
     };
     Some(if cost(a)? >= cost(b)? { a } else { b })
+}
+/// Whether `quad`, drawn without its region (`mask.w`), would change
+/// pixels at `rect` without it. (Out of line: `Region::covers` stays inlined
+/// where items are made.)
+#[inline(never)]
+fn leaves_region(regions: &[Region], quad: &Quad, rect: Rect, scale: f32) -> bool {
+    !regions[quad.mask[3] as usize - 1].covers(rect, scale)
+}
+/// The rectangle untransformed `quads` cover, or `None` if one is
+/// transformed (`quad_bounds` in one pass, stopping at the first that is).
+fn flat_bounds(quads: &[Quad]) -> Option<Rect> {
+    let [mut x0, mut y0, mut x1, mut y1] = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for quad in quads {
+        if quad.options[2] >= 0.5 {
+            return None;
+        }
+        let [x, y, w, h] = quad.rect;
+        x0 = x0.min(x.min(x + w));
+        y0 = y0.min(y.min(y + h));
+        x1 = x1.max(x.max(x + w));
+        y1 = y1.max(y.max(y + h));
+    }
+    (x0 <= x1).then(|| Rect::new(x0, y0, x1 - x0, y1 - y0))
 }
 fn quad_bounds(quads: &[Quad]) -> Rect {
     quads
@@ -5036,9 +5059,8 @@ impl GpuRenderer {
         }
         let at = kept_item.start as usize;
         let mut quad = kept.quads[at];
-        // (Made whole and untransformed: its box is its rectangle and fade.
-        // Not drawn without its region for where it was: `Region::covers`.)
-        if quad.rect != quad.fade || quad.options[2] >= 0.5 || quad.mask[3] > 0. {
+        // (Made whole and untransformed: its box is its rectangle and fade.)
+        if quad.rect != quad.fade || quad.options[2] >= 0.5 {
             return false;
         }
         let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
@@ -5059,10 +5081,16 @@ impl GpuRenderer {
         if rect_outside(rect, limit) {
             return false;
         }
-        // Only its geometry moved: the rest of the quad stays in place.
+        // Only its geometry moved: the rest of the quad stays in place,
+        // unless it was drawn without its region and moved where the region
+        // changes pixels (`Region::covers`): then drawn in it again.
+        let left = quad.mask[3] > 0. && leaves_region(&kept.clips, &quad, rect, self.scale);
         let stored = &mut kept.quads[at];
         stored.rect = quad.rect;
         stored.fade = quad.fade;
+        if left {
+            (stored.mask[0], stored.mask[3]) = (stored.mask[3], 0.);
+        }
         kept.upload.wrote(at as u32, at as u32 + 1);
         let draw = &mut kept.draws[kept_item.draws.start as usize];
         draw.shading = match self.split_shading {
@@ -6638,24 +6666,24 @@ impl GpuRenderer {
             // Inside rounded clips or a `fade_edges` container: cut and faded
             // in the shader, unless the item lies wholly where the region
             // changes nothing (a row well inside a rounded card): then drawn
-            // without it, as the plain quads it is. `mask.w` marks those, so
-            // a box moved alone (`patch_box_moved`) is made again instead.
+            // without it, as the plain quads it is, its region's index in
+            // `mask.w` for a box moved alone (`patch_box_moved`).
             let item_quads = &mut quads[start as usize..];
-            let in_region = Region::of(&item);
-            let drawn_in = in_region.filter(|region| {
-                !(item_quads.iter().all(|quad| quad.options[2] < 0.5)
-                    && region.covers(quad_bounds(item_quads), self.scale))
-            });
-            let region = region_index(&mut clips, drawn_in);
-            if region > 0. {
-                for quad in item_quads {
-                    quad.mask[0] = region;
+            let in_region = match Region::of(&item) {
+                None => false,
+                region => {
+                    let drawn_in = !region.as_ref().is_some_and(|region| {
+                        flat_bounds(item_quads)
+                            .is_some_and(|bounds| region.covers(bounds, self.scale))
+                    });
+                    let region = region_index(&mut clips, region);
+                    let lane = if drawn_in { 0 } else { 3 };
+                    for quad in item_quads {
+                        quad.mask[lane] = region;
+                    }
+                    true
                 }
-            } else if in_region.is_some() {
-                for quad in item_quads {
-                    quad.mask[3] = 1.;
-                }
-            }
+            };
             // When the clip only culls whole quads, apply it on the CPU and
             // draw under the viewport, so a change of clip never splits a
             // batch: neighbouring text, icons and rows become one draw. Quads
@@ -6689,12 +6717,11 @@ impl GpuRenderer {
                 let split = self.split_shading;
                 // A glyph's quad (`glyph_quad`) is plain unless faded or in a
                 // clip region, and textured: one shading for all of them.
-                let glyphs = glyphs_alone.then_some(
-                    match item.effects.edge_fade != 0. || in_region.is_some() {
+                let glyphs =
+                    glyphs_alone.then_some(match item.effects.edge_fade != 0. || in_region {
                         true => Shading::Full,
                         false => Shading::Basic,
-                    },
-                );
+                    });
                 push_draw(
                     &mut draws, &quads, draw, split, polylines, self.scale, glyphs,
                 );
