@@ -394,7 +394,7 @@ impl QuadPipelines {
             self.device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("quads"),
-                    source: wgpu::ShaderSource::Wgsl(include_str!("draw.wgsl").into()),
+                    source: wgpu::ShaderSource::Wgsl(exp_full(include_str!("draw.wgsl")).into()),
                 })
         })
     }
@@ -11605,5 +11605,31 @@ mod copy_blocker_tests {
                 assert_eq!(blocker, None);
             }
         }
+    }
+}
+
+/// SCRATCH (render-win-draws): `ZGX_EXP_FULL` swaps parts of the full quad
+/// shader to time what it costs a pixel on Windows (wrong pixels: timing only).
+/// `coarse`: plain derivatives; `flat`: the flat colour alone; `noregion`: no
+/// clip regions.
+fn exp_full(source: &'static str) -> std::borrow::Cow<'static, str> {
+    match std::env::var("ZGX_EXP_FULL").as_deref() {
+        Ok("coarse") => source
+            .replace("fwidthFine(", "fwidth(")
+            .replace("dpdxFine(", "dpdx(")
+            .replace("dpdyFine(", "dpdy(")
+            .into(),
+        Ok("flat") => source
+            .replace(
+                "@fragment fn fs(v:Out)->@location(0) vec4<f32> { return shade(v); }",
+                "@fragment fn fs(v:Out)->@location(0) vec4<f32> { return vec4(v.color.rgb*v.color.a,v.color.a); }",
+            )
+            .replace(
+                "@fragment fn fs_both(v:Out)->Both { let c=shade(v); return Both(c,c); }",
+                "@fragment fn fs_both(v:Out)->Both { let c=vec4(v.color.rgb*v.color.a,v.color.a); return Both(c,c); }",
+            )
+            .into(),
+        Ok("noregion") => source.replace("if v.mask.x>.5 {", "if false {").into(),
+        _ => source.into(),
     }
 }
