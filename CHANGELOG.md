@@ -4,6 +4,10 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ## Unreleased
 
+### Added
+
+- **Zoom an element**, as CSS's `zoom`: `Styled::zoom(n)` (Luau `zoom = n`) shows a node's subtree `n` times as large, laid out again at that size and drawn crisply at it; zooms multiply with ancestors' and the window's, and `zoom_fixed()` (Luau `zoom_fixed = true`) keeps a node at its own size whatever zooms are around it. `Scene::set_zoom`, `zoom`, `zoom_around`, `Ui::set_zoom_fixed`; `PlaneSplit::native_zoom` for hosts. At 1 nothing changes. *For now:* a zoomed node paints as a cached layer at its exact scale, so content changing inside it repaints the whole layer ([styling](docs/styling.md#zoom)).
+
 ### Changed: what to check in an existing app
 
 **A mount's text inputs are laid out once its static bindings have run, not each as it binds**: a mount of many inputs is linear, not quadratic (the widgets benchmark −93%). An observer in the mount that reads geometry (a reactive style, a binding) sees the layout as it is: a style derived from an input's width of 160 reads 160, where it read an earlier layout's (such as the default 240) and kept it.

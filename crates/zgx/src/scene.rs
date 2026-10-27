@@ -531,6 +531,25 @@ pub fn filter_spread(sigma: f32) -> f32 {
 }
 /// How far `matrix` moves a point that is one unit away, at most along an
 /// axis: a spread inside a layer times this is its spread outside.
+/// `map`, then a zoom of `zoom` about `bounds`' top-left
+/// (`Node::projective`). Out of line: inlined, it takes registers from the
+/// hot walks that reach `projective` (`hit_test_all`).
+#[cold]
+#[inline(never)]
+fn then_zoom(map: crate::affine::Projective, bounds: Rect, zoom: f32) -> crate::affine::Projective {
+    map.then(zoom_about(bounds, zoom).into())
+}
+/// A zoom of `zoom` about `bounds`' top-left (`Node::projective`).
+fn zoom_about(bounds: Rect, zoom: f32) -> crate::affine::Affine {
+    crate::affine::Affine {
+        a: zoom,
+        b: 0.,
+        c: 0.,
+        d: zoom,
+        tx: bounds.x * (1. - zoom),
+        ty: bounds.y * (1. - zoom),
+    }
+}
 fn stretch(matrix: crate::affine::Projective) -> f32 {
     let linear = crate::affine::Projective {
         tx: 0.,
@@ -1596,9 +1615,10 @@ struct Node {
     /// out, cleared with its layout.
     reads: std::cell::Cell<u8>,
     isolated: bool,
-    /// Scale, rotation and skew; a node with one paints as a layer. Boxed:
-    /// few nodes have one, and every node's size costs each tree walk.
-    local: Option<Box<LocalTransform>>,
+    /// Scale, rotation and skew, and its zoom; a node with either paints as
+    /// a layer. Boxed: few nodes have one, and every node's size costs each
+    /// tree walk.
+    local: Option<Box<Local>>,
     /// An alpha mask over the subtree (`Scene::set_mask`): a layer too.
     image_mask: Option<Box<ImageMask>>,
     /// Whether it composites through a layer shader (`Scene::layer_shaders`
@@ -1622,9 +1642,12 @@ struct Node {
     /// Scroll content: a translation is reported as a `ScrollMove` the
     /// renderer may apply by copying pixels (see `set_scroll_copy`).
     scroll_copy: bool,
-    /// Lays out as its last child (`Scene::set_contents`): `style` is then
-    /// derived, its own kept in `Scene::contents_styles`.
-    contents: bool,
+    /// `CONTENTS`: lays out as its last child (`Scene::set_contents`):
+    /// `style` is then derived, its own kept in `Scene::contents_styles`.
+    /// `ZOOMED`: has a zoom (`Scene::set_zoom`). One byte, so the branches
+    /// that test for a contents node send a zoomed one aside as well, for no
+    /// more work on the nodes with neither (`measure_uncached`, `restyle`).
+    special: Special,
     /// Draws an image, an icon or a canvas to its box (`Scene::set_replaced`):
     /// a size it sets is also its least.
     replaced: bool,
@@ -1638,15 +1661,108 @@ struct Node {
     /// write knows the style is still the one it gave (`set_box`).
     style_writes: u32,
 }
-impl Node {
-    fn local(&self) -> LocalTransform {
-        self.local.as_deref().copied().unwrap_or_default()
+/// A node's local transform and zoom (`Node::local`).
+#[derive(Clone, Copy, PartialEq)]
+struct Local {
+    transform: LocalTransform,
+    /// Its subtree's lengths times this on screen (`Scene::set_zoom`).
+    zoom: f32,
+    /// Laid out (`snap_zoomed`): the room its parent last measured it
+    /// under, its result since in its own points (`measure_special`).
+    placed: Option<Constraints>,
+    /// Whether `transform` or `zoom` maps its subtree (`Node::transformed`),
+    /// kept as either changes: one test where each step of a walk would
+    /// compare the transform with the identity field by field.
+    maps: bool,
+}
+/// `Node::special`: a contents node.
+const CONTENTS: u8 = 1;
+/// `Node::special`: a zoomed node.
+const ZOOMED: u8 = 2;
+/// `Node::special`'s bits (`CONTENTS`, `ZOOMED`), as an enum rather than a
+/// `u8`: its unused values are a niche, as a `bool`'s are, so `Node` lays
+/// its byte fields out as it did with `contents: bool` (a field moved puts
+/// `invalidate_layout`'s two-byte store off its alignment).
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Special {
+    None = 0,
+    Contents = 1,
+    Zoomed = 2,
+    Both = 3,
+}
+impl Special {
+    /// Whether it has any bit.
+    #[inline(always)]
+    fn any(self) -> bool {
+        self != Special::None
     }
-    /// Whether it has a local transform other than the identity.
-    fn transformed(&self) -> bool {
+    /// Whether it has `bit`.
+    #[inline(always)]
+    fn has(self, bit: u8) -> bool {
+        self as u8 & bit != 0
+    }
+    /// It with `bit` set or cleared.
+    fn with(self, bit: u8, on: bool) -> Self {
+        match if on {
+            self as u8 | bit
+        } else {
+            self as u8 & !bit
+        } {
+            0 => Special::None,
+            1 => Special::Contents,
+            2 => Special::Zoomed,
+            _ => Special::Both,
+        }
+    }
+}
+impl Node {
+    /// Whether it lays out as its last child (`Scene::set_contents`).
+    #[inline(always)]
+    fn contents(&self) -> bool {
+        self.special.has(CONTENTS)
+    }
+    fn local(&self) -> LocalTransform {
         self.local
             .as_deref()
-            .is_some_and(|local| !local.is_identity())
+            .map_or(LocalTransform::IDENTITY, |local| local.transform)
+    }
+    /// Its zoom (`Scene::set_zoom`): 1 unless set.
+    fn zoom(&self) -> f32 {
+        self.local.as_deref().map_or(1., |local| local.zoom)
+    }
+    /// Whether it has a local transform other than the identity, or a
+    /// zoom: either maps its subtree through `matrix`.
+    fn transformed(&self) -> bool {
+        self.local.as_deref().is_some_and(|local| local.maps)
+    }
+    /// Its subtree's mapping onto its parent's space, for its box at
+    /// `bounds`: its local transform (`LocalTransform::projective`), then
+    /// its zoom about its top-left. Out of line: the walks that reach it
+    /// (`hit_test_all`, paint) do so for transformed nodes alone, and
+    /// inlined, it takes registers from each of their steps.
+    #[inline(never)]
+    fn projective(&self, bounds: Rect) -> crate::affine::Projective {
+        let Some(local) = self.local.as_deref() else {
+            return crate::affine::Projective::IDENTITY;
+        };
+        let map = local.transform.projective(bounds);
+        match local.zoom {
+            1. => map,
+            zoom => then_zoom(map, bounds, zoom),
+        }
+    }
+    /// `projective` without the tilt (`LocalTransform::matrix`): what a
+    /// paint item's `matrix` holds when the whole map is not affine.
+    fn flat_matrix(&self, bounds: Rect) -> crate::affine::Affine {
+        let Some(local) = self.local.as_deref() else {
+            return crate::affine::Affine::IDENTITY;
+        };
+        let matrix = local.transform.matrix(bounds);
+        match local.zoom {
+            1. => matrix,
+            zoom => matrix.then(zoom_about(bounds, zoom)),
+        }
     }
     /// Whether it composites through a content blur.
     fn filtered(&self) -> bool {
@@ -1664,9 +1780,34 @@ impl Node {
     }
     fn set_local(&mut self, transform: LocalTransform) {
         match &mut self.local {
+            // Zoomed: it maps either way.
+            Some(local) if local.zoom != 1. => local.transform = transform,
             _ if transform == LocalTransform::IDENTITY => self.local = None,
-            Some(local) => **local = transform,
-            None => self.local = Some(Box::new(transform)),
+            Some(local) => {
+                local.transform = transform;
+                local.maps = !transform.is_identity();
+            }
+            None => {
+                self.local = Some(Box::new(Local {
+                    transform,
+                    zoom: 1.,
+                    placed: None,
+                    maps: !transform.is_identity(),
+                }))
+            }
+        }
+    }
+    fn set_local_and_zoom(&mut self, transform: LocalTransform, zoom: f32) {
+        let local = Local {
+            transform,
+            zoom,
+            placed: None,
+            maps: !transform.is_identity() || zoom != 1.,
+        };
+        match &mut self.local {
+            _ if transform == LocalTransform::IDENTITY && zoom == 1. => self.local = None,
+            Some(old) => **old = local,
+            None => self.local = Some(Box::new(local)),
         }
     }
 }
@@ -1713,6 +1854,31 @@ struct Constraints {
     percent_height: Option<f32>,
     force_width: Option<f32>,
     force_height: Option<f32>,
+}
+/// Constraints no measure asks under (NaN equals nothing): a zoomed node's
+/// result while it is in its own points (`snap_zoomed`).
+const UNMATCHED: Constraints = Constraints {
+    width: Some(f32::NAN),
+    height: None,
+    percent_width: None,
+    percent_height: None,
+    force_width: None,
+    force_height: None,
+};
+impl Constraints {
+    /// Every length times `factor`: a zoomed node's room in its own points
+    /// (`Scene::set_zoom`).
+    fn scaled(self, factor: f32) -> Self {
+        let scale = |length: Option<f32>| length.map(|length| length * factor);
+        Self {
+            width: scale(self.width),
+            height: scale(self.height),
+            percent_width: scale(self.percent_width),
+            percent_height: scale(self.percent_height),
+            force_width: scale(self.force_width),
+            force_height: scale(self.force_height),
+        }
+    }
 }
 type ChildPlacement = (NodeId, Rect, Constraints);
 struct Measurement {
@@ -2424,8 +2590,9 @@ pub struct Scene {
     /// Nodes with `Style::relative`: none keeps every absolute child placed
     /// by its parent, with no ancestor walk.
     relative_count: usize,
-    /// How many nodes are contents nodes (`set_contents`): with none, style
-    /// and child changes skip looking for a contents parent.
+    /// How many nodes are contents nodes (`set_contents`) or zoomed
+    /// (`set_zoom`), their `special` byte set: with none, style and child
+    /// changes skip looking for either.
     contents_count: usize,
     /// Absolute nodes whose containing block is an ancestor above their
     /// parent: their parents leave them out, and `place_escaped` positions
@@ -2558,7 +2725,7 @@ impl Scene {
                     shader_uniforms: None,
                     promoted: false,
                     scroll_copy: false,
-                    contents: false,
+                    special: Special::None,
                     replaced: false,
                     rtl: false,
                     align_logical: None,
@@ -2906,8 +3073,17 @@ impl Scene {
     /// is drawn as a cached layer, damaged where it was and where it lands.
     pub fn set_local_transform(&mut self, id: NodeId, transform: LocalTransform) {
         let transform = transform.normalized();
-        let old = self.node(id).local();
-        if old == transform {
+        let node = self.node(id);
+        // Untransformed and asked for none (most calls): against the
+        // identity, a constant.
+        let (old, unchanged) = match node.local.as_deref() {
+            Some(own) => (own.transform, own.transform == transform),
+            None => (
+                LocalTransform::IDENTITY,
+                transform == LocalTransform::IDENTITY,
+            ),
+        };
+        if unchanged {
             return;
         }
         if old.is_identity() && transform.is_identity() {
@@ -2916,7 +3092,9 @@ impl Scene {
             return;
         }
         self.damage_subtree(id);
-        if old.is_identity() != transform.is_identity() {
+        // A zoomed node is transformed either way (`Node::transformed`).
+        // Checked above.
+        if old.is_identity() != transform.is_identity() && self.tree_node(id).zoom() == 1. {
             if transform.is_identity() {
                 self.transformed -= 1;
             } else {
@@ -2931,6 +3109,71 @@ impl Scene {
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
         self.damage_subtree(id);
         self.invalidate(id, COMPOSITE);
+    }
+    /// `id`'s zoom (`set_zoom`): 1 unless set.
+    pub fn zoom(&self, id: NodeId) -> f32 {
+        self.node(id).zoom()
+    }
+    /// How much `id` shows zoomed: its own zoom times its ancestors'. A
+    /// native view's content follows it (a page's zoom, a terminal's text).
+    pub fn zoom_around(&self, id: NodeId) -> f32 {
+        // A zoomed node is a transformed one.
+        if self.transformed == 0 {
+            return 1.;
+        }
+        std::iter::once(id)
+            .chain(self.ancestors(id))
+            .map(|id| self.node(id).zoom())
+            .product()
+    }
+    /// Zoom `id`'s subtree by `zoom`, as CSS's `zoom`: it lays out in its own
+    /// points, under its parent's room divided by `zoom`, and takes `zoom`
+    /// times the room it needs there; it paints scaled about its top-left,
+    /// as a layer rasterized at the scale it shows at (crisp, not
+    /// resampled). Its own box (`bounds`) is in its own points;
+    /// `transformed_bounds` gives where it shows. Hit testing, damage and
+    /// clips follow it as a local transform's do. Nonfinite or nonpositive
+    /// zooms are 1.
+    pub fn set_zoom(&mut self, id: NodeId, zoom: f32) {
+        let zoom = if zoom.is_finite() && zoom > 0. {
+            zoom
+        } else {
+            1.
+        };
+        if self.node(id).zoom() == zoom {
+            return;
+        }
+        let transform = self.node(id).local();
+        self.set_local_parts(id, transform, zoom);
+        let zoomed = zoom != 1.;
+        if self.node(id).special.has(ZOOMED) != zoomed {
+            self.set_special(id, ZOOMED, zoomed);
+            // Laid out as `snap` while zoomed (`restyle_special`).
+            let given = self.style(id);
+            self.restyle(id, given, true);
+        }
+        // Its room and the room it takes change: laid out again.
+        self.invalidate_layout(id);
+        self.invalidate(id, COMPOSITE);
+    }
+    /// Give `id` `transform` and `zoom`, damaging its subtree where it
+    /// showed and where it shows, and counting it as transformed.
+    fn set_local_parts(&mut self, id: NodeId, transform: LocalTransform, zoom: f32) {
+        self.damage_subtree(id);
+        let was = self.node(id).transformed();
+        let node = self.node_mut(id);
+        node.set_local_and_zoom(transform, zoom);
+        let is = node.transformed();
+        if !std::mem::replace(&mut node.promoted, true) {
+            self.promoted_count += 1;
+        }
+        match (was, is) {
+            (false, true) => self.transformed += 1,
+            (true, false) => self.transformed -= 1,
+            _ => {}
+        }
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.damage_subtree(id);
     }
     /// Whether `id` paints as a cached layer: isolated, transformed, blurred
     /// (`Effects::filter_blur`) or masked.
@@ -3169,7 +3412,11 @@ impl Scene {
         (
             node.clip_inset.as_deref().copied() == inset,
             node.transform == finite_translation(transform),
-            node.local() == local,
+            // Untransformed (most nodes): against the identity, a constant.
+            match node.local.as_deref() {
+                Some(own) => own.transform == local,
+                None => local == LocalTransform::IDENTITY,
+            },
         )
     }
     /// Clip `id` and its descendants to its box inset by `inset` (see
@@ -3206,7 +3453,7 @@ impl Scene {
         loop {
             let node = self.node(id);
             match node.children.last() {
-                Some(last) if node.contents => id = *last,
+                Some(last) if node.contents() => id = *last,
                 _ => return id,
             }
         }
@@ -3449,7 +3696,7 @@ impl Scene {
     /// The style `id` was given (a contents node's own, not what it lays
     /// out as).
     pub fn style(&self, id: NodeId) -> Style {
-        if self.node(id).contents {
+        if self.node(id).contents() {
             self.contents_styles.get(&id).cloned().unwrap_or_default()
         } else if let Some(given) = self.given_styles.get(&id) {
             given.clone()
@@ -3480,29 +3727,39 @@ impl Scene {
     /// out as its own style says. Control-flow regions holding one view at
     /// a time use it to stay out of layout.
     pub fn set_contents(&mut self, id: NodeId, contents: bool) {
-        if self.node(id).contents == contents {
+        if self.node(id).contents() == contents {
             return;
         }
         if contents {
             let own = self.style(id);
             self.given_styles.remove(&id);
             self.keep_contents_style(id, own);
-            self.node_mut(id).contents = true;
-            self.contents_count += 1;
+            self.set_special(id, CONTENTS, true);
             self.sync_contents(id);
         } else {
             let own = self.contents_styles.remove(&id).unwrap_or_default();
-            self.node_mut(id).contents = false;
-            self.contents_count -= 1;
+            self.set_special(id, CONTENTS, false);
             self.restyle(id, own, true);
         }
         // Its own measurement changes kind either way.
         self.invalidate_layout(id);
     }
+    /// Set or clear `bit` of `id`'s `special` byte, counting the nodes with
+    /// any (`contents_count`, which guards the branches that test it).
+    fn set_special(&mut self, id: NodeId, bit: u8, on: bool) {
+        let node = self.node_mut(id);
+        let was = node.special;
+        node.special = was.with(bit, on);
+        match (was.any(), node.special.any()) {
+            (false, true) => self.contents_count += 1,
+            (true, false) => self.contents_count -= 1,
+            _ => {}
+        }
+    }
     /// Whether `id` is a contents node (CSS `display: contents`): its
     /// children lay out in its place.
     pub fn is_contents(&self, id: NodeId) -> bool {
-        self.node(id).contents
+        self.node(id).contents()
     }
     /// Which way `id`'s lines run, for it and what it holds (CSS's
     /// `direction`), or with `None` as its parent's: right to left, its
@@ -3563,7 +3820,7 @@ impl Scene {
                 crate::deep(0, || self.refresh_direction(child, rtl, true));
             }
         }
-        if self.node(id).contents {
+        if self.node(id).contents() {
             self.sync_contents(id);
         } else {
             let given = self.style(id);
@@ -3602,7 +3859,7 @@ impl Scene {
     /// (`invalidate_layout`), it repaints with `CHILDREN`.
     fn children_changed(&mut self, parent: NodeId) {
         self.node_mut(parent).dirty |= CHILDREN;
-        if self.contents_count > 0 && self.node(parent).contents {
+        if self.contents_count > 0 && self.node(parent).contents() {
             self.sync_contents(parent);
         }
     }
@@ -3810,7 +4067,7 @@ impl Scene {
                 (point, inherited_clip)
             } else {
                 // Clipped around it, or flattened to nothing, nothing in it is hit.
-                let Some(inverse) = node.local().projective(bounds).inverse() else {
+                let Some(inverse) = node.projective(bounds).inverse() else {
                     continue;
                 };
                 if !inside(inherited_clip, point) {
@@ -4556,7 +4813,7 @@ impl Scene {
             shader_uniforms: None,
             promoted: false,
             scroll_copy: false,
-            contents: false,
+            special: Special::None,
             replaced: false,
             rtl,
             align_logical: None,
@@ -4680,8 +4937,10 @@ impl Scene {
         if node.isolated {
             self.isolation_count -= 1;
         }
-        if node.contents {
-            self.contents_styles.remove(&id);
+        if node.special.any() {
+            if node.contents() {
+                self.contents_styles.remove(&id);
+            }
             self.contents_count -= 1;
         }
         if !self.given_styles.is_empty() {
@@ -4760,7 +5019,7 @@ impl Scene {
         let node = self.node(id);
         let old = &node.style;
         let known = *kept == Some(node.style_writes);
-        if (self.contents_count > 0 && node.contents)
+        if (self.contents_count > 0 && node.special.any())
             || !laid_out_as_given(style, self.way(id))
             || !(known
                 || match (&old.layout_options, &style.layout_options) {
@@ -4808,11 +5067,26 @@ impl Scene {
         // A contents parent lays out as its last child.
         if self.contents_count > 0
             && let Some(parent) = self.tree_node(id).parent
-            && self.tree_node(parent).contents
+            && self.tree_node(parent).contents()
             && self.tree_node(parent).children.last() == Some(&id)
         {
             self.sync_contents(parent);
         }
+    }
+    /// `set_style` for a contents node or a zoomed one (`Node::special`).
+    #[cold]
+    #[inline(never)]
+    fn restyle_special(&mut self, id: NodeId, style: Style) {
+        if self.node(id).contents() {
+            self.set_contents_style(id, style);
+            return;
+        }
+        // Zoomed: laid out as `snap`, so that `arrange` takes its box in its
+        // own points from `snap` (`set_zoom`); the style given is kept.
+        let mut laid = laid_out_style(style.clone(), self.way(id));
+        laid.snap = true;
+        self.given_styles.insert(id, style);
+        self.restyle(id, laid, false);
     }
     /// `set_style` for a contents node: keep `style` as its own, and lay it
     /// out as its last child in its place.
@@ -4852,8 +5126,8 @@ impl Scene {
                     style.layout_options = Some(Arc::new(normalized));
                 }
             }
-            if self.contents_count > 0 && self.node(id).contents {
-                self.set_contents_style(id, style);
+            if self.contents_count > 0 && self.node(id).special.any() {
+                self.restyle_special(id, style);
                 return;
             }
             let way = self.way(id);
@@ -4918,7 +5192,7 @@ impl Scene {
         // A contents parent lays out as its last child.
         if self.contents_count > 0
             && let Some(parent) = self.node(id).parent
-            && self.node(parent).contents
+            && self.node(parent).contents()
             && self.node(parent).children.last() == Some(&id)
         {
             self.sync_contents(parent);
@@ -5684,7 +5958,7 @@ impl Scene {
         // A content blur starts a layer as a transform does: it spreads
         // what the layer paints, in the layer's space, and its own clip
         // applies inside, before the blur.
-        let matrix = node.local().projective(bounds);
+        let matrix = node.projective(bounds);
         let spread = match node.filtered() {
             true => filter_spread(node.effects.filter_blur) * stretch(matrix),
             false => 0.,
@@ -5791,7 +6065,7 @@ impl Scene {
             .map(|ink| match node.transformed() {
                 false => ink,
                 // About its untranslated box: translating after commutes.
-                true => node.local().projective(node.bounds).bounds(ink),
+                true => node.projective(node.bounds).bounds(ink),
             })
             .map(|ink| ink.translated(node.transform));
         node.ink.set(ink);
@@ -6098,13 +6372,17 @@ impl Scene {
         if style.relative || style.absolute {
             return None;
         }
+        if self.node(parent).zoom() != 1. {
+            return None;
+        }
         let mut current = self.node(parent).parent;
         while let Some(ancestor) = current {
             let node = self.node(ancestor);
             if node.style.relative {
                 return Some(ancestor);
             }
-            if node.style.absolute {
+            // A zoomed node holds what is placed within it, in its points.
+            if node.style.absolute || node.zoom() != 1. {
                 return None;
             }
             current = node.parent;
@@ -6190,7 +6468,7 @@ impl Scene {
         let style = &node.style;
         let (width, height) = match &node.kind {
             // As its last child, which it measures as.
-            _ if node.contents && !node.children.is_empty() => {
+            _ if node.contents() && !node.children.is_empty() => {
                 self.reads_available(*node.children.last().unwrap())
             }
             NodeKind::Text { .. } => (
@@ -6306,21 +6584,28 @@ impl Scene {
         size
     }
     /// `measured`, when nothing kept serves.
+    /// A contents or zoomed node goes to `measure_special`.
     fn measure_uncached(&mut self, id: NodeId, constraints: Constraints) -> (f32, f32) {
-        let node = self.node(id);
-        if node.contents && !node.children.is_empty() {
-            return self.measure_contents(id, constraints);
+        // Checked by `measured`, its one caller.
+        let node = self.tree_node(id);
+        if node.special.any()
+            && let Some(size) = self.measure_special(id, constraints)
+        {
+            return size;
         }
         if let Some(size) = self.measure_sized_box(id, constraints) {
             return size;
         }
-        let node = self.node(id);
+        let node = self.tree_node(id);
         if let NodeKind::Container(layout) | NodeKind::Panel { layout, .. } = node.kind
             && self.uses_advanced_layout(id)
         {
             return self.measure_advanced(id, layout, constraints);
         }
-        self.node_mut(id).advanced_layout = None;
+        let node = self.tree_node_mut(id);
+        if node.advanced_layout.is_some() {
+            node.advanced_layout = None;
+        }
         let style = self.resolved_leaf_style(id, constraints);
         let padding = style.padding_edges.unwrap_or(Insets::all(style.padding));
         // A container's layout, and the room its border takes.
@@ -6855,11 +7140,12 @@ impl Scene {
     /// height, with no padding, children or advanced layout to weigh, and
     /// its style read in place rather than copied. `None` for any other node.
     fn measure_sized_box(&mut self, id: NodeId, constraints: Constraints) -> Option<(f32, f32)> {
-        let node = self.node(id);
+        // Checked by `measured`, through `measure_uncached`.
+        let node = self.tree_node(id);
         let style = &node.style;
         if !matches!(node.kind, NodeKind::Container(_) | NodeKind::Panel { .. })
             || !node.children.is_empty()
-            || node.contents
+            || node.contents()
             || style.layout_options.is_some()
             || style.align == Align::Baseline
         {
@@ -6882,8 +7168,12 @@ impl Scene {
         // As `measure_uncached` leaves it: no advanced layout, and the last
         // result's lists, when this pass replaces it, kept for this one.
         let pass = self.layout_pass;
-        let node = self.node_mut(id);
-        node.advanced_layout = None;
+        // Most boxes never had an advanced result: one compare, nothing
+        // dropped.
+        let node = self.tree_node_mut(id);
+        if node.advanced_layout.is_some() {
+            node.advanced_layout = None;
+        }
         let stale = node.dirty & LAYOUT != 0;
         // Its last result replaced and nothing else kept (a bar changing
         // height): `store_measurement`'s result, written over that one.
@@ -7027,6 +7317,58 @@ impl Scene {
         }
         self.store_measurement(id, constraints, size, children);
         size
+    }
+    /// `measure_uncached` for a contents node (as its last child) or a
+    /// zoomed one: laid out in its own points, under its parent's room
+    /// divided by its zoom, the room it takes times it. A zoomed node's
+    /// result is kept as its parent asks for it, in its parent's points, so
+    /// that `measured` serves it as any other; `arrange` takes its box in its
+    /// own from `snap` (it lays out as `snap`, `restyle_special`). `None`:
+    /// measured as any node.
+    #[cold]
+    #[inline(never)]
+    fn measure_special(&mut self, id: NodeId, constraints: Constraints) -> Option<(f32, f32)> {
+        let node = self.node(id);
+        let contents = node.contents() && !node.children.is_empty();
+        if !node.special.has(ZOOMED) {
+            return contents.then(|| self.measure_contents(id, constraints));
+        }
+        let zoom = node.zoom();
+        // Laid out since its parent last measured it under this room: its
+        // result in its own points is the one to serve again.
+        if node.local.as_deref().and_then(|local| local.placed) == Some(constraints)
+            && let Some(measurement) = &node.measurement
+            && measurement.constraints.width.is_some_and(f32::is_nan)
+        {
+            let size = measurement.size;
+            let outer = (size.0 * zoom, size.1 * zoom);
+            let node = self.node_mut(id);
+            let measurement = node.measurement.as_mut().unwrap();
+            measurement.constraints = constraints;
+            measurement.size = outer;
+            return Some(outer);
+        }
+        let mut inner = constraints.scaled(zoom.recip());
+        // In its own points, as an unzoomed node, through `measured` (its
+        // one copy of `measure_uncached` stays the hot one): its zoom and
+        // the results kept in its parent's points set aside meanwhile, so
+        // none serves this (nothing in measuring reads its zoom).
+        let node = self.node_mut(id);
+        node.special = node.special.with(ZOOMED, false);
+        let alternates = std::mem::take(&mut node.alternates);
+        let sizes = std::mem::take(&mut node.sizes);
+        node.measurement = None;
+        let size = self.measured(id, &mut inner, true);
+        let outer = (size.0 * zoom, size.1 * zoom);
+        let node = self.node_mut(id);
+        node.special = node.special.with(ZOOMED, true);
+        node.alternates = alternates;
+        node.sizes = sizes;
+        if let Some(measurement) = &mut node.measurement {
+            measurement.constraints = constraints;
+            measurement.size = outer;
+        }
+        Some(outer)
     }
     /// Make a new result current, keeping earlier ones that are still valid.
     fn store_measurement(
@@ -7195,6 +7537,37 @@ impl Scene {
     /// A `snap` node placed at `x`, `y`: its edges on whole points, laid
     /// out again at the size between them if that differs.
     fn snap(&mut self, id: NodeId, x: f32, y: f32) -> (f32, f32) {
+        if self.node(id).special.has(ZOOMED) {
+            return self.snap_zoomed(id, x, y);
+        }
+        self.snap_edges(id, x, y)
+    }
+    /// `snap` for a zoomed node, which lays out as `snap`
+    /// (`restyle_special`): on whole points only if its style asks, and its
+    /// result, kept in its parent's points (`measure_special`), made its
+    /// own for `arrange` to take its box and its children's places from.
+    /// Its parent's next measure finds the result in its own points and
+    /// measures again, serving that from it.
+    #[cold]
+    #[inline(never)]
+    fn snap_zoomed(&mut self, id: NodeId, x: f32, y: f32) -> (f32, f32) {
+        let (x, y) = match self.given_styles.get(&id).is_some_and(|given| given.snap) {
+            true => self.snap_edges(id, x, y),
+            false => (x, y),
+        };
+        let zoom = self.node(id).zoom();
+        let node = self.node_mut(id);
+        let measurement = node.measurement.as_mut().unwrap();
+        let parents = std::mem::replace(&mut measurement.constraints, UNMATCHED);
+        measurement.size = (measurement.size.0 / zoom, measurement.size.1 / zoom);
+        if let Some(local) = &mut node.local {
+            local.placed = Some(parents);
+        }
+        (x, y)
+    }
+    /// `snap`'s edges on whole points, laid out again at the size between
+    /// them if that differs.
+    fn snap_edges(&mut self, id: NodeId, x: f32, y: f32) -> (f32, f32) {
         let measurement = self.node(id).measurement.as_ref().unwrap();
         let (w, h) = measurement.size;
         let (x0, y0) = (x.round(), y.round());
@@ -8126,7 +8499,7 @@ impl Scene {
             }
             // A transformed layer clips itself, inside, to its rotated box; a
             // blurred or masked one clips inside, before its effect.
-            let matrix = (isolated && transformed).then(|| node.local().projective(bounds));
+            let matrix = (isolated && transformed).then(|| node.projective(bounds));
             // A border pass (its border and outline over what it holds)
             // isn't cut by its own clip, as CSS doesn't cut an outline.
             let clip = match (isolated && (transformed || effect)) || border {
@@ -8206,7 +8579,7 @@ impl Scene {
                         // Affine where it is; in perspective, the map
                         // before the tilt, with the whole map beside it.
                         matrix: matrix
-                            .map(|map| map.affine().unwrap_or_else(|| node.local().matrix(bounds))),
+                            .map(|map| map.affine().unwrap_or_else(|| node.flat_matrix(bounds))),
                         mask: own.mask,
                         rounded: own.item_rounded,
                         color: own.color,

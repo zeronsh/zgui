@@ -932,6 +932,9 @@ pub(crate) struct UiStorage {
     pub(crate) zoom_host: RefCell<Vec<Rc<dyn Fn()>>>,
     /// A Control-wheel's notches short of a whole one (`zoom_wheel`).
     pub(crate) zoom_wheel: Cell<f32>,
+    /// Nodes kept at their own size whatever zooms are around them
+    /// (`Ui::set_zoom_fixed`).
+    pub(crate) fixed_zooms: RefCell<Vec<NodeId>>,
     /// The host's wheel recorder and player (`Ui::on_wheel_tape`).
     wheel_taper: RefCell<Option<WheelTaper>>,
     /// The display's refresh period (`Ui::set_refresh_interval`).
@@ -1175,6 +1178,7 @@ impl Ui {
             zoom_off: Cell::new(false),
             zoom_host: RefCell::new(Vec::new()),
             zoom_wheel: Cell::new(0.),
+            fixed_zooms: RefCell::new(Vec::new()),
             wheel_taper: RefCell::new(None),
             refresh_interval: Cell::new(std::time::Duration::from_micros(16_667)),
             popup_previews: Cell::new(false),

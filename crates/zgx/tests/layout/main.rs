@@ -12,6 +12,8 @@ mod composition_percent;
 mod composition_wrap;
 #[path = "../contents_layout.rs"]
 mod contents_layout;
+#[path = "../element_zoom.rs"]
+mod element_zoom;
 #[path = "../incremental_layout_equivalence.rs"]
 mod incremental_layout_equivalence;
 #[path = "../layout_automatic_minimum.rs"]

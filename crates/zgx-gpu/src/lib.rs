@@ -942,6 +942,11 @@ struct LayerCache {
     uv: [f32; 2],
     /// Its raster scale over the device's, as steps of √2 (`raster_step`).
     step: i32,
+    /// That scale's bits: a step's, or a zoom's exactly (`prepare_layer`).
+    factor: u32,
+    /// At a zoom's scale exactly: composited with its corner on a pixel,
+    /// texel for pixel.
+    exact: bool,
     /// Promoted by a local transform rather than isolation: kept a while
     /// once back at identity (`LAYER_PARK_FRAMES`).
     transformed: bool,
@@ -3615,7 +3620,7 @@ impl GpuRenderer {
         self.layer_frame += 1;
         for item in &items {
             if item.isolated && item.effects.opacity > 0. {
-                self.prepare_layer(scene, item.id, 1., &mut layer_stats)?;
+                self.prepare_layer(scene, item.id, 1., true, &mut layer_stats)?;
             }
         }
         self.prepare_effects(scene, &items)?;
@@ -3709,26 +3714,39 @@ impl GpuRenderer {
     /// Bring `id`'s layer texture up to date. `magnification`: how much its
     /// parent's content is magnified on screen (by transformed ancestors);
     /// with its own scale, it picks the raster scale (`raster_step`).
+    /// `exact`: that magnification is zooms' alone (`Scene::set_zoom`), and
+    /// the layer rasterizes at it exactly, showing texel for pixel.
     fn prepare_layer(
         &mut self,
         scene: &Scene,
         id: NodeId,
         magnification: f32,
+        exact: bool,
         stats: &mut GpuStats,
     ) -> Result<(), GpuError> {
         let revision = scene.layer_revision(id);
         let root = scene.bounds(id);
         let local = scene.local_transform(id);
+        let zoom = scene.zoom(id);
         // Parked a while once it has none (`LAYER_PARK_FRAMES`).
-        let transformed =
-            !local.is_identity() || scene.filter_blur(id) > 0. || scene.mask(id).is_some();
-        let magnification = magnification * local.magnification();
+        let transformed = !local.is_identity()
+            || zoom != 1.
+            || scene.filter_blur(id) > 0.
+            || scene.mask(id).is_some();
+        let magnification = magnification * local.magnification() * zoom;
+        // Zoomed (and not otherwise scaled): at its scale exactly, crisp.
+        let exact = exact && local.is_identity();
         let current = self.layers.get(&id).map(|cache| cache.step);
         let mut step = raster_step(magnification, current);
+        let mut factor = match exact && magnification != 1. {
+            true => magnification,
+            false => step_scale(step),
+        };
         let frame = self.layer_frame;
         if let Some(cache) = self.layers.get_mut(&id)
             && cache.revision == revision
             && cache.step == step
+            && cache.factor == factor.to_bits()
         {
             cache.bounds.x += root.x - cache.root_origin.0;
             cache.bounds.y += root.y - cache.root_origin.1;
@@ -3743,33 +3761,49 @@ impl GpuRenderer {
         let limit = self.device.limits().max_texture_dimension_2d;
         // Magnified past what the texture limits or the budget allow, a
         // layer renders at the finest scale that fits.
-        let pixels = |step: i32| {
-            let scale = self.scale * step_scale(step);
+        let pixels = |factor: f32| {
+            let scale = self.scale * factor;
             (content.width + 2. / scale) * scale * (content.height + 2. / scale) * scale
         };
-        while step > 0
-            && ((content.width.max(content.height) + 2.) * self.scale * step_scale(step)
-                > limit as f32
-                || pixels(step) * 4. > 16. * 1024. * 1024.)
-        {
-            step -= 1;
+        let fits = |factor: f32| {
+            (content.width.max(content.height) + 2.) * self.scale * factor <= limit as f32
+                && pixels(factor) * 4. <= 16. * 1024. * 1024.
+        };
+        // Too large at a zoom's scale: the finest step that fits.
+        let exact = exact && fits(factor);
+        if !exact {
+            while step > 0 && !fits(step_scale(step)) {
+                step -= 1;
+            }
+            factor = step_scale(step);
         }
         let device_scale = self.scale;
-        let scale = device_scale * step_scale(step);
+        let scale = device_scale * factor;
         // A transparent texel border lets linear sampling preserve fractional
         // translation coverage (and smooth a rotated layer's edges) instead
         // of clamping opaque edge pixels.
         let bounds = content.expand(1. / scale);
-        let x = bounds.x;
-        let y = bounds.y;
-        let width = (bounds.width * scale).ceil().max(1.) as u32;
-        let height = (bounds.height * scale).ceil().max(1.) as u32;
+        // At a zoom's scale, its texels on the device's pixels: counted from
+        // its box's corner, which layout puts on a pixel.
+        let (x, y) = match exact && factor != 1. {
+            true => (
+                root.x + ((bounds.x - root.x) * scale).floor() / scale,
+                root.y + ((bounds.y - root.y) * scale).floor() / scale,
+            ),
+            false => (bounds.x, bounds.y),
+        };
+        let (width, height) = match (x, y) == (bounds.x, bounds.y) {
+            true => (bounds.width, bounds.height),
+            false => (bounds.x + bounds.width - x, bounds.y + bounds.height - y),
+        };
+        let width = (width * scale).ceil().max(1.) as u32;
+        let height = (height * scale).ceil().max(1.) as u32;
         let bounds = Rect::new(x, y, width as f32 / scale, height as f32 / scale);
         let mut items = scene.layer_items(Some(id));
         self.plane_filter(&mut items);
         for item in &items {
             if item.isolated && item.effects.opacity > 0. {
-                self.prepare_layer(scene, item.id, magnification, stats)?;
+                self.prepare_layer(scene, item.id, magnification, exact, stats)?;
             }
         }
         self.prepare_effects(scene, &items)?;
@@ -3895,6 +3929,8 @@ impl GpuRenderer {
                 bytes,
                 uv,
                 step,
+                factor: factor.to_bits(),
+                exact: exact && factor != 1.,
                 transformed,
                 used: frame,
                 parked: false,
@@ -5230,8 +5266,15 @@ impl GpuRenderer {
                 // Transformed: the quad's corners move in the vertex shader,
                 // as an affine image's; edge fades stay in its own frame. In
                 // perspective (`options.z` 2), divided by `w` there too.
-                let m = matrix.unwrap_or_default();
+                let mut m = matrix.unwrap_or_default();
                 let projective = matrix.is_some_and(|m| m.affine().is_none());
+                // Zoomed: its corner on a pixel of this target, so its texels
+                // land on pixels (`prepare_layer`).
+                if layer.exact && !projective {
+                    let (x, y) = m.point(item.bounds.x, item.bounds.y);
+                    m.tx += (x * self.scale).round() / self.scale - x;
+                    m.ty += (y * self.scale).round() / self.scale - y;
+                }
                 quads.push(Quad {
                     rect: [bounds.x, bounds.y, bounds.width, bounds.height],
                     uv,

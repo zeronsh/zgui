@@ -1309,6 +1309,7 @@ props! {
     "blend" => Blend: Str,
     "fade" => Fade: Pair, "fade_x" => FadeX: Pair, "fade_sides" => FadeSides: Corners,
     "fade_overflow" => FadeOverflow: Bool, "snap" => Snap: Bool,
+    "zoom" => Zoom: Num, "zoom_fixed" => ZoomFixed: Bool,
     "clip_inset" => ClipInset: Corners, "clip_feather" => ClipFeather: Num, "layer" => Layer: Bool, "fit" => Fit: Str, "tint" => Tint: Color, "dither" => Dither: Num, "characters" => Characters: Num,
     "cursor" => Cursor: Str,
     // Text.

@@ -763,6 +763,16 @@ pub(crate) struct RareStyles {
     pub(crate) blend: Option<crate::scene::BlendMode>,
     /// `Styled::relative`: a containing block for absolute descendants.
     pub(crate) relative: Option<bool>,
+    /// `Styled::zoom`, `zoom_fixed`.
+    pub(crate) zoom: Option<ZoomStyle>,
+}
+/// A node's zoom as a style gives it (`Styled::zoom`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ZoomStyle {
+    /// Its subtree's lengths times this.
+    By(f32),
+    /// At its own size, whatever zooms are around it.
+    Fixed,
 }
 /// A mask image and the size (logical pixels) it is drawn at.
 pub(crate) type MaskImage = (std::sync::Arc<crate::image::ImageData>, (f32, f32));
@@ -800,6 +810,7 @@ impl RareStyles {
         layer_uniforms: None,
         blend: None,
         relative: None,
+        zoom: None,
     };
     /// Overlay explicitly supplied properties, preserving all others.
     fn merge(&mut self, other: &Self) {
@@ -898,6 +909,9 @@ impl RareStyles {
         }
         if other.relative.is_some() {
             self.relative = other.relative;
+        }
+        if other.zoom.is_some() {
+            self.zoom = other.zoom;
         }
     }
 }
@@ -2671,6 +2685,21 @@ pub trait Styled: Sized {
     /// `start`/`end` edges follow. `pl`, `ml` and `left` stay on the left.
     fn direction(mut self, value: crate::scene::Direction) -> Self {
         self.styles_mut().rare_mut().direction = Some(value);
+        self
+    }
+    /// Zoom what it holds, as CSS's `zoom`: its lengths (sizes, padding,
+    /// text, borders, shadows) `zoom` times as large, laid out again at that
+    /// size and drawn crisply at it, rather than scaled after layout as
+    /// `scale` is. Zooms multiply with its ancestors' and the window's
+    /// (`Ui::set_zoom`). 1 leaves it as it is.
+    fn zoom(mut self, zoom: f32) -> Self {
+        self.styles_mut().rare_mut().zoom = Some(ZoomStyle::By(zoom));
+        self
+    }
+    /// Keep it at its own size whatever zooms its ancestors and the window
+    /// have: a toolbar that stays put, a canvas that zooms itself.
+    fn zoom_fixed(mut self) -> Self {
+        self.styles_mut().rare_mut().zoom = Some(ZoomStyle::Fixed);
         self
     }
     /// `direction(Direction::Rtl)`: Arabic, Hebrew, Persian, Urdu.

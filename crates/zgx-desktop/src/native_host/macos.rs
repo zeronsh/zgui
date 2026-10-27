@@ -946,7 +946,9 @@ impl Surfaces {
                 .find(|(other, _)| other == node)
                 .unwrap()
                 .1;
-            // Mount what it shows (a page or a terminal is made on first mount).
+            // Mount what it shows (a page or a terminal is made on first mount),
+            // its content at the window's zoom and the zoomed nodes' around it.
+            let zoom = self.zoom * f64::from(split.native_zoom(*node));
             let mut term = None;
             let (view, web): (Option<Retained<NSView>>, Option<zgx::web_view::WebView>) =
                 match content {
@@ -959,14 +961,14 @@ impl Surfaces {
                                 .as_any()
                                 .downcast_ref::<webkit::MacWebView>()
                                 .map(|page| {
-                                    page.set_window_zoom(self.zoom);
+                                    page.set_window_zoom(zoom);
                                     page.view().retain()
                                 });
                         (page, Some(web.clone()))
                     }
                     NativeContent::Terminal(terminal) => {
                         term = Some(terminal.clone());
-                        (Self::terminal_view(terminal, self.zoom, self.mtm), None)
+                        (Self::terminal_view(terminal, zoom, self.mtm), None)
                     }
                     NativeContent::Platform(view) => {
                         (view.downcast_ref::<Retained<NSView>>().cloned(), None)

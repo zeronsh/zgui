@@ -126,6 +126,24 @@ Values above 100 percent are allowed; negative and non-finite values normalize t
 zero. Only width and height currently expose percentage units; percentage
 padding, margins and min/max dimensions are not provided.
 
+## Zoom
+
+`zoom(n)` zooms what a node holds, as CSS's `zoom`: its lengths (sizes, padding, gaps, borders, radii, shadows, text) show `n` times as large, laid out again at that size. The node lays its subtree out in its own points, under its parent's room divided by `n`, and takes `n` times the room it needs there, so the content around it reflows around the zoomed size. It is drawn at the scale it shows at, crisp, not resampled as a `scale` transform is. Zooms multiply with the node's ancestors' and the window's (`Ui::set_zoom`). `zoom_fixed()` keeps a node at its own size whatever zooms are around it, the window's included (a toolbar that stays put, a canvas that zooms itself).
+
+```rust
+# use zgx::compose::prelude::*;
+let panel = column().zoom(1.5).child(text("Larger, laid out at that size"));
+```
+
+```lua
+ui.column { zoom = 1.5, ui.text { "Larger" } }
+ui.row { zoom_fixed = true, toolbar }
+```
+
+A zoomed node's `bounds` are in its own points; `Scene::transformed_bounds` gives where it shows, and hit testing, damage and accessibility follow that. A zoom of 1 is no zoom at all: no layer, the same layout and paint. Native views inside a zoomed node are placed at its zoom, and a web page's zoom and a terminal's text follow it.
+
+**For now** a zoomed node paints as a cached layer rasterized at its exact scale: free while it holds still, but content changing inside it (typing, a caret) repaints the whole layer, where the same content at the window's zoom repaints only what changed. A direct path, drawing zoomed content in the window's own pass, removes that cost. The CPU reference renderer samples zoomed layers at 1×, so they are not crisp there.
+
 ## Image fitting
 
 Image views accept `.object_fit(ObjectFit::...)`, with centered placement inside

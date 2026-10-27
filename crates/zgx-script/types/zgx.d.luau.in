@@ -1165,6 +1165,12 @@ export type Styles = {
 	fade_overflow: boolean?,
 	-- Lay its edges on whole points (crisp borders where percentages leave fractions).
 	snap: boolean?,
+	-- Zoom what it holds, as CSS's `zoom`: its lengths and text this many times
+	-- as large, laid out again and drawn crisply at that size (not scaled after
+	-- layout as `scale` is). Zooms multiply with its ancestors' and the window's.
+	zoom: number?,
+	-- At its own size whatever zooms are around it (the window's included).
+	zoom_fixed: boolean?,
 	clip_inset: Sides?,
 	-- Where it clips (overflow = "hidden"), its content fades out over this
 	-- many points inside its rounded edge instead of being cut: with a large
@@ -1327,6 +1333,8 @@ export type StyleProps = {
 	fade_sides: Reactive<Sides>?,
 	fade_overflow: Reactive<boolean>?,
 	snap: Reactive<boolean>?,
+	zoom: Reactive<number>?,
+	zoom_fixed: Reactive<boolean>?,
 	clip_inset: Reactive<Sides>?,
 	clip_feather: Reactive<number>?,
 	layer: Reactive<boolean>?,

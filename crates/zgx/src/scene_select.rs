@@ -357,11 +357,7 @@ impl Scene {
             translation.y += node.transform.y;
             if node.transformed() {
                 let bounds = node.bounds.translated(translation);
-                point = node
-                    .local()
-                    .projective(bounds)
-                    .inverse()?
-                    .point(point.0, point.1);
+                point = node.projective(bounds).inverse()?.point(point.0, point.1);
             }
         }
         Some(point)

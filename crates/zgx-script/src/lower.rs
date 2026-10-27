@@ -5234,6 +5234,8 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (FadeX, Lit::Pair(left, right)) => s.fade_edges_x(*left, *right),
         (FadeOverflow, Lit::Bool(v)) => s.fade_overflow(*v),
         (Snap, Lit::Bool(v)) => s.snap(*v),
+        (Zoom, Lit::Num(v)) => s.zoom(*v),
+        (ZoomFixed, Lit::Bool(true)) => s.zoom_fixed(),
         // `{ top, right, bottom, left }` in points; negative reaches past the box.
         (ClipInset, Lit::Corners(c)) => {
             s.clip_inset(c.top_left, c.top_right, c.bottom_right, c.bottom_left)

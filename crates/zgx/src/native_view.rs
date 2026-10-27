@@ -472,6 +472,9 @@ pub struct PlaneSplit {
     /// Layers whose split changed since the previous frame: renderers drop
     /// their cached textures.
     changed_layers: Vec<NodeId>,
+    /// Native views inside zoomed nodes, with how much they show zoomed
+    /// (`Scene::zoom_around`): their content follows (`native_zoom`).
+    zooms: Vec<(NodeId, f32)>,
 }
 
 /// The overlay region is kept as at most this many rectangles; beyond, the
@@ -719,6 +722,10 @@ impl Walk<'_> {
                 }
                 self.split.native_nodes.insert(item.id);
                 self.split.natives.push(placement);
+                let zoom = self.scene.zoom_around(item.id);
+                if zoom != 1. {
+                    self.split.zooms.push((item.id, zoom));
+                }
                 // Its own background paints under it.
                 if paints(item) {
                     base = true;
@@ -959,6 +966,16 @@ impl PlaneSplit {
     /// `node`'s placement this frame, if it is a native view.
     pub fn native(&self, node: NodeId) -> Option<&NativePlacement> {
         self.natives.iter().find(|placement| placement.node == node)
+    }
+    /// How much native view `node` shows zoomed by zoomed nodes around it
+    /// (`Scene::set_zoom`): 1 outside any. Its frame is zoomed already; its
+    /// content (a page's zoom, a terminal's text) follows this, times the
+    /// window's.
+    pub fn native_zoom(&self, node: NodeId) -> f32 {
+        self.zooms
+            .iter()
+            .find(|(other, _)| *other == node)
+            .map_or(1., |(_, zoom)| *zoom)
     }
     /// Whether `node` is a native view this frame.
     pub fn is_native(&self, node: NodeId) -> bool {

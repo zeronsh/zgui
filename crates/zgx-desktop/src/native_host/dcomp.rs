@@ -721,7 +721,8 @@ impl Surfaces {
                 clip,
                 split.native(*node).cloned(),
                 scale,
-                zoom,
+                // Its page at the window's zoom and the zoomed nodes' around it.
+                zoom * split.native_zoom(*node),
             );
         }
         // Shown pages in paint order, between the base and the overlay.

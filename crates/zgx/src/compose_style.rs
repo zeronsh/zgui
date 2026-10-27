@@ -1669,6 +1669,14 @@ fn apply_resolved(
     if let Some(direction) = resolved.rare().direction {
         scene.set_direction(node, Some(direction));
     }
+    match resolved.rare().zoom {
+        Some(crate::style::ZoomStyle::By(zoom)) => {
+            scene.set_zoom(node, zoom);
+            crate::zoom::refresh_fixed(ui, &mut scene);
+        }
+        Some(crate::style::ZoomStyle::Fixed) => crate::zoom::set_fixed(ui, &mut scene, node, true),
+        None => {}
+    }
     if let Some(content) = content_layout {
         let mut content_style = scene.style(content);
         content_style.gap = resolved.gap.get().unwrap_or(0.);

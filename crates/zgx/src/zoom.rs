@@ -71,6 +71,12 @@ impl Ui {
         if self.storage.zoom.replace(zoom) == zoom {
             return;
         }
+        // Fixed nodes undo it (`set_zoom_fixed`).
+        if !self.storage.fixed_zooms.borrow().is_empty()
+            && let Ok(mut scene) = self.scene.try_borrow_mut()
+        {
+            refresh_fixed(self, &mut scene);
+        }
         let told = self.storage.zoom_host.borrow().clone();
         for tell in told {
             tell();
@@ -220,6 +226,51 @@ pub fn is_zoom_key(key: &Key, modifiers: Modifiers) -> bool {
             "0" => !modifiers.shift,
             _ => false,
         }
+}
+
+impl Ui {
+    /// Keep `node` at its own size whatever zooms its ancestors and the
+    /// window have (a toolbar that stays put, a canvas that zooms itself):
+    /// its zoom (`Scene::set_zoom`) undoes theirs, kept so as they change.
+    /// `false` leaves it at 1.
+    pub fn set_zoom_fixed(&self, node: NodeId, fixed: bool) {
+        let mut scene = self.scene.borrow_mut();
+        set_fixed(self, &mut scene, node, fixed);
+    }
+}
+
+/// `Ui::set_zoom_fixed`, with the scene already borrowed.
+pub(crate) fn set_fixed(ui: &Ui, scene: &mut crate::scene::Scene, node: NodeId, fixed: bool) {
+    let mut list = ui.storage.fixed_zooms.borrow_mut();
+    match (list.contains(&node), fixed) {
+        (false, true) => list.push(node),
+        (true, false) => {
+            list.retain(|other| *other != node);
+            drop(list);
+            scene.set_zoom(node, 1.);
+            return;
+        }
+        _ => return,
+    }
+    drop(list);
+    refresh_fixed(ui, scene);
+}
+
+/// Each fixed node's zoom, undoing the window's and its ancestors': after
+/// either changes. Gone nodes leave the list.
+pub(crate) fn refresh_fixed(ui: &Ui, scene: &mut crate::scene::Scene) {
+    let mut list = ui.storage.fixed_zooms.borrow_mut();
+    if list.is_empty() {
+        return;
+    }
+    list.retain(|id| scene.contains(*id));
+    let window = ui.zoom() as f32;
+    for id in list.iter() {
+        let around = scene
+            .parent(*id)
+            .map_or(1., |parent| scene.zoom_around(parent));
+        scene.set_zoom(*id, (window * around).recip());
+    }
 }
 
 /// The window's zoom keys (`is_zoom_key`), for keys nothing else took: in
