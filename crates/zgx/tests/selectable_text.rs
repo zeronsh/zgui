@@ -733,6 +733,40 @@ fn copied_html_keeps_paragraphs_line_breaks_and_inline_styles() {
     );
 }
 
+/// Monospace text of more than one line copies as preformatted (a code
+/// block), and runs coloured apart from the text the selection starts in
+/// say their colour, as a page's copy keeps them.
+#[test]
+fn copied_html_keeps_preformatted_blocks_and_coloured_runs() {
+    use zgx::{scene::Color, text_layout::FontFamily};
+    let mut ui = Ui::new(400., 300.);
+    ui.mount(
+        column()
+            .w(300.)
+            .gap(16.)
+            .text_size(10.)
+            .line_height(20.)
+            .selectable(true)
+            .child(
+                rich_text()
+                    .child(text_span("Plain "))
+                    .child(text_span("red").text_color(Color(255, 0, 0, 255)))
+                    .child(text_span(" and "))
+                    .child(text_span("faint").text_color(Color(0, 0, 255, 128))),
+            )
+            .child(text("fn main() {\n}").font_family(FontFamily::Monospace))
+            .child(text("inline").font_family(FontFamily::Monospace)),
+    );
+    ui.prepare_frame();
+    assert!(ui.select_all_text(texts(&ui)[0]));
+    assert_eq!(
+        ui.selected_html(),
+        "<meta charset=\"utf-8\"><p>Plain <span style=\"color:#ff0000\">red</span> and \
+         <span style=\"color:rgba(0,0,255,0.502)\">faint</span></p>\
+         <pre><code>fn main() {<br>}</code></pre><p><code>inline</code></p>"
+    );
+}
+
 #[test]
 fn copied_html_keeps_headings_links_and_rows_a_list_has_not_mounted() {
     let mut ui = Ui::new(400., 300.);

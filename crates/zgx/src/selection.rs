@@ -1696,19 +1696,22 @@ impl Ui {
             .collect()
     }
     /// The selected text as HTML, for pasting into rich text: paragraphs,
-    /// headings (`<h1>`…) and line breaks where `selected_text` has them;
+    /// headings (`<h1>`…), preformatted blocks (`<pre>`: monospace text of
+    /// more than one line) and line breaks where `selected_text` has them;
     /// bold, italic, monospace (code), underline and strikethrough runs;
-    /// links with their targets; and the rows of virtual lists with row
-    /// text that they have not mounted, as `selected_text` copies them.
+    /// runs coloured apart from the text the selection starts in; links
+    /// with their targets; and the rows of virtual lists with row text that
+    /// they have not mounted, as `selected_text` copies them.
     pub fn selected_html(&self) -> String {
         let shown = self.selection_state().borrow().shown.clone();
         let provided = self.provided_rows(&shown);
         let state = self.selection_state().borrow();
         let scene = self.scene.borrow();
         let semantics = self.semantics.borrow();
-        // The block a text node is in: a heading's level, or a paragraph.
-        let heading = |id: NodeId| -> Option<usize> {
-            std::iter::once(id)
+        // The block a text node is in: a heading, preformatted text, or a
+        // paragraph.
+        let block_of = |id: NodeId| -> HtmlBlock {
+            let heading = std::iter::once(id)
                 .chain(scene.ancestors(id))
                 .take_while(|at| state.root != Some(*at))
                 .find_map(|at| {
@@ -1716,30 +1719,52 @@ impl Ui {
                         .get(at)
                         .filter(|n| n.role == Role::Heading)
                         .map(|n| n.level.unwrap_or(1).clamp(1, 6))
-                })
+                });
+            let monospace =
+                |font: &FontStyle| font.family == crate::text_layout::FontFamily::Monospace;
+            let preformatted = match scene.kind(id) {
+                NodeKind::Text { text, .. } => monospace(scene.font(id)) && text.contains('\n'),
+                NodeKind::RichText { text } => {
+                    text.runs().iter().all(|run| monospace(&run.font)) && text.text().contains('\n')
+                }
+                _ => false,
+            };
+            match heading {
+                Some(level) => HtmlBlock::Heading(level),
+                None if preformatted => HtmlBlock::Pre,
+                None => HtmlBlock::Paragraph,
+            }
         };
-        let tag = |level: Option<usize>| match level {
-            Some(level) => format!("h{level}"),
-            None => "p".to_owned(),
-        };
+        // The colour of the text the selection starts in: runs coloured
+        // otherwise say theirs.
+        let base = shown.iter().find_map(|part| match scene.kind(part.node) {
+            NodeKind::Text { color, .. } => Some(*color),
+            NodeKind::RichText { text } => text
+                .runs()
+                .iter()
+                .find(|run| run.range.end > part.range.start)
+                .map(|run| run.color),
+            _ => None,
+        });
+        let apart = |color: Color| (Some(color) != base).then_some(color);
         let mut out = String::from("<meta charset=\"utf-8\">");
         // The block open now, if any.
-        let mut block: Option<Option<usize>> = None;
-        let enter = |out: &mut String, block: &mut Option<Option<usize>>, level| {
+        let mut block: Option<HtmlBlock> = None;
+        let enter = |out: &mut String, block: &mut Option<HtmlBlock>, next: HtmlBlock| {
             if let Some(open) = block.take() {
-                out.push_str(&format!("</{}>", tag(open)));
+                out.push_str(&format!("</{}>", open.tag()));
             }
-            out.push_str(&format!("<{}>", tag(level)));
-            *block = Some(level);
+            out.push_str(&format!("<{}>", next.tag()));
+            *block = Some(next);
         };
         let mut previous: Option<(NodeId, f32)> = None;
         let mut provided = provided.into_iter().peekable();
-        let row = |out: &mut String, block: &mut Option<Option<usize>>, text: &str| {
+        let row = |out: &mut String, block: &mut Option<HtmlBlock>, text: &str| {
             match block {
                 Some(_) => out.push_str("<br>"),
-                None => enter(out, block, None),
+                None => enter(out, block, HtmlBlock::Paragraph),
             }
-            html_run(out, text, &FontStyle::default(), None, false, false);
+            html_run(out, text, &FontStyle::default(), None, None, false, false);
         };
         for (at, part) in shown.into_iter().enumerate() {
             while let Some((_, text)) = provided.next_if(|(before, _)| *before == at) {
@@ -1750,7 +1775,7 @@ impl Ui {
                 continue;
             }
             let size = font_size(&scene, part.node);
-            let level = heading(part.node);
+            let level = block_of(part.node);
             match (block, previous) {
                 (Some(open), Some((before, before_size))) if open == level => {
                     match separator(&scene, before, part.node, before_size.min(size)) {
@@ -1764,13 +1789,14 @@ impl Ui {
             }
             let links = state.links.get(&part.node);
             match scene.kind(part.node) {
-                NodeKind::Text { text, .. } if !scene.font(part.node).masked => {
+                NodeKind::Text { text, color, .. } if !scene.font(part.node).masked => {
                     let range = part.range.start.min(text.len())..part.range.end.min(text.len());
                     html_run(
                         &mut out,
                         &text[range],
                         scene.font(part.node),
                         None,
+                        apart(*color),
                         false,
                         false,
                     );
@@ -1791,6 +1817,8 @@ impl Ui {
                                 &text.text()[start..end],
                                 &run.font,
                                 href,
+                                // A link's colour is the link's.
+                                href.is_none().then(|| apart(run.color)).flatten(),
                                 run.underline.is_some(),
                                 run.strikethrough.is_some(),
                             );
@@ -1805,7 +1833,7 @@ impl Ui {
             row(&mut out, &mut block, &text);
         }
         match block {
-            Some(open) => out.push_str(&format!("</{}>", tag(open))),
+            Some(open) => out.push_str(&format!("</{}>", open.tag())),
             None => out.push_str("<p></p>"),
         }
         out
@@ -2355,11 +2383,29 @@ fn scene_offset(scene: &Scene, id: NodeId, semantic: usize) -> usize {
 }
 
 /// One styled run of `selected_html`: escaped, with its line breaks.
+/// A block of copied HTML: a paragraph, a heading of a level, or
+/// preformatted text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HtmlBlock {
+    Paragraph,
+    Heading(usize),
+    Pre,
+}
+impl HtmlBlock {
+    fn tag(self) -> String {
+        match self {
+            Self::Paragraph => "p".to_owned(),
+            Self::Heading(level) => format!("h{level}"),
+            Self::Pre => "pre".to_owned(),
+        }
+    }
+}
 fn html_run(
     out: &mut String,
     text: &str,
     font: &FontStyle,
     href: Option<&str>,
+    color: Option<Color>,
     underline: bool,
     strike: bool,
 ) {
@@ -2367,6 +2413,15 @@ fn html_run(
         out.push_str("<a href=\"");
         escape_html(out, href);
         out.push_str("\">");
+    }
+    if let Some(Color(r, g, b, a)) = color {
+        out.push_str(&match a {
+            255 => format!("<span style=\"color:#{r:02x}{g:02x}{b:02x}\">"),
+            _ => format!(
+                "<span style=\"color:rgba({r},{g},{b},{:.3})\">",
+                f32::from(a) / 255.
+            ),
+        });
     }
     let tags = [
         (font.weight >= 600, "b"),
@@ -2388,6 +2443,9 @@ fn html_run(
     escape_html(out, text);
     for (_, tag) in tags.iter().rev().filter(|(on, _)| *on) {
         out.push_str(&format!("</{tag}>"));
+    }
+    if color.is_some() {
+        out.push_str("</span>");
     }
     if href.is_some() {
         out.push_str("</a>");
