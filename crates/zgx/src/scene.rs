@@ -6868,13 +6868,12 @@ impl Scene {
         let explicit_w = constraints
             .force_width
             .or(style.width)
-            .or_else(|| percentage(style.width_percent, constraints.percent_width))
-            .map(|w| dimension(w, style.min_width, style.max_width))?;
+            .or_else(|| percentage(style.width_percent, constraints.percent_width))?;
         let explicit_h = constraints
             .force_height
             .or(style.height)
-            .or_else(|| percentage(style.height_percent, constraints.percent_height))
-            .map(|h| dimension(h, style.min_height, style.max_height))?;
+            .or_else(|| percentage(style.height_percent, constraints.percent_height))?;
+        // Each clamped to its limits once: a second clamp would not move it.
         let size = (
             dimension(explicit_w, style.min_width, style.max_width),
             dimension(explicit_h, style.min_height, style.max_height),
