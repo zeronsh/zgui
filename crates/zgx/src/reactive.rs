@@ -174,7 +174,7 @@ struct Order {
 /// in one pass rather than a sort's many (a dashboard queues a thousand a
 /// tick). No id is queued twice (`EffectRecord::queued`), so none is lost.
 #[inline(always)]
-fn newest_first(ids: &mut Vec<EffectId>, order: &mut Order) {
+fn newest_first<const IN_PLACE: bool>(ids: &mut Vec<EffectId>, order: &mut Order) {
     // Effects queued as they are made come oldest first: reversed.
     let (mut low, mut high, mut ascending) = (u64::MAX, 0, true);
     let mut last = 0;
@@ -205,14 +205,31 @@ fn newest_first(ids: &mut Vec<EffectId>, order: &mut Order) {
         bits[at as usize / 64] |= 1 << (at % 64);
         slots[at as usize] = (id & SLOT_MASK) as u32;
     }
-    ids.clear();
-    for (word, &set) in bits.iter().enumerate().rev() {
-        let mut set = set;
-        while set != 0 {
-            let bit = 63 - set.leading_zeros() as u64;
-            let at = word as u64 * 64 + bit;
-            ids.push((low + at) << SLOT_BITS | EffectId::from(slots[at as usize]));
-            set &= !(1 << bit);
+    let id = |at: u64| (low + at) << SLOT_BITS | EffectId::from(slots[at as usize]);
+    // In place, over the ids taken (as many come out): for `flush`. The
+    // barrier's flush keeps clearing and pushing, which codegens smaller
+    // there (research A's A22).
+    if IN_PLACE {
+        let mut written = 0;
+        for (word, &set) in bits.iter().enumerate().rev() {
+            let mut set = set;
+            while set != 0 {
+                let bit = 63 - set.leading_zeros() as u64;
+                ids[written] = id(word as u64 * 64 + bit);
+                written += 1;
+                set &= !(1 << bit);
+            }
+        }
+        ids.truncate(written);
+    } else {
+        ids.clear();
+        for (word, &set) in bits.iter().enumerate().rev() {
+            let mut set = set;
+            while set != 0 {
+                let bit = 63 - set.leading_zeros() as u64;
+                ids.push(id(word as u64 * 64 + bit));
+                set &= !(1 << bit);
+            }
         }
     }
 }
@@ -485,7 +502,7 @@ impl Runtime {
             &self.inner,
             std::mem::take(&mut *self.inner.queued.borrow_mut()),
         );
-        newest_first(&mut sorted.1, &mut self.inner.order.borrow_mut());
+        newest_first::<false>(&mut sorted.1, &mut self.inner.order.borrow_mut());
         // The oldest waiting, and whether it is `pending`'s. Left where it
         // is until it runs: a barrier may queue an older one.
         let oldest = |sorted: &[EffectId]| {
@@ -566,7 +583,7 @@ impl Runtime {
             &self.inner,
             std::mem::take(&mut *self.inner.queued.borrow_mut()),
         );
-        newest_first(&mut sorted.1, &mut self.inner.order.borrow_mut());
+        newest_first::<true>(&mut sorted.1, &mut self.inner.order.borrow_mut());
         loop {
             let id = {
                 let mut pending = self.inner.pending.borrow_mut();
@@ -987,11 +1004,11 @@ mod tests {
             }
             let mut sorted = ids.clone();
             sorted.sort_unstable_by(|a, b| b.cmp(a));
-            newest_first(&mut ids, &mut order);
+            newest_first::<true>(&mut ids, &mut order);
             assert_eq!(ids, sorted, "{count} ids over {spread}");
             // Queued as they were made: oldest first.
             ids.reverse();
-            newest_first(&mut ids, &mut order);
+            newest_first::<false>(&mut ids, &mut order);
             assert_eq!(ids, sorted, "{count} ascending ids over {spread}");
         }
     }
