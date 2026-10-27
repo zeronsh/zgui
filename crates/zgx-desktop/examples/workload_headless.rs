@@ -25,7 +25,11 @@ fn control(value: View, x: f32) -> View {
         .child(label(value, 12.0, 6.0, 38.0, 20.0))
 }
 
-fn app(stream: zgx::reactive::Signal<String>, offset: zgx::reactive::Signal<f32>) -> View {
+/// The lab's view (render_parity draws it too).
+pub(crate) fn app(
+    stream: zgx::reactive::Signal<String>,
+    offset: zgx::reactive::Signal<f32>,
+) -> View {
     let rows = virtual_list(
         offset,
         ROW_HEIGHT,
