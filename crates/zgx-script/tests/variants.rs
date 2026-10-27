@@ -453,8 +453,7 @@ fn ordinary_computed_styles_match_element_styles() {
         let scene = h.ui.scene.borrow();
         let children = scene.children(parent);
         assert_eq!(children.len(), 6);
-        for pair in children.chunks_exact(2) {
-            let (plain, element) = (pair[0], pair[1]);
+        for &[plain, element] in children.as_chunks::<2>().0 {
             assert_eq!(scene.style(plain), scene.style(element), "tick {tick}");
             assert_eq!(scene.effects(plain), scene.effects(element), "tick {tick}");
             assert_eq!(scene.kind(plain), scene.kind(element), "tick {tick}");
