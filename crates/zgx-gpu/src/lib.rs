@@ -327,23 +327,19 @@ fn shading(quad: &Quad, scale: f32) -> Shading {
     // bit for bit, except for the coverage of a translucent square panel (an
     // extra divide and multiply): those stay full, so either shader draws the
     // same bytes.
-    let plain = quad.options[0] == 0.
+    // No edge fade, transform, shadow or region.
+    let alone = quad.options[0] == 0.
         && quad.options[2] < 0.5
         && quad.shape[2] <= 0.
-        && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.))
         && quad.mask[0] <= 0.;
-    // What `round_box` draws as `shade` does: a box on its own.
-    let rounded = quad.options[0] == 0.
-        && quad.options[1] <= 0.5
-        && quad.options[2] < 0.5
-        && quad.shape[1] >= 0.
-        && quad.shape[2] <= 0.
-        && quad.shape[3] > 0.5
-        && quad.mask[0] <= 0.;
-    if !plain && rounded {
-        Shading::Rounded
-    } else if !plain {
-        Shading::Full
+    let plain = alone && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.));
+    if !plain {
+        // Then a box (`shape.w`): what `round_box` draws as `shade` does,
+        // untextured and no ring.
+        match alone && quad.options[1] <= 0.5 && quad.shape[1] >= 0. {
+            true => Shading::Rounded,
+            false => Shading::Full,
+        }
     } else if quad.options[1] <= 0.5 && quad.color[3] >= 1. {
         Shading::Opaque
     } else {
