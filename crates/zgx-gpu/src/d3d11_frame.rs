@@ -38,17 +38,26 @@ use windows::{
                     DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R32_TYPELESS,
                     DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_SAMPLE_DESC,
                 },
-                CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_GPU_PREFERENCE_MINIMUM_POWER,
-                IDXGIAdapter, IDXGIFactory6,
+                CreateDXGIFactory2, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_CREATE_FACTORY_FLAGS,
+                DXGI_GPU_PREFERENCE_MINIMUM_POWER, IDXGIAdapter, IDXGIAdapter1, IDXGIDevice,
+                IDXGIFactory6,
             },
         },
     },
     core::{Interface, s},
 };
 
-/// `ZGX_D3D11=1`: windows and offscreen renderers draw with Direct3D 11.
-pub(crate) static ENABLED: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_D3D11").is_some_and(|value| value != "0"));
+/// Whether windows and offscreen renderers draw with Direct3D 11, where a
+/// device fit for it opens (`Device::open`): by default with the
+/// `d3d11-default` feature, otherwise with `ZGX_D3D11=1`. `ZGX_D3D12=1` (or
+/// `ZGX_D3D11=0`) keeps Direct3D 12 either way.
+pub(crate) static WANTED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    let set = |name| zgx::env::var_os(name).map(|value| value != "0");
+    if set("ZGX_D3D12") == Some(true) {
+        return false;
+    }
+    set("ZGX_D3D11").unwrap_or(cfg!(feature = "d3d11-default"))
+});
 /// `ZGX_D3D11_THREADED=1`: the driver's own threading left on. Off by
 /// default, as GPUI's renderer runs: on NVIDIA it moves a frame's cost to a
 /// thread of the driver's rather than saving it (docs/windows.md).
@@ -114,6 +123,48 @@ pub(crate) struct Made(pub(crate) Device);
 unsafe impl Send for Made {}
 
 impl Device {
+    /// `new`, where the device is fit for zgx's frames, or None (said once
+    /// on stderr) so the context opens Direct3D 12 instead. Fit: a hardware
+    /// adapter (WARP, Windows' software one, draws Direct3D 12's frames as
+    /// well and is not where Direct3D 11 saves anything), feature level
+    /// 11_0, and Direct3D 11.4's shared fences (`ID3D11Device5`), which a
+    /// view drawing with wgpu on Direct3D 12 needs to hand its frames over.
+    pub(crate) fn open() -> Option<Self> {
+        let checked = Self::new().and_then(|device| {
+            // A test hook: each check failing as it would (debug builds).
+            let failing = |what| {
+                cfg!(debug_assertions)
+                    && zgx::env::var_os("ZGX_D3D11_FAIL").is_some_and(|value| value == what)
+            };
+            if failing("device") {
+                return Err(GpuError(
+                    "Direct3D 11 made no device (ZGX_D3D11_FAIL)".into(),
+                ));
+            }
+            // SAFETY: Reads the device's adapter's description.
+            let software = unsafe {
+                let adapter: IDXGIAdapter1 = (device.device.cast::<IDXGIDevice>())
+                    .and_then(|dxgi| dxgi.GetAdapter())
+                    .and_then(|adapter| adapter.cast())
+                    .map_err(failed("adapter"))?;
+                let desc = adapter.GetDesc1().map_err(failed("adapter description"))?;
+                desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0
+            };
+            if software || failing("software") {
+                return Err(GpuError("its adapter is a software one".into()));
+            }
+            if device.device.cast::<ID3D11Device5>().is_err() || failing("fences") {
+                return Err(GpuError("no shared fences (Direct3D 11.4)".into()));
+            }
+            Ok(device)
+        });
+        checked
+            .inspect_err(|error| {
+                eprintln!("zgx: Direct3D 11 unavailable ({error}): drawing with Direct3D 12")
+            })
+            .ok()
+    }
+
     /// A device on the adapter DXGI lists first (its own order, as the
     /// Direct3D 12 path takes it), at feature level 11_0, with every
     /// pipeline made.

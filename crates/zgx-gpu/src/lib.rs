@@ -2905,12 +2905,13 @@ impl GpuContext {
         // Direct3D 12 has no adapter. On Linux, GL stands in where no Vulkan
         // driver is (VMs and older GPUs without one): made only then, so a
         // Vulkan system loads no EGL.
-        // `ZGX_D3D11`: frames are drawn with Direct3D 11, and wgpu runs on
-        // its no-op backend, opening no driver (d3d11_frame.rs).
+        // Direct3D 11 (d3d11_frame.rs, `WANTED`): frames are drawn with it,
+        // and wgpu runs on its no-op backend, opening no driver. Where no
+        // device fit for it opens, Direct3D 12, as without it.
         #[cfg(d3d11)]
-        let d3d11 = d3d11_frame::ENABLED
-            .then(d3d11_frame::Device::new)
-            .transpose()?;
+        let d3d11 = d3d11_frame::WANTED
+            .then(d3d11_frame::Device::open)
+            .flatten();
         #[cfg(d3d11)]
         let window = window.filter(|_| d3d11.is_none());
         #[cfg(d3d11)]

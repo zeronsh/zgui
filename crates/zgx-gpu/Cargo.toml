@@ -32,6 +32,9 @@ vulkan = ["wgpu/vulkan"]
 # (d3d11_frame.rs), wgpu's no-op backend standing in for its device, so no
 # Direct3D 12 device is opened. Off, nothing of it is built.
 d3d11 = ["wgpu/noop", "windows/Win32_Graphics_Direct3D", "windows/Win32_Graphics_Direct3D11"]
+# Direct3D 11 by default where it is fit (`ZGX_D3D12=1` keeps Direct3D 12);
+# not yet anyone's default: docs/windows.md, Direct3D 11.
+d3d11-default = ["d3d11"]
 
 [dependencies]
 smallvec = "1.16"
@@ -111,5 +114,11 @@ required-features = ["svg"]
 # Runs itself again with `ZGX_D3D11=1` (read once a process) and compares.
 [[test]]
 name = "d3d11_parity"
+harness = false
+required-features = ["d3d11"]
+
+# Each fallback in a process of its own.
+[[test]]
+name = "d3d11_fallback"
 harness = false
 required-features = ["d3d11"]
