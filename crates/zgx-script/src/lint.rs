@@ -38,6 +38,11 @@
 //!   animation does; `scale` only composites.
 //! - `zoomable-zoom`: an element given both `zoom` and `zoomable`. Its
 //!   zoomable state sets its zoom; a `zoom` beside it fights that state.
+//! - `list-marker-hidden`: a `role = "listitem"` whose first child is a
+//!   text marker ("•", "3.") not `aria_hidden`. A marker hidden from
+//!   assistive technology is the list's: selection and plain text leave it
+//!   out and copied HTML makes it a `<ul>` or `<ol>`; one that isn't is
+//!   copied, and read, as text.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -99,6 +104,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "zoomable-zoom",
         "an element given both `zoom` and `zoomable`: its state sets the zoom",
+    ),
+    (
+        "list-marker-hidden",
+        "a list item's marker text not `aria_hidden`: copied and read as text",
     ),
 ];
 
@@ -443,6 +452,59 @@ impl Linter<'_> {
             ),
             _ => false,
         }
+    }
+    /// In the element table opened at `table`, its first child when that
+    /// is a `ui.text` of a list marker ("•", "-", "3.", "b)", `` `{i}.` ``)
+    /// without `aria_hidden = true`: the marker's string.
+    fn unhidden_marker(&self, table: usize) -> Option<usize> {
+        let end = self.closing(table);
+        let mut depth = 0;
+        let mut j = table + 1;
+        // The first `ui.name` call among its fields.
+        let call = loop {
+            if j >= end {
+                return None;
+            }
+            match self.tokens[j].text.as_str() {
+                "(" | "{" | "[" if self.tokens[j].kind == Kind::Punct => depth += 1,
+                ")" | "}" | "]" if self.tokens[j].kind == Kind::Punct => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 && self.is(j, "ui") && self.is(j + 1, ".") && self.name(j + 2).is_some() {
+                break j;
+            }
+            j += 1;
+        };
+        if !self.is(call + 2, "text") || !(self.is(call + 3, "{") || self.is(call + 3, "(")) {
+            return None;
+        }
+        let close = self.closing(call + 3);
+        let marker = (call + 4..close).find(|&k| self.tokens[k].kind == Kind::Str)?;
+        let text = &self.tokens[marker].text;
+        let inner = text.get(1..text.len().saturating_sub(1))?.trim();
+        let bullet = [
+            "•", "◦", "▪", "‣", "·", "-", "–", "—", "*", "○", "●", "■", "□",
+        ]
+        .contains(&inner);
+        let numbered = inner.len() > 1 && inner.ends_with(['.', ')']) && {
+            let head = &inner[..inner.len() - 1];
+            head.chars().all(|c| c.is_ascii_digit())
+                || (head.chars().count() == 1 && head.chars().all(|c| c.is_ascii_alphabetic()))
+                || (text.starts_with('`') && head.starts_with('{') && head.ends_with('}'))
+        };
+        if !bullet && !numbered {
+            return None;
+        }
+        let mut depth = 0;
+        let hidden = (call + 4..close).any(|k| {
+            match self.tokens[k].text.as_str() {
+                "(" | "{" | "[" if self.tokens[k].kind == Kind::Punct => depth += 1,
+                ")" | "}" | "]" if self.tokens[k].kind == Kind::Punct => depth -= 1,
+                _ => {}
+            }
+            depth == 0 && self.is(k, "aria_hidden") && self.is(k + 1, "=") && self.is(k + 2, "true")
+        });
+        (!hidden).then_some(marker)
     }
     /// The index of the bracket that closes the one opened at `at`.
     fn closing(&self, at: usize) -> usize {
@@ -884,6 +946,25 @@ impl Linter<'_> {
                 );
             }
         }
+        // `role = "listitem"` whose first child is a marker text not hidden.
+        if self.is(at, "role")
+            && self.is(at + 1, "=")
+            && self.tokens.get(at + 2).is_some_and(|t| {
+                t.kind == Kind::Str && t.text.trim_matches(['"', '\'']) == "listitem"
+            })
+            && let Some(table) = stack.last().filter(|frame| frame.open == Open::Brace)
+            && let Some(marker) = self.unhidden_marker(table.at)
+        {
+            self.report(
+                marker,
+                "list-marker-hidden",
+                "this list item's marker shows as text: selecting the item takes it, its \
+                 plain text copies it, and screen readers read it. Give it \
+                 `aria_hidden = true`: the list then draws it, as a browser draws an `<li>`'s \
+                 marker (copied HTML makes the list a `<ul>`, or an `<ol>` from the number)."
+                    .into(),
+            );
+        }
         // `ui.state(...)` inside a component, `each` row or `list` row.
         // A key built from the instance (`\`file:{pane}\``) is deliberate.
         let literal_key = self.tokens.get(at + 4).is_some_and(|t| {
@@ -1211,6 +1292,25 @@ mod tests {
     }
     fn one(line: u32, rule: &str) -> Vec<(u32, String)> {
         vec![(line, rule.to_string())]
+    }
+
+    #[test]
+    fn a_list_items_marker_not_hidden_is_reported() {
+        let source = r##"
+ui.row { role = "listitem", ui.text { "•" }, ui.text { "one" } }
+ui.row { role = "listitem", ui.text { `{i}.`, color = "$text.tertiary" }, ui.text { "two" } }
+ui.row { role = "listitem", ui.text { "•", aria_hidden = true }, ui.text { "three" } }
+ui.row { role = "listitem", ui.text { "Name" }, ui.text { "four" } }
+ui.row { role = "listitem", ui.image { src = "dot.png" }, ui.text { "five" } }
+ui.row { role = "option", ui.text { "•" } }
+"##;
+        assert_eq!(
+            rules(source),
+            vec![
+                (2, "list-marker-hidden".to_string()),
+                (3, "list-marker-hidden".to_string())
+            ]
+        );
     }
 
     #[test]

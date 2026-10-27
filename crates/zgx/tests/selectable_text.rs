@@ -793,6 +793,92 @@ fn copied_html_keeps_preformatted_blocks_and_coloured_runs() {
     );
 }
 
+/// A list item's marker ("•", "3."), drawn as accessible-hidden text that
+/// leads the item, is the list's, as a browser draws an `<li>`'s: a
+/// selection takes no part of it and its plain text leaves it out, while
+/// its HTML is a `<ul>`, or an `<ol>` from the number the marker reads.
+#[test]
+fn list_markers_are_the_lists_not_the_selections() {
+    use zgx::semantics::Role;
+    let item = |marker: String, body: &str| {
+        row()
+            .role(Role::ListItem)
+            .gap(8.)
+            .child(text(marker).accessible_hidden())
+            .child(text(body.to_owned()))
+    };
+    let list = |markers: [&str; 2], bodies: [&str; 2]| {
+        column().role(Role::List).children([
+            item(markers[0].into(), bodies[0]),
+            item(markers[1].into(), bodies[1]),
+        ])
+    };
+    let mut ui = Ui::new(400., 300.);
+    document(
+        &mut ui,
+        vec![
+            text("Before"),
+            list(["•", "•"], ["one", "two"]),
+            list(["3.", "4."], ["three", "four"]),
+            text("After"),
+        ],
+    );
+    let all = texts(&ui);
+    assert!(ui.select_all_text(all[0]));
+    ui.prepare_frame();
+    assert_eq!(ui.selected_text(), "Before\none\ntwo\nthree\nfour\nAfter");
+    let scene = ui.scene.borrow();
+    for marker in [all[1], all[3], all[5], all[7]] {
+        assert!(
+            scene.text_highlight(marker).is_none(),
+            "a marker shows unselected"
+        );
+    }
+    drop(scene);
+    assert_eq!(
+        ui.selected_html(),
+        "<meta charset=\"utf-8\"><p>Before</p><ul><li>one</li><li>two</li></ul>\
+         <ol start=\"3\"><li>three</li><li>four</li></ol><p>After</p>"
+    );
+}
+
+/// A list in a list item nests, in its `<li>`.
+#[test]
+fn copied_html_nests_lists() {
+    use zgx::semantics::Role;
+    let mut ui = Ui::new(400., 300.);
+    document(
+        &mut ui,
+        vec![
+            column().role(Role::List).children([
+                row()
+                    .role(Role::ListItem)
+                    .child(text("1.").accessible_hidden())
+                    .child(
+                        column().child(text("outer")).child(
+                            column().role(Role::List).child(
+                                row()
+                                    .role(Role::ListItem)
+                                    .child(text("•").accessible_hidden())
+                                    .child(text("inner")),
+                            ),
+                        ),
+                    ),
+                row()
+                    .role(Role::ListItem)
+                    .child(text("2.").accessible_hidden())
+                    .child(text("next")),
+            ]),
+        ],
+    );
+    assert!(ui.select_all_text(texts(&ui)[0]));
+    assert_eq!(
+        ui.selected_html(),
+        "<meta charset=\"utf-8\"><ol><li>outer<ul><li>inner</li></ul></li><li>next</li></ol>"
+    );
+    assert_eq!(ui.selected_text(), "outer\ninner\nnext");
+}
+
 #[test]
 fn copied_html_keeps_headings_links_and_rows_a_list_has_not_mounted() {
     let mut ui = Ui::new(400., 300.);

@@ -13,7 +13,7 @@
 use crate::{
     input::{EventPhase, InputEvent, Key, Modifiers, PointerButton},
     scene::{Color, Direction, NodeId, NodeKind, Rect, Scene, TextHighlight, TextLeaf},
-    semantics::Role,
+    semantics::{Role, Semantics},
     text_layout::{FontStyle, TextLayout},
     theme::tok,
     widgets::{Ui, WeakUi},
@@ -778,6 +778,17 @@ impl Ui {
     fn point_at(&self, root: NodeId, x: f32, y: f32) -> Option<Hit> {
         self.point_near(root, x, y, true)
     }
+    /// The text a selection in region `root` takes, in document order
+    /// (`Scene::selectable_text`): not an editor's, which selects on its
+    /// own, nor a list's markers.
+    fn selectable_leaves(&self, scene: &Scene, root: NodeId, visit: impl FnMut(TextLeaf)) {
+        let semantics = self.semantics.borrow();
+        scene.selectable_text(
+            root,
+            |id| self.is_editor(id) || list_marker(scene, &semantics, id).is_some(),
+            visit,
+        );
+    }
     /// `point_at`; not `visible`, over all the region's laid-out text, at a
     /// point already in its layout space: the keyboard's steps, which reach
     /// text scrolled out of view.
@@ -787,44 +798,40 @@ impl Ui {
         // The nearest text, its distance and the pointer in its space.
         type Nearest = (TextLeaf, (f32, f32), (f32, f32));
         let mut best: Option<Nearest> = None;
-        scene.selectable_text(
-            root,
-            |id| self.is_editor(id),
-            |leaf| {
-                let Some(visible) = (if only_visible {
-                    leaf.visible
+        self.selectable_leaves(&scene, root, |leaf| {
+            let Some(visible) = (if only_visible {
+                leaf.visible
+            } else {
+                Some(leaf.bounds)
+            }) else {
+                return;
+            };
+            // The pointer where the text is laid out, through scales
+            // and rotations on the way.
+            let Some((x, y)) = (match only_visible {
+                true => scene.point_in(leaf.id, x, y),
+                false => Some((x, y)),
+            }) else {
+                return;
+            };
+            let distance = |at: f32, start: f32, extent: f32| {
+                if at < start {
+                    start - at
+                } else if at >= start + extent {
+                    at - (start + extent) + 0.01
                 } else {
-                    Some(leaf.bounds)
-                }) else {
-                    return;
-                };
-                // The pointer where the text is laid out, through scales
-                // and rotations on the way.
-                let Some((x, y)) = (match only_visible {
-                    true => scene.point_in(leaf.id, x, y),
-                    false => Some((x, y)),
-                }) else {
-                    return;
-                };
-                let distance = |at: f32, start: f32, extent: f32| {
-                    if at < start {
-                        start - at
-                    } else if at >= start + extent {
-                        at - (start + extent) + 0.01
-                    } else {
-                        0.
-                    }
-                };
-                let key = (
-                    distance(y, visible.y, visible.height),
-                    distance(x, visible.x, visible.width),
-                );
-                // Ties go to what paints later, over the rest.
-                if best.is_none_or(|(_, best, _)| key <= best) {
-                    best = Some((leaf, key, (x, y)));
+                    0.
                 }
-            },
-        );
+            };
+            let key = (
+                distance(y, visible.y, visible.height),
+                distance(x, visible.x, visible.width),
+            );
+            // Ties go to what paints later, over the rest.
+            if best.is_none_or(|(_, best, _)| key <= best) {
+                best = Some((leaf, key, (x, y)));
+            }
+        });
         let (leaf, _, (x, y)) = best?;
         let bounds = leaf.bounds;
         let visible = match only_visible {
@@ -996,7 +1003,7 @@ impl Ui {
                 (anchor, focus)
             };
             leaves.clear();
-            scene.selectable_text(root, |id| self.is_editor(id), |leaf| leaves.push(leaf));
+            self.selectable_leaves(&scene, root, |leaf| leaves.push(leaf));
             // The leaves from the start to the end: an end that does not show
             // (hidden, or in an unmounted row) by where it would be.
             let first = match &start {
@@ -1444,14 +1451,10 @@ impl Ui {
     fn region_ends(&self, root: NodeId) -> (Option<TextPoint>, Option<TextPoint>) {
         let scene = self.scene.borrow();
         let (mut first, mut last) = (None, None);
-        scene.selectable_text(
-            root,
-            |id| self.is_editor(id),
-            |leaf| {
-                first.get_or_insert(leaf.id);
-                last = Some(leaf.id);
-            },
-        );
+        self.selectable_leaves(&scene, root, |leaf| {
+            first.get_or_insert(leaf.id);
+            last = Some(leaf.id);
+        });
         let end = last
             .and_then(|id| text_of(&scene, id))
             .map_or(0, |text| text.len());
@@ -1700,16 +1703,55 @@ impl Ui {
     /// more than one line) and line breaks where `selected_text` has them;
     /// bold, italic, monospace (code), underline and strikethrough runs;
     /// runs coloured apart from the text the selection starts in; links
-    /// with their targets; and the rows of virtual lists with row text that
-    /// they have not mounted, as `selected_text` copies them.
+    /// with their targets; lists (`Role::List`, `Role::ListItem`) as `<ul>`
+    /// or `<ol start>` (as their markers read), their markers left to the
+    /// list; and the rows of virtual lists with row text that they have
+    /// not mounted, as `selected_text` copies them.
     pub fn selected_html(&self) -> String {
         let shown = self.selection_state().borrow().shown.clone();
         let provided = self.provided_rows(&shown);
         let state = self.selection_state().borrow();
         let scene = self.scene.borrow();
         let semantics = self.semantics.borrow();
-        // The block a text node is in: a heading, preformatted text, or a
-        // paragraph.
+        // The lists a text node is in, outermost first: each list, the item
+        // of it the node is in, and the list's tag (`ol` as its marker reads
+        // a number, with that number to start from).
+        let items_of = |id: NodeId| -> Vec<(NodeId, NodeId)> {
+            let mut items: Vec<(NodeId, NodeId)> = scene
+                .ancestors(id)
+                .take_while(|at| state.root != Some(*at))
+                .filter(|at| semantics.get(*at).is_some_and(|n| n.role == Role::ListItem))
+                .filter_map(|item| {
+                    let list = scene
+                        .ancestors(item)
+                        .take_while(|at| state.root != Some(*at))
+                        .find(|at| semantics.get(*at).is_some_and(|n| n.role == Role::List))?;
+                    Some((list, item))
+                })
+                .collect();
+            items.reverse();
+            items
+        };
+        let list_tag = |item: NodeId| -> (&'static str, Option<usize>) {
+            // Its marker: the leading text that `list_marker` takes for it.
+            let mut at = item;
+            while let Some(&first) = scene.children(at).first() {
+                at = first;
+            }
+            let number = (list_marker(&scene, &semantics, at) == Some(item))
+                .then(|| text_of(&scene, at))
+                .flatten()
+                .and_then(|marker| {
+                    let marker = marker.trim().trim_end_matches(['.', ')']);
+                    marker.parse::<usize>().ok()
+                });
+            match number {
+                Some(start) => ("ol", Some(start)),
+                None => ("ul", None),
+            }
+        };
+        // The block a text node is in: a heading, preformatted text, a list
+        // item's, or a paragraph.
         let block_of = |id: NodeId| -> HtmlBlock {
             let heading = std::iter::once(id)
                 .chain(scene.ancestors(id))
@@ -1732,6 +1774,8 @@ impl Ui {
             match heading {
                 Some(level) => HtmlBlock::Heading(level),
                 None if preformatted => HtmlBlock::Pre,
+                // A list item's text is the item's, inline in its `<li>`.
+                None if !items_of(id).is_empty() => HtmlBlock::Item,
                 None => HtmlBlock::Paragraph,
             }
         };
@@ -1752,11 +1796,13 @@ impl Ui {
         let mut block: Option<HtmlBlock> = None;
         let enter = |out: &mut String, block: &mut Option<HtmlBlock>, next: HtmlBlock| {
             if let Some(open) = block.take() {
-                out.push_str(&format!("</{}>", open.tag()));
+                out.push_str(&open.close());
             }
-            out.push_str(&format!("<{}>", next.tag()));
+            out.push_str(&next.open());
             *block = Some(next);
         };
+        // The lists open now: each, its item open in it, and its tag.
+        let mut open: Vec<(NodeId, NodeId, &'static str)> = Vec::new();
         let mut previous: Option<(NodeId, f32)> = None;
         let mut provided = provided.into_iter().peekable();
         let row = |out: &mut String, block: &mut Option<HtmlBlock>, text: &str| {
@@ -1776,10 +1822,54 @@ impl Ui {
             }
             let size = font_size(&scene, part.node);
             let level = block_of(part.node);
+            // Into another list item: the block and the items and lists it
+            // leaves close, and those it enters open.
+            let items = items_of(part.node);
+            let kept = open
+                .iter()
+                .zip(&items)
+                .take_while(|((list, item, _), (l, i))| list == l && item == i)
+                .count();
+            if kept < open.len() || kept < items.len() {
+                if let Some(done) = block.take() {
+                    out.push_str(&done.close());
+                }
+                previous = None;
+                // A list the next item is in, at the level it left, stays open.
+                let mut reopened = None;
+                while open.len() > kept {
+                    let (list, _, tag) = open.pop().unwrap();
+                    out.push_str("</li>");
+                    if open.len() == kept && items.get(kept).is_some_and(|(l, _)| *l == list) {
+                        reopened = Some(tag);
+                    } else {
+                        out.push_str(&format!("</{tag}>"));
+                    }
+                }
+                for &(list, item) in &items[kept..] {
+                    let tag = match reopened.take() {
+                        Some(tag) => tag,
+                        None => {
+                            let (tag, start) = list_tag(item);
+                            match start {
+                                Some(start) if start != 1 => {
+                                    out.push_str(&format!("<ol start=\"{start}\">"))
+                                }
+                                _ => out.push_str(&format!("<{tag}>")),
+                            }
+                            tag
+                        }
+                    };
+                    out.push_str("<li>");
+                    open.push((list, item, tag));
+                }
+            }
             match (block, previous) {
                 (Some(open), Some((before, before_size))) if open == level => {
                     match separator(&scene, before, part.node, before_size.min(size)) {
                         "\t" => out.push(' '),
+                        // An item's paragraphs break within its `<li>`.
+                        "\n\n" if level == HtmlBlock::Item => out.push_str("<br>"),
                         "\n\n" => enter(&mut out, &mut block, level),
                         _ => out.push_str("<br>"),
                     }
@@ -1833,8 +1923,12 @@ impl Ui {
             row(&mut out, &mut block, &text);
         }
         match block {
-            Some(open) => out.push_str(&format!("</{}>", open.tag())),
-            None => out.push_str("<p></p>"),
+            Some(done) => out.push_str(&done.close()),
+            None if open.is_empty() => out.push_str("<p></p>"),
+            None => {}
+        }
+        for (_, _, tag) in open.into_iter().rev() {
+            out.push_str(&format!("</li></{tag}>"));
         }
         out
     }
@@ -1871,7 +1965,7 @@ impl Ui {
                 return false;
             }
             let mut leaves = Vec::new();
-            scene.selectable_text(root, |id| self.is_editor(id), |leaf| leaves.push(leaf));
+            self.selectable_leaves(&scene, root, |leaf| leaves.push(leaf));
             let Some(at) = leaves.iter().position(|leaf| leaf.id == focus.node) else {
                 return false;
             };
@@ -2301,6 +2395,36 @@ fn shape(scene: &Scene, id: NodeId, width: f32) -> Option<Rc<dyn TextLayout>> {
     })
 }
 
+/// The list item whose marker `id` is: text hidden from assistive
+/// technology that leads a list item ("•", "3."), as markdown draws one.
+/// The list shows it, as a browser draws an `<li>`'s marker: a selection
+/// takes no part of it, its plain text leaves it out, and its HTML says
+/// `<ul>` or `<ol>` instead.
+fn list_marker(scene: &Scene, semantics: &Semantics, id: NodeId) -> Option<NodeId> {
+    if !matches!(
+        scene.kind(id),
+        NodeKind::Text { .. } | NodeKind::RichText { .. }
+    ) || !semantics.get(id).is_some_and(|s| s.hidden)
+    {
+        return None;
+    }
+    // Leading: on the way up to its item, each node its parent's first.
+    let mut at = id;
+    while let Some(parent) = scene.parent(at) {
+        if scene.children(parent).first() != Some(&at) {
+            return None;
+        }
+        if semantics
+            .get(parent)
+            .is_some_and(|s| s.role == Role::ListItem)
+        {
+            return Some(parent);
+        }
+        at = parent;
+    }
+    None
+}
+
 pub(crate) fn text_of(scene: &Scene, id: NodeId) -> Option<Arc<str>> {
     match scene.kind(id) {
         NodeKind::Text { text, .. } if !scene.font(id).masked => Some(text.clone()),
@@ -2383,13 +2507,14 @@ fn scene_offset(scene: &Scene, id: NodeId, semantic: usize) -> usize {
 }
 
 /// One styled run of `selected_html`: escaped, with its line breaks.
-/// A block of copied HTML: a paragraph, a heading of a level, or
-/// preformatted text.
+/// A block of copied HTML: a paragraph, a heading of a level,
+/// preformatted text, or a list item's text (inline in its `<li>`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HtmlBlock {
     Paragraph,
     Heading(usize),
     Pre,
+    Item,
 }
 impl HtmlBlock {
     fn tag(self) -> String {
@@ -2397,6 +2522,19 @@ impl HtmlBlock {
             Self::Paragraph => "p".to_owned(),
             Self::Heading(level) => format!("h{level}"),
             Self::Pre => "pre".to_owned(),
+            Self::Item => String::new(),
+        }
+    }
+    fn open(self) -> String {
+        match self {
+            Self::Item => String::new(),
+            _ => format!("<{}>", self.tag()),
+        }
+    }
+    fn close(self) -> String {
+        match self {
+            Self::Item => String::new(),
+            _ => format!("</{}>", self.tag()),
         }
     }
 }

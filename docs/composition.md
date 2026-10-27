@@ -316,6 +316,17 @@ false` and the defaults it keeps); those scripts then select a character at a
 time. Lao, Khmer and Burmese, which also need dictionaries, select by Unicode's
 boundaries either way.
 
+A list is a view with `Role::List` (Luau `role = "list"`) whose items have
+`Role::ListItem` (`"listitem"`). An item's marker ("•", "3.") is text that
+leads the item, hidden from assistive technology (`accessible_hidden()`, Luau
+`aria_hidden = true`), as markdown draws its lists. The list owns the marker,
+as a browser draws an `<li>`'s: a selection takes no part of it and its plain
+text leaves it out. Copied as HTML, the list is a `<ul>`, or an `<ol>` (with
+`start`) when its first copied item's marker reads as a number, each item an
+`<li>`, lists in items nested. Screen readers hear each item's place ("2 of
+5") unless the app sets `position_in_set` itself, and no marker. `zgx lint`'s
+`list-marker-hidden` finds a marker left as text.
+
 Holding a captured selection pointer outside an editor autoscrolls the document
 and extends the selection even without further pointer movement. Single-line
 fields scroll horizontally; multiline fields also scroll vertically, with

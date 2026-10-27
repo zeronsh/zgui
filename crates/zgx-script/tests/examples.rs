@@ -524,7 +524,9 @@ fn selectable_markdown_selects_as_one_document() {
         text.starts_with("Selectable markdown\n\nEverything below"),
         "{text:?}"
     );
-    assert!(text.contains("•\tDouble-press a word"), "{text:?}");
+    // The list's items, without their markers: the list's, as a page's.
+    assert!(text.contains("\n\nDouble-press a word"), "{text:?}");
+    assert!(!text.contains('•'), "{text:?}");
     assert!(
         text.contains("return ui.column { selectable = true"),
         "{text:?}"

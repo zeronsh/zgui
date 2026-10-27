@@ -349,6 +349,29 @@ impl AccessibilityTree {
             let child = self.id(*id);
             children.entry(parents[id]).or_default().push(child);
         }
+        // Where each list's items are in it ("3 of 5", as a browser's
+        // `<li>` reads), for items the app doesn't say it of: only a tree
+        // with a list counts.
+        let mut list_items: HashMap<NodeId, (usize, usize)> = HashMap::new();
+        if ordered.iter().any(|(_, s)| s.role == Role::List) {
+            let mut counts: HashMap<NodeId, usize> = HashMap::new();
+            let mut lists: Vec<(NodeId, NodeId, usize)> = Vec::new();
+            for (id, semantic) in &ordered {
+                let Some(&list) = parents.get(id) else {
+                    continue;
+                };
+                if semantic.role == Role::ListItem
+                    && semantics.get(list).is_some_and(|s| s.role == Role::List)
+                {
+                    let count = counts.entry(list).or_default();
+                    *count += 1;
+                    lists.push((*id, list, *count));
+                }
+            }
+            for (item, list, position) in lists {
+                list_items.insert(item, (position, counts[&list]));
+            }
+        }
         self.text_runs.retain(|owner, _| visible.contains(owner));
         self.blocks.retain(|owner| visible.contains(owner));
         self.long_runs.retain(|owner, _| visible.contains(owner));
@@ -421,8 +444,12 @@ impl AccessibilityTree {
                 && self.run_boxes.get(&id).copied() == runs_at.filter(|_| !runs.is_empty())
                 && self.blocks.contains(&id) == block
                 && self.cache.get(&native).is_some_and(|cached| {
+                    let counted = list_items.get(&id);
                     cached.bounds() == Some(bounds)
                         && cached.is_disabled() == disabled
+                        && cached.position_in_set()
+                            == semantic.position_in_set.or(counted.map(|c| c.0))
+                        && cached.size_of_set() == semantic.size_of_set.or(counted.map(|c| c.1))
                         && cached
                             .children()
                             .iter()
@@ -606,10 +633,11 @@ impl AccessibilityTree {
             ) {
                 n.add_action(Action::Focus);
             }
-            if let Some(position) = semantic.position_in_set {
+            let counted = list_items.get(&id);
+            if let Some(position) = semantic.position_in_set.or(counted.map(|c| c.0)) {
                 n.set_position_in_set(position);
             }
-            if let Some(size) = semantic.size_of_set {
+            if let Some(size) = semantic.size_of_set.or(counted.map(|c| c.1)) {
                 n.set_size_of_set(size);
             }
             if let Some(table) = &semantic.table {
@@ -2541,6 +2569,48 @@ mod vocabulary_tests {
     }
     fn find(nodes: &[Node], role: accesskit::Role) -> Vec<&Node> {
         nodes.iter().filter(|n| n.role() == role).collect()
+    }
+
+    /// A list's items say where they are in it ("2 of 3"), as a browser's
+    /// `<li>` does, where the app doesn't say so itself; and again when an
+    /// item joins. Markers hidden from assistive technology say nothing.
+    #[test]
+    fn list_items_say_where_they_are_in_their_list() {
+        let mut ui = Ui::new(400., 300.);
+        let count = ui.signal(3_usize);
+        let read = count.clone();
+        ui.mount(column().role(Role::List).child(keyed(
+            move || (0..read.get()).collect(),
+            |i: usize, _| {
+                row()
+                    .role(Role::ListItem)
+                    .child(text("•").accessible_hidden())
+                    .child(text(format!("Item {i}")))
+            },
+        )));
+        let mut adapter = AccessibilityTree::new();
+        let mut items = |ui: &mut Ui| {
+            ui.prepare_frame();
+            let nodes: Vec<Node> = adapter
+                .update(&ui.scene.borrow(), &ui.semantics.borrow(), None, "Test", 1.)
+                .nodes
+                .into_iter()
+                .map(|(_, node)| node)
+                .collect();
+            nodes
+                .iter()
+                .filter(|n| n.role() == accesskit::Role::ListItem)
+                .map(|n| (n.position_in_set(), n.size_of_set()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            items(&mut ui),
+            [(Some(1), Some(3)), (Some(2), Some(3)), (Some(3), Some(3))]
+        );
+        count.set(4);
+        let after = items(&mut ui);
+        assert!(after.contains(&(Some(1), Some(4))), "{after:?}");
+        assert!(after.contains(&(Some(4), Some(4))), "{after:?}");
     }
 
     #[test]
