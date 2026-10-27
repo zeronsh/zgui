@@ -6860,7 +6860,14 @@ impl GpuRenderer {
                     .get_or_init(|| metal_frame::MetalFrame::new(&self.device, &self.queue).ok())
                     .as_ref()
                     .is_some_and(|frame| frame.polylines()))
-            && draws.iter().all(|draw| match draw.shading {
+            // Special draws are emitted only after preparing their wgpu
+            // pipeline. These caches live for the renderer's lifetime, so
+            // empty caches prove the shading scan would accept every draw.
+            && ((self.fill_pipelines.is_empty()
+                && self.filter_pipelines.is_empty()
+                && self.blend_pipelines.is_empty()
+                && self.image_effect_pipeline.get().is_none())
+                || draws.iter().all(|draw| match draw.shading {
                 Shading::Fill(id) => self.fill_shaders.get(&id).is_some_and(|shader| {
                     self.metal_frame
                         .get_or_init(|| metal_frame::MetalFrame::new(&self.device, &self.queue).ok())
@@ -6875,7 +6882,7 @@ impl GpuRenderer {
                 // Layer shaders and blend modes take the wgpu path.
                 Shading::Filter(_) | Shading::Blend | Shading::FilterBlend(_) => false,
                 _ => true,
-            })
+            }))
             && effect_jobs.iter().all(|job| {
                 job.mask
                     .is_none_or(|id| self.images.get(&id).is_some_and(|image| image.2.is_some()))
