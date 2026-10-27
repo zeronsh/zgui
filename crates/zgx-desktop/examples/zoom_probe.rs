@@ -1,6 +1,7 @@
 //! A window's zoom, as a browser's page zoom (Command or Control with plus,
-//! minus and 0): wrapping text in a scroll view, the zoom, the viewport in
-//! points and a text's height in pixels printed as they change (`ZOOM`).
+//! minus and 0): wrapping text in a scroll view under a zoomable panel
+//! (`View::zoomable`), the zoom, the panel's, the viewport in points and a
+//! text's height in pixels printed as they change (`ZOOM`).
 //! On macOS it sends its own window ⌘=, ⌘=, ⌘- and ⌘0, as the keyboard
 //! would (`scripts/macos_zoom_probe.py`); `scripts/zoom_smoke.py` presses
 //! the keys on X11. `--idle 1.5` zooms once and then does nothing, for
@@ -18,6 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .run(|cx| {
             let offset = cx.ui.signal(0_f32);
+            let panel = cx.ui.signal(1_f32);
             let paragraphs: Vec<View> = (0..40)
                 .map(|i| {
                     text(format!(
@@ -29,10 +31,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .collect();
             let view = cx.render(
-                scroll(offset)
+                column()
                     .w_full()
                     .h_full()
-                    .child(column().w_full().p(12.).gap(8.).children(paragraphs)),
+                    .child(
+                        row()
+                            .id("panel")
+                            .zoomable(panel.clone())
+                            .p(8.)
+                            .child(text("A zoomable panel").shrink_0()),
+                    )
+                    .child(
+                        scroll(offset)
+                            .w_full()
+                            .grow()
+                            .child(column().w_full().p(12.).gap(8.).children(paragraphs)),
+                    ),
             );
             // `--idle 1.5`: zoomed once, then nothing runs (what an idle
             // window costs at a zoom).
@@ -58,8 +72,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             _ => 0.,
                         };
                         format!(
-                            "ZOOM zoom={:.2} viewport={:.0}x{:.0} text_points={size:.1}",
+                            "ZOOM zoom={:.2} panel={:.2} viewport={:.0}x{:.0} text_points={size:.1}",
                             ui.zoom(),
+                            panel.get(),
                             root.width,
                             root.height
                         )

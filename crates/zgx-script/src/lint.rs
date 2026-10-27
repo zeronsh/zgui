@@ -36,6 +36,8 @@
 //! - `animated-zoom`: a `zoom` given a tween or a spring, or animated by
 //!   `anime`: a zoom lays its subtree out again, so every frame of the
 //!   animation does; `scale` only composites.
+//! - `zoomable-zoom`: an element given both `zoom` and `zoomable`. Its
+//!   zoomable state sets its zoom; a `zoom` beside it fights that state.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -93,6 +95,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "animated-zoom",
         "a zoom animated frame by frame lays its subtree out on every frame",
+    ),
+    (
+        "zoomable-zoom",
+        "an element given both `zoom` and `zoomable`: its state sets the zoom",
     ),
 ];
 
@@ -851,6 +857,33 @@ impl Linter<'_> {
                 );
             }
         }
+        // `zoomable = state` in a table that also gives `zoom`.
+        if self.is(at, "zoomable")
+            && self.is(at + 1, "=")
+            && self.field(at + 2).is_some()
+            && let Some(table) = stack.last().filter(|frame| frame.open == Open::Brace)
+        {
+            let end = self.closing(table.at);
+            let mut depth = 0;
+            let zoom = (table.at + 1..end).any(|j| {
+                match self.tokens[j].text.as_str() {
+                    "(" | "{" | "[" => depth += 1,
+                    ")" | "}" | "]" => depth -= 1,
+                    _ => {}
+                }
+                depth == 0 && self.is(j, "zoom") && self.is(j + 1, "=") && !self.is(j - 1, ".")
+            });
+            if zoom {
+                self.report(
+                    at,
+                    "zoomable-zoom",
+                    "this element's `zoomable` state sets its zoom, and the `zoom` beside it \
+                     sets it again each time its style applies. Give the zoom to the state \
+                     alone (`ui.state(\"zoom\", 1.5)`) and drop `zoom`."
+                        .into(),
+                );
+            }
+        }
         // `ui.state(...)` inside a component, `each` row or `list` row.
         // A key built from the instance (`\`file:{pane}\``) is deliberate.
         let literal_key = self.tokens.get(at + 4).is_some_and(|t| {
@@ -1178,6 +1211,17 @@ mod tests {
     }
     fn one(line: u32, rule: &str) -> Vec<(u32, String)> {
         vec![(line, rule.to_string())]
+    }
+
+    #[test]
+    fn a_zoom_beside_a_zoomable_is_reported() {
+        let source = r##"
+local z = ui.state("z", 1)
+ui.column { zoomable = z, zoom = 2 }
+ui.column { zoomable = z, ui.div { zoom = 2 } }
+ui.column { zoomable = z }
+"##;
+        assert_eq!(rules(source), one(3, "zoomable-zoom"));
     }
 
     #[test]

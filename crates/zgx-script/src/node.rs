@@ -631,6 +631,10 @@ pub(crate) struct Events {
     pub wheel: Option<Handler>,
     /// `fn({ scale, x, y, local_x, local_y, … })`: a trackpad pinch.
     pub pinch: Option<Handler>,
+    /// `zoomable = state`: its zoom, bound to a number state the user
+    /// changes with Control and the wheel or a pinch over it
+    /// (`View::zoomable`).
+    pub zoomable: Option<Signal<Value>>,
     /// `fn(element)` once mounted: start animations here.
     pub mount: Option<Function>,
     /// `fn({ w, h }, element)` when layout gives the node a new size (and
@@ -708,6 +712,7 @@ impl Events {
         blur: None,
         wheel: None,
         pinch: None,
+        zoomable: None,
         mount: None,
         resize: None,
         visible: None,
@@ -2188,6 +2193,7 @@ fn set_handler(
         || matches!(
             key,
             "context_menu"
+                | "zoomable"
                 | "drag_preview"
                 | "drag_preview_anchor"
                 | "drag_preview_offset"
@@ -2199,6 +2205,10 @@ fn set_handler(
         return Ok(Some(value));
     }
     let events = events.get_or_insert_default();
+    if key == "zoomable" {
+        events.zoomable = Some(expect_state(&value, "`zoomable`")?);
+        return Ok(None);
+    }
     if let "drag_preview_anchor" | "drag_preview_offset" = key {
         let mlua::Value::Table(t) = value else {
             return Err(mlua::Error::runtime(format!("{key} takes {{ x, y }}")));

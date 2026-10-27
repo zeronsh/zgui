@@ -198,7 +198,7 @@ fn a_control_wheel_nothing_takes_zooms_a_level_a_notch_and_scrolls_nothing() {
     assert!(ui.wheel_zooms());
     // The host's Control-wheel: to the nodes first, then the zoom.
     let wheel = |ui: &mut Ui, delta_y: f32, notches: f32| {
-        let taken = zgx::zoom::wheel(|| {
+        let taken = zgx::zoom::wheel(40., || {
             ui.dispatch(InputEvent::Scroll {
                 x: 100.,
                 y: 100.,

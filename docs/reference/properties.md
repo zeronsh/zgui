@@ -149,8 +149,9 @@ The types: `Color` is `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(…)"`, `"rgba
 | --- | --- | --- | --- |
 | `zoom` | `number` | `1` | shows the subtree this many times as large, as CSS's `zoom`: it lays out again in its own points (its parent's room divided by the zoom) and takes the zoom times the room it needs there, so its siblings move; text and borders draw crisply at the size they show at. Zooms multiply with its ancestors' and the window's (`ui.window.zoom`); hit testing follows. Nonfinite or nonpositive zooms are `1` |
 | `zoom_fixed` | `boolean` | `false` | keeps it at its own size whatever zooms are around it, the window's included (a toolbar that stays put while the page zooms) |
+| `zoomable` | `State<number>` | | lets the user zoom it: its zoom is bound to this state, which Control with the wheel over it steps through the window's levels (Windows, Linux) and a trackpad pinch over it changes (every platform), from 0.25 to 5. The innermost zoomable under the pointer takes the gesture, at its limit too; elsewhere the window zooms. In a scroll view what is under the pointer stays there. Give the zoom to the state alone, not `zoom` beside it (`zgx lint`'s `zoomable-zoom`) |
 
-Unlike `scale`, which draws the laid-out subtree larger and leaves its place in the flow alone, a zoom changes layout: give `zoom` a value or a function of state, and animate `scale` instead. An animated zoom lays the subtree out on every frame (`zgx lint`'s `animated-zoom`). More in [styling](../styling.md#zoom).
+Unlike `scale`, which draws the laid-out subtree larger and leaves its place in the flow alone, a zoom changes layout: give `zoom` a value or a function of state, and animate `scale` instead. An animated zoom lays the subtree out on every frame (`zgx lint`'s `animated-zoom`). The window's `ui.window.zoomable` (whether the user may zoom the window) and an element's `zoomable` (the user zooms it, through this state) are the same idea at two levels. More in [styling](../styling.md#zoom).
 
 ```lua
 local big = ui.state("big", false)
@@ -161,6 +162,15 @@ return ui.column {
 	ui.button { on_click = function() big:set(not big:peek()) end, "Zoom" },
 	ui.text { "Zoomed with what it holds" },
 	ui.row { zoom_fixed = true, ui.text { "Kept at its own size" } },
+}
+```
+
+```lua
+-- A document the user zooms where they point, the window zooming elsewhere.
+local zoom = ui.state("doc_zoom", 1)
+return ui.scroll {
+	h_full = true,
+	ui.column { zoomable = zoom, p = 16, ui.text { "Control and the wheel, or a pinch, zoom this" } },
 }
 ```
 

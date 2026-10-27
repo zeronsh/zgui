@@ -5,8 +5,9 @@ and one down (in Xvfb's own pointer, inside the window).
 
 Checks that each key steps through Chrome's levels (110%, 125%, back to
 110% and 100%), that the window's logical viewport shrinks and grows by the
-zoom while the window keeps its size, and that text keeps its size in points
-(it draws larger in pixels)."""
+zoom while the window keeps its size, that text keeps its size in points
+(it draws larger in pixels), and that Control with the wheel over the
+zoomable panel at the top zooms the panel, not the window."""
 import argparse
 import json
 import os
@@ -75,6 +76,17 @@ def main():
                 run("xdotool", "keydown", "ctrl", "click", button, "keyup", "ctrl")
                 until(f"{zoom} after ctrl+wheel {button}", lambda: lines()[-1].get("zoom") == zoom)
             checks["control-wheel steps a level a notch"] = True
+            # Over the zoomable panel at the top: the panel zooms, a level a
+            # notch, and the window doesn't (a gesture of its own: one stays
+            # with what took it for 300 ms).
+            time.sleep(.4)
+            run("xdotool", "mousemove", "--window", window, "20", "16")
+            for button, panel in [("4", "1.10"), ("5", "1.00")]:
+                run("xdotool", "keydown", "ctrl", "click", button, "keyup", "ctrl")
+                until(f"panel {panel} after ctrl+wheel {button}", lambda: lines()[-1].get("panel") == panel)
+                time.sleep(.4)
+            checks["control-wheel over a zoomable panel zooms the panel, not the window"] = all(
+                line["zoom"] == "1.00" for line in lines() if line.get("panel") == "1.10")
             seen = lines()
             sizes = {line["zoom"]: tuple(map(float, line["viewport"].split("x"))) for line in seen}
             base = sizes["1.00"]

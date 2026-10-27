@@ -271,3 +271,177 @@ fn a_zoomed_node_keeps_its_zoom_when_its_transform_goes() {
     ));
     assert_eq!(ui.scene.borrow().zoom_around(panel), 2.);
 }
+
+/// The pointer moved to `at`, as the host says before a wheel or a pinch
+/// there (they go to what the pointer is over).
+fn point(ui: &mut Ui, at: (f32, f32)) {
+    ui.dispatch(zgx::input::InputEvent::PointerMove { x: at.0, y: at.1 });
+}
+/// A Control-wheel the host dispatches (`zgx::zoom::wheel`): to the nodes
+/// first; whether one took it.
+fn control_wheel(ui: &mut Ui, at: (f32, f32), notches: f32) -> bool {
+    point(ui, at);
+    zgx::zoom::wheel(40., || {
+        ui.dispatch(zgx::input::InputEvent::Scroll {
+            x: at.0,
+            y: at.1,
+            delta_x: 0.,
+            delta_y: -40. * notches,
+        })
+        .default_prevented
+    })
+}
+fn pinch(ui: &mut Ui, at: (f32, f32), delta: f32) -> bool {
+    point(ui, at);
+    ui.dispatch(zgx::input::InputEvent::Pinch {
+        x: at.0,
+        y: at.1,
+        delta,
+    })
+    .default_prevented
+}
+
+#[test]
+fn a_zoomable_takes_the_control_wheel_over_it_a_level_a_notch() {
+    let (mut ui, zoom, handle) = panel_and_rest();
+    // Over it: Chrome's levels, a notch at a time, and the window's left be.
+    assert!(control_wheel(&mut ui, (20., 20.), 1.));
+    ui.prepare_frame();
+    assert_eq!(zoom.get(), 1.1);
+    assert!(control_wheel(&mut ui, (20., 20.), 1.));
+    ui.prepare_frame();
+    assert_eq!(zoom.get(), 1.25);
+    assert!(near(
+        shown(&ui, &handle, "panel"),
+        Rect::new(0., 0., 125., 62.5)
+    ));
+    assert!(control_wheel(&mut ui, (20., 20.), -2.));
+    ui.prepare_frame();
+    assert_eq!(zoom.get(), 1.);
+    // A touchpad's half notches add up.
+    assert!(control_wheel(&mut ui, (20., 20.), 0.5));
+    assert_eq!(zoom.get(), 1.);
+    assert!(control_wheel(&mut ui, (20., 20.), 0.5));
+    assert_eq!(zoom.get(), 1.1);
+    // Elsewhere (a gesture of its own: one stays with what took it, as a
+    // scroll view's does) it isn't taken: the window zooms there.
+    let (mut ui, zoom, handle) = panel_and_rest();
+    let rest = shown(&ui, &handle, "rest");
+    assert!(!control_wheel(&mut ui, (rest.x + 10., rest.y + 10.), 1.));
+    assert_eq!(zoom.get(), 1.);
+    // A plain wheel over it scrolls as ever.
+    let (mut ui, zoom, _) = panel_and_rest();
+    point(&mut ui, (20., 20.));
+    let plain = ui.dispatch(zgx::input::InputEvent::Scroll {
+        x: 20.,
+        y: 20.,
+        delta_x: 0.,
+        delta_y: -40.,
+    });
+    assert!(!plain.default_prevented);
+    assert_eq!(zoom.get(), 1.);
+}
+
+/// A zoomable panel beside another box.
+fn panel_and_rest() -> (Ui, zgx::reactive::Signal<f32>, ViewHandle) {
+    let mut ui = Ui::new(600., 400.);
+    let zoom = ui.signal(1_f32);
+    let handle = ui.mount(
+        row()
+            .child(
+                div()
+                    .id("panel")
+                    .zoomable(zoom.clone())
+                    .child(div().w(100.).h(50.)),
+            )
+            .child(div().id("rest").w(100.).h(50.)),
+    );
+    ui.prepare_frame();
+    (ui, zoom, handle)
+}
+
+#[test]
+fn a_pinch_zooms_a_zoomable_and_stays_taken_at_its_limits() {
+    let mut ui = Ui::new(600., 400.);
+    let zoom = ui.signal(1_f32);
+    ui.mount(div().zoomable(zoom.clone()).child(div().w(100.).h(50.)));
+    ui.prepare_frame();
+    // Near its corner, over it at every zoom.
+    assert!(pinch(&mut ui, (5., 5.), 0.2));
+    assert!((zoom.get() - 1.2).abs() < 1e-5);
+    // Pinched past 500%: held there, and still taken.
+    for _ in 0..30 {
+        assert!(pinch(&mut ui, (5., 5.), 0.5));
+        ui.prepare_frame();
+    }
+    assert_eq!(zoom.get(), 5.);
+    for _ in 0..60 {
+        assert!(pinch(&mut ui, (5., 5.), -0.5));
+        ui.prepare_frame();
+    }
+    assert_eq!(zoom.get(), 0.25);
+}
+
+#[test]
+fn the_innermost_zoomable_under_the_pointer_takes_the_gesture() {
+    let nested = || {
+        let mut ui = Ui::new(600., 400.);
+        let (outer, inner) = (ui.signal(1_f32), ui.signal(1_f32));
+        let handle = ui.mount(
+            div().id("outer").zoomable(outer.clone()).p(20.).child(
+                div()
+                    .id("inner")
+                    .zoomable(inner.clone())
+                    .child(div().w(80.).h(40.)),
+            ),
+        );
+        ui.prepare_frame();
+        (ui, outer, inner, handle)
+    };
+    let (mut ui, outer, inner, handle) = nested();
+    let at = shown(&ui, &handle, "inner");
+    assert!(control_wheel(&mut ui, (at.x + 5., at.y + 5.), 1.));
+    assert_eq!((outer.get(), inner.get()), (1., 1.1));
+    // At its limit, the inner keeps it: the outer never zooms in its place.
+    inner.set(5.);
+    ui.prepare_frame();
+    let at = shown(&ui, &handle, "inner");
+    assert!(control_wheel(&mut ui, (at.x + 5., at.y + 5.), 1.));
+    assert_eq!((outer.get(), inner.get()), (1., 5.));
+    // Over the outer alone (a gesture of its own), the outer.
+    let (mut ui, outer, inner, _) = nested();
+    assert!(control_wheel(&mut ui, (5., 5.), 1.));
+    assert_eq!((outer.get(), inner.get()), (1.1, 1.));
+}
+
+#[test]
+fn what_is_under_the_pointer_stays_there_as_a_zoomable_zooms_in_a_scroll_view() {
+    let mut ui = Ui::new(300., 200.);
+    let offset = ui.signal(0_f32);
+    let zoom = ui.signal(1_f32);
+    let handle = ui.mount(
+        scroll(offset.clone()).w_full().h(200.).child(
+            column()
+                .id("doc")
+                .zoomable(zoom.clone())
+                .children((0..20).map(|i| div().id(format!("row{i}")).w(200.).h(40.))),
+        ),
+    );
+    ui.prepare_frame();
+    // The pointer over row 3, 10 points into it.
+    let row = shown(&ui, &handle, "row3");
+    let pointer = (50., row.y + 10.);
+    assert!(control_wheel(&mut ui, pointer, 4.));
+    ui.prepare_frame();
+    assert_eq!(zoom.get(), 1.75);
+    // Row 3 is 70 tall now; the point 10 into it is 17.5 into it, under the
+    // pointer still.
+    let row = shown(&ui, &handle, "row3");
+    assert!(
+        (row.y + 17.5 - pointer.1).abs() < 1.,
+        "row 3 at {}, the pointer at {}",
+        row.y,
+        pointer.1
+    );
+    assert!(offset.get() > 0.);
+}

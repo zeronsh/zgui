@@ -3477,3 +3477,32 @@ fn an_element_zooms_from_a_script_and_follows_its_state() {
     let fixed = shown(&mut h, "fixed");
     assert_eq!((fixed.width, fixed.height), (30., 10.));
 }
+
+#[test]
+fn a_zoomable_element_takes_the_control_wheel_and_its_state_follows() {
+    let mut h = Harness::inline(
+        r##"local zoom = ui.state("zoom", 1)
+        return ui.column {
+            ui.column { id = "doc", zoomable = zoom, ui.div { w = 100, h = 50 } },
+            ui.text { id = "level", function() return string.format("%.2f", zoom:get()) end } }"##,
+    );
+    h.frames(2);
+    h.ui.prepare_frame();
+    h.ui.dispatch(zgx::input::InputEvent::PointerMove { x: 20., y: 20. });
+    let taken = zgx::zoom::wheel(40., || {
+        h.ui.dispatch(zgx::input::InputEvent::Scroll {
+            x: 20.,
+            y: 20.,
+            delta_x: 0.,
+            delta_y: -40.,
+        })
+        .default_prevented
+    });
+    assert!(taken, "the zoomable takes the Control-wheel over it");
+    h.frames(2);
+    h.ui.prepare_frame();
+    // A level in, shown larger, and the script's state says so.
+    let doc = h.find("doc").unwrap();
+    assert_eq!(h.ui.scene.borrow().transformed_bounds(doc).width, 110.);
+    assert_eq!(h.text("level"), "1.10");
+}

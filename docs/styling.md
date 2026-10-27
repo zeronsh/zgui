@@ -140,9 +140,20 @@ ui.column { zoom = 1.5, ui.text { "Larger" } }
 ui.row { zoom_fixed = true, toolbar }
 ```
 
+`zoomable(state)` lets the user zoom a node: its zoom is bound to `state`, which Control with the wheel over it steps through the window's levels (Windows and Linux, where the window zooms so) and a trackpad pinch over it changes (every platform, macOS included), from 25% to 500%. The innermost zoomable under the pointer takes the gesture, at its limit too, and a wheel gesture stays with it as it grows; the window zooms only where no zoomable is under the pointer. In a scroll view what is under the pointer stays there; elsewhere the node zooms about its top-left. The keyboard's zoom stays the window's. `Ui::set_zoomable(bool)` (whether the user may zoom the window) and `zoomable(state)` (the user zooms this node, through this state) are the same idea at two levels.
+
+```rust
+# use zgx::compose::prelude::*;
+# let ui = zgx::widgets::Ui::new(400., 300.);
+let zoom = ui.signal(1_f32);
+let document = scroll(ui.signal(0.)).child(column().zoomable(zoom.clone()).child(text("Zoom me")));
+```
+
+Give the zoom to the state alone: a `zoom(n)` on the same node sets it again each time its style applies.
+
 A zoomed node's `bounds` are in its own points; `Scene::transformed_bounds` gives where it shows, and hit testing, damage and accessibility follow that. A zoom of 1 is no zoom at all: no layer, the same layout and paint. Native views inside a zoomed node are placed at its zoom, and a web page's zoom and a terminal's text follow it.
 
-**For now** a zoomed node paints as a cached layer rasterized at its exact scale: free while it holds still, but content changing inside it (typing, a caret) repaints the whole layer, where the same content at the window's zoom repaints only what changed. A direct path, drawing zoomed content in the window's own pass, removes that cost. The CPU reference renderer samples zoomed layers at 1×, so they are not crisp there.
+A zoomed node paints as a cached layer rasterized at its exact scale: free while it holds still, and content changing inside it (typing, a caret) repaints only the part of the layer the change reaches. The CPU reference renderer samples zoomed layers at 1×, so they are not crisp there.
 
 ## Image fitting
 

@@ -5589,6 +5589,10 @@ impl NodeHandle {
     pub fn node(&self) -> NodeId {
         self.node
     }
+    /// The `Ui` it is mounted in.
+    pub(crate) fn ui_handle(&self) -> &WeakUi {
+        &self.ui
+    }
     pub(crate) fn weak_ui(&self) -> WeakUi {
         self.ui.clone()
     }

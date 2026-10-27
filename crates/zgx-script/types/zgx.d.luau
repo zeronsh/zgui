@@ -1575,6 +1575,8 @@ export type NodeProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
 	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: State<number>?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,
@@ -1899,6 +1901,8 @@ export type Props = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -2138,6 +2142,7 @@ export type Props_on_focus = (Handler | Action)?
 export type Props_on_blur = (Handler | Action)?
 export type Props_on_wheel = (((e: WheelEvent) -> ...boolean?) | Action)?
 export type Props_on_pinch = (((e: PinchEvent) -> ...boolean?) | Action)?
+export type Props_zoomable = State<number>?
 export type Props_on_mount = ((element: Element) -> ...unknown)?
 export type Props_on_resize = ((size: Size, element: Element) -> ...unknown)?
 export type Props_on_visible = ((visible: boolean, element: Element) -> ...unknown)?
@@ -2422,6 +2427,8 @@ export type ContainerProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -2746,6 +2753,8 @@ export type ScrollProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -3077,6 +3086,8 @@ export type TextProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -3400,6 +3411,8 @@ export type MarkdownViewProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -3771,6 +3784,8 @@ export type RichProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -4088,6 +4103,8 @@ export type ImageProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -4415,6 +4432,8 @@ export type SvgProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -4734,6 +4753,8 @@ export type CanvasProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -5083,6 +5104,8 @@ export type CheckboxProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -5408,6 +5431,8 @@ export type InputProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -5789,6 +5814,8 @@ export type ProgressProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -6107,6 +6134,8 @@ export type SliderProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -6438,6 +6467,8 @@ export type SegmentedProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -6765,6 +6796,8 @@ export type StepperProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -7093,6 +7126,8 @@ export type DisclosureProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -7420,6 +7455,8 @@ export type AccordionProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -7735,6 +7772,8 @@ export type SectionProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -8061,6 +8100,8 @@ export type SeparatorProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -8384,6 +8425,8 @@ export type TabsProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -8715,6 +8758,8 @@ export type TreeProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -9056,6 +9101,8 @@ export type DataGridProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -9393,6 +9440,8 @@ export type CalendarProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -9722,6 +9771,8 @@ export type DatePickerProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -10049,6 +10100,8 @@ export type TimeFieldProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -10375,6 +10428,8 @@ export type ComboboxProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -10710,6 +10765,8 @@ export type CommandPaletteProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -11033,6 +11090,8 @@ export type SelectProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -11359,6 +11418,8 @@ export type SplitProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -11697,6 +11758,8 @@ export type ListProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -12074,6 +12137,8 @@ export type LayerProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -12397,6 +12462,8 @@ export type ModalProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -12735,6 +12802,8 @@ export type PopoverProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -13074,6 +13143,8 @@ export type MenuItemProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -13400,6 +13471,8 @@ export type SubmenuProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -13726,6 +13799,8 @@ export type WebViewProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -14066,6 +14141,8 @@ export type TerminalProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -14384,6 +14461,8 @@ export type SlotProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -14707,6 +14786,8 @@ export type EachOptions = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,
@@ -15033,6 +15114,8 @@ export type PresenceOptions = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: Props_on_wheel,
 	on_pinch: Props_on_pinch,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: Props_zoomable,
 	on_mount: Props_on_mount,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: Props_on_resize,

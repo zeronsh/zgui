@@ -1531,6 +1531,8 @@ export type NodeProps = {
 	-- Return true to take the gesture from the scroll views around it.
 	on_wheel: (((e: WheelEvent) -> ...boolean?) | Action)?,
 	on_pinch: (((e: PinchEvent) -> ...boolean?) | Action)?,
+	-- Its zoom, bound to this state: Control-wheel or a pinch over it zooms it (0.25 to 5).
+	zoomable: State<number>?,
 	on_mount: ((element: Element) -> ...unknown)?,
 	-- When layout gives it a new size, and at its first layout.
 	on_resize: ((size: Size, element: Element) -> ...unknown)?,

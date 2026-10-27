@@ -2180,6 +2180,19 @@ fn styled(
     // The node's handle, for local pointer coordinates and elements: made
     // only for what reads it.
     let events = node.events();
+    // Zoomable: its zoom bound to the script's number state, read and
+    // written there (no context of its own to bridge it).
+    if let Some(zoom) = &events.zoomable {
+        let (read, written) = (zoom.clone(), zoom.clone());
+        let zoom = zoom.clone();
+        view = view.zoomable_with(
+            Box::new(move || number(&zoom.get())),
+            Box::new(move || read.with_untracked(number)),
+            Box::new(move |next| {
+                written.set(Value::Num(f64::from(next)));
+            }),
+        );
+    }
     let handle: Option<Rc<OnceCell<NodeHandle>>> = (element.is_some()
         || events.any_input()
         || events.any_drag()
