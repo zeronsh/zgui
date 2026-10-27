@@ -99,9 +99,14 @@ pub use zgx::web_view::{WebProfile, WebView, WebViewEvent, WebViewOptions, WebVi
 mod focus_memory;
 mod frame_source;
 mod native_ime;
+// Windows' Text Services Framework: the document its input methods read.
 pub mod presentation;
 pub mod raster;
 pub mod terminal_process;
+#[cfg(any(windows, test))]
+mod text_store;
+#[cfg(windows)]
+mod tsf;
 pub use terminal_process::{
     ForegroundProcess, resolve_terminal_processes, terminal_processes_changed,
     terminal_processes_pushed,

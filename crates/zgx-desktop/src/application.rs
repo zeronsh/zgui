@@ -1390,6 +1390,12 @@ struct Host {
     /// zgx brought the touch keyboard up, and puts it away.
     #[cfg(windows)]
     touch_keyboard: bool,
+    /// Windows' Text Services Framework for this window (`ZGX_TSF=1`), made
+    /// when an editor first takes an input method; `tsf_tried` once tried.
+    #[cfg(windows)]
+    tsf: Option<crate::tsf::Tsf>,
+    #[cfg(windows)]
+    tsf_tried: bool,
     /// Where the trackpad's scroll gesture is: what its phases report
     /// (`InputEvent::ScrollGesture`, for elastic scrolling).
     trackpad: Trackpad,
@@ -1605,6 +1611,10 @@ impl Host {
             touch_last: false,
             #[cfg(windows)]
             touch_keyboard: false,
+            #[cfg(windows)]
+            tsf: None,
+            #[cfg(windows)]
+            tsf_tried: false,
             trackpad: Trackpad::Idle,
             wheel_tape,
             pending_file_drops: Default::default(),
@@ -1843,8 +1853,35 @@ impl Host {
         }
         // Update native permission before event delivery and before hidden-window
         // drawing gates. Read-only editors retain logical focus but no IME context.
-        let target = crate::native_ime::editable_editor(&self.context.ui, self.native_focused)
-            .map(|editor| editor.node);
+        let editor = crate::native_ime::editable_editor(&self.context.ui, self.native_focused);
+        let target = editor.as_ref().map(|editor| editor.node);
+        // On Windows with the Text Services Framework, it takes the editor
+        // instead of IMM32's context (`tsf.rs`).
+        #[cfg(windows)]
+        if let Some(window) = &self.window
+            && target.is_some()
+            && !std::mem::replace(&mut self.tsf_tried, true)
+        {
+            self.tsf = crate::tsf::Tsf::for_window(window, self.scale_factor);
+        }
+        #[cfg(windows)]
+        if let Some(tsf) = &mut self.tsf {
+            if target != self.ime_target {
+                tsf.focus(editor);
+                self.ime_target = target;
+                if let Some(window) = &self.window {
+                    if target.is_some() && self.touch_last {
+                        self.touch_keyboard = crate::input_pane::show(window);
+                    } else if target.is_none() && std::mem::take(&mut self.touch_keyboard) {
+                        crate::input_pane::hide(window);
+                    }
+                }
+            }
+            tsf.after_dispatch();
+            return;
+        }
+        #[cfg(not(windows))]
+        let _ = editor;
         if let Some(window) = &self.window
             && target != self.ime_target
         {
@@ -2261,6 +2298,12 @@ impl Host {
                 .unwrap_or_else(|| ui.scene.borrow().bounds(editor.caret))
         });
         if caret != self.ime_geometry {
+            // The Text Services Framework asks where (`GetTextExt`) when told.
+            #[cfg(windows)]
+            if let Some(tsf) = &self.tsf {
+                tsf.layout_changed();
+                tsf.after_dispatch();
+            }
             if let Some(r) = caret {
                 // XIM takes a baseline spot and ignores the supplied rectangle
                 // height; Wayland/macOS consume the actual caret rectangle.
@@ -3401,6 +3444,10 @@ impl Host {
                     self.cursor.1 *= ratio;
                 }
                 self.scale_factor = scale_factor;
+                #[cfg(windows)]
+                if let Some(tsf) = &self.tsf {
+                    tsf.set_scale(scale_factor);
+                }
                 if let Some(renderer) = &mut self.renderer {
                     renderer.set_scale_factor(scale_factor as f32);
                 }
