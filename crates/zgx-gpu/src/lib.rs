@@ -7078,6 +7078,7 @@ impl GpuRenderer {
         // Shader fills and image effects have no pipelines writing two
         // targets at once.
         let defer = !self.in_layer
+            && self.single_pass_format.is_some()
             && !draws.iter().any(|draw| {
                 matches!(
                     draw.shading,
@@ -7089,7 +7090,6 @@ impl GpuRenderer {
                 )
             })
             && (!self.present_unpremultiplies || self.background.3 == 255)
-            && self.single_pass_format.is_some()
             && !self.copy_present
             && copies.is_empty();
         if !defer && !self.in_layer {
@@ -8006,13 +8006,17 @@ impl GpuRenderer {
         let pixels = region.width * region.height * self.scale * self.scale;
         let unblended = pixels >= SPLIT_PIXELS;
         for draw in draws {
+            // (Kept frames: most draws miss the region, so before the shading.)
+            if KEPT && (!region.intersects(draw.bounds) || draw.end <= draw.start.max(first)) {
+                continue;
+            }
             let shading = match draw.shading {
                 Shading::Opaque if !unblended => Shading::Basic,
                 // Drawn alone, after their backdrop's copy (`encode_blended`).
                 Shading::Blend | Shading::FilterBlend(_) => continue,
                 shading => shading,
             };
-            if !region.intersects(draw.bounds) || draw.end <= draw.start.max(first) {
+            if !KEPT && (!region.intersects(draw.bounds) || draw.end <= draw.start.max(first)) {
                 continue;
             }
             let start = draw.start.max(first);
