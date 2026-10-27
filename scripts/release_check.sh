@@ -23,6 +23,11 @@
 #    packaged and runs a script headless: zgx's own lockfile holds its
 #    dependencies where they were tested, which a new app's does not
 #    (luau0-src 0.22.1 failed every Luau app at start, unseen by 1 and 2).
+# 4. The previous release's zgx-desktop and zgx-gpu, as crates.io has them,
+#    build against the zgx 2 packaged: an app on them that runs
+#    `cargo update -p zgx` gets this zgx, and they call it in places a
+#    doc(hidden) or return-type change breaks without semver-checks seeing
+#    it (zgx-desktop 0.1.3 calls `zoom::wheel`).
 # Before them: zgx's Thai word dictionary (crates/zgx/data/thaidict.bin) is
 # what scripts/extract_thai_dictionary.py extracts from the locked ICU4X
 # data, and zgx's package carries its Unicode licence.
@@ -93,3 +98,26 @@ return ui.column {
 }
 RUST
 cargo run --manifest-path "$app/Cargo.toml" --target-dir "$target"
+echo "== the previous release's zgx-desktop and zgx-gpu against this zgx"
+# The newest zgx-desktop on crates.io below this version.
+previous=$(curl -sfL -A zgx-release-check https://index.crates.io/zg/x-/zgx-desktop |
+    grep -o '"vers":"[^"]*"' | cut -d'"' -f4 |
+    { cat; echo "$zgx"; } | sort -V | awk -v this="$zgx" '$0 == this { print last; exit } { last = $0 }')
+if [ -z "$previous" ]; then
+    echo "no earlier zgx-desktop on crates.io"
+    exit 0
+fi
+compat="$target/compat-app"
+rm -rf "$compat"
+mkdir -p "$compat/src"
+{
+    printf '[package]\nname = "zgx-compat-app"\nversion = "0.0.0"\nedition = "2024"\npublish = false\n\n'
+    printf '[workspace]\n\n[dependencies]\nzgx = "=%s"\nzgx-desktop = "=%s"\nzgx-gpu = "=%s"\n\n[patch.crates-io]\n' "$zgx" "$previous" "$previous"
+    printf 'zgx = { path = "../package/zgx-%s" }\n' "$zgx"
+    for fork in $forks; do
+        printf 'zgx-%s = { path = "../package/zgx-%s-%s" }\n' "$fork" "$fork" "$(version "vendor/$fork/Cargo.toml")"
+    done
+} > "$compat/Cargo.toml"
+printf 'use zgx_desktop as _;\nuse zgx_gpu as _;\nfn main() {}\n' > "$compat/src/main.rs"
+cargo check --manifest-path "$compat/Cargo.toml" --target-dir "$target"
+echo "zgx-desktop and zgx-gpu $previous build against zgx $zgx"
