@@ -52,3 +52,5 @@ mod editor_undo_keys;
 mod editor_wrap_navigation;
 #[path = "../ime_clauses.rs"]
 mod ime_clauses;
+#[path = "../selection_parity.rs"]
+mod selection_parity;
