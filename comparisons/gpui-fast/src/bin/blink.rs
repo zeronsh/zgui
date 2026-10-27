@@ -29,6 +29,12 @@ impl Render for Scene {
 }
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
+        // The comparisons' one font file (comparisons/fonts), as every framework loads it.
+        if let Some(bytes) = zgx_workload::font_file() {
+            cx.text_system()
+                .add_fonts(vec![std::borrow::Cow::Owned(bytes)])
+                .unwrap();
+        }
         let seconds = Workload::from_env().seconds;
         let bounds = Bounds::centered(None, size(px(960.), px(720.)), cx);
         let start = Instant::now();
@@ -54,7 +60,7 @@ fn main() {
                     .await;
                 if seconds > 0. && start.elapsed().as_secs_f64() >= seconds {
                     let _ =
-                        window.update(cx, |scene, _, _| eprintln!("blink_frames={}", scene.frames));
+                        window.update(cx, |scene, _, _| eprintln!("blink_frames={} workload_ticks=0", scene.frames));
                     let _ = cx.update(|cx| cx.quit());
                     return;
                 }

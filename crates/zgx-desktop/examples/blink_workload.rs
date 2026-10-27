@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     sleep(Duration::from_millis(PHASE_MS)).await;
                     if seconds > 0. && start.elapsed().as_secs_f64() >= seconds {
-                        eprintln!("blink_frames={blinks}");
+                        eprintln!("blink_frames={blinks} workload_ticks=0");
                         window.close();
                         return;
                     }

@@ -32,19 +32,23 @@ Report, once, as the run ends, on stdout or stderr (the runner logs both and che
 | --- | --- |
 | lab, heavy, vlist | `workload_ticks=N` (or lab's `{"framework":…,"ticks":N}`) |
 | animate | `animation_frames=N fps=F` |
-| blink | `blink_frames=N` |
+| blink | `blink_frames=N workload_ticks=0` |
+| field | `workload_ticks=0` |
 
 `N` is the ticks run (0 in idle); a run that reports none, or exits
 otherwise, fails its trial.
 
 Binaries: zgx's are examples (`heavy_workload`, `component_workload`,
-`animation_workload`, `vlist_workload`, `blink_workload`; in Luau, zgx-script's `vlist_luau`); GPUI Fast's are `heavy`,
+`animation_workload`, `vlist_workload`, `blink_workload`, `field_workload`; in Luau, zgx-script's `vlist_luau`); GPUI Fast's are `heavy`,
 `zgx-compare-gpui-fast` (lab), `animate`, `vlist`, `blink`; MyGo's are
-`comparisons/mygo/bin/{heavy,lab,animate,vlist,blink}`.
+`comparisons/mygo/bin/{heavy,lab,animate,vlist,blink,field}`, Rune's `comparisons/rune/bin/` the same.
 
 blink is a caret blinking in a still window (`zgx_workload::blink`): a 2 ×
-20 point bar shown and hidden every 530 ms, nothing else changing, for an
-idle focused field's memory and wakes.
+20 point bar shown and hidden every 530 ms, nothing else changing. field is
+a focused text field left alone, each framework's own (`field_workload`,
+MyGo's `TextInput`, Rune's `text_input`; GPUI has none, so the field scene
+runs its blink): an idle focused window's memory and wakes, sampled as idle
+is (20-30 s after launch).
 
 Blank rows (vlist) are counted from outside, by a probe capturing the
 window: no adapter needs a hook for it.
