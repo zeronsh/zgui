@@ -1939,6 +1939,14 @@ impl PickedPipelines {
 }
 /// Pipelines for each shading, and the one clearing a region (see
 /// `GpuRenderer::encode_damage`).
+/// The state batches set on a pass (`encode_batch`), to set each only when
+/// it changes: `None` until a batch sets it.
+#[derive(Default)]
+struct Bound {
+    shading: Option<Shading>,
+    scissor: Option<Scissor>,
+    group: Option<*const wgpu::BindGroup>,
+}
 #[derive(Clone, Copy)]
 struct Picks<'p> {
     full: &'p wgpu::RenderPipeline,
@@ -7588,8 +7596,8 @@ impl GpuRenderer {
         first: u32,
         stats: &mut GpuStats,
     ) {
-        // The pipeline set on `pass`: the caller's, until a batch sets one.
-        let mut current = None;
+        // What the batches set on `pass`: the caller's, until one sets it.
+        let mut current = Bound::default();
         self.batches(region, draws, first, |batch| {
             self.encode_batch(pass, pipelines, &mut current, batch, stats)
         });
@@ -7704,31 +7712,37 @@ impl GpuRenderer {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         pipelines: &dyn Fn(Shading) -> &'p wgpu::RenderPipeline,
-        current: &mut Option<Shading>,
+        current: &mut Bound,
         batch: Batch,
         stats: &mut GpuStats,
     ) {
-        let Some((x, y, w, h)) = scissor(batch.rect, self.scale, self.width, self.height) else {
+        let Some(rect) = scissor(batch.rect, self.scale, self.width, self.height) else {
             return;
         };
-        if *current != Some(batch.shading) {
+        if current.shading != Some(batch.shading) {
             pass.set_pipeline(pipelines(batch.shading));
-            *current = Some(batch.shading);
+            current.shading = Some(batch.shading);
         }
-        pass.set_scissor_rect(x, y, w, h);
+        // Each state set is a command a GPU runs (Direct3D 12's cost a
+        // draw): what the batch before set stays.
+        if current.scissor != Some(rect) {
+            let (x, y, w, h) = rect;
+            pass.set_scissor_rect(x, y, w, h);
+            current.scissor = Some(rect);
+        }
         let (image, layer) = batch.source;
-        pass.set_bind_group(
-            0,
-            image.and_then(|id| self.images.get(&id)).map_or_else(
-                || {
-                    layer
-                        .and_then(|id| self.layers.get(&id))
-                        .map_or(&self.bind, |l| &l.bind)
-                },
-                |entry| &entry.0,
-            ),
-            &[],
+        let group = image.and_then(|id| self.images.get(&id)).map_or_else(
+            || {
+                layer
+                    .and_then(|id| self.layers.get(&id))
+                    .map_or(&self.bind, |l| &l.bind)
+            },
+            |entry| &entry.0,
         );
+        if current.group != Some(std::ptr::from_ref(group)) {
+            pass.set_bind_group(0, group, &[]);
+            current.group = Some(std::ptr::from_ref(group));
+        }
         pass.draw(0..4, batch.start..batch.end);
         stats.draw_calls += 1;
         stats.instances += (batch.end - batch.start) as usize;
