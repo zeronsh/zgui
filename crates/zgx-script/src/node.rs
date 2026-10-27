@@ -4821,6 +4821,9 @@ mod tests {
             "#123456789",
             "#12g",
             "#１２３",
+            "#é1",
+            "#1é",
+            "#12\0",
         ] {
             assert_eq!(super::parse_color(text), None, "{text}");
             assert_eq!(animated(text), None, "{text}");

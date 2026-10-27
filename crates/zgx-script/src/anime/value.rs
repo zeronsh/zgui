@@ -246,19 +246,21 @@ pub(crate) fn parse_color(text: &str) -> Option<[f64; 4]> {
 /// Hex channels as bytes: style colours need no floating-point conversion
 /// or rounding back from the animation representation.
 pub(crate) fn parse_hex_color(hex: &str) -> Option<[u8; 4]> {
-    let mut digits = [0u8; 8];
+    let mut value = 0u32;
     let mut len = 0;
-    for c in hex.chars() {
-        *digits.get_mut(len)? = c.to_digit(16)? as u8;
+    for c in hex.bytes() {
+        if len == 8 {
+            return None;
+        }
+        value = (value << 4) | (c as char).to_digit(16)?;
         len += 1;
     }
-    let pair = |i: usize| digits[i] * 16 + digits[i + 1];
-    let single = |i: usize| digits[i] * 17;
+    let single = |shift: u32| (((value >> shift) & 15u32) * 17u32) as u8;
     Some(match len {
-        3 => [single(0), single(1), single(2), 255],
-        4 => [single(0), single(1), single(2), single(3)],
-        6 => [pair(0), pair(2), pair(4), 255],
-        8 => [pair(0), pair(2), pair(4), pair(6)],
+        3 => [single(8), single(4), single(0), 255],
+        4 => [single(12), single(8), single(4), single(0)],
+        6 => [(value >> 16) as u8, (value >> 8) as u8, value as u8, 255],
+        8 => value.to_be_bytes(),
         _ => return None,
     })
 }
