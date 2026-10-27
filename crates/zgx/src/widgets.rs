@@ -1166,6 +1166,9 @@ impl Ui {
     /// windows share one, so the state one shows the others follow (a
     /// settings window's switch, every window's theme).
     pub fn with_runtime(runtime: Runtime, width: f32, height: f32) -> Self {
+        // `ZGX_ASSISTIVE=0`: headless as a desktop starts, no reader (the
+        // gate's scenes, which measure what users get).
+        let listening = crate::env::var_os("ZGX_ASSISTIVE").is_none_or(|v| v != "0");
         let storage = Rc::new(UiStorage {
             themes: Themes::of(&runtime),
             mount_theme: RefCell::new(None),
@@ -1174,10 +1177,10 @@ impl Ui {
             overlay_scrollbars: runtime.signal(false),
             caret_width: Rc::new(Cell::new(1.)),
             caret_blink: Rc::default(),
-            assistive: runtime.signal(true),
+            assistive: runtime.signal(listening),
             pending_labels: RefCell::default(),
             pending_prune: Cell::new(1024),
-            listening: Cell::new(true),
+            listening: Cell::new(listening),
             popup_screens: runtime.signal(Vec::new()),
             popup_limits: runtime.signal(Vec::new()),
             popup_flips: runtime.signal(Vec::new()),
@@ -2108,11 +2111,13 @@ impl Ui {
     }
     /// Whether assistive technology (a screen reader, a switch control)
     /// reads this document's semantics. While none does, the names and
-    /// values views give it as functions of state (`label`, `value`) are not
-    /// worked out as that state changes: they are only ever read by it.
+    /// values views give it as functions of state (`label`, `value`), and
+    /// the labels of changing text, are not worked out as that state
+    /// changes: they are only ever read by it.
     /// Turned on, they are worked out at once, from the state as it is, as
     /// the effects run (before the tree is read). On by default (tests and
-    /// headless documents read the semantics); a desktop host turns it off
+    /// headless documents read the semantics; `ZGX_ASSISTIVE=0` starts one
+    /// off, as the perf gate runs); a desktop host turns it off
     /// until a reader asks for its tree, and off again when it leaves.
     pub fn set_assistive_technology(&self, listening: bool) {
         if listening {

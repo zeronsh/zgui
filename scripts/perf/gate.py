@@ -15,7 +15,10 @@ gate's failure, never as a result; benches run with ZGX_GATE=1, which
 the script benches take for budgets long enough for cachegrind. Linux
 (CI's `perf` job). Nothing renders: under valgrind a software rasterizer's
 instructions would swamp zgx's, so heavy, lab and animate run with
-RENDER=0 (update, layout and damage, text measured as a renderer would).
+RENDER=0 (update, layout and damage, text measured as a renderer would). They
+run as a desktop with no screen reader does (`ZGX_ASSISTIVE=0`: labels and
+names made for assistive technology wait for one), which is what most
+users get; `heavy-stream-at` keeps one listening, to guard that work.
 The app scenes count their canvases' CPU work too (`HeadlessCanvases`):
 found as shapes the GPU draws, or rasterized where they cannot be. Each
 run has one environment, addresses not randomized, and a clock and hash
@@ -50,6 +53,12 @@ SCENES = [
     ('heavy-both', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'both', 'TICKS': '300', 'RENDER': '0'}),
     ('heavy-stream', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'stream', 'TICKS': '300', 'RENDER': '0'}),
     ('heavy-scroll', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'scroll', 'TICKS': '300', 'RENDER': '0'}),
+    # Every scene runs as a desktop with no screen reader does
+    # (`ZGX_ASSISTIVE=0`, see `run`): what most users get. This one keeps
+    # assistive technology listening, so its work (labels, names and values
+    # from state) stays guarded.
+    ('heavy-stream-at', 'zgx-desktop', 'heavy_headless', {'ZGX_MODE': 'stream', 'TICKS': '300', 'RENDER': '0',
+                                                          'ZGX_ASSISTIVE': '1'}),
     ('lab-stream', 'zgx-desktop', 'workload_headless', {'ZGX_MODE': 'stream', 'RENDER': '0'}),
     ('lab-scroll', 'zgx-desktop', 'workload_headless', {'ZGX_MODE': 'scroll', 'RENDER': '0'}),
     ('animate', 'zgx-desktop', 'animation_headless', {'FRAMES': '1200', 'RENDER': '0'}),
@@ -260,7 +269,8 @@ def count(binary, env, checkout=None, placement=None):
     command = ['valgrind', '--tool=cachegrind', '--cache-sim=no', '--cachegrind-out-file=/dev/null', str(binary)]
     result = subprocess.run(
         ['setarch', '-R', *command] if shutil.which('setarch') else command,
-        env={**fixed, **renamed_env({'ZGX_GATE': '1', **scripts, **env})}, capture_output=True, text=True)
+        env={**fixed, **renamed_env({'ZGX_GATE': '1', 'ZGX_ASSISTIVE': '0', **scripts, **env})},
+        capture_output=True, text=True)
     found = re.search(r'I\s+refs:\s+([\d,]+)', result.stderr)
     if result.returncode or not found:
         why = 'a script hit its time budget' if 'time budget' in result.stdout + result.stderr else 'it failed'
