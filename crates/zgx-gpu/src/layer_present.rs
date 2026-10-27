@@ -1184,7 +1184,12 @@ impl Layer {
                 transaction(|| self.host.insertSublayer_atIndex(&self.plain, 0));
             }
         }
+        let asked = std::time::Instant::now();
         let drawable = drawables.layer.nextDrawable()?;
+        crate::DRAWABLE_WAIT.store(
+            (asked.elapsed().as_secs_f64() * 1e3).to_bits(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         // Feedback only while it is read (the trial, a log): a handler a
         // frame is work on Core Animation's thread.
         if feedback {
@@ -1414,6 +1419,7 @@ impl Layer {
         }
         if self.video.is_none() {
             crate::present_log::log(|| format!("plain-set surface={}", buffer.surface.id()));
+            crate::diag_phase("tiles");
             transaction(|| self.show_tile(buffer));
             self.plain_shows.set(true);
             return;

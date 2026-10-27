@@ -51,38 +51,81 @@ pub(crate) fn diag_last_tick() -> (f64, f64) {
     )
 }
 
-/// DIAGNOSTIC (`ZGX_PHASE_LOG`): a drawable presenting now, after the last tick.
+/// DIAGNOSTIC (`ZGX_PHASE_LOG`, `ZGX_PHASE_FIX`): a frame handed over now
+/// (`kind`: drawables or tiles), after the last tick; `ZGX_PHASE_FIX` asks the
+/// frame source to skip one tick (`take_rephase`) after 8 presents in a row
+/// past their target.
 #[cfg(target_os = "macos")]
-pub(crate) fn diag_phase() {
-    // DIAGNOSTIC (`ZGX_PHASE_LOG`): each present's time after the
-    // display-link tick's refresh and before its target, every 240.
+pub(crate) fn diag_phase(kind: &str) {
+    use std::sync::atomic::Ordering;
     static PHASE: std::sync::LazyLock<bool> =
         std::sync::LazyLock::new(|| std::env::var_os("ZGX_PHASE_LOG").is_some());
-    if *PHASE {
+    static FIX: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("ZGX_PHASE_FIX").is_some());
+    if !*PHASE && !*FIX {
+        return;
+    }
+    let (tick, target) = diag_last_tick();
+    if tick <= 0. {
+        return;
+    }
+    let now = crate::present_log::now_ns() as f64 / 1e9;
+    let (after, before) = ((now - tick) * 1e3, (target - now) * 1e3);
+    if *FIX {
         thread_local! {
-            static SEEN: std::cell::RefCell<Vec<(f64, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
+            static STREAK: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
         }
-        let (tick, target) = diag_last_tick();
-        let now = crate::present_log::now_ns() as f64 / 1e9;
-        if tick > 0. {
-            SEEN.with_borrow_mut(|seen| {
-                seen.push(((now - tick) * 1e3, (target - now) * 1e3));
-                if seen.len() >= 240 {
-                    let quantiles = |mut v: Vec<f64>| {
-                        v.sort_by(f64::total_cmp);
-                        let at = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
-                        format!("p10 {:.2} p50 {:.2} p90 {:.2}", at(0.1), at(0.5), at(0.9))
-                    };
-                    eprintln!(
-                        "phase after tick ms {} | before target ms {}",
-                        quantiles(seen.iter().map(|x| x.0).collect()),
-                        quantiles(seen.iter().map(|x| x.1).collect())
-                    );
-                    seen.clear();
-                }
-            });
+        // Waiting most of a refresh for a drawable, frame after frame: the
+        // pool full, frames a refresh deeper than they need be.
+        let waited = f64::from_bits(DRAWABLE_WAIT.load(Ordering::Relaxed));
+        let streak = if waited > 3. { STREAK.get() + 1 } else { 0 };
+        if streak >= 8 {
+            REPHASE.store(true, Ordering::Release);
+            REPHASES.fetch_add(1, Ordering::Relaxed);
+            STREAK.set(0);
+        } else {
+            STREAK.set(streak);
         }
     }
+    if *PHASE {
+        thread_local! {
+            static SEEN: std::cell::RefCell<Vec<(f64, f64, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        let waited = f64::from_bits(DRAWABLE_WAIT.load(Ordering::Relaxed));
+        SEEN.with_borrow_mut(|seen| {
+            seen.push((after, before, waited));
+            if seen.len() >= 240 {
+                let quantiles = |mut v: Vec<f64>| {
+                    v.sort_by(f64::total_cmp);
+                    let at = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
+                    format!("p10 {:.2} p50 {:.2} p90 {:.2}", at(0.1), at(0.5), at(0.9))
+                };
+                eprintln!(
+                    "phase {kind} after tick ms {} | before target ms {} | drawable wait ms {} | rephases {}",
+                    quantiles(seen.iter().map(|x| x.0).collect()),
+                    quantiles(seen.iter().map(|x| x.1).collect()),
+                    quantiles(seen.iter().map(|x| x.2).collect()),
+                    REPHASES.load(Ordering::Relaxed),
+                );
+                seen.clear();
+            }
+        });
+    }
+}
+/// DIAGNOSTIC: the last `nextDrawable` call's wait (ms, f64 bits).
+#[cfg(target_os = "macos")]
+pub(crate) static DRAWABLE_WAIT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+#[cfg(target_os = "macos")]
+static REPHASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+static REPHASES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// DIAGNOSTIC (`ZGX_PHASE_FIX`): whether the frame source should skip this
+/// tick, once, to bring frames back before their targets.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn take_rephase() -> bool {
+    REPHASE.swap(false, std::sync::atomic::Ordering::AcqRel)
 }
 mod upload;
 pub use font_cache::set_desktop_sans_serif;
@@ -6666,7 +6709,7 @@ impl GpuRenderer {
                 host + at.saturating_duration_since(now).as_secs_f64()
             });
             if drawable.is_some() {
-                diag_phase();
+                diag_phase("drawables");
             }
             pass.commit_presenting(
                 drawable

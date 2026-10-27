@@ -320,6 +320,15 @@ mod display_link {
             time: Instant::now() + Duration::from_nanos(ahead as u64),
             interval,
         };
+        // DIAGNOSTIC (ZGX_PHASE_LOG / ZGX_PHASE_FIX): the tick and its target
+        // for the renderer's handover phase; a tick skipped when it asks.
+        zgx_gpu::diag_tick(
+            nanos(host_now as i128) as f64 / 1e9,
+            nanos(output.host_time as i128) as f64 / 1e9,
+        );
+        if zgx_gpu::take_rephase() {
+            return 0;
+        }
         let refresh = 1. / interval.as_secs_f64();
         entry
             .grid
@@ -480,6 +489,9 @@ mod display_link {
                 );
             }
             if !subscriber.active.load(Ordering::Acquire) {
+                return;
+            }
+            if zgx_gpu::take_rephase() {
                 return;
             }
             let max_rate = subscriber.max_rate.load(Ordering::Relaxed);
