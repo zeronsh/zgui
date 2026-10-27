@@ -46,6 +46,7 @@ pub(crate) struct MetalFrame {
     full_clear: Pipeline,
     basic: Pipeline,
     opaque: Pipeline,
+    rounded: Pipeline,
     copy_offset: Pipeline,
     /// Compiled with the first filter (None: not here).
     blur: std::cell::OnceCell<Option<Blur>>,
@@ -143,6 +144,7 @@ impl MetalFrame {
             full_clear: pipeline(&draw, "vs", "fs", Blend::Replace)?,
             basic: pipeline(&draw, "vs_basic", "fs_basic", Blend::Over)?,
             opaque: pipeline(&draw, "vs_basic", "fs_basic", Blend::Replace)?,
+            rounded: pipeline(&draw, "vs_round", "fs_round", Blend::Over)?,
             copy_offset: pipeline(&copy, "vs", "fs", Blend::Replace)?,
             device: raw,
             queue,
@@ -406,6 +408,7 @@ impl MetalFrame {
             Shading::Full => self.full.clone(),
             Shading::Basic => self.basic.clone(),
             Shading::Opaque => self.opaque.clone(),
+            Shading::Rounded => self.rounded.clone(),
             Shading::Polyline => self
                 .polyline_pipelines()
                 .expect("checked by `polylines`")
@@ -699,6 +702,7 @@ impl Frame {
                 | Shading::Blend
                 | Shading::FilterBlend(_)
                 | Shading::ImageEffect
+                | Shading::Rounded
                 | Shading::Polyline,
                 true,
             ) => Bound::FullClear,

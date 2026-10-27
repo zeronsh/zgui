@@ -283,6 +283,10 @@ enum Shading {
     /// An opaque flat colour: `basic` without blending, which reads every
     /// pixel it writes. Same pixels.
     Opaque,
+    /// A plain rounded or bordered box (no texture, edge fade, region,
+    /// transform, ring or shadow): `round_box`, the full shader's box branch
+    /// with only the vectors it reads. Same pixels.
+    Rounded,
     /// A shader fill (`FillShader`, by id): its pipeline, `shade` for
     /// whatever else the draw holds.
     Fill(u64),
@@ -328,7 +332,17 @@ fn shading(quad: &Quad, scale: f32) -> Shading {
         && quad.shape[2] <= 0.
         && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.))
         && quad.mask[0] <= 0.;
-    if !plain {
+    // What `round_box` draws as `shade` does: a box on its own.
+    let rounded = quad.options[0] == 0.
+        && quad.options[1] <= 0.5
+        && quad.options[2] < 0.5
+        && quad.shape[1] >= 0.
+        && quad.shape[2] <= 0.
+        && quad.shape[3] > 0.5
+        && quad.mask[0] <= 0.;
+    if !plain && rounded {
+        Shading::Rounded
+    } else if !plain {
         Shading::Full
     } else if quad.options[1] <= 0.5 && quad.color[3] >= 1. {
         Shading::Opaque
@@ -349,6 +363,7 @@ struct QuadPipelines {
     full_clear: std::cell::OnceCell<wgpu::RenderPipeline>,
     basic: std::cell::OnceCell<wgpu::RenderPipeline>,
     basic_clear: std::cell::OnceCell<wgpu::RenderPipeline>,
+    rounded: std::cell::OnceCell<wgpu::RenderPipeline>,
     /// The quad pipelines' group layouts (texture, viewport), for the
     /// polyline layout.
     texture_layout: wgpu::BindGroupLayout,
@@ -367,26 +382,20 @@ struct Polylines {
 impl QuadPipelines {
     /// The pipeline drawing quads of `shading`.
     fn get(&self, shading: Shading) -> &wgpu::RenderPipeline {
-        let (cell, basic, blend) = match shading {
+        let (cell, kind, blend) = match shading {
             Shading::Full
             | Shading::Fill(_)
             | Shading::Filter(_)
             | Shading::Blend
             | Shading::FilterBlend(_)
-            | Shading::ImageEffect => (&self.full, false, true),
-            Shading::Basic => (&self.basic, true, true),
-            Shading::Opaque => (&self.basic_clear, true, false),
+            | Shading::ImageEffect => (&self.full, QuadKind::Full, true),
+            Shading::Basic => (&self.basic, QuadKind::Basic, true),
+            Shading::Opaque => (&self.basic_clear, QuadKind::Basic, false),
+            Shading::Rounded => (&self.rounded, QuadKind::Rounded, true),
             Shading::Polyline => return &self.polylines().pipeline,
         };
         cell.get_or_init(|| {
-            quad_pipeline(
-                &self.device,
-                self.shader(),
-                &self.layout,
-                blend,
-                None,
-                basic,
-            )
+            quad_pipeline(&self.device, self.shader(), &self.layout, blend, None, kind)
         })
     }
     fn shader(&self) -> &wgpu::ShaderModule {
@@ -448,7 +457,7 @@ impl QuadPipelines {
                     &self.layout,
                     false,
                     None,
-                    false,
+                    QuadKind::Full,
                 )
             })
         }
@@ -1922,6 +1931,7 @@ struct PickedPipelines {
     clear: wgpu::RenderPipeline,
     basic: wgpu::RenderPipeline,
     opaque: wgpu::RenderPipeline,
+    rounded: wgpu::RenderPipeline,
     /// Made when a frame first draws polylines (`picks`).
     polyline: std::cell::OnceCell<wgpu::RenderPipeline>,
 }
@@ -1933,6 +1943,7 @@ impl PickedPipelines {
             clear: &self.clear,
             basic: &self.basic,
             opaque: &self.opaque,
+            rounded: &self.rounded,
             polyline: polylines.then(|| self.polyline.get_or_init(make)),
         }
     }
@@ -1945,6 +1956,7 @@ struct Picks<'p> {
     clear: &'p wgpu::RenderPipeline,
     basic: &'p wgpu::RenderPipeline,
     opaque: &'p wgpu::RenderPipeline,
+    rounded: &'p wgpu::RenderPipeline,
     /// For frames drawing polylines.
     polyline: Option<&'p wgpu::RenderPipeline>,
 }
@@ -1959,6 +1971,7 @@ impl<'p> Picks<'p> {
             | Shading::ImageEffect => self.full,
             Shading::Basic => self.basic,
             Shading::Opaque => self.opaque,
+            Shading::Rounded => self.rounded,
             Shading::Polyline => self.polyline.expect("made for a frame with polylines"),
         }
     }
@@ -1993,10 +2006,19 @@ const PROMOTED_FULL_PIXELS: f32 = 1024.;
 /// every basic quad, and blending every opaque one, to the same bytes (see
 /// `shading`). Shader fills and image effects keep their own pipelines.
 fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
+    // The rounded box shader draws no texture: with a basic quad (a glyph,
+    // an image), only the full one draws both.
+    if matches!(
+        (a, b),
+        (Shading::Rounded, Shading::Basic) | (Shading::Basic, Shading::Rounded)
+    ) {
+        return Some(Shading::Full);
+    }
     let cost = |shading| match shading {
         Shading::Opaque => Some(0),
         Shading::Basic => Some(1),
-        Shading::Full => Some(2),
+        Shading::Rounded => Some(2),
+        Shading::Full => Some(3),
         Shading::Fill(_)
         | Shading::Filter(_)
         | Shading::Blend
@@ -2372,6 +2394,7 @@ impl GpuContext {
             full_clear: Default::default(),
             basic: Default::default(),
             basic_clear: Default::default(),
+            rounded: Default::default(),
             texture_layout: texture_layout.clone(),
             viewport_layout: viewport_layout.clone(),
             polylines: Default::default(),
@@ -7206,6 +7229,7 @@ impl GpuRenderer {
                 clear: quads.clear(false),
                 basic: quads.get(Shading::Basic),
                 opaque: quads.get(Shading::Opaque),
+                rounded: quads.get(Shading::Rounded),
                 polyline: deferred
                     .points
                     .is_some()
@@ -7338,41 +7362,43 @@ impl GpuRenderer {
             if let Some(spare) = &mut self.spare {
                 spare.copy_bind = None;
             }
-            let both = |blend, basic| {
+            let both = |blend, kind| {
                 quad_pipeline(
                     &self.device,
                     inner.quads.shader(),
                     &inner.quad_layout,
                     blend,
                     Some(format),
-                    basic,
+                    kind,
                 )
             };
-            let direct = |blend, basic| {
+            let direct = |blend, kind| {
                 drawable_pipeline(
                     &self.device,
                     inner.quads.shader(),
                     &inner.quad_layout,
                     blend,
                     format,
-                    basic,
+                    kind,
                 )
             };
             self.single_pass = Some(SinglePass {
                 format,
                 copy,
                 both: PickedPipelines {
-                    full: both(true, false),
-                    clear: both(false, false),
-                    basic: both(true, true),
-                    opaque: both(false, true),
+                    full: both(true, QuadKind::Full),
+                    clear: both(false, QuadKind::Full),
+                    basic: both(true, QuadKind::Basic),
+                    opaque: both(false, QuadKind::Basic),
+                    rounded: both(true, QuadKind::Rounded),
                     polyline: Default::default(),
                 },
                 direct: PickedPipelines {
-                    full: direct(true, false),
-                    clear: direct(false, false),
-                    basic: direct(true, true),
-                    opaque: direct(false, true),
+                    full: direct(true, QuadKind::Full),
+                    clear: direct(false, QuadKind::Full),
+                    basic: direct(true, QuadKind::Basic),
+                    opaque: direct(false, QuadKind::Basic),
+                    rounded: direct(true, QuadKind::Rounded),
                     polyline: Default::default(),
                 },
             });
@@ -7667,7 +7693,7 @@ impl GpuRenderer {
                                 open.pixels
                             } + if merged == shading { 0. } else { pixels };
                             let budget = match merged {
-                                Shading::Full => PROMOTED_FULL_PIXELS,
+                                Shading::Full | Shading::Rounded => PROMOTED_FULL_PIXELS,
                                 _ => PROMOTED_PIXELS,
                             };
                             (promoted <= budget).then_some((merged, promoted))
@@ -10369,16 +10395,17 @@ fn drawable_pipeline(
     layout: &wgpu::PipelineLayout,
     blend: bool,
     format: wgpu::TextureFormat,
-    basic: bool,
+    kind: QuadKind,
 ) -> wgpu::RenderPipeline {
     let all = wgpu::vertex_attr_array![0=>Float32x4,1=>Float32x4,2=>Float32x4,3=>Float32x4,4=>Float32x4,5=>Float32x4,6=>Float32x4,7=>Float32x4];
     let basic_attributes = [all[0], all[1], all[2], all[4]];
+    let basic = kind == QuadKind::Basic;
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("quads to the drawable"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some(if basic { "vs_basic" } else { "vs" }),
+            entry_point: Some(kind.vertex()),
             compilation_options: Default::default(),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: 128,
@@ -10391,7 +10418,11 @@ fn drawable_pipeline(
         multisample: Default::default(),
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some(if basic { "fs_basic" } else { "fs" }),
+            entry_point: Some(match kind {
+                QuadKind::Full => "fs",
+                QuadKind::Basic => "fs_basic",
+                QuadKind::Rounded => "fs_round",
+            }),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
@@ -10403,18 +10434,38 @@ fn drawable_pipeline(
         cache: None,
     })
 }
+/// Which of draw.wgsl's shaders a quad pipeline runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuadKind {
+    /// `vs` and `fs`: every quad.
+    Full,
+    /// `vs_basic` and `fs_basic`: plain ones (`Shading::Basic`, `Opaque`).
+    Basic,
+    /// `vs_round` and `fs_round`: plain boxes (`Shading::Rounded`).
+    Rounded,
+}
+impl QuadKind {
+    fn vertex(self) -> &'static str {
+        match self {
+            Self::Full => "vs",
+            Self::Basic => "vs_basic",
+            Self::Rounded => "vs_round",
+        }
+    }
+}
 fn quad_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     blend: bool,
     drawable: Option<wgpu::TextureFormat>,
-    basic: bool,
+    kind: QuadKind,
 ) -> wgpu::RenderPipeline {
     let blend = blend.then_some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING);
     let all = wgpu::vertex_attr_array![0=>Float32x4,1=>Float32x4,2=>Float32x4,3=>Float32x4,4=>Float32x4,5=>Float32x4,6=>Float32x4,7=>Float32x4];
     // `basic` reads rect, uv, colour and options only.
     let basic_attributes = [all[0], all[1], all[2], all[4]];
+    let basic = kind == QuadKind::Basic;
     let target = |format| {
         Some(wgpu::ColorTargetState {
             format,
@@ -10428,7 +10479,7 @@ fn quad_pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some(if basic { "vs_basic" } else { "vs" }),
+            entry_point: Some(kind.vertex()),
             compilation_options: Default::default(),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: 128,
@@ -10441,12 +10492,14 @@ fn quad_pipeline(
         multisample: Default::default(),
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            // Single-pass presentation draws with the full shader alone.
-            entry_point: Some(match (basic, drawable.is_some()) {
-                (true, true) => "fs_basic_both",
-                (true, false) => "fs_basic",
-                (false, true) => "fs_both",
-                (false, false) => "fs",
+            // Single-pass presentation writes both targets.
+            entry_point: Some(match (kind, drawable.is_some()) {
+                (QuadKind::Basic, true) => "fs_basic_both",
+                (QuadKind::Basic, false) => "fs_basic",
+                (QuadKind::Rounded, true) => "fs_round_both",
+                (QuadKind::Rounded, false) => "fs_round",
+                (QuadKind::Full, true) => "fs_both",
+                (QuadKind::Full, false) => "fs",
             }),
             compilation_options: Default::default(),
             targets: if drawable.is_some() {

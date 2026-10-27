@@ -132,6 +132,34 @@ fn shade_texel(input:Out, given:vec4<f32>, has_texel:bool)->vec4<f32> {
 // Single-pass presentation: the same colour to the retained target and the drawable.
 struct Both { @location(0) retained:vec4<f32>, @location(1) drawable:vec4<f32> }
 @fragment fn fs_both(v:Out)->Both { let c=shade(v); return Both(c,c); }
+// Plain rounded or bordered boxes (no texture, edge fade, region, transform,
+// ring or shadow: `Shading::Rounded`): `shade`'s box branch alone, with the
+// five per-quad vectors it reads and `point` from the position, as `shade`
+// takes an untransformed quad's. Seven flat vec4s and two interpolated
+// vec2s to every pixel cost Direct3D 12 a third of heavy's GPU time; the
+// same bytes as `shade` draws them.
+struct Round { @builtin(position) position:vec4<f32>, @location(0) @interpolate(flat) color:vec4<f32>, @location(1) @interpolate(flat) fade:vec4<f32>, @location(2) @interpolate(flat) options:vec4<f32>, @location(3) @interpolate(flat) shape:vec4<f32>, @location(4) @interpolate(flat) border:vec4<f32> }
+@vertex fn vs_round(v:Vertex,@builtin(vertex_index) i:u32)->Round {
+ let corner=vec2(f32(i&1u),f32(i>>1u));
+ let p=v.rect.xy+corner*v.rect.zw;
+ var o:Round; o.position=vec4(p.x/viewport.x*2.-1.,1.-p.y/viewport.y*2.,0.,1.);o.color=v.color;o.fade=v.fade;o.options=v.options;o.shape=v.shape;o.border=v.border;return o;
+}
+fn round_box(v:Round)->vec4<f32> {
+ let point=v.position.xy/viewport.z;
+ var color=v.color;
+ var corner=v.shape.x;
+ if v.options.w>0.5 {
+   let right=point.x>v.fade.x+v.fade.z*0.5; let bottom=point.y>v.fade.y+v.fade.w*0.5;
+   corner=select(select(v.border.x,v.border.y,right),select(v.border.w,v.border.z,right),bottom);
+ }
+ let radius=clamp(corner,0.,min(v.fade.z,v.fade.w)*0.5);
+ let q=abs(point-v.fade.xy-v.fade.zw*0.5)-(v.fade.zw*0.5-vec2(radius));
+ let distance=length(max(q,vec2(0.)))+min(max(q.x,q.y),0.)-radius;
+ let dx=abs(dpdxFine(distance));let dy=abs(dpdyFine(distance));let aa=max(select(dx+dy,max(dx,dy),radius<=0.),0.5);let outer=clamp(0.5-distance/aa,0.,1.);let inner=clamp(0.5-(distance+v.shape.y)/aa,0.,1.);let alpha=color.a*inner+v.border.a*(outer-inner);let rgb=select(vec3(0.),(color.rgb*color.a*inner+v.border.rgb*v.border.a*(outer-inner))/max(alpha,0.00001),alpha>0.);color=vec4(rgb,alpha);
+ return vec4(color.rgb*color.a,color.a);
+}
+@fragment fn fs_round(v:Round)->@location(0) vec4<f32> { return round_box(v); }
+@fragment fn fs_round_both(v:Round)->Both { let c=round_box(v); return Both(c,c); }
 // Plain quads (no corners, borders, shadows, fades, regions or transforms):
 // most text and backgrounds. A software rasterizer runs a fragment shader on
 // the CPU for every pixel, and every branch of `shade` with it, so these use
