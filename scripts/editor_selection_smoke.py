@@ -128,9 +128,12 @@ def main():
                 assert (line["anchor"],line["focus"]) == (target["paragraph_start"],target["paragraph_end"]), reports
                 assert line["focus"] - line["anchor"] > target["line_end"] - target["line_start"], reports
                 capture("triple-click")
+                # Four in a row: the fourth keeps the paragraph, as Chrome's
+                # clicks past a triple's do, not a caret again.
                 click(target["bx"],target["y"],4)
                 reports["fourth_click"] = report()
-                assert reports["fourth_click"]["anchor"] == reports["fourth_click"]["focus"] == 8, reports
+                fourth = reports["fourth_click"]
+                assert (fourth["anchor"],fourth["focus"]) == (target["paragraph_start"],target["paragraph_end"]), reports
                 click(90,264)
                 click(target["bx"],target["y"],2)
                 reports["readonly"] = report()

@@ -614,7 +614,7 @@ line endings, empty rows and trailing whitespace.
 
 The fresh owned X11 selection smoke passes nine stages, including real native
 Shift-click, double/triple clicks, reversed word dragging, wrapped line selection,
-fourth-click reset and read-only input rejection. Pointer-button chord/capture
+a fourth click keeping the paragraph and read-only input rejection. Pointer-button chord/capture
 and native IBus IME regressions also pass. The final integrated build passes
 555 ordinary tests, 29 documentation examples, strict Clippy, formatting, and
 macOS ARM64 cross-checking. Native macOS and hardware GPU execution remain
