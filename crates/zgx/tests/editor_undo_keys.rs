@@ -7,9 +7,12 @@ use zgx::{
 };
 
 fn field(text: &str) -> (Ui, zgx::reactive::Signal<String>) {
+    field_sized(text, 300.)
+}
+fn field_sized(text: &str, width: f32) -> (Ui, zgx::reactive::Signal<String>) {
     let mut ui = Ui::new(400., 200.);
     let value = ui.signal(text.to_owned());
-    let view = ui.mount(text_area("Notes", value.clone()).size(300., 120.));
+    let view = ui.mount(text_area("Notes", value.clone()).size(width, 120.));
     ui.prepare_frame();
     ui.input.focus(&ui.scene, Some(view.node()));
     (ui, value)
@@ -66,7 +69,7 @@ fn macos_line_deletion_and_control_keys() {
     assert_eq!(value.get(), "first line\n");
     key(&mut ui, Key::Character("z".into()), meta);
     assert_eq!(value.get(), "first line\nsecond line");
-    // Control+A to the line's start, Control+K to its end.
+    // Control+A to the paragraph's start, Control+K to its end.
     key(&mut ui, Key::Character("a".into()), control);
     key(&mut ui, Key::Character("f".into()), control);
     key(&mut ui, Key::Character("k".into()), control);
@@ -109,6 +112,166 @@ fn option_arrows_move_by_paragraphs_on_macos() {
         "Shift extends"
     );
     assert_eq!(value.get(), "one\ntwo three\nfour", "nothing typed");
+}
+
+/// Control-A and Control-E go to a wrapped paragraph's edges, not its row's,
+/// as NSTextView's `moveToBeginningOfParagraph:` does; Control-K kills to
+/// the paragraph's end, kills in a row adding up, and Control-Y yanks them
+/// back; Control-T swaps the characters around the caret.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_control_keys_go_by_paragraphs_kill_yank_and_transpose() {
+    let text = "a long first paragraph that wraps onto more rows than one\nnext";
+    let control = Modifiers {
+        control: true,
+        ..Modifiers::default()
+    };
+    let at = |ui: &Ui| ui.focused_editor().unwrap().editor.borrow().selection();
+    // In a narrow field, from a later row of the first paragraph.
+    let (mut ui, value) = field_sized(text, 90.);
+    let editor = ui.focused_editor().unwrap();
+    editor.editor.borrow_mut().set_selection(40, 40);
+    editor.refresh();
+    ui.prepare_frame();
+    key(&mut ui, Key::Character("a".into()), control);
+    assert_eq!(at(&ui).focus, 0, "the paragraph's start, rows above");
+    key(&mut ui, Key::Character("e".into()), control);
+    assert_eq!(at(&ui).focus, 57, "the paragraph's end, rows below");
+    let shift = Modifiers {
+        shift: true,
+        ..control
+    };
+    key(&mut ui, Key::Character("a".into()), shift);
+    let selection = at(&ui);
+    assert_eq!(
+        (selection.anchor, selection.focus),
+        (57, 0),
+        "Shift extends"
+    );
+
+    // Two kills in a row: the paragraph's rest, then its break.
+    editor.editor.borrow_mut().set_selection(7, 7);
+    editor.refresh();
+    key(&mut ui, Key::Character("k".into()), control);
+    key(&mut ui, Key::Character("k".into()), control);
+    assert_eq!(value.get(), "a long next");
+    key(&mut ui, Key::Character("e".into()), control);
+    key(&mut ui, Key::Character("y".into()), control);
+    let yanked = format!("a long next{}", &text[7..58]);
+    assert_eq!(value.get(), yanked, "both kills yanked back together");
+    // A kill after other edits (the yank) starts the buffer again.
+    editor.editor.borrow_mut().set_selection(1, 1);
+    editor.refresh();
+    key(&mut ui, Key::Character("k".into()), control);
+    assert_eq!(value.get(), "a\n");
+    key(&mut ui, Key::Character("y".into()), control);
+    assert_eq!(value.get(), yanked, "only the last kill yanked");
+
+    // Control-T at the end swaps the two before it, undone in one step.
+    let (mut ui, value) = field("ab");
+    key(&mut ui, Key::Character("t".into()), control);
+    assert_eq!(value.get(), "ba");
+    let meta = Modifiers {
+        meta: true,
+        ..Modifiers::default()
+    };
+    key(&mut ui, Key::Character("z".into()), meta);
+    assert_eq!(value.get(), "ab");
+
+    // A password's kill deletes it and keeps nothing to yank.
+    let mut ui = Ui::new(400., 200.);
+    let secret = ui.signal("hunter2".to_owned());
+    let view = ui.mount(
+        text_input("Password", secret.clone())
+            .secure(true)
+            .size(200., 30.),
+    );
+    ui.prepare_frame();
+    ui.input.focus(&ui.scene, Some(view.node()));
+    let editor = ui.focused_editor().unwrap();
+    editor.editor.borrow_mut().set_selection(0, 0);
+    editor.refresh();
+    key(&mut ui, Key::Character("k".into()), control);
+    assert_eq!(secret.get(), "");
+    key(&mut ui, Key::Character("y".into()), control);
+    assert!(!secret.get().contains("hunter2"), "{}", secret.get());
+}
+
+/// Control-Up and Control-Down go to paragraphs' starts on Windows and
+/// Linux (Chrome there, and Windows' edit controls), not a row up or down,
+/// Shift extending.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn control_arrows_go_to_paragraph_starts_off_macos() {
+    let text = "a long first paragraph that wraps onto more rows than one\nnext\nlast";
+    let (mut ui, _) = field_sized(text, 90.);
+    let editor = ui.focused_editor().unwrap();
+    editor.editor.borrow_mut().set_selection(3, 3);
+    editor.refresh();
+    ui.prepare_frame();
+    let control = Modifiers {
+        control: true,
+        ..Modifiers::default()
+    };
+    let at = |ui: &Ui| ui.focused_editor().unwrap().editor.borrow().selection();
+    key(&mut ui, Key::ArrowDown, control);
+    assert_eq!(at(&ui).focus, 58, "past the first paragraph's rows");
+    key(&mut ui, Key::ArrowDown, control);
+    assert_eq!(at(&ui).focus, 63, "the last paragraph's start");
+    key(&mut ui, Key::ArrowDown, control);
+    assert_eq!(at(&ui).focus, 67, "then the text's end");
+    key(&mut ui, Key::ArrowUp, control);
+    assert_eq!(at(&ui).focus, 63, "back to its paragraph's start");
+    key(&mut ui, Key::ArrowUp, control);
+    assert_eq!(at(&ui).focus, 58, "then the one before's");
+    let shift = Modifiers {
+        shift: true,
+        ..control
+    };
+    key(&mut ui, Key::ArrowUp, shift);
+    let selection = at(&ui);
+    assert_eq!(
+        (selection.anchor, selection.focus),
+        (58, 0),
+        "Shift extends"
+    );
+}
+
+/// The word step on: Windows' (Control-Right, Control-Delete) goes past the
+/// spaces to the next word's start, then a line's end, then over its break;
+/// macOS's Option and Linux's Control stop at each word's end.
+#[test]
+fn the_word_step_on_stops_where_the_platform_does() {
+    let (mut ui, value) = field("one two  three\nfour");
+    let editor = ui.focused_editor().unwrap();
+    editor.editor.borrow_mut().set_selection(0, 0);
+    editor.refresh();
+    let word = Modifiers {
+        alt: cfg!(target_os = "macos"),
+        control: !cfg!(target_os = "macos"),
+        ..Modifiers::default()
+    };
+    let stops: Vec<usize> = (0..4)
+        .map(|_| {
+            key(&mut ui, Key::ArrowRight, word);
+            editor.editor.borrow().selection().focus
+        })
+        .collect();
+    let want = if cfg!(windows) {
+        [4, 9, 14, 15]
+    } else {
+        [3, 7, 14, 19]
+    };
+    assert_eq!(stops, want);
+    editor.editor.borrow_mut().set_selection(0, 0);
+    editor.refresh();
+    key(&mut ui, Key::Delete, word);
+    let want = if cfg!(windows) {
+        "two  three\nfour"
+    } else {
+        " two  three\nfour"
+    };
+    assert_eq!(value.get(), want);
 }
 
 /// The platform's word keys (Option on macOS, Control elsewhere) move by

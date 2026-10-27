@@ -523,6 +523,9 @@ impl TextEditor {
         }
     }
     fn next(&self, word: bool) -> usize {
+        if word && cfg!(windows) {
+            return self.next_word_start();
+        }
         let pos = self.selection.focus;
         let len = self.text.len();
         let on = |text: &str, at: usize| {
@@ -554,6 +557,27 @@ impl TextEditor {
             }
         }
     }
+    /// Windows' word step on (Control+Right, Control+Delete), as its edit
+    /// controls and Chrome there go: past the spaces after a word to the
+    /// next one's start; from a line's last word to its end, and from there
+    /// over the break and the next line's leading spaces.
+    fn next_word_start(&self) -> usize {
+        let pos = self.selection.focus;
+        let line = self.text.line_around(pos);
+        if pos >= line.end {
+            if pos >= self.text.len() {
+                return pos;
+            }
+            let next = self.text.line_around(pos + 1);
+            let rest = self.text.slice(next.clone());
+            return next.start + rest.len() - rest.trim_start().len();
+        }
+        let rest = self.text.slice(pos..line.end);
+        rest.unicode_word_indices()
+            .map(|(at, _)| pos + at)
+            .find(|&at| at > pos)
+            .unwrap_or(line.end)
+    }
     fn move_to(&mut self, offset: usize, extend: bool) {
         self.run = None;
         self.cancel_preedit();
@@ -574,8 +598,8 @@ impl TextEditor {
         self.move_to(pos, extend);
     }
     /// Move the caret forward a grapheme, or to the end of a word with
-    /// `word`. `extend` moves only the focus; without it, a selection
-    /// collapses to its end.
+    /// `word` (on Windows, the next word's start). `extend` moves only the
+    /// focus; without it, a selection collapses to its end.
     pub fn move_right(&mut self, word: bool, extend: bool) {
         let pos = if !extend && !self.selection.is_empty() {
             self.selection.range().end
@@ -681,6 +705,60 @@ impl TextEditor {
             }
         };
         self.move_to(pos, extend);
+    }
+    /// Move the caret to the start of its paragraph, or of the one before
+    /// when it is there already (`up`); else to the start of the next
+    /// paragraph, or the text's end in its last. Control-Up and Control-Down
+    /// on Windows and Linux. `extend` moves only the focus.
+    pub fn move_paragraph_start(&mut self, up: bool, extend: bool) {
+        if up {
+            return self.move_paragraph(true, extend);
+        }
+        let end = self.text.line_around(self.selection.focus).end;
+        self.move_to((end + 1).min(self.text.len()), extend);
+    }
+    /// Swap the graphemes either side of the caret, and step past them; at
+    /// a paragraph's end, the two before it (Control-T on macOS, AppKit's
+    /// `transpose:`). False with a selection, or fewer than two graphemes
+    /// in the paragraph to swap.
+    pub fn transpose(&mut self) -> bool {
+        if !self.selection.is_empty() {
+            return false;
+        }
+        let focus = self.selection.focus;
+        let line = self.text.line_around(focus);
+        let text = self.text.slice(line.clone());
+        let edges: Vec<usize> = text
+            .grapheme_indices(true)
+            .map(|(at, _)| line.start + at)
+            .chain([line.end])
+            .collect();
+        let Some(mut at) = edges.iter().position(|&e| e == focus) else {
+            return false;
+        };
+        if at + 1 == edges.len() {
+            at = at.saturating_sub(1);
+        }
+        if at == 0 || at + 1 >= edges.len() {
+            return false;
+        }
+        let (start, middle, end) = (edges[at - 1], edges[at], edges[at + 1]);
+        let swapped = self.text.slice(middle..end).into_owned() + &self.text.slice(start..middle);
+        self.run = None;
+        self.cancel_preedit();
+        self.selection = Selection {
+            anchor: start,
+            focus: end,
+        };
+        let changed = self.replace(&swapped, None);
+        // Undone, the caret goes back where it was.
+        if changed && let Some(s) = self.undo.back_mut() {
+            s.before = Selection {
+                anchor: focus,
+                focus,
+            };
+        }
+        changed
     }
     /// Move the text at `from` to `to` (a byte offset outside it), as a
     /// drag of a selection drops it: one undo step, the moved text
@@ -829,17 +907,24 @@ impl TextEditor {
     /// Delete from the caret to the end of its line (Cmd+Delete, and
     /// Control+K, on macOS), or the line break there.
     pub fn delete_to_line_end(&mut self) -> bool {
+        self.kill_to_line_end().is_some()
+    }
+    /// As [`Self::delete_to_line_end`], returning what it deleted: Control-K's
+    /// kill, for Control-Y to yank.
+    pub(crate) fn kill_to_line_end(&mut self) -> Option<String> {
         if !self.selection.is_empty() {
-            return self.replace("", None);
+            let killed = self.selected_text().into_owned();
+            return self.replace("", None).then_some(killed);
         }
         let focus = self.selection.focus;
         let end = self.text.line_around(focus).end;
         let end = if end == focus { self.next(false) } else { end };
         if end == focus {
-            return false;
+            return None;
         }
+        let killed = self.text.slice(focus..end).into_owned();
         self.run = None;
-        self.delete_to(end, Run::DeletingForward)
+        self.delete_to(end, Run::DeletingForward).then_some(killed)
     }
     /// Return selected text and remove it in one undoable operation. The host owns the OS clipboard.
     pub fn cut(&mut self) -> String {
@@ -1024,6 +1109,25 @@ mod tests {
         assert_eq!(e.text(), "hello 🌎");
         e.insert("!");
         assert!(!e.redo());
+    }
+    #[test]
+    fn transpose_swaps_around_the_caret_or_before_a_paragraphs_end() {
+        let mut e = TextEditor::new("abc\né");
+        e.set_selection(1, 1);
+        assert!(e.transpose());
+        assert_eq!((e.text().as_ref(), e.selection().focus), ("bac\né", 2));
+        e.set_selection(3, 3);
+        assert!(e.transpose(), "the two before the paragraph's end");
+        assert_eq!((e.text().as_ref(), e.selection().focus), ("bca\né", 3));
+        e.undo();
+        assert_eq!((e.text().as_ref(), e.selection().focus), ("bac\né", 3));
+        for at in [0, 4, 6] {
+            e.set_selection(at, at);
+            assert!(!e.transpose(), "nothing before, or one grapheme, at {at}");
+        }
+        e.set_selection(0, 2);
+        assert!(!e.transpose(), "not a selection");
+        assert_eq!(e.text(), "bac\né");
     }
     #[test]
     fn ime_does_not_mutate_until_commit() {

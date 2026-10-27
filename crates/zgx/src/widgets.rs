@@ -4522,7 +4522,7 @@ impl Ui {
                     InputEvent::Text(_) | InputEvent::ImePreedit { .. } | InputEvent::ImeCommit(_) | InputEvent::SetValue(_) => true,
                     InputEvent::KeyDown { key, modifiers, .. } => matches!(key, Key::Backspace | Key::Delete | Key::Enter)
                         || (modifiers.primary_shortcut() && matches!(key, Key::Character(k) if k.eq_ignore_ascii_case("z") || k.eq_ignore_ascii_case("y")))
-                        || (mac_control(*modifiers) && matches!(key, Key::Character(k) if ["d", "h", "k"].iter().any(|c| k.eq_ignore_ascii_case(c)))),
+                        || (mac_control(*modifiers) && matches!(key, Key::Character(k) if ["d", "h", "k", "y", "t"].iter().any(|c| k.eq_ignore_ascii_case(c)))),
                     _ => false,
                 };
                 if mutation { cx.prevent_default(); return; }
@@ -4924,28 +4924,33 @@ impl Ui {
                 }
                 InputEvent::KeyDown { key, modifiers, .. } => {
                     // macOS's Control keys, as its text system binds them: a
-                    // line's start and end, a character or a line either way,
-                    // deleting either way, and to the line's end (Control+K).
-                    let mut kill = false;
+                    // paragraph's start and end, a character or a line either
+                    // way, deleting either way, killing to the paragraph's end
+                    // (Control+K), yanking it back (Control+Y) and swapping
+                    // characters (Control+T).
+                    let mut mac = None;
                     let (key, modifiers) = match &key {
                         Key::Character(k) if mac_control(modifiers) => {
                             let plain = crate::input::Modifiers {
                                 control: false,
                                 ..modifiers
                             };
+                            let action = |action, mac: &mut Option<MacControl>| {
+                                *mac = Some(action);
+                                (key.clone(), plain)
+                            };
                             match k.to_ascii_lowercase().as_str() {
-                                "a" => (Key::Home, plain),
-                                "e" => (Key::End, plain),
+                                "a" => action(MacControl::ParagraphEdge(false), &mut mac),
+                                "e" => action(MacControl::ParagraphEdge(true), &mut mac),
                                 "f" => (Key::ArrowRight, plain),
                                 "b" => (Key::ArrowLeft, plain),
                                 "n" => (Key::ArrowDown, plain),
                                 "p" => (Key::ArrowUp, plain),
                                 "d" => (Key::Delete, plain),
                                 "h" => (Key::Backspace, plain),
-                                "k" => {
-                                    kill = true;
-                                    (key.clone(), plain)
-                                }
+                                "k" => action(MacControl::Kill, &mut mac),
+                                "y" => action(MacControl::Yank, &mut mac),
+                                "t" => action(MacControl::Transpose, &mut mac),
                                 _ => (key.clone(), modifiers),
                             }
                         }
@@ -4969,8 +4974,13 @@ impl Ui {
                         }
                         _ => None,
                     };
+                    let by_paragraph = !cfg!(target_os = "macos")
+                        && modifiers.control
+                        && !modifiers.alt
+                        && !modifiers.meta;
                     let directional = paging || (matches!(key, Key::ArrowUp | Key::ArrowDown)
-                        && !(cfg!(target_os = "macos") && (modifiers.meta || modifiers.alt)));
+                        && !(cfg!(target_os = "macos") && (modifiers.meta || modifiers.alt))
+                        && !by_paragraph);
                     if !directional {
                         preferred_x.set(None);
                     }
@@ -5024,6 +5034,11 @@ impl Ui {
                                 if cfg!(target_os = "macos") && modifiers.alt =>
                             {
                                 e.move_paragraph(key == Key::ArrowUp, modifiers.shift)
+                            }
+                            // To paragraphs' starts, as Windows' edit controls and
+                            // Chrome there and on Linux go.
+                            Key::ArrowUp | Key::ArrowDown if by_paragraph => {
+                                e.move_paragraph_start(key == Key::ArrowUp, modifiers.shift)
                             }
                             // Right-to-left text: the arrows go the way it
                             // shows (the macOS way), by its layout.
@@ -5131,9 +5146,40 @@ impl Ui {
                                 };
                                 e.set_selection(anchor, index);
                             }
-                            Key::Character(_) if kill => {
-                                changed = e.delete_to_line_end();
-                            }
+                            Key::Character(_) if mac.is_some() => match mac {
+                                Some(MacControl::ParagraphEdge(end)) => {
+                                    if end {
+                                        e.move_end(modifiers.shift)
+                                    } else {
+                                        e.move_home(modifiers.shift)
+                                    }
+                                }
+                                Some(MacControl::Kill) => {
+                                    let id = Rc::as_ptr(&editor) as usize;
+                                    let before = (id, e.revision(), e.selection().focus);
+                                    // A password's is deleted, never kept.
+                                    if let Some(killed) = e.kill_to_line_end()
+                                        && !hint.secure.get()
+                                    {
+                                        let after = (id, e.revision(), e.selection().focus);
+                                        KILLED.with_borrow_mut(|buffer| {
+                                            // A kill straight after another adds to it.
+                                            if buffer.after != Some(before) {
+                                                buffer.text.clear();
+                                            }
+                                            buffer.text.push_str(&killed);
+                                            buffer.after = Some(after);
+                                        });
+                                    }
+                                    changed = e.revision() != before.1;
+                                }
+                                Some(MacControl::Yank) => {
+                                    let yanked = KILLED.with_borrow(|buffer| buffer.text.clone());
+                                    changed = !yanked.is_empty() && e.insert_pasted(&yanked);
+                                }
+                                Some(MacControl::Transpose) => changed = e.transpose(),
+                                None => {}
+                            },
                             // ⌘⌫ and ⌘⌦: to the line's start or end.
                             Key::Backspace if cfg!(target_os = "macos") && modifiers.meta => {
                                 changed = e.delete_to_line_start();
@@ -5300,6 +5346,35 @@ fn mac_control(modifiers: crate::input::Modifiers) -> bool {
 fn in_viewport(s: &Scene, viewport: NodeId, x: f32, y: f32) -> (f32, f32) {
     s.point_in(viewport, x, y).unwrap_or((x, y))
 }
+
+/// What a macOS Control key does in an editor that no other key does.
+#[derive(Clone, Copy)]
+enum MacControl {
+    /// Control-A and Control-E: the paragraph's start or end (`true`).
+    ParagraphEdge(bool),
+    Kill,
+    Yank,
+    Transpose,
+}
+
+/// What Control-K killed, for Control-Y to yank: one buffer every editor
+/// shares, as AppKit keeps it.
+struct Killed {
+    text: String,
+    /// Which editor (its model's address), at which revision and caret, the
+    /// last kill left: a kill straight after it adds to it.
+    after: Option<(usize, u64, usize)>,
+}
+
+thread_local! {
+    static KILLED: RefCell<Killed> = const {
+        RefCell::new(Killed {
+            text: String::new(),
+            after: None,
+        })
+    };
+}
+
 fn editor_drag_velocity(pointer: f32, start: f32, extent: f32, offset: f32, limit: f32) -> f32 {
     if !pointer.is_finite() || !start.is_finite() || !extent.is_finite() || extent <= 0. {
         return 0.;

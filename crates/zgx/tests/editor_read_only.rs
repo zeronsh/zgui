@@ -48,6 +48,22 @@ fn read_only_blocks_mutations_but_keeps_selection_copy_and_external_models() {
             });
             assert_eq!(value.get(), "abc");
         }
+        // macOS's Control keys that edit: delete, kill, yank, transpose.
+        if cfg!(target_os = "macos") {
+            for key in ["d", "h", "k", "y", "t"] {
+                ui.dispatch(InputEvent::KeyDown {
+                    key: Key::Character(key.into()),
+                    modifiers: Modifiers {
+                        control: true,
+                        ..Default::default()
+                    },
+                    repeat: false,
+                });
+                assert_eq!(value.get(), "abc", "Control-{key}");
+            }
+            editor.editor.borrow_mut().set_selection(0, 2);
+            editor.refresh();
+        }
         assert_eq!(editor.copy(), "ab");
         assert_eq!(editor.cut(), "ab");
         editor.paste("paste");
