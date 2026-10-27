@@ -6365,32 +6365,34 @@ impl GpuRenderer {
                     if !font_size.is_finite() || font_size <= 0. {
                         return Err(GpuError("font size must be finite and positive".into()));
                     }
-                    // Colour-only rich changes (fades, highlights) keep glyph
-                    // positions: recolour the cached shape instead of re-shaping.
-                    if let (Some(new), Some(shaped)) = (&rich, self.shapes.get_mut(&item.id))
-                        && let Some(old) = &shaped.rich
-                        && !Arc::ptr_eq(old, new)
-                        && old.same_shape(new)
-                        && shaped.width == bounds.width
-                        && shaped.height == bounds.height
-                        && shaped.text_options == item.text_options
-                        && shaped.font == *item.font
-                    {
-                        for decoration in &mut shaped.decorations {
-                            decoration.color = decoration.color_in(new);
+                    // One lookup for both: a colour-only rich change (fades,
+                    // highlights) keeps glyph positions, so the cached shape
+                    // is recoloured instead of re-shaped; then whether it is
+                    // stale.
+                    let stale = self.shapes.get_mut(&item.id).is_none_or(|shaped| {
+                        if let Some(new) = &rich
+                            && let Some(old) = &shaped.rich
+                            && !Arc::ptr_eq(old, new)
+                            && old.same_shape(new)
+                            && shaped.width == bounds.width
+                            && shaped.height == bounds.height
+                            && shaped.text_options == item.text_options
+                            && shaped.font == *item.font
+                        {
+                            for decoration in &mut shaped.decorations {
+                                decoration.color = decoration.color_in(new);
+                            }
+                            shaped.rich = Some(new.clone());
+                            shaped.atlas_epoch = self.atlas_epoch.wrapping_sub(1);
                         }
-                        shaped.rich = Some(new.clone());
-                        shaped.atlas_epoch = self.atlas_epoch.wrapping_sub(1);
-                    }
-                    let stale = self.shapes.get(&item.id).is_none_or(|s| {
-                        s.rich != rich
-                            || s.text_options != item.text_options
-                            || s.text != *text
-                            || s.font != *item.font
-                            || s.size != font_size
-                            || s.width != bounds.width
-                            || s.height != bounds.height
-                            || s.scale != self.scale
+                        shaped.rich != rich
+                            || shaped.text_options != item.text_options
+                            || shaped.text != *text
+                            || shaped.font != *item.font
+                            || shaped.size != font_size
+                            || shaped.width != bounds.width
+                            || shaped.height != bounds.height
+                            || shaped.scale != self.scale
                     });
                     // A shape made this frame, held here until placed: into
                     // the map once, not in and out again to place it.
