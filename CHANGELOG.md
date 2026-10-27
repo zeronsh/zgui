@@ -2,6 +2,14 @@
 
 zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps, newest first.
 
+## Unreleased
+
+### Changed: what to check in an existing app
+
+**A mount's text inputs are laid out once its static bindings have run, not each as it binds**: a mount of many inputs is linear, not quadratic (the widgets benchmark −93%). An observer in the mount that reads geometry (a reactive style, a binding) sees the layout as it is: a style derived from an input's width of 160 reads 160, where it read an earlier layout's (such as the default 240) and kept it.
+- *Migrate:* nothing, unless an app relied on the earlier width.
+- A `TextMeasurer`, `TextShaper` or `FontTextShaper` is a cached computation: it may be called any number of times, in any order. The signals it reads keep their subscriptions; writing a signal from one is unsupported.
+
 ## 0.1.3 (2026-10-27)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.2 is an addition), unless it writes one of the three structs below field by field. Some defaults change, each below with what to check: zoom and find in page are on, keys and cursors behave as a browser's and AppKit's, and Windows presents and serves assistive technology differently.

@@ -1169,6 +1169,13 @@ pub enum Justify {
     Stretch,
 }
 /// A platform text shaper can provide accurate intrinsic and wrapped text metrics.
+///
+/// Results are cached: this computation may be called any number of times,
+/// in any order. Its result must be a function of its inputs and the signals
+/// it reads; the invocation sequence and intermediate model states observed
+/// are not part of the contract. Reactive reads participate in the calling
+/// effect's dependency tracking.
+/// Writing signals from a measurement or shaping callback is unsupported.
 pub trait TextMeasurer {
     /// The size of `text` at `font_size`, wrapped at `max_width` if given.
     fn measure(&self, text: &str, font_size: f32, max_width: Option<f32>) -> (f32, f32);

@@ -242,6 +242,13 @@ impl FontStyle {
     }
 }
 /// Font-aware shaping callback. The legacy TextShaper remains available for default fonts.
+///
+/// Results are cached: this computation may be called any number of times,
+/// in any order. Its result must be a function of its inputs and the signals
+/// it reads; the invocation sequence and intermediate model states observed
+/// are not part of the contract. Reactive reads participate in the calling
+/// effect's dependency tracking.
+/// Writing signals from a measurement or shaping callback is unsupported.
 pub trait FontTextShaper {
     /// Shape `text` at `size` in `font`, wrapped at `width` if given.
     fn shape(
@@ -383,6 +390,13 @@ pub trait TextLayout {
     }
 }
 /// Shapes text in the default font (see [`FontTextShaper`] for others).
+///
+/// Results are cached: this computation may be called any number of times,
+/// in any order. Its result must be a function of its inputs and the signals
+/// it reads; the invocation sequence and intermediate model states observed
+/// are not part of the contract. Reactive reads participate in the calling
+/// effect's dependency tracking.
+/// Writing signals from a measurement or shaping callback is unsupported.
 pub trait TextShaper {
     /// Shape `text` at `font_size`, wrapped at `max_width` if given.
     fn shape(&self, text: &str, font_size: f32, max_width: Option<f32>) -> Box<dyn TextLayout>;

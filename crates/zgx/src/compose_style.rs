@@ -812,7 +812,9 @@ pub(crate) fn mount_style_with_intrinsic(
     // Whether the effect subscribed to the inherited typography for good: a
     // node restyled every frame then compares its version without tracking.
     let mut parent_subscribed = false;
-    ui.bind(node, move || {
+    // Static: it reads no layout, so a mount need not draw its inputs first.
+    let mount_pure = dynamic.is_none() && reactive.is_none() && disabled.is_none();
+    ui.bind_marked(node, mount_pure, move || {
         let _span = crate::profile::nested(crate::profile::Phase::Style);
         // A `Ui` only for a full application: a run that changes paint or a
         // box alone needs just the scene and themes.

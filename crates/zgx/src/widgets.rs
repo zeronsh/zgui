@@ -493,7 +493,10 @@ impl EditorHandle {
         // A placeholder showing keeps its own colour: draw it again.
         if metrics_changed || self.hint.placeholder.borrow().is_some() {
             self.preferred_x.set(None);
-            self.refresh();
+            // A mount drawing this editor later draws it in this style.
+            if !input_draw_pending(self.node, &self.scene) {
+                self.refresh();
+            }
         } else {
             let mut scene = self.scene.borrow_mut();
             if !scene.contains(self.text) {
@@ -1374,14 +1377,25 @@ impl Ui {
     }
     /// Run `f` now and whenever what it reads changes, for as long as `owner`
     /// is mounted.
-    pub fn bind(&mut self, owner: NodeId, mut f: impl FnMut() + 'static) {
+    pub fn bind(&mut self, owner: NodeId, f: impl FnMut() + 'static) {
+        self.bind_marked(owner, false, f);
+    }
+    /// [`Ui::bind`]. `mount_pure`: `f` reads no layout, so a mount's
+    /// deferred input draws need not be made before it runs
+    /// (`draw_inputs_before`).
+    pub(crate) fn bind_marked(
+        &mut self,
+        owner: NodeId,
+        mount_pure: bool,
+        mut f: impl FnMut() + 'static,
+    ) {
         assert!(
             self.scene.borrow().contains(owner),
             "cannot bind a removed UI node"
         );
         let mut initial = self.storage.mount_initialization.borrow().clone();
         self.runtime.clone().batch(|| {
-            let effect = self.runtime.effect(move || {
+            let effect = self.runtime.effect_marked(mount_pure, move || {
                 let Some(token) = initial.take() else {
                     f();
                     return;
@@ -1414,6 +1428,24 @@ impl Ui {
                 .or_default()
                 .effects
                 .push(effect);
+        });
+    }
+    /// [`Ui::bind`] for a text input's model or typography, which a mount
+    /// deferring its inputs' draws runs without drawing them first
+    /// (`draw_inputs_before`).
+    pub(crate) fn bind_input(&mut self, owner: NodeId, f: impl FnMut() + 'static) {
+        self.bind_marked(owner, false, f);
+        INPUT_DRAWS.with_borrow_mut(|draws| {
+            let Some(draws) = &mut **draws else {
+                return;
+            };
+            if draws.storage.as_ptr() != Rc::as_ptr(&self.storage) {
+                return;
+            }
+            let owned = self.storage.owned.borrow();
+            if let Some(effect) = owned.get(&owner).and_then(|owned| owned.effects.last()) {
+                draws.inputs.insert(effect.number(), owner);
+            }
         });
     }
     /// Listen for input at `node` for as long as it is mounted. `focusable`
@@ -3278,7 +3310,7 @@ impl Ui {
         {
             let (nodes, scene, theme) =
                 (selection_nodes.clone(), self.scene.clone(), theme.clone());
-            self.bind(root, move || {
+            self.bind_marked(root, true, move || {
                 let color = theme.color(tok::SELECTION);
                 let mut s = scene.borrow_mut();
                 for id in nodes.borrow().iter() {
@@ -4187,7 +4219,7 @@ impl Ui {
         let model_preferred_x = preferred_x.clone();
         let model_gesture = gesture.clone();
         let model_storage = Rc::downgrade(&self.storage);
-        self.bind(root, move || {
+        self.bind_input(root, move || {
             // Canonical model text is compared and applied in place, without
             // cloning the full document; the signal's borrow is released
             // before anything else runs.
@@ -4214,7 +4246,9 @@ impl Ui {
             if let Some(canonical) = writeback {
                 model.value.set(canonical);
             }
-            draw();
+            if !defer_input_draw(root, &draw, &model, &model_storage) {
+                draw();
+            }
         });
         let scene = self.scene.clone();
         let input_storage = Rc::downgrade(&self.storage);
@@ -5444,6 +5478,159 @@ impl Ui {
         self.storage.owned.borrow_mut().entry(n).or_default();
         n
     }
+}
+
+/// An input waiting to be drawn, with the model effect whose reads its
+/// draw's are.
+type InputDraw = (NodeId, u64, Rc<dyn Fn()>);
+/// A mount's text inputs, drawn once its bindings have run rather than each
+/// as its model binds. A draw lays the scene out (to place the text in the
+/// editor's box), so drawing inputs one by one laid out again a tree that
+/// grew with every row: a mount of n inputs was quadratic. Bindings that
+/// read no layout (static styles, `mount_pure`, and the inputs' own model
+/// and typography bindings) run between; before any other observer, which
+/// may read geometry, the inputs waiting are drawn and the scene laid out
+/// (`draw_inputs_before`), so it reads current geometry. One top-level
+/// mount at a time, per thread.
+struct InputDraws {
+    /// The model and typography bindings of this mount's inputs, by effect.
+    inputs: std::collections::BTreeMap<u64, NodeId>,
+    storage: Weak<UiStorage>,
+    waiting: Vec<InputDraw>,
+    /// Whether a draw was deferred: observers from then on get a layout.
+    deferred: bool,
+}
+thread_local! {
+    // `InputDrawScope` takes the value on return and unwind: the slot owns
+    // none after a mount, so it needs no destructor at thread exit (one
+    // registered costs an allocation).
+    static INPUT_DRAWS: RefCell<std::mem::ManuallyDrop<Option<InputDraws>>> =
+        const { RefCell::new(std::mem::ManuallyDrop::new(None)) };
+}
+/// Defers the input draws of the mount it was begun for, if `active`.
+pub(crate) struct InputDrawScope {
+    pub(crate) active: bool,
+}
+impl InputDrawScope {
+    /// For a mount by `ui`: not inside a batch or a flush, where its
+    /// effects wait for an outer one, nor inside another mount's scope.
+    pub(crate) fn begin(ui: &Ui) -> Self {
+        let active = !ui.runtime.deferring()
+            && INPUT_DRAWS.with_borrow_mut(|draws| {
+                if draws.is_some() {
+                    return false;
+                }
+                **draws = Some(InputDraws {
+                    inputs: Default::default(),
+                    storage: Rc::downgrade(&ui.storage),
+                    waiting: Vec::new(),
+                    deferred: false,
+                });
+                true
+            });
+        Self { active }
+    }
+}
+impl Drop for InputDrawScope {
+    fn drop(&mut self) {
+        if self.active {
+            let _draws = INPUT_DRAWS.with_borrow_mut(|draws| draws.take());
+        }
+    }
+}
+/// Leave the draw of input `root` to its mount, if one is deferring them
+/// and it is a plain field (a code editor's caret callbacks are drawn at
+/// once). Called from its model binding, whose reads the draw's join.
+fn defer_input_draw(
+    root: NodeId,
+    draw: &Rc<dyn Fn()>,
+    hint: &EditorHint,
+    storage: &Weak<UiStorage>,
+) -> bool {
+    INPUT_DRAWS.with_borrow_mut(|draws| {
+        let Some(draws) = &mut **draws else {
+            return false;
+        };
+        if storage.as_ptr() != draws.storage.as_ptr() || hint.code().is_some() {
+            return false;
+        }
+        draws.deferred = true;
+        let Some(effect) = draws
+            .storage
+            .upgrade()
+            .and_then(|storage| storage.runtime.active_effect())
+        else {
+            return false;
+        };
+        draws.waiting.push((root, effect, draw.clone()));
+        true
+    })
+}
+/// Before observer `effect` runs in a mount: unless it reads no layout, draw
+/// the inputs waiting and lay out. Whether it did (the draws may have
+/// queued an older observer).
+pub(crate) fn draw_inputs_before(effect: u64, scene: &Rc<RefCell<Scene>>) -> bool {
+    let drawing = INPUT_DRAWS.with_borrow_mut(|draws| {
+        let draws = draws.as_mut()?;
+        let storage = draws.storage.upgrade()?;
+        let input = draws.inputs.get(&effect).is_some_and(|owner| {
+            storage
+                .editors
+                .borrow()
+                .get(owner)
+                .is_some_and(|editor| editor.hint.code().is_none())
+        });
+        if input || !draws.deferred {
+            return None;
+        }
+        Some((storage.runtime.clone(), std::mem::take(&mut draws.waiting)))
+    });
+    let Some((runtime, waiting)) = drawing else {
+        return false;
+    };
+    for (_, effect, draw) in waiting {
+        runtime.run_as(effect, &*draw);
+    }
+    scene.borrow_mut().prepare_layout();
+    true
+}
+/// The end of a mount whose input draws were deferred: the rest drawn.
+pub(crate) fn finish_input_draws(scene: &Rc<RefCell<Scene>>) {
+    let Some(draws) = INPUT_DRAWS.with_borrow_mut(|draws| draws.take()) else {
+        return;
+    };
+    let Some(storage) = draws.storage.upgrade().filter(|_| draws.deferred) else {
+        return;
+    };
+    let runtime = storage.runtime.clone();
+    // Batched: an observer of a signal a shaper writes (unsupported) runs
+    // after the draws, not inside an editor's borrow.
+    runtime.batch(|| {
+        for (_, effect, draw) in draws.waiting {
+            runtime.run_as(effect, &*draw);
+        }
+        scene.borrow_mut().prepare_layout();
+    });
+}
+/// Whether the mount deferring input draws has bound an input: without one
+/// its observers run as any batch's.
+pub(crate) fn inputs_bound() -> bool {
+    INPUT_DRAWS.with_borrow(|draws| draws.as_ref().is_some_and(|draws| !draws.inputs.is_empty()))
+}
+/// Whether `node`'s draw is the last a mount on `scene` has waiting.
+fn input_draw_pending(node: NodeId, scene: &Rc<RefCell<Scene>>) -> bool {
+    INPUT_DRAWS.with_borrow(|draws| {
+        draws.as_ref().is_some_and(|draws| {
+            draws
+                .waiting
+                .last()
+                .is_some_and(|(owner, _, _)| *owner == node)
+                && draws
+                    .storage
+                    .upgrade()
+                    .is_some_and(|storage| Rc::ptr_eq(&storage.scene, scene))
+        })
+    })
 }
 
 #[cfg(test)]

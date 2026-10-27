@@ -4289,7 +4289,7 @@ fn open_element(
         }
         let typography = environment.typography.clone();
         let theme = environment.theme.clone();
-        ui.bind(root, move || {
+        ui.bind_input(root, move || {
             let style = typography.get();
             let theme = Some(&*theme);
             editor.set_text_style(
@@ -5908,12 +5908,26 @@ impl Ui {
         // subtree. Attach the whole tree and its ownership before they run.
         let mut transaction = MountTransaction::new(&ui, self.root());
         let initialization = ui.begin_mount_initialization();
-        let root = runtime.batch(|| {
+        // Text inputs are drawn once the bindings that read no layout have
+        // run, not each as it binds (`InputDraws`).
+        let draws = crate::widgets::InputDrawScope::begin(self);
+        let build = || {
             let _scope = initialization.enter();
             let root = runtime.untracked(|| mount(&mut ui, self.root(), view, environment));
             initialization.set_root(root);
             root
-        });
+        };
+        let root = if draws.active {
+            let root = runtime.batch_with_barrier(
+                build,
+                |effect| crate::widgets::draw_inputs_before(effect, &self.scene),
+                crate::widgets::inputs_bound,
+            );
+            crate::widgets::finish_input_draws(&self.scene);
+            root
+        } else {
+            runtime.batch(build)
+        };
         transaction.commit();
         ViewHandle {
             ui: self.downgrade(),
@@ -6047,5 +6061,144 @@ mod editor_mount_tests {
         assert!(ui.scene.borrow().children(ui.root()).is_empty());
         drop(watcher);
         assert_eq!(ui.runtime.effect_count(), 0);
+    }
+}
+
+#[cfg(test)]
+mod input_draw_tests {
+    use super::*;
+    use std::{cell::Cell, rc::Rc};
+
+    // Drawn as it bound, the input was last laid out before its width
+    // applied: the callback read the default 240, and a style derived from
+    // it stayed 240. Its draws deferred to the callback, it reads 160.
+    #[test]
+    fn a_mount_callback_derives_its_style_from_current_input_geometry() {
+        let mut ui = Ui::new(1200., 800.);
+        let value = ui.signal(String::from("abcdefghijabcdefghijabcdefghij"));
+        let scene = ui.scene.clone();
+        let observed = Rc::new(Cell::new(0.));
+        let read = observed.clone();
+        let mounted = ui.mount(
+            column().children([
+                row().child(text_input("Name", value).id("source").w(160.)),
+                button()
+                    .id("derived")
+                    .child(text("Derived"))
+                    .reactive_style(move || {
+                        let scene = scene.borrow();
+                        let column = scene.children(scene.root())[0];
+                        let row = scene.children(column)[0];
+                        let input = scene.children(row)[0];
+                        assert_eq!(scene.style(input).width, Some(160.));
+                        let width = scene.bounds(input).width;
+                        read.set(width);
+                        Styles::default().w(width)
+                    }),
+            ]),
+        );
+        assert_eq!(observed.get(), 160.);
+        ui.prepare_frame();
+        let derived = mounted.find("derived").unwrap();
+        assert_eq!(ui.scene.borrow().bounds(derived).width, 160.);
+    }
+
+    fn picture(ui: &Ui) -> Vec<String> {
+        let scene = ui.scene.borrow();
+        scene
+            .layer_items(None)
+            .iter()
+            .map(|item| {
+                format!(
+                    "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+                    item.id,
+                    item.bounds,
+                    item.kind,
+                    item.font,
+                    item.text_options,
+                    item.effects,
+                    item.clip,
+                    item.border_pass,
+                    item.isolated,
+                    item.extras
+                )
+            })
+            .collect()
+    }
+
+    fn shaper_read_case(eager: bool) -> Vec<String> {
+        let mut ui = Ui::new(600., 400.);
+        let metric = ui.signal(1.0f32);
+        let read = metric.clone();
+        let calls = Rc::new(Cell::new(0));
+        let measured = calls.clone();
+        ui.scene.borrow_mut().set_text_shaper(
+            move |text: &str,
+                  size: f32,
+                  width: Option<f32>|
+                  -> Box<dyn crate::text_layout::TextLayout> {
+                measured.set(measured.get() + 1);
+                Box::new(crate::text_layout::FallbackTextLayout::new(
+                    text,
+                    size * read.get(),
+                    width,
+                ))
+            },
+        );
+        let value = ui.signal(String::from("not empty"));
+        let view = column().child(text_input("Input", value).w(160.));
+        let runtime = ui.runtime.clone();
+        // Inside an outer batch a mount draws each input as it binds.
+        let _mounted = if eager {
+            runtime.batch(|| ui.mount(view))
+        } else {
+            ui.mount(view)
+        };
+        ui.prepare_frame();
+        assert!(metric.is_observed());
+        let before = calls.get();
+        metric.set(2.);
+        ui.prepare_frame();
+        assert!(calls.get() > before);
+        picture(&ui)
+    }
+    #[test]
+    fn a_deferred_initial_draw_keeps_its_custom_shapers_signal_dependency() {
+        assert_eq!(shaper_read_case(false), shaper_read_case(true));
+    }
+
+    fn shaper_write_case(eager: bool) -> Vec<String> {
+        let mut ui = Ui::new(600., 400.);
+        let value = ui.signal(String::from("first"));
+        let write = value.clone();
+        let fired = Rc::new(Cell::new(false));
+        let once = fired.clone();
+        ui.scene.borrow_mut().set_text_shaper(
+            move |text: &str,
+                  size: f32,
+                  width: Option<f32>|
+                  -> Box<dyn crate::text_layout::TextLayout> {
+                if text == "first" && !once.replace(true) {
+                    write.set(String::from("second"));
+                }
+                Box::new(crate::text_layout::FallbackTextLayout::new(
+                    text, size, width,
+                ))
+            },
+        );
+        let view = column().child(text_input("Input", value.clone()).w(160.));
+        let runtime = ui.runtime.clone();
+        let _mounted = if eager {
+            runtime.batch(|| ui.mount(view))
+        } else {
+            ui.mount(view)
+        };
+        ui.prepare_frame();
+        assert_eq!(value.get(), "second");
+        picture(&ui)
+    }
+    #[test]
+    fn a_signal_written_by_a_deferred_shaper_waits_until_the_draw_finishes() {
+        assert_eq!(shaper_write_case(false), shaper_write_case(true));
     }
 }
