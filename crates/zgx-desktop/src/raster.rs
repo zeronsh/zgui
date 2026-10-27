@@ -413,7 +413,7 @@ impl Raster {
         let mode = scene.blend(item.id);
         // A transformed layer samples back through its matrix (from this
         // target's origin), nearest texel, as transformed images do.
-        let matrix = item.matrix().map(|matrix| {
+        let matrix = item.projective().map(|matrix| {
             use zgx::affine::{Affine, Projective};
             let (x, y) = self.origin;
             Projective::from(Affine::translation(x, y))

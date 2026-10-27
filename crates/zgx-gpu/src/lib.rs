@@ -5161,7 +5161,7 @@ impl GpuRenderer {
             };
 
             // A transformed layer's matrix, from this target's origin.
-            let matrix = item.matrix().map(|matrix| {
+            let matrix = item.projective().map(|matrix| {
                 use zgx::affine::{Affine, Projective};
                 let (x, y) = self.layer_origin;
                 Projective::from(Affine::translation(x, y))

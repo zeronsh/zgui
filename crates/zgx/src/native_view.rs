@@ -657,7 +657,7 @@ impl Walk<'_> {
             rounded.extend(context.rounded.iter().copied());
             if item.isolated {
                 let inner = self.scene.layer_items(Some(item.id));
-                let matrix = match (item.matrix(), context.matrix) {
+                let matrix = match (item.projective(), context.matrix) {
                     (Some(own), Some(outer)) => Some(own.then(outer)),
                     (own, outer) => own.or(outer),
                 };

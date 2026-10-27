@@ -359,7 +359,7 @@ impl Scene {
                 let bounds = node.bounds.translated(translation);
                 point = node
                     .local()
-                    .matrix(bounds)
+                    .projective(bounds)
                     .inverse()?
                     .point(point.0, point.1);
             }

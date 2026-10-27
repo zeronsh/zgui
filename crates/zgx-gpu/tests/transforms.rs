@@ -381,7 +381,7 @@ fn a_tilt_in_perspective_shows_the_nearer_side_larger() {
         scene.set_local_transform(card, tilt);
         let (stats, p) = render(&mut gpu, &mut scene);
         assert_eq!(stats.layer_repaints, 1, "direct {direct}");
-        let matrix = tilt.matrix(Rect::new(50., 50., 100., 100.));
+        let matrix = tilt.projective(Rect::new(50., 50., 100., 100.));
         let (left, top) = matrix.point(50., 50.);
         let (right, top_right) = matrix.point(150., 50.);
         assert!(top < 50. && top_right > 50., "{top} {top_right}");

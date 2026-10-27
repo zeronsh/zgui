@@ -410,10 +410,29 @@ impl LocalTransform {
             && self.rotate_x == 0.
             && self.rotate_y == 0.
     }
+    /// Its scale, rotation and skew about the origin for a node at `bounds`
+    /// (layout rect, untranslated), as an affine matrix: translate(origin) ·
+    /// rotate · skew · scale · translate(-origin). Leaves out a tilt
+    /// (`rotate_x`, `rotate_y`), which `projective` includes.
+    pub fn matrix(&self, bounds: Rect) -> crate::affine::Affine {
+        use crate::affine::Affine;
+        let skew = Affine {
+            b: self.skew.1.tan(),
+            c: self.skew.0.tan(),
+            ..Affine::IDENTITY
+        };
+        Affine::scale(self.scale.0, self.scale.1)
+            .then(skew)
+            .then(Affine::rotation(self.rotate))
+            .around(
+                bounds.x + bounds.width * self.origin.0,
+                bounds.y + bounds.height * self.origin.1,
+            )
+    }
     /// The map for a node at `bounds` (layout rect, untranslated), as CSS
     /// `perspective() rotateX() rotateY() rotate() skew() scale()` about the
     /// origin: projective once tilted with a perspective, affine otherwise.
-    pub fn matrix(&self, bounds: Rect) -> crate::affine::Projective {
+    pub fn projective(&self, bounds: Rect) -> crate::affine::Projective {
         use crate::affine::{Affine, Projective};
         let skew = Affine {
             b: self.skew.1.tan(),
@@ -2199,13 +2218,16 @@ pub struct PaintItem<'a> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PaintExtras {
     /// See `PaintItem::matrix`.
-    pub matrix: Option<crate::affine::Projective>,
+    pub matrix: Option<crate::affine::Affine>,
     /// See `PaintItem::mask`.
     pub mask: Option<FadeMask>,
     /// See `PaintItem::rounded`.
     pub rounded: RoundedClip,
     /// See `PaintItem::color`.
     pub color: Option<ColorMatrix>,
+    /// See `PaintItem::projective`: the map in perspective, which `matrix`
+    /// cannot hold (`None` where `matrix` is the whole map).
+    pub projective: Option<crate::affine::Projective>,
 }
 impl PaintExtras {
     /// `None` for nothing to carry, else shared.
@@ -2270,8 +2292,18 @@ impl PaintItem<'_> {
     /// lands in this item's (see `LocalTransform::matrix`). Its `clip` is
     /// then its parent's; its own clips inside the layer. Always `None`
     /// from `paint_items`.
-    pub fn matrix(&self) -> Option<crate::affine::Projective> {
+    /// In perspective (a tilt seen from `perspective`), the map before the
+    /// tilt: `projective` has the whole map.
+    pub fn matrix(&self) -> Option<crate::affine::Affine> {
         self.extras.as_ref().and_then(|extras| extras.matrix)
+    }
+    /// A transformed layer's whole map, perspective included (see
+    /// `LocalTransform::projective`): `matrix`'s where it is affine.
+    pub fn projective(&self) -> Option<crate::affine::Projective> {
+        let extras = self.extras.as_ref()?;
+        extras
+            .projective
+            .or_else(|| extras.matrix.map(crate::affine::Projective::from))
     }
     /// The nearest `fade_edges` ancestor's clip and bands (top, bottom).
     pub fn mask(&self) -> Option<FadeMask> {
@@ -3771,7 +3803,7 @@ impl Scene {
                 (point, inherited_clip)
             } else {
                 // Clipped around it, or flattened to nothing, nothing in it is hit.
-                let Some(inverse) = node.local().matrix(bounds).inverse() else {
+                let Some(inverse) = node.local().projective(bounds).inverse() else {
                     continue;
                 };
                 if !inside(inherited_clip, point) {
@@ -5645,7 +5677,7 @@ impl Scene {
         // A content blur starts a layer as a transform does: it spreads
         // what the layer paints, in the layer's space, and its own clip
         // applies inside, before the blur.
-        let matrix = node.local().matrix(bounds);
+        let matrix = node.local().projective(bounds);
         let spread = match node.filtered() {
             true => filter_spread(node.effects.filter_blur) * stretch(matrix),
             false => 0.,
@@ -5752,7 +5784,7 @@ impl Scene {
             .map(|ink| match node.transformed() {
                 false => ink,
                 // About its untranslated box: translating after commutes.
-                true => node.local().matrix(node.bounds).bounds(ink),
+                true => node.local().projective(node.bounds).bounds(ink),
             })
             .map(|ink| ink.translated(node.transform));
         node.ink.set(ink);
@@ -7827,7 +7859,8 @@ impl Scene {
                 let nested = self
                     .layer_bounds(item.id)
                     .expand(filter_spread(item.effects.filter_blur));
-                item.matrix().map_or(nested, |matrix| matrix.bounds(nested))
+                item.projective()
+                    .map_or(nested, |matrix| matrix.bounds(nested))
             } else if let NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } = item.kind {
                 quad.paint_bounds(item.bounds)
             } else if let NodeKind::Svg(svg) = item.kind {
@@ -8084,7 +8117,7 @@ impl Scene {
             }
             // A transformed layer clips itself, inside, to its rotated box; a
             // blurred or masked one clips inside, before its effect.
-            let matrix = (isolated && transformed).then(|| node.local().matrix(bounds));
+            let matrix = (isolated && transformed).then(|| node.local().projective(bounds));
             // A border pass (its border and outline over what it holds)
             // isn't cut by its own clip, as CSS doesn't cut an outline.
             let clip = match (isolated && (transformed || effect)) || border {
@@ -8161,10 +8194,14 @@ impl Scene {
                         || own.color != own.parent_color =>
                 {
                     PaintExtras {
-                        matrix,
+                        // Affine where it is; in perspective, the map
+                        // before the tilt, with the whole map beside it.
+                        matrix: matrix
+                            .map(|map| map.affine().unwrap_or_else(|| node.local().matrix(bounds))),
                         mask: own.mask,
                         rounded: own.item_rounded,
                         color: own.color,
+                        projective: matrix.filter(|map| map.affine().is_none()),
                     }
                     .shared()
                 }
@@ -8203,6 +8240,7 @@ impl Scene {
                         mask: own.child_mask,
                         rounded: own.child_rounded,
                         color: own.color,
+                        projective: None,
                     }
                     .shared(),
                 };
@@ -8469,6 +8507,7 @@ impl<'a> Iterator for PaintIter<'a> {
                 mask,
                 rounded,
                 color,
+                projective: None,
             }
             .shared()
         };
@@ -8480,6 +8519,7 @@ impl<'a> Iterator for PaintIter<'a> {
                 mask: child_mask,
                 rounded: child_rounded,
                 color,
+                projective: None,
             }
             .shared()
         };
@@ -11279,7 +11319,38 @@ mod local_transform_tests {
         };
         let (x, y) = skew.matrix(bounds).point(10., 30.);
         assert!((x - 20.).abs() < 1e-4 && (y - 30.).abs() < 1e-4);
-        assert!(LocalTransform::IDENTITY.matrix(bounds) == crate::affine::Projective::IDENTITY);
+        assert!(LocalTransform::IDENTITY.matrix(bounds) == crate::affine::Affine::IDENTITY);
+        assert!(LocalTransform::IDENTITY.projective(bounds) == crate::affine::Projective::IDENTITY);
+        // Untilted, the whole map is the affine one, exactly.
+        for t in [transform, corner, skew] {
+            assert_eq!(t.projective(bounds).affine(), Some(t.matrix(bounds)));
+        }
+    }
+    #[test]
+    fn a_layer_in_perspective_has_its_whole_map_beside_the_affine_one() {
+        let mut scene = Scene::new(200., 200.);
+        let id = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Overlay),
+            fixed(100., 100.),
+        );
+        let bounds = Rect::new(0., 0., 100., 100.);
+        let tilt = LocalTransform {
+            rotate_y: 0.5,
+            perspective: 400.,
+            ..LocalTransform::IDENTITY
+        };
+        scene.set_local_transform(id, tilt);
+        scene.flush();
+        let item = scene
+            .layer_items(None)
+            .into_iter()
+            .find(|item| item.id == id && item.isolated)
+            .unwrap();
+        assert_eq!(item.projective(), Some(tilt.projective(bounds)));
+        assert!(tilt.projective(bounds).affine().is_none());
+        // The affine matrix is the map before the tilt (here none).
+        assert_eq!(item.matrix(), Some(crate::affine::Affine::IDENTITY));
     }
     #[test]
     fn equal_and_normalized_writes_do_nothing() {
