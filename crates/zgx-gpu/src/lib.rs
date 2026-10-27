@@ -361,7 +361,10 @@ fn shading(quad: &Quad, scale: f32) -> Shading {
         && quad.options[2] < 0.5
         && quad.shape[2] <= 0.
         && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.))
-        && quad.mask[0] <= 0.;
+        && quad.mask[0] <= 0.
+        // Drawn without the region it lies in (`Region::covers`): full
+        // still, batched as it was.
+        && quad.mask[3] <= 0.;
     if !plain {
         Shading::Full
     } else if quad.options[1] <= 0.5 && quad.color[3] >= 1. {
@@ -6669,7 +6672,7 @@ impl GpuRenderer {
                 // A glyph's quad (`glyph_quad`) is plain unless faded or in a
                 // clip region, and textured: one shading for all of them.
                 let glyphs =
-                    glyphs_alone.then_some(match item.effects.edge_fade != 0. || region > 0. {
+                    glyphs_alone.then_some(match item.effects.edge_fade != 0. || in_region.is_some() {
                         true => Shading::Full,
                         false => Shading::Basic,
                     });
