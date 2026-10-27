@@ -613,6 +613,208 @@ fn patch_sizes(style: &mut crate::scene::Style, next: &Styles) {
 /// what a style effect re-running spent.
 pub(crate) type DynamicStyle = Box<dyn FnMut(&mut Option<Styles>)>;
 
+/// A style effect's run that changes paint (or a box's sizes) alone: the
+/// last full application's styles with this run's paint laid over them,
+/// written to the scene. Out of line, so that the full application and a
+/// mount, which run the rest of the effect, keep its code apart.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn paint_only_run(
+    storage: &crate::widgets::UiStorage,
+    node: NodeId,
+    produced: &Option<Styles>,
+    applied: &mut AppliedInputs,
+    last: &mut Settled,
+    shown: &mut Option<crate::scene::Style>,
+    painted: &mut bool,
+    boxed: &mut Option<u32>,
+    paint: Option<([bool; 11], u8)>,
+    resized: bool,
+    active_variants: [(bool, &Option<Box<Styles>>); 4],
+    glass: Option<bool>,
+    theme: &Option<crate::theme::StyleTheme>,
+    originals: &Originals,
+    is_text: bool,
+    output: &Option<Signal<Typography>>,
+    inherited: &Signal<Typography>,
+    base: &Styles,
+    scope: &Option<std::rc::Rc<crate::theme::ThemeScope>>,
+) {
+    if resized
+        && let (Some(now), Some(then), Some(style)) = (&produced, &mut last.dynamic, shown.as_mut())
+    {
+        // As `Styles::merge` lays them over the base.
+        use crate::style::bit;
+        let next = &mut applied.0;
+        if now.width.is_some() || now.width_percent.is_some() {
+            let fields = next.fields_mut(bit::WIDTH | bit::WIDTH_PERCENT);
+            fields.width = now.width;
+            fields.width_percent = now.width_percent;
+        }
+        if now.height.is_some() || now.height_percent.is_some() {
+            let fields = next.fields_mut(bit::HEIGHT | bit::HEIGHT_PERCENT);
+            fields.height = now.height;
+            fields.height_percent = now.height_percent;
+        }
+        if let Some(margin) = now.margin {
+            let mask = if now.margin_sides == 0 {
+                15
+            } else {
+                now.margin_sides
+            };
+            crate::style::merge_insets(
+                next.fields_mut(bit::MARGIN)
+                    .margin
+                    .get_or_insert_with(Default::default),
+                margin,
+                mask,
+            );
+        }
+        set_sizes(then, sizes(now));
+        patch_sizes(style, next);
+        storage.scene.borrow_mut().set_box(node, style, boxed);
+    }
+    // The paint written last time, from the same inputs.
+    // Resized with no dynamic paint, as last time: nothing to write.
+    let none = resized && paint.is_none_or(|paint| paint == ([false; 11], 0));
+    if std::mem::replace(painted, none) && none {
+        return;
+    }
+    // The paint resolved last time, with this run's laid over it:
+    // the base and the variants on are the same, and so is which
+    // paint the style sets.
+    if let Some(produced) = &produced {
+        Paint::lay_from(produced, &mut applied.0);
+    }
+    for (enabled, variant) in active_variants {
+        if enabled && let Some(variant) = variant {
+            Paint::lay_from(variant, &mut applied.0);
+        }
+    }
+    // Frosted glass painted opaque (`opaque_glass`) stays so,
+    // whatever blur was laid over it.
+    if glass == Some(true)
+        && applied
+            .0
+            .overflow()
+            .blur
+            .get()
+            .is_some_and(|sigma| sigma > 0.)
+    {
+        applied
+            .0
+            .fields_mut(crate::style::bit::BLUR)
+            .overflow_mut()
+            .blur = Some(0.).into();
+    }
+    let resolved = &applied.0;
+    let paint_color = resolved.text_color;
+    let bound = theme.as_ref().is_some_and(|theme| theme.themed())
+        || produced.as_ref().is_some_and(Styles::has_tokens);
+    let mut effects = originals.effects;
+    if let Some(value) = resolved.opacity.get() {
+        effects.opacity = value;
+    }
+    if let Some(value) = resolved.overflow().blur.get() {
+        effects.blur_radius = value;
+    }
+    if let Some(value) = resolved.overflow().edge_fade.get() {
+        effects.edge_fade = value;
+    }
+    if let Some(value) = resolved.overflow().filter_blur.get() {
+        effects.filter_blur = value;
+    }
+    if let Some(value) = resolved.overflow().brightness.get() {
+        effects.brightness = value;
+    }
+    if let Some(value) = resolved.overflow().contrast.get() {
+        effects.contrast = value;
+    }
+    if let Some(value) = resolved.overflow().saturate.get() {
+        effects.saturate = value;
+    }
+    // The text colour matters to text, and to what inherits it:
+    // the last patch that sets it decides it, a token if it
+    // bound one (only patches with tokens need looking at).
+    let mut text_color = None;
+    if is_text || output.is_some() {
+        let parent_color = inherited.with_untracked(|parent| parent.color);
+        let color = match paint_color {
+            None => parent_color,
+            Some(value) if !bound => Themed::Value(value),
+            Some(value) => {
+                let mut color = themed_color(base);
+                if let (Some(value), Some(produced)) =
+                    (produced.as_ref().and_then(|p| p.text_color), &produced)
+                {
+                    color = Some(match token_of(produced, crate::theme::Field::TextColor) {
+                        Some(token) => Themed::Token(token),
+                        None => Themed::Value(value),
+                    });
+                }
+                for (enabled, variant) in active_variants {
+                    if enabled
+                        && let Some(variant) = variant
+                        && let Some(own) = themed_color(variant)
+                    {
+                        color = Some(own);
+                    }
+                }
+                color.unwrap_or(Themed::Value(value))
+            }
+        };
+        if is_text {
+            let shown = resolve_color(color, scope.as_deref());
+            applied.1.color = Themed::Value(shown);
+            text_color = Some(shown);
+            if let Some(output) = &output {
+                set_color(output, color);
+            }
+        } else if applied.1.color != color {
+            applied.1.color = color;
+            if let Some(output) = &output {
+                set_color(output, color);
+            }
+        }
+    }
+    let mut scene = storage.scene.borrow_mut();
+    let transform = resolved.transform.unwrap_or(originals.transform);
+    let inset = applied.0.overflow().clip_inset.or(originals.inset());
+    let local = resolved.local_transform.resolve_finite(originals.local);
+    let (inset_kept, transform_kept, local_kept) = scene.paint_kept(node, inset, transform, local);
+    if last.moves_and_fades {
+        show_moved_and_faded(
+            &mut scene, node, transform, effects, &applied.0, originals, inset_kept,
+        );
+    } else {
+        scene.set_effects(node, effects);
+        apply_mask(&mut scene, node, &applied.0, originals.mask());
+        if !inset_kept {
+            scene.set_clip_inset(node, inset);
+        }
+        if !transform_kept {
+            scene.set_transform(node, transform);
+        }
+    }
+    if !local_kept {
+        scene.set_local_transform(node, local);
+    }
+    if let Some(color) = text_color
+        && let NodeKind::Text {
+            text,
+            font_size,
+            color: old,
+        } = scene.kind(node)
+        && *old != color
+    {
+        let kind = NodeKind::Text {
+            text: text.clone(),
+            color,
+            font_size: *font_size,
+        };
+        scene.set_kind(node, kind);
+    }
+}
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn mount_style_with_intrinsic(
     ui: &mut Ui,
@@ -969,184 +1171,27 @@ pub(crate) fn mount_style_with_intrinsic(
                         })
                 });
             if unchanged {
-                if resized
-                    && let (Some(now), Some(then), Some(style)) =
-                        (&produced, &mut last.dynamic, shown.as_mut())
-                {
-                    // As `Styles::merge` lays them over the base.
-                    use crate::style::bit;
-                    let next = &mut applied.0;
-                    if now.width.is_some() || now.width_percent.is_some() {
-                        let fields = next.fields_mut(bit::WIDTH | bit::WIDTH_PERCENT);
-                        fields.width = now.width;
-                        fields.width_percent = now.width_percent;
-                    }
-                    if now.height.is_some() || now.height_percent.is_some() {
-                        let fields = next.fields_mut(bit::HEIGHT | bit::HEIGHT_PERCENT);
-                        fields.height = now.height;
-                        fields.height_percent = now.height_percent;
-                    }
-                    if let Some(margin) = now.margin {
-                        let mask = if now.margin_sides == 0 {
-                            15
-                        } else {
-                            now.margin_sides
-                        };
-                        crate::style::merge_insets(
-                            next.fields_mut(bit::MARGIN)
-                                .margin
-                                .get_or_insert_with(Default::default),
-                            margin,
-                            mask,
-                        );
-                    }
-                    set_sizes(then, sizes(now));
-                    patch_sizes(style, next);
-                    storage.scene.borrow_mut().set_box(node, style, boxed);
-                }
-                // The paint written last time, from the same inputs.
-                // Resized with no dynamic paint, as last time: nothing to write.
-                let none = resized && paint.is_none_or(|paint| paint == ([false; 11], 0));
-                if std::mem::replace(painted, none) && none {
-                    return;
-                }
-                // The paint resolved last time, with this run's laid over it:
-                // the base and the variants on are the same, and so is which
-                // paint the style sets.
-                if let Some(produced) = &produced {
-                    Paint::lay_from(produced, &mut applied.0);
-                }
-                for (enabled, variant) in active_variants {
-                    if enabled && let Some(variant) = variant {
-                        Paint::lay_from(variant, &mut applied.0);
-                    }
-                }
-                // Frosted glass painted opaque (`opaque_glass`) stays so,
-                // whatever blur was laid over it.
-                if glass == Some(true)
-                    && applied
-                        .0
-                        .overflow()
-                        .blur
-                        .get()
-                        .is_some_and(|sigma| sigma > 0.)
-                {
-                    applied
-                        .0
-                        .fields_mut(crate::style::bit::BLUR)
-                        .overflow_mut()
-                        .blur = Some(0.).into();
-                }
-                let resolved = &applied.0;
-                let paint_color = resolved.text_color;
-                let bound = theme.as_ref().is_some_and(|theme| theme.themed())
-                    || produced.as_ref().is_some_and(Styles::has_tokens);
-                let mut effects = originals.effects;
-                if let Some(value) = resolved.opacity.get() {
-                    effects.opacity = value;
-                }
-                if let Some(value) = resolved.overflow().blur.get() {
-                    effects.blur_radius = value;
-                }
-                if let Some(value) = resolved.overflow().edge_fade.get() {
-                    effects.edge_fade = value;
-                }
-                if let Some(value) = resolved.overflow().filter_blur.get() {
-                    effects.filter_blur = value;
-                }
-                if let Some(value) = resolved.overflow().brightness.get() {
-                    effects.brightness = value;
-                }
-                if let Some(value) = resolved.overflow().contrast.get() {
-                    effects.contrast = value;
-                }
-                if let Some(value) = resolved.overflow().saturate.get() {
-                    effects.saturate = value;
-                }
-                // The text colour matters to text, and to what inherits it:
-                // the last patch that sets it decides it, a token if it
-                // bound one (only patches with tokens need looking at).
-                let mut text_color = None;
-                if is_text || output.is_some() {
-                    let parent_color = inherited.with_untracked(|parent| parent.color);
-                    let color = match paint_color {
-                        None => parent_color,
-                        Some(value) if !bound => Themed::Value(value),
-                        Some(value) => {
-                            let mut color = themed_color(&base);
-                            if let (Some(value), Some(produced)) =
-                                (produced.as_ref().and_then(|p| p.text_color), &produced)
-                            {
-                                color = Some(
-                                    match token_of(produced, crate::theme::Field::TextColor) {
-                                        Some(token) => Themed::Token(token),
-                                        None => Themed::Value(value),
-                                    },
-                                );
-                            }
-                            for (enabled, variant) in active_variants {
-                                if enabled
-                                    && let Some(variant) = variant
-                                    && let Some(own) = themed_color(variant)
-                                {
-                                    color = Some(own);
-                                }
-                            }
-                            color.unwrap_or(Themed::Value(value))
-                        }
-                    };
-                    if is_text {
-                        let shown = resolve_color(color, scope.as_deref());
-                        applied.1.color = Themed::Value(shown);
-                        text_color = Some(shown);
-                        if let Some(output) = &output {
-                            set_color(output, color);
-                        }
-                    } else if applied.1.color != color {
-                        applied.1.color = color;
-                        if let Some(output) = &output {
-                            set_color(output, color);
-                        }
-                    }
-                }
-                let mut scene = storage.scene.borrow_mut();
-                let transform = resolved.transform.unwrap_or(originals.transform);
-                let inset = applied.0.overflow().clip_inset.or(originals.inset());
-                let local = resolved.local_transform.resolve_finite(originals.local);
-                let (inset_kept, transform_kept, local_kept) =
-                    scene.paint_kept(node, inset, transform, local);
-                if last.moves_and_fades {
-                    show_moved_and_faded(
-                        &mut scene, node, transform, effects, &applied.0, &originals, inset_kept,
-                    );
-                } else {
-                    scene.set_effects(node, effects);
-                    apply_mask(&mut scene, node, &applied.0, originals.mask());
-                    if !inset_kept {
-                        scene.set_clip_inset(node, inset);
-                    }
-                    if !transform_kept {
-                        scene.set_transform(node, transform);
-                    }
-                }
-                if !local_kept {
-                    scene.set_local_transform(node, local);
-                }
-                if let Some(color) = text_color
-                    && let NodeKind::Text {
-                        text,
-                        font_size,
-                        color: old,
-                    } = scene.kind(node)
-                    && *old != color
-                {
-                    let kind = NodeKind::Text {
-                        text: text.clone(),
-                        color,
-                        font_size: *font_size,
-                    };
-                    scene.set_kind(node, kind);
-                }
+                paint_only_run(
+                    &storage,
+                    node,
+                    &produced,
+                    applied,
+                    last,
+                    shown,
+                    painted,
+                    boxed,
+                    paint,
+                    resized,
+                    active_variants,
+                    glass,
+                    &theme,
+                    &originals,
+                    is_text,
+                    &output,
+                    &inherited,
+                    &base,
+                    &scope,
+                );
                 return;
             }
         }
