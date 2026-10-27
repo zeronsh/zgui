@@ -55,6 +55,32 @@ pub struct ViewportFrame<'a> {
     pub time: std::time::Instant,
 }
 
+impl<'a> ViewportFrame<'a> {
+    /// A frame to draw outside a renderer (a painter's own tests, a
+    /// comparison with wgpu alone): no sRGB view, drawn now.
+    pub fn new(
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        encoder: &'a mut wgpu::CommandEncoder,
+        target: &'a wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        size: (u32, u32),
+        scale: f32,
+    ) -> Self {
+        Self {
+            device,
+            queue,
+            encoder,
+            target,
+            target_srgb: None,
+            format,
+            size,
+            scale,
+            time: std::time::Instant::now(),
+        }
+    }
+}
+
 /// A view's painter, and the device it last drew with.
 struct Painter {
     viewport: Box<dyn Viewport>,
@@ -79,6 +105,8 @@ pub(crate) struct Views {
 struct Shown {
     image: u64,
     size: (u32, u32),
+    /// Its texture's views for the painter: plain and sRGB.
+    targets: (wgpu::TextureView, Option<wgpu::TextureView>),
 }
 impl Views {
     /// The image ids views' textures are cached under: forgotten, their next
@@ -108,10 +136,10 @@ impl GpuRenderer {
         let mut kept = None;
         let key = (frame.view, frame.shown_by);
         if let Some(last) = views.shown.remove(&key)
-            && let Some(entry) = self.images.remove(&last.image)
+            && let Some((bind, bytes, Some(texture))) = self.images.remove(&last.image)
             && last.size == size
         {
-            kept = Some(entry);
+            kept = Some((bind, bytes, texture, last.targets));
         }
         // Views gone: their entries (their textures went with their frames).
         if views.shown.len() > 64 {
@@ -120,9 +148,9 @@ impl GpuRenderer {
                 .shown
                 .retain(|_, shown| images.contains_key(&shown.image));
         }
-        let (bind, bytes, texture) = match kept {
-            Some((bind, bytes, Some(texture))) => (bind, bytes, texture),
-            _ => {
+        let (bind, bytes, texture, targets) = match kept {
+            Some(kept) => kept,
+            None => {
                 let bytes = size.0 as usize * size.1 as usize * 4;
                 if bytes + self.images.values().map(|entry| entry.1).sum::<usize>()
                     > 64 * 1024 * 1024
@@ -132,8 +160,15 @@ impl GpuRenderer {
                     ));
                 }
                 let texture = self.view_texture(key, size);
-                let bind = self.texture_bind(&texture.create_view(&Default::default()), "GPU view");
-                (bind, bytes, texture)
+                let target = texture.create_view(&Default::default());
+                let bind = self.texture_bind(&target, "GPU view");
+                let srgb = self.view_srgb().then(|| {
+                    texture.create_view(&wgpu::TextureViewDescriptor {
+                        format: Some(crate::FORMAT.add_srgb_suffix()),
+                        ..Default::default()
+                    })
+                });
+                (bind, bytes, texture, (target, srgb))
             }
         };
         if let Some(painter) = zgx::gpu_view::painter(frame.view) {
@@ -149,13 +184,6 @@ impl GpuRenderer {
                 }
                 painter.device = Some(device.clone());
             }
-            let target = texture.create_view(&Default::default());
-            let srgb = self.view_srgb().then(|| {
-                texture.create_view(&wgpu::TextureViewDescriptor {
-                    format: Some(crate::FORMAT.add_srgb_suffix()),
-                    ..Default::default()
-                })
-            });
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("GPU view"),
             });
@@ -163,8 +191,8 @@ impl GpuRenderer {
                 device,
                 queue,
                 encoder: &mut encoder,
-                target: &target,
-                target_srgb: srgb.as_ref(),
+                target: &targets.0,
+                target_srgb: targets.1.as_ref(),
                 format: crate::FORMAT,
                 size,
                 scale: self.scale,
@@ -181,6 +209,7 @@ impl GpuRenderer {
             Shown {
                 image: image.id(),
                 size,
+                targets,
             },
         );
         Ok(())
