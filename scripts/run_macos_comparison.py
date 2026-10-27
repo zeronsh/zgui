@@ -149,6 +149,18 @@ SCENES = {
             'rune': RUNE / 'vlist',
         },
     },
+    # A field of lit cubes drawn with wgpu (crates/zgx-desktop/examples/
+    # support/cubes.rs): in a GPU view filling a zgx window, against the same
+    # painter drawing straight into a window's surface with winit and wgpu
+    # alone. What showing it in zgx costs over a minimal wgpu app; idle, the
+    # view's first frame and nothing after.
+    'viewport': {
+        'modes': ['animate', 'idle'],
+        'binaries': {
+            'zgx': ROOT / 'target/dist/examples/viewport_workload',
+            'wgpu': ROOT / 'target/dist/examples/wgpu_viewport',
+        },
+    },
     # A focused text field left alone, idle (zgx_workload::blink): each
     # framework's own field, its caret as it draws it (MyGo's blinks every
     # 530 ms, Rune's does not blink, zgx's blinks as the system's); GPUI has
@@ -165,7 +177,12 @@ SCENES = {
 }
 # The suite's frameworks: zgx (in Rust, and in Luau where a scene has it),
 # the stronger GPUI, MyGo and Rune.
-SUITE_FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune']
+SUITE_FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune', 'wgpu']
+# Scenes whose active trials report the frames they drew (`animation_frames=`,
+# `fps=`) rather than 60 updates a second.
+FRAMES = {'animate', 'viewport'}
+# Frameworks built as zgx-desktop examples beside zgx's (no checkout of their own).
+EXAMPLES = {'wgpu'}
 SAMPLER, PACER, BLANK = Path('/tmp/zgx-macsample'), Path('/tmp/zgx-framepace'), Path('/tmp/zgx-blankprobe')
 READY = Path('/tmp/zgx-window-ready')
 # The one font file every adapter loads (comparisons/fonts), and how each
@@ -211,7 +228,10 @@ def build(scene, frameworks):
     if 'zgx-luau' in frameworks:
         luau = SCENES[scene]['binaries']['zgx-luau'].name
         run(['cargo', 'build', '--profile', 'dist', '--locked', '-p', 'zgx-script', '--example', luau], cwd=ROOT)
-    for name in [f for f in frameworks if f not in ('zgx', 'zgx-luau', 'mygo', 'rune')]:
+    for name in [f for f in frameworks if f in EXAMPLES]:
+        run(['cargo', 'build', '--profile', 'dist', '--locked', '-p', 'zgx-desktop', '--example',
+             SCENES[scene]['binaries'][name].name], cwd=ROOT)
+    for name in [f for f in frameworks if f not in ('zgx', 'zgx-luau', 'mygo', 'rune', *EXAMPLES)]:
         run(['cargo', 'build', '--profile', 'dist', '--locked'], cwd=ROOT / 'comparisons' / name)
     if 'rune' in frameworks:
         # Rune at its pinned rev with the wheel patch (comparisons/rune/build.sh).
@@ -463,7 +483,7 @@ def valid(row, scene):
     if FONT_FNV64 and 'font_fnv64' in row and row['font_fnv64'] != FONT_FNV64:
         return False
     ticks, seconds = row['workload_ticks'], row['requested_seconds']
-    if scene == 'animate':
+    if scene in FRAMES and row['mode'] != 'idle':
         return ticks > 0 and row['reported_fps'] not in ('', None) and abs(ticks / seconds - row['reported_fps']) <= 0.15 * row['reported_fps']
     if row['mode'] == 'idle':
         return ticks == 0
@@ -644,7 +664,7 @@ def main():
         frameworks = [f for f in SUITE_FRAMEWORKS if f in SCENES[args.scene]['binaries']]
         # Idle once, in heavy: it is the verdict's idle CPU (and in the
         # field, which is nothing else).
-        if args.scene not in ('heavy', 'field'):
+        if args.scene not in ('heavy', 'field', 'viewport'):
             modes = [m for m in modes if m != 'idle']
     if not args.quickgui:
         frameworks = [f for f in frameworks if f != 'quickgui']
@@ -803,9 +823,10 @@ def measure(args, frameworks, modes, repeats, commit, found):
     (out / 'summary.json').write_text(json.dumps({'groups': groups, 'pacing': pacing_groups,
                                                   **({'blank': blank_groups} if blanks else {})}, indent=1) + '\n')
     apps = [r for r in rows if r['framework'] != 'desktop']
-    if args.scene == 'animate':
-        active = [r['reported_fps'] for r in apps if r['reported_fps'] != '']
-        gated = all(r['workload_ticks'] > 0 for r in apps)
+    if args.scene in FRAMES:
+        active = [r['reported_fps'] for r in apps if r['reported_fps'] != '' and r['mode'] != 'idle']
+        gated = (all(r['workload_ticks'] > 0 for r in apps if r['mode'] != 'idle')
+                 and all(r['workload_ticks'] == 0 for r in apps if r['mode'] == 'idle'))
     else:
         active = [r['workload_ticks'] / float(r.get('requested_seconds') or REQUESTED) for r in apps if r['mode'] != 'idle']
         gated = (all(58 <= t <= 61 for t in active)
@@ -818,7 +839,7 @@ def measure(args, frameworks, modes, repeats, commit, found):
                 for name, path in SCENES[args.scene]['binaries'].items() if name in frameworks}
     audit = {'accepted': accepted, 'trials': len(rows), 'samples': sum(r['samples'] for r in rows),
              'pacing_trials': len(paced),
-             ('reported_fps' if args.scene == 'animate' else 'active_ticks_per_requested_second'):
+             ('reported_fps' if args.scene in FRAMES else 'active_ticks_per_requested_second'):
                  {'min': min(active), 'max': max(active)} if active else None,
              'powermetrics': any(r.get('package_mw') not in ('', None) for r in rows),
              'scene': args.scene, 'commit': commit,

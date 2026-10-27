@@ -4979,6 +4979,8 @@ fn mount_gpu_view(
     let mounted = view.mount(requests.clone(), animating.clone());
     let shown_by = mounted.key();
     ui.retain(root, mounted);
+    // Shown, its painter lives: the app may keep no handle of its own.
+    ui.retain(root, view.clone());
     let size = ui.observe_content_size(root);
     let scene = ui.scene.clone();
     let id = view.id();

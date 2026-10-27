@@ -181,3 +181,17 @@ fn a_frame_names_its_painter() {
     drop(view);
     assert!(zgx::gpu_view::painter(id).is_none());
 }
+
+#[test]
+fn a_shown_view_lives_until_its_box_goes() {
+    let view = GpuView::new(());
+    let id = view.id();
+    let mut ui = Ui::new(200., 100.);
+    let handle = ui.mount(gpu_view("Model", &view).w_full().h_full());
+    drop(view);
+    ui.prepare_frame();
+    assert!(zgx::gpu_view::painter(id).is_some(), "its box keeps it");
+    handle.unmount();
+    ui.prepare_frame();
+    assert!(zgx::gpu_view::painter(id).is_none(), "gone with its box");
+}
