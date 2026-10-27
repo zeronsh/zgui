@@ -3896,7 +3896,7 @@ impl Scene {
         let node = self.node(id);
         Way {
             own: node.rtl,
-            parent: node.parent.is_some_and(|parent| self.node(parent).rtl),
+            parent: node.parent.is_some_and(|parent| self.tree_node(parent).rtl),
         }
     }
     /// The way `id`'s lines run, its own or inherited.
