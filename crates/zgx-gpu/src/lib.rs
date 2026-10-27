@@ -2453,7 +2453,10 @@ pub struct GpuRenderer {
     pending: RefCell<Option<wgpu::CommandEncoder>>,
     /// Viewport uniforms by logical size (f32 bits). Each is written once at
     /// creation; layers and the window switch between them per pass.
-    viewports: FxHashMap<(u32, u32, u32), (wgpu::Buffer, wgpu::BindGroup)>,
+    /// Viewport uniforms by size and scale, each with its bind groups by
+    /// the quad buffer they hold (the frame's vertices, `fs_lean`'s quads):
+    /// a ring's few slots.
+    viewports: FxHashMap<(u32, u32, u32), (wgpu::Buffer, Vec<(wgpu::Buffer, wgpu::BindGroup)>)>,
     /// Bound as the clip regions of frames without any (`Region`).
     no_regions: wgpu::Buffer,
     /// The raster each canvas, decoration or SVG node currently draws. A
@@ -3917,10 +3920,10 @@ impl GpuRenderer {
                 bytemuck::cast_slice(&[width, height, self.scale, 0.]),
                 wgpu::BufferUsages::UNIFORM,
             );
-            let bind = self.viewport_group(&buffer, self.no_regions.as_entire_binding());
-            self.viewports.insert(key, (buffer, bind));
+            self.viewports.insert(key, (buffer, Vec::new()));
         }
-        self.viewport_bind = self.viewports.get(&key).map(|(_, bind)| bind.clone());
+        // Made for the frame's vertices (`viewport_for`).
+        self.viewport_bind = None;
         #[cfg(target_os = "macos")]
         {
             self.viewport_values = [width, height, self.scale, 0.];
@@ -4083,6 +4086,7 @@ impl GpuRenderer {
         &self,
         uniform: &wgpu::Buffer,
         regions: wgpu::BindingResource<'_>,
+        quads: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("viewport"),
@@ -4095,6 +4099,10 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: regions,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: quads.as_entire_binding(),
                 },
             ],
         })
@@ -6604,23 +6612,41 @@ impl GpuRenderer {
             self.belt.get_mut().finish();
             vertices
         };
-        if let Some((offset, size)) = region_range {
-            let uniform = self
-                .viewports
-                .get(&(
-                    viewport.width.to_bits(),
-                    viewport.height.to_bits(),
-                    self.scale.to_bits(),
-                ))
-                .map(|(uniform, _)| uniform.clone())
-                .expect("selected above");
-            let regions = wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: &vertices,
-                offset,
-                size: wgpu::BufferSize::new(size),
-            });
-            self.viewport_bind = Some(self.viewport_group(&uniform, regions));
-        }
+        let key = (
+            viewport.width.to_bits(),
+            viewport.height.to_bits(),
+            self.scale.to_bits(),
+        );
+        let uniform = self
+            .viewports
+            .get(&key)
+            .map(|(uniform, _)| uniform.clone())
+            .expect("selected above");
+        self.viewport_bind = Some(match region_range {
+            // Regions sit among this frame's vertices: a group of its own.
+            Some((offset, size)) => {
+                let regions = wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &vertices,
+                    offset,
+                    size: wgpu::BufferSize::new(size),
+                });
+                self.viewport_group(&uniform, regions, &vertices)
+            }
+            None => match self.viewports[&key].1.iter().find(|(quads, _)| *quads == vertices) {
+                Some((_, bind)) => bind.clone(),
+                None => {
+                    let bind =
+                        self.viewport_group(&uniform, self.no_regions.as_entire_binding(), &vertices);
+                    let binds = &mut self.viewports.get_mut(&key).expect("selected above").1;
+                    // A ring's slots, and buffers grown past: keep the few.
+                    if binds.len() >= 4 {
+                        binds.remove(0);
+                    }
+                    binds.push((vertices.clone(), bind.clone()));
+                    bind
+                }
+            },
+        });
         let points_bind = points_range.map(|(offset, size)| {
             let polylines = self.context.inner.quads.polylines();
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -10378,7 +10404,7 @@ fn drawable_pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some(if basic { "vs_basic" } else { "vs" }),
+            entry_point: Some(if basic { "vs_basic" } else { "vs_lean" }),
             compilation_options: Default::default(),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: 128,
@@ -10391,7 +10417,7 @@ fn drawable_pipeline(
         multisample: Default::default(),
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some(if basic { "fs_basic" } else { "fs" }),
+            entry_point: Some(if basic { "fs_basic" } else { "fs_lean" }),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
@@ -10428,7 +10454,7 @@ fn quad_pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some(if basic { "vs_basic" } else { "vs" }),
+            entry_point: Some(if basic { "vs_basic" } else { "vs_lean" }),
             compilation_options: Default::default(),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: 128,
@@ -10445,8 +10471,8 @@ fn quad_pipeline(
             entry_point: Some(match (basic, drawable.is_some()) {
                 (true, true) => "fs_basic_both",
                 (true, false) => "fs_basic",
-                (false, true) => "fs_both",
-                (false, false) => "fs",
+                (false, true) => "fs_both_lean",
+                (false, false) => "fs_lean",
             }),
             compilation_options: Default::default(),
             targets: if drawable.is_some() {
@@ -11192,6 +11218,17 @@ fn create_quad_pipelines(
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // The frame's quads, read by the lean full shader (`fs_lean`).
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },

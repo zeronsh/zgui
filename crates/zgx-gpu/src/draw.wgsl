@@ -19,6 +19,12 @@ struct Out { @builtin(position) position:vec4<f32>, @location(0) uv:vec2<f32>, @
 // inside their edges their content fades out from (0: cut at the edge).
 struct Region { round0:vec4<f32>, radii0:vec4<f32>, round1:vec4<f32>, radii1:vec4<f32>, fade_box:vec4<f32>, fade:vec4<f32>, color0:vec4<f32>, color1:vec4<f32>, color2:vec4<f32>, tint:vec4<f32> }
 @group(1) @binding(1) var<storage, read> regions:array<Region>;
+// The frame's quads, as the vertex buffer holds them: the lean entries
+// (`vs_lean`, `fs_lean`) pass a quad's index rather than its constants, which
+// the fragment stage reads here. Seven flat vec4s handed to every pixel cost
+// Direct3D 12 more than the shading (a third of heavy's GPU time).
+struct QuadData { rect:vec4<f32>, uv:vec4<f32>, color:vec4<f32>, fade:vec4<f32>, options:vec4<f32>, shape:vec4<f32>, border:vec4<f32>, mask:vec4<f32> }
+@group(1) @binding(2) var<storage, read> quads:array<QuadData>;
 fn rounded(b:vec4<f32>, r:vec4<f32>, feather:f32, p:vec2<f32>)->f32 {
  if b.z<0. {return 1.;}
  let half=b.zw*.5; let q=p-b.xy-half;
@@ -46,7 +52,8 @@ fn region(index:f32, position:vec2<f32>)->f32 {
  return k;
 }
 @group(0) @binding(2) var tex_sampler:sampler;
-@vertex fn vs(v:Vertex,@builtin(vertex_index) i:u32)->Out {
+@vertex fn vs(v:Vertex,@builtin(vertex_index) i:u32)->Out { return vertex(v,i); }
+fn vertex(v:Vertex,i:u32)->Out {
  // A quad is a four-vertex strip, (0,0) (1,0) (0,1) (1,1): its two
  // triangles with two fewer vertex invocations than a list. Corners come
  // from the index's bits: a runtime index into a local array makes Metal
@@ -60,6 +67,16 @@ fn region(index:f32, position:vec2<f32>)->f32 {
  var w=1.;
  if v.options.z>1.5 {w=max(dot(v.border.zw,p)+1.,1e-4);}
  var o:Out; o.position=vec4(position.x/viewport.x*2.-w,w-position.y/viewport.y*2.,0.,w);o.uv=v.uv.xy+corner*v.uv.zw;o.color=v.color;o.point=p;o.fade=v.fade;o.options=v.options;o.shape=v.shape;o.border=v.border;o.mask=v.mask;return o;
+}
+// What `vs` hands a pixel, less the quad's constants: its index instead.
+struct Lean { @builtin(position) position:vec4<f32>, @location(0) uv:vec2<f32>, @location(1) @interpolate(flat) index:u32, @location(2) point:vec2<f32> }
+@vertex fn vs_lean(v:Vertex,@builtin(vertex_index) i:u32,@builtin(instance_index) n:u32)->Lean {
+ let o=vertex(v,i); var l:Lean; l.position=o.position; l.uv=o.uv; l.index=n; l.point=o.point; return l;
+}
+// `vs`'s output again: the same values, the constants read from the quad.
+fn unpack(l:Lean)->Out {
+ let q=quads[l.index];
+ var o:Out; o.position=l.position; o.uv=l.uv; o.color=q.color; o.point=l.point; o.fade=q.fade; o.options=q.options; o.shape=q.shape; o.border=q.border; o.mask=q.mask; return o;
 }
 fn shade(input:Out)->vec4<f32> { return shade_texel(input,vec4(0.),false); }
 // `shade` with the texel `given` when `has_texel` (image_effects.wgsl's,
@@ -132,6 +149,8 @@ fn shade_texel(input:Out, given:vec4<f32>, has_texel:bool)->vec4<f32> {
 // Single-pass presentation: the same colour to the retained target and the drawable.
 struct Both { @location(0) retained:vec4<f32>, @location(1) drawable:vec4<f32> }
 @fragment fn fs_both(v:Out)->Both { let c=shade(v); return Both(c,c); }
+@fragment fn fs_lean(l:Lean)->@location(0) vec4<f32> { return shade(unpack(l)); }
+@fragment fn fs_both_lean(l:Lean)->Both { let c=shade(unpack(l)); return Both(c,c); }
 // Plain quads (no corners, borders, shadows, fades, regions or transforms):
 // most text and backgrounds. A software rasterizer runs a fragment shader on
 // the CPU for every pixel, and every branch of `shade` with it, so these use
