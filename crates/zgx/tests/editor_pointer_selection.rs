@@ -235,3 +235,48 @@ fn single_line_triple_click_selects_all_and_cancel_stops_unit_drag() {
     move_to(&mut ui, 10., 20.);
     assert_eq!(editor.copy(), "one two three");
 }
+
+/// Inside a zoomed node (or a scaled one), a press and a drag land on the
+/// characters that show under the pointer: the same as at 100%, the
+/// pointer's window point mapped back through the zoom.
+#[test]
+fn a_press_and_a_drag_in_a_zoomed_editor_land_where_they_show() {
+    let editor_in = |zoom: f32| {
+        let mut ui = Ui::new(800., 600.);
+        let view = ui.mount(
+            column().zoom(zoom).child(
+                text_area("Document", ui.signal("abcdefghijklmnop".to_owned()))
+                    .id("ed")
+                    .size(200., 160.)
+                    .p(10.)
+                    .text_size(10.)
+                    .line_height(20.),
+            ),
+        );
+        ui.prepare_frame();
+        let node = view.find("ed").unwrap();
+        ui.input.focus(&ui.scene, Some(node));
+        let editor = ui.focused_editor().unwrap();
+        editor.editor.borrow_mut().set_selection(0, 0);
+        editor.refresh();
+        ui.prepare_frame();
+        (ui, editor)
+    };
+    for (x, to) in [(22., 52.), (33., 71.)] {
+        let (mut ui, editor) = editor_in(1.);
+        down(&mut ui, x, 20., false);
+        move_to(&mut ui, to, 20.);
+        up(&mut ui, to, 20.);
+        let plain = editor.copy();
+        let (mut ui, editor) = editor_in(2.);
+        down(&mut ui, x * 2., 40., false);
+        move_to(&mut ui, to * 2., 40.);
+        up(&mut ui, to * 2., 40.);
+        assert_eq!(
+            editor.copy(),
+            plain,
+            "dragged from {x} to {to}, shown twice as large"
+        );
+        assert!(!plain.is_empty());
+    }
+}

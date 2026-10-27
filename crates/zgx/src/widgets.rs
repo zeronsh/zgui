@@ -355,7 +355,7 @@ impl EditorHandle {
         self.hint.select_on_focus.set(select);
     }
     /// Whether it is a password's (`set_secure`).
-    pub(crate) fn is_secure(&self) -> bool {
+    pub fn is_secure(&self) -> bool {
         self.hint.secure.get()
     }
     /// A password field: its text shows as a bullet per character (each in
@@ -4288,6 +4288,7 @@ impl Ui {
                     wrap.get().then_some(bounds.width.max(1.)),
                     &font,
                 );
+                let (x, y) = in_viewport(&s, viewport, x, y);
                 let x = (x - bounds.x).clamp(0., bounds.width.max(0.)) + offset.0;
                 let y = (y - bounds.y).clamp(0., (bounds.height - 0.01).max(0.)) + offset.1;
                 layout.hit_position(x, y).byte_offset
@@ -4324,6 +4325,7 @@ impl Ui {
                     &font,
                 );
                 let (px, py) = gesture.pointer.get();
+                let (px, py) = in_viewport(&s, viewport, px, py);
                 // Hit the visible edge, not an arbitrarily distant text row.
                 let x = (px - bounds.x).clamp(0., bounds.width.max(0.)) + offset.0;
                 let y = (py - bounds.y).clamp(0., (bounds.height - 0.01).max(0.)) + offset.1;
@@ -4366,6 +4368,7 @@ impl Ui {
                 }
                 let bounds = s.bounds(viewport);
                 let point = gesture.pointer.get();
+                let point = in_viewport(&s, viewport, point.0, point.1);
                 let offset = *scroll.borrow();
                 let limit = limits.get();
                 (
@@ -4618,6 +4621,7 @@ impl Ui {
                     let layout = committed_layout(&input_storage, &s, root, &edit, size,
                         wrap.get().then_some(bounds.width.max(1.)), &font,
                     );
+                    let (x, y) = in_viewport(&s, viewport, x, y);
                     let x = x - bounds.x + scroll.0;
                     let y = y - bounds.y + scroll.1;
                     let hit = layout.hit_position(x, y);
@@ -4695,6 +4699,7 @@ impl Ui {
                     let layout = committed_layout(&input_storage, &s, root, &edit, size,
                         wrap.get().then_some(bounds.width.max(1.)), &font,
                     );
+                    let (x, y) = in_viewport(&s, viewport, x, y);
                     let hit = layout.hit_position(x - bounds.x + scroll.0, y - bounds.y + scroll.1);
                     edit.set_selection(hit.byte_offset, hit.byte_offset);
                     position.set(hit);
@@ -4728,6 +4733,7 @@ impl Ui {
                     let layout = committed_layout(&input_storage, &s, root, &edit, size,
                         wrap.get().then_some(bounds.width.max(1.)), &font,
                     );
+                    let (x, y) = in_viewport(&s, viewport, x, y);
                     let (lx, ly) = (x - bounds.x + scroll.0, y - bounds.y + scroll.1);
                     let hit = layout.hit_position(lx, ly);
                     let range = edit.selection().range();
@@ -5261,6 +5267,12 @@ fn mac_control(modifiers: crate::input::Modifiers) -> bool {
     cfg!(target_os = "macos") && modifiers.control && !modifiers.meta && !modifiers.alt
 }
 
+/// `(x, y)` in the window, in an editor's viewport's own points: what
+/// transforms and zooms its ancestors (and it) have undone, so a press lands
+/// on the character that shows under it. As it was with none.
+fn in_viewport(s: &Scene, viewport: NodeId, x: f32, y: f32) -> (f32, f32) {
+    s.point_in(viewport, x, y).unwrap_or((x, y))
+}
 fn editor_drag_velocity(pointer: f32, start: f32, extent: f32, offset: f32, limit: f32) -> f32 {
     if !pointer.is_finite() || !start.is_finite() || !extent.is_finite() || extent <= 0. {
         return 0.;
