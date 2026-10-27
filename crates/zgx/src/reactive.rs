@@ -52,14 +52,74 @@ impl std::hash::Hasher for IdHasher {
         self.0 = value.wrapping_mul(0x9e37_79b9_7f4a_7c15);
     }
 }
-type IdMap<V> = HashMap<EffectId, V, std::hash::BuildHasherDefault<IdHasher>>;
+/// Low bits of an effect's id: its slot in `Effects`.
+const SLOT_BITS: u32 = 24;
+const SLOT_MASK: EffectId = (1 << SLOT_BITS) - 1;
+/// Effects by id: slots, reused once freed. An id is `born << SLOT_BITS |
+/// slot`, `born` counting effects made, never reused: ids order effects
+/// by age as a plain count does, and a slot remembers whose it is, so a
+/// stale id finds nothing.
+#[derive(Default)]
+struct Effects {
+    slots: Vec<(EffectId, Option<EffectRecord>)>,
+    free: Vec<u32>,
+    live: usize,
+}
+impl Effects {
+    /// Keep `record` as the effect `born`-th made: its id.
+    fn insert(&mut self, born: u64, record: EffectRecord) -> EffectId {
+        assert!(born < 1 << (64 - SLOT_BITS), "effect identifiers exhausted");
+        let slot = match self.free.pop() {
+            Some(slot) => slot as usize,
+            None => {
+                assert!(self.slots.len() < 1 << SLOT_BITS, "too many effects");
+                self.slots.push((EffectId::MAX, None));
+                self.slots.len() - 1
+            }
+        };
+        let id = born << SLOT_BITS | slot as EffectId;
+        self.slots[slot] = (id, Some(record));
+        self.live += 1;
+        id
+    }
+    #[inline(always)]
+    fn get(&self, id: &EffectId) -> Option<&EffectRecord> {
+        match self.slots.get((id & SLOT_MASK) as usize) {
+            Some((at, record)) if at == id => record.as_ref(),
+            _ => None,
+        }
+    }
+    #[inline(always)]
+    fn get_mut(&mut self, id: &EffectId) -> Option<&mut EffectRecord> {
+        match self.slots.get_mut((id & SLOT_MASK) as usize) {
+            Some((at, record)) if at == id => record.as_mut(),
+            _ => None,
+        }
+    }
+    fn remove(&mut self, id: &EffectId) -> Option<EffectRecord> {
+        let slot = (id & SLOT_MASK) as usize;
+        match self.slots.get_mut(slot) {
+            Some((at, record)) if at == id => {
+                *at = EffectId::MAX;
+                let record = record.take();
+                self.live -= 1;
+                self.free.push(slot as u32);
+                record
+            }
+            _ => None,
+        }
+    }
+    fn len(&self) -> usize {
+        self.live
+    }
+}
 /// A signal's subscribers, in no order: a flush orders what runs. A set
 /// most nodes' effects join (the inherited typography) is removed from
 /// one by one as they go, in constant time.
 type IdSet = HashSet<EffectId, std::hash::BuildHasherDefault<IdHasher>>;
 #[derive(Default)]
 struct Inner {
-    effects: RefCell<IdMap<EffectRecord>>,
+    effects: RefCell<Effects>,
     /// Effects to run, the oldest first (they were made before what they
     /// made): those queued outside a flush (a batch's writes, most of them)
     /// in `queued`, sorted once as a flush starts; those queued while it
@@ -69,9 +129,10 @@ struct Inner {
     queued: RefCell<Vec<EffectId>>,
     pending: RefCell<BinaryHeap<Reverse<EffectId>>>,
     /// Room `newest_first` orders `queued` in, kept between flushes.
-    order: RefCell<Vec<u64>>,
+    order: RefCell<Order>,
     active: Cell<Option<EffectId>>,
-    next: Cell<EffectId>,
+    /// Effects made so far (`Effects::insert`'s `born`).
+    next: Cell<u64>,
     /// Effects stopped whose handles still live (`Effect::stop`).
     stopped: Cell<usize>,
     batch_depth: Cell<usize>,
@@ -100,21 +161,29 @@ impl Drop for Active<'_> {
         self.slot.set(self.previous);
     }
 }
+/// `newest_first`'s room: a bit for each effect born in the range queued,
+/// and its slot.
+#[derive(Default)]
+struct Order {
+    bits: Vec<u64>,
+    slots: Vec<u32>,
+}
 /// Sort `ids` newest (highest) first. Subscribers come in no order, but the
 /// ids a write queues are mostly close together (effects made together): a
-/// bit for each id in their range, read from the top, orders them in one
-/// pass rather than a sort's many (a dashboard queues a thousand a tick).
-/// No id is queued twice (`EffectRecord::queued`), so none is lost.
+/// bit for each id's `born` in their range, read from the top, orders them
+/// in one pass rather than a sort's many (a dashboard queues a thousand a
+/// tick). No id is queued twice (`EffectRecord::queued`), so none is lost.
 #[inline(always)]
-fn newest_first(ids: &mut Vec<EffectId>, bits: &mut Vec<u64>) {
+fn newest_first<const IN_PLACE: bool>(ids: &mut Vec<EffectId>, order: &mut Order) {
     // Effects queued as they are made come oldest first: reversed.
-    let (mut low, mut high, mut ascending) = (EffectId::MAX, 0, true);
+    let (mut low, mut high, mut ascending) = (u64::MAX, 0, true);
     let mut last = 0;
     for &id in ids.iter() {
         ascending &= id >= last;
         last = id;
-        low = low.min(id);
-        high = high.max(id);
+        let born = id >> SLOT_BITS;
+        low = low.min(born);
+        high = high.max(born);
     }
     if ascending {
         ids.reverse();
@@ -125,19 +194,42 @@ fn newest_first(ids: &mut Vec<EffectId>, bits: &mut Vec<u64>) {
         ids.sort_unstable_by(|a, b| b.cmp(a));
         return;
     }
+    let Order { bits, slots } = order;
     bits.clear();
     bits.resize(span as usize / 64 + 1, 0);
-    for id in ids.iter() {
-        let at = id - low;
-        bits[at as usize / 64] |= 1 << (at % 64);
+    if slots.len() <= span as usize {
+        slots.resize(span as usize + 1, 0);
     }
-    ids.clear();
-    for (word, &set) in bits.iter().enumerate().rev() {
-        let mut set = set;
-        while set != 0 {
-            let bit = 63 - set.leading_zeros() as u64;
-            ids.push(low + word as u64 * 64 + bit);
-            set &= !(1 << bit);
+    for id in ids.iter() {
+        let at = (id >> SLOT_BITS) - low;
+        bits[at as usize / 64] |= 1 << (at % 64);
+        slots[at as usize] = (id & SLOT_MASK) as u32;
+    }
+    let id = |at: u64| (low + at) << SLOT_BITS | EffectId::from(slots[at as usize]);
+    // In place, over the ids taken (as many come out): for `flush`. The
+    // barrier's flush keeps clearing and pushing, which codegens smaller
+    // there (research A's A22).
+    if IN_PLACE {
+        let mut written = 0;
+        for (word, &set) in bits.iter().enumerate().rev() {
+            let mut set = set;
+            while set != 0 {
+                let bit = 63 - set.leading_zeros() as u64;
+                ids[written] = id(word as u64 * 64 + bit);
+                written += 1;
+                set &= !(1 << bit);
+            }
+        }
+        ids.truncate(written);
+    } else {
+        ids.clear();
+        for (word, &set) in bits.iter().enumerate().rev() {
+            let mut set = set;
+            while set != 0 {
+                let bit = 63 - set.leading_zeros() as u64;
+                ids.push(id(word as u64 * 64 + bit));
+                set &= !(1 << bit);
+            }
         }
     }
 }
@@ -258,12 +350,10 @@ impl Runtime {
         mount_pure: bool,
         callback: impl FnMut() + 'static,
     ) -> Effect {
-        let id = self.inner.next.get();
-        self.inner
-            .next
-            .set(id.checked_add(1).expect("effect identifiers exhausted"));
-        self.inner.effects.borrow_mut().insert(
-            id,
+        let born = self.inner.next.get();
+        self.inner.next.set(born + 1);
+        let id = self.inner.effects.borrow_mut().insert(
+            born,
             EffectRecord {
                 callback: Rc::new(RefCell::new(callback)),
                 dependencies: Default::default(),
@@ -289,13 +379,11 @@ impl Runtime {
         if self.inner.batch_depth.get() == 0 && !self.inner.flushing.get() {
             return self.effect(callback);
         }
-        let id = self.inner.next.get();
-        self.inner
-            .next
-            .set(id.checked_add(1).expect("effect identifiers exhausted"));
+        let born = self.inner.next.get();
+        self.inner.next.set(born + 1);
         let callback: Callback = Rc::new(RefCell::new(callback));
-        self.inner.effects.borrow_mut().insert(
-            id,
+        let id = self.inner.effects.borrow_mut().insert(
+            born,
             EffectRecord {
                 callback: callback.clone(),
                 dependencies: Default::default(),
@@ -414,7 +502,7 @@ impl Runtime {
             &self.inner,
             std::mem::take(&mut *self.inner.queued.borrow_mut()),
         );
-        newest_first(&mut sorted.1, &mut self.inner.order.borrow_mut());
+        newest_first::<false>(&mut sorted.1, &mut self.inner.order.borrow_mut());
         // The oldest waiting, and whether it is `pending`'s. Left where it
         // is until it runs: a barrier may queue an older one.
         let oldest = |sorted: &[EffectId]| {
@@ -495,7 +583,7 @@ impl Runtime {
             &self.inner,
             std::mem::take(&mut *self.inner.queued.borrow_mut()),
         );
-        newest_first(&mut sorted.1, &mut self.inner.order.borrow_mut());
+        newest_first::<true>(&mut sorted.1, &mut self.inner.order.borrow_mut());
         loop {
             let id = {
                 let mut pending = self.inner.pending.borrow_mut();
@@ -899,26 +987,28 @@ mod tests {
             seed ^= seed << 17;
             seed
         };
-        let mut bits = Vec::new();
+        let mut order = Order::default();
         for (count, spread) in [(0, 1), (1, 1), (31, 40), (32, 32), (900, 1000), (900, 5000)]
             .into_iter()
-            .chain([(64, 64 * 33), (500, 1 << 40)])
+            .chain([(64, 64 * 33), (500, 1 << 38)])
         {
             let base = next() % 1_000_000;
             let mut ids: Vec<EffectId> = Vec::new();
             while ids.len() < count {
-                let id = base + next() % spread;
-                if !ids.contains(&id) {
+                // Born close together or far apart, in any slot.
+                let born = base + next() % spread;
+                let id = born << SLOT_BITS | next() & SLOT_MASK;
+                if !ids.iter().any(|&other| other >> SLOT_BITS == born) {
                     ids.push(id);
                 }
             }
             let mut sorted = ids.clone();
             sorted.sort_unstable_by(|a, b| b.cmp(a));
-            newest_first(&mut ids, &mut bits);
+            newest_first::<true>(&mut ids, &mut order);
             assert_eq!(ids, sorted, "{count} ids over {spread}");
             // Queued as they were made: oldest first.
             ids.reverse();
-            newest_first(&mut ids, &mut bits);
+            newest_first::<false>(&mut ids, &mut order);
             assert_eq!(ids, sorted, "{count} ascending ids over {spread}");
         }
     }
