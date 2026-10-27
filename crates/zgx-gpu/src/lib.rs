@@ -120,6 +120,9 @@ pub struct GpuStats {
     pub damaged_pixels: u64,
     /// Cached layers repainted.
     pub layer_repaints: usize,
+    /// Of those, the ones repainted only where the window's damage reaches
+    /// them (`prepare_layer`'s `shown`).
+    pub layer_partial_repaints: usize,
     /// Cached layers composited without repainting.
     pub layer_cache_hits: usize,
     /// Layer textures allocated.
@@ -937,6 +940,8 @@ struct LayerCache {
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
     bounds: Rect,
+    /// What it painted, in the scene's points (`Scene::layer_bounds`).
+    content: Rect,
     revision: u64,
     root_origin: (f32, f32),
     bytes: usize,
@@ -956,6 +961,53 @@ struct LayerCache {
     used: u64,
     /// No longer a layer, kept for its pixels.
     parked: bool,
+    /// Where in the window all of it showed when last drawn (`shown`),
+    /// while every frame since that damaged it also drew it: its pixels
+    /// then differ from its content's only where the window's damage
+    /// says, and it can repaint just there. A frame damaging it without
+    /// drawing it (hidden, culled) ends that.
+    watched: Option<Rect>,
+}
+/// How a layer of the window's own shows there (`GpuRenderer::shown`).
+#[derive(Clone, Copy)]
+struct Shown<'a> {
+    /// The window's damage this frame.
+    damage: &'a [Rect],
+    /// Its content onto the window.
+    map: zgx::affine::Affine,
+    /// What of the window it can show in.
+    clip: Rect,
+}
+impl Shown<'_> {
+    /// Where `content` shows in the window, if all of it does.
+    fn window(&self, content: Rect) -> Option<Rect> {
+        let window = self.map.bounds(content);
+        within(self.clip, window).then_some(window)
+    }
+}
+/// Whether `inner` lies within `outer`.
+fn within(outer: Rect, inner: Rect) -> bool {
+    inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner.x + inner.width <= outer.x + outer.width
+        && inner.y + inner.height <= outer.y + outer.height
+}
+/// A layer's repaint, counted in the frame's `stats`.
+fn add_layer_stats(stats: &mut GpuStats, result: &GpuStats) {
+    stats.draw_calls += result.draw_calls;
+    stats.render_passes += result.render_passes;
+    stats.blur_passes += result.blur_passes;
+    stats.effect_passes += result.effect_passes;
+    stats.instances += result.instances;
+    stats.shaped_nodes += result.shaped_nodes;
+    stats.glyph_uploads += result.glyph_uploads;
+    stats.image_uploads += result.image_uploads;
+    stats.canvas_rasterizations += result.canvas_rasterizations;
+    stats.svg_rasterizations += result.svg_rasterizations;
+    stats.geometry_rebuilds += result.geometry_rebuilds;
+    stats.vertex_buffer_allocations += result.vertex_buffer_allocations;
+    stats.layer_repaints += 1;
+    stats.damaged_pixels += result.damaged_pixels;
 }
 /// Frames a transformed layer's texture outlives its transform, so an
 /// animation passing through identity finds its pixels again instead of
@@ -3654,7 +3706,20 @@ impl GpuRenderer {
         self.layer_frame += 1;
         for item in &items {
             if item.isolated && item.effects.opacity > 0. {
-                self.prepare_layer(scene, item.id, 1., true, &mut layer_stats)?;
+                let shown = self.shown(item, damage, viewport);
+                self.prepare_layer(scene, item.id, 1., true, shown, &mut layer_stats)?;
+            }
+        }
+        // Damaged where it shows but not drawn (hidden, culled): what changed
+        // in it then is known nowhere, so it repaints whole next.
+        let frame = self.layer_frame;
+        for cache in self.layers.values_mut() {
+            if cache.used != frame
+                && cache
+                    .watched
+                    .is_some_and(|watched| damage.iter().any(|d| d.intersects(watched)))
+            {
+                cache.watched = None;
             }
         }
         self.prepare_effects(scene, &items)?;
@@ -3672,6 +3737,7 @@ impl GpuRenderer {
         stats.add_made(&std::mem::take(&mut self.patch_stats));
         self.rendered_serial = Some(scene.flush_serial());
         stats.layer_repaints = layer_stats.layer_repaints;
+        stats.layer_partial_repaints = layer_stats.layer_partial_repaints;
         stats.layer_cache_hits = layer_stats.layer_cache_hits;
         stats.layer_texture_allocations = layer_stats.layer_texture_allocations;
         stats.damaged_pixels += layer_stats.damaged_pixels;
@@ -3750,12 +3816,15 @@ impl GpuRenderer {
     /// with its own scale, it picks the raster scale (`raster_step`).
     /// `exact`: that magnification is zooms' alone (`Scene::set_zoom`), and
     /// the layer rasterizes at it exactly, showing texel for pixel.
+    /// `shown`: how a layer of the window's own shows there, when all of it
+    /// does: changed, it repaints only where the window's damage reaches it.
     fn prepare_layer(
         &mut self,
         scene: &Scene,
         id: NodeId,
         magnification: f32,
         exact: bool,
+        shown: Option<Shown<'_>>,
         stats: &mut GpuStats,
     ) -> Result<(), GpuError> {
         let revision = scene.layer_revision(id);
@@ -3784,10 +3853,13 @@ impl GpuRenderer {
         {
             cache.bounds.x += root.x - cache.root_origin.0;
             cache.bounds.y += root.y - cache.root_origin.1;
+            cache.content.x += root.x - cache.root_origin.0;
+            cache.content.y += root.y - cache.root_origin.1;
             cache.root_origin = (root.x, root.y);
             cache.transformed = transformed;
             cache.used = frame;
             cache.parked = false;
+            cache.watched = shown.and_then(|shown| shown.window(cache.content));
             stats.layer_cache_hits += 1;
             return Ok(());
         }
@@ -3833,14 +3905,78 @@ impl GpuRenderer {
         let width = (width * scale).ceil().max(1.) as u32;
         let height = (height * scale).ceil().max(1.) as u32;
         let bounds = Rect::new(x, y, width as f32 / scale, height as f32 / scale);
+        // Where all of it shows in the window, if it does.
+        let window = shown.and_then(|shown| shown.window(content));
+        // Its window's damage, back in its own space: where its pixels can
+        // have changed. All of it shows, so a change anywhere in it is
+        // damage there (the window repaints from it nowhere else). A
+        // blurred, masked or shaded layer's texels reach past where they
+        // are: it repaints whole.
+        let plain = || {
+            scene.filter_blur(id) <= 0.
+                && scene.mask(id).is_none()
+                && scene.layer_shader(id).is_none()
+        };
+        let partial = shown
+            .filter(|_| window.is_some() && plain())
+            .and_then(|shown| {
+                let cache = self.layers.get(&id)?;
+                let kept = !cache.parked
+                    && cache.watched.is_some()
+                    && cache.step == step
+                    && cache.factor == factor.to_bits()
+                    && cache.bounds == bounds
+                    && cache.root_origin == (root.x, root.y);
+                let inverse = shown.map.inverse()?;
+                kept.then(|| {
+                    shown
+                        .damage
+                        .iter()
+                        .filter_map(|damage| {
+                            inverse
+                                .bounds(*damage)
+                                .expand(1. / scale)
+                                .intersection(bounds)
+                        })
+                        .map(|rect| {
+                            Rect::new(
+                                rect.x - bounds.x,
+                                rect.y - bounds.y,
+                                rect.width,
+                                rect.height,
+                            )
+                        })
+                        .collect::<Vec<Rect>>()
+                })
+            });
         let mut items = scene.layer_items(Some(id));
         self.plane_filter(&mut items);
         for item in &items {
             if item.isolated && item.effects.opacity > 0. {
-                self.prepare_layer(scene, item.id, magnification, exact, stats)?;
+                self.prepare_layer(scene, item.id, magnification, exact, None, stats)?;
             }
         }
         self.prepare_effects(scene, &items)?;
+        if let Some(damage) = partial {
+            let cache = self.layers.remove(&id).expect("kept above");
+            let (texture, result) =
+                self.paint_layer(scene, items, bounds, cache.texture, scale, &damage, false);
+            self.layers.insert(
+                id,
+                LayerCache {
+                    texture,
+                    revision,
+                    transformed,
+                    used: frame,
+                    watched: window,
+                    ..cache
+                },
+            );
+            let result = result?;
+            add_layer_stats(stats, &result);
+            stats.layer_partial_repaints += 1;
+            return Ok(());
+        }
         let bytes = width as usize * height as usize * 4;
         let mut existing = self.layers.get(&id).map_or(0, |l| l.bytes);
         let mut used: usize = self.layers.values().map(|l| l.bytes).sum();
@@ -3899,59 +4035,11 @@ impl GpuRenderer {
             width as f32 / texture.width() as f32,
             height as f32 / texture.height() as f32,
         ];
-        let view = texture.create_view(&Default::default());
-        let target = std::mem::replace(&mut self.target, texture);
-        let old_view = std::mem::replace(&mut self.view, view);
-        let old_size = (self.width, self.height);
-        self.width = self.target.width();
-        self.height = self.target.height();
-        let background = self.background;
-        self.background = Color(0, 0, 0, 0);
-        let fresh = self.fresh;
-        self.fresh = true;
-        // Everything inside draws at the layer's raster scale: glyphs,
-        // canvases and nested layers rasterize as finely as it shows.
-        self.scale = scale;
-        let mut local = items;
-        zgx::scene::translate_items(&mut local, -bounds.x, -bounds.y);
-        // Nested layer images remain world-positioned in their cache; pass the offset
-        // separately so the same texture can be composed into any ancestor layer.
-        let old_origin = self.layer_origin;
-        self.layer_origin = (bounds.x, bounds.y);
-        let in_layer = std::mem::replace(&mut self.in_layer, true);
-        // `fresh` repaints the whole texture, slack included, so an earlier
-        // larger frame never bleeds into sampling at the content's edge.
-        let result = self.render_flat::<FRAME>(
-            scene,
-            local,
-            &[Rect::new(0., 0., bounds.width, bounds.height)],
-            None,
-            false,
-        );
-        self.in_layer = in_layer;
-        self.layer_origin = old_origin;
-        let texture = std::mem::replace(&mut self.target, target);
-        let _view = std::mem::replace(&mut self.view, old_view);
-        self.width = old_size.0;
-        self.height = old_size.1;
-        self.scale = device_scale;
-        self.background = background;
-        self.fresh = fresh;
+        let whole = [Rect::new(0., 0., bounds.width, bounds.height)];
+        let (texture, result) =
+            self.paint_layer(scene, items, bounds, texture, scale, &whole, true);
         let result = result?;
-        stats.draw_calls += result.draw_calls;
-        stats.render_passes += result.render_passes;
-        stats.blur_passes += result.blur_passes;
-        stats.effect_passes += result.effect_passes;
-        stats.instances += result.instances;
-        stats.shaped_nodes += result.shaped_nodes;
-        stats.glyph_uploads += result.glyph_uploads;
-        stats.image_uploads += result.image_uploads;
-        stats.canvas_rasterizations += result.canvas_rasterizations;
-        stats.svg_rasterizations += result.svg_rasterizations;
-        stats.geometry_rebuilds += result.geometry_rebuilds;
-        stats.vertex_buffer_allocations += result.vertex_buffer_allocations;
-        stats.layer_repaints += 1;
-        stats.damaged_pixels += result.damaged_pixels;
+        add_layer_stats(stats, &result);
         self.layers.insert(
             id,
             LayerCache {
@@ -3968,9 +4056,72 @@ impl GpuRenderer {
                 transformed,
                 used: frame,
                 parked: false,
+                watched: window,
+                content,
             },
         );
         Ok(())
+    }
+    /// Draw `items` into a layer's `texture` at `scale`, its content's
+    /// corner at `bounds`' (nested layers find theirs from it): where
+    /// `damage` says (in its own points from that corner), all of it
+    /// when `fresh` (its slack too, so an earlier larger frame never bleeds
+    /// into sampling at the content's edge).
+    #[allow(clippy::too_many_arguments)]
+    fn paint_layer(
+        &mut self,
+        scene: &Scene,
+        mut items: Vec<zgx::scene::PaintItem<'_>>,
+        bounds: Rect,
+        texture: wgpu::Texture,
+        scale: f32,
+        damage: &[Rect],
+        fresh: bool,
+    ) -> (wgpu::Texture, Result<GpuStats, GpuError>) {
+        let view = texture.create_view(&Default::default());
+        let target = std::mem::replace(&mut self.target, texture);
+        let old_view = std::mem::replace(&mut self.view, view);
+        let old_size = (self.width, self.height);
+        self.width = self.target.width();
+        self.height = self.target.height();
+        let background = self.background;
+        self.background = Color(0, 0, 0, 0);
+        let was_fresh = std::mem::replace(&mut self.fresh, fresh);
+        // Everything inside draws at the layer's raster scale: glyphs,
+        // canvases and nested layers rasterize as finely as it shows.
+        let device_scale = std::mem::replace(&mut self.scale, scale);
+        zgx::scene::translate_items(&mut items, -bounds.x, -bounds.y);
+        // Nested layer images remain world-positioned in their cache; pass the offset
+        // separately so the same texture can be composed into any ancestor layer.
+        let old_origin = std::mem::replace(&mut self.layer_origin, (bounds.x, bounds.y));
+        let in_layer = std::mem::replace(&mut self.in_layer, true);
+        let result = self.render_flat::<FRAME>(scene, items, damage, None, false);
+        self.in_layer = in_layer;
+        self.layer_origin = old_origin;
+        let texture = std::mem::replace(&mut self.target, target);
+        self.view = old_view;
+        self.width = old_size.0;
+        self.height = old_size.1;
+        self.scale = device_scale;
+        self.background = background;
+        self.fresh = was_fresh;
+        (texture, result)
+    }
+    /// How `item`, a layer in the window's own pass, shows there: its map
+    /// (none: as laid out), what of the window it can show in, and the
+    /// window's damage this frame. `None` in perspective.
+    fn shown<'a>(
+        &self,
+        item: &zgx::scene::PaintItem<'_>,
+        damage: &'a [Rect],
+        viewport: Rect,
+    ) -> Option<Shown<'a>> {
+        let map = match item.projective() {
+            Some(map) => map.affine()?,
+            None => zgx::affine::Affine::IDENTITY,
+        };
+        let clip = item.clip.unwrap_or(viewport).intersection(viewport)?;
+        Some(Shown { damage, map, clip })
     }
     fn select_viewport(&mut self, width: f32, height: f32) {
         let key = (width.to_bits(), height.to_bits(), self.scale.to_bits());

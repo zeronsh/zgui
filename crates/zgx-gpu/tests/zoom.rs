@@ -3,7 +3,7 @@
 //! texel for pixel, so text, rounded corners and hairlines are as crisp, not
 //! resampled from a smaller raster.
 use zgx::scene::*;
-use zgx_gpu::GpuRenderer;
+use zgx_gpu::{GpuRenderer, GpuStats};
 
 fn gpu_fixture() -> std::sync::MutexGuard<'static, ()> {
     static DEVICE_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -183,4 +183,46 @@ fn a_zoomed_panel_off_a_pixel_draws_as_on_the_nearest_one() {
         draw(&mut gpu, &scene, PIXELS as f32)
     };
     assert_eq!(differing(&draw_at(10.3), &draw_at(10.), 0), 0);
+}
+
+/// Each scene's frame after its text changes: drawn to, read back, and
+/// what the frame cost.
+fn after_text_change(gpu: &mut GpuRenderer, scene: &mut Scene, size: f32) -> (Vec<u8>, GpuStats) {
+    draw(gpu, scene, size);
+    let panel = scene.children(scene.root())[0];
+    let text = scene.children(panel)[0];
+    scene.set_text(text, "Zoomed Ab");
+    let report = scene.flush();
+    let stats = gpu.render(scene, &report.damage).unwrap();
+    (gpu.readback().unwrap(), stats)
+}
+
+#[test]
+fn text_changing_in_a_zoomed_panel_repaints_its_part_of_the_layer_alone() {
+    let _gpu = gpu_fixture();
+    let zoom = 2.;
+    // The window at 200%: the change's damage alone.
+    let mut window = GpuRenderer::new(PIXELS, PIXELS).unwrap();
+    window.set_scale_factor(zoom);
+    let points = PIXELS as f32 / zoom;
+    let (_, at_window_zoom) = after_text_change(&mut window, &mut scene(points, None), points);
+    // The panel at 200% in a window at 100%: its layer's part once more,
+    // not the whole layer.
+    let size = PIXELS as f32;
+    let mut zoomed = scene(size, Some(zoom));
+    let mut gpu = GpuRenderer::new(PIXELS, PIXELS).unwrap();
+    let (partial, stats) = after_text_change(&mut gpu, &mut zoomed, size);
+    assert_eq!((stats.layer_repaints, stats.layer_partial_repaints), (1, 1));
+    // 11,810 pixels where the window zoom repaints 5,396: the layer's part
+    // and the window's, each about the change (30,296 with the whole layer).
+    assert!(
+        stats.damaged_pixels * 2 <= at_window_zoom.damaged_pixels * 5,
+        "{} pixels against the window zoom's {}",
+        stats.damaged_pixels,
+        at_window_zoom.damaged_pixels
+    );
+    // As a fresh render of the same scene draws it.
+    let mut fresh = GpuRenderer::new(PIXELS, PIXELS).unwrap();
+    let full = draw(&mut fresh, &zoomed, size);
+    assert_eq!(differing(&partial, &full, 0), 0);
 }

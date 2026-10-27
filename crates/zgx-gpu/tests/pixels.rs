@@ -4185,13 +4185,11 @@ fn clean_blur_streaming_uses_one_pass_including_isolated_layer_accounting() {
             let damage = scene.flush().damage;
             let stats = gpu.render(&scene, &damage).unwrap();
             if isolated {
-                // Repainted isolated layers currently redraw their whole target.
-                assert_eq!(stats.layer_repaints, 1);
-                assert_eq!(
-                    stats.blur_passes, 3,
-                    "nested passes reach caller statistics"
-                );
-                assert!(stats.render_passes > stats.blur_passes + 1);
+                // The layer repaints where the text changed alone: the blur,
+                // away from it, draws nothing again (`layer_partial_repaints`).
+                assert_eq!((stats.layer_repaints, stats.layer_partial_repaints), (1, 1));
+                assert_eq!(stats.blur_passes, 0);
+                assert_eq!(stats.render_passes, 2, "the layer's and the window's");
             } else {
                 assert_eq!(stats.blur_passes, 0);
                 assert_eq!(stats.render_passes, 1);

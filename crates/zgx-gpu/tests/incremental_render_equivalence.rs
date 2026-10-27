@@ -1,7 +1,8 @@
 //! Damage-limited rendering (subtree culling, batched draws, deferred
 //! submission) must produce exactly the pixels of a fresh full render.
 use zgx::scene::{
-    BoxShadow, Color, Effects, Layout, NodeId, NodeKind, QuadStyle, Scene, Style, Transform,
+    BoxShadow, Color, Effects, Layout, LocalTransform, NodeId, NodeKind, QuadStyle, Scene, Style,
+    Transform,
 };
 use zgx_gpu::GpuRenderer;
 
@@ -43,6 +44,8 @@ fn quad(fill: Color, shadow: bool) -> NodeKind {
 }
 
 struct Tree {
+    /// Groups drawn as layers (`layered`): held still, inside the window.
+    layers: bool,
     /// Every node, in creation order.
     all: Vec<NodeId>,
     /// Moving, recolouring and fading targets.
@@ -55,6 +58,7 @@ fn build() -> (Scene, Tree) {
     let mut scene = Scene::new(W, H);
     scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
     let mut tree = Tree {
+        layers: false,
         all: Vec::new(),
         movers: Vec::new(),
         groups: Vec::new(),
@@ -150,6 +154,11 @@ fn mutate(scene: &mut Scene, tree: &Tree, step: u64) {
             3 => {
                 let group = tree.groups[rng.below(tree.groups.len() as u64) as usize];
                 let t = scene.transform(group);
+                // A layer moved part of a pixel shows its texture resampled,
+                // where a fresh render rasterizes it there: alike, not equal.
+                if tree.layers && scene.is_layer(group) {
+                    continue;
+                }
                 scene.set_transform(
                     group,
                     Transform {
@@ -177,20 +186,86 @@ fn mutate(scene: &mut Scene, tree: &Tree, step: u64) {
     }
 }
 
+/// Groups drawn as layers: one zoomed, one isolated, one rotated, placed
+/// within the window. A change inside one repaints its layer only where the
+/// window's damage reaches it (`GpuStats::layer_partial_repaints`).
+fn layered(scene: &mut Scene, tree: &mut Tree) {
+    tree.layers = true;
+    scene.set_transform(tree.groups[1], Transform { x: 100., y: 10. });
+    scene.set_transform(tree.groups[2], Transform { x: 10., y: 130. });
+    scene.set_transform(tree.groups[3], Transform { x: 160., y: 70. });
+    scene.set_zoom(tree.groups[1], 1.5);
+    scene.set_isolated(tree.groups[2], true);
+    scene.set_local_transform(
+        tree.groups[3],
+        LocalTransform {
+            rotate: 8.,
+            ..LocalTransform::IDENTITY
+        },
+    );
+}
+
 #[test]
 fn damage_limited_rendering_matches_a_fresh_render_after_every_mutation() {
-    let (mut live, tree) = build();
+    matches_a_fresh_render(false);
+}
+
+#[test]
+fn layers_repainted_where_damaged_match_a_fresh_render_after_every_mutation() {
+    matches_a_fresh_render(true);
+}
+
+fn matches_a_fresh_render(layers: bool) {
+    let (mut live, mut tree) = build();
+    if layers {
+        layered(&mut live, &mut tree);
+    }
     let mut renderer = GpuRenderer::new(W as u32, H as u32).expect("GPU adapter");
     let context = renderer.context();
+    // The same scene, changed alike, its frames each told the whole window
+    // changed: its layers repaint whole, its history otherwise the same (a
+    // scene keeps what its renderer drew, so each has its own).
+    let (mut again, mut again_tree) = build();
+    if layers {
+        layered(&mut again, &mut again_tree);
+    }
+    let mut whole = GpuRenderer::new_with_context(W as u32, H as u32, &context).unwrap();
+    let window = [zgx::scene::Rect::new(0., 0., W, H)];
     let report = live.flush();
     renderer.render(&live, &report.damage).unwrap();
+    again.flush();
+    whole.render(&again, &window).unwrap();
+    let mut partial = 0;
     for step in 0..60 {
         mutate(&mut live, &tree, step);
         let report = live.flush();
-        renderer.render(&live, &report.damage).unwrap();
+        partial += renderer
+            .render(&live, &report.damage)
+            .unwrap()
+            .layer_partial_repaints;
         let incremental = renderer.readback().unwrap();
+        if layers {
+            mutate(&mut again, &again_tree, step);
+            again.flush();
+            whole.render(&again, &window).unwrap();
+            let repainted = whole.readback().unwrap();
+            // A level apart at most: overlapping layers composite through
+            // textures drawn at other times (stale pixels are far more).
+            let differing = incremental
+                .chunks(4)
+                .zip(repainted.chunks(4))
+                .filter(|(a, b)| a.iter().zip(b.iter()).any(|(a, b)| a.abs_diff(*b) > 1))
+                .count();
+            assert_eq!(
+                differing, 0,
+                "{differing} pixels differ from whole repaints after step {step}"
+            );
+        }
 
-        let (mut fresh, fresh_tree) = build();
+        let (mut fresh, mut fresh_tree) = build();
+        if layers {
+            layered(&mut fresh, &mut fresh_tree);
+        }
         for replay in 0..=step {
             mutate(&mut fresh, &fresh_tree, replay);
         }
@@ -199,13 +274,22 @@ fn damage_limited_rendering_matches_a_fresh_render_after_every_mutation() {
         full.render(&fresh, &report.damage).unwrap();
         let expected = full.readback().unwrap();
 
+        // A layer's texture, reused at a size a fresh render doesn't pick,
+        // places its pixels through other coordinates: a level off at most.
+        let tolerance = if layers { 2 } else { 0 };
         let differing = incremental
             .chunks(4)
             .zip(expected.chunks(4))
-            .filter(|(a, b)| a != b)
+            .filter(|(a, b)| {
+                a.iter()
+                    .zip(b.iter())
+                    .any(|(a, b)| a.abs_diff(*b) > tolerance)
+            })
             .count();
         assert_eq!(differing, 0, "{differing} pixels differ after step {step}");
     }
+    // The layers' changes went the partial way, not only the whole one.
+    assert!(!layers || partial > 0, "no layer repainted where damaged");
 }
 
 /// Plain frames encoded with Metal directly (macOS) draw exactly the pixels
