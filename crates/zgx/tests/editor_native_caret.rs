@@ -72,12 +72,12 @@ fn a_plain_focused_caret_is_the_hosts_where_the_editors_would_show() {
         0.,
         "the editor's paints nothing"
     );
+    assert!(caret.shown && !ui.caret_blinked_off(), "shown at first");
     assert_eq!(
         ui.next_interaction_deadline(),
-        None,
-        "the host blinks it: no wake"
+        Some(caret.since + BLINK.on),
+        "a wake at the end of its shown phase, to flip it"
     );
-    assert!(!ui.caret_blinked_off(), "shown at first");
     // Nothing to draw while it blinks.
     ui.scene.borrow_mut().flush();
     ui.prepare_frame();
@@ -414,4 +414,77 @@ fn blurred_and_focused_again_between_frames_the_editors_caret_stays_unpainted() 
     ui.prepare_frame();
     assert!(drawn(&ui).is_some());
     assert_eq!(opacity(&ui, editor.caret), 0., "painted under the host's");
+}
+
+#[test]
+fn each_phase_flips_the_hosts_caret_and_draws_no_frame() {
+    let mut ui = native_ui();
+    let _editor = field(&mut ui);
+    let (serial, caret) = ui.native_caret();
+    let caret = caret.unwrap();
+    ui.scene.borrow_mut().flush();
+    let hide = ui.next_interaction_deadline().unwrap();
+    assert_eq!(hide, caret.since + BLINK.on);
+    assert!(
+        !ui.advance_interactions(hide).unwrap(),
+        "nothing for a frame"
+    );
+    let (hidden_serial, hidden) = ui.native_caret();
+    let hidden = hidden.unwrap();
+    assert_ne!(hidden_serial, serial, "a change for the host");
+    assert!(!hidden.shown && ui.caret_blinked_off());
+    assert_eq!((hidden.rect, hidden.since), (caret.rect, caret.since));
+    assert!(
+        ui.scene.borrow_mut().flush().damage.is_empty(),
+        "no frame for a blink"
+    );
+    // Hidden for `off`, then shown for `on`.
+    let show = ui.next_interaction_deadline().unwrap();
+    assert_eq!(show - hide, BLINK.off);
+    ui.advance_interactions(show).unwrap();
+    assert!(ui.native_caret().1.unwrap().shown);
+    assert_eq!(ui.next_interaction_deadline().unwrap() - show, BLINK.on);
+    // A frame preparing in between keeps the phase (it does not show it again).
+    ui.advance_interactions(ui.next_interaction_deadline().unwrap())
+        .unwrap();
+    ui.prepare_frame();
+    assert!(!ui.native_caret().1.unwrap().shown, "still hidden");
+}
+
+#[test]
+fn the_hosts_caret_wakes_nothing_unfocused_or_unseen() {
+    let mut ui = native_ui();
+    let _editor = field(&mut ui);
+    assert!(ui.next_interaction_deadline().is_some());
+    // The window covered, minimized or hidden: no wake, and none missed.
+    ui.set_presented(false);
+    assert_eq!(ui.next_interaction_deadline(), None);
+    let later = std::time::Instant::now() + Duration::from_secs(5);
+    ui.advance_interactions(later).unwrap();
+    ui.set_presented(true);
+    ui.prepare_frame();
+    let back = ui.native_caret().1.expect("drawn again");
+    assert!(back.shown, "shown as it comes back");
+    assert!(ui.next_interaction_deadline().is_some());
+    // The field blurred (its window no longer key): nothing at all.
+    ui.input.focus(&ui.scene, None);
+    ui.prepare_frame();
+    assert_eq!(ui.native_caret().1, None);
+    assert_eq!(ui.next_interaction_deadline(), None);
+}
+
+#[test]
+fn typing_shows_the_hosts_caret_and_starts_its_phase_again() {
+    let mut ui = native_ui();
+    let editor = field(&mut ui);
+    let hide = ui.next_interaction_deadline().unwrap();
+    ui.advance_interactions(hide).unwrap();
+    assert!(!ui.native_caret().1.unwrap().shown);
+    std::thread::sleep(Duration::from_millis(2));
+    editor.editor.borrow_mut().insert("s");
+    editor.refresh();
+    ui.prepare_frame();
+    let typed = ui.native_caret().1.unwrap();
+    assert!(typed.shown, "solid as it types");
+    assert_eq!(ui.next_interaction_deadline(), Some(typed.since + BLINK.on));
 }

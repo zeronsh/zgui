@@ -373,29 +373,16 @@ pub(crate) struct Layer {
     caret: Option<(Retained<CALayer>, Option<Caret>)>,
 }
 /// A caret drawn by Core Animation over the window's frames
-/// (`zgx::caret_blink::NativeCaret`): a box of one colour, blinking by an
-/// animation the window server runs, so the app neither wakes nor draws
-/// while it blinks.
+/// (`zgx::caret_blink::NativeCaret`): a box of one colour, shown or hidden as
+/// the document's blink says, so the window draws no frame for a blink.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Caret {
     /// Its box in the host layer's points, from the top left.
     pub rect: (f64, f64, f64, f64),
     /// Its colour, sRGB, each 0 to 1.
     pub color: [f64; 4],
-    /// Seconds shown each blink.
-    pub on: f64,
-    /// Seconds hidden each blink.
-    pub off: f64,
-    /// When its blink started shown, in `CACurrentMediaTime`'s seconds.
-    pub began: f64,
-}
-unsafe extern "C" {
-    fn CACurrentMediaTime() -> f64;
-}
-/// Now, in Core Animation's time (`Caret::began`).
-pub fn media_time() -> f64 {
-    // SAFETY: QuartzCore's clock, which takes nothing.
-    unsafe { CACurrentMediaTime() }
+    /// Whether it shows now (a blink's phase).
+    pub shown: bool,
 }
 /// Hides the plain layer's tiles once the video layer above it shows a
 /// frame: until then they show the frame before; after, under a window's
@@ -634,43 +621,6 @@ fn hide_tiles(plain: &CALayer, shown: Option<&CALayer>) {
         }
     }
 }
-/// Blink `layer` as `caret` says: shown from `began` for `on`, hidden for
-/// `off`, and again, by a discrete animation of its opacity that the window
-/// server runs.
-fn blink(layer: &CALayer, caret: Caret) {
-    let cycle = caret.on + caret.off;
-    // SAFETY: Core Animation's and Foundation's classes, given what their
-    // methods take: an NSString key path, NSArrays of NSNumbers, and the
-    // timing's doubles and float.
-    unsafe {
-        let number = |value: f64| -> Retained<AnyObject> {
-            msg_send![objc2::class!(NSNumber), numberWithDouble: value]
-        };
-        let array = |items: &[Retained<AnyObject>]| -> Retained<AnyObject> {
-            let pointers: Vec<*const AnyObject> = items
-                .iter()
-                .map(|item| &**item as *const AnyObject)
-                .collect();
-            msg_send![objc2::class!(NSArray), arrayWithObjects: pointers.as_ptr(), count: pointers.len()]
-        };
-        let key = objc2_foundation::NSString::from_str("opacity");
-        let animation: Retained<AnyObject> =
-            msg_send![objc2::class!(CAKeyframeAnimation), animationWithKeyPath: &*key];
-        // Discrete: each value holds from its key time to the next.
-        let values = array(&[number(1.), number(0.)]);
-        let times = array(&[number(0.), number(caret.on / cycle), number(1.)]);
-        let discrete = objc2_foundation::NSString::from_str("discrete");
-        let _: () = msg_send![&*animation, setValues: &*values];
-        let _: () = msg_send![&*animation, setKeyTimes: &*times];
-        let _: () = msg_send![&*animation, setCalculationMode: &*discrete];
-        let _: () = msg_send![&*animation, setDuration: cycle];
-        let _: () = msg_send![&*animation, setRepeatCount: f32::INFINITY];
-        let _: () = msg_send![&*animation, setBeginTime: caret.began];
-        let _: () = msg_send![&*animation, setRemovedOnCompletion: false];
-        let name = objc2_foundation::NSString::from_str("zgx.caret");
-        let _: () = msg_send![layer, addAnimation: &*animation, forKey: &*name];
-    }
-}
 /// Run `change` as one Core Animation transaction, without animation.
 fn transaction(change: impl FnOnce()) {
     CATransaction::begin();
@@ -800,7 +750,6 @@ impl Layer {
             });
             let Some(caret) = caret else {
                 layer.setHidden(true);
-                layer.removeAllAnimations();
                 *shown = None;
                 return;
             };
@@ -824,10 +773,12 @@ impl Layer {
                 let color = objc2_core_graphics::CGColor::new_srgb(r, g, b, a);
                 layer.setBackgroundColor(Some(&color));
             }
-            if shown.is_none_or(|was| {
-                (was.on, was.off, was.began) != (caret.on, caret.off, caret.began)
-            }) {
-                blink(layer, caret);
+            // A blink's phase, by its opacity (window 28, 2026-10-27: two such
+            // changes a second cost the window server what GPUI's blinking
+            // frames do, and a Core Animation blink a quarter point more).
+            let opacity = if caret.shown { 1. } else { 0. };
+            if layer.opacity() != opacity {
+                layer.setOpacity(opacity);
             }
             layer.setHidden(false);
             *shown = Some(caret);

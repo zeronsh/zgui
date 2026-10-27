@@ -9,11 +9,15 @@
 //! presented, and as the editor loses the focus (its window deactivating).
 //!
 //! A host can draw the caret itself (`Ui::set_native_caret`; macOS, as a
-//! Core Animation layer over the window's content, blinking by an animation
-//! of its own): while the caret shows plainly (`Scene::plain_box`), nothing
-//! paints over it and it marks no composition or selection, the editor's
-//! caret paints nothing and sets no deadline, so a focused field left alone
-//! wakes nothing and the GPU does no work. Every Metal submission makes the
+//! Core Animation layer over the window's content): while the caret shows
+//! plainly (`Scene::plain_box`), nothing paints over it and it marks no
+//! composition or selection, the editor's caret paints nothing, and each
+//! blink phase flips the host's (`NativeCaret::shown`), a change it applies
+//! with no frame drawn, so a focused field left alone does no GPU work: two
+//! small wakes a second, none while it is unfocused or unseen. A flip costs
+//! the window server what a blinking frame does, where an animation the
+//! window server runs cost it a quarter point more (window 28, M5,
+//! 2026-10-27). Every Metal submission makes the
 //! driver hold about 176 MB for its command queue for some 8 s after it
 //! (M5, 2026-10-27), so a caret blinking through frames kept a window's
 //! footprint that high for as long as a field had the focus.
@@ -66,6 +70,9 @@ pub struct NativeCaret {
     /// focused), the blink's start: shown for `on` from then, hidden for
     /// `off`, and again.
     pub since: Instant,
+    /// Whether it shows now: the document flips this each phase (`advance`),
+    /// a change for the host to apply, with no frame drawn.
+    pub shown: bool,
 }
 
 /// The document's one blinking caret: the focused editor's.
@@ -165,15 +172,11 @@ impl Ui {
     }
 
     /// Whether the focused editor's caret is in a blink's hidden phase
-    /// (worked out from the blink's start while the host draws it).
+    /// (the host's, while it draws it).
     pub fn caret_blinked_off(&self) -> bool {
         let blink = self.caret_blink();
         match blink.drawn.get() {
-            Some(caret) => {
-                let cycle = (caret.on + caret.off).as_secs_f64();
-                let into = caret.since.elapsed().as_secs_f64() % cycle;
-                into >= caret.on.as_secs_f64()
-            }
+            Some(caret) => !caret.shown,
             None => blink.hidden.get(),
         }
     }
@@ -239,12 +242,19 @@ pub(crate) fn settle(ui: &Ui) {
         if rect.width <= 0. || rect.height <= 0. || scene.painted_over(caret, rect) {
             return None;
         }
+        // Shown from its blink's start; flipped since only by `advance`.
+        let shown = blink
+            .drawn
+            .get()
+            .filter(|was| was.since == since)
+            .is_none_or(|was| was.shown);
         Some(NativeCaret {
             rect,
             color,
             on: settings.on,
             off: settings.off,
             since,
+            shown,
         })
     })();
     let was = blink.drawn.get();
@@ -274,7 +284,7 @@ pub(crate) fn settle(ui: &Ui) {
             scene.set_kind(caret, NodeKind::Rect(color));
         }
         blink.hidden.set(false);
-        blink.next.set(None);
+        blink.next.set(want.map(|caret| caret.since + caret.on));
     } else if was.is_some() {
         // Given back, still shown (it moved under something, a selection
         // began): solid, blinking from a phase on, as when it is drawn.
@@ -292,9 +302,9 @@ pub(crate) fn settle(ui: &Ui) {
 /// When the caret next changes, while one blinks in a presented window.
 pub(crate) fn next(ui: &Ui) -> Option<Instant> {
     let blink = ui.caret_blink();
-    // The host's blinks by itself.
+    // The host's, which the document flips each phase.
     if blink.drawn.get().is_some() {
-        return None;
+        return blink.next.get().filter(|_| ui.is_presented());
     }
     let caret = blink.caret.get()?;
     if !ui.is_presented() || !ui.scene.borrow().contains(caret) {
@@ -307,7 +317,24 @@ pub(crate) fn next(ui: &Ui) -> Option<Instant> {
 /// timeout. Whether it changed.
 pub(crate) fn advance(ui: &Ui, now: Instant) -> bool {
     let blink = ui.caret_blink();
-    if blink.drawn.get().is_some() {
+    if let Some(mut caret) = blink.drawn.get() {
+        // The host's: flipped here, a change it applies with no frame drawn.
+        if let Some(due) = blink
+            .next
+            .get()
+            .filter(|due| *due <= now && ui.is_presented())
+        {
+            caret.shown = !caret.shown;
+            let phase = if caret.shown { caret.on } else { caret.off };
+            let start = if now.saturating_duration_since(due) < phase {
+                due
+            } else {
+                now
+            };
+            blink.next.set(Some(start + phase));
+            blink.drawn.set(Some(caret));
+            blink.serial.set(blink.serial.get().wrapping_add(1));
+        }
         return false;
     }
     let (Some(caret), Some(color), Some(settings)) =

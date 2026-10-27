@@ -22,7 +22,7 @@ pub mod iosurface;
 mod layer_present;
 /// A caret Core Animation draws over the frames (`GpuRenderer::set_caret`).
 #[cfg(target_os = "macos")]
-pub use layer_present::{Caret, media_time};
+pub use layer_present::Caret;
 #[cfg(target_os = "macos")]
 mod metal_frame;
 #[cfg(target_os = "macos")]

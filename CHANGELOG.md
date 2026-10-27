@@ -10,7 +10,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Performance
 
-- **macOS: a focused field left alone takes about 180 MB less memory.** Its caret is a Core Animation layer, blinking by itself, where it was a frame each blink: the Metal driver holds about 176 MB for its command queue for some 8 s after any frame, so a blinking caret kept the window's footprint at 210 MB, where it now falls to an idle window's 30 (M5; GPUI Fast, MyGo and Rune keep 219–404 MB blinking a caret). The window wakes for nothing while the caret blinks. It is the editor's caret, drawn in frames as before, wherever Core Animation's could differ (`docs/composition.md`); `ZGX_NATIVE_CARET=0` keeps it everywhere.
+- **macOS: a focused field left alone takes about 180 MB less memory.** Its caret is a Core Animation layer, shown and hidden each blink with no frame drawn, where it was a frame each blink: the Metal driver holds about 176 MB for its command queue for some 8 s after any frame, so a blinking caret kept the window's footprint at 210 MB, where it now falls to an idle window's 30 (M5; GPUI Fast, MyGo and Rune keep 219–404 MB blinking a caret). The window does no GPU work while the caret blinks: two small wakes a second, none while the field is unfocused or the window unseen (its window server cost is what GPUI's blinking frames cost, with 1/13 of the app CPU). It is the editor's caret, drawn in frames as before, wherever Core Animation's could differ (`docs/composition.md`); `ZGX_NATIVE_CARET=0` keeps it everywhere.
 
 ### Changed: what to check in an existing app
 

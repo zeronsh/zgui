@@ -942,8 +942,8 @@ static NATIVE_CARET: std::sync::LazyLock<bool> =
 /// Give the renderer the caret Core Animation draws (`Ui::native_caret`),
 /// once for each change: its box from window points to the view's (the
 /// window's zoom undone) on the pixels the editor's would fill (those whose
-/// centres it covers, as the GPU fills a rectangle), its blink's start in
-/// Core Animation's clock.
+/// centres it covers, as the GPU fills a rectangle), shown or hidden as the
+/// document's blink says.
 #[cfg(target_os = "macos")]
 fn sync_caret(
     ui: &zgx::widgets::Ui,
@@ -972,9 +972,7 @@ fn sync_caret(
         zgx_gpu::Caret {
             rect: (left, top, right - left, bottom - top),
             color: [r, g, b, a].map(|channel| f64::from(channel) / 255.),
-            on: caret.on.as_secs_f64(),
-            off: caret.off.as_secs_f64(),
-            began: zgx_gpu::media_time() - caret.since.elapsed().as_secs_f64(),
+            shown: caret.shown,
         }
     }));
 }
