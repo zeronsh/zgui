@@ -79,7 +79,14 @@ pub(crate) fn diag_phase(kind: &str) {
         // pool full, frames a refresh deeper than they need be.
         let waited = f64::from_bits(DRAWABLE_WAIT.load(Ordering::Relaxed));
         let streak = if waited > 3. { STREAK.get() + 1 } else { 0 };
-        if streak >= 8 {
+        // `ZGX_PHASE_FIX_RUN`: how many slow waits in a row (8).
+        static RUN: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| {
+            std::env::var("ZGX_PHASE_FIX_RUN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8)
+        });
+        if streak >= *RUN {
             REPHASE.store(true, Ordering::Release);
             REPHASES.fetch_add(1, Ordering::Relaxed);
             STREAK.set(0);
@@ -100,16 +107,28 @@ pub(crate) fn diag_phase(kind: &str) {
                     let at = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
                     format!("p10 {:.2} p50 {:.2} p90 {:.2}", at(0.1), at(0.5), at(0.9))
                 };
+                let latency = std::mem::take(&mut *LATENCY.lock().unwrap_or_else(|e| e.into_inner()));
                 eprintln!(
-                    "phase {kind} after tick ms {} | before target ms {} | drawable wait ms {} | rephases {}",
+                    "phase {kind} after tick ms {} | before target ms {} | drawable wait ms {} | tick to presented ms {} | rephases {}",
                     quantiles(seen.iter().map(|x| x.0).collect()),
                     quantiles(seen.iter().map(|x| x.1).collect()),
                     quantiles(seen.iter().map(|x| x.2).collect()),
+                    if latency.is_empty() { "-".into() } else { quantiles(latency) },
                     REPHASES.load(Ordering::Relaxed),
                 );
                 seen.clear();
             }
         });
+    }
+}
+/// DIAGNOSTIC: tick-to-presented times of drawables lately (ms).
+#[cfg(target_os = "macos")]
+static LATENCY: std::sync::Mutex<Vec<f64>> = std::sync::Mutex::new(Vec::new());
+#[cfg(target_os = "macos")]
+pub(crate) fn diag_latency(ms: f64) {
+    let mut latency = LATENCY.lock().unwrap_or_else(|e| e.into_inner());
+    if latency.len() < 4096 {
+        latency.push(ms);
     }
 }
 /// DIAGNOSTIC: the last `nextDrawable` call's wait (ms, f64 bits).
@@ -8134,7 +8153,9 @@ impl GpuRenderer {
             present.retain_buffers(|_, buffer| buffer.drawable);
             // Presented feedback while the trial reads it, or a log does.
             static LOGGED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
-                zgx::env::var_os("ZGX_DRAWABLE_FEEDBACK").is_some() || present_log::enabled()
+                zgx::env::var_os("ZGX_DRAWABLE_FEEDBACK").is_some()
+                    || zgx::env::var_os("ZGX_PHASE_LOG").is_some()
+                    || present_log::enabled()
             });
             let wants_feedback = *LOGGED || matches!(present.trial, Trial::Drawables { .. });
             // SAFETY: The raw device is only retained; the guard is dropped

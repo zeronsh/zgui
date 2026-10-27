@@ -571,6 +571,68 @@ struct Drawables {
     /// DIAGNOSTIC (`ZGX_DRAWABLE_TOGGLE=hostclear`): the host's own contents,
     /// put back on even seconds.
     saved_host: Option<Retained<AnyObject>>,
+    /// DIAGNOSTIC (`ZGX_DRAWABLE_PREFETCH`): the next drawable, fetched off
+    /// the main thread as each is taken (as MyGo does).
+    prefetch: Option<std::sync::Arc<Prefetch>>,
+}
+/// See `Drawables::prefetch`.
+struct Prefetch {
+    slot: std::sync::Mutex<(bool, Fetched)>,
+    ready: std::sync::Condvar,
+    ask: std::sync::mpsc::Sender<()>,
+}
+/// A drawable or none, handed between the prefetch thread and the main one.
+struct Fetched(Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>);
+// SAFETY: a drawable is taken by one thread at a time (the slot's lock), and
+// Metal's drawables may be used from any thread.
+unsafe impl Send for Fetched {}
+struct SendLayer(Retained<CAMetalLayer>);
+// SAFETY: CAMetalLayer's -nextDrawable may be called from any thread.
+unsafe impl Send for SendLayer {}
+impl Prefetch {
+    fn start(layer: &Retained<CAMetalLayer>) -> std::sync::Arc<Self> {
+        let (ask, asked) = std::sync::mpsc::channel::<()>();
+        let this = std::sync::Arc::new(Self {
+            slot: std::sync::Mutex::new((false, Fetched(None))),
+            ready: std::sync::Condvar::new(),
+            ask,
+        });
+        let shared = this.clone();
+        let layer = SendLayer(layer.clone());
+        std::thread::spawn(move || {
+            let layer = layer;
+            while asked.recv().is_ok() {
+                let drawable = objc2::rc::autoreleasepool(|_| layer.0.nextDrawable());
+                let mut slot = shared.slot.lock().unwrap_or_else(|e| e.into_inner());
+                *slot = (false, Fetched(drawable));
+                shared.ready.notify_all();
+            }
+        });
+        this
+    }
+    /// Fetch the next one, if none is fetched or being fetched.
+    fn request(&self) {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        if !slot.0 && slot.1.0.is_none() {
+            slot.0 = true;
+            let _ = self.ask.send(());
+        }
+    }
+    /// The fetched drawable, waiting (at most a second) for one being fetched.
+    fn take(&self) -> Option<Retained<ProtocolObject<dyn CAMetalDrawable>>> {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        while slot.0 {
+            let (next, timeout) = self
+                .ready
+                .wait_timeout(slot, std::time::Duration::from_secs(1))
+                .unwrap_or_else(|e| e.into_inner());
+            slot = next;
+            if timeout.timed_out() {
+                break;
+            }
+        }
+        slot.1.0.take()
+    }
 }
 /// Hides the plain layer's tiles once the video layer above it shows a
 /// frame: until then they show the frame before; after, under a window's
@@ -1053,6 +1115,7 @@ impl Layer {
                 feedback: Default::default(),
                 on_host: true,
                 saved_host: None,
+                prefetch: None,
             });
         }
         let drawables = self.drawables.get_or_insert_with(|| {
@@ -1090,6 +1153,7 @@ impl Layer {
                 feedback: Default::default(),
                 on_host: false,
                 saved_host: None,
+                prefetch: None,
             }
         });
         // DIAGNOSTIC (the flush lane's ZGX_DRAWABLE_CS_ALT): no colorspace on
@@ -1184,20 +1248,47 @@ impl Layer {
                 transaction(|| self.host.insertSublayer_atIndex(&self.plain, 0));
             }
         }
+        static PREFETCH: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| std::env::var_os("ZGX_DRAWABLE_PREFETCH").is_some());
         let asked = std::time::Instant::now();
-        let drawable = drawables.layer.nextDrawable()?;
+        let fetched = if *PREFETCH {
+            let layer = drawables.layer.clone();
+            let prefetch = drawables
+                .prefetch
+                .get_or_insert_with(|| Prefetch::start(&layer))
+                .clone();
+            // One of another size (the window resized) is not this frame's.
+            prefetch.take().filter(|drawable| {
+                let texture = drawable.texture();
+                texture.width() as f64 == size.width && texture.height() as f64 == size.height
+            })
+        } else {
+            None
+        };
+        let drawable = match fetched {
+            Some(drawable) => drawable,
+            None => drawables.layer.nextDrawable()?,
+        };
         crate::DRAWABLE_WAIT.store(
             (asked.elapsed().as_secs_f64() * 1e3).to_bits(),
             std::sync::atomic::Ordering::Relaxed,
         );
+        if let Some(prefetch) = &drawables.prefetch {
+            prefetch.request();
+        }
         // Feedback only while it is read (the trial, a log): a handler a
         // frame is work on Core Animation's thread.
         if feedback {
             let feedback = drawables.feedback.clone();
+            let tick = crate::diag_last_tick().0;
             let handler = block2::RcBlock::new(
                 move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
                     // SAFETY: Metal passes the drawable presented, alive for the call.
-                    feedback.record(unsafe { shown.as_ref() }.presentedTime());
+                    let presented = unsafe { shown.as_ref() }.presentedTime();
+                    feedback.record(presented);
+                    if presented > 0. && tick > 0. {
+                        crate::diag_latency((presented - tick) * 1e3);
+                    }
                 },
             );
             // SAFETY: A live block taking the drawable, as the handler's type
