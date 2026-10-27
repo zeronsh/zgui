@@ -265,6 +265,10 @@ enum Kind {
         label: String,
         source: Box<dyn FnMut() -> std::sync::Arc<crate::image::ImageData>>,
     },
+    GpuView {
+        label: String,
+        view: crate::gpu_view::GpuView,
+    },
     Progress {
         label: String,
         value: Signal<f32>,
@@ -1588,6 +1592,16 @@ pub fn image_signal(
     View::new(Kind::Image {
         label: label.into(),
         source: Box::new(source),
+    })
+}
+/// A box whose pixels `view` draws on the GPU (see [`crate::gpu_view`]):
+/// a frame at the box's size as it first shows, as it resizes, as the view
+/// is invalidated and, while it animates, every refresh it shows. It has no
+/// size of its own: give it one. `label` is its accessible name.
+pub fn gpu_view(label: impl Into<String>, view: &crate::gpu_view::GpuView) -> View {
+    View::new(Kind::GpuView {
+        label: label.into(),
+        view: view.clone(),
     })
 }
 /// A vertical viewport for ordinary retained children, stacked in a column.
@@ -3446,6 +3460,16 @@ fn open_element(
             image_intrinsic = Some(intrinsic);
             root
         }
+        Kind::GpuView { label, view: gpu } => {
+            assert!(view.children.is_empty(), "GPU views own their pixels");
+            let root = ui.container(parent, Layout::Overlay, Default::default());
+            ui.scene.borrow_mut().set_replaced(root, true);
+            ui.semantics
+                .borrow_mut()
+                .set(root, SemanticNode::new(Role::Image, label));
+            mount_gpu_view(ui, root, gpu, &environment);
+            root
+        }
         Kind::RichText(binding) => {
             assert!(
                 view.children.is_empty(),
@@ -4923,6 +4947,115 @@ fn mount_native_surface(
         );
     });
 }
+/// A GPU view's box: a frame the size of its content box, made anew when
+/// that size changes, the view asks (`GpuView::invalidate`) or, while it
+/// animates and shows, every refresh.
+fn mount_gpu_view(
+    ui: &mut Ui,
+    root: NodeId,
+    view: crate::gpu_view::GpuView,
+    environment: &Environment,
+) {
+    use crate::scene::Style;
+    let viewport = ui.container(
+        root,
+        Layout::Overlay,
+        Style {
+            absolute: true,
+            clip: true,
+            ..Default::default()
+        },
+    );
+    // A frame once laid out; nothing to draw until then.
+    let frame = ui.container(
+        viewport,
+        Layout::Overlay,
+        Style {
+            absolute: true,
+            ..Default::default()
+        },
+    );
+    let requests = ui.signal(0_u64);
+    let animating = ui.signal(false);
+    let mounted = view.mount(requests.clone(), animating.clone());
+    let shown_by = mounted.key();
+    ui.retain(root, mounted);
+    let size = ui.observe_content_size(root);
+    let scene = ui.scene.clone();
+    let id = view.id();
+    let mut ring = crate::gpu_view::FrameRing::default();
+    let mut shown = None;
+    let asked = requests.clone();
+    ui.bind(root, move || {
+        asked.get();
+        let (width, height) = size.get();
+        let mut scene = scene.borrow_mut();
+        if !(width > 0. && height > 0.) {
+            if shown.take().is_some() {
+                scene.set_kind(frame, NodeKind::Container(Layout::Overlay));
+            }
+            return;
+        }
+        let image = ring.next(crate::gpu_view::GpuFrame {
+            view: id,
+            shown_by,
+            width,
+            height,
+        });
+        if shown.replace((width, height)) == Some((width, height)) {
+            scene.set_image_frame(frame, image);
+            return;
+        }
+        if matches!(scene.kind(frame), NodeKind::Image(_)) {
+            scene.set_image_frame(frame, image);
+        } else {
+            scene.set_kind(frame, NodeKind::Image(image));
+        }
+        let boxed = Style {
+            width: Some(width),
+            height: Some(height),
+            absolute: true,
+            ..Default::default()
+        };
+        scene.set_style(
+            viewport,
+            Style {
+                clip: true,
+                ..boxed.clone()
+            },
+        );
+        scene.set_style(frame, boxed);
+    });
+    // Animating, a frame each refresh while it shows; otherwise no timer.
+    let Some(runner) = environment.services.get::<TaskRunner>() else {
+        return;
+    };
+    let visible = ui.observe_visibility(root);
+    let presented = ui.observe_presentation();
+    let frames = environment
+        .services
+        .get::<crate::frame::FrameClock>()
+        .map(|clock| (*clock).clone());
+    let task: Rc<RefCell<Option<TaskToken>>> = Default::default();
+    ui.retain(root, task.clone());
+    ui.bind(root, move || {
+        let active = animating.get() && presented.get() && visible.get();
+        drop(task.borrow_mut().take());
+        let (true, Some(frames)) = (active, frames.clone()) else {
+            return;
+        };
+        let requests = requests.clone();
+        *task.borrow_mut() = Some(runner.spawn(Box::pin(async move {
+            loop {
+                frames.next().await;
+                requests.mutate(|count| {
+                    *count = count.wrapping_add(1);
+                    true
+                });
+            }
+        })));
+    });
+}
 fn mount_image(
     ui: &mut Ui,
     root: NodeId,
@@ -6020,7 +6153,7 @@ pub mod prelude {
     };
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
     pub use super::{SplitOptions, split};
-    pub use super::{animated_image, animated_image_controlled, async_image, canvas};
+    pub use super::{animated_image, animated_image_controlled, async_image, canvas, gpu_view};
     #[cfg(target_os = "macos")]
     pub use super::{native_surface, native_surface_signal};
     pub use super::{svg, svg_signal};

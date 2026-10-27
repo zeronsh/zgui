@@ -41,6 +41,8 @@ pub struct ImageData {
     pixels: Arc<[u8]>,
     transform: crate::affine::Affine,
     effect: ImageEffect,
+    /// A GPU view's frame: no pixels of its own (see `gpu_frame`).
+    gpu: Option<crate::gpu_view::GpuFrame>,
 }
 impl ImageData {
     /// A `width` by `height` image from RGBA8 `pixels`; fails unless both are
@@ -66,7 +68,36 @@ impl ImageData {
             pixels,
             transform: crate::affine::Affine::IDENTITY,
             effect: ImageEffect::Plain,
+            gpu: None,
         })
+    }
+    /// A frame of a GPU view, its pixels left to the renderer, which asks the
+    /// view to draw them (`crate::gpu_view`).
+    pub(crate) fn gpu(frame: crate::gpu_view::GpuFrame) -> Result<Self, &'static str> {
+        Ok(Self {
+            id: next_identity()?,
+            width: frame.width.ceil() as u32,
+            height: frame.height.ceil() as u32,
+            pixels: Arc::from(&[][..]),
+            transform: crate::affine::Affine::IDENTITY,
+            effect: ImageEffect::Plain,
+            gpu: Some(frame),
+        })
+    }
+    /// Make this a GPU view's next frame in place: a new identity, so a
+    /// renderer draws it afresh, and the frame's size. Only for a frame no
+    /// scene holds (the view's spare one).
+    pub(crate) fn restamp(&mut self, frame: crate::gpu_view::GpuFrame) -> Result<(), &'static str> {
+        self.id = next_identity()?;
+        self.width = frame.width.ceil() as u32;
+        self.height = frame.height.ceil() as u32;
+        self.gpu = Some(frame);
+        Ok(())
+    }
+    /// The GPU view frame this is, if it is one: then it has no pixels
+    /// (`pixels` is empty), and a renderer draws it from the view's texture.
+    pub fn gpu_frame(&self) -> Option<&crate::gpu_view::GpuFrame> {
+        self.gpu.as_ref()
     }
     /// Its pixels' identity, shared by `transformed` copies; renderers key GPU
     /// uploads by it.
@@ -81,7 +112,8 @@ impl ImageData {
     pub fn height(&self) -> u32 {
         self.height
     }
-    /// Its RGBA8 bytes, four per pixel.
+    /// Its RGBA8 bytes, four per pixel; none for a GPU view's frame
+    /// (`gpu_frame`).
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }
@@ -101,6 +133,7 @@ impl ImageData {
                 crate::affine::Affine::IDENTITY
             },
             effect: self.effect,
+            gpu: self.gpu,
         }
     }
     /// Share decoded pixels and GPU upload identity, drawn dithered as Zeron

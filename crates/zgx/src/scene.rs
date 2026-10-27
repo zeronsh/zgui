@@ -5091,6 +5091,33 @@ impl Scene {
             self.invalidate_layout(id);
         }
     }
+    /// Show `image`, a GPU view's next frame (`crate::gpu_view`), where `id`
+    /// shows that view's last one: its box repaints, and layout runs again
+    /// only for a new size its style leaves open. Unlike `set_kind`, the
+    /// scene's resources count as they were (`content_revision`): a renderer
+    /// replaces the view's texture itself, rather than looking over every
+    /// item for stale ones each frame a view draws. Panics unless `image` is
+    /// a frame of the view `id` shows.
+    pub fn set_image_frame(&mut self, id: NodeId, image: Arc<crate::image::ImageData>) {
+        let view = image.gpu_frame().expect("a GPU view's frame").view;
+        let node = self.node(id);
+        let resized = match &node.kind {
+            NodeKind::Image(old) if old.gpu_frame().is_some_and(|old| old.view == view) => {
+                if **old == *image {
+                    return;
+                }
+                (old.width(), old.height()) != (image.width(), image.height())
+                    && (node.style.width.is_none() || node.style.height.is_none())
+            }
+            _ => panic!("set_image_frame requires a node showing the same view's frame"),
+        };
+        self.damage_subtree(id);
+        self.node_mut(id).kind = NodeKind::Image(image);
+        self.invalidate(id, PAINT);
+        if resized {
+            self.invalidate_layout(id);
+        }
+    }
     /// Append a node of `kind` with `style` as `parent`'s last child.
     pub fn append(&mut self, parent: NodeId, kind: NodeKind, mut style: Style) -> NodeId {
         self.content_revision = self.content_revision.wrapping_add(1);

@@ -20,6 +20,8 @@ mod composition_local_transform;
 mod composition_transform_normalization;
 #[path = "../decorations.rs"]
 mod decorations;
+#[path = "../gpu_views.rs"]
+mod gpu_views;
 #[path = "../hidden_blur_damage.rs"]
 mod hidden_blur_damage;
 #[path = "../image_cache.rs"]

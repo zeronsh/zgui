@@ -145,6 +145,9 @@ mod presentation_retry;
 mod window_control_examples {}
 
 pub use zgx_gpu::text::FontData;
+/// GPU views: an app's own wgpu drawing in a box (`zgx::compose::gpu_view`),
+/// with the wgpu the renderer draws with.
+pub use zgx_gpu::{viewport, wgpu};
 
 mod file_drop;
 mod gpu_stats;

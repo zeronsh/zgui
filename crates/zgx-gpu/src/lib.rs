@@ -35,8 +35,13 @@ mod surface;
 #[cfg(target_os = "macos")]
 mod trial_energy;
 mod upload;
+pub mod viewport;
 pub use font_cache::set_desktop_sans_serif;
 pub use surface::PresentationStatus;
+/// The wgpu this renderer draws with, for GPU views (`viewport`): an app
+/// drawing one uses it, not a wgpu of its own, whose types would not be
+/// these. A new major version of wgpu is a new major version of zgx-gpu.
+pub use wgpu;
 
 /// The corner radius of find's marks behind text.
 const MARK_RADIUS: f32 = 2.;
@@ -3361,6 +3366,8 @@ pub struct GpuRenderer {
     /// Image textures: each bound for the quads, its size in bytes, and,
     /// where the CPU wrote its texels, the texture (see `render_direct`).
     images: FxHashMap<u64, (wgpu::BindGroup, usize, Option<wgpu::Texture>)>,
+    /// GPU views' textures, by view (`viewport`): none until one shows.
+    views: Option<Box<viewport::Views>>,
     #[cfg(target_os = "macos")]
     native_surfaces: Option<native_surface::SurfaceCache>,
     /// The next present joins the Core Animation transaction that resized the layer.
@@ -3891,6 +3898,7 @@ impl GpuRenderer {
             visible_glyphs: Vec::new(),
             background: Color(0, 0, 0, 0),
             images: FxHashMap::default(),
+            views: None,
             #[cfg(target_os = "macos")]
             native_surfaces: None,
             #[cfg(target_os = "macos")]
@@ -4052,6 +4060,12 @@ impl GpuRenderer {
             self.scale = scale;
             self.layers.clear();
             self.shapes.clear();
+            // GPU views draw their next frames at the new scale.
+            if let Some(views) = &mut self.views {
+                for image in views.forget() {
+                    self.images.remove(&image);
+                }
+            }
             self.fresh = true;
         }
     }
@@ -9109,6 +9123,9 @@ impl GpuRenderer {
         Ok(found.id)
     }
     fn upload_image(&mut self, image: &zgx::image::ImageData) -> Result<(), GpuError> {
+        if let Some(frame) = image.gpu_frame() {
+            return self.render_view(image, frame);
+        }
         let bytes = image.pixels().len();
         if bytes + self.images.values().map(|entry| entry.1).sum::<usize>() > 64 * 1024 * 1024 {
             return Err(GpuError(

@@ -20,6 +20,8 @@ pub mod keyed;
 
 pub mod image;
 
+pub mod gpu_view;
+
 pub mod components;
 
 pub mod local_time;

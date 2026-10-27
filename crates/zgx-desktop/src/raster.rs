@@ -250,6 +250,8 @@ impl Raster {
                                 self.image(item.bounds, clip, &image, item.effects);
                             }
                         }
+                        // A GPU view's frame: nothing the CPU can draw.
+                        NodeKind::Image(image) if image.gpu_frame().is_some() => {}
                         NodeKind::Image(image) => self.image_revealed(
                             item.bounds,
                             clip,
