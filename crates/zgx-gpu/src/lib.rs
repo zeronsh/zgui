@@ -312,27 +312,28 @@ enum Shading {
 fn shading(quad: &Quad, scale: f32) -> Shading {
     // A panel with square corners and no border only antialiases its edges:
     // on whole device pixels, coverage is exactly what rasterizing gives.
-    let whole = |value: f32| {
-        let device = value * scale;
-        (device - device.round()).abs() < 1e-3
+    // (Asked last: four roundings, for the few boxes it decides.)
+    let square = || {
+        let whole = |value: f32| {
+            let device = value * scale;
+            (device - device.round()).abs() < 1e-3
+        };
+        let [x, y, width, height] = quad.rect;
+        quad.shape[0] <= 0.
+            && quad.shape[1] <= 0.
+            && quad.options[3] < 0.5
+            && quad.rect == quad.fade
+            && [x, y, x + width, y + height].into_iter().all(whole)
     };
-    let [x, y, width, height] = quad.rect;
-    let square = quad.shape[3] > 0.5
-        && quad.shape[0] <= 0.
-        && quad.shape[1] <= 0.
-        && quad.options[3] < 0.5
-        && quad.rect == quad.fade
-        && [x, y, x + width, y + height].into_iter().all(whole);
     // The basic shader computes what the full one does in the same order,
     // bit for bit, except for the coverage of a translucent square panel (an
     // extra divide and multiply): those stay full, so either shader draws the
-    // same bytes.
-    // No edge fade, transform, shadow or region.
+    // same bytes. No edge fade, transform, shadow or region:
     let alone = quad.options[0] == 0.
         && quad.options[2] < 0.5
         && quad.shape[2] <= 0.
         && quad.mask[0] <= 0.;
-    let plain = alone && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.));
+    let plain = alone && (quad.shape[3] <= 0.5 || (quad.color[3] >= 1. && square()));
     if !plain {
         // Then a box (`shape.w`): what `round_box` draws as `shade` does,
         // untextured and no ring.
