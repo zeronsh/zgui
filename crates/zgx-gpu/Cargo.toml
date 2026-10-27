@@ -28,6 +28,10 @@ composition = ["windows/Win32_Graphics_DirectComposition"]
 # driver has none), so it is off there: 1.1 MiB of every binary. Linux
 # always has it.
 vulkan = ["wgpu/vulkan"]
+# Windows, experimental: frames drawn with Direct3D 11 when `ZGX_D3D11=1`
+# (d3d11_frame.rs), wgpu's no-op backend standing in for its device, so no
+# Direct3D 12 device is opened. Off, nothing of it is built.
+d3d11 = ["wgpu/noop", "windows/Win32_Graphics_Direct3D", "windows/Win32_Graphics_Direct3D11"]
 
 [dependencies]
 smallvec = "1.16"
@@ -86,7 +90,7 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["
 harfrust = { package = "zgx-harfrust", version = "0.5.3", path = "../../vendor/harfrust" }
 
 [target.'cfg(windows)'.dev-dependencies]
-windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D12", "Win32_Graphics_DirectComposition", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Direct3D12", "Win32_Graphics_DirectComposition", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
 # The debug layer's errors, collected (tests/d3d12_validation.rs).
 wgpu-hal = { version = "29.0.4", default-features = false, features = ["validation_canary"] }
 
@@ -103,3 +107,9 @@ required-features = ["gif"]
 [[test]]
 name = "svg"
 required-features = ["svg"]
+
+# Runs itself again with `ZGX_D3D11=1` (read once a process) and compares.
+[[test]]
+name = "d3d11_parity"
+harness = false
+required-features = ["d3d11"]

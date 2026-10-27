@@ -154,9 +154,16 @@ impl KeptQuads {
             _ => self.writing.push((start, end)),
         }
     }
+    /// What a buffer written with its quads now holds of them, while its
+    /// writes are remembered: which kept frame, as of which patch
+    /// (d3d11_frame.rs's ring keeps it as `MappedRing` does).
+    #[cfg(d3d11)]
+    pub(crate) fn held(&self) -> Option<(u64, u64)> {
+        (self.generation != 0 && self.tracking).then_some((self.generation, self.version))
+    }
     /// The runs of quads written after `version`, if it is one it knows
     /// (no older than the patch before the first it remembers).
-    fn since(&self, version: u64) -> Option<impl Iterator<Item = (u32, u32)> + '_> {
+    pub(crate) fn since(&self, version: u64) -> Option<impl Iterator<Item = (u32, u32)> + '_> {
         // (The open patch's writes are remembered too.)
         let first = self
             .changes

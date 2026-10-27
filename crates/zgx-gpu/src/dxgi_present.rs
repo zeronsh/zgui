@@ -44,7 +44,7 @@ use windows::{
         },
         System::Threading::WaitForSingleObjectEx,
     },
-    core::Interface,
+    core::{IUnknown, Interface},
 };
 
 /// Buffers in the swap chain: one shown, one drawn (as wgpu's).
@@ -67,12 +67,31 @@ pub(crate) struct Buffer {
     pub copy_source: std::cell::OnceCell<wgpu::BindGroup>,
 }
 
+/// What a swap chain presents on: wgpu's Direct3D 12 queue, or (d3d11_frame.rs)
+/// a Direct3D 11 device.
+enum Owner {
+    /// wgpu's queue, which the swap chain presents on, and its device.
+    D3d12 {
+        queue: ID3D12CommandQueue,
+        raw: ID3D12Device,
+    },
+    /// Direct3D 11 rotates a flip-model swap chain's buffers under their
+    /// names: buffer 0 is always the one to draw, and of two, buffer 1 the
+    /// one shown. `presents` counts them, standing in for Direct3D 12's
+    /// buffer index (`current`); `views` are the two buffers', made with
+    /// `buffers`.
+    #[cfg(d3d11)]
+    D3d11 {
+        device: std::rc::Rc<crate::d3d11_frame::Device>,
+        views: std::cell::RefCell<Option<[crate::d3d11_frame::Surface; 2]>>,
+        presents: std::cell::Cell<usize>,
+    },
+}
+
 /// The window's swap chain and the composition visual showing it.
 pub(crate) struct Chain {
     device: wgpu::Device,
-    /// wgpu's queue, which the swap chain presents on, and its device.
-    queue: ID3D12CommandQueue,
-    raw: ID3D12Device,
+    owner: Owner,
     hwnd: HWND,
     swap_chain: IDXGISwapChain3,
     /// Signalled when a frame may start without queueing more than
@@ -99,7 +118,6 @@ impl Chain {
         height: u32,
         transparent: bool,
     ) -> Result<Self, GpuError> {
-        let fail = |what: &str, error: windows::core::Error| GpuError(format!("{what}: {error}"));
         // SAFETY: Reads the raw queue and device only; the guard is dropped before wgpu is
         // called again.
         let (queue, raw) = {
@@ -107,6 +125,53 @@ impl Chain {
                 .ok_or_else(|| GpuError("not a Direct3D 12 device".into()))?;
             (hal.raw_queue().clone(), hal.raw_device().clone())
         };
+        let creator: IUnknown = queue
+            .cast()
+            .map_err(|e| GpuError(format!("IUnknown: {e}")))?;
+        Self::compose(
+            device,
+            Owner::D3d12 { queue, raw },
+            &creator,
+            hwnd,
+            width,
+            height,
+            transparent,
+        )
+    }
+    /// `new` on a Direct3D 11 device (d3d11_frame.rs); `device` is wgpu's
+    /// no-op one, which the buffers' handles are made on.
+    #[cfg(d3d11)]
+    pub fn new_d3d11(
+        device: &wgpu::Device,
+        d3d11: &std::rc::Rc<crate::d3d11_frame::Device>,
+        hwnd: HWND,
+        width: u32,
+        height: u32,
+        transparent: bool,
+    ) -> Result<Self, GpuError> {
+        let creator: IUnknown = d3d11
+            .device
+            .cast()
+            .map_err(|e| GpuError(format!("IUnknown: {e}")))?;
+        let owner = Owner::D3d11 {
+            device: d3d11.clone(),
+            views: Default::default(),
+            presents: Default::default(),
+        };
+        Self::compose(device, owner, &creator, hwnd, width, height, transparent)
+    }
+    /// The swap chain made by `creator` (a queue or device of `owner`'s),
+    /// shown through a visual of `hwnd`'s.
+    fn compose(
+        device: &wgpu::Device,
+        owner: Owner,
+        creator: &IUnknown,
+        hwnd: HWND,
+        width: u32,
+        height: u32,
+        transparent: bool,
+    ) -> Result<Self, GpuError> {
+        let fail = |what: &str, error: windows::core::Error| GpuError(format!("{what}: {error}"));
         let desc = DXGI_SWAP_CHAIN_DESC1 {
             Width: width,
             Height: height,
@@ -133,7 +198,7 @@ impl Chain {
             let factory: IDXGIFactory2 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))
                 .map_err(|e| fail("CreateDXGIFactory2", e))?;
             let swap_chain: IDXGISwapChain3 = factory
-                .CreateSwapChainForComposition(&queue, &desc, None)
+                .CreateSwapChainForComposition(creator, &desc, None)
                 .map_err(|e| fail("CreateSwapChainForComposition", e))?
                 .cast()
                 .map_err(|e| fail("IDXGISwapChain3", e))?;
@@ -156,8 +221,7 @@ impl Chain {
             dcomp.Commit().map_err(|e| fail("Commit", e))?;
             Ok(Self {
                 device: device.clone(),
-                queue: queue.clone(),
-                raw,
+                owner,
                 hwnd,
                 swap_chain,
                 waitable,
@@ -184,6 +248,36 @@ impl Chain {
             height,
             depth_or_array_layers: 1,
         };
+        // Direct3D 11: views of buffers 0 and 1 (see `Owner::D3d11`), and
+        // handles of the shell's standing for them.
+        #[cfg(d3d11)]
+        if let Owner::D3d11 {
+            device: d3d11,
+            views,
+            ..
+        } = &self.owner
+        {
+            let surface = |index: u32| {
+                // SAFETY: A buffer of the swap chain, released before it
+                // resizes or goes (`release`).
+                let texture = unsafe { self.swap_chain.GetBuffer(index) }
+                    .map_err(|e| GpuError(format!("swap chain buffer {index}: {e}")))?;
+                // Buffer 1 and on are read-only: sampled alone.
+                crate::d3d11_frame::Surface::of(&d3d11.device, texture, index == 0, true)
+            };
+            *views.borrow_mut() = Some([surface(0)?, surface(1)?]);
+            for _ in 0..BUFFERS {
+                let texture = crate::texture(device, width, height, "window buffer");
+                let view = texture.create_view(&Default::default());
+                buffers.push(Buffer {
+                    texture,
+                    view,
+                    copy_source: Default::default(),
+                });
+            }
+            self.wrapped = true;
+            return Ok(buffers);
+        }
         for index in 0..BUFFERS {
             // SAFETY: A buffer of the swap chain, which outlives the wrapper:
             // its owner releases the wrappers before `resize` and the chain.
@@ -246,6 +340,24 @@ impl Chain {
             buffer.texture.destroy();
         }
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        // Direct3D 11: the views go, and the context lets go of whatever
+        // it still binds of them.
+        #[cfg(d3d11)]
+        if let Owner::D3d11 { device, views, .. } = &self.owner {
+            views.borrow_mut().take();
+            // SAFETY: Unbinds everything; each frame binds what it draws with.
+            unsafe { device.context.ClearState() };
+            device.wait_idle();
+        }
+    }
+    /// Direct3D 11: the views of the buffer to draw and the one shown
+    /// (`Owner::D3d11`), once `buffers` made them.
+    #[cfg(d3d11)]
+    pub fn d3d11_views(&self) -> Option<std::cell::Ref<'_, [crate::d3d11_frame::Surface; 2]>> {
+        let Owner::D3d11 { views, .. } = &self.owner else {
+            return None;
+        };
+        std::cell::Ref::filter_map(views.borrow(), Option::as_ref).ok()
     }
     /// Resize the buffers, once every wrapper of them was `release`d; take
     /// the new ones from `buffers`.
@@ -263,10 +375,18 @@ impl Chain {
         }
         .map_err(|e| GpuError(format!("ResizeBuffers: {e}")))?;
         self.whole = true;
+        #[cfg(d3d11)]
+        if let Owner::D3d11 { presents, .. } = &self.owner {
+            presents.set(0);
+        }
         Ok(())
     }
     /// The buffer the next frame draws into.
     pub fn current(&self) -> usize {
+        #[cfg(d3d11)]
+        if let Owner::D3d11 { presents, .. } = &self.owner {
+            return presents.get() % BUFFERS as usize;
+        }
         // SAFETY: Reads the swap chain's index.
         unsafe { self.swap_chain.GetCurrentBackBufferIndex() as usize }
     }
@@ -313,6 +433,10 @@ impl Chain {
             .ok()
             .map_err(|e| GpuError(format!("Present1: {e}")))?;
         self.whole = false;
+        #[cfg(d3d11)]
+        if let Owner::D3d11 { presents, .. } = &self.owner {
+            presents.set(presents.get() + 1);
+        }
         Ok(result != DXGI_STATUS_OCCLUDED)
     }
     /// The chain made again, opaque unless `transparent`, the size it was,
@@ -323,6 +447,12 @@ impl Chain {
         // SAFETY: Reads the swap chain's description.
         let desc = unsafe { self.swap_chain.GetDesc1() }
             .map_err(|e| GpuError(format!("GetDesc1: {e}")))?;
+        #[cfg(d3d11)]
+        if let Owner::D3d11 { device: d3d11, .. } = &self.owner {
+            let d3d11 = d3d11.clone();
+            drop(self);
+            return Self::new_d3d11(&device, &d3d11, hwnd, desc.Width, desc.Height, transparent);
+        }
         drop(self);
         Self::new(&device, hwnd, desc.Width, desc.Height, transparent)
     }
@@ -332,16 +462,18 @@ impl Chain {
     /// that ends the process on Windows Server's Direct3D (CI's runners).
     /// wgpu waits likewise for its own (`wait_for_present_queue_idle`).
     fn wait_idle(&self) {
+        let (queue, raw) = match &self.owner {
+            Owner::D3d12 { queue, raw } => (queue, raw),
+            #[cfg(d3d11)]
+            Owner::D3d11 { device, .. } => return device.wait_idle(),
+        };
         // SAFETY: A fence of our own, signalled on wgpu's queue; a null
         // event makes SetEventOnCompletion wait until it is reached.
         unsafe {
-            let Ok(fence) = self
-                .raw
-                .CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE)
-            else {
+            let Ok(fence) = raw.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE) else {
                 return;
             };
-            if self.queue.Signal(&fence, 1).is_ok() && fence.GetCompletedValue() < 1 {
+            if queue.Signal(&fence, 1).is_ok() && fence.GetCompletedValue() < 1 {
                 let _ = fence.SetEventOnCompletion(1, HANDLE::default());
             }
         }

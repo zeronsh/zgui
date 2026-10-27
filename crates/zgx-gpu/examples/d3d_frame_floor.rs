@@ -13,6 +13,10 @@
 //! (Direct3D 12 through wgpu, set up as zgx-gpu sets it up). Prints the
 //! median cycles of each stage on the drawing thread, the process's cycles
 //! a frame (every thread), and the private memory the device added.
+//!
+//! Direct3D 11 presents flip-sequential and Direct3D 12 flip-discard;
+//! `FLOOR_EFFECT=sequential` or `discard` gives both the one. Its GPU time
+//! is the floor docs/results/d3d11-proof-windows-2026-10-27 compares.
 
 #[cfg(windows)]
 mod floor {
@@ -93,7 +97,11 @@ mod floor {
             BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
             BufferCount: BUFFERS,
             Scaling: DXGI_SCALING_STRETCH,
-            SwapEffect: effect,
+            SwapEffect: match std::env::var("FLOOR_EFFECT").as_deref() {
+                Ok("sequential") => DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+                Ok("discard") => DXGI_SWAP_EFFECT_FLIP_DISCARD,
+                _ => effect,
+            },
             AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
             Flags: 0,
             Stereo: false.into(),

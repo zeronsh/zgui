@@ -9,6 +9,8 @@ use zgx::scene::{Color, NodeId, NodeKind, Rect, Scene};
 
 #[cfg(all(windows, feature = "composition"))]
 mod composition;
+#[cfg(d3d11)]
+mod d3d11_frame;
 #[cfg(windows)]
 mod dxgi;
 #[cfg(windows)]
@@ -2817,6 +2819,8 @@ struct Prepared {
     quad_layout: wgpu::PipelineLayout,
     mapped_uploads: bool,
     vertex_ring: bool,
+    #[cfg(d3d11)]
+    d3d11: Option<d3d11_frame::Made>,
 }
 /// A `GpuContext` being made on another thread (`GpuContext::prepare_in_background`).
 pub struct PendingGpuContext(Option<std::thread::JoinHandle<Result<Prepared, GpuError>>>);
@@ -2863,6 +2867,10 @@ struct GpuContextInner {
     vertex_ring: bool,
     /// For dual-output (single-pass presentation) pipelines.
     quad_layout: wgpu::PipelineLayout,
+    /// With `ZGX_D3D11`, the Direct3D 11 device frames are drawn with; wgpu
+    /// then runs on its no-op backend (d3d11_frame.rs).
+    #[cfg(d3d11)]
+    d3d11: Option<Rc<d3d11_frame::Device>>,
 }
 impl GpuContext {
     /// A context on the system's GPU, found without a window.
@@ -2897,7 +2905,21 @@ impl GpuContext {
         // Direct3D 12 has no adapter. On Linux, GL stands in where no Vulkan
         // driver is (VMs and older GPUs without one): made only then, so a
         // Vulkan system loads no EGL.
-        let attempts: &[wgpu::Backends] = if cfg!(all(windows, feature = "vulkan")) {
+        // `ZGX_D3D11`: frames are drawn with Direct3D 11, and wgpu runs on
+        // its no-op backend, opening no driver (d3d11_frame.rs).
+        #[cfg(d3d11)]
+        let d3d11 = d3d11_frame::ENABLED
+            .then(d3d11_frame::Device::new)
+            .transpose()?;
+        #[cfg(d3d11)]
+        let window = window.filter(|_| d3d11.is_none());
+        #[cfg(d3d11)]
+        let noop = d3d11.is_some();
+        #[cfg(not(d3d11))]
+        let noop = false;
+        let attempts: &[wgpu::Backends] = if noop {
+            &[wgpu::Backends::NOOP]
+        } else if cfg!(all(windows, feature = "vulkan")) {
             &[wgpu::Backends::DX12, wgpu::Backends::VULKAN]
         } else if cfg!(windows) {
             &[wgpu::Backends::DX12]
@@ -2916,6 +2938,10 @@ impl GpuContext {
             // glass windows), where a window's own swap chain is opaque.
             descriptor.backend_options.dx12.presentation_system =
                 wgpu::Dx12SwapchainKind::DxgiFromVisual;
+            #[cfg(d3d11)]
+            {
+                descriptor.backend_options.noop.enable = noop;
+            }
             descriptor.flags = instance_flags(descriptor.flags, !cfg!(debug_assertions));
             // EGL draws to the window's display, which it must be given.
             if backends == wgpu::Backends::GL
@@ -2978,14 +3004,18 @@ impl GpuContext {
         let mappable = adapter
             .features()
             .contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
-        let mapped_uploads = info.device_type == wgpu::DeviceType::IntegratedGpu && mappable;
+        // (On the no-op backend, Direct3D 11 takes vertices and texels:
+        // neither is written through wgpu.)
+        let mapped_uploads =
+            !noop && info.device_type == wgpu::DeviceType::IntegratedGpu && mappable;
         // Direct3D 12 also takes vertices written in place, in upload-heap
         // buffers the GPU reads directly (as Direct3D 11's dynamic buffers
         // are): a frame then needs no staging copy, and no command list for
         // it, each of which costs NVIDIA's driver some 30 K cycles. Measured
         // on an RTX 4090: 0.7 to 3.3% fewer cycles a frame, the GPU's time
         // the same. Textures and uniforms keep their copies.
-        let vertex_ring = mappable && (mapped_uploads || info.backend == wgpu::Backend::Dx12);
+        let vertex_ring =
+            !noop && mappable && (mapped_uploads || info.backend == wgpu::Backend::Dx12);
         zgx::profile::mark("GPU adapter");
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("zgx shared device"),
@@ -3076,6 +3106,8 @@ impl GpuContext {
             quad_layout,
             mapped_uploads,
             vertex_ring,
+            #[cfg(d3d11)]
+            d3d11: d3d11.map(d3d11_frame::Made),
         })
     }
     /// The context of what `prepare` made, on the thread that uses it.
@@ -3093,6 +3125,8 @@ impl GpuContext {
             quad_layout,
             mapped_uploads,
             vertex_ring,
+            #[cfg(d3d11)]
+            d3d11,
         } = prepared;
         let quads = QuadPipelines {
             device: device.clone(),
@@ -3122,6 +3156,8 @@ impl GpuContext {
                 quad_layout,
                 mapped_uploads,
                 vertex_ring,
+                #[cfg(d3d11)]
+                d3d11: d3d11.map(|made| Rc::new(made.0)),
             }),
         }
     }
@@ -3403,8 +3439,12 @@ pub struct GpuRenderer {
     #[cfg(target_os = "macos")]
     gpu_time: std::cell::Cell<Option<std::time::Duration>>,
     /// The viewport uniform `select_viewport` chose last, for direct frames.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", d3d11))]
     viewport_values: [f32; 4],
+    /// Frames drawn with Direct3D 11 (`ZGX_D3D11`, d3d11_frame.rs): this
+    /// renderer's buffers, atlas and offscreen target there.
+    #[cfg(d3d11)]
+    d3d11: Option<d3d11_frame::State>,
     /// Shifted texel copies drawn in a render pass (copy_offset.wgsl).
     #[cfg(own_surfaces)]
     copy_offset: Option<wgpu::RenderPipeline>,
@@ -3592,6 +3632,10 @@ impl GpuRenderer {
         let queue = context.inner.queue.clone();
         let adapter = &context.inner.adapter;
         let info = context.inner.info.clone();
+        // Direct3D 11 presents through a swap chain of its own alone (made
+        // below): the no-op backend's surface is let go.
+        #[cfg(d3d11)]
+        let surface = surface.filter(|_| context.inner.d3d11.is_none());
         if surface
             .as_ref()
             .is_some_and(|surface| !adapter.is_surface_supported(surface))
@@ -3606,23 +3650,51 @@ impl GpuRenderer {
         // retained frame (dxgi_present.rs); wgpu's surface then stays
         // unconfigured. Without one, wgpu's.
         #[cfg(windows)]
+        let hwnd = |window: &Arc<winit::window::Window>| {
+            use wgpu::rwh::HasWindowHandle;
+            let wgpu::rwh::RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw()
+            else {
+                return None;
+            };
+            Some(windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _))
+        };
+        #[cfg(windows)]
         let own_chain = window
             .as_ref()
             .filter(|_| own && *DXGI_PRESENT && info.backend == wgpu::Backend::Dx12)
             .and_then(|window| {
-                use wgpu::rwh::HasWindowHandle;
-                let wgpu::rwh::RawWindowHandle::Win32(handle) =
-                    window.window_handle().ok()?.as_raw()
-                else {
-                    return None;
-                };
-                let hwnd = windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _);
+                let hwnd = hwnd(window)?;
                 dxgi_present::Chain::new(&device, hwnd, width, height, transparent)
                     .inspect_err(|e| {
                         eprintln!("zgx: no swap chain of its own ({e}): presenting through wgpu's")
                     })
                     .ok()
             });
+        // Direct3D 11 has no other way to present: a window without one fails.
+        #[cfg(d3d11)]
+        let own_chain = match (&context.inner.d3d11, &window) {
+            (Some(d3d11), Some(window)) => {
+                let hwnd = hwnd(window).filter(|_| own).ok_or_else(|| {
+                    GpuError("Direct3D 11 presents to its own windows alone".into())
+                })?;
+                Some(dxgi_present::Chain::new_d3d11(
+                    &device,
+                    d3d11,
+                    hwnd,
+                    width,
+                    height,
+                    transparent,
+                )?)
+            }
+            _ => own_chain,
+        };
+        #[cfg(d3d11)]
+        let d3d11 = context
+            .inner
+            .d3d11
+            .clone()
+            .map(d3d11_frame::State::new)
+            .transpose()?;
         #[cfg(windows)]
         let own_surfaces = own_chain.is_some();
         #[cfg(not(windows))]
@@ -3693,6 +3765,28 @@ impl GpuRenderer {
             }
             c
         });
+        // Direct3D 11's swap chain is configured as wgpu's would be on
+        // Direct3D 12 (what is read of it: its alpha, `match_background`).
+        #[cfg(d3d11)]
+        let config = match (&d3d11, own_surfaces) {
+            (Some(_), true) => {
+                translucent_alpha = wgpu::CompositeAlphaMode::PreMultiplied;
+                Some(wgpu::SurfaceConfiguration {
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    format: FORMAT,
+                    width,
+                    height,
+                    present_mode: wgpu::PresentMode::Mailbox,
+                    desired_maximum_frame_latency: 2,
+                    alpha_mode: match transparent {
+                        true => translucent_alpha,
+                        false => wgpu::CompositeAlphaMode::Opaque,
+                    },
+                    view_formats: Vec::new(),
+                })
+            }
+            _ => config,
+        };
         #[cfg(not(windows))]
         let _ = translucent_alpha;
         let copy_present = !own_surfaces
@@ -3843,8 +3937,10 @@ impl GpuRenderer {
             frame_started: None,
             #[cfg(target_os = "macos")]
             gpu_time: std::cell::Cell::new(None),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", d3d11))]
             viewport_values: [0.; 4],
+            #[cfg(d3d11)]
+            d3d11,
             #[cfg(own_surfaces)]
             copy_offset: None,
             in_layer: false,
@@ -3940,6 +4036,13 @@ impl GpuRenderer {
     }
     /// What its caches hold now.
     pub fn debug_cache_stats(&self) -> DebugCacheStats {
+        let vertex_buffers = self.mapped.as_ref().map_or(1, |ring| ring.borrow().len());
+        // Direct3D 11's ring holds them there (d3d11_frame.rs).
+        #[cfg(d3d11)]
+        let vertex_buffers = self
+            .d3d11
+            .as_ref()
+            .map_or(vertex_buffers, |state| state.ring.len());
         DebugCacheStats {
             shaped_nodes: self.shapes.len(),
             shaped_bytes: self.shapes.values().map(Shaped::bytes).sum(),
@@ -3953,7 +4056,7 @@ impl GpuRenderer {
             canvas_raster_bytes: self.canvases.bytes(),
             svg_raster_bytes: self.svgs.bytes(),
             vertex_buffer_bytes: self.vertex_capacity,
-            vertex_buffers: self.mapped.as_ref().map_or(1, |ring| ring.borrow().len()),
+            vertex_buffers,
             layer_textures: self.layers.len(),
             layer_bytes: self.layers.values().map(|l| l.bytes).sum(),
         }
@@ -4870,7 +4973,7 @@ impl GpuRenderer {
             self.viewports.insert(key, (buffer, bind));
         }
         self.viewport_bind = self.viewports.get(&key).map(|(_, bind)| bind.clone());
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", d3d11))]
         {
             self.viewport_values = [width, height, self.scale, 0.];
         }
@@ -7404,6 +7507,28 @@ impl GpuRenderer {
         // Every stroke appends at least two points before making its quad.
         let polylines =
             !points.is_empty() && draws.iter().any(|draw| draw.shading == Shading::Polyline);
+        // `ZGX_D3D11`: every frame is drawn with Direct3D 11 (d3d11_frame.rs),
+        // from the same data `render_direct` takes.
+        #[cfg(d3d11)]
+        if self.d3d11.is_some() {
+            if let Some(lacks) = self.d3d11_lacks(&draws, &batches, polylines, &effect_jobs) {
+                let message = format!(
+                    "ZGX_D3D11 draws no {lacks}: the Direct3D 11 proof draws the Windows \
+                     suite's scenes alone"
+                );
+                eprintln!("zgx: {message}");
+                if cfg!(debug_assertions) {
+                    panic!("{message}");
+                }
+                return Err(GpuError(message));
+            }
+            let catch_up = catch_up.map(|(_, instances)| instances);
+            let stats = self.render_d3d11(
+                quads, draws, &regions, &copies, catch_up, shown, &clips, stats,
+            )?;
+            self.frame_points = points;
+            return Ok(stats);
+        }
         // Frames of quads (images the CPU wrote, layer composites, nothing
         // else recorded, any filters mixed by dual-source blending) skip
         // wgpu: see `metal_frame`. Layers repainted this frame were submitted
@@ -8031,6 +8156,160 @@ impl GpuRenderer {
         }
         self.frame_draws = draws;
         stats
+    }
+    /// What a frame needs that the Direct3D 11 proof does not draw, if
+    /// anything: it draws what the Windows suite's scenes do alone.
+    #[cfg(d3d11)]
+    fn d3d11_lacks(
+        &self,
+        draws: &[Draw],
+        batches: &[(usize, Vec<usize>)],
+        polylines: bool,
+        effect_jobs: &[effects::Job],
+    ) -> Option<&'static str> {
+        if self.in_layer {
+            return Some("isolated or transformed layer");
+        }
+        if !batches.is_empty() {
+            return Some("backdrop filter");
+        }
+        if polylines {
+            return Some("polyline");
+        }
+        if !effect_jobs.is_empty() {
+            return Some("layer effect");
+        }
+        draws
+            .iter()
+            .find_map(|draw| match (draw.source, draw.shading) {
+                (TextureSource::Image(_), _) => Some("image"),
+                (TextureSource::Layer(_), _) => Some("layer"),
+                (_, Shading::Full | Shading::Basic | Shading::Opaque) => None,
+                _ => Some("shader fill, layer shader, blend mode or image effect"),
+            })
+    }
+    /// Record this frame with Direct3D 11 (`d3d11_frame`): the pass the
+    /// wgpu path records for a frame of plain draws, as `render_direct`
+    /// records it with Metal.
+    #[cfg(d3d11)]
+    #[allow(clippy::too_many_arguments)]
+    fn render_d3d11(
+        &mut self,
+        mut quads: Vec<Quad>,
+        mut draws: Vec<Draw>,
+        regions: &[(Rect, Scissor)],
+        copies: &[ScrollCopy],
+        catch_up: Option<std::ops::Range<u32>>,
+        shown: Option<usize>,
+        clips: &[Region],
+        mut stats: GpuStats,
+    ) -> Result<GpuStats, GpuError> {
+        let _span = zgx::profile::span(zgx::profile::Phase::Encode);
+        let (width, height) = (self.width, self.height);
+        let state = self.d3d11.as_mut().expect("checked by the caller");
+        let device = state.device.clone();
+        let parts = [bytemuck::cast_slice(&quads)];
+        let (vertices, allocated) = match &self.kept_upload {
+            Some((kept, bytes)) => {
+                state
+                    .ring
+                    .write_kept(&device, &parts, kept, *bytes, size_of::<Quad>())?
+            }
+            None => state.ring.write_parts(&device, &parts)?,
+        };
+        stats.vertex_buffer_allocations += usize::from(allocated);
+        self.vertex_capacity = state.ring.bytes();
+        state.set_frame(self.viewport_values, bytemuck::cast_slice(clips))?;
+        // Offscreen, the retained target is the renderer's own (and its
+        // spare, for scroll copies), made at its size.
+        let presenting = self.layer_present.is_some();
+        if !presenting
+            && state
+                .target
+                .as_ref()
+                .is_none_or(|t| (t.width, t.height) != (width, height))
+        {
+            state.target = Some(device.surface(width, height, true)?);
+        }
+        if shown.is_none()
+            && !copies.is_empty()
+            && state
+                .spare
+                .as_ref()
+                .is_none_or(|t| (t.width, t.height) != (width, height))
+        {
+            state.spare = Some(device.surface(width, height, true)?);
+        }
+        if state.atlas.is_none() {
+            state.atlas = Some(device.surface(1, 1, false)?);
+        }
+        self.whole_frames = 0;
+        let first = occluded_from(&quads, &draws, regions, self.scale);
+        let state = self.d3d11.as_ref().expect("checked by the caller");
+        let views = self
+            .layer_present
+            .as_ref()
+            .and_then(|present| present.chain.as_ref())
+            .and_then(|chain| chain.d3d11_views());
+        // The swap chain's buffer to draw (buffer 0; 1 is the one shown), or
+        // the renderer's own.
+        let target = match &views {
+            Some(views) => &views[0],
+            None => state.target.as_ref().expect("made above"),
+        };
+        // Scrolled without a shown surface to draw them from, the copies are
+        // made in place, as wgpu's path makes them.
+        if shown.is_none() && !copies.is_empty() {
+            device.scroll(target, state.spare.as_ref().expect("made above"), copies);
+            stats.scroll_copies += copies.len();
+        }
+        let mut frame = device.begin(state, target, &vertices);
+        if let (Some(instances), Some(views)) = (catch_up, &views) {
+            frame.texture(views[1].srv.as_ref().expect("sampled"));
+            frame.copies(instances);
+            stats.draw_calls += 1;
+        }
+        let atlas = state.atlas.as_ref().and_then(|atlas| atlas.srv.as_ref());
+        frame.texture(atlas.expect("made above"));
+        let clear = if self.split_shading {
+            Shading::Basic
+        } else {
+            Shading::Full
+        };
+        for (index, (region, region_scissor)) in regions.iter().enumerate() {
+            frame.scissor(*region_scissor);
+            if first[index] == 0 {
+                frame.quads(clear, true, 0..1);
+                stats.draw_calls += 1;
+            }
+            self.batches(*region, &draws, first[index], |batch| {
+                let Some(rect) = scissor(batch.rect, self.scale, self.width, self.height) else {
+                    return;
+                };
+                frame.scissor(rect);
+                frame.quads(batch.shading, false, batch.start..batch.end);
+                stats.draw_calls += 1;
+                stats.instances += (batch.end - batch.start) as usize;
+            });
+        }
+        {
+            let _span = zgx::profile::span(zgx::profile::Phase::Submit);
+            frame.end();
+        }
+        drop(views);
+        let state = self.d3d11.as_mut().expect("checked by the caller");
+        state.ring.submitted(&device.context);
+        stats.render_passes += 1;
+        self.fresh = false;
+        keep_room(&mut quads, &mut self.frame_peaks.0);
+        keep_room(&mut draws, &mut self.frame_peaks.1);
+        self.frame_quads = quads;
+        // (A kept frame's, lent: given back as they are.)
+        if self.kept_upload.is_none() {
+            draws.clear();
+        }
+        self.frame_draws = draws;
+        Ok(stats)
     }
     /// Wait for a directly encoded frame (`render_direct`) to complete.
     #[cfg(target_os = "macos")]
@@ -9195,6 +9474,31 @@ impl GpuRenderer {
             upload::write_texels(target, (x, y, width, height), rgba);
             return;
         }
+        // Direct3D 11: into its atlas, made at the shell's atlas's size.
+        // Images are not drawn there (`d3d11_lacks`).
+        #[cfg(d3d11)]
+        if let Some(state) = &mut self.d3d11 {
+            if *target != self.atlas {
+                return;
+            }
+            let size = (target.width(), target.height());
+            if state
+                .atlas
+                .as_ref()
+                .is_none_or(|a| (a.width, a.height) != size)
+            {
+                match state.device.surface(size.0, size.1, false) {
+                    Ok(atlas) => state.atlas = Some(atlas),
+                    Err(error) => return eprintln!("zgx: no Direct3D 11 glyph atlas: {error}"),
+                }
+            }
+            for pixel in rgba.as_chunks_mut::<4>().0 {
+                pixel.swap(0, 2);
+            }
+            let atlas = state.atlas.as_ref().expect("made above");
+            state.device.write(atlas, (x, y, width, height), rgba);
+            return;
+        }
         if self.unified {
             self.texture_uploads
                 .push(target, (x, y, width, height), rgba);
@@ -10194,28 +10498,35 @@ impl GpuRenderer {
             // Nothing drawn since: the shown frame stands.
             return Ok(PresentationStatus::Presented);
         };
-        let mut encoder = self
-            .pending
-            .get_mut()
-            .take()
-            .unwrap_or_else(|| self.device.create_command_encoder(&Default::default()));
-        {
-            let present = self.layer_present.as_ref().expect("presenting");
-            // Presented, a buffer is in the common state the compositor reads.
-            encoder.transition_resources(
-                std::iter::empty(),
-                std::iter::once(wgpu::TextureTransition {
-                    texture: &present.buffers[index].0.texture,
-                    selector: None,
-                    state: wgpu::TextureUses::PRESENT,
-                }),
-            );
-        }
-        self.queue.submit([encoder.finish()]);
-        self.belt.get_mut().recall();
-        self.submitted();
-        if let Some(mapped) = self.mapped.as_mut() {
-            mapped.get_mut().submitted();
+        // Direct3D 11 submitted the frame as it recorded it (d3d11_frame.rs).
+        #[cfg(d3d11)]
+        let recorded = self.d3d11.is_some();
+        #[cfg(not(d3d11))]
+        let recorded = false;
+        if !recorded {
+            let mut encoder = self
+                .pending
+                .get_mut()
+                .take()
+                .unwrap_or_else(|| self.device.create_command_encoder(&Default::default()));
+            {
+                let present = self.layer_present.as_ref().expect("presenting");
+                // Presented, a buffer is in the common state the compositor reads.
+                encoder.transition_resources(
+                    std::iter::empty(),
+                    std::iter::once(wgpu::TextureTransition {
+                        texture: &present.buffers[index].0.texture,
+                        selector: None,
+                        state: wgpu::TextureUses::PRESENT,
+                    }),
+                );
+            }
+            self.queue.submit([encoder.finish()]);
+            self.belt.get_mut().recall();
+            self.submitted();
+            if let Some(mapped) = self.mapped.as_mut() {
+                mapped.get_mut().submitted();
+            }
         }
         before_present();
         let present = self.layer_present.as_mut().expect("presenting");
@@ -10461,6 +10772,11 @@ impl GpuRenderer {
         if let Some(mapped) = &mut self.mapped {
             mapped.get_mut().trim();
         }
+        #[cfg(d3d11)]
+        if let Some(state) = &mut self.d3d11 {
+            state.ring.trim();
+            state.spare = None;
+        }
         // Word shapes kept for the next frame, and the table they peaked in
         // (streaming fills it): the next frame shapes what it needs again.
         self.fonts.borrow_mut().shape_run_cache = Default::default();
@@ -10692,6 +11008,14 @@ impl GpuRenderer {
     /// bytes in RGBA order. Single-pass renderers draw the pending frame
     /// through a non-sRGB view; others use the present blit, as on screen.
     pub fn debug_present_offscreen(&mut self) -> Result<Vec<u8>, GpuError> {
+        // Direct3D 11 presents through its own swap chain alone: the no-op
+        // shell would read back nothing.
+        #[cfg(d3d11)]
+        if self.d3d11.is_some() {
+            return Err(GpuError(
+                "ZGX_D3D11 presents through no wgpu surface, offscreen either".into(),
+            ));
+        }
         let srgb = wgpu::TextureFormat::Bgra8UnormSrgb;
         let drawable = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen drawable"),
@@ -10753,6 +11077,21 @@ impl GpuRenderer {
     pub fn readback(&self) -> Result<Vec<u8>, GpuError> {
         if let Some(reason) = self.context.lost() {
             return Err(GpuError::device_lost(&reason));
+        }
+        // Direct3D 11: its target, the swap chain's buffer drawn last
+        // (buffer 0 until presented, then 1), or the renderer's own.
+        #[cfg(d3d11)]
+        if let Some(state) = &self.d3d11 {
+            let present = self.layer_present.as_ref();
+            let views = (present.and_then(|present| present.chain.as_ref()))
+                .and_then(|chain| chain.d3d11_views());
+            let drawing = present.is_some_and(|present| present.current.is_some());
+            return match (&views, &state.target) {
+                (Some(views), _) => state.device.read(&views[usize::from(!drawing)]),
+                (None, Some(target)) => state.device.read(target),
+                // Nothing drawn: what wgpu's target holds, cleared.
+                (None, None) => Ok(vec![0; (self.width * self.height * 4) as usize]),
+            };
         }
         self.flush_pending();
         self.read_texture(&self.target)

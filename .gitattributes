@@ -1,3 +1,5 @@
 # One line ending everywhere: tests and include_str! compare sources byte
 # for byte, and Windows checkouts would otherwise get CRLF (core.autocrlf).
 * text=auto eol=lf
+# Shaders compiled ahead (crates/zgx-gpu/src/d3d11_frame.rs), byte for byte.
+*.dxbc binary

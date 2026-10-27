@@ -21,6 +21,8 @@ jpeg = ["zgx-gpu/jpeg"]
 gif = ["zgx-gpu/gif"]
 # Windows: Vulkan where Direct3D 12 has no adapter (see zgx-gpu).
 vulkan = ["zgx-gpu/vulkan"]
+# Windows: the experimental Direct3D 11 path, with `ZGX_D3D11=1` (see zgx-gpu).
+d3d11 = ["zgx-gpu/d3d11"]
 # macOS private API, looked up as it is first used and done without where
 # it is missing: `CGSMoveWindow` moves a drag preview's window (a sixth of
 # what `setFrameOrigin:` costs). Off for App Store builds, which may not
