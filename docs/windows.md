@@ -617,6 +617,9 @@ cargo build -p zgx-desktop --example gallery --example dpi_transition --example 
 python scripts/windows_desktop_smoke.py target/debug/examples/gallery.exe
 python scripts/windows_dpi_smoke.py target/debug/examples/dpi_transition.exe
 python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean
+python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean --tsf
+python scripts/windows_tsf_smoke.py target/debug/examples/native_ime.exe
+python scripts/windows_tsf_japanese_smoke.py target/debug/examples/native_ime.exe
 python scripts/windows_platform_smoke.py target/debug/examples
 python scripts/windows_settings_smoke.py target/debug/examples/scrollbars.exe --both
 python scripts/windows_touch_smoke.py target/debug/examples
@@ -661,7 +664,31 @@ python scripts/windows_first_frame_probe.py target/release/examples/component_wo
   run and restores the list after. The Japanese and Chinese IMEs need their
   language's typing features (an administrator install) before they compose.
   `native_ime --open-ime` opens the IME itself: input methods ignore a
-  synthesized on/off key.
+  synthesized on/off key. `--tsf` runs it through the Text Services Framework
+  (`ZGX_TSF=1`, below), checking the editors' text.
+- `windows_tsf_smoke.py` (`ZGX_TSF=1`): the emoji panel (Win+., Enter) inserts
+  through zgx's text store, and typing after it reaches the editor. It needs
+  no input method beyond English.
+- `windows_tsf_japanese_smoke.py` (`ZGX_TSF=1`): the Microsoft Japanese IME
+  converts and commits 日本語 through the text store. It prints PENDING
+  without the Japanese typing features installed.
+
+### The Text Services Framework (`ZGX_TSF=1`)
+
+Editors take input methods through winit's IMM32 path by default. With
+`ZGX_TSF=1`, a window gives them Windows' Text Services Framework instead:
+- **The text store.** An `ITextStoreACP2` of zgx's own (`tsf.rs`, over
+  `text_store.rs`, which is tested on every platform) holds the focused
+  editor's text in UTF-16 offsets, with the composition in place of the
+  selection while one is open.
+- **What it gives input methods.** They read the text around the caret and
+  place their candidates at the clause they convert. Text services (the emoji
+  panel, dictation, the touch keyboard) insert at the selection.
+- **The composition** is the editor's preedit, committed when the input
+  method ends it, as on other platforms.
+
+Clauses from display attributes, reconversion and input scopes are the next
+stages; the framework becomes the default after them.
 - `windows_platform_smoke.py`: selected display text copied as text and HTML
   and read by another process, text from another process pasted into an
   editor, the file picker, the save dialog (a name typed into it reaches the

@@ -7,6 +7,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 ### Added
 
 - `View::hollow()`: the pointer passes through a box while nothing it holds is displayed (`hidden` or `invisible`). A Luau `presence` box uses it: a page kept mounted but hidden no longer takes the presses meant for what is under it (a web page, the panes).
+- **Windows: input methods through the Text Services Framework**, opt-in with `ZGX_TSF=1` (IMM32 stays the default for now). Editors give Windows' input methods and text services a text store. They read the text around the caret, place candidates at the clause they convert, and insert at the caret: the emoji panel, dictation, the touch keyboard. For it, editors take an input method's clauses (`TextEditor::set_preedit_clauses`, `ClauseStyle`), each underlined, thick under the one being converted. They also take a replacement as one undo step (`TextEditor::replace_range`) and count UTF-16 offsets (`utf16_len`, `byte_to_utf16`, `utf16_to_byte`). `EditorHandle` makes these edits (`insert_text`, `replace_text`, `set_composition`, `commit_composition`, `cancel_composition`, `input_method_area`) ([windows](docs/windows.md)).
 
 ## 0.1.4 (2026-10-27)
 
@@ -23,6 +24,7 @@ A patch: Rust and Luau code builds as before (every API change since 0.1.3 is an
 - **Double-click selects a word of Chinese, Japanese or Thai**, as Chrome does: those scripts put no spaces between words, and Unicode's boundaries took each character for one. zgx's new `cjk-thai-words` feature, on by default (and forwarded by `zgx-desktop` and `zgx-script`), finds words with ICU4X's dictionaries (北京 in 我们在北京大学, สวัสดี in สวัสดีครับ). The dictionaries are about 2.2 MB of a release binary, paged in when first used, with no startup or per-frame cost. Turn it off with `default-features = false` on each zgx crate an app depends on. zgx's licence is now `MIT AND Unicode-3.0`, for the Thai dictionary it carries ([composition](docs/composition.md)).
 - **Lists copy as lists**, as a browser's do: a list item's marker ("•", "3."), drawn as accessible-hidden text leading a `Role::ListItem` (as markdown draws its lists), is now the list's. A selection takes no part of it, plain text leaves it out, and copied HTML is a `<ul>`, or an `<ol start>` from the marker's number, nested as the lists are. Screen readers hear where each item is in its list ("2 of 5") unless the app says so itself. `zgx lint` reports a marker left as text (`list-marker-hidden`) ([composition](docs/composition.md)).
 - Windows: a start says whether it read its shaders from FXC's disk cache or compiled them, and which it couldn't keep (`zgx_gpu::shader_cache_counts()`; `ZGX_SHADER_LOG=1` prints it with the first frame, as `ZGX_PROFILE=1`'s startup marks carry it). It is `None` elsewhere, and with crates.io's wgpu-hal.
+
 
 ### Performance
 

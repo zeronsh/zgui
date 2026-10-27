@@ -11,6 +11,11 @@ for the run and restores the user's list after. native_ime --open-ime opens it
 
     cargo build -p zgx-desktop --example native_ime
     python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean
+
+`--tsf` runs it through Windows' Text Services Framework (`ZGX_TSF=1`): the
+composition is the editor's preedit through zgx's text store, not IMM32's
+events, so the editors' text is what is checked: 한글 committed into the
+first, nothing in the second.
 """
 import argparse
 import ctypes
@@ -56,6 +61,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
     parser.add_argument("--install-korean", action="store_true")
+    parser.add_argument("--tsf", action="store_true", help="through the Text Services Framework")
     args = parser.parse_args()
     saved = input_methods()
     if KOREAN_TIP.split(":")[1] not in saved:
@@ -66,6 +72,8 @@ def main():
                    f"$k.InputMethodTips.Clear(); $k.InputMethodTips.Add('{KOREAN_TIP}'); "
                    "Set-WinUserLanguageList $l -Force -WarningAction SilentlyContinue")
     env = dict(os.environ, ZGX_SECONDS="30")
+    if args.tsf:
+        env["ZGX_TSF"] = "1"
     proc = subprocess.Popen([str(args.binary.resolve()), "--open-ime"], env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8")
     lines = []
@@ -87,7 +95,9 @@ def main():
         else:
             raise RuntimeError("could not switch the window to the Korean IME")
         deadline = time.monotonic() + 5
-        while "IME_OPEN true\n" not in lines:
+        # Through the framework, IMM32's context isn't the window's: the
+        # input method opens as its own on/off state is.
+        while not args.tsf and "IME_OPEN true\n" not in lines:
             if time.monotonic() > deadline:
                 raise RuntimeError("the input method did not open")
             time.sleep(0.1)
@@ -114,12 +124,20 @@ def main():
         if input_methods() != saved:
             restore(saved)
     output = "".join(lines)
+    final = next(line for line in lines if line.startswith("FINAL"))
+    if args.tsf:
+        first = final.split("first=", 1)[1].split(" second=", 1)[0]
+        if "한글" not in first:
+            raise AssertionError(f"the composition didn't commit through the text store: {final}\n{output}")
+        if "second=\"\"" not in final:
+            raise AssertionError(f"the composition followed focus into the other editor: {final}")
+        print(f"PASS: Korean IME through the Text Services Framework: {final.strip()}")
+        return
     # The caret after the composing syllable, as in Windows' own fields.
     for expected in ['PREEDIT first "ㅎ" Some((3, 3))', 'PREEDIT first "한" Some((3, 3))', 'COMMIT first "한"',
                      'COMMIT first "글"', 'PREEDIT first "안"']:
         if expected not in output:
             raise AssertionError(f"missing {expected!r}:\n{output}")
-    final = next(line for line in lines if line.startswith("FINAL"))
     if "second=\"\"" not in final or "ㅇ" in final.split("second=")[1]:
         raise AssertionError(f"the composition followed focus into the other editor: {final}")
     print(f"PASS: Korean IME preedit and commit, focus change mid-composition: {final.strip()}")
