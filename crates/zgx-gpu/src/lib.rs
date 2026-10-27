@@ -225,51 +225,9 @@ impl Region {
             tint: [0.; 4],
         }
     }
-    /// Whether it leaves every pixel of `bounds` as it is: no colour filter,
-    /// every pixel centre in `bounds` fully inside each rounded box, and
-    /// `bounds` inside every fade band (draw.wgsl's `region` is exactly 1
-    /// there).
+    /// Whether it leaves every pixel of `bounds` as it is (`interior`).
     fn covers(&self, bounds: Rect, scale: f32) -> bool {
-        // (Slack past the edges, so rounding never reads a band's last step.)
-        const SLACK: f32 = 1e-3;
-        let (end_x, end_y) = (bounds.x + bounds.width, bounds.y + bounds.height);
-        let inside = |round: [f32; 4], radii: [f32; 4], feather: f32| {
-            let [x0, y0, width, height] = round;
-            if width < 0. {
-                return true;
-            }
-            let (x1, y1) = (x0 + width, y0 + height);
-            let corner = radii.into_iter().fold(0f32, f32::max);
-            if feather > 0. || corner > width.min(height) * 0.5 {
-                let margin = corner + (0.5 / scale).max(feather) + SLACK;
-                return bounds.x >= x0 + margin
-                    && bounds.y >= y0 + margin
-                    && end_x <= x1 - margin
-                    && end_y <= y1 - margin;
-            }
-            // Clear of its corner squares a box's distance is its nearest
-            // edge's, and coverage is 1 half a device pixel inside it: at
-            // every pixel centre within the device pixels the box spans
-            // whole, even an edge it shares.
-            let [top_left, top_right, bottom_right, bottom_left] = radii;
-            bounds.x * scale >= (x0 * scale).ceil()
-                && bounds.y * scale >= (y0 * scale).ceil()
-                && end_x * scale <= (x1 * scale).floor()
-                && end_y * scale <= (y1 * scale).floor()
-                && (bounds.x >= x0 + top_left || bounds.y >= y0 + top_left)
-                && (end_x <= x1 - top_right || bounds.y >= y0 + top_right)
-                && (end_x <= x1 - bottom_right || end_y <= y1 - bottom_right)
-                && (bounds.x >= x0 + bottom_left || end_y <= y1 - bottom_left)
-        };
-        let [x0, y0, x1, y1] = self.fade_box;
-        let [top, right, bottom, left] = self.fade;
-        self.tint[0] == 0.
-            && inside(self.round0, self.radii0, self.tint[1])
-            && inside(self.round1, self.radii1, self.tint[2])
-            && (top <= 0. || bounds.y >= y0 + top + SLACK)
-            && (right <= 0. || bounds.x + bounds.width <= x1 - right - SLACK)
-            && (bottom <= 0. || bounds.y + bounds.height <= y1 - bottom - SLACK)
-            && (left <= 0. || bounds.x >= x0 + left + SLACK)
+        Interior::of(self, scale).holds(bounds)
     }
     /// `item`'s, if it lies in one.
     fn of(item: &zgx::scene::PaintItem<'_>) -> Option<Self> {
@@ -315,6 +273,127 @@ impl Region {
 }
 /// The index (plus one) `region` has in `regions`, added if new; 0 for none.
 /// Neighbouring items mostly share one (a list in a rounded card).
+/// Two bands of a region where it leaves every pixel as it is, as edges
+/// (left, top, right, bottom): with no colour filter, every pixel centre
+/// fully inside each rounded box, and inside every fade band (draw.wgsl's
+/// `region` is exactly 1 there). Clear of its corner squares a box's
+/// distance is its nearest edge's, and coverage is 1 half a device pixel
+/// inside it: at every pixel centre within the device pixels the box spans
+/// whole, even an edge it shares. So the bands are the box across, between
+/// its corners' squares, and the box down; a feathered box (or one whose
+/// corners meet) keeps only the part inside its largest corner and feather.
+#[derive(Clone, Copy)]
+struct Interior([[f32; 4]; 2]);
+impl Interior {
+    const NONE: Self = Self([[f32::MAX, f32::MAX, f32::MIN, f32::MIN]; 2]);
+    fn of(region: &Region, scale: f32) -> Self {
+        // (Slack past the edges, so rounding never reads a band's last step.)
+        const SLACK: f32 = 1e-3;
+        if region.tint[0] != 0. {
+            return Self::NONE;
+        }
+        let all = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
+        let rounded = |round: [f32; 4], radii: [f32; 4], feather: f32| {
+            let [x0, y0, width, height] = round;
+            if width < 0. {
+                return [all; 2];
+            }
+            let (x1, y1) = (x0 + width, y0 + height);
+            let corner = radii.into_iter().fold(0f32, f32::max);
+            if feather > 0. || corner > width.min(height) * 0.5 {
+                let margin = corner + (0.5 / scale).max(feather) + SLACK;
+                return [[x0 + margin, y0 + margin, x1 - margin, y1 - margin]; 2];
+            }
+            let [top_left, top_right, bottom_right, bottom_left] = radii;
+            let whole = [
+                (x0 * scale).ceil() / scale,
+                (y0 * scale).ceil() / scale,
+                (x1 * scale).floor() / scale,
+                (y1 * scale).floor() / scale,
+            ];
+            [
+                [
+                    whole[0],
+                    whole[1].max(y0 + top_left.max(top_right)),
+                    whole[2],
+                    whole[3].min(y1 - bottom_left.max(bottom_right)),
+                ],
+                [
+                    whole[0].max(x0 + top_left.max(bottom_left)),
+                    whole[1],
+                    whole[2].min(x1 - top_right.max(bottom_right)),
+                    whole[3],
+                ],
+            ]
+        };
+        let meet = |a: [f32; 4], b: [f32; 4]| {
+            [
+                a[0].max(b[0]),
+                a[1].max(b[1]),
+                a[2].min(b[2]),
+                a[3].min(b[3]),
+            ]
+        };
+        let [top, right, bottom, left] = region.fade;
+        let [x0, y0, x1, y1] = region.fade_box;
+        let faded = [
+            if left > 0. {
+                x0 + left + SLACK
+            } else {
+                f32::MIN
+            },
+            if top > 0. { y0 + top + SLACK } else { f32::MIN },
+            if right > 0. {
+                x1 - right - SLACK
+            } else {
+                f32::MAX
+            },
+            if bottom > 0. {
+                y1 - bottom - SLACK
+            } else {
+                f32::MAX
+            },
+        ];
+        let first = rounded(region.round0, region.radii0, region.tint[1]);
+        let second = rounded(region.round1, region.radii1, region.tint[2]);
+        Self([0, 1].map(|band| meet(meet(first[band], second[band]), faded)))
+    }
+    #[inline]
+    fn holds(&self, bounds: Rect) -> bool {
+        let (x1, y1) = (bounds.x + bounds.width, bounds.y + bounds.height);
+        self.0.iter().any(|band| {
+            bounds.x >= band[0] && bounds.y >= band[1] && x1 <= band[2] && y1 <= band[3]
+        })
+    }
+}
+/// Marks `quads` as drawn in clip region `region` (`mask.x`), or without it
+/// where it changes none of their pixels (its index in `mask.w`): not in
+/// perspective, which `quad_rect` bounds only in part, nor blurred.
+#[inline(always)]
+fn mark_region(
+    interiors: &mut Vec<Option<Interior>>,
+    regions: &[Region],
+    region: f32,
+    quads: &mut [Quad],
+    bounds: Rect,
+    blurred: bool,
+    scale: f32,
+) {
+    let at = region as usize - 1;
+    if interiors.len() <= at {
+        interiors.resize(at + 1, None);
+    }
+    let interior = *interiors[at].get_or_insert_with(|| Interior::of(&regions[at], scale));
+    let flat = |quad: Option<&Quad>| quad.is_some_and(|quad| quad.options[2] < 1.5);
+    let lane = match !blurred && flat(quads.first()) && flat(quads.last()) && interior.holds(bounds)
+    {
+        true => 3,
+        false => 0,
+    };
+    for quad in quads {
+        quad.mask[lane] = region;
+    }
+}
 fn region_index(regions: &mut Vec<Region>, region: Option<Region>) -> f32 {
     let Some(region) = region else {
         return 0.;
@@ -377,12 +456,12 @@ fn shading(quad: &Quad, scale: f32) -> Shading {
     // same bytes.
     // (Drawn without the region it lies in, `mask.w`: full still, batched
     // as it was. Tested first, as a region's quads are.)
-    let plain = quad.mask[0] <= 0.
-        && quad.mask[3] <= 0.
-        && quad.options[0] == 0.
+    let plain = quad.options[0] == 0.
         && quad.options[2] < 0.5
         && quad.shape[2] <= 0.
-        && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.));
+        && (quad.shape[3] <= 0.5 || (square && quad.color[3] >= 1.))
+        && quad.mask[0] <= 0.
+        && quad.mask[3] <= 0.;
     if !plain {
         Shading::Full
     } else if quad.options[1] <= 0.5 && quad.color[3] >= 1. {
@@ -2261,22 +2340,6 @@ fn merged_shading(a: Shading, b: Shading) -> Option<Shading> {
 fn leaves_region(regions: &[Region], quad: &Quad, rect: Rect, scale: f32) -> bool {
     !regions[quad.mask[3] as usize - 1].covers(rect, scale)
 }
-/// The rectangle untransformed `quads` cover, or `None` if one is
-/// transformed (`quad_bounds` in one pass, stopping at the first that is).
-fn flat_bounds(quads: &[Quad]) -> Option<Rect> {
-    let [mut x0, mut y0, mut x1, mut y1] = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
-    for quad in quads {
-        if quad.options[2] >= 0.5 {
-            return None;
-        }
-        let [x, y, w, h] = quad.rect;
-        x0 = x0.min(x.min(x + w));
-        y0 = y0.min(y.min(y + h));
-        x1 = x1.max(x.max(x + w));
-        y1 = y1.max(y.max(y + h));
-    }
-    (x0 <= x1).then(|| Rect::new(x0, y0, x1 - x0, y1 - y0))
-}
 fn quad_bounds(quads: &[Quad]) -> Rect {
     quads
         .iter()
@@ -2873,6 +2936,9 @@ pub struct GpuRenderer {
     item_ranges: Vec<(u32, u32, u32, u32, u32)>,
     /// A kept frame's clip regions, while it is patched (`PATCH`).
     patch_clips: Vec<Region>,
+    /// Each clip region's `Interior`, by index, as `render_flat` first
+    /// draws in it.
+    region_interiors: Vec<Option<Interior>>,
     /// A plain box's quads and draws as `patch_box` makes them, kept for
     /// their room.
     box_quads: Vec<Quad>,
@@ -3405,6 +3471,7 @@ impl GpuRenderer {
             unpatched_keeps: 0,
             item_ranges: Vec::new(),
             patch_clips: Vec::new(),
+            region_interiors: Vec::new(),
             box_quads: Vec::new(),
             kept_upload: None,
             kept_ordered: 0,
@@ -5526,6 +5593,7 @@ impl GpuRenderer {
         let mut draws = std::mem::take(&mut self.frame_draws);
         // The clip regions quads lie in (`Quad::mask`): a kept frame's, to
         // patch it, or those of a frame made already.
+        self.region_interiors.clear();
         let mut clips: Vec<Region> = match MODE {
             PATCH => std::mem::take(&mut self.patch_clips),
             _ if made => std::mem::take(&mut self.patch_clips),
@@ -6664,26 +6732,10 @@ impl GpuRenderer {
                 }
             };
             // Inside rounded clips or a `fade_edges` container: cut and faded
-            // in the shader, unless the item lies wholly where the region
-            // changes nothing (a row well inside a rounded card): then drawn
-            // without it, as the plain quads it is, its region's index in
-            // `mask.w` for a box moved alone (`patch_box_moved`).
-            let item_quads = &mut quads[start as usize..];
-            let in_region = match Region::of(&item) {
-                None => false,
-                region => {
-                    let drawn_in = !region.as_ref().is_some_and(|region| {
-                        flat_bounds(item_quads)
-                            .is_some_and(|bounds| region.covers(bounds, self.scale))
-                    });
-                    let region = region_index(&mut clips, region);
-                    let lane = if drawn_in { 0 } else { 3 };
-                    for quad in item_quads {
-                        quad.mask[lane] = region;
-                    }
-                    true
-                }
-            };
+            // in the shader (its quads' lane is set once they're culled).
+            let item_region = Region::of(&item);
+            let in_region = item_region.is_some();
+            let region = region_index(&mut clips, item_region);
             // When the clip only culls whole quads, apply it on the CPU and
             // draw under the viewport, so a change of clip never splits a
             // batch: neighbouring text, icons and rows become one draw. Quads
@@ -6697,6 +6749,21 @@ impl GpuRenderer {
                 false => (clip, None),
             };
             if quads.len() as u32 > start || item.effects.blur_radius > 0. {
+                let drawn = culled_bounds.unwrap_or_else(|| quad_bounds(&quads[start as usize..]));
+                if region > 0. {
+                    // Unless the item lies wholly where its region changes
+                    // nothing (a row well inside a rounded card): then drawn
+                    // without it, as the plain quads it is, its region's
+                    // index in `mask.w` for a box moved alone
+                    // (`patch_box_moved`). (Not in perspective, which
+                    // `quad_rect` bounds only in part, nor blurred.)
+                    let blurred = item.effects.blur_radius > 0.;
+                    let item_quads = &mut quads[start as usize..];
+                    let interiors = &mut self.region_interiors;
+                    mark_region(
+                        interiors, &clips, region, item_quads, drawn, blurred, self.scale,
+                    );
+                }
                 let draw = Draw {
                     shading: fill_shading.unwrap_or(Shading::Full),
                     blur: (item.effects.blur_radius > 0.).then(|| {
@@ -6705,7 +6772,7 @@ impl GpuRenderer {
                     start,
                     end: quads.len() as u32,
                     clip: draw_clip,
-                    bounds: culled_bounds.unwrap_or_else(|| quad_bounds(&quads[start as usize..])),
+                    bounds: drawn,
                     source: if let Some(image) = canvas_image {
                         TextureSource::Image(image)
                     } else if let NodeKind::Image(image) = item.kind {
@@ -12268,7 +12335,7 @@ mod region_cover_tests {
             seed % steps
         };
         let mut covered = 0;
-        for _ in 0..20_000 {
+        for _ in 0..100_000 {
             let scale = [1., 1.25, 1.5, 2.][next(4) as usize];
             let quarter = |n: u32| n as f32 * 0.25;
             let round = [
@@ -12305,6 +12372,6 @@ mod region_cover_tests {
                 );
             }
         }
-        assert!(covered > 500, "only {covered} covered");
+        assert!(covered > 2_500, "only {covered} covered");
     }
 }
