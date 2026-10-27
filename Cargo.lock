@@ -4654,7 +4654,7 @@ dependencies = [
 
 [[package]]
 name = "zgx"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "foldhash 0.2.0",
  "icu_collections",
@@ -4675,7 +4675,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-components"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "zgx",
  "zgx-desktop",
@@ -4705,7 +4705,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-demo"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "softbuffer",
  "winit",
@@ -4717,7 +4717,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-desktop"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "accesskit",
  "accesskit_atspi_common",
@@ -4774,11 +4774,11 @@ dependencies = [
 
 [[package]]
 name = "zgx-ghostty-sys"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "zgx-gpu"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bytemuck",
  "gif",
@@ -4833,7 +4833,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-run"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "png 0.18.1",
  "serde_json",
@@ -4844,7 +4844,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-script"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "libc",
  "memchr",

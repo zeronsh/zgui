@@ -2,17 +2,25 @@
 
 zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps, newest first.
 
-## Unreleased
+## 0.1.4 (2026-10-27)
+
+A patch: Rust and Luau code builds as before (every API change since 0.1.3 is an addition, and zgx-desktop and zgx-gpu 0.1.3 build against this zgx), unless it writes a `zgx_gpu::GpuStats` field by field (below). A few editor keys and clicks change, each below with what to check.
+
+### Changed: new fields
+
+- `zgx_gpu::GpuStats` gains `layer_partial_repaints` (layers repainted only where the window's damage reaches them). One written field by field ends with `..Default::default()`.
 
 ### Added
 
-- **Zoom an element**, as CSS's `zoom`: `Styled::zoom(n)` (Luau `zoom = n`) shows a node's subtree `n` times as large, laid out again at that size and drawn crisply at it; zooms multiply with ancestors' and the window's, and `zoom_fixed()` (Luau `zoom_fixed = true`) keeps a node at its own size whatever zooms are around it. `Scene::set_zoom`, `zoom`, `zoom_around`, `Ui::set_zoom_fixed`; `PlaneSplit::native_zoom` for hosts. At 1 nothing changes. *For now:* a zoomed node paints as a cached layer at its exact scale, so content changing inside it repaints the whole layer ([styling](docs/styling.md#zoom)).
+- **Zoom an element**, as CSS's `zoom`: `Styled::zoom(n)` (Luau `zoom = n`) shows a node's subtree `n` times as large, laid out again at that size and drawn crisply at it; zooms multiply with ancestors' and the window's, and `zoom_fixed()` (Luau `zoom_fixed = true`) keeps a node at its own size whatever zooms are around it. `Scene::set_zoom`, `zoom`, `zoom_around`, `Ui::set_zoom_fixed`; `PlaneSplit::native_zoom` for hosts. At 1 nothing changes. A zoomed node paints as a cached layer at its exact scale, repainted only where the window's damage reaches it ([styling](docs/styling.md#zoom)).
 - **Zoomable elements**: `View::zoomable(state)` (Luau `zoomable = state`) lets the user zoom a node in place: Control with the wheel over it steps the window's levels (Windows, Linux) and a pinch over it zooms (every platform), 25% to 500%, the innermost zoomable under the pointer taking the gesture and the window zooming elsewhere; in a scroll view what is under the pointer stays there. `zgx lint` reports a `zoom` beside a `zoomable` (`zoomable-zoom`).
 - **Double-click selects a word of Chinese, Japanese or Thai**, as Chrome does: those scripts put no spaces between words, and Unicode's boundaries took each character for one. zgx's new `cjk-thai-words` feature, on by default (and forwarded by `zgx-desktop` and `zgx-script`), finds words with ICU4X's dictionaries (北京 in 我们在北京大学, สวัสดี in สวัสดีครับ). The dictionaries are about 2.2 MB of a release binary, paged in when first used, with no startup or per-frame cost. Turn it off with `default-features = false` on each zgx crate an app depends on. zgx's licence is now `MIT AND Unicode-3.0`, for the Thai dictionary it carries ([composition](docs/composition.md)).
 - **Lists copy as lists**, as a browser's do: a list item's marker ("•", "3."), drawn as accessible-hidden text leading a `Role::ListItem` (as markdown draws its lists), is now the list's. A selection takes no part of it, plain text leaves it out, and copied HTML is a `<ul>`, or an `<ol start>` from the marker's number, nested as the lists are. Screen readers hear where each item is in its list ("2 of 5") unless the app says so itself. `zgx lint` reports a marker left as text (`list-marker-hidden`) ([composition](docs/composition.md)).
+- Windows: a start says whether it read its shaders from FXC's disk cache or compiled them, and which it couldn't keep (`zgx_gpu::shader_cache_counts()`; `ZGX_SHADER_LOG=1` prints it with the first frame, as `ZGX_PROFILE=1`'s startup marks carry it). It is `None` elsewhere, and with crates.io's wgpu-hal.
 
 ### Performance
 
+- **CPU, against 0.1.3**, by exact instruction counts (Linux arm64, with a screen reader on for both, as 0.1.3 always ran; with none, as desktops run, 0.1.4 does less again): widgets −93.7% (a mount lays out its text inputs once, below), style −13.5%, animate −11.2%, heavy −9.5 to −9.9%, anime −5.7%, script-update −4.2%, the apps, lists and scrolls −0.2 to −2.7%; lab-stream and list-state level. No scene is slower.
 - **macOS: a focused field left alone takes about 180 MB less memory.** Its caret is a Core Animation layer, shown and hidden each blink with no frame drawn, where it was a frame each blink: the Metal driver holds about 176 MB for its command queue for some 8 s after any frame, so a blinking caret kept the window's footprint at 210 MB, where it now falls to an idle window's 30 (M5; GPUI Fast, MyGo and Rune keep 219–404 MB blinking a caret). The window does no GPU work while the caret blinks: two small wakes a second, none while the field is unfocused or the window unseen (its window server cost is what GPUI's blinking frames cost, with 1/13 of the app CPU). It is the editor's caret, drawn in frames as before, wherever Core Animation's could differ (`docs/composition.md`); `ZGX_NATIVE_CARET=0` keeps it everywhere.
 
 ### Changed: what to check in an existing app
@@ -32,6 +40,17 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 **macOS: Home and End in an editor scroll to the text's start or end and leave the caret where it is**, as NSTextView and Chrome on Mac take them. Shift-Home and Shift-End extend the selection to the text's ends. ⌘← and ⌘→ go to a line's ends, ⌘↑ and ⌘↓ (and ⌘Home, ⌘End) to the text's, as before. Windows and Linux are unchanged.
 - *Migrate:* a test or script pressing Home or End in an editor on macOS to move the caret presses ⌘← or ⌘→.
+
+**A password field takes no input method, and on macOS types with secure keyboard entry on**, as browsers' password fields and AppKit's secure text fields do: a candidate window no longer shows what is typed, and other processes can't read the keys while one has the keyboard (`EditorHandle::is_secure`).
+- *Migrate:* nothing, unless an app relied on composing (pinyin, kana) in a secure field: its keys now type their characters.
+
+### Fixed
+
+- **A scroll under a rounded clip no longer leaves corners behind**: a panel with rounded corners and `overflow: hidden` around a scrolling view, scrolled down and back, trailed copies of its corners down the view's edge (since before 0.1.2). Copying renderers now repaint each such corner where it is and where the scroll took its pixels; a scroll with no rounded clip around it costs what it did.
+- Windows: a frame of the app's own timing ready just before the compositor latches the next refresh waits until just past it, rather than making and missing the refresh in turn: with a timer drifting near the latch, missed refreshes in an 8 s lab stream went from 45–76 to 0–1.
+- X11: a wheel notch from a pointer with no scroll valuators (XTEST's, a remote desktop's) scrolls one line and zooms one level, not two.
+- A press in a zoomed or scaled editor lands on the character it shows on, and a drag selects the run it covers; extending a selection in a zoomed scroll view scrolls just enough to show its end.
+- macOS: each of an app's menus shows once in the menu bar (Edit, Edit, View, View before).
 
 ## 0.1.3 (2026-10-27)
 
