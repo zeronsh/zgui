@@ -4718,7 +4718,7 @@ impl Ui {
                                 let edges = editor_pointer_unit(edit.around(hit.byte_offset), layout.as_ref(), hit, x, y, false, multiline);
                                 EditorPointerSelection::Unit { edges, line: false }
                             }
-                            3 => {
+                            3.. => {
                                 let edges = editor_pointer_unit(edit.around(hit.byte_offset), layout.as_ref(), hit, x, y, true, multiline);
                                 EditorPointerSelection::Unit { edges, line: true }
                             }

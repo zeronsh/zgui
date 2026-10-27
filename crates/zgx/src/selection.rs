@@ -689,7 +689,8 @@ impl Ui {
         let unit = match count {
             _ if extend => Unit::Character,
             2 => Unit::Word,
-            3 => Unit::Paragraph,
+            // A triple click's, and any after it in a row, as Chrome's.
+            3.. => Unit::Paragraph,
             _ => Unit::Character,
         };
         let edges = hit.edges(unit);

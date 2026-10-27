@@ -392,7 +392,9 @@ impl EventContext {
     pub fn pointer_modifiers(&self) -> Modifiers {
         self.pointer_modifiers
     }
-    /// Primary or other button press count (1–3); zero for non-press events.
+    /// Primary or other button press count: 1, 2 for a double click's
+    /// second, 3 for a triple's and on past it, as the web's `detail` counts;
+    /// zero for non-press events.
     pub fn click_count(&self) -> u8 {
         self.click_count
     }
@@ -588,7 +590,7 @@ impl ClickTracker {
                         .is_some_and(|elapsed| elapsed <= self.1)
                     && self.near(old.position, position)
             })
-            .map_or(1, |old| old.count % 3 + 1);
+            .map_or(1, |old| old.count.saturating_add(1));
         self.0 = Some(Click {
             target,
             button,
@@ -2494,11 +2496,12 @@ mod tests {
         (Rc::new(RefCell::new(s)), a, b)
     }
     #[test]
-    fn click_tracker_time_distance_button_target_and_cycle_are_deterministic() {
+    fn click_tracker_time_distance_button_target_and_count_are_deterministic() {
         let (_, a, b) = setup();
         let mut tracker = ClickTracker::default();
         let now = Instant::now();
-        for (index, expected) in [1, 2, 3, 1].into_iter().enumerate() {
+        // Past a triple's, on counting (the web's `detail`), not round again.
+        for (index, expected) in [1, 2, 3, 4].into_iter().enumerate() {
             assert_eq!(
                 tracker.press(
                     a,
@@ -2516,7 +2519,7 @@ mod tests {
                 (4., 0.),
                 now + Duration::from_millis(2000)
             ),
-            2
+            5
         );
         assert_eq!(
             tracker.press(

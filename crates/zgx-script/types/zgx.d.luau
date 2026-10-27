@@ -1003,7 +1003,8 @@ export type Child = Node | string | (() -> TextValue) | { read [number]: Child }
 
 -- Event handlers: a function, or an action Rust runs.
 export type Handler = () -> ...unknown
--- `clicks` (on_press): the press's count, 2 for a double click's second.
+-- `clicks` (on_press): the press's count, 2 for a double click's second, 3
+-- for a triple's, and on past it.
 -- `shift`, `ctrl`, `alt`, `meta`: the keys held; `cmd`: the platform's
 -- command key (Command on macOS, Ctrl elsewhere), as `cmd` in keys.
 export type PointerEvent = {

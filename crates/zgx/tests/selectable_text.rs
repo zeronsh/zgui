@@ -157,6 +157,12 @@ fn double_and_triple_presses_select_words_and_paragraphs_and_drag_by_them() {
         release(&mut ui, 10., 54.);
     }
     assert_eq!(ui.selected_text(), "two three");
+    // Presses past the third keep it, as Chrome's do: no caret again.
+    for _ in 0..2 {
+        press(&mut ui, 10., 54., false);
+        release(&mut ui, 10., 54.);
+        assert_eq!(ui.selected_text(), "two three");
+    }
 }
 
 #[test]

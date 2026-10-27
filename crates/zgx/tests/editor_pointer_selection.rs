@@ -134,6 +134,11 @@ fn triple_click_selects_the_paragraph_and_drags_by_paragraphs() {
         "abcdefghijklmnopqrst",
         "every wrapped row of it"
     );
+    // Presses past the third keep it, as Chrome's do: no caret again.
+    for _ in 0..2 {
+        click(&mut ui, 22., 40., false);
+        assert_eq!(editor.copy(), "abcdefghijklmnopqrst");
+    }
     let (mut ui, editor) = fixture("first\nsecond\nthird", 200., false);
     click(&mut ui, 22., 40., false);
     click(&mut ui, 22., 40., false);
