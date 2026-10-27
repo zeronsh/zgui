@@ -5361,6 +5361,14 @@ impl Scene {
             self.invalidate(id, COMPOSITE);
             return;
         }
+        // Fully transparent, it paints nothing in either place (a caret the
+        // host draws, moving): nothing to damage.
+        if self.node(id).effects.opacity <= 0. {
+            self.node_mut(id).transform = transform;
+            self.geometry_revision = self.geometry_revision.wrapping_add(1);
+            self.invalidate(id, COMPOSITE);
+            return;
+        }
         // Its old place and its new, under the same ancestors: their
         // context is worked out once.
         let mut context = None;
@@ -5409,14 +5417,12 @@ impl Scene {
         }
         // A content blur's spread damages under the old effects, then the new.
         // Opacity and colour filters paint where the node painted before:
-        // that place is damaged once (an animated fade, every frame), under
-        // the old effects when the new paint nothing (a transparent node
-        // damages nothing).
+        // that place is damaged once (an animated fade, every frame).
         let old = self.node(id).effects;
         let same_area =
             old.blur_radius == effects.blur_radius && old.filter_blur == effects.filter_blur;
         let mut context = None;
-        if !same_area || effects.opacity <= 0. {
+        if !same_area {
             self.damage_subtree_with(id, &mut context);
         }
         let old_filter = self.node(id).filtered();
@@ -5937,17 +5943,12 @@ impl Scene {
     /// is worked out by the first and kept for the rest. Valid while the
     /// ancestors keep their places, clips and visibility.
     fn damage_subtree_with(&mut self, id: NodeId, context: &mut Option<DamageContext>) {
-        // Hidden, fully transparent (it paints nothing, wherever it is: a
-        // caret the host draws, moving), or never laid out (a mounting row's
-        // nodes, each closing in turn): it damages nothing
-        // (`damage_subtree_in`), so its ancestors need no working out.
+        // Hidden, or never laid out (a mounting row's nodes, each closing in
+        // turn): it damages nothing (`damage_subtree_in`), so its ancestors
+        // need no working out.
         let node = self.node(id);
         let unplaced = node.measurement.is_none() && node.bounds == Rect::default();
-        if !own_visible(&node.style)
-            || node.effects.opacity <= 0.
-            || unplaced
-            || self.damage_is_full()
-        {
+        if !own_visible(&node.style) || unplaced || self.damage_is_full() {
             return;
         }
         // Resolve the ancestors once, then carry translation and clipping down
@@ -11836,18 +11837,11 @@ mod local_transform_tests {
             let (t, s) = (together.flush(), apart.flush());
             assert_eq!(together.is_layer(a), apart.is_layer(b));
             assert_eq!(t.composite_nodes, s.composite_nodes);
-            if effects.opacity > 0. {
-                assert_eq!(
-                    union(&t.damage),
-                    union(&s.damage),
-                    "{transform:?} {effects:?}"
-                );
-            } else {
-                // Moved and gone at once, only its old place: the setters
-                // also damage the new, where they show it in between.
-                let (t, s) = (union(&t.damage), union(&s.damage));
-                assert!(s.intersection(t) == Some(t), "{t:?} within {s:?}");
-            }
+            assert_eq!(
+                union(&t.damage),
+                union(&s.damage),
+                "{transform:?} {effects:?}"
+            );
         }
     }
     #[test]
@@ -11874,14 +11868,24 @@ mod local_transform_tests {
         scene.set_transform(id, at(20., 30.));
         let both = there.union(place(&scene, id));
         assert_eq!(union(&scene.flush().damage), both, "moving shown");
-        // Moving and fading at once, either way: the place it showed.
+        // Moving and fading at once, either way: both places, as the two
+        // setters damage them.
         let (mut scene, id) = placed(40., 20.);
         let old = place(&scene, id);
         scene.set_transform_and_effects(id, at(250., 40.), faded(0.));
-        assert_eq!(union(&scene.flush().damage), old, "moved and faded out");
+        let gone = place(&scene, id);
+        assert_eq!(
+            union(&scene.flush().damage),
+            old.union(gone),
+            "moved and faded out"
+        );
         scene.set_transform_and_effects(id, at(60., 200.), faded(0.5));
         let new = place(&scene, id);
-        assert_eq!(union(&scene.flush().damage), new, "moved and faded in");
+        assert_eq!(
+            union(&scene.flush().damage),
+            gone.union(new),
+            "moved and faded in"
+        );
     }
     #[test]
     fn matrix_is_css_order_about_the_origin() {
