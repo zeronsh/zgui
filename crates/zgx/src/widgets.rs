@@ -5,7 +5,7 @@ use crate::{
     scene::{Color, Insets, Layout, NodeId, NodeKind, Rect, Scene, Style, Transform},
     semantics::{Role, SemanticNode, Semantics},
     text::{Text, TextValue},
-    text_edit::TextEditor,
+    text_edit::{ClauseStyle, TextEditor},
     text_layout::{FontStyle, TextAffinity, TextLayout, TextPosition},
     theme::{ColorToken, ThemeScope, Themes, tok},
 };
@@ -288,6 +288,12 @@ impl EditorHandle {
             clause.height,
         ))
     }
+    /// Where an input method's candidates go, in the window's points: under
+    /// the clause it converts (`composition_area`), else at the caret.
+    pub fn input_method_area(&self) -> Rect {
+        self.composition_area()
+            .unwrap_or_else(|| self.scene.borrow().bounds(self.caret))
+    }
     /// The selection as UTF-8 byte offsets into the committed text,
     /// `(anchor, focus)`: equal for a caret, `focus` where the caret is.
     pub fn selection(&self) -> (usize, usize) {
@@ -563,6 +569,81 @@ impl EditorHandle {
             self.refresh();
         }
         text
+    }
+    /// Replace the selection with `text`, as typed: what a text service
+    /// (Windows' emoji panel, dictation, touch keyboard) inserts. A
+    /// single-line editor joins its lines; a read-only one ignores it.
+    pub fn insert_text(&self, text: &str) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+        self.preferred_x.set(None);
+        let changed = self
+            .editor
+            .borrow_mut()
+            .insert(&normalize_text(text, self.multiline));
+        if changed {
+            self.hint.value.write(&self.editor);
+            self.refresh();
+        }
+        changed
+    }
+    /// Replace the committed text in `range` (UTF-8 byte offsets) with
+    /// `text`, one undo step, the caret after it: an input method converting
+    /// text again, or correcting it. A read-only editor ignores it.
+    pub fn replace_text(&self, range: std::ops::Range<usize>, text: &str) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+        self.preferred_x.set(None);
+        let changed = self
+            .editor
+            .borrow_mut()
+            .replace_range(range, &normalize_text(text, self.multiline));
+        if changed {
+            self.hint.value.write(&self.editor);
+            self.refresh();
+        }
+        changed
+    }
+    /// Show `text` as the input method's composition at the selection, as
+    /// `TextEditor::set_preedit_clauses` does (empty clears it). A read-only
+    /// editor shows none.
+    pub fn set_composition(
+        &self,
+        text: &str,
+        cursor: Option<(usize, usize)>,
+        clauses: &[(std::ops::Range<usize>, crate::text_edit::ClauseStyle)],
+    ) {
+        if self.is_read_only() {
+            return;
+        }
+        self.editor
+            .borrow_mut()
+            .set_preedit_clauses(text, cursor, clauses);
+        self.refresh();
+    }
+    /// End the composition, inserting `text` (what the input method
+    /// committed) as typed. False when nothing changed.
+    pub fn commit_composition(&self, text: &str) -> bool {
+        if self.is_read_only() {
+            self.editor.borrow_mut().cancel_preedit();
+            return false;
+        }
+        let changed = self
+            .editor
+            .borrow_mut()
+            .commit_preedit(&normalize_text(text, self.multiline));
+        if changed {
+            self.hint.value.write(&self.editor);
+        }
+        self.refresh();
+        changed
+    }
+    /// Drop the composition, inserting nothing.
+    pub fn cancel_composition(&self) {
+        self.editor.borrow_mut().cancel_preedit();
+        self.refresh();
     }
     /// Replace the selection with `text`, as the person pasting it would. A
     /// single-line editor joins its lines; a read-only one ignores it.
@@ -4094,30 +4175,54 @@ impl Ui {
             // Marked text, underlined as a native field underlines it: a thin
             // line under all of it, a thick one under the clause the input
             // method is converting (its cursor range), where its candidates
-            // show.
+            // show. Given its clauses (Windows' display attributes), a line
+            // under each, apart from the next, thick under the target.
             let mut clause_area = None;
+            let clauses = e.preedit_clauses();
             let lines: Vec<_> = if let Some(preedit) = e.preedit() {
                 let start = selection.range().start;
                 let line = |r: Rect, thick: f32| {
                     let y = r.y + r.height - 1. - thick - scroll.1;
                     (y >= 0. && y < inner_height).then_some((r.x - scroll.0, y, r.width, thick))
                 };
-                let mut lines: Vec<_> = layout
-                    .selection(start..start + preedit.text.len())
-                    .into_iter()
-                    .filter_map(|r| line(r, 1.))
-                    .collect();
-                if let Some((a, b)) = preedit
-                    .cursor
-                    .filter(|(a, b)| a < b && *b <= preedit.text.len())
-                {
-                    let clause = layout.selection(start + a..start + b);
-                    clause_area = clause
-                        .first()
-                        .map(|r| Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height));
-                    lines.extend(clause.into_iter().filter_map(|r| line(r, 2.)));
+                if !clauses.is_empty() {
+                    let mut lines = Vec::new();
+                    for (range, style) in &clauses {
+                        let rects = layout.selection(start + range.start..start + range.end);
+                        let thick = if *style == ClauseStyle::Target {
+                            2.
+                        } else {
+                            1.
+                        };
+                        if *style == ClauseStyle::Target && clause_area.is_none() {
+                            clause_area = rects.first().map(|r| {
+                                Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height)
+                            });
+                        }
+                        // A pixel apart from the next clause's.
+                        lines.extend(rects.into_iter().filter_map(|r| {
+                            line(Rect::new(r.x, r.y, (r.width - 1.).max(1.), r.height), thick)
+                        }));
+                    }
+                    lines
+                } else {
+                    let mut lines: Vec<_> = layout
+                        .selection(start..start + preedit.text.len())
+                        .into_iter()
+                        .filter_map(|r| line(r, 1.))
+                        .collect();
+                    if let Some((a, b)) = preedit
+                        .cursor
+                        .filter(|(a, b)| a < b && *b <= preedit.text.len())
+                    {
+                        let clause = layout.selection(start + a..start + b);
+                        clause_area = clause
+                            .first()
+                            .map(|r| Rect::new(r.x - scroll.0, r.y - scroll.1, r.width, r.height));
+                        lines.extend(clause.into_iter().filter_map(|r| line(r, 2.)));
+                    }
+                    lines
                 }
-                lines
             } else {
                 Vec::new()
             };

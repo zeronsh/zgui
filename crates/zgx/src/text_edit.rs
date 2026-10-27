@@ -134,6 +134,37 @@ pub struct Preedit {
     /// and end UTF-8 byte offsets. `None` hides the caret.
     pub cursor: Option<(usize, usize)>,
 }
+/// How an input method marks a clause of its composition, as Windows'
+/// display attributes and macOS's marked text do: still being typed, already
+/// converted, or the one it is converting now (whose candidates show).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ClauseStyle {
+    /// Typed and not yet converted: a thin underline.
+    Input,
+    /// Converted, not the one being converted: a thin underline.
+    Converted,
+    /// The clause being converted: a thick underline, the candidates under it.
+    Target,
+}
+/// What an editor keeps for an input method that reaches into its text
+/// (Windows' Text Services Framework), made when one first does: its
+/// composition's clauses, and where its text's UTF-16 offsets are.
+#[derive(Default)]
+struct ImeState {
+    clauses: std::cell::RefCell<Vec<(Range<usize>, ClauseStyle)>>,
+    utf16: std::cell::RefCell<Option<Utf16Starts>>,
+}
+/// The revision of a text, and its pieces' UTF-8 and UTF-16 starts then.
+type Utf16Starts = (u64, Vec<(usize, usize)>);
+/// `at` (a byte offset into `text`) on a character's start, back from it.
+fn floor(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
 /// What an edit was, for joining runs of them into one undo step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Run {
@@ -167,6 +198,9 @@ pub struct TextEditor {
     /// The run the last undo step is, while the next edit of its kind can
     /// join it: typing, or deleting one way, as AppKit's text views undo.
     run: Option<Run>,
+    /// For an input method that reaches into the text: one pointer until
+    /// one does.
+    ime: std::cell::OnceCell<Box<ImeState>>,
 }
 impl Default for TextEditor {
     fn default() -> Self {
@@ -203,6 +237,7 @@ impl TextEditor {
             history_limit: 100,
             history_bytes: 4 * 1024 * 1024,
             run: None,
+            ime: std::cell::OnceCell::new(),
         }
     }
     /// The committed text, without any preedit: borrowed while short, a
@@ -1002,6 +1037,128 @@ impl TextEditor {
         };
         let cursor = cursor.map(|(a, b)| (clamp(a), clamp(b)));
         self.preedit = Some(Preedit { text, cursor });
+        if let Some(ime) = self.ime.get() {
+            ime.clauses.borrow_mut().clear();
+        }
+    }
+    /// Set the preedit as `set_preedit` does, with the input method's
+    /// clauses: byte ranges of `text` and how each is marked (Windows' display
+    /// attributes), underlined each its own way, the candidates under the
+    /// `Target`. Ranges past `text`, or not on character boundaries, are cut
+    /// to it.
+    pub fn set_preedit_clauses(
+        &mut self,
+        text: impl Into<String>,
+        cursor: Option<(usize, usize)>,
+        clauses: &[(Range<usize>, ClauseStyle)],
+    ) {
+        let text = text.into();
+        let floor = |n: usize| {
+            let mut n = n.min(text.len());
+            while !text.is_char_boundary(n) {
+                n -= 1;
+            }
+            n
+        };
+        let clauses: Vec<_> = clauses
+            .iter()
+            .map(|(range, style)| (floor(range.start)..floor(range.end), *style))
+            .filter(|(range, _)| range.start < range.end)
+            .collect();
+        self.set_preedit(text, cursor);
+        if self.preedit.is_some() && !clauses.is_empty() {
+            *self.ime().clauses.borrow_mut() = clauses;
+        }
+    }
+    /// The preedit's clauses (`set_preedit_clauses`): none for a preedit set
+    /// without them, or no preedit.
+    pub fn preedit_clauses(&self) -> Vec<(Range<usize>, ClauseStyle)> {
+        match self.ime.get().filter(|_| self.preedit.is_some()) {
+            Some(ime) => ime.clauses.borrow().clone(),
+            None => Vec::new(),
+        }
+    }
+    fn ime(&self) -> &ImeState {
+        self.ime.get_or_init(Box::default)
+    }
+    /// Replace the text in `range` (byte offsets, cut to grapheme
+    /// boundaries) with `text` as one undo step, the caret after it: an input
+    /// method converting text again, or correcting it.
+    pub fn replace_range(&mut self, range: Range<usize>, text: &str) -> bool {
+        let start = self.clamp(range.start);
+        let end = self.clamp(range.end.max(range.start));
+        self.run = None;
+        self.cancel_preedit();
+        let before = self.selection;
+        self.selection = Selection {
+            anchor: start,
+            focus: end,
+        };
+        let changed = self.replace(text, None);
+        if !changed {
+            self.selection = before;
+        }
+        changed
+    }
+    /// The committed text's length in UTF-16 code units, as Windows counts.
+    pub fn utf16_len(&self) -> usize {
+        self.utf16_starts(|starts, _| starts.last().map_or(0, |(_, u)| *u))
+    }
+    /// Byte offset `at` as a UTF-16 offset (a byte inside a character
+    /// counts from that character's start).
+    pub fn byte_to_utf16(&self, at: usize) -> usize {
+        let at = at.min(self.text.len());
+        self.utf16_starts(|starts, parts| {
+            // The piece `at` is in, and on from its start.
+            let piece = starts.partition_point(|(b, _)| *b <= at).saturating_sub(1);
+            let (byte, unit) = starts[piece];
+            let Some(text) = parts.get(piece) else {
+                return unit;
+            };
+            unit + text[..floor(text, at - byte)].encode_utf16().count()
+        })
+    }
+    /// UTF-16 offset `at` as a byte offset, on a character's start (an
+    /// offset between a surrogate pair's halves counts from the pair).
+    pub fn utf16_to_byte(&self, at: usize) -> usize {
+        self.utf16_starts(|starts, parts| {
+            let piece = starts.partition_point(|(_, u)| *u <= at).saturating_sub(1);
+            let (byte, unit) = starts[piece];
+            let Some(text) = parts.get(piece) else {
+                return byte;
+            };
+            let mut units = unit;
+            for (i, c) in text.char_indices() {
+                if units + c.len_utf16() > at {
+                    return byte + i;
+                }
+                units += c.len_utf16();
+            }
+            byte + text.len()
+        })
+    }
+    /// `f` of each piece's UTF-8 and UTF-16 starts (the text's end last)
+    /// and the pieces, kept for the revision until the text changes.
+    fn utf16_starts<R>(&self, f: impl FnOnce(&[(usize, usize)], &[&str]) -> R) -> R {
+        let ime = self.ime();
+        let mut cached = ime.utf16.borrow_mut();
+        self.text.with_parts(|parts| {
+            if cached
+                .as_ref()
+                .is_none_or(|(revision, _)| *revision != self.revision)
+            {
+                let mut starts = Vec::with_capacity(parts.len() + 1);
+                let (mut byte, mut unit) = (0, 0);
+                for part in parts {
+                    starts.push((byte, unit));
+                    byte += part.len();
+                    unit += part.encode_utf16().count();
+                }
+                starts.push((byte, unit));
+                *cached = Some((self.revision, starts));
+            }
+            f(&cached.as_ref().unwrap().1, parts)
+        })
     }
     /// Clear the preedit and insert `text`, what the input method
     /// committed, as typing. False when the text didn't change.
@@ -1128,6 +1285,77 @@ mod tests {
         e.set_selection(0, 2);
         assert!(!e.transpose(), "not a selection");
         assert_eq!(e.text(), "bac\né");
+    }
+    #[test]
+    fn utf16_offsets_count_as_windows_does_and_follow_edits() {
+        let mut e = TextEditor::new("aé😀日");
+        // a 1, é 1, 😀 2 (a surrogate pair), 日 1.
+        assert_eq!(e.utf16_len(), 5);
+        assert_eq!(
+            [0, 1, 3, 7, 10].map(|b| e.byte_to_utf16(b)),
+            [0, 1, 2, 4, 5]
+        );
+        assert_eq!(
+            [0, 1, 2, 4, 5].map(|u| e.utf16_to_byte(u)),
+            [0, 1, 3, 7, 10]
+        );
+        // Between the pair's halves: the pair's start. Past the end: the end.
+        assert_eq!(e.utf16_to_byte(3), 3);
+        assert_eq!(e.utf16_to_byte(99), 10);
+        assert_eq!(e.byte_to_utf16(5), 2, "inside 😀's bytes: its start");
+        e.set_selection(0, 0);
+        e.insert("😀");
+        assert_eq!(e.utf16_len(), 7, "counted again after an edit");
+        // A long text, in chunks: offsets in a later chunk.
+        let long = "x".repeat(super::LONG * 2) + "😀é";
+        let e = TextEditor::new(long.clone());
+        assert!(e.long_text().is_some());
+        let n = super::LONG * 2;
+        assert_eq!(e.utf16_len(), n + 3);
+        assert_eq!(e.byte_to_utf16(n + 4), n + 2);
+        assert_eq!(e.utf16_to_byte(n + 2), n + 4);
+        assert_eq!(e.utf16_to_byte(n + 1), n, "inside the pair: its start");
+    }
+    #[test]
+    fn replace_range_is_one_undo_step_with_the_caret_after() {
+        let mut e = TextEditor::new("hello world");
+        e.set_selection(1, 1);
+        assert!(e.replace_range(6..11, "there"));
+        assert_eq!(
+            (e.text().as_ref(), e.selection().focus),
+            ("hello there", 11)
+        );
+        assert!(e.undo());
+        assert_eq!(e.text(), "hello world");
+        assert!(!e.replace_range(0..5, "hello"), "nothing changed");
+        assert_eq!(
+            e.selection().range(),
+            6..11,
+            "a replacement that changes nothing leaves the selection"
+        );
+    }
+    #[test]
+    fn preedit_clauses_are_cut_to_the_text_and_go_with_it() {
+        use super::ClauseStyle;
+        let mut e = TextEditor::new("");
+        e.set_preedit_clauses(
+            "日本",
+            None,
+            &[
+                (0..4, ClauseStyle::Target),
+                (4..99, ClauseStyle::Input),
+                (6..6, ClauseStyle::Input),
+            ],
+        );
+        assert_eq!(
+            e.preedit_clauses(),
+            [(0..3, ClauseStyle::Target), (3..6, ClauseStyle::Input)]
+        );
+        e.set_preedit("日本", None);
+        assert!(e.preedit_clauses().is_empty(), "a preedit without them");
+        e.set_preedit_clauses("日本", None, &[(0..3, ClauseStyle::Converted)]);
+        e.commit_preedit("日本");
+        assert!(e.preedit_clauses().is_empty(), "committed");
     }
     #[test]
     fn ime_does_not_mutate_until_commit() {
