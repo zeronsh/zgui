@@ -541,7 +541,7 @@ def release_section(release, e):
 # The field scene: each framework's own text field, focused, left alone;
 # how its caret draws, which is what decides its memory.
 FIELD_CARETS = {
-    'zgx': 'zgx&#8217;s text input: its caret blinks as the system&#8217;s, drawn by Core Animation, so the window draws no frame while it blinks',
+    'zgx': 'zgx&#8217;s text input: its caret blinks as the system&#8217;s, a Core Animation layer shown and hidden each phase, so the window draws no frame while it blinks',
     'gpui-fast': 'GPUI has no text field of its own: a 2 &#215; 20 point bar shown and hidden every 530 ms in a still window, as a caret blinks',
     'mygo': 'MyGo&#8217;s <code>TextInput</code>: its caret blinks every 530 ms, a frame each time',
     'rune': 'Rune&#8217;s <code>text_input</code>: its caret does not blink, so the window draws no frame while it is left alone',
