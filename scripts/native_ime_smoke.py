@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Drive an owned IBus/libpinyin XIM session with actual native key events.
 
+`--password`: the first editor is a password field. Pinyin typed into it
+types its letters (no preedit, nothing composed), as a browser's password
+field takes no input method.
+
 `--server-gone`: the input method's server (ibus-x11) goes while a focus
 for the app is queued behind it (the app stopped meanwhile), as when IBus
 went as a window closed (#564); the app takes the focus without waiting on
@@ -18,6 +22,27 @@ import tempfile
 import time
 
 from platform_smoke import release_mounts, stop, wait_for_wm, use_ibus_engine, wait_for_ibus_xim, wait_for_exit, close_window
+
+
+def password(env, app, window, xdo, key, type_text, output):
+    """Pinyin into a password field: the letters themselves, nothing composed."""
+    type_text('nihao'); key('space')
+    deadline = time.monotonic() + 10
+    while True:
+        log = (output/'application.log').read_text()
+        models = re.findall(r'MODEL \d+ first=(".*?") second=', log)
+        if models and json.loads(models[-1]) == 'nihao ':
+            break
+        if time.monotonic() > deadline:
+            raise AssertionError(f'the password field took {models[-1:] or "nothing"}, not the letters typed')
+        time.sleep(.1)
+    composed = [line for line in log.splitlines() if line.startswith(('PREEDIT first', 'COMMIT first'))]
+    if composed:
+        raise AssertionError(f'an input method composed into the password field: {composed}')
+    xdo('windowactivate', window); time.sleep(.3); xdo('key', 'alt+F4')
+    wait_for_exit(app, env, output, 10)
+    (output/'result.json').write_text(json.dumps({'result': 'pass'}, indent=2)+'\n')
+    print('PASS: pinyin typed into a password field typed its letters; no input method composed there')
 
 
 def server_gone(env, app, window, xdo, key, type_text, output):
@@ -72,6 +97,7 @@ def main():
     parser.add_argument('binary', type=pathlib.Path)
     parser.add_argument('--output', type=pathlib.Path, required=True)
     parser.add_argument('--server-gone', action='store_true', help="ibus-x11 goes with a focus queued (#564)")
+    parser.add_argument('--password', action='store_true', help="a password field takes no input method")
     args = parser.parse_args()
     for executable in ('Xvfb', 'openbox', 'dbus-daemon', 'gsettings', 'ibus-daemon', 'ibus', 'xdotool', 'xwininfo'):
         if shutil.which(executable) is None:
@@ -131,7 +157,8 @@ def main():
             def xdo(*arguments):
                 return subprocess.check_output(['xdotool', *map(str,arguments)], env=env, text=True).strip()
             with (args.output / 'application.log').open('w') as output:
-                app = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=output, stderr=output)
+                app = subprocess.Popen([str(args.binary.resolve())] + (['--password'] if args.password else []),
+                                       env=env, stdout=output, stderr=output)
                 deadline=time.monotonic()+20
                 while True:
                     found=subprocess.run(['xdotool','search','--onlyvisible','--pid',str(app.pid)],env=env,capture_output=True,text=True)
@@ -228,6 +255,9 @@ def main():
                 use_ibus_engine(env,'libpinyin',ime)
                 if args.server_gone:
                     server_gone(env, app, window, xdo, key, type_text, args.output)
+                    return
+                if args.password:
+                    password(env, app, window, xdo, key, type_text, args.output)
                     return
                 type_text('nihao');capture(1,'first')
                 key('space');capture(2)

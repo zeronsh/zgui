@@ -1,4 +1,6 @@
 //! Native input-method probe; the application never synthesizes IME events.
+//! `--password`: the first editor is a password field, which no input
+//! method composes into (`scripts/native_ime_smoke.py --password`).
 use std::time::Duration;
 use zgx::{
     compose::prelude::*,
@@ -77,6 +79,7 @@ fn open_input_method() {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let observe = std::env::args().any(|arg| arg == "--native-observe");
+    let password = std::env::args().any(|arg| arg == "--password");
     #[cfg(windows)]
     let open_ime = std::env::args().any(|arg| arg == "--open-ime");
     Application::new()
@@ -122,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .gap(12.)
                     .text_color(Color(231, 236, 246, 255))
                     .child(text("Native input-method composition").h(24.))
-                    .child(editor("first", first.clone()))
+                    .child(editor("first", first.clone()).secure(password))
                     .child(text("Second editor").h(24.))
                     .child(editor("second", second.clone())),
             );

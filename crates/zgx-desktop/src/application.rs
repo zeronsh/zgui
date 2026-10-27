@@ -1367,6 +1367,9 @@ struct Host {
     pointer_inside: bool,
     ime_geometry: Option<Rect>,
     ime_target: Option<NodeId>,
+    /// A password field has the keyboard (`native_ime::password_focused`):
+    /// on macOS, secure keyboard entry is on meanwhile.
+    password: bool,
     gpu_stats: Option<crate::gpu_stats::GpuStatsLog>,
     /// `ZGX_DAMAGE_CHECK=1`: compare every damaged frame with a full
     /// repaint and report stale pixels (slow; for debugging damage).
@@ -1676,6 +1679,7 @@ impl Host {
             pointer_inside: false,
             ime_geometry: None,
             ime_target: None,
+            password: false,
             native,
             popups,
             native_drag: Default::default(),
@@ -1827,6 +1831,11 @@ impl Host {
         }
     }
     fn sync_ime_cancellation(&mut self) {
+        let password = crate::native_ime::password_focused(&self.context.ui, self.native_focused);
+        if password != std::mem::replace(&mut self.password, password) {
+            #[cfg(target_os = "macos")]
+            crate::native_ime::secure_input(password);
+        }
         // Update native permission before event delivery and before hidden-window
         // drawing gates. Read-only editors retain logical focus but no IME context.
         let target = crate::native_ime::editable_editor(&self.context.ui, self.native_focused)
@@ -4628,6 +4637,11 @@ fn borderless_resize_never_calls_the_style_mutating_native_zoom_query() {
 
 impl Drop for Host {
     fn drop(&mut self) {
+        // Secure keyboard entry ends with the window that turned it on.
+        #[cfg(target_os = "macos")]
+        if std::mem::take(&mut self.password) {
+            crate::native_ime::secure_input(false);
+        }
         // Closed before its last move settled: saved now.
         if self.frame_save_at.take().is_some() {
             self.save_frame();
