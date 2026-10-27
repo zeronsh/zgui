@@ -613,6 +613,336 @@ fn patch_sizes(style: &mut crate::scene::Style, next: &Styles) {
 /// what a style effect re-running spent.
 pub(crate) type DynamicStyle = Box<dyn FnMut(&mut Option<Styles>)>;
 
+/// A style effect's full application: its styles and typography resolved
+/// again and written to the scene. Out of line, so that the run changing
+/// paint alone (every animated frame) keeps the effect small.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn full_application(
+    storage: std::rc::Rc<crate::widgets::UiStorage>,
+    node: NodeId,
+    base: &Styles,
+    produced: Option<Styles>,
+    active_variants: [(bool, &Option<Box<Styles>>); 4],
+    has_disabled: bool,
+    previous_disabled: &mut Option<bool>,
+    is_disabled: bool,
+    object_fit: &Option<Signal<crate::style::ObjectFit>>,
+    inherited: &Signal<Typography>,
+    parent_subscribed: &mut bool,
+    output: &Option<Signal<Typography>>,
+    intrinsic: &Option<Signal<(f32, f32)>>,
+    layout_target: &Option<Signal<Option<NodeId>>>,
+    memo: &mut Option<Box<Memo>>,
+    state: Interaction,
+    is_text: bool,
+    scope: &Option<std::rc::Rc<crate::theme::ThemeScope>>,
+    body_subscribed: &mut bool,
+    glass: &mut Option<bool>,
+    originals: &Originals,
+) {
+    let mut ui = Ui::from_storage(storage);
+    let mut resolved = base.clone();
+    if let Some(produced) = &produced {
+        resolved.merge(produced);
+    }
+    for (enabled, variant) in active_variants {
+        if enabled && let Some(variant) = variant {
+            resolved.merge(variant);
+        }
+    }
+    if has_disabled && *previous_disabled != Some(is_disabled) {
+        *previous_disabled = Some(is_disabled);
+        ui.runtime
+            .clone()
+            .untracked(|| ui.set_disabled(node, is_disabled));
+    }
+    if let Some(output) = &object_fit {
+        output.set(resolved.overflow().object_fit.unwrap_or_default());
+    }
+    // Only observe inherited typography when a field is actually inherited
+    // (and from then on: a later run setting every field is rare).
+    let tracks_parent = resolved.rare().text_overflow.is_none()
+        || resolved.rare().line_clamp.is_none()
+        || resolved.text_color.is_none()
+        || resolved.text_size.is_none()
+        || resolved.text_wrap.is_none()
+        || resolved.font_family.is_none()
+        || resolved.rare().font_features.is_none()
+        || resolved.text_align.is_none()
+        || resolved.rare().font_fallbacks.is_none()
+        || resolved.font_weight.is_none()
+        || resolved.overflow().italic.is_none()
+        || resolved.line_height.is_none()
+        || resolved.rare().letter_spacing.is_none()
+        || resolved.rare().underline.is_none()
+        || resolved.rare().underline_offset.is_none();
+    let parent_version = inherited.version();
+    if tracks_parent && !std::mem::replace(parent_subscribed, true) {
+        inherited.subscribe();
+    }
+    let parent = inherited.with_untracked(Clone::clone);
+    // Nothing of its own (the usual dynamic style: sizes, colours): the
+    // parent's typography, as it is.
+    let current = if !resolved.sets_typography() {
+        parent
+    } else {
+        let size = match (
+            resolved.text_size.get(),
+            token_of(&resolved, crate::theme::Field::TextSize),
+        ) {
+            (Some(_), Some(token)) => Themed::Token(token),
+            (Some(size), None) => Themed::Value(size),
+            (None, _) => parent.size,
+        };
+        let family = match (
+            &resolved.font_family,
+            token_of(&resolved, crate::theme::Field::FontFamily),
+        ) {
+            (Some(_), Some(token)) => (Default::default(), Some(token)),
+            (Some(family), None) => (family.clone(), None),
+            (None, _) => (parent.font.family.clone(), parent.family),
+        };
+        Typography {
+            family: family.1,
+            display: crate::text_layout::TextOptions {
+                overflow: resolved
+                    .rare()
+                    .text_overflow
+                    .unwrap_or(parent.display.overflow),
+                line_clamp: resolved
+                    .rare()
+                    .line_clamp
+                    .unwrap_or(parent.display.line_clamp),
+            },
+            color: themed_color(&resolved).unwrap_or(parent.color),
+            size,
+            wrap: resolved.text_wrap.unwrap_or(parent.wrap),
+            font: crate::text_layout::FontStyle {
+                family: family.0,
+                features: resolved
+                    .rare()
+                    .font_features
+                    .clone()
+                    .unwrap_or_else(|| parent.font.features.clone()),
+                align: resolved.text_align.unwrap_or(parent.font.align),
+                fallbacks: resolved
+                    .rare()
+                    .font_fallbacks
+                    .clone()
+                    .unwrap_or_else(|| parent.font.fallbacks.clone()),
+                weight: resolved.font_weight.unwrap_or(parent.font.weight),
+                italic: resolved.overflow().italic.unwrap_or(parent.font.italic),
+                line_height: resolved.line_height.unwrap_or(parent.font.line_height),
+                letter_spacing: resolved
+                    .rare()
+                    .letter_spacing
+                    .unwrap_or(parent.font.letter_spacing),
+                masked: false,
+                underline: {
+                    let rare = resolved.rare();
+                    let offset = rare
+                        .underline_offset
+                        .or_else(|| parent.font.underline.and_then(|u| u.offset()));
+                    rare.underline
+                        .unwrap_or(parent.font.underline.is_some())
+                        .then(|| crate::text_layout::TextUnderline::new(offset))
+                },
+            },
+        }
+    };
+    // Compare before cloning: unchanged typography notifies nothing.
+    if let Some(output) = &output
+        && output.with_untracked(|old| *old != current)
+    {
+        output.set(current.clone());
+    }
+    // Read every remaining dependency before any early return so the
+    // effect keeps its subscriptions.
+    let intrinsic_size = intrinsic.as_ref().map(|size| size.get());
+    let content_layout = layout_target.as_ref().and_then(|target| target.get());
+    if let Some(memo) = memo.as_mut() {
+        let mut dynamic_rest = produced;
+        let paint = dynamic_rest.as_mut().map(Paint::take);
+        let moves_and_fades = paint.is_some_and(|p| p.transform.is_some() && p.opacity.is_some());
+        let paint = paint.map(|p| p.set());
+        memo.settled = Some(Settled {
+            dynamic: dynamic_rest,
+            paint,
+            moves_and_fades,
+            state,
+            disabled: is_disabled,
+            parent: tracks_parent,
+            parent_version,
+            intrinsic: intrinsic_size,
+            content: content_layout,
+            text: is_text.then_some((current.size, current.family)),
+        });
+    }
+    // Text shows its colour, size and family resolved in its scope (a
+    // token's change re-runs it); other nodes do not show typography.
+    let current = if is_text {
+        current.shown(scope.as_deref(), body_subscribed)
+    } else {
+        current
+    };
+    let opaque = opaque_glass(&ui, &mut resolved, &originals.kind);
+    *glass = opaque;
+    let inputs = (resolved, current, intrinsic_size, content_layout);
+    if memo
+        .as_ref()
+        .is_some_and(|memo| memo.applied.as_ref() == Some(&inputs))
+    {
+        return;
+    }
+    // Animations mostly change paint effects or the transform, which need
+    // neither layout nor a new paint kind, or a box's size and margins,
+    // which need only those in its layout style: update just those.
+    if let Some(Memo {
+        applied: Some(previous),
+        shown,
+        painted,
+        boxed,
+        ..
+    }) = memo.as_deref_mut()
+        && previous.1 == inputs.1
+        && previous.2 == inputs.2
+        && previous.3 == inputs.3
+        && (boxes(&previous.0) == boxes(&inputs.0) && shown.is_some()
+            || (
+                previous.0.width,
+                previous.0.width_percent,
+                previous.0.height,
+            ) == (inputs.0.width, inputs.0.width_percent, inputs.0.height)
+                && (previous.0.height_percent, previous.0.margin)
+                    == (inputs.0.height_percent, inputs.0.margin))
+    {
+        let sizes = (
+            previous.0.width,
+            previous.0.width_percent,
+            previous.0.height,
+            previous.0.height_percent,
+            previous.0.margin,
+        );
+        let next = &inputs.0;
+        let fields = previous.0.fields_mut(
+            crate::style::bit::WIDTH
+                | crate::style::bit::WIDTH_PERCENT
+                | crate::style::bit::HEIGHT
+                | crate::style::bit::HEIGHT_PERCENT
+                | crate::style::bit::MARGIN,
+        );
+        (
+            fields.width,
+            fields.width_percent,
+            fields.height,
+            fields.height_percent,
+            fields.margin,
+        ) = (
+            next.width,
+            next.width_percent,
+            next.height,
+            next.height_percent,
+            next.margin,
+        );
+        let before = (
+            previous.0.opacity,
+            previous.0.overflow_paint(),
+            previous.0.transform,
+            previous.0.local_transform,
+        );
+        let next = &inputs.0;
+        let fields = previous.0.fields_mut(Paint::BITS);
+        fields.set_overflow_paint(next.overflow_paint());
+        (fields.opacity, fields.transform, fields.local_transform) =
+            (next.opacity, next.transform, next.local_transform);
+        if previous.0 == *next {
+            // Written here from the resolved styles, not a dynamic paint.
+            *painted = false;
+            let resized = sizes
+                != (
+                    next.width,
+                    next.width_percent,
+                    next.height,
+                    next.height_percent,
+                    next.margin,
+                );
+            let mut scene = ui.scene.borrow_mut();
+            if resized && let Some(style) = shown {
+                patch_sizes(style, next);
+                *boxed = None;
+                scene.set_style(node, style.clone());
+            }
+            let mut effects = originals.effects;
+            if let Some(value) = next.opacity.get() {
+                effects.opacity = value;
+            }
+            if let Some(value) = next.overflow().blur.get() {
+                effects.blur_radius = value;
+            }
+            if let Some(value) = next.overflow().edge_fade.get() {
+                effects.edge_fade = value;
+            }
+            if let Some(value) = next.overflow().filter_blur.get() {
+                effects.filter_blur = value;
+            }
+            if let Some(value) = next.overflow().brightness.get() {
+                effects.brightness = value;
+            }
+            if let Some(value) = next.overflow().contrast.get() {
+                effects.contrast = value;
+            }
+            if let Some(value) = next.overflow().saturate.get() {
+                effects.saturate = value;
+            }
+            scene.set_effects(node, effects);
+            apply_mask(&mut scene, node, next, originals.mask());
+            scene.set_clip_inset(node, next.overflow().clip_inset.or(originals.inset()));
+            scene.set_transform(node, next.transform.unwrap_or(originals.transform));
+            scene.set_local_transform(node, next.local_transform.resolve(originals.local));
+            return;
+        }
+        let fields = previous.0.fields_mut(
+            crate::style::bit::WIDTH
+                | crate::style::bit::WIDTH_PERCENT
+                | crate::style::bit::HEIGHT
+                | crate::style::bit::HEIGHT_PERCENT
+                | crate::style::bit::MARGIN,
+        );
+        (
+            fields.width,
+            fields.width_percent,
+            fields.height,
+            fields.height_percent,
+            fields.margin,
+        ) = sizes;
+        let fields = previous.0.fields_mut(Paint::BITS);
+        let (opacity, overflow, transform, local_transform) = before;
+        fields.set_overflow_paint(overflow);
+        (fields.opacity, fields.transform, fields.local_transform) =
+            (opacity, transform, local_transform);
+    }
+    let mut first: Option<AppliedInputs> = None;
+    let (resolved, current, _, _) = match memo.as_mut() {
+        Some(memo) => &*memo.applied.insert(inputs),
+        None => &*first.insert(inputs),
+    };
+    let style = apply_resolved(
+        &ui,
+        node,
+        originals,
+        resolved,
+        current,
+        intrinsic_size,
+        content_layout,
+        layout_target.is_some(),
+    );
+    if let Some(memo) = memo.as_mut() {
+        memo.shown = Some(style);
+        memo.painted = false;
+        memo.boxed = None;
+    }
+}
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn mount_style_with_intrinsic(
     ui: &mut Ui,
@@ -1150,308 +1480,29 @@ pub(crate) fn mount_style_with_intrinsic(
                 return;
             }
         }
-        let mut ui = Ui::from_storage(storage);
-        let mut resolved = base.clone();
-        if let Some(produced) = &produced {
-            resolved.merge(produced);
-        }
-        for (enabled, variant) in active_variants {
-            if enabled && let Some(variant) = variant {
-                resolved.merge(variant);
-            }
-        }
-        if disabled.is_some() && previous_disabled != Some(is_disabled) {
-            previous_disabled = Some(is_disabled);
-            ui.runtime
-                .clone()
-                .untracked(|| ui.set_disabled(node, is_disabled));
-        }
-        if let Some(output) = &object_fit {
-            output.set(resolved.overflow().object_fit.unwrap_or_default());
-        }
-        // Only observe inherited typography when a field is actually inherited
-        // (and from then on: a later run setting every field is rare).
-        let tracks_parent = resolved.rare().text_overflow.is_none()
-            || resolved.rare().line_clamp.is_none()
-            || resolved.text_color.is_none()
-            || resolved.text_size.is_none()
-            || resolved.text_wrap.is_none()
-            || resolved.font_family.is_none()
-            || resolved.rare().font_features.is_none()
-            || resolved.text_align.is_none()
-            || resolved.rare().font_fallbacks.is_none()
-            || resolved.font_weight.is_none()
-            || resolved.overflow().italic.is_none()
-            || resolved.line_height.is_none()
-            || resolved.rare().letter_spacing.is_none()
-            || resolved.rare().underline.is_none()
-            || resolved.rare().underline_offset.is_none();
-        let parent_version = inherited.version();
-        if tracks_parent && !std::mem::replace(&mut parent_subscribed, true) {
-            inherited.subscribe();
-        }
-        let parent = inherited.with_untracked(Clone::clone);
-        // Nothing of its own (the usual dynamic style: sizes, colours): the
-        // parent's typography, as it is.
-        let current = if !resolved.sets_typography() {
-            parent
-        } else {
-            let size = match (
-                resolved.text_size.get(),
-                token_of(&resolved, crate::theme::Field::TextSize),
-            ) {
-                (Some(_), Some(token)) => Themed::Token(token),
-                (Some(size), None) => Themed::Value(size),
-                (None, _) => parent.size,
-            };
-            let family = match (
-                &resolved.font_family,
-                token_of(&resolved, crate::theme::Field::FontFamily),
-            ) {
-                (Some(_), Some(token)) => (Default::default(), Some(token)),
-                (Some(family), None) => (family.clone(), None),
-                (None, _) => (parent.font.family.clone(), parent.family),
-            };
-            Typography {
-                family: family.1,
-                display: crate::text_layout::TextOptions {
-                    overflow: resolved
-                        .rare()
-                        .text_overflow
-                        .unwrap_or(parent.display.overflow),
-                    line_clamp: resolved
-                        .rare()
-                        .line_clamp
-                        .unwrap_or(parent.display.line_clamp),
-                },
-                color: themed_color(&resolved).unwrap_or(parent.color),
-                size,
-                wrap: resolved.text_wrap.unwrap_or(parent.wrap),
-                font: crate::text_layout::FontStyle {
-                    family: family.0,
-                    features: resolved
-                        .rare()
-                        .font_features
-                        .clone()
-                        .unwrap_or_else(|| parent.font.features.clone()),
-                    align: resolved.text_align.unwrap_or(parent.font.align),
-                    fallbacks: resolved
-                        .rare()
-                        .font_fallbacks
-                        .clone()
-                        .unwrap_or_else(|| parent.font.fallbacks.clone()),
-                    weight: resolved.font_weight.unwrap_or(parent.font.weight),
-                    italic: resolved.overflow().italic.unwrap_or(parent.font.italic),
-                    line_height: resolved.line_height.unwrap_or(parent.font.line_height),
-                    letter_spacing: resolved
-                        .rare()
-                        .letter_spacing
-                        .unwrap_or(parent.font.letter_spacing),
-                    masked: false,
-                    underline: {
-                        let rare = resolved.rare();
-                        let offset = rare
-                            .underline_offset
-                            .or_else(|| parent.font.underline.and_then(|u| u.offset()));
-                        rare.underline
-                            .unwrap_or(parent.font.underline.is_some())
-                            .then(|| crate::text_layout::TextUnderline::new(offset))
-                    },
-                },
-            }
-        };
-        // Compare before cloning: unchanged typography notifies nothing.
-        if let Some(output) = &output
-            && output.with_untracked(|old| *old != current)
-        {
-            output.set(current.clone());
-        }
-        // Read every remaining dependency before any early return so the
-        // effect keeps its subscriptions.
-        let intrinsic_size = intrinsic.as_ref().map(|size| size.get());
-        let content_layout = layout_target.as_ref().and_then(|target| target.get());
-        if let Some(memo) = &mut memo {
-            let mut dynamic_rest = produced;
-            let paint = dynamic_rest.as_mut().map(Paint::take);
-            let moves_and_fades =
-                paint.is_some_and(|p| p.transform.is_some() && p.opacity.is_some());
-            let paint = paint.map(|p| p.set());
-            memo.settled = Some(Settled {
-                dynamic: dynamic_rest,
-                paint,
-                moves_and_fades,
-                state,
-                disabled: is_disabled,
-                parent: tracks_parent,
-                parent_version,
-                intrinsic: intrinsic_size,
-                content: content_layout,
-                text: is_text.then_some((current.size, current.family)),
-            });
-        }
-        // Text shows its colour, size and family resolved in its scope (a
-        // token's change re-runs it); other nodes do not show typography.
-        let current = if is_text {
-            current.shown(scope.as_deref(), &mut body_subscribed)
-        } else {
-            current
-        };
-        let opaque = opaque_glass(&ui, &mut resolved, &originals.kind);
-        glass = opaque;
-        let inputs = (resolved, current, intrinsic_size, content_layout);
-        if memo
-            .as_ref()
-            .is_some_and(|memo| memo.applied.as_ref() == Some(&inputs))
-        {
-            return;
-        }
-        // Animations mostly change paint effects or the transform, which need
-        // neither layout nor a new paint kind, or a box's size and margins,
-        // which need only those in its layout style: update just those.
-        if let Some(Memo {
-            applied: Some(previous),
-            shown,
-            painted,
-            boxed,
-            ..
-        }) = memo.as_deref_mut()
-            && previous.1 == inputs.1
-            && previous.2 == inputs.2
-            && previous.3 == inputs.3
-            && (boxes(&previous.0) == boxes(&inputs.0) && shown.is_some()
-                || (
-                    previous.0.width,
-                    previous.0.width_percent,
-                    previous.0.height,
-                ) == (inputs.0.width, inputs.0.width_percent, inputs.0.height)
-                    && (previous.0.height_percent, previous.0.margin)
-                        == (inputs.0.height_percent, inputs.0.margin))
-        {
-            let sizes = (
-                previous.0.width,
-                previous.0.width_percent,
-                previous.0.height,
-                previous.0.height_percent,
-                previous.0.margin,
-            );
-            let next = &inputs.0;
-            let fields = previous.0.fields_mut(
-                crate::style::bit::WIDTH
-                    | crate::style::bit::WIDTH_PERCENT
-                    | crate::style::bit::HEIGHT
-                    | crate::style::bit::HEIGHT_PERCENT
-                    | crate::style::bit::MARGIN,
-            );
-            (
-                fields.width,
-                fields.width_percent,
-                fields.height,
-                fields.height_percent,
-                fields.margin,
-            ) = (
-                next.width,
-                next.width_percent,
-                next.height,
-                next.height_percent,
-                next.margin,
-            );
-            let before = (
-                previous.0.opacity,
-                previous.0.overflow_paint(),
-                previous.0.transform,
-                previous.0.local_transform,
-            );
-            let next = &inputs.0;
-            let fields = previous.0.fields_mut(Paint::BITS);
-            fields.set_overflow_paint(next.overflow_paint());
-            (fields.opacity, fields.transform, fields.local_transform) =
-                (next.opacity, next.transform, next.local_transform);
-            if previous.0 == *next {
-                // Written here from the resolved styles, not a dynamic paint.
-                *painted = false;
-                let resized = sizes
-                    != (
-                        next.width,
-                        next.width_percent,
-                        next.height,
-                        next.height_percent,
-                        next.margin,
-                    );
-                let mut scene = ui.scene.borrow_mut();
-                if resized && let Some(style) = shown {
-                    patch_sizes(style, next);
-                    *boxed = None;
-                    scene.set_style(node, style.clone());
-                }
-                let mut effects = originals.effects;
-                if let Some(value) = next.opacity.get() {
-                    effects.opacity = value;
-                }
-                if let Some(value) = next.overflow().blur.get() {
-                    effects.blur_radius = value;
-                }
-                if let Some(value) = next.overflow().edge_fade.get() {
-                    effects.edge_fade = value;
-                }
-                if let Some(value) = next.overflow().filter_blur.get() {
-                    effects.filter_blur = value;
-                }
-                if let Some(value) = next.overflow().brightness.get() {
-                    effects.brightness = value;
-                }
-                if let Some(value) = next.overflow().contrast.get() {
-                    effects.contrast = value;
-                }
-                if let Some(value) = next.overflow().saturate.get() {
-                    effects.saturate = value;
-                }
-                scene.set_effects(node, effects);
-                apply_mask(&mut scene, node, next, originals.mask());
-                scene.set_clip_inset(node, next.overflow().clip_inset.or(originals.inset()));
-                scene.set_transform(node, next.transform.unwrap_or(originals.transform));
-                scene.set_local_transform(node, next.local_transform.resolve(originals.local));
-                return;
-            }
-            let fields = previous.0.fields_mut(
-                crate::style::bit::WIDTH
-                    | crate::style::bit::WIDTH_PERCENT
-                    | crate::style::bit::HEIGHT
-                    | crate::style::bit::HEIGHT_PERCENT
-                    | crate::style::bit::MARGIN,
-            );
-            (
-                fields.width,
-                fields.width_percent,
-                fields.height,
-                fields.height_percent,
-                fields.margin,
-            ) = sizes;
-            let fields = previous.0.fields_mut(Paint::BITS);
-            let (opacity, overflow, transform, local_transform) = before;
-            fields.set_overflow_paint(overflow);
-            (fields.opacity, fields.transform, fields.local_transform) =
-                (opacity, transform, local_transform);
-        }
-        let mut first: Option<AppliedInputs> = None;
-        let (resolved, current, _, _) = match &mut memo {
-            Some(memo) => &*memo.applied.insert(inputs),
-            None => &*first.insert(inputs),
-        };
-        let style = apply_resolved(
-            &ui,
+        full_application(
+            storage,
             node,
+            &base,
+            produced,
+            active_variants,
+            disabled.is_some(),
+            &mut previous_disabled,
+            is_disabled,
+            &object_fit,
+            &inherited,
+            &mut parent_subscribed,
+            &output,
+            &intrinsic,
+            &layout_target,
+            &mut memo,
+            state,
+            is_text,
+            &scope,
+            &mut body_subscribed,
+            &mut glass,
             &originals,
-            resolved,
-            current,
-            intrinsic_size,
-            content_layout,
-            layout_target.is_some(),
         );
-        if let Some(memo) = &mut memo {
-            memo.shown = Some(style);
-            memo.painted = false;
-            memo.boxed = None;
-        }
     });
     typography
 }
