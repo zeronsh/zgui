@@ -265,10 +265,6 @@ enum Kind {
         label: String,
         source: Box<dyn FnMut() -> std::sync::Arc<crate::image::ImageData>>,
     },
-    GpuView {
-        label: String,
-        view: crate::gpu_view::GpuView,
-    },
     Progress {
         label: String,
         value: Signal<f32>,
@@ -1599,9 +1595,21 @@ pub fn image_signal(
 /// is invalidated and, while it animates, every refresh it shows. It has no
 /// size of its own: give it one. `label` is its accessible name.
 pub fn gpu_view(label: impl Into<String>, view: &crate::gpu_view::GpuView) -> View {
-    View::new(Kind::GpuView {
-        label: label.into(),
-        view: view.clone(),
+    // A box mounted as any is, its frames set up once it is: no kind of its
+    // own for every element's mount to tell apart.
+    let (label, view) = (label.into(), view.clone());
+    component(move |cx| {
+        let runner = cx.try_service::<TaskRunner>();
+        let frames = cx.try_service::<crate::frame::FrameClock>();
+        div().on_mount(move |handle| {
+            if let Some(mut ui) = handle.ui.upgrade() {
+                ui.scene.borrow_mut().set_replaced(handle.node, true);
+                ui.semantics
+                    .borrow_mut()
+                    .set(handle.node, SemanticNode::new(Role::Image, label));
+                mount_gpu_view(&mut ui, handle.node, view, runner, frames);
+            }
+        })
     })
 }
 /// A vertical viewport for ordinary retained children, stacked in a column.
@@ -3460,16 +3468,6 @@ fn open_element(
             image_intrinsic = Some(intrinsic);
             root
         }
-        Kind::GpuView { label, view: gpu } => {
-            assert!(view.children.is_empty(), "GPU views own their pixels");
-            let root = ui.container(parent, Layout::Overlay, Default::default());
-            ui.scene.borrow_mut().set_replaced(root, true);
-            ui.semantics
-                .borrow_mut()
-                .set(root, SemanticNode::new(Role::Image, label));
-            mount_gpu_view(ui, root, gpu, &environment);
-            root
-        }
         Kind::RichText(binding) => {
             assert!(
                 view.children.is_empty(),
@@ -4954,7 +4952,8 @@ fn mount_gpu_view(
     ui: &mut Ui,
     root: NodeId,
     view: crate::gpu_view::GpuView,
-    environment: &Environment,
+    runner: Option<Rc<TaskRunner>>,
+    frames: Option<Rc<crate::frame::FrameClock>>,
 ) {
     use crate::scene::Style;
     let viewport = ui.container(
@@ -5027,23 +5026,21 @@ fn mount_gpu_view(
         scene.set_style(frame, boxed);
     });
     // Animating, a frame each refresh while it shows; otherwise no timer.
-    let Some(runner) = environment.services.get::<TaskRunner>() else {
+    let (Some(runner), Some(frames)) = (runner, frames) else {
         return;
     };
+    let frames = (*frames).clone();
     let visible = ui.observe_visibility(root);
     let presented = ui.observe_presentation();
-    let frames = environment
-        .services
-        .get::<crate::frame::FrameClock>()
-        .map(|clock| (*clock).clone());
     let task: Rc<RefCell<Option<TaskToken>>> = Default::default();
     ui.retain(root, task.clone());
     ui.bind(root, move || {
         let active = animating.get() && presented.get() && visible.get();
         drop(task.borrow_mut().take());
-        let (true, Some(frames)) = (active, frames.clone()) else {
+        if !active {
             return;
-        };
+        }
+        let frames = frames.clone();
         let requests = requests.clone();
         *task.borrow_mut() = Some(runner.spawn(Box::pin(async move {
             loop {

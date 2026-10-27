@@ -5100,23 +5100,17 @@ impl Scene {
     /// a frame of the view `id` shows.
     pub fn set_image_frame(&mut self, id: NodeId, image: Arc<crate::image::ImageData>) {
         let view = image.gpu_frame().expect("a GPU view's frame").view;
-        let node = self.node(id);
-        let resized = match &node.kind {
-            NodeKind::Image(old) if old.gpu_frame().is_some_and(|old| old.view == view) => {
-                if **old == *image {
-                    return;
-                }
-                (old.width(), old.height()) != (image.width(), image.height())
-                    && (node.style.width.is_none() || node.style.height.is_none())
-            }
-            _ => panic!("set_image_frame requires a node showing the same view's frame"),
-        };
-        self.damage_subtree(id);
-        self.node_mut(id).kind = NodeKind::Image(image);
-        self.invalidate(id, PAINT);
-        if resized {
-            self.invalidate_layout(id);
-        }
+        assert!(
+            matches!(&self.node(id).kind, NodeKind::Image(old)
+                if old.gpu_frame().is_some_and(|old| old.view == view)),
+            "set_image_frame requires a node showing the same view's frame"
+        );
+        // As `set_kind`, but the resources counted as they were. Through it,
+        // not beside it: its helpers keep the one caller they are inlined
+        // into, rather than costing every other change a call.
+        let resources = self.content_revision;
+        self.set_kind(id, NodeKind::Image(image));
+        self.content_revision = resources;
     }
     /// Append a node of `kind` with `style` as `parent`'s last child.
     pub fn append(&mut self, parent: NodeId, kind: NodeKind, mut style: Style) -> NodeId {
