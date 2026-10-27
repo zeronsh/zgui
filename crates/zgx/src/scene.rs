@@ -6727,7 +6727,8 @@ impl Scene {
         }
         if let Some(index) = node.alternates.iter().position(usable) {
             // Promote it: `arrange` places children from the current result.
-            let node = self.node_mut(id);
+            // Checked just above.
+            let node = self.tree_node_mut(id);
             let size = promote_measurement(&mut node.measurement, &mut node.alternates, index);
             node.arrange_dirty = true;
             return size;
@@ -6774,7 +6775,7 @@ impl Scene {
         let style = self.resolved_leaf_style(id, constraints);
         let padding = style.padding_edges.unwrap_or(Insets::all(style.padding));
         // A container's layout, and the room its border takes.
-        let (layout, border) = match &self.node(id).kind {
+        let (layout, border) = match &self.tree_node(id).kind {
             NodeKind::Panel { layout, quad } => (Some(*layout), quad.layout_border()),
             NodeKind::Container(layout) => (Some(*layout), Insets::default()),
             _ => (None, Insets::default()),
@@ -6819,7 +6820,7 @@ impl Scene {
         // A changed node's result from an earlier pass is dropped as this
         // one is stored: its buffers hold this one's placements.
         let pass = self.layout_pass;
-        let node = self.node_mut(id);
+        let node = self.tree_node_mut(id);
         let stale = node.dirty & LAYOUT != 0;
         let mut children = match &mut node.measurement {
             Some(last) if layout.is_some() && stale && last.pass != pass => {
@@ -6832,7 +6833,7 @@ impl Scene {
             None => self.leaf_size(id, &style, available_w),
             // An empty box (a bar, a swatch, a spacer): its padding and size,
             // as the flex pass below works them out with nothing in it.
-            Some(layout) if self.node(id).children.is_empty() => {
+            Some(layout) if self.tree_node(id).children.is_empty() => {
                 let gaps = 0.0 + style.gap * 0.0;
                 match layout {
                     Layout::Row => (gaps, 0.0),
@@ -6858,8 +6859,8 @@ impl Scene {
                 } = self.scratch.pop().unwrap_or_default();
                 ids.clear();
                 absolute.clear();
-                for &child in &self.node(id).children {
-                    if self.node(child).style.absolute {
+                for &child in &self.tree_node(id).children {
+                    if self.tree_node(child).style.absolute {
                         absolute.push(child);
                     } else {
                         ids.push(child);
@@ -6971,7 +6972,7 @@ impl Scene {
                 let natural_main = sizes
                     .iter()
                     .enumerate()
-                    .map(|(i, size)| main(*size) + main_margin(&self.node(ids[i]).style))
+                    .map(|(i, size)| main(*size) + main_margin(&self.tree_node(ids[i]).style))
                     .sum::<f32>()
                     + gaps;
                 let main_limit = if horizontal {
@@ -7008,7 +7009,9 @@ impl Scene {
                         let used: f32 = sizes
                             .iter()
                             .enumerate()
-                            .map(|(i, size)| main(*size) + main_margin(&self.node(ids[i]).style))
+                            .map(|(i, size)| {
+                                main(*size) + main_margin(&self.tree_node(ids[i]).style)
+                            })
                             .sum::<f32>()
                             + gaps;
                         let remaining = limit - used;
@@ -7256,7 +7259,7 @@ impl Scene {
                     cursor += main(sizes[i]) + main_margin(s) + style.gap + extra_gap;
                 }
                 for &child in &absolute {
-                    let margin = self.node(child).style.margin;
+                    let margin = self.tree_node(child).style.margin;
                     let placed = Constraints {
                         width: Some((inner_w - margin.left - margin.right).max(0.0)),
                         height: Some((inner_h - margin.top - margin.bottom).max(0.0)),
