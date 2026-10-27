@@ -5056,14 +5056,18 @@ impl GpuRenderer {
                     self.changed_texts.insert(item.id);
                 }
                 if len > item.room {
-                    // Emptied where it was; at the end, with room again.
-                    let old = item.start as usize..(item.start + item.len) as usize;
-                    kept.upload.wrote(item.start, item.start + item.len);
-                    kept.quads[old].fill(bytemuck::Zeroable::zeroed());
                     let room = len + text_room(len);
-                    (item.start, item.len, item.room) = (kept.quads.len() as u32, 0, room);
+                    // At the physical tail its room grows where it is;
+                    // otherwise emptied where it was, at the end again.
+                    if item.start + item.room != kept.quads.len() as u32 {
+                        let old = item.start as usize..(item.start + item.len) as usize;
+                        kept.upload.wrote(item.start, item.start + item.len);
+                        kept.quads[old].fill(bytemuck::Zeroable::zeroed());
+                        item.start = kept.quads.len() as u32;
+                    }
+                    (item.len, item.room) = (0, room);
                     kept.quads.resize(
-                        kept.quads.len() + room as usize,
+                        item.start as usize + room as usize,
                         bytemuck::Zeroable::zeroed(),
                     );
                 }
@@ -12703,5 +12707,120 @@ mod atlas_glyph_errors_tests {
         );
         assert_eq!(stats.glyph_uploads, 0);
         assert_eq!(stats.geometry_rebuilds, 0);
+    }
+}
+
+#[cfg(test)]
+mod kept_text_growth_tests {
+    use super::*;
+    use zgx::scene::{Layout, Style};
+
+    // Both initial positions, repeated room growth and shorter values; the
+    // kept ranges are inspected, so the pixels can't pass only because
+    // every item was made again.
+    #[test]
+    fn growing_kept_text_matches_fresh_and_clears_shorter_values() {
+        let lengths = [
+            12, 12, 12, 12, 12, 12, 30, 50, 80, 130, 200, 320, 80, 12, 380, 20,
+        ];
+        for scale in [1., 1.5, 2.] {
+            for trailing in [false, true] {
+                let width = (320. * scale) as u32;
+                let height = (200. * scale) as u32;
+                let mut gpu = GpuRenderer::new(width, height).unwrap();
+                gpu.set_scale_factor(scale);
+                let mut scene = Scene::new(320., 200.);
+                scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+                let fixed = |w, h| Style {
+                    width: Some(w),
+                    height: Some(h),
+                    ..Default::default()
+                };
+                scene.append(
+                    scene.root(),
+                    NodeKind::Rect(Color(10, 20, 30, 255)),
+                    fixed(320., 200.),
+                );
+                let text = scene.append(
+                    scene.root(),
+                    NodeKind::Text {
+                        text: "".into(),
+                        font_size: 12.,
+                        color: Color(220, 230, 240, 255),
+                    },
+                    fixed(320., 200.),
+                );
+                if trailing {
+                    scene.append(
+                        scene.root(),
+                        NodeKind::Rect(Color(120, 25, 90, 140)),
+                        fixed(80., 20.),
+                    );
+                }
+                let (mut tails, mut moves, mut shrinks) = (0, 0, 0);
+                for (step, &length) in lengths.iter().enumerate() {
+                    let value: String = (0..length)
+                        .map(|at| match at % 8 {
+                            7 => ' ',
+                            _ => char::from(b'a' + ((at + step) % 20) as u8),
+                        })
+                        .collect();
+                    let before = gpu.kept.as_ref().and_then(|kept| {
+                        kept.items
+                            .iter()
+                            .find(|item| item.id == text)
+                            .map(|item| (item.start, item.len, item.room, kept.quads.len()))
+                    });
+                    scene.set_kind(
+                        text,
+                        NodeKind::Text {
+                            text: value.into(),
+                            font_size: 12.,
+                            color: Color(220, 230, 240, 255),
+                        },
+                    );
+                    scene.flush();
+                    let full = [Rect::new(0., 0., 320., 200.)];
+                    let stats = gpu.render(&scene, &full).unwrap();
+                    if let (Some((start, len, room, total)), Some(kept)) = (before, &gpu.kept) {
+                        let item = kept.items.iter().find(|item| item.id == text).unwrap();
+                        if stats.patched_items > 0 && item.room > room {
+                            if start as usize + room as usize == total {
+                                tails += 1;
+                                assert_eq!(item.start, start, "a text at the tail grows in place");
+                                assert_eq!(kept.quads.len(), start as usize + item.room as usize);
+                            } else {
+                                moves += 1;
+                                assert_eq!(item.start as usize, total, "another moves to the end");
+                            }
+                        }
+                        if stats.patched_items > 0 && item.len < len {
+                            shrinks += 1;
+                            let spare = &kept.quads[(item.start + item.len) as usize
+                                ..(item.start + item.room) as usize];
+                            let bytes: &[u8] = bytemuck::cast_slice(spare);
+                            assert!(
+                                bytes.iter().all(|&byte| byte == 0),
+                                "no glyphs left in its spare room"
+                            );
+                        }
+                    }
+                    let actual = gpu.readback().unwrap();
+                    let mut fresh =
+                        GpuRenderer::new_with_context(width, height, &gpu.context()).unwrap();
+                    fresh.set_scale_factor(scale);
+                    fresh.render(&scene, &full).unwrap();
+                    assert!(
+                        actual == fresh.readback().unwrap(),
+                        "scale {scale}, trailing {trailing}, step {step}"
+                    );
+                }
+                assert!(tails >= 2, "repeated growth at the tail, got {tails}");
+                assert!(shrinks >= 2, "shorter values, got {shrinks}");
+                if trailing {
+                    assert!(moves >= 1, "a text before another moves");
+                }
+            }
+        }
     }
 }
