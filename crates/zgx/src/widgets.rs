@@ -4178,8 +4178,8 @@ impl Ui {
             // show. Given its clauses (Windows' display attributes), a line
             // under each, apart from the next, thick under the target.
             let mut clause_area = None;
-            let clauses = e.preedit_clauses();
             let lines: Vec<_> = if let Some(preedit) = e.preedit() {
+                let clauses = e.preedit_clauses();
                 let start = selection.range().start;
                 let line = |r: Rect, thick: f32| {
                     let y = r.y + r.height - 1. - thick - scroll.1;
