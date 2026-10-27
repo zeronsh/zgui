@@ -561,6 +561,13 @@ struct Drawables {
     /// their work is scheduled (`ZGX_DRAWABLE_TXN`, PROTOTYPE), rather than
     /// by Metal when it completes.
     transactional: bool,
+    /// DIAGNOSTIC (`ZGX_DRAWABLE_ON_HOST`, not for main): the layer is the
+    /// host itself (wgpu's CAMetalLayer, the view's), the tiles' layer out of
+    /// the tree: one layer, as MyGo's window has.
+    on_host: bool,
+    /// DIAGNOSTIC (`ZGX_DRAWABLE_TOGGLE=hostclear`): the host's own contents,
+    /// put back on even seconds.
+    saved_host: Option<Retained<AnyObject>>,
 }
 /// Hides the plain layer's tiles once the video layer above it shows a
 /// frame: until then they show the frame before; after, under a window's
@@ -937,6 +944,113 @@ impl Layer {
         feedback: bool,
     ) -> Option<(crate::metal_frame::Texture, CFRetained<IOSurfaceRef>)> {
         let opaque = self.opaque.get();
+        if std::env::var_os("ZGX_LAYER_TREE").is_some() && self.drawables.is_none() {
+            // SAFETY: CALayer and NSObject getters, on the main thread.
+            unsafe fn describe(layer: &AnyObject, depth: usize) {
+                unsafe {
+                    let class: Retained<objc2_foundation::NSString> = msg_send![layer, className];
+                    let contents: Option<Retained<AnyObject>> = msg_send![layer, contents];
+                    let hidden: bool = msg_send![layer, isHidden];
+                    let opaque: bool = msg_send![layer, isOpaque];
+                    eprintln!(
+                        "zgx diag tree: {}{class} contents={} hidden={hidden} opaque={opaque}",
+                        "  ".repeat(depth),
+                        contents.is_some()
+                    );
+                    let subs: Option<Retained<AnyObject>> = msg_send![layer, sublayers];
+                    if let Some(subs) = subs {
+                        let count: usize = msg_send![&*subs, count];
+                        for at in 0..count {
+                            let sub: *mut AnyObject = msg_send![&*subs, objectAtIndex: at];
+                            describe(&*sub, depth + 1);
+                        }
+                    }
+                }
+            }
+            // SAFETY: NSObject's -className, on the main thread.
+            unsafe {
+                let class: Retained<objc2_foundation::NSString> = msg_send![&*self.host, className];
+                let up = self.host.superlayer();
+                let up_class: Option<Retained<objc2_foundation::NSString>> =
+                    up.as_ref().map(|up| msg_send![&**up, className]);
+                let contents: Option<Retained<AnyObject>> = msg_send![&*self.host, contents];
+                eprintln!(
+                    "zgx diag tree: host {class} contents={} superlayer {up_class:?}",
+                    contents.is_some()
+                );
+            }
+            // SAFETY: the host's root, walked on the main thread.
+            unsafe {
+                let mut root: Retained<AnyObject> = Retained::cast_unchecked(self.host.clone());
+                loop {
+                    let up: Option<Retained<AnyObject>> = msg_send![&*root, superlayer];
+                    match up {
+                        Some(up) => root = up,
+                        None => break,
+                    }
+                }
+                describe(&root, 0);
+            }
+        }
+        // The window surface's own CAMetalLayer (wgpu's), the host's superlayer.
+        let is_metal = |layer: &CALayer| -> bool {
+            // SAFETY: NSObject's -isKindOfClass: and -respondsToSelector:, on the main thread.
+            unsafe {
+                let kind: bool =
+                    msg_send![layer, isKindOfClass: <CAMetalLayer as objc2::ClassType>::class()];
+                let responds: bool =
+                    msg_send![layer, respondsToSelector: objc2::sel!(nextDrawable)];
+                kind || responds
+            }
+        };
+        let metal_host: Option<Retained<CAMetalLayer>> =
+            [Some(self.host.clone()), self.host.superlayer()]
+                .into_iter()
+                .flatten()
+                .find(|layer| is_metal(layer))
+                // SAFETY: checked just above to be a CAMetalLayer.
+                .map(|layer| unsafe { Retained::cast_unchecked(layer) });
+        if std::env::var_os("ZGX_LAYER_TREE").is_some() && self.drawables.is_none() {
+            // SAFETY: NSObject's -isKindOfClass:, on the main thread.
+            let kind: bool = unsafe {
+                msg_send![&*self.host, isKindOfClass: <CAMetalLayer as objc2::ClassType>::class()]
+            };
+            eprintln!(
+                "zgx diag tree: host is a CAMetalLayer: {kind}; metal host found: {}",
+                metal_host.is_some()
+            );
+        }
+        let on_host = std::env::var_os("ZGX_DRAWABLE_ON_HOST").is_some_and(|v| v != "0")
+            && metal_host.is_some();
+        if on_host && self.drawables.is_none() {
+            let layer = metal_host.clone().expect("checked");
+            layer.setDevice(Some(device));
+            layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+            layer.setFramebufferOnly(false);
+            layer.setPresentsWithTransaction(false);
+            // SAFETY: CoreGraphics' constant CFString, read only.
+            if let Some(space) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })) {
+                layer.setColorspace(Some(&space));
+            }
+            // SAFETY: CALayer's -contents, an object or nil.
+            let had: Option<Retained<AnyObject>> = unsafe { msg_send![&*layer, contents] };
+            crate::present_log::log(|| {
+                format!("drawables-start on-host host-contents={}", had.is_some())
+            });
+            eprintln!(
+                "zgx diag: drawables on the host layer (host had contents: {})",
+                had.is_some()
+            );
+            self.drawables = Some(Drawables {
+                layer,
+                pending: None,
+                shown: false,
+                transactional: false,
+                feedback: Default::default(),
+                on_host: true,
+                saved_host: None,
+            });
+        }
         let drawables = self.drawables.get_or_insert_with(|| {
             let layer = CAMetalLayer::new();
             layer.setDevice(Some(device));
@@ -970,6 +1084,8 @@ impl Layer {
                 shown: false,
                 transactional,
                 feedback: Default::default(),
+                on_host: false,
+                saved_host: None,
             }
         });
         // DIAGNOSTIC (the flush lane's ZGX_DRAWABLE_CS_ALT): no colorspace on
@@ -998,6 +1114,14 @@ impl Layer {
                 });
             }
         }
+        if drawables.on_host {
+            if drawables.layer.maximumDrawableCount() != 3 {
+                drawables.layer.setMaximumDrawableCount(3);
+            }
+            if drawables.layer.presentsWithTransaction() {
+                drawables.layer.setPresentsWithTransaction(false);
+            }
+        }
         let size = CGSize::new(width as f64, height as f64);
         if drawables.layer.drawableSize() != size {
             drawables.layer.setDrawableSize(size);
@@ -1012,9 +1136,41 @@ impl Layer {
             && std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .is_ok_and(|d| d.as_secs() % 2 == 1);
-        let opaque = opaque && !(odd && alt.as_deref() == Some("opaque"));
+        // `ZGX_DRAWABLE_OPAQUE=0`: never opaque (as MyGo's), for a whole run.
+        let opaque = opaque
+            && !(odd && alt.as_deref() == Some("opaque"))
+            && std::env::var_os("ZGX_DRAWABLE_OPAQUE").is_none_or(|v| v != "0");
         if drawables.layer.isOpaque() != opaque {
             transaction(|| drawables.layer.setOpaque(opaque));
+        }
+        if alt.as_deref() == Some("hostclear")
+            && drawables.shown
+            && !drawables.on_host
+            && let Some(metal) = &metal_host
+        {
+            // SAFETY: CALayer's -contents and -setContents:, an object or nil,
+            // on the main thread.
+            unsafe {
+                let now: Option<Retained<AnyObject>> = msg_send![&**metal, contents];
+                if odd && now.is_some() {
+                    if drawables.saved_host.is_none() {
+                        eprintln!(
+                            "zgx diag: the host layer holds contents; emptied on odd seconds"
+                        );
+                    }
+                    drawables.saved_host = now;
+                    transaction(|| {
+                        let _: () = msg_send![&**metal, setContents: std::ptr::null::<AnyObject>()];
+                    });
+                } else if !odd
+                    && now.is_none()
+                    && let Some(saved) = &drawables.saved_host
+                {
+                    transaction(|| {
+                        let _: () = msg_send![&**metal, setContents: &**saved];
+                    });
+                }
+            }
         }
         if alt.as_deref() == Some("detach") && drawables.shown {
             let attached = self.plain.superlayer().is_some();
@@ -1078,8 +1234,13 @@ impl Layer {
         if !drawables.shown {
             drawables.shown = true;
             let layer = drawables.layer.clone();
+            let on_host = drawables.on_host;
             transaction(|| {
-                layer.setHidden(false);
+                if on_host {
+                    self.plain.removeFromSuperlayer();
+                } else {
+                    layer.setHidden(false);
+                }
                 hide_tiles(&self.plain, None);
             });
             self.plain_shows.set(false);
@@ -1098,13 +1259,21 @@ impl Layer {
             && drawables.shown
         {
             drawables.shown = false;
-            drawables.layer.setHidden(true);
+            if drawables.on_host {
+                if self.plain.superlayer().is_none() {
+                    self.host.addSublayer(&self.plain);
+                }
+            } else {
+                drawables.layer.setHidden(true);
+            }
         }
     }
     /// Drop the drawable layer and its pool (at rest, showing a tile).
     pub fn release_drawables(&mut self) {
         if let Some(drawables) = self.drawables.take() {
-            transaction(|| drawables.layer.removeFromSuperlayer());
+            if !drawables.on_host {
+                transaction(|| drawables.layer.removeFromSuperlayer());
+            }
             crate::present_log::log(|| "drawables-drop".into());
         }
     }
@@ -1289,7 +1458,9 @@ impl Drop for Layer {
                 video.layer.removeFromSuperlayer();
             }
             self.plain.removeFromSuperlayer();
-            if let Some(drawables) = &self.drawables {
+            if let Some(drawables) = &self.drawables
+                && !drawables.on_host
+            {
                 drawables.layer.removeFromSuperlayer();
             }
             if let Some(probe) = &self.probe {
