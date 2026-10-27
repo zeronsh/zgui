@@ -3624,7 +3624,7 @@ impl Host {
                         delta_x: dx,
                         delta_y: dy,
                     };
-                    if !zgx::zoom::wheel(step.1, || self.dispatch_prevented(event))? {
+                    if !zgx::zoom::wheel_notched(step.1, || self.dispatch_prevented(event))? {
                         self.context.ui.zoom_wheel(-dy / step.1);
                     }
                 } else if crate::scroll_resample::enabled() {

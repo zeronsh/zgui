@@ -3489,7 +3489,7 @@ fn a_zoomable_element_takes_the_control_wheel_and_its_state_follows() {
     h.frames(2);
     h.ui.prepare_frame();
     h.ui.dispatch(zgx::input::InputEvent::PointerMove { x: 20., y: 20. });
-    let taken = zgx::zoom::wheel(40., || {
+    let taken = zgx::zoom::wheel_notched(40., || {
         h.ui.dispatch(zgx::input::InputEvent::Scroll {
             x: 20.,
             y: 20.,

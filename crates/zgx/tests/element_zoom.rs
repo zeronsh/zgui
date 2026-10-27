@@ -281,7 +281,7 @@ fn point(ui: &mut Ui, at: (f32, f32)) {
 /// first; whether one took it.
 fn control_wheel(ui: &mut Ui, at: (f32, f32), notches: f32) -> bool {
     point(ui, at);
-    zgx::zoom::wheel(40., || {
+    zgx::zoom::wheel_notched(40., || {
         ui.dispatch(zgx::input::InputEvent::Scroll {
             x: at.0,
             y: at.1,

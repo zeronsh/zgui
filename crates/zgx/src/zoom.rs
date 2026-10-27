@@ -40,7 +40,7 @@ thread_local! {
 /// `notch`: the points a notch scrolls, which a zoomable element counts
 /// its notches in (`View::zoomable`).
 #[doc(hidden)]
-pub fn wheel<R>(notch: f32, dispatch: impl FnOnce() -> R) -> R {
+pub fn wheel_notched<R>(notch: f32, dispatch: impl FnOnce() -> R) -> R {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -50,6 +50,13 @@ pub fn wheel<R>(notch: f32, dispatch: impl FnOnce() -> R) -> R {
     WHEEL.with(|wheel| wheel.set(Some(notch)));
     let _reset = Reset;
     dispatch()
+}
+/// `wheel_notched` with no notch known, as zgx-desktop 0.1.3 calls it: scroll
+/// views leave the Control-wheel to the window's zoom, and zoomable
+/// elements, which count notches, take none.
+#[doc(hidden)]
+pub fn wheel<R>(dispatch: impl FnOnce() -> R) -> R {
+    wheel_notched(f32::NAN, dispatch)
 }
 /// Whether the scroll being dispatched is a Control-wheel's zoom: a scroll
 /// view leaves it.

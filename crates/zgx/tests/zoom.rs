@@ -198,7 +198,7 @@ fn a_control_wheel_nothing_takes_zooms_a_level_a_notch_and_scrolls_nothing() {
     assert!(ui.wheel_zooms());
     // The host's Control-wheel: to the nodes first, then the zoom.
     let wheel = |ui: &mut Ui, delta_y: f32, notches: f32| {
-        let taken = zgx::zoom::wheel(40., || {
+        let taken = zgx::zoom::wheel_notched(40., || {
             ui.dispatch(InputEvent::Scroll {
                 x: 100.,
                 y: 100.,
@@ -240,4 +240,31 @@ fn a_control_wheel_nothing_takes_zooms_a_level_a_notch_and_scrolls_nothing() {
     // Off, the host does not ask.
     ui.set_zoomable(false);
     assert!(!ui.wheel_zooms());
+}
+
+#[test]
+fn a_control_wheel_without_its_notch_still_leaves_scroll_views_to_the_zoom() {
+    // zgx-desktop 0.1.3 calls `wheel` with no notch, and builds against
+    // this zgx after `cargo update -p zgx`.
+    let mut ui = Ui::new(300., 200.);
+    let offset = ui.signal(0_f32);
+    let rows: Vec<View> = (0..40).map(|i| text(format!("Row {i}"))).collect();
+    ui.mount(
+        scroll(offset.clone())
+            .w_full()
+            .h(200.)
+            .child(column().w_full().children(rows)),
+    );
+    ui.prepare_frame();
+    let taken = zgx::zoom::wheel(|| {
+        ui.dispatch(InputEvent::Scroll {
+            x: 100.,
+            y: 100.,
+            delta_x: 0.,
+            delta_y: 40.,
+        })
+        .default_prevented
+    });
+    assert!(!taken);
+    assert_eq!(offset.get(), 0., "the scroll view left it");
 }
