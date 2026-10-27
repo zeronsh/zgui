@@ -11342,8 +11342,8 @@ fn cluster_damage(damage: &[Rect], viewport: Rect) -> Vec<Rect> {
             // The root of `i`'s group: `i` until a cell joins it to another,
             // then that one's root (each join keeps it a root).
             let mut group = i;
-            let first =
-                |value: f32, count: usize| ((value / cell).floor().max(0.) as usize).min(count);
+            // (A cast floors what is past zero and saturates the rest.)
+            let first = |value: f32, count: usize| ((value / cell) as usize).min(count);
             let end =
                 |value: f32, count: usize| ((value / cell).ceil().max(0.) as usize).min(count);
             for row in first(r.y, rows)..end(r.y + r.height, rows) {
