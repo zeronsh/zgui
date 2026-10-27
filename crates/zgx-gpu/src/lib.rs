@@ -8892,13 +8892,22 @@ impl GpuRenderer {
         key: CacheKey,
         stats: &mut GpuStats,
     ) -> Result<Option<AtlasEntry>, GpuError> {
+        // A resident entry passed the same check when it went in: a patch
+        // takes it first. (A full frame keeps the old order.)
+        if MODE == PATCH
+            && let Some(entry) = get_in::<MODE, _, _>(&mut self.entries, &AtlasKey::from(key))
+        {
+            return Ok(*entry);
+        }
         let size = f32::from_bits(key.font_size_bits);
         if !size.is_finite() || size > MAX_ATLAS as f32 {
             return Err(GpuError(
                 "glyph font size exceeds atlas raster limit".into(),
             ));
         }
-        if let Some(entry) = get_in::<MODE, _, _>(&mut self.entries, &AtlasKey::from(key)) {
+        if MODE != PATCH
+            && let Some(entry) = get_in::<MODE, _, _>(&mut self.entries, &AtlasKey::from(key))
+        {
             return Ok(*entry);
         }
         self.raster_glyph(key, stats)
@@ -12581,5 +12590,118 @@ mod region_cover_tests {
             }
         }
         assert!(covered > 2_500, "only {covered} covered");
+    }
+}
+
+#[cfg(test)]
+mod atlas_glyph_errors_tests {
+    use super::*;
+
+    #[test]
+    fn cached_empty_glyphs_and_invalid_misses_keep_error_precedence() {
+        let mut gpu = GpuRenderer::new(4, 4).unwrap();
+        let key = |glyph: u16, size: f32| {
+            CacheKey::new(
+                Default::default(),
+                glyph,
+                size,
+                (0., 0.),
+                cosmic_text::fontdb::Weight::NORMAL,
+                0,
+                cosmic_text::CacheKeyFlags::empty(),
+            )
+            .0
+        };
+        for glyph in 0..8192 {
+            gpu.entries.insert(AtlasKey::from(key(glyph, 12.)), None);
+        }
+        let mut shaped = Shaped {
+            rich: None,
+            text_options: Default::default(),
+            decorations: Vec::new(),
+            font: Default::default(),
+            text: Arc::from(""),
+            size: 12.,
+            width: 4.,
+            height: 201.,
+            scale: 1.,
+            glyphs: [0., 100., 200.]
+                .into_iter()
+                .map(|y| Glyph {
+                    key: key(7, 12.),
+                    run: 0,
+                    x: 0.,
+                    y,
+                })
+                .collect(),
+            quads: Vec::new(),
+            atlas_epoch: 0,
+            last_used: 0,
+            prepared: None,
+        };
+        let mut stats = GpuStats::default();
+        let before = (gpu.entries.len(), gpu.entries.capacity(), gpu.atlas_epoch);
+        // These paths finish before touching the font system.
+        let fonts = gpu.fonts.clone();
+        let _borrow = fonts.borrow_mut();
+        assert!(
+            gpu.glyph::<PATCH>(key(7, 12.), &mut stats)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            gpu.glyph::<FRAME>(key(7, 12.), &mut stats)
+                .unwrap()
+                .is_none()
+        );
+        assert!(gpu.visible_lines(&shaped, 0., 1., 12., &mut stats).unwrap());
+        assert!(gpu.visible_glyphs.is_empty());
+        for size in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            MAX_ATLAS as f32 + 1.,
+        ] {
+            shaped.glyphs[0].key = key(u16::MAX, size);
+            let result = gpu.visible_lines(&shaped, 0., 1., 12., &mut stats);
+            assert_eq!(
+                result.err().unwrap().0,
+                "glyph font size exceeds atlas raster limit"
+            );
+            assert_eq!(
+                (gpu.entries.len(), gpu.entries.capacity(), gpu.atlas_epoch),
+                before
+            );
+            for patch in [false, true] {
+                let result = if patch {
+                    gpu.glyph::<PATCH>(key(u16::MAX, size), &mut stats)
+                } else {
+                    gpu.glyph::<FRAME>(key(u16::MAX, size), &mut stats)
+                };
+                assert_eq!(
+                    result.err().unwrap().0,
+                    "glyph font size exceeds atlas raster limit"
+                );
+                assert_eq!(
+                    (gpu.entries.len(), gpu.entries.capacity(), gpu.atlas_epoch),
+                    before
+                );
+            }
+        }
+        // Every finite size up to the limit passes the check, negatives
+        // included; the full table's error comes next.
+        for size in [-1., -0., 0., 12., MAX_ATLAS as f32] {
+            let result = gpu.glyph::<PATCH>(key(u16::MAX, size), &mut stats);
+            assert_eq!(
+                result.err().unwrap().0,
+                "glyph metadata exceeds 8192 entries in one frame"
+            );
+        }
+        assert_eq!(
+            (gpu.entries.len(), gpu.entries.capacity(), gpu.atlas_epoch),
+            before
+        );
+        assert_eq!(stats.glyph_uploads, 0);
+        assert_eq!(stats.geometry_rebuilds, 0);
     }
 }
