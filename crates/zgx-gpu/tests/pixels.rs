@@ -5743,3 +5743,32 @@ fn find_marks_are_rounded_whichever_shader_draws_the_text() {
         .count();
     assert_eq!(changed, 0, "find marks differ from the full shader's");
 }
+
+/// A box's edges land on device pixels (`snap_edges`), each rounded on its
+/// own: at 10.3 and 30.7 it covers pixels 10 to 30 whole.
+#[test]
+fn box_edges_snap_to_device_pixels() {
+    let _gpu_fixture = gpu_fixture();
+    use zgx::{compose::prelude::*, widgets::Ui};
+    let mut gpu = GpuRenderer::new(64, 16).unwrap();
+    let mut ui = Ui::new(64., 16.);
+    gpu.install_text(&mut ui.scene.borrow_mut());
+    ui.mount(
+        overlay().w(64.).h(16.).bg(rgb(0x000000)).child(
+            div()
+                .absolute()
+                .ml(10.3)
+                .mt(2.)
+                .w(20.4)
+                .h(10.)
+                .bg(rgb(0xffffff)),
+        ),
+    );
+    ui.prepare_frame();
+    let damage = ui.scene.borrow_mut().flush().damage;
+    gpu.render(&ui.scene.borrow(), &damage).unwrap();
+    let pixels = gpu.readback().unwrap();
+    let at = |x: usize| pixels[(6 * 64 + x) * 4];
+    eprintln!("SNAPROW {:?}", (8..33).map(at).collect::<Vec<_>>());
+    assert_eq!((at(9), at(10), at(30), at(31)), (0, 255, 255, 0));
+}
