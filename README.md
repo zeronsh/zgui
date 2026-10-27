@@ -1,6 +1,6 @@
 # zgx
 
-zgx is a retained-mode GUI framework in Rust for macOS, Windows and Linux. Components mount once and fine-grained signals update only the nodes that depend on them, so an idle window does no work and a busy one repaints only what changed. Interfaces are written in Rust or in Luau scripts that hot reload without losing state. It is young (0.1, used from git) and its API still changes.
+zgx is a retained-mode GUI framework in Rust for macOS, Windows and Linux. Components mount once and fine-grained signals update only the nodes that depend on them, so an idle window does no work and a busy one repaints only what changed. Interfaces are written in Rust or in Luau scripts that hot reload without losing state. It is young (0.1, on crates.io) and its API still changes.
 
 ## What it has
 
@@ -15,7 +15,7 @@ zgx is a retained-mode GUI framework in Rust for macOS, Windows and Linux. Compo
 
 ## Quick start
 
-In Rust, with the dependencies [getting started](docs/getting-started.md#in-rust) lists (zgx's crates from git, and the forks it builds with):
+In Rust, with the dependencies [getting started](docs/getting-started.md#in-rust) lists (`zgx = "0.1.3"` and `zgx-desktop = "0.1.3"` from crates.io):
 
 ```rust,no_run
 use zgx::compose::prelude::*;
@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-In Luau: put this in `hello/app.luau` and run `zgx-run hello/` (`LUAU_CXXFLAGS=-DNDEBUG cargo install --git https://github.com/zeronsh/zgx zgx-run`). Saving the file updates the window and keeps the count.
+In Luau: put this in `hello/app.luau` and run `zgx-run hello/` (`LUAU_CXXFLAGS=-DNDEBUG cargo install zgx-run`). Saving the file updates the window and keeps the count.
 
 ```lua
 local count = ui.state("count", 0)
