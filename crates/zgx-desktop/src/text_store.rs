@@ -39,6 +39,9 @@ pub(crate) struct TextStore {
     editor: Option<EditorHandle>,
     /// The composition's range in the document, while one is open.
     composition: Option<Range<usize>>,
+    /// The composition's text, the store's own: an editor drops its preedit
+    /// when it loses focus, and the composition is still committed into it.
+    composing: String,
     seen: Option<Seen>,
 }
 
@@ -47,14 +50,16 @@ impl TextStore {
         Self {
             editor: None,
             composition: None,
+            composing: String::new(),
             seen: None,
         }
     }
     /// The editor the document is now; `None` while no editor that takes an
-    /// input method has focus. A composition open in another ends.
+    /// input method has focus. A composition still open is committed into
+    /// the editor it began in, as IMM32's is, not carried into the next.
     pub(crate) fn focus(&mut self, editor: Option<EditorHandle>) {
         if self.editor.as_ref().map(|e| e.node) != editor.as_ref().map(|e| e.node) {
-            self.composition = None;
+            self.end_composition();
             self.editor = editor;
             self.seen = self.editor.as_ref().map(seen);
         }
@@ -62,7 +67,6 @@ impl TextStore {
     pub(crate) fn editor(&self) -> Option<&EditorHandle> {
         self.editor.as_ref()
     }
-    #[cfg(test)]
     pub(crate) fn is_composing(&self) -> bool {
         self.composition.is_some()
     }
@@ -221,6 +225,7 @@ impl TextStore {
             let preedit = String::from_utf16_lossy(&units);
             let caret = String::from_utf16_lossy(&units[..a + text.len()]).len();
             editor.set_composition(&preedit, Some((caret, caret)), &[]);
+            self.composing = preedit;
             self.composition = Some(composition.start..composition.start + units.len());
             self.seen = Some(seen(&editor));
             return Some(composition.start + a..composition.start + a + text.len());
@@ -245,6 +250,7 @@ impl TextStore {
     pub(crate) fn start_composition(&mut self, range: Range<usize>) {
         if self.editor.is_some() {
             self.composition = Some(range.start..range.start);
+            self.composing.clear();
         }
     }
     /// The input method marked its composition's clauses (`OnUpdateComposition`,
@@ -279,9 +285,8 @@ impl TextStore {
         let (Some(editor), Some(_)) = (self.editor.clone(), self.composition.take()) else {
             return;
         };
-        let text = editor.editor.borrow().preedit().map(|p| p.text.clone());
-        match text {
-            Some(text) if !text.is_empty() => {
+        match std::mem::take(&mut self.composing) {
+            text if !text.is_empty() => {
                 editor.commit_composition(&text);
             }
             _ => editor.cancel_composition(),
@@ -405,6 +410,33 @@ mod tests {
         assert_eq!(value.get(), "a日本b");
         assert!(!store.is_composing());
         assert_eq!(store.selection(), (3, 3, false));
+    }
+
+    /// Focus moving mid-composition commits it into the editor it began in,
+    /// as IMM32's does, though that editor dropped its preedit on blur; none
+    /// of it follows into the next.
+    #[test]
+    fn a_composition_open_when_focus_moves_commits_where_it_began() {
+        let mut ui = Ui::new(400., 300.);
+        let (first, second) = (ui.signal("ab".to_owned()), ui.signal(String::new()));
+        let view = ui.mount(
+            column()
+                .child(text_input("First", first.clone()).id("first").w(300.))
+                .child(text_input("Second", second.clone()).id("second").w(300.)),
+        );
+        ui.prepare_frame();
+        ui.input.focus(&ui.scene, view.find("first"));
+        let mut store = TextStore::new();
+        store.focus(ui.focused_editor());
+        store.start_composition(2..2);
+        store.replace(2, 2, &utf16("안"));
+        // The click into the other editor: the first loses its preedit.
+        ui.input.focus(&ui.scene, view.find("second"));
+        ui.prepare_frame();
+        store.focus(ui.focused_editor());
+        assert_eq!(first.get(), "ab안");
+        assert_eq!(second.get(), "");
+        assert!(!store.is_composing());
     }
 
     #[test]

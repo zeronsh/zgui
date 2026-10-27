@@ -26,12 +26,12 @@ use windows::{
         UI::{
             TextServices::{
                 CLSID_TF_ThreadMgr, ITextStoreACP2, ITextStoreACP2_Impl, ITextStoreACPSink,
-                ITfCompositionView, ITfContext, ITfContextOwnerCompositionSink,
-                ITfContextOwnerCompositionSink_Impl, ITfDocumentMgr, ITfRange, ITfRangeACP,
-                ITfThreadMgr, TEXT_STORE_LOCK_FLAGS, TEXT_STORE_TEXT_CHANGE_FLAGS,
-                TF_IAS_QUERYONLY, TS_AE_END, TS_AE_START, TS_ATTRVAL, TS_DEFAULT_SELECTION,
-                TS_E_NOLOCK, TS_E_SYNCHRONOUS, TS_LC_CHANGE, TS_LF_READ, TS_LF_READWRITE,
-                TS_LF_SYNC, TS_RT_PLAIN, TS_RUNINFO, TS_S_ASYNC, TS_SELECTION_ACP,
+                ITfCompositionView, ITfContext, ITfContextOwnerCompositionServices,
+                ITfContextOwnerCompositionSink, ITfContextOwnerCompositionSink_Impl,
+                ITfDocumentMgr, ITfRange, ITfRangeACP, ITfThreadMgr, TEXT_STORE_LOCK_FLAGS,
+                TEXT_STORE_TEXT_CHANGE_FLAGS, TF_IAS_QUERYONLY, TS_AE_END, TS_AE_START, TS_ATTRVAL,
+                TS_DEFAULT_SELECTION, TS_E_NOLOCK, TS_E_SYNCHRONOUS, TS_LC_CHANGE, TS_LF_READ,
+                TS_LF_READWRITE, TS_LF_SYNC, TS_RT_PLAIN, TS_RUNINFO, TS_S_ASYNC, TS_SELECTION_ACP,
                 TS_SELECTIONSTYLE, TS_SS_NOHIDDENTEXT, TS_STATUS, TS_TEXTCHANGE,
             },
             WindowsAndMessaging::GetClientRect,
@@ -119,6 +119,17 @@ impl Tsf {
     /// The editor taking the input method now, or none.
     pub(crate) fn focus(&mut self, editor: Option<EditorHandle>) {
         let on = editor.is_some();
+        // A composition open in the editor losing focus ends there: the
+        // input method stops composing (its OnEndComposition commits it
+        // into that editor), and the store commits it if it didn't.
+        // (No borrow is held across the call: it calls back into the store.)
+        let composing = self.shared.borrow().store.is_composing();
+        if composing
+            && let Ok(services) = self._context.cast::<ITfContextOwnerCompositionServices>()
+        {
+            // SAFETY: the context's own services; no lock is held.
+            let _ = unsafe { services.TerminateComposition(None) };
+        }
         {
             let mut shared = self.shared.borrow_mut();
             shared.store.focus(editor);

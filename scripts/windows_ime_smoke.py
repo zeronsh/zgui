@@ -94,9 +94,14 @@ def main():
             time.sleep(0.3)
         else:
             raise RuntimeError("could not switch the window to the Korean IME")
+        # Through the framework, IMM32's context isn't the window's, so
+        # `--open-ime` can't open it: the Korean input method starts in its
+        # English mode, and its Hangul key opens it.
+        if args.tsf:
+            win.require_foreground(window)
+            win.key("hangul")
+            time.sleep(0.3)
         deadline = time.monotonic() + 5
-        # Through the framework, IMM32's context isn't the window's: the
-        # input method opens as its own on/off state is.
         while not args.tsf and "IME_OPEN true\n" not in lines:
             if time.monotonic() > deadline:
                 raise RuntimeError("the input method did not open")
