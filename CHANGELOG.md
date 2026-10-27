@@ -19,6 +19,8 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 - *Migrate:* derive what a callback makes from its geometry read each time it runs. One that keeps only its first read (a `Cell` set once) keeps a value from before layout; an app relying on the earlier width needs nothing else.
 - A `TextMeasurer`, `TextShaper` or `FontTextShaper` is a cached computation: it may be called any number of times, in any order. The signals it reads keep their subscriptions; writing a signal from one is unsupported.
 
+**Editor keys go by words and paragraphs as each platform's text fields do.** On Windows, Control-Right and Control-Delete stop at the next word's start (past the spaces), not the end of the word. On Windows and Linux, Control-Up and Control-Down go to the start of a paragraph, not up or down a line. On macOS, Control-A and Control-E go to a wrapped paragraph's edges rather than its row's. Control-K kills into a buffer that Control-Y yanks back, and Control-T swaps characters.
+
 ## 0.1.3 (2026-10-27)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.2 is an addition), unless it writes one of the three structs below field by field. Some defaults change, each below with what to check: zoom and find in page are on, keys and cursors behave as a browser's and AppKit's, and Windows presents and serves assistive technology differently.
