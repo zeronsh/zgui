@@ -377,32 +377,50 @@ impl Paint {
         ];
         (set, self.local.set)
     }
-    /// `self` with what `over` sets laid over it, as `Styles::merge` does.
-    /// What `over` sets laid over `self`, as `Styles::merge` does. In
-    /// place: by value, each of the 150-byte paints was copied in and the
-    /// result out again, every run of an animated style.
-    fn lay(&mut self, over: &Self) {
+    /// What `self` sets laid over `styles`, as `Styles::merge` does: on the
+    /// paint a style effect resolved last time, whose other fields still
+    /// hold while which paint is set and the variants are the same.
+    fn lay_on(&self, styles: &mut Styles) {
+        use crate::style::bit;
         macro_rules! lay {
-            ($($field:ident),*) => {$(
-                if over.$field.is_some() {
-                    self.$field = over.$field;
+            ($($field:ident $bit:ident),*) => {$(
+                if self.$field.is_some() {
+                    styles.fields_mut(bit::$bit).$field = self.$field;
+                }
+            )*};
+        }
+        lay!(opacity OPACITY, transform TRANSFORM, text_color TEXT_COLOR);
+        // The full application allocated it if any source set a rare paint
+        // property, and which are set is the same here.
+        debug_assert!(styles.overflow.is_allocated() || self.overflow_unset());
+        if styles.overflow.is_allocated() {
+            self.lay_overflow_on(styles);
+        }
+        if self.local.set != 0 {
+            let local = styles.local_transform.over(self.local);
+            styles.fields_mut(bit::LOCAL_TRANSFORM).local_transform = local;
+        }
+    }
+    #[inline(never)]
+    fn lay_overflow_on(&self, styles: &mut Styles) {
+        use crate::style::bit;
+        macro_rules! lay {
+            ($($field:ident $bit:ident),*) => {$(
+                if self.$field.is_some() {
+                    styles.fields_mut(bit::$bit).overflow_mut().$field = self.$field;
                 }
             )*};
         }
         lay!(
-            opacity,
-            blur,
-            edge_fade,
-            filter_blur,
-            brightness,
-            contrast,
-            saturate,
-            mask_offset,
-            clip_inset,
-            transform,
-            text_color
+            blur BLUR,
+            edge_fade EDGE_FADE,
+            filter_blur FILTER_BLUR,
+            brightness BRIGHTNESS,
+            contrast CONTRAST,
+            saturate SATURATE,
+            mask_offset MASK_OFFSET,
+            clip_inset CLIP_INSET
         );
-        self.local = self.local.over(over.local);
     }
     fn of(styles: &Styles) -> Self {
         if styles.set_bits() & Self::BITS == 0 {
@@ -964,44 +982,57 @@ pub(crate) fn mount_style_with_intrinsic(
                 if std::mem::replace(painted, none) && none {
                     return;
                 }
-                let mut resolved = Paint::of(&base);
+                // The paint resolved last time, with this run's laid over it:
+                // the base and the variants on are the same, and so is which
+                // paint the style sets.
                 if let Some(paint) = &paint {
-                    resolved.lay(paint);
+                    paint.lay_on(&mut applied.0);
                 }
                 for (enabled, variant) in active_variants {
                     if enabled && let Some(variant) = variant {
-                        resolved.lay(&Paint::of(variant));
+                        Paint::of(variant).lay_on(&mut applied.0);
                     }
                 }
-                // Frosted glass painted opaque (`opaque_glass`) stays so: its
-                // blur is put back from the base above.
-                if glass == Some(true) && resolved.blur.get().is_some_and(|sigma| sigma > 0.) {
-                    resolved.blur = Some(0.).into();
+                // Frosted glass painted opaque (`opaque_glass`) stays so,
+                // whatever blur was laid over it.
+                if glass == Some(true)
+                    && applied
+                        .0
+                        .overflow()
+                        .blur
+                        .get()
+                        .is_some_and(|sigma| sigma > 0.)
+                {
+                    applied
+                        .0
+                        .fields_mut(crate::style::bit::BLUR)
+                        .overflow_mut()
+                        .blur = Some(0.).into();
                 }
+                let resolved = &applied.0;
                 let paint_color = resolved.text_color;
                 let bound = theme.as_ref().is_some_and(|theme| theme.themed())
                     || produced.as_ref().is_some_and(Styles::has_tokens);
-                resolved.put(&mut applied.0);
                 let mut effects = originals.effects;
                 if let Some(value) = resolved.opacity.get() {
                     effects.opacity = value;
                 }
-                if let Some(value) = resolved.blur.get() {
+                if let Some(value) = resolved.overflow().blur.get() {
                     effects.blur_radius = value;
                 }
-                if let Some(value) = resolved.edge_fade.get() {
+                if let Some(value) = resolved.overflow().edge_fade.get() {
                     effects.edge_fade = value;
                 }
-                if let Some(value) = resolved.filter_blur.get() {
+                if let Some(value) = resolved.overflow().filter_blur.get() {
                     effects.filter_blur = value;
                 }
-                if let Some(value) = resolved.brightness.get() {
+                if let Some(value) = resolved.overflow().brightness.get() {
                     effects.brightness = value;
                 }
-                if let Some(value) = resolved.contrast.get() {
+                if let Some(value) = resolved.overflow().contrast.get() {
                     effects.contrast = value;
                 }
-                if let Some(value) = resolved.saturate.get() {
+                if let Some(value) = resolved.overflow().saturate.get() {
                     effects.saturate = value;
                 }
                 // The text colour matters to text, and to what inherits it:
@@ -1053,7 +1084,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 let mut scene = storage.scene.borrow_mut();
                 let transform = resolved.transform.unwrap_or(originals.transform);
                 let inset = applied.0.overflow().clip_inset.or(originals.inset());
-                let local = resolved.local.resolve(originals.local);
+                let local = resolved.local_transform.resolve(originals.local);
                 let (inset_kept, transform_kept, local_kept) =
                     scene.paint_kept(node, inset, transform, local);
                 if last.moves_and_fades {
@@ -2453,6 +2484,150 @@ mod tests {
             value.set(opacity);
             let effects = ui.scene.borrow().effects(node);
             assert_eq!((effects.opacity, effects.blur_radius), (opacity, 0.));
+        }
+    }
+
+    #[test]
+    fn an_unchanged_background_restores_external_paint() {
+        use crate::scene::{ClipInset, Effects, LocalTransform, Transform};
+        let mut ui = Ui::new(200., 200.);
+        let node = ui.container(ui.root(), Layout::Column, Style::default());
+        let effects = Effects {
+            opacity: 0.75,
+            ..Effects::default()
+        };
+        let transform = Transform { x: 5., y: 6. };
+        let local = LocalTransform {
+            rotate: 0.2,
+            ..LocalTransform::IDENTITY
+        };
+        let inset = Some(ClipInset::px(1., 2., 3., 4.));
+        {
+            let mut scene = ui.scene.borrow_mut();
+            scene.set_effects(node, effects);
+            scene.set_transform(node, transform);
+            scene.set_local_transform(node, local);
+            scene.set_clip_inset(node, inset);
+        }
+        let tick = ui.signal(0);
+        let inherited = inherited(&ui);
+        let read = tick.clone();
+        mount_style(
+            &mut ui,
+            node,
+            color(7),
+            inherited,
+            Some(Box::new(move || {
+                read.get();
+                color(7)
+            })),
+            Variants::default(),
+            None,
+            false,
+        );
+        tick.set(1);
+        tick.set(2);
+        for value in 3..6 {
+            {
+                let mut scene = ui.scene.borrow_mut();
+                scene.set_effects(
+                    node,
+                    Effects {
+                        opacity: 0.4,
+                        ..effects
+                    },
+                );
+                scene.set_transform(node, Transform { x: 50., y: 60. });
+                scene.set_local_transform(
+                    node,
+                    LocalTransform {
+                        rotate: 0.8,
+                        ..local
+                    },
+                );
+                scene.set_clip_inset(node, None);
+            }
+            tick.set(value);
+            let scene = ui.scene.borrow();
+            assert_eq!(scene.effects(node), effects);
+            assert_eq!(scene.transform(node), transform);
+            assert_eq!(scene.local_transform(node), local);
+            assert_eq!(scene.clip_inset(node), inset);
+        }
+    }
+
+    #[test]
+    fn consecutive_resizes_keep_external_paint() {
+        let mut ui = Ui::new(200., 200.);
+        let node = ui.container(ui.root(), Layout::Column, Style::default());
+        let width = ui.signal(0_f32);
+        let read = width.clone();
+        let inherited = inherited(&ui);
+        mount_style(
+            &mut ui,
+            node,
+            color(7),
+            inherited,
+            Some(Box::new(move || Styles::new().w(read.get()))),
+            Variants::default(),
+            None,
+            false,
+        );
+        width.set(1.);
+        width.set(2.);
+        let external = crate::scene::Transform { x: 50., y: 60. };
+        ui.scene.borrow_mut().set_transform(node, external);
+        width.set(3.);
+        assert_eq!(ui.scene.borrow().transform(node), external);
+    }
+    /// Reusing paint follows the same component precedence as rebuilding
+    /// it from the base, including variants that cover only part of a transform.
+    #[test]
+    fn retained_paint_overlays_match_rebuilding_each_time() {
+        let bases = [
+            Styles::new(),
+            Styles::new()
+                .opacity(0.8)
+                .scale(2.)
+                .rotate(0.2)
+                .rotate_x(0.3)
+                .perspective(600.),
+            Styles::new()
+                .blur(4.)
+                .brightness(0.7)
+                .text_color(Color(1, 2, 3, 255)),
+        ];
+        let variants = [
+            Styles::new(),
+            Styles::new().opacity(0.6).rotate(0.5),
+            Styles::new().blur(2.).contrast(1.2).scale(3.).rotate_y(0.6),
+        ];
+        for base in bases {
+            for variant in &variants {
+                for mode in 0..4 {
+                    let dynamic = |v: f32| match mode {
+                        0 => Styles::new(),
+                        1 => Styles::new().opacity(v).translate(v, -v).scale(v + 1.),
+                        2 => Styles::new().rotate_x(v).rotate_y(-v).perspective(400. + v),
+                        _ => Styles::new()
+                            .blur(v)
+                            .brightness(v)
+                            .text_color(Color(v as u8, 2, 3, 255)),
+                    };
+                    let mut kept = base.clone();
+                    kept.merge(&dynamic(0.));
+                    kept.merge(variant);
+                    for v in [0.25, 0.5, 0.1, 0.75] {
+                        let next = dynamic(v);
+                        Paint::of(&next).lay_on(&mut kept);
+                        Paint::of(variant).lay_on(&mut kept);
+                        let mut rebuilt = base.clone();
+                        rebuilt.merge(&next);
+                        rebuilt.merge(variant);
+                        assert!(Paint::of(&kept) == Paint::of(&rebuilt));
+                    }
+                }
+            }
         }
     }
 }
