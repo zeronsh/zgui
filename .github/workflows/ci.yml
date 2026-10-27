@@ -5,6 +5,8 @@ on:
     paths:
       - "**"
       - "!site/**"
+      - "!website/**"
+      - "!.github/workflows/site.yml"
       - "!**/*.md"
       # Markdown compiled as doctests.
       - "README.md"
@@ -15,6 +17,8 @@ on:
     paths:
       - "**"
       - "!site/**"
+      - "!website/**"
+      - "!.github/workflows/site.yml"
       - "!**/*.md"
       # Markdown compiled as doctests.
       - "README.md"
