@@ -703,6 +703,17 @@ impl TransformPatch {
         .over(self)
         .values
     }
+    /// As `resolve`, normalized (`LocalTransform::normalized`), over a
+    /// normalized `base` (as the scene keeps them): with nothing overridden,
+    /// `base` as it is.
+    #[inline]
+    pub(crate) fn resolve_finite(self, base: LocalTransform) -> LocalTransform {
+        if self.set == 0 {
+            base
+        } else {
+            self.resolve(base).normalized()
+        }
+    }
 }
 /// Properties few views set, kept apart and shared so that every `Styles`
 /// (a view's, its node's style effect's and that effect's memo) stays small:

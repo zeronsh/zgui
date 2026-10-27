@@ -474,7 +474,7 @@ impl LocalTransform {
     }
     /// Each nonfinite component takes its identity value, so equal writes
     /// compare equal (NaN never would).
-    fn normalized(self) -> Self {
+    pub(crate) fn normalized(self) -> Self {
         let finite = |value: f32, default: f32| if value.is_finite() { value } else { default };
         Self {
             scale: (finite(self.scale.0, 1.), finite(self.scale.1, 1.)),
@@ -3150,7 +3150,7 @@ impl Scene {
     /// as `set_clip_inset`, `set_transform` and `set_local_transform`
     /// compare them: a style writing its paint again every frame (one
     /// property animated) looks the node up once for those left as they
-    /// were.
+    /// were. `local` is normalized already (`TransformPatch::resolve_finite`).
     pub(crate) fn paint_kept(
         &self,
         id: NodeId,
@@ -3162,7 +3162,7 @@ impl Scene {
         (
             node.clip_inset.as_deref().copied() == inset,
             node.transform == finite_translation(transform),
-            node.local() == local.normalized(),
+            node.local() == local,
         )
     }
     /// Clip `id` and its descendants to its box inset by `inset` (see
@@ -11176,6 +11176,63 @@ mod cursor_count_tests {
 mod local_transform_tests {
     use super::*;
     use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+    /// Skipping normalization for an empty patch keeps the whole-transform result.
+    #[test]
+    fn resolving_finite_matches_normalizing_the_whole_transform() {
+        let values = [
+            LocalTransform::IDENTITY,
+            LocalTransform {
+                scale: (-0., f32::from_bits(1)),
+                rotate: -0.,
+                skew: (-0.25, 1.5),
+                rotate_x: 0.3,
+                rotate_y: -0.4,
+                perspective: -0.,
+                origin: (2., -1.),
+            },
+            LocalTransform {
+                scale: (f32::NAN, f32::INFINITY),
+                rotate: f32::NEG_INFINITY,
+                skew: (f32::NAN, f32::NEG_INFINITY),
+                rotate_x: f32::INFINITY,
+                rotate_y: f32::NAN,
+                perspective: f32::INFINITY,
+                origin: (f32::NAN, f32::NEG_INFINITY),
+            },
+            LocalTransform {
+                perspective: -200.,
+                ..rotated(0.75)
+            },
+        ];
+        let bits = |t: LocalTransform| {
+            [
+                t.scale.0,
+                t.scale.1,
+                t.rotate,
+                t.skew.0,
+                t.skew.1,
+                t.rotate_x,
+                t.rotate_y,
+                t.perspective,
+                t.origin.0,
+                t.origin.1,
+            ]
+            .map(f32::to_bits)
+        };
+        for original in values {
+            let base = original.normalized();
+            for values in values {
+                for set in 0..=u8::MAX {
+                    let patch = crate::style::TransformPatch { values, set };
+                    assert_eq!(
+                        bits(patch.resolve_finite(base)),
+                        bits(patch.resolve(base).normalized()),
+                        "component mask {set}"
+                    );
+                }
+            }
+        }
+    }
     fn fixed(width: f32, height: f32) -> Style {
         Style {
             width: Some(width),

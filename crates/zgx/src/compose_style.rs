@@ -1110,7 +1110,7 @@ pub(crate) fn mount_style_with_intrinsic(
                 let mut scene = storage.scene.borrow_mut();
                 let transform = resolved.transform.unwrap_or(originals.transform);
                 let inset = applied.0.overflow().clip_inset.or(originals.inset());
-                let local = resolved.local_transform.resolve(originals.local);
+                let local = resolved.local_transform.resolve_finite(originals.local);
                 let (inset_kept, transform_kept, local_kept) =
                     scene.paint_kept(node, inset, transform, local);
                 if last.moves_and_fades {
