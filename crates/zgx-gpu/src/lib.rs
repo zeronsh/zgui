@@ -510,11 +510,17 @@ fn push_draw(
         false => draw.shading,
     };
     // Each run ends where the shading changes, so runs alternate shadings.
+    // Each quad is classified once: the one ending a run starts the next.
     let mut start = draw.start;
+    let mut kind = kind_of(&quads[start as usize]);
     while start < draw.end {
-        let kind = kind_of(&quads[start as usize]);
         let mut end = start + 1;
-        while end < draw.end && kind_of(&quads[end as usize]) == kind {
+        let mut next = kind;
+        while end < draw.end {
+            next = kind_of(&quads[end as usize]);
+            if next != kind {
+                break;
+            }
             end += 1;
         }
         // One run (the usual item): the draw's own bounds.
@@ -532,6 +538,7 @@ fn push_draw(
             ..draw.clone()
         });
         start = end;
+        kind = next;
     }
 }
 fn texel_at(texture: &wgpu::Texture, x: u32, y: u32) -> wgpu::TexelCopyTextureInfo<'_> {
