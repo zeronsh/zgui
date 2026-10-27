@@ -5341,20 +5341,22 @@ impl Scene {
         };
         transform.x = coordinate(transform.x);
         transform.y = coordinate(transform.y);
-        if self.node(id).scroll_copy {
+        // What it needs of the node, read once (a move is the hottest
+        // setter: a reorder animation moves every row each frame).
+        let node = self.node(id);
+        let (scroll_copy, from, transparent) =
+            (node.scroll_copy, node.transform, node.effects.opacity <= 0.);
+        if scroll_copy {
             transform = self.on_pixels(transform);
         }
-        if self.node(id).transform == transform {
+        if from == transform {
             return;
         }
-        if self.node(id).scroll_copy {
+        if scroll_copy {
             // Resolved at flush: a copy plus the exposed strip, or full damage.
             match self.pending_moves.iter_mut().find(|(node, ..)| *node == id) {
                 Some((.., again)) => *again = true,
-                None => {
-                    let from = self.node(id).transform;
-                    self.pending_moves.push((id, from, false));
-                }
+                None => self.pending_moves.push((id, from, false)),
             }
             self.node_mut(id).transform = transform;
             self.geometry_revision = self.geometry_revision.wrapping_add(1);
@@ -5363,7 +5365,7 @@ impl Scene {
         }
         // Fully transparent, it paints nothing in either place (a caret the
         // host draws, moving): nothing to damage.
-        if self.node(id).effects.opacity <= 0. {
+        if transparent {
             self.node_mut(id).transform = transform;
             self.geometry_revision = self.geometry_revision.wrapping_add(1);
             self.invalidate(id, COMPOSITE);
