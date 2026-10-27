@@ -25,6 +25,19 @@ And four forks, as zgx's own crates, published first:
 
 Each keeps its upstream's license files, authors and library name (`harfrust`, `cosmic_text`, `taffy`, `mlua`), and its version (a fix of our own bumps the patch: `zgx-cosmic-text` is 0.19.2, as it shapes with `zgx-harfrust` (0.19.1) and places glyphs inline (0.19.2); `zgx-mlua` is 0.12.4, its Luau held (0.12.3) and its userdata checks inlined (0.12.4); `zgx-harfrust` is 0.5.3, as 0.5.2, uploaded on 2026-10-26, never reached crates.io's index). zgx's crates depend on them by path and version under their upstream names (`cosmic-text = { package = "zgx-cosmic-text", version = "0.19.2", path = "../../vendor/cosmic-text" }`, and `zgx-cosmic-text` on `zgx-harfrust` likewise), so code reads `cosmic_text::` as before. Only zgx's crates use them, so an app never sees two of one. Drop a fork, back to the upstream crate, once a release of it has the fix.
 
+## Vendored data
+
+zgx carries ICU4X's Thai word dictionary for its `cjk-thai-words` feature (`crates/zgx/data/thaidict.bin`, 131,759 bytes). ICU4X's compiled data keeps Thai in one table with Burmese, Khmer and Lao, and linking it would add the other three (about 0.9 MB). Chinese and Japanese come from that compiled data as a dependency. The file is extracted from `icu_segmenter_data` 2.4, the version zgx's `icu_segmenter = "~2.4"` pins, by `scripts/extract_thai_dictionary.py`. It reads the locked crate from Cargo's registry, writes the same bytes from the same source, and with `--check` (the release check runs it) fails if the committed file differs.
+
+- **Licence.** The data is Unicode's, under the Unicode License v3, a permissive one. So zgx's `license` is `MIT AND Unicode-3.0`, and its package ships the licence text as `data/LICENSE-UNICODE` (the release check fails without it). A release's metadata and semver check expect that field, which changed after 0.1.3.
+- **Moving ICU4X on** (2.5, say):
+  1. Bump `icu_segmenter`, `icu_provider` and `icu_collections` in `crates/zgx/Cargo.toml`, and `PINNED` in the script, together.
+  2. Run `cargo update -p icu_segmenter`.
+  3. Run the script, and copy that version's `LICENSE` from `icu_segmenter_data` over `data/LICENSE-UNICODE`.
+  4. Run zgx's `words::` tests. They read Chinese, Japanese and Thai words, so they catch a dictionary that didn't load.
+
+  If the data's layout changed (2.4 moved Thai from a char16 trie to an alphabet and a `ZeroTrieSimpleAscii`), the script stops and says so. Then the script and `words.rs`'s provider change with it.
+
 ## What stays patched in the repository alone
 
 The workspace's `[patch.crates-io]` keeps the rest: wgpu-hal (Metal command buffers made lazily and never empty, a Direct3D 12 adapter exposed without opening the others), winit (a Wayland window's `xdg_surface`, X11's `_NET_WM_SYNC_REQUEST` and `_NET_WM_USER_TIME`), and AccessKit's consumer and adapters for macOS, Windows and Linux (headings, grid rows, tables, tree items, a field's error message). Forking them would mean forking what depends on them too (wgpu, accesskit_winit). An app depending on zgx from crates.io gets their releases instead, and zgx builds and runs with them, without those fixes:

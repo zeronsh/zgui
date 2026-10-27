@@ -23,6 +23,9 @@
 #    packaged and runs a script headless: zgx's own lockfile holds its
 #    dependencies where they were tested, which a new app's does not
 #    (luau0-src 0.22.1 failed every Luau app at start, unseen by 1 and 2).
+# Before them: zgx's Thai word dictionary (crates/zgx/data/thaidict.bin) is
+# what scripts/extract_thai_dictionary.py extracts from the locked ICU4X
+# data, and zgx's package carries its Unicode licence.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
 # `--allow-dirty`: check uncommitted changes too (a release itself is clean).
@@ -51,6 +54,10 @@ for fork in $forks; do
     cargo package --manifest-path "vendor/$fork/Cargo.toml" $features $dirty \
         --target-dir "$target" ${deps:+--config "$deps"}
 done
+echo "== zgx's vendored Thai dictionary"
+# (Windows' runners name it python.)
+"$(command -v python3 || command -v python)" scripts/extract_thai_dictionary.py --check
+cargo package -p zgx --list $dirty | grep -qx data/LICENSE-UNICODE
 echo "== the workspace's published crates"
 cargo publish --workspace --dry-run --locked $dirty "$@"
 echo "== a new app, resolving afresh, runs a script"

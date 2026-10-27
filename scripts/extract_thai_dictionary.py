@@ -9,17 +9,29 @@ point inversion list: a little-endian `u32` count, then that many `u32`s),
 then its trie (a `ZeroTrieSimpleAscii`'s store), as
 `DictionaryBreakData::ZeroTrie` holds them.
 
-    python3 scripts/extract_thai_dictionary.py \
-        ~/.cargo/registry/src/*/icu_segmenter_data-2.4.0
+    python3 scripts/extract_thai_dictionary.py           # write it
+    python3 scripts/extract_thai_dictionary.py --check   # it is what it says
 
-Run it again when `icu_segmenter` moves to a new minor version, from that
-version's `icu_segmenter_data`. The data is Unicode's, under the Unicode
-License v3 (`crates/zgx/data/LICENSE-UNICODE`).
+It reads the `icu_segmenter_data` that Cargo.lock locks (from Cargo's
+registry, through `cargo metadata`), and only version 2.4: the file is that
+version's, as zgx's `icu_segmenter = "~2.4"` is. The output depends on that
+source alone, so `--check` (run by the release check) finds the committed
+file unchanged. To move ICU4X on, see docs/releasing.md. The data is
+Unicode's, under the Unicode License v3 (`crates/zgx/data/LICENSE-UNICODE`).
 """
+import hashlib
+import json
 import pathlib
 import re
 import struct
+import subprocess
 import sys
+
+# The icu_segmenter_data the file is extracted from: zgx's icu_segmenter is
+# pinned to this minor version.
+PINNED = "2.4."
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+OUT = ROOT / "crates" / "zgx" / "data" / "thaidict.bin"
 
 ESCAPE = re.compile(rb"\\(x[0-9A-Fa-f]{2}|.)", re.S)
 SIMPLE = {b"0": 0, b"n": 10, b"r": 13, b"t": 9, b"\\": 92, b'"': 34, b"'": 39}
@@ -48,10 +60,22 @@ def decode(literal: bytes) -> bytes:
     return bytes(out)
 
 
-def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit(__doc__)
-    source = pathlib.Path(sys.argv[1]) / "data" / "segmenter_dictionary_extended_v2.rs.data"
+def locked_source() -> pathlib.Path:
+    """The locked icu_segmenter_data's directory, from `cargo metadata`."""
+    metadata = json.loads(subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--locked"],
+        cwd=ROOT, check=True, capture_output=True, text=True).stdout)
+    found = [p for p in metadata["packages"] if p["name"] == "icu_segmenter_data"]
+    if len(found) != 1:
+        raise SystemExit(f"Cargo.lock locks {len(found)} icu_segmenter_data, not one")
+    package = found[0]
+    if not package["version"].startswith(PINNED):
+        raise SystemExit(f"icu_segmenter_data {package['version']} is locked; the file is {PINNED}x's")
+    return pathlib.Path(package["manifest_path"]).parent
+
+
+def extract(source: pathlib.Path) -> bytes:
+    source = source / "data" / "segmenter_dictionary_extended_v2.rs.data"
     data = source.read_bytes()
     # The lookup's trie names the dictionaries in order: Burmese, Khmer, Lao,
     # Thai (`\x80` to `\x83`); VALUES holds them in that order.
@@ -75,11 +99,23 @@ def main() -> None:
     if len(points) % 3 or len(inversion) % 2 or size != int(alphabet.group(2)):
         raise SystemExit(f"a malformed alphabet: {inversion} for {alphabet.group(2)} characters")
     trie = decode(re.search(rb"ZeroTrieSimpleAscii\s*\{\s*store\s*:.*?" + literal, thai, re.S).group(1))
-    out = pathlib.Path(__file__).resolve().parent.parent / "crates" / "zgx" / "data" / "thaidict.bin"
-    out.parent.mkdir(exist_ok=True)
     header = struct.pack(f"<I{len(inversion)}I", len(inversion), *inversion)
-    out.write_bytes(header + trie)
-    print(f"{out}: alphabet {[hex(p) for p in inversion]}, trie {len(trie)} bytes")
+    return header + trie
+
+
+def main() -> None:
+    check = sys.argv[1:] == ["--check"]
+    if sys.argv[1:] not in ([], ["--check"]):
+        raise SystemExit(__doc__)
+    thai = extract(locked_source())
+    digest = hashlib.sha256(thai).hexdigest()
+    if check:
+        if not OUT.exists() or OUT.read_bytes() != thai:
+            raise SystemExit(f"{OUT} is not what the locked icu_segmenter_data gives (sha256 {digest}): run the script")
+        print(f"{OUT.name}: as extracted, sha256 {digest}")
+        return
+    OUT.write_bytes(thai)
+    print(f"{OUT}: {len(thai)} bytes, sha256 {digest}")
 
 
 if __name__ == "__main__":
