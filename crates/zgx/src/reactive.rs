@@ -869,6 +869,7 @@ impl<T: 'static> Signal<T> {
         WeakSignal(Rc::downgrade(&self.inner))
     }
     /// Call `f` with the value, subscribing the running effect.
+    #[inline(always)]
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         self.track();
         f(&self.inner.value.borrow())
@@ -884,6 +885,15 @@ impl<T: 'static> Signal<T> {
     }
     /// A clone of the value, subscribing the running effect.
     pub fn get(&self) -> T
+    where
+        T: Clone,
+    {
+        self.with(Clone::clone)
+    }
+    /// `get`, kept out of line: for a large effect where reads inlined
+    /// (`with` is) cost more registers than the call (the style effect).
+    #[inline(never)]
+    pub(crate) fn get_out_of_line(&self) -> T
     where
         T: Clone,
     {

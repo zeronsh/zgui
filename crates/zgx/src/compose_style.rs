@@ -993,8 +993,9 @@ pub(crate) fn mount_style_with_intrinsic(
             }) && paint == last.paint
                 && (same || resized)
                 && (!last.parent || inherited.version() == last.parent_version)
-                && intrinsic.as_ref().map(|size| size.get()) == last.intrinsic
-                && layout_target.as_ref().and_then(|target| target.get()) == last.content
+                // Out of line: inlined, reads crowd this effect's registers.
+                && intrinsic.as_ref().map(|size| size.get_out_of_line()) == last.intrinsic
+                && layout_target.as_ref().and_then(|target| target.get_out_of_line()) == last.content
                 && last.text.as_ref().is_none_or(|(size, family)| {
                     let scope = scope.as_deref();
                     resolve_size(*size, scope) == Typography::size_value(applied.1.size)
