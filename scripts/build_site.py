@@ -25,7 +25,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = 'https://github.com/zeronsh/zgx'
-NAMES = {'zgx': 'zgx', 'zgx-luau': 'zgx (Luau)', 'gpui-fast': 'GPUI Fast', 'mygo': 'MyGo', 'rune': 'Rune'}
+# zgx's variants (named zgx-*) are never counted among the rivals.
+NAMES = {'zgx': 'zgx', 'zgx-luau': 'zgx (Luau)', 'zgx-d3d11': 'zgx (Direct3D 11)',
+         'zgx-d3d11-threaded': 'zgx (Direct3D 11, driver threads on)', 'gpui-fast': 'GPUI Fast', 'mygo': 'MyGo',
+         'rune': 'Rune'}
 ORDER = ['heavy', 'lab', 'animate', 'vlist']
 SCENES = {
     'heavy': ('Heavy dashboard', 'A 1280×800 dashboard: 6 tiles, 30 cards of 26 sparkline bars, a status table '

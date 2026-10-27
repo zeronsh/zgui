@@ -77,6 +77,12 @@ SPREAD, EXTRA = 0.10, 1
 PROBE_TOLERANCE = 2.0
 STARTUP_LAUNCHES = 10
 FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune']
+# zgx's binaries run another way, by `--frameworks` alone: the framework
+# whose binaries they are, and what their environment adds. Direct3D 11
+# (zgx-gpu's `d3d11` feature, built into the binaries), with the driver's
+# threading off and on (crates/zgx-gpu/src/d3d11_frame.rs).
+VARIANTS = {'zgx-d3d11': ('zgx', {'ZGX_D3D11': '1'}),
+            'zgx-d3d11-threaded': ('zgx', {'ZGX_D3D11': '1', 'ZGX_D3D11_THREADED': '1'})}
 # Scene: modes, and each framework's binary.
 SCENES = {
     'heavy': (['idle', 'stream', 'scroll', 'both'],
@@ -168,22 +174,23 @@ def counted(framework, kind):
     LAUNCHES[framework][kind] += 1
 
 
-def environment_for(binary, mode, seconds):
+def environment_for(binary, mode, seconds, framework=None):
     env = dict(os.environ, ZGX_MODE=mode, ZGX_SECONDS=str(seconds), ZGX_INITIAL_TICKS='0',
                ZGUI_MODE=mode, ZGUI_SECONDS=str(seconds), ZGUI_INITIAL_TICKS='0',  # rename-to-zgx: keep
                ZGX_ACCESSIBILITY_LOG='1')
     if FONT.exists():
         env['ZGX_FONT_FILE'] = env['ZGUI_FONT_FILE'] = str(FONT)
+    env.update(VARIANTS.get(framework, (None, {}))[1])
     return env
 
 
-def launch(binary, mode, seconds, log):
+def launch(binary, mode, seconds, log, framework=None):
     """The app, started with its window in front and uncovered (or a
     ReadinessFailure within the lifetime margin's budget)."""
     started = time.perf_counter()
     with log.open('w') as handle:
         process = subprocess.Popen([str(binary)], stdout=handle, stderr=subprocess.STDOUT,
-                                   env=environment_for(binary, mode, seconds), cwd=tempfile.gettempdir())
+                                   env=environment_for(binary, mode, seconds, framework), cwd=tempfile.gettempdir())
     process.started = started
     if mode == 'probe':
         return process
@@ -300,7 +307,7 @@ def one_trial(scene, binary, framework, mode, repeat, out):
     log = out / f'{framework}.{mode}.{repeat}.log'
     idle = mode == 'idle'
     requested = (IDLE_SETTLE + SAMPLED + 1 if idle else REQUESTED) + LIFETIME_MARGIN
-    process = launch(binary, mode, requested, log)
+    process = launch(binary, mode, requested, log, framework)
     try:
         dwm = pdh.pid_of('dwm.exe')
         with pdh.Counters([pdh.dwm_cpu(), pdh.gpu_time(dwm), pdh.gpu_time(process.pid),
@@ -390,7 +397,7 @@ def pacing(scene, binary, framework, mode, repeat, out, pacer):
     for attempt in range(2):
         counted(framework, 'pacing')
         try:
-            process = launch(binary, mode, seconds, log)
+            process = launch(binary, mode, seconds, log, framework)
         except ReadinessFailure as error:
             READINESS_FAILURES.append(dict(scene=scene, framework=framework, mode=mode, kind='pacing',
                                            attempt=attempt + 1, exhausted=bool(attempt), error=str(error)))
@@ -420,7 +427,7 @@ def probe(scene, binaries, out):
     found = {}
     for framework, binary in binaries.items():
         log = out / f'{framework}.probe.log'
-        process = launch(binary, 'probe', 30, log)
+        process = launch(binary, 'probe', 30, log, framework)
         finish(process, 30, log)
         text = log.read_text(errors='replace')
         heights = re.search(r'row_heights=(\S+)', text)
@@ -737,7 +744,8 @@ def measure_scene(scene, binaries, out, pacer, commit, preflight, tools):
              'source_diff_sha256': source_diff_sha256(),
              'started_utc': started.isoformat(), 'finished_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
              'environment': environment(), 'preflight': preflight,
-             'binaries': {f: {'sha256': hashlib.sha256(p.read_bytes()).hexdigest(), 'bytes': p.stat().st_size}
+             'binaries': {f: {'sha256': hashlib.sha256(p.read_bytes()).hexdigest(), 'bytes': p.stat().st_size,
+                              **({'environment': VARIANTS[f][1]} if f in VARIANTS else {})}
                           for f, p in binaries.items()},
              'toolchains': {k: v for k, v in tools.items() if k in ('rust', 'rust_profile', 'go') or k in frameworks},
              'invalid_trials': invalid,
@@ -776,7 +784,8 @@ def measure_startup(binaries, out, commit):
     for index in range(STARTUP_LAUNCHES):
         shift = index % len(names)
         for framework in names[shift:] + names[:shift]:
-            window, content, cpu, mcycles, shaders = startup.launch(str(binaries[framework]), 0)
+            added = VARIANTS.get(framework, (None, {}))[1]
+            window, content, cpu, mcycles, shaders = startup.launch(str(binaries[framework]), 0, added)
             found[framework].append({'window_ms': round(window, 1), 'content_ms': round(content, 1),
                                      'cycles': round(mcycles * 1e6), 'cpu_ms': round(cpu, 1),
                                      **({'shaders': shaders} if shaders else {})})
@@ -791,7 +800,9 @@ def measure_startup(binaries, out, commit):
         'probe': 'scripts/windows_startup_probe.py: spawn, window, the header strip until its text has drawn '
                  '(PrintWindow); CPU time and cycles of the process at content; for zgx, what its kept shaders '
                  'did by its first present (read, compiled, not kept: ZGX_SHADER_LOG)',
-        'apps': {f: f'{p.name} (lab), ZGX_MODE=idle' for f, p in binaries.items()},
+        'apps': {f: f'{p.name} (lab), ZGX_MODE=idle'
+                    + ''.join(f', {k}={v}' for k, v in VARIANTS.get(f, (None, {}))[1].items())
+                 for f, p in binaries.items()},
         'protocol': f"{STARTUP_LAUNCHES} rounds, the frameworks rotating; the suite's font",
         'launches': found,
         'medians': medians,
@@ -827,7 +838,11 @@ def main():
     SOURCE, GO = args.source.resolve(), str(args.go)
     dirs = {'zgx': args.zgx, 'zgx-luau': args.zgx, 'gpui-fast': args.gpui_fast, 'mygo': args.mygo, 'rune': args.rune}
     wanted = args.frameworks.split(',')
-    binaries = {scene: {f: dirs[f] / f'{name}.exe' for f, name in SCENES[scene][1].items() if f in wanted}
+    # Each framework's binary by scene, a variant's its framework's.
+    names = {scene: {**programs, **{v: programs[base] for v, (base, _) in VARIANTS.items() if base in programs}}
+             for scene, (_, programs) in SCENES.items()}
+    binaries = {scene: {f: dirs[VARIANTS.get(f, (f,))[0]] / f'{name}.exe' for f, name in names[scene].items()
+                        if f in wanted}
                 for scene in SCENES}
     scenes = args.scenes.split(',')
     missing = [str(p) for s in scenes if s in SCENES for p in binaries[s].values() if not p.exists()]

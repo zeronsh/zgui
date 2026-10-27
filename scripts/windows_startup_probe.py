@@ -51,16 +51,18 @@ def shaders_of(log):
     return dict(zip(("read", "compiled", "not_kept"), map(int, found.groups()))) if found else None
 
 
-def launch(binary, settle):
+def launch(binary, settle, added=None):
     """(window ms, first text ms, CPU ms, M cycles, shaders[, private MiB,
     working set MiB]): `shaders` is what zgx's kept shaders did by its first
-    present (`shaders_of`), so a start slowed by compiling them says so."""
+    present (`shaders_of`), so a start slowed by compiling them says so.
+    `added`: environment the app gets besides (a suite variant's)."""
     # ZGUI_*: adapters built before the rename read those alone.
     # ZGX_SHADER_LOG: zgx's first-present line with what its kept shaders did,
     # on stderr (ZGX_PROFILE, which prints it among its marks, slows a start
     # by about 25 ms).
     env = dict(os.environ, ZGX_MODE="idle", ZGX_SECONDS=str(settle + 8), ZGX_INITIAL_TICKS="0",
                ZGUI_MODE="idle", ZGUI_SECONDS=str(settle + 8), ZGUI_INITIAL_TICKS="0", ZGX_SHADER_LOG="1")
+    env.update(added or {})
     log = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False)
     started = time.perf_counter()
     proc = subprocess.Popen([binary], env=env, stdout=subprocess.DEVNULL, stderr=log)
