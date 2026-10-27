@@ -1030,6 +1030,38 @@ fn shift_keys_extend_the_selection_across_text_nodes() {
     );
 }
 
+/// Shift with Right or Left extends the way the block runs, as Chrome does:
+/// Right goes back through a right-to-left paragraph's text, Left on.
+#[test]
+fn shift_arrows_extend_the_way_a_right_to_left_block_runs() {
+    use zgx::{scene::Direction, selection::TextPoint};
+    for rtl in [false, true] {
+        let mut ui = Ui::new(400., 300.);
+        let view = ui.mount(
+            column()
+                .w(300.)
+                .text_size(10.)
+                .line_height(20.)
+                .selectable(true)
+                .direction(if rtl { Direction::Rtl } else { Direction::Ltr })
+                .child(text("שלום עולם").id("text")),
+        );
+        ui.prepare_frame();
+        let node = view.find("text").unwrap();
+        // Between the words.
+        let caret = TextPoint {
+            node,
+            offset: "שלום".len(),
+        };
+        assert!(ui.select_text(caret, caret));
+        ui.dispatch(shift(Key::ArrowRight, false, false));
+        assert_eq!(ui.selected_text(), if rtl { "ם" } else { " " }, "rtl {rtl}");
+        ui.dispatch(shift(Key::ArrowLeft, false, false));
+        ui.dispatch(shift(Key::ArrowLeft, false, false));
+        assert_eq!(ui.selected_text(), if rtl { " " } else { "ם" }, "rtl {rtl}");
+    }
+}
+
 #[test]
 fn a_triple_press_on_a_wrapped_paragraph_selects_all_its_lines() {
     let mut ui = Ui::new(400., 300.);

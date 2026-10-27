@@ -12,7 +12,7 @@
 //! whose highlight changed (`Scene::set_text_highlight`).
 use crate::{
     input::{EventPhase, InputEvent, Key, Modifiers, PointerButton},
-    scene::{Color, NodeId, NodeKind, Rect, Scene, TextHighlight, TextLeaf},
+    scene::{Color, Direction, NodeId, NodeKind, Rect, Scene, TextHighlight, TextLeaf},
     semantics::Role,
     text_layout::{FontStyle, TextLayout},
     theme::tok,
@@ -1857,6 +1857,9 @@ impl Ui {
             match step {
                 Step::Character(forward) | Step::Word(forward) => {
                     let word = matches!(step, Step::Word(_));
+                    // Right and Left go the way the block runs, as Chrome
+                    // extends: Right back through a right-to-left one.
+                    let forward = forward != (scene.direction(focus.node) == Direction::Rtl);
                     let within = if forward {
                         next_boundary(&own, offset, word)
                     } else {
