@@ -482,7 +482,7 @@ fn push_draw(
 ) {
     let split = split
         && draw.blur.is_none()
-        && draw.layer.is_none()
+        && !matches!(draw.source, TextureSource::Layer(_))
         && !matches!(
             draw.shading,
             Shading::Fill(_)
@@ -791,8 +791,7 @@ fn occluded_from(
                 *h as f32 / scale,
             );
             for draw in draws.iter().rev() {
-                if draw.image.is_some()
-                    || draw.layer.is_some()
+                if draw.source != TextureSource::Atlas
                     || draw.blur.is_some()
                     || !covers(draw.bounds, pixels)
                     || !covers(draw.clip, pixels)
@@ -1396,6 +1395,14 @@ impl GpuStats {
 }
 /// A backdrop filter's bounds, effects and corner radii (`Draw::blur`).
 type Backdrop = (Rect, zgx::scene::Effects, [f32; 4]);
+/// What a draw's quads sample: the glyph atlas, an image (or the effect
+/// atlas) by id, or a cached layer. One of them, never two.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextureSource {
+    Atlas,
+    Image(u64),
+    Layer(NodeId),
+}
 #[derive(Clone)]
 struct Draw {
     /// How its quads are drawn; set by `push_draw`.
@@ -1408,8 +1415,7 @@ struct Draw {
     clip: Rect,
     /// Union of this draw's quads: nothing outside it is ever touched.
     bounds: Rect,
-    image: Option<u64>,
-    layer: Option<NodeId>,
+    source: TextureSource,
 }
 /// A frame's damage, encoded at presentation so it can be drawn into the
 /// next retained target and the drawable in one pass (see `present_single_pass`).
@@ -1978,7 +1984,7 @@ impl<'p> Picks<'p> {
 /// A run of draws encoded as one instanced call.
 struct Batch {
     rect: Rect,
-    source: (Option<u64>, Option<NodeId>),
+    source: TextureSource,
     shading: Shading,
     start: u32,
     end: u32,
@@ -4816,7 +4822,7 @@ impl GpuRenderer {
                             true => shading(&quad, self.scale),
                             false => Shading::Full,
                         },
-                        layer: None,
+                        source: TextureSource::Atlas,
                         blur: None,
                         start: at as u32,
                         end: at as u32 + 1,
@@ -4825,7 +4831,6 @@ impl GpuRenderer {
                             false => clip,
                         },
                         bounds: rect,
-                        image: None,
                     };
                     return true;
                 }
@@ -4833,13 +4838,12 @@ impl GpuRenderer {
                 if !quads.is_empty() {
                     let draw = Draw {
                         shading: Shading::Full,
-                        layer: None,
+                        source: TextureSource::Atlas,
                         blur: None,
                         start: 0,
                         end: quads.len() as u32,
                         clip: draw_clip,
                         bounds: culled.unwrap_or_else(|| quad_bounds(quads)),
-                        image: None,
                     };
                     push_draw(
                         draws,
@@ -5353,8 +5357,10 @@ impl GpuRenderer {
                     clip,
                     bounds: quad_bounds(&quads[start as usize..]),
                     // Effect layers sample the effect atlas, and batch.
-                    image: effect.map(|_| effects::EFFECT_ATLAS),
-                    layer: effect.is_none().then_some(item.id),
+                    source: match effect {
+                        Some(_) => TextureSource::Image(effects::EFFECT_ATLAS),
+                        None => TextureSource::Layer(item.id),
+                    },
                     blur: (item.effects.blur_radius > 0.).then(|| {
                         Box::new((
                             item.bounds,
@@ -6333,7 +6339,6 @@ impl GpuRenderer {
             if quads.len() as u32 > start || item.effects.blur_radius > 0. {
                 let draw = Draw {
                     shading: fill_shading.unwrap_or(Shading::Full),
-                    layer: None,
                     blur: (item.effects.blur_radius > 0.).then(|| {
                         Box::new((bounds, item.effects, blur_corners(item.kind, item.bounds)))
                     }),
@@ -6341,12 +6346,12 @@ impl GpuRenderer {
                     end: quads.len() as u32,
                     clip: draw_clip,
                     bounds: culled_bounds.unwrap_or_else(|| quad_bounds(&quads[start as usize..])),
-                    image: if let Some(image) = canvas_image {
-                        Some(image)
+                    source: if let Some(image) = canvas_image {
+                        TextureSource::Image(image)
                     } else if let NodeKind::Image(image) = item.kind {
-                        Some(image.id())
+                        TextureSource::Image(image.id())
                     } else {
-                        None
+                        TextureSource::Atlas
                     },
                 };
                 let split = self.split_shading;
@@ -6522,11 +6527,12 @@ impl GpuRenderer {
             && (shown.is_some() || copies.is_empty())
             && (self.layer_present.is_some() || self.surface.is_none())
             && self.single_pass_format.is_none()
-            && draws.iter().all(|draw| {
-                draw.layer.is_none_or(|id| self.layers.contains_key(&id))
-                    && draw.image.is_none_or(|id| {
-                        self.images.get(&id).is_some_and(|image| image.2.is_some())
-                    })
+            && draws.iter().all(|draw| match draw.source {
+                TextureSource::Atlas => true,
+                TextureSource::Layer(id) => self.layers.contains_key(&id),
+                TextureSource::Image(id) => {
+                    self.images.get(&id).is_some_and(|image| image.2.is_some())
+                }
             })
             && (batches.is_empty()
                 || self
@@ -7016,7 +7022,7 @@ impl GpuRenderer {
                 Shading::Full
             };
             // The image or layer the quads sample (neither: the glyph atlas).
-            let mut sampled = (None, None);
+            let mut sampled = TextureSource::Atlas;
             let splits = batches.iter().map(|(start, _)| *start);
             let mut from = 0;
             // The batch drawn back at the start of the pass after its blur.
@@ -7045,13 +7051,13 @@ impl GpuRenderer {
                         };
                         if batch.source != sampled {
                             let texture = match batch.source {
-                                (Some(image), _) => {
+                                TextureSource::Image(image) => {
                                     self.images.get(&image).and_then(|image| image.2.as_ref())
                                 }
-                                (None, Some(layer)) => {
+                                TextureSource::Layer(layer) => {
                                     self.layers.get(&layer).map(|layer| &layer.texture)
                                 }
-                                (None, None) => None,
+                                TextureSource::Atlas => None,
                             };
                             match texture {
                                 Some(texture) => pass.texture(&raw(texture)),
@@ -7077,7 +7083,7 @@ impl GpuRenderer {
                 pass.blur(frame, &target, [&blur[0], &blur[1]], &records, rects);
                 pass.resume(&target);
                 pass.texture(&atlas);
-                sampled = (None, None);
+                sampled = TextureSource::Atlas;
                 stats.draw_calls += 3 * rects.iter().filter(|r| r.2 > 0 && r.3 > 0).count();
                 stats.render_passes += 4;
                 stats.blur_passes += 3;
@@ -7633,18 +7639,7 @@ impl GpuRenderer {
         };
         pass.set_pipeline(pipeline);
         pass.set_scissor_rect(x, y, w, h);
-        pass.set_bind_group(
-            0,
-            draw.image.and_then(|id| self.images.get(&id)).map_or_else(
-                || {
-                    draw.layer
-                        .and_then(|id| self.layers.get(&id))
-                        .map_or(&self.bind, |l| &l.bind)
-                },
-                |entry| &entry.0,
-            ),
-            &[],
-        );
+        pass.set_bind_group(0, self.source_bind(draw.source), &[]);
         pass.set_bind_group(2, bind, &[]);
         pass.draw(0..4, draw.start..draw.end);
         stats.draw_calls += 1;
@@ -7704,7 +7699,7 @@ impl GpuRenderer {
                 }
                 continue;
             };
-            let source = (draw.image, draw.layer);
+            let source = draw.source;
             let pixels = draw
                 .bounds
                 .intersection(rect)
@@ -7787,22 +7782,21 @@ impl GpuRenderer {
             *current = Some(batch.shading);
         }
         pass.set_scissor_rect(x, y, w, h);
-        let (image, layer) = batch.source;
-        pass.set_bind_group(
-            0,
-            image.and_then(|id| self.images.get(&id)).map_or_else(
-                || {
-                    layer
-                        .and_then(|id| self.layers.get(&id))
-                        .map_or(&self.bind, |l| &l.bind)
-                },
-                |entry| &entry.0,
-            ),
-            &[],
-        );
+        pass.set_bind_group(0, self.source_bind(batch.source), &[]);
         pass.draw(0..4, batch.start..batch.end);
         stats.draw_calls += 1;
         stats.instances += (batch.end - batch.start) as usize;
+    }
+    /// The bind group of what `source` samples (the atlas's where it is gone).
+    #[inline(always)]
+    fn source_bind(&self, source: TextureSource) -> &wgpu::BindGroup {
+        match source {
+            TextureSource::Atlas => &self.bind,
+            TextureSource::Image(id) => self.images.get(&id).map_or(&self.bind, |entry| &entry.0),
+            TextureSource::Layer(id) => {
+                self.layers.get(&id).map_or(&self.bind, |layer| &layer.bind)
+            }
+        }
     }
     /// Plan a batch of backdrop filters (see blur.wgsl): each one's levels
     /// as slots of the atlas, packed, the atlas grown to hold them.
