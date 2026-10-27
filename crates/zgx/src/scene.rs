@@ -245,6 +245,7 @@ impl DamageGrid {
     }
     /// Each row's runs of marked cells, a run repeated straight down the
     /// next rows joining them as one rectangle.
+    #[inline(never)]
     fn rects(&self, viewport: Rect) -> Vec<Rect> {
         let mut done = Vec::new();
         // Runs still growing down: first and end column, first row.
@@ -1564,17 +1565,42 @@ fn paints_only(old: &NodeKind, new: &NodeKind) -> bool {
         _ => false,
     }
 }
+// Two feature counts are bounded by twice the Slot vector's allocation
+// length, far below this bit (size_of::<Slot>() > 2, Vec bytes <= isize::MAX).
+// While removals are pending, this bit routes only subtree damage through
+// its existing exceptional path. Layout/flush materialize before other uses.
+const PENDING_CHILDREN_BIT: usize = 1usize << (usize::BITS - 1);
+const _: () = assert!(std::mem::size_of::<Slot>() > 2);
 const BOUNDS_VALID: u8 = 1;
 const HIT_DIRECTION: u8 = 2;
 const HIT_CHECKED: u8 = 32;
 const NON_RTL: u8 = 64;
 const INK_VALID: u8 = 128;
+// Pin the original font/children region despite UnsafeCell suppressing
+// the Vec's niche. No extra fields or allocation.
+#[repr(C)]
+struct NodeHead {
+    font: crate::text_layout::FontStyle,
+    children: std::cell::UnsafeCell<Vec<NodeId>>,
+}
+impl std::ops::Deref for Node {
+    type Target = NodeHead;
+    #[inline(always)]
+    fn deref(&self) -> &NodeHead {
+        &self.head
+    }
+}
+impl std::ops::DerefMut for Node {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut NodeHead {
+        &mut self.head
+    }
+}
 struct Node {
     cursor: Option<crate::cursor::Cursor>,
     parent: Option<NodeId>,
-    children: Vec<NodeId>,
     kind: NodeKind,
-    font: crate::text_layout::FontStyle,
+    head: NodeHead,
     style: Style,
     bounds: Rect,
     transform: Transform,
@@ -2517,6 +2543,10 @@ pub struct WalkItem {
 /// compositing that depends on it, and [`Scene::flush`] does that work
 /// and reports the damage.
 pub struct Scene {
+    // One live parent with unmaterialized removals. MAX means none; that
+    // possible arena index uses eager removal, so no NodeId is reserved.
+    // kill/free materialize before the parent's slot can be reused.
+    pending_children: std::cell::Cell<u32>,
     identity: u64,
     slots: Vec<Slot>,
     free: Vec<u32>,
@@ -2556,7 +2586,7 @@ pub struct Scene {
     transformed: usize,
     /// Nodes with a content blur: with `transformed`, whether damage takes
     /// the placed paths (`descend`).
-    filtered: usize,
+    filtered: std::cell::Cell<usize>,
     /// Nodes that ever had one, a content blur or a mask (`Node::promoted`).
     promoted_count: usize,
     text_measurer: Option<Box<dyn TextMeasurer>>,
@@ -2689,6 +2719,7 @@ impl Scene {
             generation: 0,
         };
         Self {
+            pending_children: std::cell::Cell::new(u32::MAX),
             identity: NEXT_SCENE_ID
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
                 .expect("scene identity exhausted"),
@@ -2698,9 +2729,11 @@ impl Scene {
                 node: Some(Node {
                     cursor: None,
                     parent: None,
-                    children: Vec::new(),
                     kind: NodeKind::Container(Layout::Column),
-                    font: Default::default(),
+                    head: NodeHead {
+                        font: Default::default(),
+                        children: std::cell::UnsafeCell::new(Vec::new()),
+                    },
                     style: Style {
                         width: Some(width),
                         height: Some(height),
@@ -2767,7 +2800,7 @@ impl Scene {
             repaints_unread: REPAINTS_UNREAD,
             isolation_count: 0,
             transformed: 0,
-            filtered: 0,
+            filtered: std::cell::Cell::new(0),
             promoted_count: 0,
             text_measurer: None,
             text_shaper: None,
@@ -2884,6 +2917,7 @@ impl Scene {
     /// the viewport as it may be); `None` while it shows nothing (it or what
     /// holds it is hidden or transparent).
     pub fn popup_bounds(&self, id: NodeId) -> Option<Rect> {
+        self.settle_children();
         if !self.contains(id) || !self.layout_visible(id) || self.world(id).1.opacity <= 0. {
             return None;
         }
@@ -3161,6 +3195,7 @@ impl Scene {
     /// points: what a host drawing `id` above the window's content would
     /// wrongly cover.
     pub fn painted_over(&self, id: NodeId, rect: Rect) -> bool {
+        self.settle_children();
         let mut node = id;
         while let Some(parent) = self.node(node).parent {
             // Ink is in the parent's space: its ancestors' translations added.
@@ -3172,7 +3207,7 @@ impl Scene {
                 offset.y += ancestor.transform.y;
                 up = ancestor.parent;
             }
-            let children = &self.tree_node(parent).children;
+            let children = self.children_raw(self.tree_node(parent));
             let after = children
                 .iter()
                 .position(|child| *child == node)
@@ -3494,7 +3529,9 @@ impl Scene {
         if matches!(node.kind, NodeKind::Image(_)) {
             let mut at = node.parent;
             while let Some(parent) = at.map(|id| self.node(id)) {
-                if !matches!(parent.kind, NodeKind::Container(_)) || parent.children.len() != 1 {
+                if !matches!(parent.kind, NodeKind::Container(_))
+                    || self.children_of(parent).len() != 1
+                {
                     break;
                 }
                 if let Some(uniforms) = parent.shader_uniforms.as_deref() {
@@ -3549,10 +3586,10 @@ impl Scene {
         let mut at = id;
         loop {
             let node = self.node(at);
-            if !matches!(node.kind, NodeKind::Container(_)) || node.children.len() != 1 {
+            if !matches!(node.kind, NodeKind::Container(_)) || self.children_of(node).len() != 1 {
                 break;
             }
-            let child = node.children[0];
+            let child = self.children_of(node)[0];
             let inner = self.node(child);
             if inner.shader_uniforms.is_some() {
                 break;
@@ -3624,7 +3661,7 @@ impl Scene {
     pub(crate) fn laid_out_as(&self, mut id: NodeId) -> NodeId {
         loop {
             let node = self.node(id);
-            match node.children.last() {
+            match self.children_raw(node).last() {
                 Some(last) if node.contents() => id = *last,
                 _ => return id,
             }
@@ -3726,7 +3763,7 @@ impl Scene {
         let id = self.laid_out_as(id);
         let node = self.node(id);
         let kind_is_box = matches!(node.kind, NodeKind::Container(_) | NodeKind::Panel { .. });
-        if !kind_is_box || node.children.is_empty() {
+        if !kind_is_box || self.children_raw(node).is_empty() {
             if kind_is_box {
                 let insets = self.content_insets(id);
                 return if horizontal {
@@ -3755,7 +3792,7 @@ impl Scene {
             NodeKind::Container(layout) | NodeKind::Panel { layout, .. } => layout,
             _ => unreachable!(),
         };
-        let (gap, children) = (node.style.gap, node.children.clone());
+        let (gap, children) = (node.style.gap, self.children_raw(node).clone());
         // Children that wrap onto lines need only the widest of them.
         let wraps = node
             .style
@@ -3857,9 +3894,86 @@ impl Scene {
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.node(id).parent
     }
+    /// Materialize the pending child vector before exposing any reference to it.
+    /// Marking a tombstone needs &mut Scene, so no slice of this vector survives
+    /// the mark. The first subsequent read clears pending before returning one.
+    #[inline(always)]
+    fn children_of<'a>(&self, node: &'a Node) -> &'a Vec<NodeId> {
+        if self.pending_children.get() != u32::MAX {
+            return self.children_pending_of(node);
+        }
+        self.children_raw(node)
+    }
+    #[cold]
+    #[inline(never)]
+    fn children_pending_of<'a>(&self, node: &'a Node) -> &'a Vec<NodeId> {
+        let index = self.pending_children.get();
+        if index != u32::MAX {
+            let held = self.slots[index as usize].node.as_ref().unwrap();
+            if std::ptr::eq(held, node) {
+                self.finish_pending_children();
+            }
+        }
+        self.children_raw(node)
+    }
+    /// For a phase that materialized its child vectors at entry, or a
+    /// removal's damage walk below (not through) the pending parent.
+    #[inline(always)]
+    fn children_raw<'a>(&self, node: &'a Node) -> &'a Vec<NodeId> {
+        #[cfg(debug_assertions)]
+        {
+            let index = self.pending_children.get();
+            if index != u32::MAX {
+                let held = self.slots[index as usize].node.as_ref().unwrap();
+                assert!(
+                    !std::ptr::eq(held, node),
+                    "unmaterialized child vector in internal walk"
+                );
+            }
+        }
+        // SAFETY: entry barriers and the checked private removal path guarantee
+        // this vector has no tombstones and cannot be compacted while borrowed.
+        unsafe { &*node.children.get() }
+    }
+    #[inline(always)]
+    fn settle_children(&self) {
+        if self.pending_children.get() != u32::MAX {
+            self.finish_pending_children();
+        }
+    }
+    #[cold]
+    #[inline(never)]
+    fn finish_pending_children(&self) {
+        let index = self.pending_children.replace(u32::MAX);
+        if index == u32::MAX {
+            return;
+        }
+        self.filtered
+            .set(self.filtered.get() & !PENDING_CHILDREN_BIT);
+        // Pending is cleared before kill/free/reuse of this parent's slot.
+        let slot = &self.slots[index as usize];
+        debug_assert!(!slot.dead);
+        let node = slot.node.as_ref().unwrap();
+        // SAFETY: no reference to the pending vector has been exposed since
+        // the exclusive write marked it. Retain invokes no user callback.
+        unsafe { &mut *node.children.get() }.retain(|child| *child != self.root);
+    }
     /// `id`'s children, in order.
+    #[inline(always)]
     pub fn children(&self, id: NodeId) -> &[NodeId] {
-        &self.node(id).children
+        if self.pending_children.get() != u32::MAX {
+            return self.children_pending(id);
+        }
+        assert!(self.contains(id), "stale scene node");
+        self.children_raw(self.tree_node(id))
+    }
+    #[cold]
+    #[inline(never)]
+    fn children_pending(&self, id: NodeId) -> &[NodeId] {
+        if self.pending_children.get() == id.index {
+            self.finish_pending_children();
+        }
+        self.children_raw(self.node(id))
     }
     /// What `id` is and paints.
     pub fn kind(&self, id: NodeId) -> &NodeKind {
@@ -3955,7 +4069,7 @@ impl Scene {
             .node(id)
             .parent
             .is_some_and(|parent| self.node(parent).rtl);
-        self.refresh_direction(id, inherited, false);
+        self.refresh_direction::<true>(id, inherited, false);
     }
     /// Which way `id` and its parent run.
     fn way(&self, id: NodeId) -> Way {
@@ -3976,7 +4090,7 @@ impl Scene {
     /// `id` under a parent running right to left (`inherited`) or not, the
     /// parent having changed way (`moved`) or not: it, and what of its
     /// subtree changes way or sits in what did, lay out again.
-    fn refresh_direction(&mut self, id: NodeId, inherited: bool, moved: bool) {
+    fn refresh_direction<const ENTRY: bool>(&mut self, id: NodeId, inherited: bool, moved: bool) {
         let rtl = self
             .directions
             .get(&id)
@@ -3988,8 +4102,11 @@ impl Scene {
         self.node_mut(id).rtl = rtl;
         // Children first: a contents node lays out as its last child.
         if turned {
-            for child in self.node(id).children.clone() {
-                crate::deep(0, || self.refresh_direction(child, rtl, true));
+            if ENTRY {
+                self.settle_children();
+            }
+            for child in self.children_raw(self.node(id)).clone() {
+                crate::deep(0, || self.refresh_direction::<false>(child, rtl, true));
             }
         }
         if self.node(id).contents() {
@@ -4021,7 +4138,7 @@ impl Scene {
         let own = self.contents_styles.get(&id).cloned().unwrap_or_default();
         let way = self.way(id);
         let own = laid_out_style(own, way);
-        let style = match self.node(id).children.last() {
+        let style = match self.children_of(self.node(id)).last() {
             Some(lead) => contents_style(own, &self.node(*lead).style),
             None => own,
         };
@@ -4051,6 +4168,7 @@ impl Scene {
     /// The point maps through each transformed ancestor's inverse, so nodes
     /// are hit where they are drawn; a singular transform hits nothing.
     pub fn hit_test_all(&self, x: f32, y: f32) -> Vec<NodeId> {
+        self.settle_children();
         match self.popups.is_empty() {
             true => self.hit_test_walk::<false>(x, y),
             false => self.hit_test_walk::<true>(x, y),
@@ -4127,7 +4245,7 @@ impl Scene {
                 .set(cached | BOUNDS_VALID | if zero { HIT_CHECKED } else { 0 });
             return None;
         }
-        if node.children.is_empty() {
+        if self.children_raw(node).is_empty() {
             node.bounds_valid.set(
                 cached
                     | BOUNDS_VALID
@@ -4156,7 +4274,7 @@ impl Scene {
         own: f32,
         limit: f32,
     ) -> Option<f32> {
-        let extent = node.children.iter().try_fold(own, |held, child| {
+        let extent = self.children_raw(node).iter().try_fold(own, |held, child| {
             let child = self.node(*child);
             let shift = if D < 2 {
                 child.transform.x
@@ -4267,7 +4385,7 @@ impl Scene {
             if hit && inside(clip, point) {
                 hits.push(id);
             }
-            if node.children.is_empty() {
+            if self.children_raw(node).is_empty() {
                 continue;
             }
             if !hit
@@ -4286,7 +4404,7 @@ impl Scene {
                     parent_point,
                 ));
             }
-            siblings = node.children.iter();
+            siblings = self.children_raw(node).iter();
             parent_transform = transform;
             parent_opacity = opacity;
             parent_clip = clip;
@@ -4311,6 +4429,7 @@ impl Scene {
     /// subtrees, as are inert ones (`set_inert`). Local transforms (scale,
     /// rotation, skew) are not applied: boxes are as laid out and translated.
     pub fn walk(&self, from: NodeId, mut visit: impl FnMut(&WalkItem) -> bool) {
+        self.settle_children();
         if !self.contains(from) {
             return;
         }
@@ -4351,7 +4470,7 @@ impl Scene {
             }
             let inner = clipped_bounds(clip, bounds, &node.style);
             stack.extend(
-                node.children
+                self.children_raw(node)
                     .iter()
                     .rev()
                     .map(|child| (*child, transform, inner, depth + 1)),
@@ -4415,10 +4534,11 @@ impl Scene {
     /// Invalid parents, foreign nodes, omissions, and duplicates return `false`
     /// without modifying the scene. An unchanged order is a successful no-op.
     pub fn reorder_children(&mut self, parent: NodeId, children: &[NodeId]) -> bool {
+        self.settle_children();
         if !self.contains(parent) {
             return false;
         }
-        let current = &self.node(parent).children;
+        let current = self.children_raw(self.node(parent));
         if current == children {
             return true;
         }
@@ -4454,7 +4574,10 @@ impl Scene {
                 self.damage_subtree(*child);
             }
         }
-        self.node_mut(parent).children.copy_from_slice(children);
+        self.node_mut(parent)
+            .children
+            .get_mut()
+            .copy_from_slice(children);
         self.invalidate_layout(parent);
         self.children_changed(parent);
         true
@@ -4957,9 +5080,11 @@ impl Scene {
         let node = Node {
             cursor: None,
             parent: Some(parent),
-            children: Vec::new(),
             kind,
-            font: Default::default(),
+            head: NodeHead {
+                font: Default::default(),
+                children: std::cell::UnsafeCell::new(Vec::new()),
+            },
             style,
             bounds: Rect::default(),
             transform: Transform::default(),
@@ -5011,7 +5136,7 @@ impl Scene {
                 generation: 0,
             }
         };
-        self.node_mut(parent).children.push(id);
+        self.node_mut(parent).children.get_mut().push(id);
         if let Some(given) = given {
             self.given_styles.insert(id, given);
         }
@@ -5026,11 +5151,42 @@ impl Scene {
     /// Remove `id` and its subtree, damaging where they painted. Panics for
     /// the root.
     pub fn remove(&mut self, id: NodeId) {
+        self.remove_as::<false>(id, 0);
+    }
+    pub(crate) fn remove_indexed(&mut self, id: NodeId, index: usize) {
+        self.remove_as::<true>(id, index);
+    }
+    #[inline(always)]
+    fn remove_as<const INDEXED: bool>(&mut self, id: NodeId, index: usize) {
+        if !INDEXED {
+            self.settle_children();
+        }
         self.content_revision = self.content_revision.wrapping_add(1);
         assert_ne!(id, self.root, "cannot remove scene root");
         self.damage_subtree(id);
         let parent = self.node(id).parent.unwrap();
-        self.node_mut(parent).children.retain(|child| *child != id);
+        if INDEXED
+            && self.pending_children.get() != u32::MAX
+            && self.pending_children.get() != parent.index
+        {
+            self.finish_pending_children();
+        }
+        let tombstone = self.root;
+        let children = self.node_mut(parent).children.get_mut();
+        if INDEXED && parent.index != u32::MAX && children.get(index) == Some(&id) {
+            children[index] = tombstone;
+            self.pending_children.set(parent.index);
+            self.filtered
+                .set(self.filtered.get() | PENDING_CHILDREN_BIT);
+        } else {
+            if INDEXED {
+                self.finish_pending_children();
+            }
+            self.node_mut(parent)
+                .children
+                .get_mut()
+                .retain(|child| *child != id);
+        }
         self.free_subtree(id);
         if !self.inert.is_empty() {
             let mut inert = std::mem::take(&mut self.inert);
@@ -5059,11 +5215,15 @@ impl Scene {
     /// the whole viewport repaints, rather than each node's ink. Panics for
     /// the root.
     pub(crate) fn kill(&mut self, id: NodeId) -> Vec<NodeId> {
+        self.finish_pending_children();
         self.content_revision = self.content_revision.wrapping_add(1);
         assert_ne!(id, self.root, "cannot remove scene root");
         self.add_damage(self.viewport);
         let parent = self.node(id).parent.unwrap();
-        self.node_mut(parent).children.retain(|child| *child != id);
+        self.node_mut(parent)
+            .children
+            .get_mut()
+            .retain(|child| *child != id);
         let mut ids = vec![id];
         let mut at = 0;
         while let Some(&id) = ids.get(at) {
@@ -5074,7 +5234,9 @@ impl Scene {
                 .checked_add(1)
                 .expect("node generation exhausted");
             slot.dead = true;
-            ids.extend_from_slice(&slot.node.as_ref().unwrap().children);
+            // SAFETY: pending removals were settled above (`kill` starts with
+            // `finish_pending_children`), and nothing borrows this vector.
+            ids.extend_from_slice(unsafe { &*slot.node.as_ref().unwrap().children.get() });
         }
         self.dead += ids.len();
         let slots = &self.slots;
@@ -5125,10 +5287,16 @@ impl Scene {
             self.layer_shaders.remove(&id);
         }
         self.transformed -= usize::from(node.transformed());
-        self.filtered -= usize::from(node.filtered());
+        self.filtered
+            .set(self.filtered.get() - usize::from(node.filtered()));
         self.promoted_count -= usize::from(node.promoted);
     }
     fn free_subtree(&mut self, id: NodeId) {
+        // Only remove_as enters this walk. It either materialized first or
+        // left tombstones in id's parent, outside the freed subtree.
+        debug_assert!(
+            self.pending_children.get() == u32::MAX || self.pending_children.get() != id.index
+        );
         let node = self.slots[id.index as usize].node.take().unwrap();
         self.forget(id, &node);
         if node.effects.blur_radius > 0.0 {
@@ -5141,7 +5309,7 @@ impl Scene {
         if node.style.fade_overflow {
             self.overflow_fades.retain(|(entry, _)| *entry != id);
         }
-        for child in node.children {
+        for child in node.head.children.into_inner() {
             crate::deep(0, || self.free_subtree(child));
         }
         self.slots[id.index as usize].generation = self.slots[id.index as usize]
@@ -5240,7 +5408,7 @@ impl Scene {
         if self.contents_count > 0
             && let Some(parent) = self.tree_node(id).parent
             && self.tree_node(parent).contents()
-            && self.tree_node(parent).children.last() == Some(&id)
+            && self.children_of(self.tree_node(parent)).last() == Some(&id)
         {
             self.sync_contents(parent);
         }
@@ -5365,7 +5533,7 @@ impl Scene {
         if self.contents_count > 0
             && let Some(parent) = self.node(id).parent
             && self.node(parent).contents()
-            && self.node(parent).children.last() == Some(&id)
+            && self.children_of(self.node(parent)).last() == Some(&id)
         {
             self.sync_contents(parent);
         }
@@ -5373,12 +5541,13 @@ impl Scene {
     /// Lay out again every absolute node under `id`, and so its parent: its
     /// containing block may have changed (see `containing_block`).
     fn invalidate_absolute_descendants(&mut self, id: NodeId) {
-        let mut stack = self.node(id).children.clone();
+        self.settle_children();
+        let mut stack = self.children_raw(self.node(id)).clone();
         while let Some(node) = stack.pop() {
             if self.node(node).style.absolute {
                 self.invalidate_layout(node);
             }
-            stack.extend_from_slice(&self.node(node).children);
+            stack.extend_from_slice(self.children_raw(self.node(node)));
         }
     }
     /// Resize the viewport (the root's box) to `width` by `height`.
@@ -5496,10 +5665,10 @@ impl Scene {
         let old_filter = self.node(id).filtered();
         if old_filter != (effects.filter_blur > 0.) {
             if old_filter {
-                self.filtered -= 1;
+                self.filtered.set(self.filtered.get() - 1);
             } else {
                 // A layer from now on: its texture outlives a blur back at 0.
-                self.filtered += 1;
+                self.filtered.set(self.filtered.get() + 1);
                 if !std::mem::replace(&mut self.node_mut(id).promoted, true) {
                     self.promoted_count += 1;
                 }
@@ -5573,10 +5742,10 @@ impl Scene {
         let old_filter = self.node(id).filtered();
         if old_filter != (effects.filter_blur > 0.) {
             if old_filter {
-                self.filtered -= 1;
+                self.filtered.set(self.filtered.get() - 1);
             } else {
                 // A layer from now on: its texture outlives a blur back at 0.
-                self.filtered += 1;
+                self.filtered.set(self.filtered.get() + 1);
                 if !std::mem::replace(&mut self.node_mut(id).promoted, true) {
                     self.promoted_count += 1;
                 }
@@ -6070,12 +6239,19 @@ impl Scene {
         }
         // Resolve the ancestors once, then carry translation and clipping down
         // instead of walking back up from every descendant.
-        if self.transformed + self.filtered > 0 {
-            if !self.shown(id) {
-                return;
+        let special = self.transformed + self.filtered.get();
+        if special > 0 {
+            if (special as isize) < 0 {
+                return self.damage_pending_subtree(id, context);
             }
+            // Entry already established this node's visibility.
             let (transform, clip, placement) = match self.node(id).parent {
-                Some(parent) => self.context(parent),
+                Some(parent) => {
+                    if !self.shown(parent) {
+                        return;
+                    }
+                    self.context(parent)
+                }
                 None => (Transform::default(), Some(self.viewport), None),
             };
             self.damage_subtree_placed::<false>(id, transform, clip, placement, 0);
@@ -6085,6 +6261,43 @@ impl Scene {
         let context = *context.get_or_insert_with(|| self.damage_context(parent));
         if let Some((transform, clip)) = context {
             self.damage_subtree_in::<false>(id, transform, clip, 0);
+        }
+    }
+    #[cold]
+    #[inline(never)]
+    fn damage_pending_subtree(&mut self, id: NodeId, context: &mut Option<DamageContext>) {
+        self.settle_damage_children(id);
+        // The caller already checked visibility, placement and full damage.
+        if self.transformed + (self.filtered.get() & !PENDING_CHILDREN_BIT) > 0 {
+            // Entry already established this node's visibility.
+            let (transform, clip, placement) = match self.node(id).parent {
+                Some(parent) => {
+                    if !self.shown(parent) {
+                        return;
+                    }
+                    self.context(parent)
+                }
+                None => (Transform::default(), Some(self.viewport), None),
+            };
+            self.damage_subtree_placed::<false>(id, transform, clip, placement, 0);
+            return;
+        }
+        let parent = self.node(id).parent;
+        let context = *context.get_or_insert_with(|| self.damage_context(parent));
+        if let Some((transform, clip)) = context {
+            self.damage_subtree_in::<false>(id, transform, clip, 0);
+        }
+    }
+    #[cold]
+    #[inline(never)]
+    fn settle_damage_children(&self, id: NodeId) {
+        // A sibling removal walks below the pending parent, never through it.
+        if self
+            .node(id)
+            .parent
+            .is_none_or(|parent| parent.index != self.pending_children.get())
+        {
+            self.finish_pending_children();
         }
     }
     /// `level`: how deep in the walk (`deep`).
@@ -6121,8 +6334,8 @@ impl Scene {
             false => clip,
         };
         self.damage_painted(id, bounds, node.effects.blur_radius, own);
-        for index in 0..self.node(id).children.len() {
-            let child = self.node(id).children[index];
+        for index in 0..self.children_raw(self.node(id)).len() {
+            let child = self.children_raw(self.node(id))[index];
             crate::deep(level + 1, || {
                 self.damage_subtree_in::<true>(child, transform, clip, level + 1)
             });
@@ -6154,8 +6367,8 @@ impl Scene {
             false => clip,
         };
         self.damage_painted_placed(id, bounds, node.effects.blur_radius, own, placement);
-        for index in 0..self.node(id).children.len() {
-            let child = self.node(id).children[index];
+        for index in 0..self.children_raw(self.node(id)).len() {
+            let child = self.children_raw(self.node(id))[index];
             crate::deep(level + 1, || {
                 self.damage_subtree_placed::<true>(child, transform, clip, placement, level + 1)
             });
@@ -6268,7 +6481,7 @@ impl Scene {
         // shadows) reaches past it, as the paint walks draw it.
         let own = self.own_ink(id);
         let mut held: Option<Rect> = None;
-        for child in &node.children {
+        for child in self.children_raw(node) {
             if let Some(child) = crate::deep(0, || self.ink(*child)) {
                 held = Some(held.map_or(child, |ink| ink.union(child)));
             }
@@ -6470,7 +6683,7 @@ impl Scene {
             return;
         }
         let past_clip = self.paints_past_clip(id);
-        if self.transformed + self.filtered > 0 {
+        if self.transformed + self.filtered.get() > 0 {
             let (bounds, clip, placement) = self.placed(id);
             let node = self.node(id);
             let blur_radius = node.effects.blur_radius;
@@ -6691,7 +6904,7 @@ impl Scene {
         // Percentages anywhere below, or its own.
         let (own_w, own_h) = self.percent_bases(id);
         let (mut percent_w, mut percent_h) = (own_w, own_h);
-        for child in &node.children {
+        for child in self.children_raw(node) {
             let (w, h) = self.percentages_within(*child);
             percent_w |= w;
             percent_h |= h;
@@ -6699,8 +6912,8 @@ impl Scene {
         let style = &node.style;
         let (width, height) = match &node.kind {
             // As its last child, which it measures as.
-            _ if node.contents() && !node.children.is_empty() => {
-                self.reads_available(*node.children.last().unwrap())
+            _ if node.contents() && !self.children_raw(node).is_empty() => {
+                self.reads_available(*self.children_raw(node).last().unwrap())
             }
             NodeKind::Text { .. } => (
                 style.text_wrap || style.text_options != Default::default(),
@@ -6712,7 +6925,7 @@ impl Scene {
             ),
             NodeKind::Container(layout) | NodeKind::Panel { layout, .. } => {
                 let mut children = (false, false);
-                for child in &node.children {
+                for child in self.children_raw(node) {
                     if self.node(*child).style.absolute {
                         continue;
                     }
@@ -6721,7 +6934,7 @@ impl Scene {
                 }
                 // A row fits its shrinkable children into the room it has.
                 if *layout == Layout::Row
-                    && node.children.iter().any(|child| {
+                    && self.children_raw(node).iter().any(|child| {
                         let s = &self.node(*child).style;
                         !s.absolute && s.flex_shrink > 0.
                     })
@@ -6899,7 +7112,7 @@ impl Scene {
             None => self.leaf_size(id, &style, available_w),
             // An empty box (a bar, a swatch, a spacer): its padding and size,
             // as the flex pass below works them out with nothing in it.
-            Some(layout) if self.tree_node(id).children.is_empty() => {
+            Some(layout) if self.children_raw(self.tree_node(id)).is_empty() => {
                 let gaps = 0.0 + style.gap * 0.0;
                 match layout {
                     Layout::Row => (gaps, 0.0),
@@ -6925,7 +7138,7 @@ impl Scene {
                 } = self.scratch.pop().unwrap_or_default();
                 ids.clear();
                 absolute.clear();
-                for &child in &self.tree_node(id).children {
+                for &child in self.children_raw(self.tree_node(id)) {
                     if self.tree_node(child).style.absolute {
                         absolute.push(child);
                     } else {
@@ -7378,7 +7591,7 @@ impl Scene {
         let node = self.tree_node(id);
         let style = &node.style;
         if !matches!(node.kind, NodeKind::Container(_) | NodeKind::Panel { .. })
-            || !node.children.is_empty()
+            || !self.children_raw(node).is_empty()
             || node.contents()
             || style.layout_options.is_some()
             || style.align == Align::Baseline
@@ -7528,7 +7741,7 @@ impl Scene {
     /// the children before it over it, within its box.
     fn measure_contents(&mut self, id: NodeId, constraints: Constraints) -> (f32, f32) {
         self.node_mut(id).advanced_layout = None;
-        let ids = self.node(id).children.clone();
+        let ids = self.children_raw(self.node(id)).clone();
         let lead = *ids.last().unwrap();
         let size = self.measure(lead, constraints);
         let mut children = Vec::with_capacity(ids.len());
@@ -7562,7 +7775,7 @@ impl Scene {
     #[inline(never)]
     fn measure_special(&mut self, id: NodeId, constraints: Constraints) -> Option<(f32, f32)> {
         let node = self.node(id);
-        let contents = node.contents() && !node.children.is_empty();
+        let contents = node.contents() && !self.children_raw(node).is_empty();
         if !node.special.has(ZOOMED) {
             return contents.then(|| self.measure_contents(id, constraints));
         }
@@ -7688,8 +7901,11 @@ impl Scene {
         let node = self.tree_node(id);
         let cache = node.measurement.as_ref().unwrap();
         let bounds = Rect::new(x, y, cache.size.0, cache.size.1);
-        let (arrange_dirty, rtl, childless) =
-            (node.arrange_dirty, node.rtl, node.children.is_empty());
+        let (arrange_dirty, rtl, childless) = (
+            node.arrange_dirty,
+            node.rtl,
+            self.children_raw(node).is_empty(),
+        );
         if !arrange_dirty && node.bounds == bounds {
             return;
         }
@@ -7701,7 +7917,7 @@ impl Scene {
         let damage = changed && !covered;
         // A leaf, nothing transformed or filtered: what it painted is damaged
         // with what it will paint, once it is placed (see `leaf_damage`).
-        let leaf = damage && childless && self.transformed + self.filtered == 0;
+        let leaf = damage && childless && self.transformed + self.filtered.get() == 0;
         // A moved leaf's damage where it was and where it lands, worked out
         // and added before its box changes: a leaf has no children, so no
         // other damage comes between, and nothing it paints changes.
@@ -7757,7 +7973,7 @@ impl Scene {
             // A leaf in the grid's walk is placed here, without a call of
             // its own; in list mode's, a second copy of `arrange`'s work
             // would outline what it inlines (`add_moved_leaf_damage`).
-            if CELLS && self.tree_node(child).children.is_empty() {
+            if CELLS && self.children_raw(self.tree_node(child)).is_empty() {
                 let (x, y) = (x + rect.x, y + rect.y);
                 self.place_leaf(child, x, y, report, covered || changed, &mut children);
                 continue;
@@ -7803,7 +8019,7 @@ impl Scene {
         let changed = node.bounds != bounds;
         report.layout_nodes += 1;
         let damage = changed && !covered;
-        let leaf = damage && self.transformed + self.filtered == 0;
+        let leaf = damage && self.transformed + self.filtered.get() == 0;
         match (damage, leaf) {
             (true, true) => {
                 let was = self.tree_node(id).bounds;
@@ -8036,14 +8252,23 @@ impl Scene {
     }
     /// Updates geometry for hit testing without consuming pending paint damage.
     /// The next `flush` reports this work and all damage accumulated by layout.
+    #[inline(never)]
     pub fn prepare_layout(&mut self) {
-        if self.node(self.root).dirty & LAYOUT == 0 && self.layout_roots.is_empty() {
+        let full = self.node(self.root).dirty & LAYOUT != 0;
+        if !full && self.layout_roots.is_empty() {
             return;
         }
+        self.prepare_layout_active(full);
+    }
+    // The clean entry needs neither the active pass's stack nor its scratch.
+    // Materializing children and starting the profile span do not dirty root.
+    #[inline(never)]
+    fn prepare_layout_active(&mut self, full: bool) {
+        self.settle_children();
         let _span = crate::profile::span(crate::profile::Phase::Layout);
         self.layout_pass = self.layout_pass.wrapping_add(1);
         let mut report = FrameReport::default();
-        if self.node(self.root).dirty & LAYOUT != 0 {
+        if full {
             self.measure_full(self.root, Constraints::default());
             self.arrange_from(self.root, 0.0, 0.0, &mut report);
         }
@@ -8124,6 +8349,7 @@ impl Scene {
             return report;
         }
         self.prepare_layout();
+        debug_assert_eq!(self.pending_children.get(), u32::MAX);
         let _span = crate::profile::span(crate::profile::Phase::Damage);
         report.layout_nodes = std::mem::take(&mut self.pending_layout_nodes);
         let dirty = std::mem::take(&mut self.dirty);
@@ -8317,21 +8543,21 @@ impl Scene {
             // viewport fills it and holds the moving content): look past
             // a lone child as large as the node, adding up translations.
             let (mut holder, mut shift) = (node, Transform::default());
-            while let [only] = holder.children[..] {
+            while let [only] = self.children_raw(holder)[..] {
                 let child = self.node(only);
                 let same = (child.bounds.x - own.x).abs() < 0.5
                     && (child.bounds.y - own.y).abs() < 0.5
                     && (child.bounds.width - own.width).abs() < 0.5
                     && (child.bounds.height - own.height).abs() < 0.5;
-                if !same || child.children.is_empty() {
+                if !same || self.children_raw(child).is_empty() {
                     break;
                 }
                 shift.x += child.transform.x;
                 shift.y += child.transform.y;
                 holder = child;
             }
-            let reach = holder
-                .children
+            let reach = self
+                .children_raw(holder)
                 .iter()
                 .map(|child| {
                     let child = self.node(*child);
@@ -8395,7 +8621,7 @@ impl Scene {
             let layered = std::iter::once(id)
                 .chain(self.ancestors(id))
                 .any(|node| self.is_layer(node));
-            if again && self.transformed + self.filtered > 0 {
+            if again && self.transformed + self.filtered.get() > 0 {
                 // Its clip, wherever transformed or blurred ancestors show it.
                 let (_, clip, placement) = self.placed(id);
                 let shown = match (placement, clip) {
@@ -8686,6 +8912,7 @@ impl Scene {
         inherited: &mut Vec<Inherited>,
         from: Option<(NodeId, &Inherited)>,
     ) -> Vec<PaintItem<'_>> {
+        self.settle_children();
         let reach = damage.map(|damage| {
             damage
                 .iter()
@@ -8924,7 +9151,7 @@ impl Scene {
                     .shared(),
                 };
                 stack.extend(
-                    node.children
+                    self.children_raw(node)
                         .iter()
                         .rev()
                         .filter(|child| touches(self.ink(**child), transform))
@@ -8969,6 +9196,7 @@ impl Scene {
     }
     /// Every paint item, in paint order from the root.
     pub fn paint_items(&self) -> impl Iterator<Item = PaintItem<'_>> {
+        self.settle_children();
         PaintIter {
             scene: self,
             stack: vec![(self.root, Transform::default(), 1.0, self.viewport, None)],
@@ -9202,10 +9430,11 @@ impl<'a> Iterator for PaintIter<'a> {
             }
             .shared()
         };
-        self.stack.extend(node.children.iter().rev().map(|child| {
-            let opacity = effects.opacity;
-            (*child, transform, opacity, clip, passed.clone())
-        }));
+        self.stack
+            .extend(self.scene.children_raw(node).iter().rev().map(|child| {
+                let opacity = effects.opacity;
+                (*child, transform, opacity, clip, passed.clone())
+            }));
         Some(PaintItem {
             isolated: false,
             id,
@@ -11250,7 +11479,7 @@ mod nonfinite_effect_tests {
             && p.effects.edge_fade.is_finite()
             && p.effects.filter_blur.is_finite()));
         assert!(scene.blur_nodes.is_empty());
-        assert_eq!(scene.filtered, 0);
+        assert_eq!(scene.filtered.get(), 0);
     }
     #[test]
     fn opacity_infinities_keep_clamped_endpoints_and_invalid_filters_remove_blur_tracking() {
@@ -12443,10 +12672,10 @@ mod local_transform_tests {
                 .iter()
                 .any(|item| item.id == id && !item.isolated)
         );
-        assert_eq!((scene.filtered, scene.promoted_count), (0, 1));
+        assert_eq!((scene.filtered.get(), scene.promoted_count), (0, 1));
         scene.set_filter_blur(id, 1.);
         scene.remove(id);
-        assert_eq!((scene.filtered, scene.promoted_count), (0, 0));
+        assert_eq!((scene.filtered.get(), scene.promoted_count), (0, 0));
     }
     #[test]
     fn descendants_of_a_blurred_node_damage_its_spread() {

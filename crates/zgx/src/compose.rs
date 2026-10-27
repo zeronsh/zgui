@@ -1951,11 +1951,11 @@ pub fn keyed<K: Eq + std::hash::Hash + Clone + 'static>(
                 // map's iteration is not), as what their removal repaints
                 // follows it.
                 if entries.len() > unique.len() {
-                    for key in &last.0 {
+                    for (index, key) in last.0.iter().enumerate() {
                         if !unique.contains(key)
                             && let Some(node) = entries.remove(key)
                         {
-                            ui.remove(node);
+                            ui.remove_indexed(node, index);
                         }
                     }
                     // Any not in the last order (left by a pass that did not finish).
@@ -6292,5 +6292,56 @@ mod input_draw_tests {
     #[test]
     fn a_signal_written_by_a_deferred_shaper_waits_until_the_draw_finishes() {
         assert_eq!(shaper_write_case(false), shaper_write_case(true));
+    }
+}
+
+#[cfg(test)]
+mod keyed_removal_tests {
+    use super::*;
+    use std::cell::Cell;
+    struct ReadChildren {
+        scene: Rc<RefCell<crate::scene::Scene>>,
+        parent: Rc<Cell<Option<NodeId>>>,
+        seen: Rc<RefCell<Vec<Vec<NodeId>>>>,
+    }
+    impl Drop for ReadChildren {
+        fn drop(&mut self) {
+            if let Some(parent) = self.parent.get() {
+                self.seen
+                    .borrow_mut()
+                    .push(self.scene.borrow().children(parent).to_vec());
+            }
+        }
+    }
+    #[test]
+    fn a_removed_rows_resource_reads_its_parents_children_as_they_are() {
+        let mut ui = Ui::new(800., 600.);
+        let keys = ui.signal((0..8u32).collect::<Vec<_>>());
+        let parent = Rc::new(Cell::new(None));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let scene = ui.scene.clone();
+        let (read_keys, read_parent, read_seen) = (keys.clone(), parent.clone(), seen.clone());
+        let view = ui.mount(keyed(
+            move || read_keys.get(),
+            move |_, cx| {
+                cx.retain(ReadChildren {
+                    scene: scene.clone(),
+                    parent: read_parent.clone(),
+                    seen: read_seen.clone(),
+                });
+                column()
+            },
+        ));
+        parent.set(Some(view.node()));
+        let before = ui.scene.borrow().children(view.node()).to_vec();
+        assert_eq!(before.len(), 8);
+        keys.set((4..8).collect());
+        let snapshots = seen.borrow();
+        assert_eq!(snapshots.len(), 4);
+        for (at, snapshot) in snapshots.iter().enumerate() {
+            assert_eq!(snapshot, &before[at + 1..]);
+        }
+        assert_eq!(ui.scene.borrow().children(view.node()), &before[4..]);
+        parent.set(None);
     }
 }

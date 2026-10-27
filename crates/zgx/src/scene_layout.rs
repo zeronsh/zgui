@@ -498,7 +498,7 @@ impl Scene {
                 || options.align_content.is_some()
         });
         own || node.style.align == Align::Baseline
-            || node.children.iter().any(|child| {
+            || self.children_raw(node).iter().any(|child| {
                 // A live node's child.
                 self.tree_node(*child)
                     .style
@@ -520,7 +520,7 @@ impl Scene {
     }
     pub(super) fn measure_hidden(&mut self, id: NodeId, constraints: Constraints) -> (f32, f32) {
         self.node_mut(id).advanced_layout = None;
-        let ids = self.node(id).children.clone();
+        let ids = self.children_raw(self.node(id)).clone();
         // A width no laid out box is forced to, and equal to itself (a NaN
         // was not: no result measured with it was found again, and each
         // arranging of the parent measured the subtree afresh, to its
@@ -569,7 +569,7 @@ impl Scene {
             .advanced_layout
             .take()
             .unwrap_or_else(|| Box::new(AdvancedLayoutCache::new()));
-        let mut ids = self.node(id).children.clone();
+        let mut ids = self.children_raw(self.node(id)).clone();
         // Those whose containing block is further up are placed by it.
         if self.relative_count > 0 {
             ids.retain(|child| !self.escapes(*child));

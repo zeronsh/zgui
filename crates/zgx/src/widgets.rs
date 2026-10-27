@@ -3087,6 +3087,13 @@ impl Ui {
     /// and what its components keep is dropped), and what else its nodes
     /// held is freed over the next frames (`Ui::reclaim`).
     pub fn remove(&mut self, node: NodeId) {
+        self.remove_as(node, usize::MAX);
+    }
+    pub(crate) fn remove_indexed(&mut self, node: NodeId, index: usize) {
+        self.remove_as(node, index);
+    }
+    #[inline(never)]
+    fn remove_as(&mut self, node: NodeId, index: usize) {
         if !self.scene.borrow().contains(node) {
             return;
         }
@@ -3117,7 +3124,11 @@ impl Ui {
         // Detach geometry before listener captures or cached layouts can run
         // user destructors. Reentrant removal of this owner (or an ancestor)
         // then observes an already removed subtree instead of stale node IDs.
-        self.scene.borrow_mut().remove(node);
+        if index != usize::MAX {
+            self.scene.borrow_mut().remove_indexed(node, index);
+        } else {
+            self.scene.borrow_mut().remove(node);
+        }
         for id in ids {
             self.storage.content_sizes.borrow_mut().remove(&id);
             self.storage.observed_sizes.borrow_mut().remove(&id);

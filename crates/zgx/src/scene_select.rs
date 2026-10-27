@@ -233,12 +233,22 @@ impl Scene {
             None => ink,
         }
     }
+    #[cold]
+    #[inline(never)]
+    fn damage_text_pending(&mut self, id: NodeId, rects: &[Rect]) {
+        self.finish_pending_children();
+        self.damage_text_rects(id, rects);
+    }
     fn damage_text_rects(&mut self, id: NodeId, rects: &[Rect]) {
         if rects.is_empty() || self.damage_is_full() || !self.shown(id) {
             return;
         }
         // Placed in a transformed or filtered layer: all of it.
-        if self.transformed + self.filtered > 0 {
+        let special = self.transformed + self.filtered.get();
+        if special > 0 {
+            if (special as isize) < 0 {
+                return self.damage_text_pending(id, rects);
+            }
             self.damage_subtree(id);
             return;
         }
@@ -290,6 +300,7 @@ impl Scene {
         mut skip: impl FnMut(NodeId) -> bool,
         mut visit: impl FnMut(TextLeaf),
     ) {
+        self.settle_children();
         if !self.contains(root) {
             return;
         }
@@ -332,7 +343,7 @@ impl Scene {
             }
             let inner = clipped_bounds(clip, bounds, &node.style);
             stack.extend(
-                node.children
+                self.children_raw(node)
                     .iter()
                     .rev()
                     .map(|child| (*child, transform, inner)),
@@ -381,7 +392,7 @@ impl Scene {
             (None, _) => Ordering::Less,
             (_, None) => Ordering::Greater,
             (Some(x), Some(y)) => {
-                let siblings = &self.node(pa[shared - 1]).children;
+                let siblings = self.children_of(self.node(pa[shared - 1]));
                 let index = |id| siblings.iter().position(|c| c == id);
                 index(x).cmp(&index(y))
             }
