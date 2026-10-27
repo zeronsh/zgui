@@ -2283,43 +2283,48 @@ pub fn virtual_list<K: Eq + std::hash::Hash + Clone + 'static>(
                     let _theme = ui.enter_theme(&environment.theme);
                     let mut transaction = MountTransaction::new(&ui, content);
                     // Construct first: a failed row constructor leaves old rows intact.
-                    let mut added = Vec::new();
-                    for (key, index) in &keys {
-                        if entries.contains_key(key) {
-                            continue;
-                        }
-                        let index_signal = ui.signal(*index);
-                        let mut cx = Context::new(runtime.clone(), environment.clone());
-                        let view = build(index_signal.clone(), key.clone(), &mut cx);
-                        let row = ui.container(content, Layout::Overlay, Default::default());
-                        crate::selection::mount_row(&mut ui, row, &index_signal);
-                        let node = mount(&mut ui, row, view, environment.clone());
-                        cx.finish(&mut ui, node);
-                        if let Some(navigation) = &navigation {
-                            navigation.mount_row(&mut ui, row, row_height);
-                        }
-                        added.push((key.clone(), (row, index_signal, Placed { run, at: None })));
-                    }
-                    entries.extend(added);
-                    let mut removed_focus = false;
-                    entries.retain(|_, (node, _, placed)| {
-                        if placed.run == run {
-                            true
-                        } else {
-                            if navigation.is_some()
-                                && let Some(focused) = ui.input.focused()
-                            {
-                                let scene = ui.scene.borrow();
-                                removed_focus |= focused == *node
-                                    || (scene.contains(focused)
-                                        && scene
-                                            .ancestors(focused)
-                                            .any(|ancestor| ancestor == *node));
+                    if fresh != 0 {
+                        let mut added = Vec::new();
+                        for (key, index) in &keys {
+                            if entries.contains_key(key) {
+                                continue;
                             }
-                            ui.remove(*node);
-                            false
+                            let index_signal = ui.signal(*index);
+                            let mut cx = Context::new(runtime.clone(), environment.clone());
+                            let view = build(index_signal.clone(), key.clone(), &mut cx);
+                            let row = ui.container(content, Layout::Overlay, Default::default());
+                            crate::selection::mount_row(&mut ui, row, &index_signal);
+                            let node = mount(&mut ui, row, view, environment.clone());
+                            cx.finish(&mut ui, node);
+                            if let Some(navigation) = &navigation {
+                                navigation.mount_row(&mut ui, row, row_height);
+                            }
+                            added
+                                .push((key.clone(), (row, index_signal, Placed { run, at: None })));
                         }
-                    });
+                        entries.extend(added);
+                    }
+                    let mut removed_focus = false;
+                    if entries.len() > keys.len() {
+                        entries.retain(|_, (node, _, placed)| {
+                            if placed.run == run {
+                                true
+                            } else {
+                                if navigation.is_some()
+                                    && let Some(focused) = ui.input.focused()
+                                {
+                                    let scene = ui.scene.borrow();
+                                    removed_focus |= focused == *node
+                                        || (scene.contains(focused)
+                                            && scene
+                                                .ancestors(focused)
+                                                .any(|ancestor| ancestor == *node));
+                                }
+                                ui.remove(*node);
+                                false
+                            }
+                        });
+                    }
                     for (key, index) in &keys {
                         entries[key].1.set(*index);
                     }
