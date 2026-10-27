@@ -1,5 +1,7 @@
 //! Display-rate animation workload (see zgx_workload::animation).
 use gpui::{prelude::*, *};
+#[path = "../menu.rs"]
+mod menu;
 use std::time::Instant;
 use zgx_workload::{Workload, animation::*};
 struct Scene {
@@ -50,6 +52,7 @@ impl Render for Scene {
 }
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
+        menu::menu_bar(cx, "zgx animation");
         // The comparisons' one font file (comparisons/fonts), as every framework loads it.
         if let Some(bytes) = zgx_workload::font_file() {
             cx.text_system()

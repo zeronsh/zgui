@@ -59,8 +59,9 @@ fn main() {
                     .timer(Duration::from_millis(PHASE_MS))
                     .await;
                 if seconds > 0. && start.elapsed().as_secs_f64() >= seconds {
-                    let _ =
-                        window.update(cx, |scene, _, _| eprintln!("blink_frames={} workload_ticks=0", scene.frames));
+                    let _ = window.update(cx, |scene, _, _| {
+                        eprintln!("blink_frames={} workload_ticks=0", scene.frames)
+                    });
                     let _ = cx.update(|cx| cx.quit());
                     return;
                 }

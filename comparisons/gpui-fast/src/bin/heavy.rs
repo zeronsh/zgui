@@ -2,6 +2,8 @@
 //! cards, the table and the log are separately cached views, and each tick
 //! notifies only the views whose data changed.
 use gpui::{prelude::*, *};
+#[path = "../menu.rs"]
+mod menu;
 use std::time::Instant;
 use zgx_workload::{Mode, heavy::*};
 
@@ -177,6 +179,7 @@ impl Render for Root {
 
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
+        menu::menu_bar(cx, "zgx heavy");
         // The comparisons' one font file (comparisons/fonts), as every framework loads it.
         if let Some(bytes) = zgx_workload::font_file() {
             cx.text_system()

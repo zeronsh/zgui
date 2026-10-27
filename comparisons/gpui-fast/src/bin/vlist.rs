@@ -3,6 +3,8 @@
 //! which lays rows out to measure them as they come into view, moved by the
 //! scene's scroll, fling or jump each tick.
 use gpui::{prelude::*, *};
+#[path = "../menu.rs"]
+mod menu;
 use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Instant};
 use zgx_workload::{PERIOD, vlist};
 
@@ -90,6 +92,7 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(30.);
     gpui_platform::application().run(move |cx: &mut App| {
+        menu::menu_bar(cx, "zgx vlist");
         // The comparisons' one font file (comparisons/fonts), as every framework loads it.
         if let Some(bytes) = zgx_workload::font_file() {
             cx.text_system()
