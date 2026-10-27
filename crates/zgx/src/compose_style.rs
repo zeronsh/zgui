@@ -278,6 +278,7 @@ impl Paint {
     };
     /// Take `styles`' paint properties out, leaving them unset. None set
     /// (`Styles::set_bits`): none to take.
+    #[inline(never)]
     fn take(styles: &mut Styles) -> Self {
         let set = styles.set_bits();
         if set & Self::BITS == 0 {
@@ -312,6 +313,7 @@ impl Paint {
             text_color: taken!(text_color, TEXT_COLOR),
         }
     }
+    #[cfg(test)]
     fn put(self, styles: &mut Styles) {
         // Nothing to write over nothing.
         if styles.set_bits() & Self::BITS == 0 && self == Self::default() {
@@ -334,6 +336,7 @@ impl Paint {
     }
     /// Out of line: inline, it kept `put` from being inlined into the
     /// style effect (style +1.1%), nearly always unset as it is.
+    #[cfg(test)]
     #[inline(never)]
     fn put_overflow(&self, styles: &mut crate::style::StylesFields) {
         styles.write_overflow_paint(crate::style::OverflowPaint {
@@ -901,14 +904,18 @@ pub(crate) fn mount_style_with_intrinsic(
             && !themed
             && !swapped
         {
-            let paint = produced.as_mut().map(Paint::take);
+            let paint = produced.as_ref().map(Paint::of);
             // Unchanged, or a box that changes only its size or margins (a
             // bar growing): the same fields set, other values, no interaction
             // style over them, and the rest compared once.
             let (same, resized) = match (&produced, &last.dynamic) {
-                // Paint alone (taken out above): nothing else to compare.
-                (Some(now), Some(then)) if now.set_bits() | then.set_bits() == 0 => (true, false),
-                (Some(now), Some(then)) => match now.eq_then_sizes(then) {
+                // Paint alone: nothing else to compare.
+                (Some(now), Some(then))
+                    if (now.set_bits() | then.set_bits()) & !Paint::BITS == 0 =>
+                {
+                    (true, false)
+                }
+                (Some(now), Some(then)) => match now.eq_then_sizes(then, Paint::BITS) {
                     None => (false, false),
                     Some(sizes) => (
                         sizes,
@@ -1120,9 +1127,6 @@ pub(crate) fn mount_style_with_intrinsic(
                     scene.set_kind(node, kind);
                 }
                 return;
-            }
-            if let (Some(produced), Some(paint)) = (&mut produced, paint) {
-                paint.put(produced);
             }
         }
         let mut ui = Ui::from_storage(storage);
@@ -2580,6 +2584,35 @@ mod tests {
         width.set(3.);
         assert_eq!(ui.scene.borrow().transform(node), external);
     }
+    /// Ignoring paint in a comparison matches taking it out first, including
+    /// overflow and partial transforms, without hiding non-paint differences.
+    #[test]
+    fn comparing_without_paint_matches_taking_it_out() {
+        let styles = [
+            Styles::new(),
+            Styles::new().opacity(0.5).translate(4., 5.),
+            Styles::new().blur(3.).brightness(0.8),
+            Styles::new().rotate_x(0.2).rotate_y(0.3).perspective(400.),
+            Styles::new().opacity(f32::NAN).rotate(f32::NAN),
+            color(7),
+            color(9).opacity(0.2),
+            Styles::new().w(30.).mt(4.).opacity(0.7),
+            Styles::new().w(40.).mt(3.).blur(5.),
+        ];
+        for a in &styles {
+            for b in &styles {
+                let mut stripped_a = a.clone();
+                let mut stripped_b = b.clone();
+                Paint::take(&mut stripped_a);
+                Paint::take(&mut stripped_b);
+                assert_eq!(
+                    a.eq_then_sizes(b, Paint::BITS),
+                    stripped_a.eq_then_sizes(&stripped_b, 0)
+                );
+            }
+        }
+    }
+
     /// Reusing paint follows the same component precedence as rebuilding
     /// it from the base, including variants that cover only part of a transform.
     #[test]

@@ -583,12 +583,13 @@ impl Styles {
     /// height, their percentages and margins: what a growing bar changes),
     /// and if so, whether those are equal too (then `==`), comparing only
     /// fields set in either: a style effect re-run's two comparisons in
-    /// one pass, out of line so the effect calling it keeps its size.
+    /// one pass, ignoring `without`'s fields. Out of line so the effect
+    /// calling it keeps its size.
     #[inline]
-    pub(crate) fn eq_then_sizes(&self, other: &Self) -> Option<bool> {
+    pub(crate) fn eq_then_sizes(&self, other: &Self, without: u64) -> Option<bool> {
         let sizes =
             bit::WIDTH | bit::HEIGHT | bit::WIDTH_PERCENT | bit::HEIGHT_PERCENT | bit::MARGIN;
-        let set = self.set | other.set;
+        let set = (self.set | other.set) & !without;
         self.fields
             .eq_in(&other.fields, set & !sizes)
             .then(|| self.fields.eq_in(&other.fields, set & sizes))
@@ -3090,7 +3091,10 @@ mod tests {
                     );
                     s
                 };
-                assert_eq!(a.eq_then_sizes(b), (sizes(a) == sizes(b)).then_some(a == b));
+                assert_eq!(
+                    a.eq_then_sizes(b, 0),
+                    (sizes(a) == sizes(b)).then_some(a == b)
+                );
             }
         }
     }
