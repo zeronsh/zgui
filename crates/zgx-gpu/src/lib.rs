@@ -992,7 +992,7 @@ struct Kept {
     clips: Vec<Region>,
     items: Vec<KeptItem>,
     /// Each node's first item (a border pass follows it).
-    by_node: FxHashMap<NodeId, u32>,
+    by_node: KeptIndex,
     /// The scene's last flush it was brought up to date with.
     flushes: u64,
     /// What it was drawn for: the scene's nodes and identity, the atlas
@@ -1012,6 +1012,135 @@ struct Kept {
     /// texts outgrowing their room move past them, to its end, where a
     /// subtree's quads no longer lie together.
     ordered: u32,
+}
+/// Each node's first item in a kept frame (`Kept::by_node`): a node's slot
+/// number indexes a dense table while the frame's nodes are numbered close
+/// together, a hash map otherwise. The item itself witnesses a slot's full
+/// identity (number and generation), so a dense table can keep stale
+/// entries after a splice: a node no longer there fails the item's bounds
+/// or its identity check.
+enum KeptIndex {
+    Dense(Vec<u32>),
+    Sparse(FxHashMap<NodeId, u32>),
+}
+impl KeptIndex {
+    fn new(items: &[KeptItem]) -> Self {
+        let span = items
+            .iter()
+            .map(|item| item.id.number() as usize + 1)
+            .max()
+            .unwrap_or(0);
+        // A node has at most an ordinary item and a border item: six bytes
+        // an item fit within the map's twelve-byte entry a node.
+        let room = items.len().saturating_add(items.len() / 2);
+        if span <= room {
+            let mut slots = vec![0; room];
+            for (index, item) in items.iter().enumerate().rev() {
+                slots[item.id.number() as usize] = index as u32;
+            }
+            Self::Dense(slots)
+        } else {
+            let mut map = FxHashMap::default();
+            Self::fill(&mut map, items);
+            Self::Sparse(map)
+        }
+    }
+    /// The distinct nodes among `items`: a node's second item is its border
+    /// pass, at the end of its subtree.
+    fn nodes(items: &[KeptItem]) -> usize {
+        let borders = items
+            .iter()
+            .enumerate()
+            .filter(|&(at, item)| {
+                let end = item.end as usize;
+                end > at + 1 && items[end - 1].id == item.id
+            })
+            .count();
+        items.len() - borders
+    }
+    fn fill(map: &mut FxHashMap<NodeId, u32>, items: &[KeptItem]) {
+        for (index, item) in items.iter().enumerate().rev() {
+            map.insert(item.id, index as u32);
+        }
+    }
+    #[inline]
+    fn get(&self, id: NodeId, items: &[KeptItem]) -> Option<usize> {
+        match self {
+            Self::Dense(slots) => {
+                let index = *slots.get(id.number() as usize)? as usize;
+                (items.get(index)?.id == id).then_some(index)
+            }
+            Self::Sparse(map) => map.get(&id).map(|&index| index as usize),
+        }
+    }
+    /// Brought up to date with `items` after splices (`renumbered`: all
+    /// of them moved), `replaced` the nodes they took out (kept only for a
+    /// sparse index).
+    fn patch(
+        &mut self,
+        items: &[KeptItem],
+        renumbered: bool,
+        replaced: Vec<NodeId>,
+        splices: &[(usize, usize, NodeId)],
+    ) {
+        match self {
+            Self::Dense(slots) => {
+                let span = if renumbered {
+                    items.iter().map(|item| item.id.number() as usize + 1).max()
+                } else {
+                    splices
+                        .iter()
+                        .flat_map(|&(first, end, _)| &items[first..end])
+                        .map(|item| item.id.number() as usize + 1)
+                        .max()
+                }
+                .unwrap_or(0);
+                if span > slots.len() {
+                    let room = items.len().saturating_add(items.len() / 2);
+                    if span > room {
+                        let nodes = Self::nodes(items);
+                        // The dense table goes first, and the map is made
+                        // once at its size: growing it would hold two.
+                        *self = Self::Sparse(FxHashMap::default());
+                        let Self::Sparse(map) = self else {
+                            unreachable!()
+                        };
+                        map.reserve(nodes);
+                        Self::fill(map, items);
+                        return;
+                    }
+                    slots.reserve_exact(room - slots.len());
+                    slots.resize(room, 0);
+                }
+                if renumbered {
+                    for (index, item) in items.iter().enumerate().rev() {
+                        slots[item.id.number() as usize] = index as u32;
+                    }
+                } else {
+                    for &(first, end, _) in splices {
+                        for index in (first..end).rev() {
+                            slots[items[index].id.number() as usize] = index as u32;
+                        }
+                    }
+                }
+            }
+            Self::Sparse(map) => {
+                if renumbered {
+                    map.clear();
+                    Self::fill(map, items);
+                } else {
+                    for id in replaced {
+                        map.remove(&id);
+                    }
+                    for &(first, end, _) in splices {
+                        for index in (first..end).rev() {
+                            map.insert(items[index].id, index as u32);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 /// What `render_flat` makes: a frame (`FRAME`, or the kept frame when
 /// `draw_made`), or items' quads and draws alone, with where each
@@ -4309,10 +4438,7 @@ impl GpuRenderer {
             .collect();
         let mut items = items;
         subtree_ends(scene, &mut items, 0);
-        let mut by_node = FxHashMap::default();
-        for (index, item) in items.iter().enumerate().rev() {
-            by_node.insert(item.id, index as u32);
-        }
+        let by_node = KeptIndex::new(&items);
         self.item_ranges = ranges;
         self.kept = Some(Box::new(Kept {
             quads,
@@ -4394,7 +4520,7 @@ impl GpuRenderer {
         let mut splices: Vec<(usize, usize, NodeId)> = Vec::new();
         let (mut leaving, mut entering) = (Vec::new(), Vec::new());
         for &(id, flags) in repaints {
-            let first = kept.by_node.get(&id).map(|&first| first as usize);
+            let first = kept.by_node.get(id, &kept.items);
             if !scene.contains(id) {
                 leaving.extend(first);
                 continue;
@@ -4968,7 +5094,9 @@ impl GpuRenderer {
         // Last first: what a splice moves lies after it, spliced already.
         for (&(first, end, _), mut new) in splices.iter().zip(made_items).rev() {
             let old = &kept.items[first..end];
-            replaced.extend(old.iter().map(|item| item.id));
+            if matches!(kept.by_node, KeptIndex::Sparse(_)) {
+                replaced.extend(old.iter().map(|item| item.id));
+            }
             let quads_from = old[0].start;
             let quads_to = old.last().map_or(quads_from, |item| item.start + item.room);
             let draws_from = old[0].draws.start;
@@ -5043,21 +5171,8 @@ impl GpuRenderer {
             kept.upload.wrote(shifted_from, kept.quads.len() as u32);
         }
         // (Each node's first item: a box's border pass comes after it.)
-        if renumbered {
-            kept.by_node.clear();
-            for (index, item) in kept.items.iter().enumerate().rev() {
-                kept.by_node.insert(item.id, index as u32);
-            }
-        } else {
-            for id in replaced {
-                kept.by_node.remove(&id);
-            }
-            for &(first, end, _) in splices {
-                for index in (first..end).rev() {
-                    kept.by_node.insert(kept.items[index].id, index as u32);
-                }
-            }
-        }
+        kept.by_node
+            .patch(&kept.items, renumbered, replaced, splices);
         self.item_ranges = ranges;
         let mut made = made;
         made.patched_items = counts.iter().sum();
@@ -11671,5 +11786,155 @@ mod copy_blocker_tests {
                 assert_eq!(blocker, None);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod kept_index_tests {
+    use super::*;
+
+    fn scene_ids(count: usize) -> (Scene, Vec<NodeId>, zgx::scene::Inherited) {
+        let mut scene = Scene::new(100., 100.);
+        let mut ids = vec![scene.root()];
+        for _ in 1..count {
+            ids.push(scene.append(
+                scene.root(),
+                NodeKind::Rect(Color(20, 30, 40, 255)),
+                zgx::scene::Style::default(),
+            ));
+        }
+        scene.flush();
+        let mut inherited = Vec::new();
+        scene.layer_items_recorded(&mut inherited);
+        (scene, ids, inherited.remove(0))
+    }
+
+    fn items(ids: &[NodeId], inherited: &zgx::scene::Inherited) -> Vec<KeptItem> {
+        ids.iter()
+            .enumerate()
+            .map(|(at, &id)| KeptItem {
+                id,
+                inherited: inherited.clone(),
+                start: 0,
+                len: 0,
+                room: 0,
+                draws: 0..0,
+                boxed: None,
+                end: (ids[at..].iter().rposition(|&other| other == id).unwrap() + at + 1) as u32,
+            })
+            .collect()
+    }
+
+    fn agrees(index: &KeptIndex, kept: &[KeptItem], ids: &[NodeId]) {
+        for &id in ids {
+            assert_eq!(
+                index.get(id, kept),
+                kept.iter().position(|item| item.id == id)
+            );
+        }
+    }
+
+    #[test]
+    fn subtree_ends_count_unique_nodes_through_nested_border_passes() {
+        let (mut scene, ids, _) = scene_ids(2);
+        let quad = zgx::scene::QuadStyle {
+            border_over: true,
+            border_width: 1.,
+            border_color: Color(255, 255, 255, 255),
+            ..Default::default()
+        };
+        scene.set_kind(ids[1], NodeKind::Quad(quad.clone()));
+        let style = zgx::scene::Style {
+            width: Some(80.),
+            height: Some(80.),
+            ..Default::default()
+        };
+        scene.set_style(ids[1], style.clone());
+        let child = scene.append(ids[1], NodeKind::Quad(quad), style.clone());
+        scene.append(child, NodeKind::Rect(Color(1, 2, 3, 255)), style);
+        scene.flush();
+        let mut inherited = Vec::new();
+        let painted = scene.layer_items_recorded(&mut inherited);
+        let expected = painted.iter().filter(|item| !item.border_pass).count();
+        let ids: Vec<_> = painted.iter().map(|item| item.id).collect();
+        let mut kept = items(&ids, &inherited[0]);
+        subtree_ends(&scene, &mut kept, 0);
+        assert_eq!(KeptIndex::nodes(&kept), expected);
+        assert!(
+            kept.len() > expected,
+            "the test must include border duplicates"
+        );
+        let mut sparse = FxHashMap::default();
+        sparse.reserve(KeptIndex::nodes(&kept));
+        let room = sparse.capacity();
+        KeptIndex::fill(&mut sparse, &kept);
+        assert_eq!(
+            sparse.capacity(),
+            room,
+            "fallback fills without another allocation"
+        );
+    }
+
+    #[test]
+    fn dense_index_rejects_recycled_generations_and_keeps_the_first_border_item() {
+        let (mut scene, ids, inherited) = scene_ids(3);
+        let root = ids[0];
+        let mut live = ids[1];
+        let spare = ids[2];
+        let mut kept = items(&[root, live, spare, live], &inherited);
+        let mut index = KeptIndex::new(&kept);
+        assert!(matches!(index, KeptIndex::Dense(_)));
+        let mut history = ids.clone();
+        for _ in 0..32 {
+            let old = live;
+            scene.remove(old);
+            live = scene.append(
+                root,
+                NodeKind::Rect(Color(0, 0, 0, 255)),
+                zgx::scene::Style::default(),
+            );
+            assert_eq!(live.number(), old.number());
+            assert_ne!(live, old);
+            kept = items(&[root, live, spare, live], &inherited);
+            index.patch(&kept, false, vec![old], &[(1, 4, root)]);
+            history.push(live);
+            agrees(&index, &kept, &history);
+            assert_eq!(index.get(live, &kept), Some(1));
+        }
+    }
+
+    #[test]
+    fn stale_dense_offsets_are_checked_after_removal_reorder_and_growth() {
+        let (_, ids, inherited) = scene_ids(10);
+        let mut kept = items(&ids[..6], &inherited);
+        let mut index = KeptIndex::new(&kept);
+        for order in [vec![0, 2, 4], vec![4, 0, 2, 6, 8, 9], vec![0], vec![]] {
+            let selected: Vec<_> = order.into_iter().map(|at| ids[at]).collect();
+            kept = items(&selected, &inherited);
+            index.patch(&kept, true, Vec::new(), &[]);
+            agrees(&index, &kept, &ids);
+        }
+    }
+
+    #[test]
+    fn sparse_slots_fall_back_and_keep_generation_and_duplicate_semantics() {
+        let (_, ids, inherited) = scene_ids(100);
+        let small = items(&ids[..4], &inherited);
+        let mut index = KeptIndex::new(&small);
+        assert!(matches!(index, KeptIndex::Dense(_)));
+        let far = items(&[ids[0], ids[99], ids[99]], &inherited);
+        index.patch(&far, true, Vec::new(), &[]);
+        assert!(matches!(index, KeptIndex::Sparse(_)));
+        agrees(&index, &far, &ids);
+        let direct = KeptIndex::new(&far);
+        assert!(matches!(direct, KeptIndex::Sparse(_)));
+        agrees(&direct, &far, &ids);
+        let next = items(&[ids[0], ids[98], ids[98]], &inherited);
+        index.patch(&next, false, vec![ids[99]], &[(1, 3, ids[0])]);
+        agrees(&index, &next, &ids);
+        assert_eq!(
+            std::mem::size_of::<KeptIndex>(),
+            std::mem::size_of::<FxHashMap<NodeId, u32>>()
+        );
     }
 }
