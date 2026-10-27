@@ -1,0 +1,169 @@
+{
+ "accepted": true,
+ "platform": "windows",
+ "trials": 41,
+ "samples": 3430,
+ "pacing_trials": 36,
+ "active_ticks_per_requested_second": {
+  "min": 59.72222222222222,
+  "max": 59.94444444444444
+ },
+ "scene": "lab",
+ "commit": "ffbae9dbbd6bc478fb7a2d7a64adbe0fac093f81",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-27T11:25:57.149172+00:00",
+ "finished_utc": "2026-10-27T11:51:29.950924+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "SudoMaker Virtual Display Adapter",
+    "resolution": "1920 x 1080 @ 60Hz",
+    "main": true
+   }
+  ],
+  "display_count": 1,
+  "power_plan": "High performance",
+  "on_battery": false,
+  "windows": "11 (10.0.26200)",
+  "uptime_hours": 84.6,
+  "chip": "12th Gen Intel(R) Core(TM) i7-12700KF",
+  "cores": 20,
+  "memory_bytes": 34194051072,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "gpu_driver": "617.42",
+  "power": "AC Power",
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "screen_reader_running": false,
+  "uia_client_processes_running": [
+   "TextInputHost"
+  ],
+  "remote_display_hosts_running": [
+   "sunshine"
+  ]
+ },
+ "preflight": {
+  "heavy": [],
+  "other_cpu_percent": 145.9,
+  "threshold_percent": 200.0,
+  "busiest": [
+   "zeron 11.2%",
+   "claude 4.1%",
+   "zeron 1.2%",
+   "taskhostw 0.3%",
+   "powershell 0.3%",
+   "zeron 0.0%"
+  ]
+ },
+ "binaries": {
+  "zgx": {
+   "sha256": "5409d08db0edfb34c9dfc85b9bd8866a4b336465354c2b1ae42dfaaad0717bf9",
+   "bytes": 14388224
+  },
+  "gpui-fast": {
+   "sha256": "b34a0cb4a214655f2140b19a46ee903e8630d6c7659b4e99a708325db517869a",
+   "bytes": 9263104
+  },
+  "mygo": {
+   "sha256": "1aa039996199e83fbb72778f4c00827d693300ab5d45543d30fde6ece4e5587c",
+   "bytes": 9989120
+  },
+  "rune": {
+   "sha256": "fd700935f05637d5baebee43416d943c220b24e77108e3585871d541012d648a",
+   "bytes": 13607936
+  }
+ },
+ "toolchains": {
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "rust_profile": "dist (release, lto = \"fat\", codegen-units = 1)",
+  "go": "go version go1.27.1 windows/amd64",
+  "mygo": {
+   "mygo_version": "v0.6.3",
+   "mygo_commit": "15242900157b77228d35ca071f43e94a11bc90a0",
+   "mygo_license": "MIT",
+   "mygo_source": "https://github.com/egoist/mygo",
+   "go": "go1.27.1 windows/amd64",
+   "flags": "-trimpath -ldflags=-s -w",
+   "cgo": false
+  },
+  "rune": {
+   "rune_rev": "",
+   "rune_branch": "dev",
+   "rune_license": "MIT",
+   "rune_source": "https://github.com/anomalyco/rune",
+   "rune_patch": "PATCH.md: Tx::wheel (sha256 17d01a2fb86e35e619947368e307e43a82272956200fc94ae7910b7a7eb05535)",
+   "profile": "dist (Rune's perf with fat LTO and codegen-units 1)"
+  }
+ },
+ "invalid_trials": [],
+ "abnormal_exits": [],
+ "launches": {
+  "zgx": {
+   "trial": 24,
+   "pacing": 18
+  },
+  "gpui-fast": {
+   "trial": 22,
+   "pacing": 18
+  },
+  "mygo": {
+   "trial": 23,
+   "pacing": 18
+  },
+  "rune": {
+   "trial": 20,
+   "pacing": 18
+  }
+ },
+ "readiness_failures": [],
+ "protocol": {
+  "requested_seconds": 18,
+  "warmup_seconds": 5,
+  "sampled_seconds": 10,
+  "sampling_anchor": "window frontmost and uncovered",
+  "readiness_timeout_seconds": 2.5,
+  "lifetime_margin_seconds": 3,
+  "interval_seconds": 0.1,
+  "repeats": 3,
+  "idle_repeats": 2,
+  "idle_window_seconds": [
+   20,
+   30
+  ],
+  "idle_requested_seconds": 34,
+  "quick": false,
+  "pgo": false,
+  "frameworks": [
+   "zgx",
+   "gpui-fast",
+   "mygo",
+   "rune"
+  ],
+  "modes": [
+   "stream",
+   "scroll",
+   "both"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 3,
+  "pacing_during_trials": false,
+  "pacing_capture": "Desktop Duplication (framepace)",
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ],
+  "suite": true,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 1,
+  "extended_cells": [
+   "zgx/stream",
+   "mygo/stream"
+  ],
+  "spread_metrics": [
+   "mcycles_per_second",
+   "gpu_ms_per_second"
+  ],
+  "power_plan": "High performance",
+  "font_fnv64": "ce252980ec1255ff"
+ }
+}

@@ -1,0 +1,352 @@
+{
+ "commit": "ffbae9dbbd6bc478fb7a2d7a64adbe0fac093f81",
+ "machine": "12th Gen Intel(R) Core(TM) i7-12700KF, NVIDIA GeForce RTX 4090",
+ "probe": "scripts/windows_startup_probe.py: spawn, window, the header strip until its text has drawn (PrintWindow); CPU time and cycles of the process at content",
+ "apps": {
+  "zgx": "component_workload.exe (lab), ZGX_MODE=idle",
+  "gpui-fast": "zgx-compare-gpui-fast.exe (lab), ZGX_MODE=idle",
+  "mygo": "lab.exe (lab), ZGX_MODE=idle",
+  "rune": "lab.exe (lab), ZGX_MODE=idle"
+ },
+ "protocol": "10 rounds, the frameworks rotating; the suite's font",
+ "launches": {
+  "zgx": [
+   {
+    "window_ms": 360.8,
+    "content_ms": 397.7,
+    "cycles": 865651647,
+    "cpu_ms": 234.4
+   },
+   {
+    "window_ms": 242.4,
+    "content_ms": 282.5,
+    "cycles": 817140106,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 532.2,
+    "content_ms": 568.6,
+    "cycles": 844305356,
+    "cpu_ms": 234.4
+   },
+   {
+    "window_ms": 232.3,
+    "content_ms": 268.0,
+    "cycles": 826502280,
+    "cpu_ms": 234.4
+   },
+   {
+    "window_ms": 238.9,
+    "content_ms": 268.6,
+    "cycles": 805671858,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 550.0,
+    "content_ms": 582.0,
+    "cycles": 898083165,
+    "cpu_ms": 250.0
+   },
+   {
+    "window_ms": 487.6,
+    "content_ms": 517.1,
+    "cycles": 836639160,
+    "cpu_ms": 281.2
+   },
+   {
+    "window_ms": 232.4,
+    "content_ms": 268.7,
+    "cycles": 799055450,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 252.2,
+    "content_ms": 281.5,
+    "cycles": 805113391,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 236.5,
+    "content_ms": 265.0,
+    "cycles": 811651462,
+    "cpu_ms": 234.4
+   }
+  ],
+  "gpui-fast": [
+   {
+    "window_ms": 299.9,
+    "content_ms": 343.9,
+    "cycles": 918502047,
+    "cpu_ms": 281.2
+   },
+   {
+    "window_ms": 244.4,
+    "content_ms": 280.0,
+    "cycles": 881837804,
+    "cpu_ms": 250.0
+   },
+   {
+    "window_ms": 262.9,
+    "content_ms": 298.0,
+    "cycles": 937620607,
+    "cpu_ms": 328.1
+   },
+   {
+    "window_ms": 344.9,
+    "content_ms": 378.1,
+    "cycles": 904634593,
+    "cpu_ms": 234.4
+   },
+   {
+    "window_ms": 239.3,
+    "content_ms": 277.9,
+    "cycles": 896214268,
+    "cpu_ms": 234.4
+   },
+   {
+    "window_ms": 251.0,
+    "content_ms": 286.0,
+    "cycles": 894943187,
+    "cpu_ms": 234.4
+   },
+   {
+    "window_ms": 257.1,
+    "content_ms": 287.8,
+    "cycles": 895078201,
+    "cpu_ms": 234.4
+   },
+   {
+    "window_ms": 255.2,
+    "content_ms": 295.3,
+    "cycles": 892372506,
+    "cpu_ms": 218.8
+   },
+   {
+    "window_ms": 247.7,
+    "content_ms": 274.8,
+    "cycles": 879078681,
+    "cpu_ms": 250.0
+   },
+   {
+    "window_ms": 249.1,
+    "content_ms": 284.8,
+    "cycles": 892684049,
+    "cpu_ms": 218.8
+   }
+  ],
+  "mygo": [
+   {
+    "window_ms": 54.1,
+    "content_ms": 252.8,
+    "cycles": 733818779,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 33.6,
+    "content_ms": 219.8,
+    "cycles": 729942000,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 47.2,
+    "content_ms": 236.8,
+    "cycles": 742963631,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 55.1,
+    "content_ms": 244.4,
+    "cycles": 733712645,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 31.8,
+    "content_ms": 219.6,
+    "cycles": 723134623,
+    "cpu_ms": 171.9
+   },
+   {
+    "window_ms": 240.0,
+    "content_ms": 433.5,
+    "cycles": 736402817,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 206.6,
+    "content_ms": 407.5,
+    "cycles": 761924073,
+    "cpu_ms": 265.6
+   },
+   {
+    "window_ms": 33.0,
+    "content_ms": 224.2,
+    "cycles": 730460035,
+    "cpu_ms": 203.1
+   },
+   {
+    "window_ms": 57.1,
+    "content_ms": 284.5,
+    "cycles": 742156074,
+    "cpu_ms": 187.5
+   },
+   {
+    "window_ms": 118.8,
+    "content_ms": 311.1,
+    "cycles": 739981049,
+    "cpu_ms": 203.1
+   }
+  ],
+  "rune": [
+   {
+    "window_ms": 40.9,
+    "content_ms": 630.5,
+    "cycles": 1928035659,
+    "cpu_ms": 531.2
+   },
+   {
+    "window_ms": 34.6,
+    "content_ms": 626.9,
+    "cycles": 1996069719,
+    "cpu_ms": 515.6
+   },
+   {
+    "window_ms": 229.1,
+    "content_ms": 835.7,
+    "cycles": 2042303350,
+    "cpu_ms": 562.5
+   },
+   {
+    "window_ms": 34.8,
+    "content_ms": 623.1,
+    "cycles": 1947624241,
+    "cpu_ms": 515.6
+   },
+   {
+    "window_ms": 37.1,
+    "content_ms": 596.7,
+    "cycles": 1924046609,
+    "cpu_ms": 500.0
+   },
+   {
+    "window_ms": 28.1,
+    "content_ms": 669.5,
+    "cycles": 1991455056,
+    "cpu_ms": 609.4
+   },
+   {
+    "window_ms": 136.8,
+    "content_ms": 715.4,
+    "cycles": 1978728723,
+    "cpu_ms": 593.8
+   },
+   {
+    "window_ms": 35.6,
+    "content_ms": 600.6,
+    "cycles": 1929045376,
+    "cpu_ms": 531.2
+   },
+   {
+    "window_ms": 32.2,
+    "content_ms": 646.0,
+    "cycles": 1990255453,
+    "cpu_ms": 546.9
+   },
+   {
+    "window_ms": 35.6,
+    "content_ms": 620.7,
+    "cycles": 1935048806,
+    "cpu_ms": 625.0
+   }
+  ]
+ },
+ "medians": {
+  "zgx": {
+   "window_ms": {
+    "median": 247.3,
+    "min": 232.3,
+    "max": 550.0
+   },
+   "content_ms": {
+    "median": 282.0,
+    "min": 265.0,
+    "max": 582.0
+   },
+   "cycles": {
+    "median": 821821193.0,
+    "min": 799055450,
+    "max": 898083165
+   },
+   "cpu_ms": {
+    "median": 234.4,
+    "min": 203.1,
+    "max": 281.2
+   }
+  },
+  "gpui-fast": {
+   "window_ms": {
+    "median": 253.1,
+    "min": 239.3,
+    "max": 344.9
+   },
+   "content_ms": {
+    "median": 286.9,
+    "min": 274.8,
+    "max": 378.1
+   },
+   "cycles": {
+    "median": 895010694.0,
+    "min": 879078681,
+    "max": 937620607
+   },
+   "cpu_ms": {
+    "median": 234.4,
+    "min": 218.8,
+    "max": 328.1
+   }
+  },
+  "mygo": {
+   "window_ms": {
+    "median": 54.6,
+    "min": 31.8,
+    "max": 240.0
+   },
+   "content_ms": {
+    "median": 248.60000000000002,
+    "min": 219.6,
+    "max": 433.5
+   },
+   "cycles": {
+    "median": 735110798.0,
+    "min": 723134623,
+    "max": 761924073
+   },
+   "cpu_ms": {
+    "median": 203.1,
+    "min": 171.9,
+    "max": 265.6
+   }
+  },
+  "rune": {
+   "window_ms": {
+    "median": 35.6,
+    "min": 28.1,
+    "max": 229.1
+   },
+   "content_ms": {
+    "median": 628.7,
+    "min": 596.7,
+    "max": 835.7
+   },
+   "cycles": {
+    "median": 1963176482.0,
+    "min": 1924046609,
+    "max": 2042303350
+   },
+   "cpu_ms": {
+    "median": 539.05,
+    "min": 500.0,
+    "max": 625.0
+   }
+  }
+ }
+}

@@ -1,0 +1,16 @@
+{
+ "framework": "zgx-luau",
+ "mode": "jump",
+ "repeat": 1,
+ "display_hz": 60,
+ "frames": 478,
+ "composed": 479,
+ "merged_frames": 1,
+ "frames_per_second": 59.75,
+ "interval_p50_ms": 16.650000000000546,
+ "interval_p95_ms": 17.07800000000043,
+ "interval_p99_ms": 17.259000000000015,
+ "interval_max_ms": 33.66600000000017,
+ "long_intervals": 2,
+ "long_interval_fraction": 0.0041928721174004195
+}

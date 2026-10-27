@@ -1,3 +1,44 @@
+# Windows suite (2026-10-27): DWM's CPU in cycles, on `ffbae9d`
+
+[`suite-windows-2026-10-27-ffbae9d`](suite-windows-2026-10-27-ffbae9d/): the same protocol, machine and display as the runs below, on `ffbae9d`: main at `faffcb48`, plus this change to the scripts. DWM's CPU is now `dwm.exe`'s cycles (`dwm_mcycles_per_second`), read from the system's process list (`docs/benchmarking.md`, On Windows); its tick-counted CPU time stays in the raw data. Every scene was accepted, and no app exited abnormally. GPUI Fast was rebuilt (the shared workload crate gained the blink scene's constants). MyGo's and Rune's lab, heavy, animate and list sources are unchanged, and so are their binaries. `python scripts/build_site.py docs/results/suite-windows-2026-10-27-ffbae9d --platform windows --startup docs/results/suite-windows-2026-10-27-ffbae9d/startup/startup.json` publishes it to `site/windows/`.
+
+Medians, zgx / GPUI Fast / MyGo / Rune (vlist: zgx / zgx in Luau / GPUI Fast / MyGo / Rune):
+
+| Scene, mode | CPU (M cycles/s) | DWM CPU (M cycles/s) | App GPU (ms/s) | Private memory (MB) | Frame time p99 (ms) |
+| --- | --- | --- | --- | --- | --- |
+| heavy idle | 1.6 / 12 / 1.5 / 5.0 | 68 / 68 / 84 / 81 | 0 / 0 / 0 / 0 | 154 / 106 / 132 / 380 | - |
+| heavy stream | 267 / 545 / 816 / 1120 | 148 / 159 / 175 / 222 | 11.0 / 12.6 / 18.7 / 10.2 | 160 / 112 / 152 / 391 | 17.5 / 33.6 / 17.2 / 17.3 |
+| heavy scroll | 105 / 259 / 647 / 1259 | 136 / 148 / 155 / 197 | 2.1 / 12.7 / 17.0 / 10.3 | 157 / 109 / 143 / 396 | 17.3 / 33.8 / 17.3 / 17.3 |
+| heavy both | 292 / 586 / 810 / 1412 | 140 / 166 / 169 / 204 | 13.2 / 12.6 / 19.1 / 10.2 | 161 / 113 / 152 / 396 | 17.2 / 33.6 / 17.3 / 17.3 |
+| lab stream | 98 / 154 / 398 / 261 | 132 / 130 / 148 / 158 | 3.2 / 6.5 / 6.4 / 7.3 | 135 / 95 / 135 / 377 | 17.2 / 33.6 / 17.4 / 17.4 |
+| lab scroll | 82 / 118 / 299 / 206 | 127 / 143 / 149 / 151 | 1.8 / 4.8 / 8.8 / 7.0 | 133 / 91 / 126 / 375 | 17.2 / 33.5 / 17.4 / 17.4 |
+| lab both | 106 / 181 / 398 / 247 | 134 / 155 / 151 / 154 | 3.4 / 6.4 / 11.5 / 7.2 | 134 / 94 / 136 / 382 | 17.2 / 17.4 / 17.4 / 17.4 |
+| animate | 94 / 97 / 262 / 134 | 132 / 147 / 139 / 144 | 2.0 / 3.4 / 3.4 / 5.3 | 132 / 91 / 121 / 372 | 17.2 / 17.2 / 17.3 / 17.3 |
+| vlist scroll | 88 / 88 / 135 / 402 / 278 | 143 / 138 / 145 / 148 / 150 | 2.6 / 2.6 / 7.4 / 12.4 / 6.5 | 146 / 148 / 109 / 143 / 392 | 17.3 / 17.3 / 33.5 / 17.4 / 17.5 |
+| vlist fling | 93 / 102 / 141 / 445 / 349 | 141 / 146 / 144 / 143 / 151 | 2.8 / 2.8 / 7.5 / 12.5 / 6.7 | 147 / 149 / 109 / 144 / 392 | 33.3 / 33.2 / 33.7 / 33.8 / 17.5 |
+| vlist jump | 93 / 92 / 143 / 452 / 412 | 144 / 133 / 143 / 140 / 141 | 2.9 / 2.9 / 7.8 / 12.9 / 6.7 | 141 / 144 / 110 / 148 / 396 | 33.5 / 17.3 / 33.7 / 33.4 / 17.6 |
+
+DWM, read in cycles, spends the fewest on zgx's window in heavy (every mode), lab scroll, lab both and animate. Elsewhere it is level: its worst ratio is 1.03× MyGo's, in vlist jump (144 against 140, with overlapping ranges). The tick-counted figure had put DWM at 1.29× (`a065781`) and 1.63× (`9562c78`), ratios that moved with the rivals' tick noise. The desktop alone reads 52–77 M cycles/s; the run's first baseline read 4.3.
+
+Startup (lab, medians of 10 launches): first content at 282 / 287 / 249 / 629 ms, 822 / 895 / 735 / 1963 M cycles by then.
+
+Startup was taken again (`manifest.json`, `startup_retaken`). In the run, every zgx launch took about 1,000 M cycles to first content (961–1,105, 362 ms median), while the rivals held within 2% of their usual. The same binaries were then measured four ways:
+- alone, against `a0657815`'s, 12 alternating launches: 846 against 853 M;
+- in the suite's rotation and power plan: 834 against 837 M;
+- from the build path and from a copy: 846 and 845 M;
+- this step re-run on its own (`--scenes startup`): 822 M.
+
+None reproduced the run's 1,000 M. The first-frame probe passed on every launch, and zgx's startup marks showed no phase grown. The extra cost (+47 ms of CPU, +82 ms to first content) matches compiling the shaders on every launch, but the shader cache's hits are not recorded, so it could not be confirmed. The run's own measurement is kept as `startup/startup.in-run.json`, and the re-run's is `startup/startup.json`.
+
+zgx uses the fewest CPU cycles in all 10 active tests and the least app GPU time in 8. Where it is not best, its worst ratio against the best rival per metric:
+- **Idle CPU:** 1.07× MyGo's (1.6 against 1.5 M cycles/s).
+- **App GPU time:** 1.30× Rune's, in heavy both.
+- **Memory:** 1.47× GPUI Fast's (Direct3D 12 against Direct3D 11; the floors are in `docs/windows.md`).
+- **Frame time:** p99 and long frames worst against Rune in vlist fling (zgx's whole-pixel tail, below).
+- **Startup to first content:** 1.13× MyGo's.
+
+zgx's vlist jump reads p99 33.5 ms here (17.3–17.4 in the runs below). Its three captures held 0, 19 and 10 long intervals against 0, 7 and 10 merged compositions. So one capture held up to 12 refreshes zgx may have missed, and the others none. zgx through Luau, on the same engine, held 2–3 long intervals in each, all but one merged. It is being looked into.
+
 # Windows suite (2026-10-27): every scene on `a065781`
 
 [`suite-windows-2026-10-27-a065781`](suite-windows-2026-10-27-a065781/): the same protocol, machine and display as the run below, on `a065781`, after Windows opened its GPU device beside the first window (#714) and presented timed frames clear of the compositor's latch (#734). Every scene accepted, no app exiting abnormally. GPUI Fast was rebuilt (its comparison app now sets the lab's menu bar, `03a9d895`); MyGo's and Rune's sources are unchanged, and their binaries too. `python scripts/build_site.py docs/results/suite-windows-2026-10-27-a065781 --platform windows --startup docs/results/suite-windows-2026-10-27-a065781/startup/startup.json` publishes it to `site/windows/`.

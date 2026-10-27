@@ -1,0 +1,74 @@
+{
+ "commit": "ffbae9dbbd6bc478fb7a2d7a64adbe0fac093f81",
+ "platform": "windows",
+ "started_utc": "2026-10-27T10:53:37.460575+00:00",
+ "finished_utc": "2026-10-27T12:34:35.749868+00:00",
+ "preflight": {
+  "heavy": [],
+  "other_cpu_percent": 145.9,
+  "threshold_percent": 200.0,
+  "busiest": [
+   "zeron 11.2%",
+   "claude 4.1%",
+   "zeron 1.2%",
+   "taskhostw 0.3%",
+   "powershell 0.3%",
+   "zeron 0.0%"
+  ]
+ },
+ "windows_minimized": [
+  "Zeron"
+ ],
+ "scenes": {
+  "heavy": {
+   "accepted": true,
+   "minutes": 32.2
+  },
+  "lab": {
+   "accepted": true,
+   "minutes": 25.6
+  },
+  "animate": {
+   "accepted": true,
+   "minutes": 9.5
+  },
+  "vlist": {
+   "accepted": true,
+   "minutes": 32.9
+  }
+ },
+ "frameworks": [
+  "zgx",
+  "zgx-luau",
+  "gpui-fast",
+  "mygo",
+  "rune"
+ ],
+ "protocol": {
+  "REQUESTED": 15,
+  "WARMUP": 5,
+  "SAMPLED": 10,
+  "IDLE_REPEATS": 2,
+  "PACING_REPEATS": 3,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 1
+ },
+ "startup_retaken": {
+  "started_utc": "2026-10-27T12:40:51.307595+00:00",
+  "finished_utc": "2026-10-27T12:41:35.670323+00:00",
+  "why": "In the run every zgx launch took about 1,000 M cycles to first content (961-1,105) while the rivals held within 2% of their usual; the same binaries re-measured four ways after it (alone, in the suite's rotation and power plan, from the build path, and this step re-run) read 822-853 M, as at a0657815. The extra cost matched compiling the shaders on every launch; the shader cache's hits are not recorded, so it could not be confirmed.",
+  "in_run": "startup/startup.in-run.json",
+  "zgx_in_run": {
+   "window_ms": 268.29999999999995,
+   "content_ms": 361.5,
+   "cycles": 1002676958.5,
+   "cpu_ms": 281.2
+  },
+  "zgx_retaken": {
+   "window_ms": 247.3,
+   "content_ms": 282.0,
+   "cycles": 821821193.0,
+   "cpu_ms": 234.4
+  }
+ }
+}

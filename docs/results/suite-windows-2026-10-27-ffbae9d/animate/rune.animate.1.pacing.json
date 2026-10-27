@@ -1,0 +1,16 @@
+{
+ "framework": "rune",
+ "mode": "animate",
+ "repeat": 1,
+ "display_hz": 60,
+ "frames": 480,
+ "composed": 481,
+ "merged_frames": 0,
+ "frames_per_second": 60.0,
+ "interval_p50_ms": 16.63299999999981,
+ "interval_p95_ms": 17.11200000000008,
+ "interval_p99_ms": 17.23199999999997,
+ "interval_max_ms": 17.442000000000007,
+ "long_intervals": 0,
+ "long_interval_fraction": 0.0
+}

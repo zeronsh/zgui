@@ -1,0 +1,16 @@
+{
+ "framework": "zgx",
+ "mode": "animate",
+ "repeat": 0,
+ "display_hz": 60,
+ "frames": 479,
+ "composed": 480,
+ "merged_frames": 0,
+ "frames_per_second": 59.875,
+ "interval_p50_ms": 16.65899999999965,
+ "interval_p95_ms": 17.057999999999993,
+ "interval_p99_ms": 17.168999999999983,
+ "interval_max_ms": 17.462999999999738,
+ "long_intervals": 0,
+ "long_interval_fraction": 0.0
+}

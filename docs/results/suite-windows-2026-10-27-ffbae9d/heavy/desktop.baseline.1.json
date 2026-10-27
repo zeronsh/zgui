@@ -1,0 +1,14 @@
+{
+ "framework": "desktop",
+ "mode": "baseline",
+ "repeat": 1,
+ "wall_seconds": 10.0185,
+ "cpu_percent_one_core": 0.0,
+ "dwm_cpu_percent": 0.0,
+ "dwm_mcycles_per_second": 77.43374687207651,
+ "dwm_gpu_ms_per_second": 0.0,
+ "gpu_board_watts": 7.252903596994831,
+ "workload_ticks": 0,
+ "exit_code": 0,
+ "terminated_after_report": false
+}
