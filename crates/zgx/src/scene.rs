@@ -5547,6 +5547,36 @@ impl Scene {
             self.dirty.push(id);
         }
     }
+    /// `invalidate(id, PAINTED)` for a node the layout walk just placed: it
+    /// and its ancestors are reached through the tree, so are looked up
+    /// unchecked (`tree_node`). The same marks in the same order.
+    #[inline(always)]
+    fn invalidate_placed(&mut self, id: NodeId) {
+        if self.isolation_count + self.promoted_count > 0 {
+            let mut current = Some(id);
+            while let Some(ancestor) = current {
+                let node = self.tree_node_mut(ancestor);
+                if node.isolated || node.promoted {
+                    node.layer_revision = node.layer_revision.wrapping_add(1);
+                }
+                current = node.parent;
+            }
+        }
+        let mut current = Some(id);
+        while let Some(ancestor) = current {
+            let node = self.tree_node(ancestor);
+            if node.bounds_valid.replace(0) & BOUNDS_VALID == 0 {
+                break;
+            }
+            current = node.parent;
+        }
+        let node = self.tree_node_mut(id);
+        node.dirty |= PAINTED;
+        if !node.queued {
+            node.queued = true;
+            self.dirty.push(id);
+        }
+    }
     /// Mark `id` and the ancestors whose geometry can depend on it. The walk
     /// stops at a layout boundary: its size cannot depend on its content, so
     /// its parent keeps its layout and only the boundary's subtree is redone.
@@ -7704,7 +7734,7 @@ impl Scene {
         }
         if changed {
             self.tree_node_mut(id).bounds = bounds;
-            self.invalidate(id, PAINTED);
+            self.invalidate_placed(id);
         }
         if damage && !leaf {
             self.damage_subtree_with(id, context);
