@@ -403,6 +403,9 @@ pub(crate) struct Layer {
     /// flip's transaction, whose presented time says when that flip reached
     /// the screen (tiles have no feedback of their own).
     probe: Option<Probe>,
+    /// DIAGNOSTIC (`ZGX_DRAWABLE_TOGGLE=hostclear` on tiles): the host's own
+    /// contents, put back on even seconds.
+    tile_saved_host: Option<Retained<AnyObject>>,
 }
 /// See `Layer::probe`.
 struct Probe {
@@ -910,6 +913,7 @@ impl Layer {
             opaque: Cell::new(false),
             drawables: None,
             probe: None,
+            tile_saved_host: None,
         }
     }
     /// Start the tile probe (`Layer::probe`), if not yet.
@@ -1280,6 +1284,30 @@ impl Layer {
     /// Shows `buffer`'s tile on the plain layer, made (its contents set) the
     /// first time the surface shows; in the caller's transaction.
     fn show_tile(&mut self, buffer: &Buffer) {
+        // DIAGNOSTIC: the host's leftover contents (wgpu's first presents)
+        // emptied on odd seconds under tiles too, in the flip's transaction.
+        if std::env::var("ZGX_DRAWABLE_TOGGLE").is_ok_and(|v| v == "hostclear") {
+            let odd = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .is_ok_and(|d| d.as_secs() % 2 == 1);
+            // SAFETY: CALayer's -contents and -setContents:, an object or nil,
+            // on the main thread, in the caller's transaction.
+            unsafe {
+                let now: Option<Retained<AnyObject>> = msg_send![&*self.host, contents];
+                if odd && now.is_some() {
+                    if self.tile_saved_host.is_none() {
+                        eprintln!("zgx diag: the host layer holds contents under tiles; emptied on odd seconds");
+                    }
+                    self.tile_saved_host = now;
+                    let _: () = msg_send![&*self.host, setContents: std::ptr::null::<AnyObject>()];
+                } else if !odd
+                    && now.is_none()
+                    && let Some(saved) = &self.tile_saved_host
+                {
+                    let _: () = msg_send![&*self.host, setContents: &**saved];
+                }
+            }
+        }
         // The plain layer exactly the host's box too: autoresizing rounds it
         // as it does a tile (a host that starts empty and grows to 1168.5 by
         // 400.25 points leaves it 1169 by 401), and every tile would show
