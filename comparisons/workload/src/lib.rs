@@ -197,6 +197,18 @@ pub mod animation {
     }
 }
 
+/// A caret blinking in an otherwise still window: a 2 × 20 point bar shown
+/// and hidden every 530 ms, as a focused text field's caret blinks while
+/// its user reads. Nothing else changes, so each phase is one small frame:
+/// what an idle, focused window costs (`examples/caret_idle.rs` is zgx's
+/// own caret in a real field).
+pub mod blink {
+    pub const PHASE_MS: u64 = 530;
+    pub const CARET: (f32, f32, f32, f32) = (40., 40., 2., 20.);
+    pub const CARET_COLOR: u32 = 0xe5edf7;
+    pub const BACKGROUND: u32 = 0x10141c;
+}
+
 /// A busy, mostly static window with one small continuous animation: the
 /// case damage-based rendering is for. Only the spinner changes each frame.
 pub mod busy {
