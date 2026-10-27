@@ -1,0 +1,11 @@
+framework,mode,repeat,captures,blank_captures,blank_fraction,longest_blank_points,error
+zgx,scroll,0,76,0,0.0,6.0,
+zgx,jump,0,76,0,0.0,6.0,
+zgx-luau,scroll,0,77,0,0.0,6.0,
+zgx-luau,jump,0,75,0,0.0,6.0,
+gpui-fast,scroll,0,76,0,0.0,6.0,
+gpui-fast,jump,0,77,0,0.0,6.0,
+mygo,scroll,0,77,0,0.0,6.0,
+mygo,jump,0,77,0,0.0,6.0,
+rune,scroll,0,76,0,0.0,6.0,
+rune,jump,0,77,0,0.0,6.0,

@@ -179,3 +179,20 @@ export function startupLead() {
     theirContent: theirs.content_ms.median,
   };
 }
+
+type ReleaseChange = { from: number; to: number; change: number };
+type Release = {
+  gate: {
+    from: { version: string; commit: string };
+    to: { version: string; commit: string };
+    unit: string;
+    how: string;
+    scenes: Record<string, [number, number, number]>;
+  };
+  previous_commit: string;
+  previous_date: string;
+  rebuilt?: string | null;
+  changes: { scene: string; mode: string; framework: string; change: Record<string, ReleaseChange> }[];
+};
+/** Release over release (data.json's `release`): the gate's exact counts and the suite's per-cell change, when the run has one. */
+export const release = ((perf as Record<string, unknown>).release ?? null) as Release | null;

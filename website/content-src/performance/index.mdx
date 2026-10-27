@@ -8,6 +8,7 @@ import BenchOverview from '@/components/home/BenchOverview.astro';
 import SceneCharts from '@/components/perf/SceneCharts.astro';
 import Method from '@/components/perf/Method.astro';
 import Startup from '@/components/perf/Startup.astro';
+import Release from '@/components/perf/Release.astro';
 
 <Headline />
 
@@ -18,6 +19,10 @@ import Startup from '@/components/perf/Startup.astro';
 These are macOS's figures; Windows is measured on its own, in its own metrics, on [the Windows page](/performance/windows).
 
 **GPUI Fast** is Zed's GPUI with its fast-path optimizations, as apps ship it. **MyGo** is a Go desktop framework, measured through its GPU-drawn native UI. **Rune** is built on Rust, wgpu, Taffy and Parley. Every figure on this page is read at build time from the run that [`scripts/build_site.py`](https://github.com/zeronsh/zgx/blob/main/scripts/build_site.py) accepted, after it recomputed each median and range from the trials and checked them against the run's summaries.
+
+## Since the last release
+
+<Release />
 
 ## Startup
 
@@ -55,6 +60,7 @@ These are macOS's figures; Windows is measured on its own, in its own metrics, o
 
 ### Caveats
 
+- Frame time and long frames are measured while the window is captured (ScreenCaptureKit), and capturing a window changes its pacing: macOS skips frames it would otherwise show, more for some ways of presenting than others. They show pacing under a capture (screen sharing, a recording), every framework under the same one; CPU, GPU power, memory and WindowServer CPU come from trials with nothing attached ([why](https://github.com/zeronsh/zgx/blob/main/docs/benchmarking.md#frame-pacing-a-capture-changes-it)).
 - Compare within this run only: the same binaries measured hours apart read differently, so a cell is not comparable across runs, while the frameworks in one run share its session.
 - Idle memory is two-level: an idle window settles at one of two levels about 25 MB apart, launch to launch, as the Metal driver returns its startup memory. Read idle memory with its range.
 - MyGo is immediate mode: each frame it draws builds and draws its whole window, which is how MyGo apps work.

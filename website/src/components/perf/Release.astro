@@ -1,0 +1,100 @@
+---
+// Release over release, from a run's `release` (scripts/build_site.py
+// --gate --previous): the CI gate's exact instruction counts for two
+// releases, then zgx's change per cell since the last published run, with
+// GPUI Fast's beside it as what the session itself moved.
+import { release, fmt, repo } from '@/lib/perf';
+
+const signed = (f: number, digits = 1) => {
+  const shown = Math.abs(f * 100).toFixed(digits);
+  return `${Number(shown) === 0 ? '±' : f > 0 ? '+' : '−'}${shown}%`;
+};
+const metrics = [
+  { key: 'cpu', title: 'CPU' },
+  { key: 'gpu', title: 'GPU power' },
+  { key: 'memory', title: 'Memory' },
+  { key: 'server', title: 'WindowServer CPU' },
+];
+const sceneNames: Record<string, string> = {
+  heavy: 'Heavy dashboard',
+  lab: 'Text and a 100,000-row list',
+  animate: 'Animation',
+  vlist: 'Variable-height list',
+};
+const modeNames: Record<string, string> = {
+  idle: 'idle', stream: 'streaming', scroll: 'scrolling', both: 'both', animate: 'animating', fling: 'flinging', jump: 'jumping',
+};
+const gate = release?.gate;
+const rows = gate ? Object.entries(gate.scenes).sort((a, b) => a[1][2] - b[1][2]) : [];
+const fewer = rows.filter(([, v]) => v[2] < 0).length;
+const changes = release?.changes ?? [];
+const find = (scene: string, mode: string, framework: string) =>
+  changes.find((c) => c.scene === scene && c.mode === mode && c.framework === framework)?.change;
+const suiteRows = changes
+  .filter((c) => c.framework === 'zgx' || c.framework === 'zgx-luau')
+  .map((c) => ({ ...c, gpui: find(c.scene, c.mode, 'gpui-fast') ?? {} }));
+const show = (c: ReleaseChangeLike, idle: boolean, key: string) =>
+  idle ? `${fmt(c.from, key === 'memory' ? 0 : 2)} → ${fmt(c.to, key === 'memory' ? 0 : 2)}` : signed(c.change);
+type ReleaseChangeLike = { from: number; to: number; change: number };
+---
+
+{
+  release && gate ? (
+    <div class="not-prose">
+      <p>
+        Instructions each scene of the CI gate runs, {gate.from.version} (<code>{gate.from.commit.slice(0, 8)}</code>) against{' '}
+        {gate.to.version} (<code>{gate.to.commit.slice(0, 8)}</code>): exact counts under cachegrind, not samples. <strong>{fewer} of {rows.length} scenes run fewer.</strong>
+      </p>
+      <figure class="perf-chart">
+        <table class="perf-table">
+          <caption>
+            <span class="perf-chart-title">Instructions per scene</span>
+            <span class="perf-chart-unit">{gate.unit}; lower is better.</span>
+          </caption>
+          <thead>
+            <tr><th scope="col">Scene</th><th scope="col">{gate.from.version}</th><th scope="col">{gate.to.version}</th><th scope="col">Change</th></tr>
+          </thead>
+          <tbody>
+            {rows.map(([name, [a, b, change]]) => (
+              <tr><th scope="row">{name}</th><td>{fmt(a, 1)}</td><td>{fmt(b, 1)}</td><td>{signed(change, 2)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </figure>
+      <p>
+        The suite, this run against the last one published (<code>{release.previous_commit.slice(0, 7)}</code>, {release.previous_date}),
+        each cell&#8217;s median. The runs are in different sessions, and a session moves a whole run, so GPUI Fast is in
+        brackets{release.rebuilt ? ` (${release.rebuilt})` : ''}: the part of a change it shares is the session&#8217;s. Idle shows its values, which are near nothing.
+      </p>
+      <figure class="perf-chart">
+        <table class="perf-table">
+          <caption>
+            <span class="perf-chart-title">Change since the last run</span>
+            <span class="perf-chart-unit">zgx, and GPUI Fast in brackets; lower is better.</span>
+          </caption>
+          <thead>
+            <tr><th scope="col">Scene</th>{metrics.map((m) => <th scope="col">{m.title}</th>)}</tr>
+          </thead>
+          <tbody>
+            {suiteRows.map((r) => (
+              <tr>
+                <th scope="row">{sceneNames[r.scene] ?? r.scene}, {modeNames[r.mode] ?? r.mode}{r.framework === 'zgx-luau' ? ' (Luau)' : ''}</th>
+                {metrics.map((m) => {
+                  const ours = r.change[m.key];
+                  const theirs = (r.gpui as Record<string, ReleaseChangeLike>)[m.key];
+                  const idle = r.mode === 'idle';
+                  return <td>{ours ? show(ours, idle, m.key) : '–'}{theirs ? ` (${show(theirs, idle, m.key)})` : ''}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </figure>
+      <p>
+        The gate&#8217;s counts: <a href={`${repo}/tree/main/docs/results`}>docs/results</a> (gate-{gate.from.version}-{gate.to.version}).
+      </p>
+    </div>
+  ) : (
+    <p>This run has no release comparison.</p>
+  )
+}

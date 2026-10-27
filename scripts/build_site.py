@@ -6,6 +6,11 @@ into site/windows/, in Windows' own metrics.
 
     python3 scripts/build_site.py docs/results/suite-macos-<date>-<commit>
     python3 scripts/build_site.py --platform windows docs/results/suite-windows-<date>-<commit>
+    python3 scripts/build_site.py <suite> --gate docs/results/gate-<from>-<to>/gate.json --previous <last suite>
+
+`--gate` with `--previous` adds a release-over-release section: the CI
+gate's exact instruction counts per scene for two releases, and zgx's
+change per cell since the last published run, GPUI Fast's beside it.
 
 Only an accepted suite run of one clean commit is published, every scene of
 it accepted. Every median and range shown is recomputed from the scenes'
@@ -446,7 +451,94 @@ def startup_section(startup, e):
         f'<div class="charts">{"".join(charts)}</div></section>'
     )
 
-def page(by, verdict, cards, micro=None, startup=None):
+# Release-over-release: the metrics compared between two suite runs.
+RELEASE_METRICS = [('cpu', 'CPU'), ('gpu', 'GPU power'), ('memory', 'Memory'), ('server', 'WindowServer CPU')]
+
+
+def release_changes(previous, by):
+    """Per scene, mode and framework present in both runs, each metric's
+    median change between the runs, as a fraction."""
+    out = []
+    for n in ORDER:
+        old, new = previous[n], by[n]
+        for mode in new['modes']:
+            for fw in new['frameworks']:
+                try:
+                    a, b = cell(old, fw, mode), cell(new, fw, mode)
+                except (KeyError, StopIteration):
+                    continue
+                change = {}
+                for metric, _ in RELEASE_METRICS:
+                    key, applies = metrics()[metric][4], metrics()[metric][5]
+                    # GPU power idle is the desktop's to the milliwatt: no ratio.
+                    if applies == 'active' and mode == 'idle':
+                        continue
+                    if key in a and key in b and a[key]['median']:
+                        scale = metrics()[metric][3]
+                        change[metric] = {'from': a[key]['median'] * scale, 'to': b[key]['median'] * scale,
+                                          'change': b[key]['median'] / a[key]['median'] - 1}
+                out.append({'scene': n, 'mode': mode, 'framework': fw, 'change': change})
+    return out
+
+
+def release_section(release, e):
+    """What changed since the last release: the instruction gate's exact
+    counts, then this run against the last published one, for zgx, with
+    GPUI Fast beside it as the measure of what the session itself moved."""
+    gate = release['gate']
+    rows = sorted(gate['scenes'].items(), key=lambda kv: kv[1][2])
+    lower = sum(v[2] < 0 for v in gate['scenes'].values())
+    signed = lambda f: ('&#177;0.0%' if round(f * 100, 1) == 0 else f'{f * 100:+.1f}%'.replace('-', '&#8722;'))
+    out = [f'<section id="release" aria-labelledby="release-h"><h2 id="release-h">{e(gate["from"]["version"])} &#8594; '
+           f'{e(gate["to"]["version"])}</h2>',
+           f'<p class="scene-note">Instructions each scene of the CI gate runs ({e(gate["how"])}), '
+           f'{e(gate["from"]["version"])} (<code>{e(gate["from"]["commit"][:8])}</code>) against '
+           f'{e(gate["to"]["version"])} (<code>{e(gate["to"]["commit"][:8])}</code>): exact counts, not samples. '
+           f'{lower} of {len(rows)} scenes run fewer.</p>',
+           '<figure class="chart"><table><caption><span class="title">Instructions per scene</span> '
+           f'<span class="unit">{e(gate["unit"])}</span> <span class="better">lower is better</span></caption>'
+           '<thead><tr><th scope="col">Scene</th><th scope="col">' + e(gate['from']['version']) + '</th><th scope="col">'
+           + e(gate['to']['version']) + '</th><th scope="col">Change</th></tr></thead><tbody>']
+    for name, (a, b, change) in rows:
+        out.append(f'<tr><th scope="row">{e(name)}</th><td>{fmt(a, 1)}</td><td>{fmt(b, 1)}</td>'
+                   f'<td>{f"{change * 100:+.2f}%".replace("-", "&#8722;")}</td></tr>')
+    out.append('</tbody></table></figure>')
+    previous = release['previous_commit']
+    out.append(f'<p class="scene-note">The suite, this run against the last one published (<code>{e(previous[:7])}</code>, '
+               f'{e(release["previous_date"])}), each cell&#8217;s median. The runs are in different sessions, and a session '
+               'moves a whole run (see the caveats), so GPUI Fast is shown beside zgx'
+               + (f' ({e(release["rebuilt"])})' if release.get('rebuilt') else '') +
+               ': the part of a change it shares is the session&#8217;s. Idle shows its values, which are near nothing.</p>')
+    changes = {(c['scene'], c['mode'], c['framework']): c['change'] for c in release['changes']}
+    out.append('<figure class="chart"><table><caption><span class="title">Change since the last run</span> '
+               '<span class="unit">zgx, and GPUI Fast in brackets</span> <span class="better">lower is better</span></caption>'
+               '<thead><tr><th scope="col">Scene</th>' + ''.join(f'<th scope="col">{e(t)}</th>' for _, t in RELEASE_METRICS)
+               + '</tr></thead><tbody>')
+    for n in ORDER:
+        for mode in release['modes'][n]:
+            for fw in ('zgx', 'zgx-luau'):
+                ours = changes.get((n, mode, fw))
+                if ours is None:
+                    continue
+                theirs = changes.get((n, mode, 'gpui-fast'), {})
+                label = f'{SCENES[n][0]}, {MODES[mode].lower()}' + (' (Luau)' if fw == 'zgx-luau' else '')
+                cells = []
+                for metric, _ in RELEASE_METRICS:
+                    if metric not in ours:
+                        cells.append('<td>&#8211;</td>')
+                        continue
+                    # Idle is near nothing: its values, not a ratio of them.
+                    digits = 2 if metrics()[metric][2] else 0
+                    show = ((lambda c: f"{fmt(c['from'], digits)} &#8594; {fmt(c['to'], digits)}") if mode == 'idle'
+                            else (lambda c: signed(c['change'])))
+                    ref = f' <span class="range">({show(theirs[metric])})</span>' if metric in theirs else ''
+                    cells.append(f'<td>{show(ours[metric])}{ref}</td>')
+                out.append(f'<tr><th scope="row">{e(label)}</th>{"".join(cells)}</tr>')
+    out.append('</tbody></table></figure></section>')
+    return '\n'.join(out)
+
+
+def page(by, verdict, cards, micro=None, startup=None, release=None):
     heavy = by['heavy']
     env, protocol, commit = heavy['environment'], heavy['protocol'], heavy['commit']
     # Since 2026-10-26 (#637), samples start from the window's readiness,
@@ -509,7 +601,8 @@ def page(by, verdict, cards, micro=None, startup=None):
                           + '</li>')
         else:
             crash_note = '<li>No app exited abnormally during the run.</li>'
-    nav = ' '.join(f'<a href="#{n}">{SCENES[n][0]}</a>' for n in ORDER) + (' <a href="#micro">Microbenchmarks</a>' if micro else '')
+    nav = ' '.join(f'<a href="#{n}">{SCENES[n][0]}</a>' for n in ORDER) + (' <a href="#micro">Microbenchmarks</a>' if micro else '') + (
+        f' <a href="#release">Since {e(release["gate"]["from"]["version"])}</a>' if release else '')
     mygo_build = (f"MyGo {e(mygo.get('mygo_version', '?'))} (<code>{e(mygo.get('mygo_commit', '?')[:7])}</code>, "
                   f"{e(mygo.get('mygo_license', '?'))}) built with {e(mygo.get('go', tools.get('go', 'Go')))}, "
                   f"<code>go build {e(mygo.get('flags', ''))}</code>, cgo {'on' if mygo.get('cgo') else 'off'}") + rune_build
@@ -540,6 +633,7 @@ def page(by, verdict, cards, micro=None, startup=None):
 </header>
 <main>
 {''.join(sections)}
+{release_section(release, e) if release else ''}
 {startup_section(startup, e) if startup else ''}
 {micro_section(micro, e) if micro else ''}
 <section id="method" aria-labelledby="method-h">
@@ -711,6 +805,9 @@ def main():
     parser.add_argument('--output', type=Path, help='default site/ (macOS), site/windows/ (Windows)')
     parser.add_argument('--micro', type=Path, help='the microbenchmarks\' run (micro.jsonl), shown in its own section')
     parser.add_argument('--startup', type=Path, help='a startup run (docs/results/startup-macos-*/startup.json), shown in its own section')
+    parser.add_argument('--gate', type=Path, help='the instruction gate\'s counts for two releases (from, to, scenes: name → [from, to]), shown with --previous')
+    parser.add_argument('--previous', type=Path, help='the last published suite run, compared with this one per cell, for zgx')
+    parser.add_argument('--rebuilt', help='which rival builds differ between the two runs (said beside the comparison)')
     parser.add_argument('--board-power', action='store_true',
                         help='Windows: publish the NVIDIA board\'s power (only where it held still across repeats)')
     args = parser.parse_args()
@@ -740,6 +837,13 @@ def main():
     if startup:
         # Medians and ranges only; every launch stays in the run's file.
         data['startup'] = {k: startup[k] for k in ('commit', 'machine', 'probe', 'apps', 'protocol', 'medians')}
+    release = None
+    if args.gate and args.previous:
+        previous = {name: load(args.previous.resolve() / name) for name in ORDER}
+        release = {'gate': json.loads(args.gate.read_text()), 'previous_commit': previous['heavy']['commit'],
+                   'previous_date': previous['heavy']['started_utc'][:10], 'rebuilt': args.rebuilt,
+                   'modes': {n: by[n]['modes'] for n in ORDER}, 'changes': release_changes(previous, by)}
+        data['release'] = {k: release[k] for k in ('gate', 'previous_commit', 'previous_date', 'rebuilt', 'changes')}
     keys = (WINDOWS_TRIAL_KEYS + (['gpu_board_power_w'] if BOARD_POWER else []) if PLATFORM == 'windows'
             else TRIAL_KEYS) + PACING_KEYS + BLANK_KEYS
     args.output.mkdir(parents=True, exist_ok=True)
@@ -757,7 +861,7 @@ def main():
     micro = load_micro(args.micro) if args.micro else None
     if micro:
         shutil.copy(args.micro, args.output / 'micro.jsonl')
-    (args.output / 'index.html').write_text(page(by, verdict, cards, micro, startup), encoding='utf-8', newline='\n')
+    (args.output / 'index.html').write_text(page(by, verdict, cards, micro, startup, release), encoding='utf-8', newline='\n')
     counts = ', '.join(f"{n} ({by[n]['trials']} trials)" for n in ORDER)
     print(f"Published {counts} at {by['heavy']['commit'][:7]} to {args.output}")
 
