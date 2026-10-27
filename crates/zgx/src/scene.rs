@@ -11687,6 +11687,9 @@ fn finite_effects(mut effects: Effects) -> Effects {
 }
 /// The indices of a longest strictly increasing subsequence of `values`
 /// (patience sorting, n log n).
+// Apart: inlined into the reorder that calls it, its read-back loop cost
+// the larger reorders more than it saved.
+#[inline(never)]
 fn longest_increasing(values: &[usize]) -> Vec<usize> {
     // `tails[k]`: the index of the smallest last value of an increasing run
     // of length k + 1; `previous`: each index's predecessor in its run.
@@ -11703,13 +11706,14 @@ fn longest_increasing(values: &[usize]) -> Vec<usize> {
             tails[at] = index;
         }
     }
-    let mut run = Vec::with_capacity(tails.len());
+    // The search is finished: its tails buffer can hold the selected
+    // indices too, in the same reverse predecessor order as before.
     let mut index = tails.last().copied().unwrap_or(usize::MAX);
-    while index != usize::MAX {
-        run.push(index);
+    for tail in &mut tails {
+        *tail = index;
         index = previous[index];
     }
-    run
+    tails
 }
 fn own_visible(style: &Style) -> bool {
     style.layout_options.as_deref().is_none_or(|options| {
