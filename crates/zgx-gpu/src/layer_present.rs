@@ -934,6 +934,7 @@ impl Layer {
         device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
         width: u32,
         height: u32,
+        feedback: bool,
     ) -> Option<(crate::metal_frame::Texture, CFRetained<IOSurfaceRef>)> {
         let opaque = self.opaque.get();
         let drawables = self.drawables.get_or_insert_with(|| {
@@ -1005,16 +1006,20 @@ impl Layer {
             transaction(|| drawables.layer.setOpaque(opaque));
         }
         let drawable = drawables.layer.nextDrawable()?;
-        let feedback = drawables.feedback.clone();
-        let handler = block2::RcBlock::new(
-            move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
-                // SAFETY: Metal passes the drawable presented, alive for the call.
-                feedback.record(unsafe { shown.as_ref() }.presentedTime());
-            },
-        );
-        // SAFETY: A live block taking the drawable, as the handler's type
-        // declares; Metal copies it.
-        unsafe { drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
+        // Feedback only while it is read (the trial, a log): a handler a
+        // frame is work on Core Animation's thread.
+        if feedback {
+            let feedback = drawables.feedback.clone();
+            let handler = block2::RcBlock::new(
+                move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
+                    // SAFETY: Metal passes the drawable presented, alive for the call.
+                    feedback.record(unsafe { shown.as_ref() }.presentedTime());
+                },
+            );
+            // SAFETY: A live block taking the drawable, as the handler's type
+            // declares; Metal copies it.
+            unsafe { drawable.addPresentedHandler(block2::RcBlock::as_ptr(&handler)) };
+        }
         let texture = drawable.texture();
         let surface = texture.iosurface()?;
         drawables.pending = Some(drawable);

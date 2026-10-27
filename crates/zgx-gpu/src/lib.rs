@@ -8024,6 +8024,11 @@ impl GpuRenderer {
         let drawable = if present.drawable_frame() {
             present.attach(self.surface.as_ref())?;
             present.retain_buffers(|_, buffer| buffer.drawable);
+            // Presented feedback while the trial reads it, or a log does.
+            static LOGGED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+                zgx::env::var_os("ZGX_DRAWABLE_FEEDBACK").is_some() || present_log::enabled()
+            });
+            let wants_feedback = *LOGGED || matches!(present.trial, Trial::Drawables { .. });
             // SAFETY: The raw device is only retained; the guard is dropped
             // before wgpu is called again.
             let device = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }
@@ -8033,7 +8038,7 @@ impl GpuRenderer {
                     .layer
                     .as_mut()
                     .expect("attached above")
-                    .next_drawable(&device, width, height)
+                    .next_drawable(&device, width, height, wants_feedback)
             });
             next.map(|(texture, surface)| {
                 let id = surface.id();
