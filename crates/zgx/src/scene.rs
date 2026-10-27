@@ -7169,7 +7169,9 @@ impl Scene {
             // Cached: promotes the matching result; evicted: re-measures.
             // Kept as its results are (`measure_kept`): its current one is
             // found here without asking.
-            let node = self.node(child);
+            // In the scene, as each child a measurement holds is: removing
+            // one lays its parent out again before it is arranged.
+            let node = self.tree_node(child);
             let current = node.measurement.as_ref().is_some_and(|m| {
                 m.constraints == constraints
                     && (node.dirty & LAYOUT == 0 || m.pass == self.layout_pass)
