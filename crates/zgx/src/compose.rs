@@ -4407,8 +4407,11 @@ fn close_element(ui: &mut Ui, opened: Opened) -> NodeId {
                 return;
             }
             ui.scene.borrow_mut().set_text(root, value.as_str());
-            ui.semantics.borrow_mut().set_label(root, &value);
-            update_button_labels(&ui, root);
+            // Only assistive technology reads it: while none does, later.
+            if !ui.defer_label(root) {
+                ui.semantics.borrow_mut().set_label(root, &value);
+                update_button_labels(&ui, root);
+            }
         });
     }
     assert!(
@@ -5538,6 +5541,23 @@ fn update_button_labels(ui: &Ui, node: NodeId) {
         }
         current = scene.parent(id);
     }
+}
+/// Text node `id`'s label from its text, and the buttons it names, as its
+/// text binding sets them: deferred while no assistive technology reads
+/// the semantics (`Ui::defer_label`). A node removed since is skipped.
+pub(crate) fn label_from_text(ui: &Ui, id: NodeId) {
+    let text = {
+        let scene = ui.scene.borrow();
+        if !scene.contains(id) {
+            return;
+        }
+        match scene.kind(id) {
+            NodeKind::Text { text, .. } => text.to_string(),
+            _ => return,
+        }
+    };
+    ui.semantics.borrow_mut().set_label(id, &text);
+    update_button_labels(ui, id);
 }
 /// Whether `id`'s content names it, as ARIA names a button, heading, tab or
 /// option from its text.

@@ -106,3 +106,48 @@ fn names_from_state_wait_for_assistive_technology() {
     ui.prepare_frame();
     assert_eq!(calls.get(), before);
 }
+
+/// Text a binding changes names its node and the button it is in only for
+/// assistive technology: with none listening neither is written, and once
+/// one listens both are the text as it is now, before the tree is read. A
+/// node removed meanwhile is passed over.
+#[test]
+fn labels_from_changing_text_wait_for_assistive_technology() {
+    let mut ui = Ui::new(400., 200.);
+    ui.set_assistive_technology(false);
+    let caption = ui.signal("Draft 1".to_string());
+    let view = ui.mount(
+        column()
+            .child(button().id("save").child(text_signal({
+                let caption = caption.clone();
+                move || caption.get()
+            })))
+            .child(
+                text_signal({
+                    let caption = caption.clone();
+                    move || format!("{} saved", caption.get())
+                })
+                .id("note"),
+            ),
+    );
+    ui.prepare_frame();
+    let label = |ui: &Ui| {
+        let node = view.find("save").unwrap();
+        ui.semantics.borrow().get(node).unwrap().label.clone()
+    };
+    let named = label(&ui);
+    for n in 2..6 {
+        caption.set(format!("Draft {n}"));
+        ui.prepare_frame();
+    }
+    assert_eq!(label(&ui), named, "not written with no reader");
+    // A pending node goes before anyone listens.
+    let note = view.find("note").unwrap();
+    ui.remove(note);
+    ui.prepare_frame();
+    ui.set_assistive_technology(true);
+    assert_eq!(label(&ui), "Draft 5", "the text's now, at once");
+    caption.set("Draft 6".into());
+    ui.prepare_frame();
+    assert_eq!(label(&ui), "Draft 6", "followed while listened to");
+}

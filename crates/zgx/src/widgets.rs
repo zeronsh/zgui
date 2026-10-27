@@ -1004,6 +1004,11 @@ pub(crate) struct UiStorage {
     caret_blink: Rc<crate::caret_blink::Blink>,
     /// Assistive technology reads the semantics (`Ui::set_assistive_technology`).
     assistive: Signal<bool>,
+    /// Text nodes whose labels (and the buttons they name) wait for
+    /// assistive technology: changed while none read the semantics.
+    pending_labels: RefCell<crate::scene::NodeMap<()>>,
+    /// `assistive`'s value, read where a text changes (`defer_label`).
+    listening: Cell<bool>,
     /// Overlay scrollbars shown, to fade once their view stops scrolling.
     scrollbar_fades: RefCell<Vec<std::rc::Weak<crate::compose_scrollbar::Fade>>>,
     /// Input is being dispatched: what scrolls now, the user scrolled.
@@ -1167,6 +1172,8 @@ impl Ui {
             caret_width: Rc::new(Cell::new(1.)),
             caret_blink: Rc::default(),
             assistive: runtime.signal(true),
+            pending_labels: RefCell::default(),
+            listening: Cell::new(true),
             popup_screens: runtime.signal(Vec::new()),
             popup_limits: runtime.signal(Vec::new()),
             popup_flips: runtime.signal(Vec::new()),
@@ -2110,7 +2117,33 @@ impl Ui {
     /// headless documents read the semantics); a desktop host turns it off
     /// until a reader asks for its tree, and off again when it leaves.
     pub fn set_assistive_technology(&self, listening: bool) {
+        if listening {
+            // Before the tree is read: what text changed while none listened.
+            let pending = std::mem::take(&mut *self.storage.pending_labels.borrow_mut());
+            for (id, ()) in pending {
+                crate::compose::label_from_text(self, id);
+            }
+        }
+        self.storage.listening.set(listening);
         self.storage.assistive.set(listening);
+    }
+    /// Whether text node `id`'s label waits for assistive technology: none
+    /// reads the semantics, so it is worked out once one does
+    /// (`set_assistive_technology`).
+    #[inline(always)]
+    pub(crate) fn defer_label(&self, id: crate::scene::NodeId) -> bool {
+        if self.storage.listening.get() {
+            return false;
+        }
+        self.pend_label(id);
+        true
+    }
+    /// `defer_label` with no reader: out of line, the listening path stays
+    /// a load.
+    #[cold]
+    #[inline(never)]
+    fn pend_label(&self, id: crate::scene::NodeId) {
+        self.storage.pending_labels.borrow_mut().insert(id, ());
     }
     /// Whether assistive technology reads the semantics (see
     /// `set_assistive_technology`).
