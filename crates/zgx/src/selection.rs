@@ -1948,14 +1948,29 @@ impl Ui {
             });
             let bounds = scene.bounds(focus.node);
             let (top, bottom) = (bounds.y + caret.y, bounds.y + caret.y + caret.height);
-            let Some(visible) = scene
+            let Some((viewport, shown)) = scene
                 .ancestors(focus.node)
                 .find(|id| scene.is_scroll_content(*id))
                 .and_then(|content| scene.parent(content))
-                .and_then(|viewport| scene.visible_bounds(viewport))
+                .and_then(|viewport| Some((viewport, scene.visible_bounds(viewport)?)))
             else {
                 return;
             };
+            // What of it shows, in the window, back in its own points (a zoom
+            // or a scale around it undone): the focus is in them, and the
+            // scroll it takes is too.
+            let (Some(start), Some(end)) = (
+                scene.point_in(viewport, shown.x, shown.y),
+                scene.point_in(viewport, shown.x + shown.width, shown.y + shown.height),
+            ) else {
+                return;
+            };
+            let visible = crate::scene::Rect::new(
+                start.0.min(end.0),
+                start.1.min(end.1),
+                (end.0 - start.0).abs(),
+                (end.1 - start.1).abs(),
+            );
             if top < visible.y {
                 top - visible.y
             } else if bottom > visible.y + visible.height {

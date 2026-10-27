@@ -1420,3 +1420,38 @@ fn a_selection_drags_into_a_field_and_a_press_on_it_let_go_clicks() {
     release(&mut ui, 50., 10.);
     assert_eq!(ui.selected_text(), "", "a click collapses it");
 }
+
+/// Extending past a zoomed scroll view's edge with the keyboard scrolls it
+/// just enough to show the focus, in its own points, as unzoomed.
+#[test]
+fn extending_in_a_zoomed_scroll_view_scrolls_just_enough() {
+    for zoom in [1., 2.] {
+        let mut ui = Ui::new(300., 200.);
+        let offset = ui.signal(0_f32);
+        ui.mount(
+            column().zoom(zoom).child(
+                scroll(offset.clone()).w(150.).h(100.).child(
+                    column()
+                        .w(150.)
+                        .text_size(10.)
+                        .line_height(20.)
+                        .selectable(true)
+                        .children((0..40).map(|i| text(format!("Line {i}")))),
+                ),
+            ),
+        );
+        ui.prepare_frame();
+        press(&mut ui, 2., 10., false);
+        release(&mut ui, 2., 10.);
+        for _ in 0..10 {
+            ui.dispatch(shift(Key::ArrowDown, false, false));
+            ui.prepare_frame();
+        }
+        // Line 10 ends at 220; the viewport is 100 tall in its own points.
+        assert!(
+            (offset.get() - 120.).abs() < 1.,
+            "at {zoom}×: scrolled {}",
+            offset.get()
+        );
+    }
+}
