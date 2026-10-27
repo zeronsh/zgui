@@ -222,8 +222,9 @@ impl Region {
             tint: [0.; 4],
         }
     }
-    /// `item`'s, if it lies in one.
-    fn of(item: &zgx::scene::PaintItem<'_>) -> Option<Self> {
+    /// `item`'s, if it lies in one: its rounded boxes' edges on device
+    /// pixels at `snap`'s scale, as the boxes they clip are (`snap_edges`).
+    fn of(item: &zgx::scene::PaintItem<'_>, snap: Option<f32>) -> Option<Self> {
         if item.mask().is_none()
             && item.rounded().iter().all(Option::is_none)
             && item.color().is_none()
@@ -231,10 +232,10 @@ impl Region {
             return None;
         }
         let round = |clip: Option<zgx::scene::RoundRect>| match clip {
-            Some(clip) => (
-                [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
-                clip.radii,
-            ),
+            Some(clip) => {
+                let rect = snap.map_or(clip.rect, |scale| snap_edges(clip.rect, scale));
+                ([rect.x, rect.y, rect.width, rect.height], clip.radii)
+            }
             None => ([0., 0., -1., -1.], [0.; 4]),
         };
         let feather =
@@ -4043,6 +4044,12 @@ impl GpuRenderer {
         self.fill_pipelines.insert(shader.id(), pipeline);
         self.fill_pipelines[&shader.id()].is_some()
     }
+    /// Whether boxes drawn now snap their edges to device pixels
+    /// (`snap_edges`): into the window, not a layer, whose content keeps
+    /// layout's subpixel places (transformed, zoomed or composited as is).
+    fn snaps(&self) -> bool {
+        !self.in_layer
+    }
     /// Compile layer shader `shader`'s pipeline if new; whether it can draw.
     fn prepare_filter(&mut self, shader: &zgx::decoration::FillShader) -> bool {
         if let Some(compiled) = self.filter_pipelines.get(&shader.id()) {
@@ -4708,6 +4715,7 @@ impl GpuRenderer {
         if quad.rect != quad.fade || quad.options[2] >= 0.5 {
             return false;
         }
+        let bounds = snap_edges(bounds, self.scale);
         let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
         (quad.rect, quad.fade) = (fade, fade);
         // (A flat colour's quad isn't split; a box's is, past a size.)
@@ -4761,6 +4769,9 @@ impl GpuRenderer {
             opacity,
             edge_fade,
         } = boxed;
+        // As `render_flat` places it (`snap_edges`): kept frames are the
+        // window's.
+        let bounds = snap_edges(bounds, self.scale);
         let clip = clip.unwrap_or(viewport).intersection(viewport);
         if let Some(clip) = clip.filter(|_| opacity > 0.) {
             let painted = match kind {
@@ -5333,7 +5344,7 @@ impl GpuRenderer {
                         (None, _) => [0.; 4],
                     },
                     mask: [
-                        region_index(&mut clips, Region::of(&item)),
+                        region_index(&mut clips, Region::of(&item, None)),
                         filter.as_ref().map_or(0., |(_, uniforms)| {
                             region_index(&mut clips, Some(Region::uniforms(*uniforms)))
                         }),
@@ -5365,7 +5376,19 @@ impl GpuRenderer {
                 });
                 continue;
             }
-            let bounds = item.bounds;
+            // A box's edges on device pixels (`snap_edges`); text, canvases
+            // and the rest keep layout's.
+            let bounds = match item.kind {
+                NodeKind::Rect(_)
+                | NodeKind::Quad(_)
+                | NodeKind::Panel { .. }
+                | NodeKind::Image(_)
+                    if self.snaps() =>
+                {
+                    snap_edges(item.bounds, self.scale)
+                }
+                _ => item.bounds,
+            };
             let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
             let mut canvas_image = None;
             // A canvas drawn as quads clips them to its box, as its raster is.
@@ -6312,7 +6335,8 @@ impl GpuRenderer {
             };
             // Inside rounded clips or a `fade_edges` container: cut and faded
             // in the shader.
-            let region = region_index(&mut clips, Region::of(&item));
+            let snap = self.snaps().then_some(self.scale);
+            let region = region_index(&mut clips, Region::of(&item, snap));
             if region > 0. {
                 for quad in &mut quads[start as usize..] {
                     quad.mask[0] = region;
@@ -10878,6 +10902,25 @@ fn blur_damage(damage: &[Rect], filters: &[(Rect, f32)], viewport: Rect, scale: 
         }
     }
     regions
+}
+/// `rect` with its edges on whole device pixels, as a browser paints a
+/// layout box (Chrome's pixel snapping): each edge rounded on its own, so
+/// boxes sharing an edge still share it, and a box with any size keeps at
+/// least a pixel each way. Only where the target maps one to one onto the
+/// window (`GpuRenderer::snaps`): under a transform, a zoom or in a layer,
+/// edges stay where layout put them.
+fn snap_edges(rect: Rect, scale: f32) -> Rect {
+    let edge = |value: f32| (value * scale).round() / scale;
+    let (x0, y0) = (edge(rect.x), edge(rect.y));
+    let mut x1 = edge(rect.x + rect.width);
+    let mut y1 = edge(rect.y + rect.height);
+    if rect.width > 0. && x1 <= x0 {
+        x1 = x0 + 1. / scale;
+    }
+    if rect.height > 0. && y1 <= y0 {
+        y1 = y0 + 1. / scale;
+    }
+    Rect::new(x0, y0, x1 - x0, y1 - y0)
 }
 fn rounded_damage(rect: Rect, viewport: Rect, scale: f32) -> Option<Rect> {
     let rect = rect.intersection(viewport)?;
