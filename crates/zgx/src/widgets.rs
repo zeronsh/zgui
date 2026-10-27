@@ -1007,6 +1007,9 @@ pub(crate) struct UiStorage {
     /// Text nodes whose labels (and the buttons they name) wait for
     /// assistive technology: changed while none read the semantics.
     pending_labels: RefCell<crate::scene::NodeMap<()>>,
+    /// At how many pending labels the removed nodes' are dropped: twice as
+    /// many as were left last time, so they stay as many as text nodes live.
+    pending_prune: Cell<usize>,
     /// `assistive`'s value, read where a text changes (`defer_label`).
     listening: Cell<bool>,
     /// Overlay scrollbars shown, to fade once their view stops scrolling.
@@ -1173,6 +1176,7 @@ impl Ui {
             caret_blink: Rc::default(),
             assistive: runtime.signal(true),
             pending_labels: RefCell::default(),
+            pending_prune: Cell::new(1024),
             listening: Cell::new(true),
             popup_screens: runtime.signal(Vec::new()),
             popup_limits: runtime.signal(Vec::new()),
@@ -2132,12 +2136,28 @@ impl Ui {
         self.pend_label(id);
         true
     }
+    /// How many text nodes' labels wait for a reader (`defer_label`): for
+    /// tests.
+    #[doc(hidden)]
+    pub fn pending_label_count(&self) -> usize {
+        self.storage.pending_labels.borrow().len()
+    }
     /// `defer_label` with no reader: out of line, the listening path stays
     /// a load.
     #[cold]
     #[inline(never)]
     fn pend_label(&self, id: crate::scene::NodeId) {
-        self.storage.pending_labels.borrow_mut().insert(id, ());
+        let mut pending = self.storage.pending_labels.borrow_mut();
+        pending.insert(id, ());
+        // A long session with no reader removes many (a list's rows): drop
+        // theirs, now and then.
+        if pending.len() >= self.storage.pending_prune.get() {
+            let scene = self.scene.borrow();
+            pending.retain(|id, ()| scene.contains(*id));
+            self.storage
+                .pending_prune
+                .set((pending.len() * 2).max(1024));
+        }
     }
     /// Whether assistive technology reads the semantics (see
     /// `set_assistive_technology`).

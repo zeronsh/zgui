@@ -151,3 +151,52 @@ fn labels_from_changing_text_wait_for_assistive_technology() {
     ui.prepare_frame();
     assert_eq!(label(&ui), "Draft 6", "followed while listened to");
 }
+
+/// With no reader, text nodes removed while their labels wait are not kept
+/// waiting: rows mounted and removed for a long session leave about as
+/// many pending as live, and the ones still shown are right once one
+/// listens.
+#[test]
+fn removed_text_leaves_no_label_waiting() {
+    let mut ui = Ui::new(400., 200.);
+    ui.set_assistive_technology(false);
+    let round = ui.signal(0_u32);
+    let caption = ui.signal(0_u32);
+    let view = ui.mount(column().id("rows").child(switch(
+        {
+            let round = round.clone();
+            move || round.get()
+        },
+        {
+            let caption = caption.clone();
+            move |_, _| {
+                let mut rows = column();
+                for i in 0..10 {
+                    let caption = caption.clone();
+                    rows = rows.child(
+                        button()
+                            .id(format!("row{i}"))
+                            .child(text_signal(move || format!("row {i} at {}", caption.get()))),
+                    );
+                }
+                rows
+            }
+        },
+    )));
+    for n in 1..300 {
+        round.set(n);
+        caption.set(n);
+        ui.prepare_frame();
+    }
+    assert!(
+        ui.pending_label_count() <= 2048,
+        "{}",
+        ui.pending_label_count()
+    );
+    ui.set_assistive_technology(true);
+    let row = view.find("row3").unwrap();
+    assert_eq!(
+        ui.semantics.borrow().get(row).unwrap().label,
+        "row 3 at 299"
+    );
+}
