@@ -5002,7 +5002,11 @@ impl Ui {
                     let command = modifiers.primary_shortcut();
                     let word = modifiers.word_navigation();
                     let visual_edge = match key {
-                        Key::Home | Key::End if !command && wrap.get() => Some(key == Key::End),
+                        Key::Home | Key::End
+                            if !command && wrap.get() && !cfg!(target_os = "macos") =>
+                        {
+                            Some(key == Key::End)
+                        }
                         Key::ArrowLeft | Key::ArrowRight
                             if cfg!(target_os = "macos") && modifiers.meta && wrap.get() =>
                         {
@@ -5097,6 +5101,29 @@ impl Ui {
                             }
                             Key::ArrowLeft => e.move_left(word, modifiers.shift),
                             Key::ArrowRight => e.move_right(word, modifiers.shift),
+                            // macOS: Home and End scroll to the text's start or
+                            // end and leave the caret where it is, as NSTextView
+                            // (scrollToBeginningOfDocument:) and Chrome there do;
+                            // with Shift, the selection extends there. (⌘ with
+                            // them still moves the caret to the text's ends.)
+                            Key::Home | Key::End if cfg!(target_os = "macos") && !command => {
+                                let end = key == Key::End;
+                                if modifiers.shift {
+                                    if end {
+                                        e.move_document_end(true)
+                                    } else {
+                                        e.move_document_start(true)
+                                    }
+                                } else {
+                                    let limit = scroll_limit.get();
+                                    *scroll.borrow_mut() = match (end, multiline) {
+                                        (false, _) => (0., 0.),
+                                        (true, true) => (0., limit.1),
+                                        (true, false) => (limit.0, 0.),
+                                    };
+                                    reveal_caret.set(false);
+                                }
+                            }
                             Key::Home => {
                                 if command {
                                     e.move_document_start(modifiers.shift)

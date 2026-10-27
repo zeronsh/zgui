@@ -443,7 +443,19 @@ fn interactive_descendants_keep_editor_and_button_keyboard_behavior() {
     );
     ui.prepare_frame();
     ui.input.focus(&ui.scene, view.find("editor"));
-    key(&mut ui, Key::Home);
+    // To the line's start: ⌘← on macOS, where Home scrolls instead.
+    ui.dispatch(InputEvent::KeyDown {
+        key: if cfg!(target_os = "macos") {
+            Key::ArrowLeft
+        } else {
+            Key::Home
+        },
+        modifiers: Modifiers {
+            meta: cfg!(target_os = "macos"),
+            ..Modifiers::default()
+        },
+        repeat: false,
+    });
     ui.dispatch(InputEvent::Text("x".into()));
     assert_eq!(value.get(), "xabc");
     for input in [Key::ArrowDown, Key::PageDown, Key::End] {

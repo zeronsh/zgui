@@ -7,6 +7,24 @@ use zgx::{
     widgets::Ui,
 };
 
+/// Home and End as a visual line's edges: ⌘← and ⌘→ on macOS, where Home
+/// and End scroll the text instead.
+fn line_edge(key: Key) -> (Key, Modifiers) {
+    match key {
+        Key::Home | Key::End if cfg!(target_os = "macos") => (
+            if key == Key::End {
+                Key::ArrowRight
+            } else {
+                Key::ArrowLeft
+            },
+            Modifiers {
+                meta: true,
+                ..Modifiers::default()
+            },
+        ),
+        key => (key, Modifiers::default()),
+    }
+}
 fn page(ui: &mut Ui, key: Key, modifiers: Modifiers) -> bool {
     let prevented = ui
         .try_dispatch(InputEvent::KeyDown {
@@ -274,11 +292,13 @@ fn wrapped_unicode_paging_reuses_shapes_and_keeps_visual_end_affinity() {
     assert_eq!(editor.editor.borrow().selection().focus, offsets[12]);
     page(&mut ui, Key::PageUp, Modifiers::default());
     assert_eq!(editor.editor.borrow().selection().focus, offsets[2]);
-    page(&mut ui, Key::End, Modifiers::default());
+    let (key, modifiers) = line_edge(Key::End);
+    page(&mut ui, key, modifiers);
     assert_eq!(editor.editor.borrow().selection().focus, offsets[5]);
     page(&mut ui, Key::PageDown, Modifiers::default());
     assert_eq!(editor.editor.borrow().selection().focus, offsets[15]);
-    page(&mut ui, Key::Home, Modifiers::default());
+    let (key, modifiers) = line_edge(Key::Home);
+    page(&mut ui, key, modifiers);
     assert_eq!(editor.editor.borrow().selection().focus, offsets[10]);
     assert_eq!(
         calls.get(),
@@ -358,4 +378,63 @@ fn capture_handler_can_prevent_paging_without_changing_selection_or_scroll() {
     assert!(page(&mut ui, Key::PageDown, Modifiers::default()));
     assert_eq!(editor.editor.borrow().selection(), selection);
     assert_eq!(ui.scene.borrow().bounds(editor.caret), caret);
+}
+
+/// On macOS, Home and End scroll the text to its start or end and leave the
+/// caret where it is, as NSTextView and Chrome there do; with Shift they
+/// extend the selection to the text's ends, and ⌘Home still moves it.
+#[cfg(target_os = "macos")]
+#[test]
+fn home_and_end_scroll_without_moving_the_caret_on_macos() {
+    let mut ui = Ui::new(400., 300.);
+    let text = ["abcdef"; 12].join("\n");
+    let value = ui.signal(text.clone());
+    let view = ui.mount(
+        text_area("Document", value.clone())
+            .w(180.)
+            .h(100.)
+            .text_size(10.)
+            .line_height(20.),
+    );
+    ui.prepare_frame();
+    ui.input.focus(&ui.scene, Some(view.node()));
+    let editor = ui.focused_editor().unwrap();
+    editor.editor.borrow_mut().set_selection(2, 2);
+    editor.refresh();
+    ui.prepare_frame();
+    let top = ui.scene.borrow().bounds(editor.caret).y;
+    assert!(page(&mut ui, Key::End, Modifiers::default()));
+    assert_eq!(
+        editor.editor.borrow().selection().focus,
+        2,
+        "the caret stays"
+    );
+    let scrolled = ui.scene.borrow().bounds(editor.caret).y;
+    assert!(
+        scrolled < top - 100.,
+        "scrolled to the end: {top} to {scrolled}"
+    );
+    // A frame later it is still there: nothing scrolls back to the caret.
+    ui.prepare_frame();
+    assert_eq!(ui.scene.borrow().bounds(editor.caret).y, scrolled);
+    assert!(page(&mut ui, Key::Home, Modifiers::default()));
+    assert_eq!(ui.scene.borrow().bounds(editor.caret).y, top);
+    let shift = Modifiers {
+        shift: true,
+        ..Modifiers::default()
+    };
+    assert!(page(&mut ui, Key::End, shift));
+    let selection = editor.editor.borrow().selection();
+    assert_eq!((selection.anchor, selection.focus), (2, text.len()));
+    let meta = Modifiers {
+        meta: true,
+        ..Modifiers::default()
+    };
+    assert!(page(&mut ui, Key::Home, meta));
+    assert_eq!(
+        editor.editor.borrow().selection().focus,
+        0,
+        "⌘Home moves it"
+    );
+    assert_eq!(value.get(), text);
 }

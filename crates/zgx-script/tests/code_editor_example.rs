@@ -106,7 +106,18 @@ fn typing_moves_the_caret_the_status_bar_shows_and_undo_puts_it_back() {
     run(&mut h, "sample");
     focus(&mut h);
     h.key(Key::ArrowDown);
-    h.key(Key::End);
+    // To the line's end: ⌘→ on macOS, where End scrolls instead.
+    if cfg!(target_os = "macos") {
+        h.key_with(
+            Key::ArrowRight,
+            Modifiers {
+                meta: true,
+                ..Modifiers::default()
+            },
+        );
+    } else {
+        h.key(Key::End);
+    }
     assert_eq!(h.text("status-caret"), "Ln 2, Col 72");
     h.ui.dispatch(InputEvent::Text(" // more".into()));
     h.settle();

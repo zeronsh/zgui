@@ -37,10 +37,29 @@ fn install_shaper(ui: &mut Ui, calls: Rc<Cell<usize>>, scale: f32) {
         },
     );
 }
+/// Home and End as a visual line's edges: ⌘← and ⌘→ on macOS, where Home
+/// and End scroll the text instead.
+fn line_edge(key: Key) -> (Key, Modifiers) {
+    match key {
+        Key::Home | Key::End if cfg!(target_os = "macos") => (
+            if key == Key::End {
+                Key::ArrowRight
+            } else {
+                Key::ArrowLeft
+            },
+            Modifiers {
+                meta: true,
+                ..Modifiers::default()
+            },
+        ),
+        key => (key, Modifiers::default()),
+    }
+}
 fn key(ui: &mut Ui, key: Key) {
+    let (key, modifiers) = line_edge(key);
     ui.dispatch(InputEvent::KeyDown {
         key,
-        modifiers: Modifiers::default(),
+        modifiers,
         repeat: false,
     });
     ui.prepare_frame();

@@ -28,6 +28,9 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 **Copied HTML keeps code blocks and colours**: a selection copied from a page (`View::selectable`) puts monospace text of more than one line in `<pre>`, and runs coloured apart from the text the selection starts in carry their colour (`<span style="color:…">`); body text and links carry none, so a dark theme's white text doesn't paste invisible.
 
+**macOS: Home and End in an editor scroll to the text's start or end and leave the caret where it is**, as NSTextView and Chrome on Mac take them. Shift-Home and Shift-End extend the selection to the text's ends. ⌘← and ⌘→ go to a line's ends, ⌘↑ and ⌘↓ (and ⌘Home, ⌘End) to the text's, as before. Windows and Linux are unchanged.
+- *Migrate:* a test or script pressing Home or End in an editor on macOS to move the caret presses ⌘← or ⌘→.
+
 ## 0.1.3 (2026-10-27)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.2 is an addition), unless it writes one of the three structs below field by field. Some defaults change, each below with what to check: zoom and find in page are on, keys and cursors behave as a browser's and AppKit's, and Windows presents and serves assistive technology differently.
