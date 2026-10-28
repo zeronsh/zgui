@@ -116,8 +116,10 @@ pub mod build {
     /// [`include_bundle!`](crate::include_bundle): every `.luau` file compiled
     /// to bytecode, and the other files the scripts read (`.luaurc`, theme
     /// `.json`, images, SVGs) as they are. Rust sources and other dotfiles
-    /// stay out. Cargo rebuilds when a file in it changes; a script that
-    /// does not parse fails the build, with its file and line.
+    /// stay out. The packages its `zgx.json` lists (`"packages"`) come too,
+    /// each as `@name/…` in the bundled host, with the `.luaurc` aliases into
+    /// one pointing at its copy. Cargo rebuilds when a file in them changes;
+    /// a script that does not parse fails the build, with its file and line.
     pub fn bundle(dir: impl AsRef<Path>, name: &str) -> io::Result<()> {
         let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
             .map(PathBuf::from)
@@ -128,9 +130,7 @@ pub mod build {
         let dir = manifest.join(dir.as_ref());
         let store = out.join(format!("zgx-bundle-{name}"));
         std::fs::create_dir_all(&store)?;
-        let mut files = Vec::new();
-        collect(&dir, &dir, &mut files)?;
-        files.sort();
+        let files = sources(&dir)?;
         println!("cargo:rerun-if-changed={}", dir.display());
         let mut code = String::new();
         let _ = writeln!(
@@ -138,10 +138,8 @@ pub mod build {
             "zgx_script::Bundle {{ name: {name:?}, root: {:?}, files: &[",
             format!("/zgx-bundle/{name}")
         );
-        for (index, rel) in files.iter().enumerate() {
-            let source = dir.join(rel);
+        for (index, (rel, source, bytes)) in files.into_iter().enumerate() {
             println!("cargo:rerun-if-changed={}", source.display());
-            let bytes = std::fs::read(&source)?;
             let bytes = if rel.ends_with(".luau") {
                 compile(&bytes).map_err(|e| io::Error::other(format!("{rel}: {e}")))?
             } else {
@@ -171,6 +169,106 @@ pub mod build {
         compiler.compile(source).map_err(|e| e.to_string())
     }
 
+    /// Where the bundle keeps a package's files: `.packages/<name>/`, a
+    /// directory no app's own files have (dotfiles stay out).
+    pub(crate) const PACKAGES: &str = ".packages";
+
+    /// The files a bundle of `dir` holds, by path in it, with where each
+    /// came from: `dir`'s own, and each package its `zgx.json` lists, under
+    /// [`PACKAGES`]; the `.luaurc` aliases into a package name its copy.
+    pub(crate) fn sources(dir: &Path) -> io::Result<Vec<(String, PathBuf, Vec<u8>)>> {
+        let read = |rel: String, path: PathBuf| Ok((rel, std::fs::read(&path)?, path));
+        let mut rels = Vec::new();
+        collect(dir, dir, &mut rels)?;
+        let mut files = rels
+            .into_iter()
+            .map(|rel| {
+                let path = dir.join(&rel);
+                read(rel, path)
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let packages = packages(dir)?;
+        for (name, folder) in &packages {
+            println!("cargo:rerun-if-changed={}", folder.display());
+            let mut rels = Vec::new();
+            collect(folder, folder, &mut rels)?;
+            for rel in rels {
+                let path = folder.join(&rel);
+                files.push(read(format!("{PACKAGES}/{name}/{rel}"), path)?);
+            }
+        }
+        if let Some(luaurc) = files.iter_mut().find(|(rel, ..)| rel == ".luaurc") {
+            luaurc.1 = repoint(dir, &luaurc.1, &packages)?;
+        }
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(files
+            .into_iter()
+            .map(|(rel, bytes, path)| (rel, path, bytes))
+            .collect())
+    }
+
+    /// The packages `dir`'s `zgx.json` lists, by name, as canonical folders.
+    fn packages(dir: &Path) -> io::Result<Vec<(String, PathBuf)>> {
+        let config = dir.join("zgx.json");
+        let Ok(text) = std::fs::read_to_string(&config) else {
+            return Ok(Vec::new());
+        };
+        println!("cargo:rerun-if-changed={}", config.display());
+        let fail = |why: String| io::Error::other(format!("{}: {why}", config.display()));
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| fail(e.to_string()))?;
+        let Some(listed) = json.get("packages") else {
+            return Ok(Vec::new());
+        };
+        let listed = listed
+            .as_object()
+            .ok_or_else(|| fail("`packages` is not an object of names and folders".into()))?;
+        listed
+            .iter()
+            .map(|(name, folder)| {
+                let folder = folder
+                    .as_str()
+                    .ok_or_else(|| fail(format!("package `{name}` is not a folder's path")))?;
+                let folder = dir
+                    .join(folder)
+                    .canonicalize()
+                    .map_err(|e| fail(format!("package `{name}`: {folder}: {e}")))?;
+                Ok((name.to_lowercase(), folder))
+            })
+            .collect()
+    }
+
+    /// `.luaurc` with its aliases into a package pointing at the package's
+    /// copy in the bundle.
+    fn repoint(dir: &Path, luaurc: &[u8], packages: &[(String, PathBuf)]) -> io::Result<Vec<u8>> {
+        let Ok(mut config) = serde_json::from_slice::<serde_json::Value>(luaurc) else {
+            return Ok(luaurc.to_vec());
+        };
+        let Some(aliases) = config.get_mut("aliases").and_then(|a| a.as_object_mut()) else {
+            return Ok(luaurc.to_vec());
+        };
+        let mut changed = false;
+        for path in aliases.values_mut() {
+            let Some(target) = path.as_str().map(|p| crate::normalize(&dir.join(p))) else {
+                continue;
+            };
+            let target = target.canonicalize().unwrap_or(target);
+            for (name, folder) in packages {
+                if let Ok(rest) = target.strip_prefix(folder) {
+                    let rest = rest.to_string_lossy().replace('\\', "/");
+                    let copy = format!("./{PACKAGES}/{name}/{rest}");
+                    *path = copy.trim_end_matches('/').into();
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if !changed {
+            return Ok(luaurc.to_vec());
+        }
+        serde_json::to_vec_pretty(&config).map_err(io::Error::other)
+    }
+
     fn collect(root: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let path = entry?.path();
@@ -191,5 +289,74 @@ pub mod build {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A bundle carries the packages its app's zgx.json lists: the bundled
+    /// host finds them by name and through `.luaurc`, from the bundle alone.
+    #[test]
+    fn a_bundle_carries_the_packages_its_app_lists() {
+        let base = std::env::temp_dir().join(format!("zgx-bundle-packages-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let write = |path: &str, text: &str| {
+            let path = base.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("kit/button.luau", r#"return require("./parts/label")"#);
+        write("kit/parts/label.luau", r#"return "Save""#);
+        write("app/zgx.json", r#"{ "packages": { "kit": "../kit" } }"#);
+        write(
+            "app/.luaurc",
+            r#"{ "aliases": { "parts": "../kit/parts", "own": "./lib" } }"#,
+        );
+        write("app/lib/name.luau", r#"return "own""#);
+        write(
+            "app/app.luau",
+            r#"assert(require("@kit/button") == "Save", "by the package's name")
+assert(require("@parts/label") == "Save", "through .luaurc")
+assert(require("@own/name") == "own", "the app's own alias as it was")
+return ui.text { "ok" }"#,
+        );
+        let sources = super::build::sources(&base.join("app")).unwrap();
+        let paths: Vec<&str> = sources.iter().map(|(rel, ..)| rel.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                ".luaurc",
+                ".packages/kit/button.luau",
+                ".packages/kit/parts/label.luau",
+                "app.luau",
+                "lib/name.luau",
+                "zgx.json"
+            ]
+        );
+        // Nothing on the disk: the bundle alone.
+        std::fs::remove_dir_all(&base).unwrap();
+        let files: Vec<super::BundleFile> = sources
+            .into_iter()
+            .map(|(rel, _, bytes)| super::BundleFile {
+                bytes: Box::leak(
+                    if rel.ends_with(".luau") {
+                        super::build::compile(&bytes).unwrap()
+                    } else {
+                        bytes
+                    }
+                    .into_boxed_slice(),
+                ),
+                path: Box::leak(rel.into_boxed_str()),
+            })
+            .collect();
+        let bundle = Box::leak(Box::new(super::Bundle {
+            name: "packages",
+            root: "/zgx-bundle/packages",
+            files: Box::leak(files.into_boxed_slice()),
+        }));
+        let runtime = zgx::reactive::Runtime::new();
+        crate::ScriptHost::bundled(&runtime, bundle, "app.luau")
+            .reload()
+            .unwrap();
     }
 }
