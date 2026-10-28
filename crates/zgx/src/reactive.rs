@@ -912,11 +912,13 @@ impl<T: 'static> Signal<T> {
         f(&self.inner.value.borrow())
     }
     /// A clone of the value, subscribing the running effect.
+    #[inline(always)]
     pub fn get(&self) -> T
     where
         T: Clone,
     {
-        self.with(Clone::clone)
+        self.track();
+        self.inner.value.borrow().clone()
     }
     fn notify(&self) {
         if let Some(inner) = self.inner.runtime.upgrade() {
