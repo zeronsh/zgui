@@ -1,0 +1,11 @@
+//! viewport_workload with its plane kept in phase on the display's link (`ZGX_PLANE_CLOCK=skip`): the comparison's
+//! cells for how a GPU view's plane keeps its drawables in phase
+//! (scripts/run_macos_comparison.py `--scene viewport`).
+#[path = "support/viewport_app.rs"]
+mod app;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // SAFETY: before any thread starts; the host reads it once, later.
+    unsafe { std::env::set_var("ZGX_PLANE_CLOCK", "skip") };
+    app::run(false)
+}

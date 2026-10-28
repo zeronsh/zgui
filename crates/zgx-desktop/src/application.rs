@@ -936,6 +936,29 @@ const ALIGN_PERIOD: std::time::Duration = std::time::Duration::from_millis(12);
 /// `ZGX_NATIVE_CARET=0`: the editor paints the caret, blinking through
 /// frames, as before Core Animation drew it (2026-10-27).
 #[cfg(target_os = "macos")]
+/// How a GPU view's plane is kept in phase when its drawables wait a
+/// refresh (`ZGX_PLANE_CLOCK`, for comparing): by default (`view`), the host
+/// paces frames on the view's `CADisplayLink` while a plane shows, as it
+/// does drawables, and skips a tick there (left alone, a plane's next
+/// drawable waited most of a refresh on the main thread, every frame, in
+/// two launches of three); `skip`, it stays on the display's link and skips
+/// a tick on it (a loss for drawables: M1, the window server +2.4 points);
+/// `off`, neither.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlaneClock {
+    Off,
+    View,
+    Skip,
+}
+#[cfg(target_os = "macos")]
+static PLANE_CLOCK: std::sync::LazyLock<PlaneClock> =
+    std::sync::LazyLock::new(|| match zgx::env::var("ZGX_PLANE_CLOCK").ok().as_deref() {
+        Some("off") => PlaneClock::Off,
+        Some("skip") => PlaneClock::Skip,
+        _ => PlaneClock::View,
+    });
+
 static NATIVE_CARET: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| zgx::env::var_os("ZGX_NATIVE_CARET").is_none_or(|v| v != "0"));
 
@@ -4517,10 +4540,11 @@ impl Host {
             .renderer
             .as_mut()
             .and_then(|renderer| renderer.take_rephase())
-            && self
-                .display_link
-                .as_ref()
-                .is_some_and(|link| link.on_view_clock())
+            && (*PLANE_CLOCK == PlaneClock::Skip
+                || self
+                    .display_link
+                    .as_ref()
+                    .is_some_and(|link| link.on_view_clock()))
         {
             self.rephased(waited);
             return;
@@ -4665,7 +4689,14 @@ impl Host {
                 .renderer
                 .as_ref()
                 .is_some_and(|renderer| renderer.drawables_showing());
-            link.set_view_clock(drawables);
+            // A GPU view's plane too, if so (`ZGX_PLANE_CLOCK=view`): its
+            // drawables a refresh behind, the view's link skips a tick.
+            let planes = *PLANE_CLOCK == PlaneClock::View
+                && self
+                    .renderer
+                    .as_ref()
+                    .is_some_and(|renderer| renderer.planes_showing());
+            link.set_view_clock(drawables || planes);
             // Once the link has reported the grid, the timer continues it:
             // a scroll starting after a pause, or the grid going stale, keeps
             // its frames on the timer while the link reports again (see

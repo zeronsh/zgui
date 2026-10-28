@@ -162,6 +162,10 @@ SCENES = {
             # The same app, its view composited into the window's frame (a
             # view not opaque or not shown whole), for the plane's gain.
             'zgx-composite': ROOT / 'target/dist/examples/viewport_composite',
+            # Planes kept in phase otherwise than the view's own link (the
+            # default): on the display's link, and not at all.
+            'zgx-plane-skip': ROOT / 'target/dist/examples/viewport_plane_skip',
+            'zgx-plane-off': ROOT / 'target/dist/examples/viewport_plane_off',
         },
     },
     # A focused text field left alone, idle (zgx_workload::blink): each
@@ -180,12 +184,13 @@ SCENES = {
 }
 # The suite's frameworks: zgx (in Rust, and in Luau where a scene has it),
 # the stronger GPUI, MyGo and Rune.
-SUITE_FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune', 'wgpu', 'zgx-composite']
+SUITE_FRAMEWORKS = ['zgx', 'zgx-luau', 'gpui-fast', 'mygo', 'rune', 'wgpu', 'zgx-composite',
+                    'zgx-plane-skip', 'zgx-plane-off']
 # Scenes whose active trials report the frames they drew (`animation_frames=`,
 # `fps=`) rather than 60 updates a second.
 FRAMES = {'animate', 'viewport'}
 # Frameworks built as zgx-desktop examples beside zgx's (no checkout of their own).
-EXAMPLES = {'wgpu', 'zgx-composite'}
+EXAMPLES = {'wgpu', 'zgx-composite', 'zgx-plane-skip', 'zgx-plane-off'}
 SAMPLER, PACER, BLANK = Path('/tmp/zgx-macsample'), Path('/tmp/zgx-framepace'), Path('/tmp/zgx-blankprobe')
 READY = Path('/tmp/zgx-window-ready')
 # The one font file every adapter loads (comparisons/fonts), and how each

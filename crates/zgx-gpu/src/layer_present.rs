@@ -1151,6 +1151,10 @@ impl Layer {
             crate::present_log::log(|| format!("plane-hide {key:?}"));
         }
     }
+    /// Whether a GPU view's plane shows.
+    pub fn planes_shown(&self) -> bool {
+        self.planes.iter().any(|plane| plane.rect.is_some())
+    }
     /// Drop the planes `keep` says go, in the caller's transaction.
     pub fn retain_planes(&mut self, mut keep: impl FnMut((u64, u64)) -> bool) {
         self.planes.retain(|plane| {

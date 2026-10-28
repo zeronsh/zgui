@@ -10659,6 +10659,15 @@ impl GpuRenderer {
             .and_then(|present| present.layer.as_ref())
             .is_some_and(|layer| layer.drawables_shown())
     }
+    /// Whether a GPU view shows on a plane of its own now (macOS): its
+    /// drawables are paced as the window's are (`drawables_showing`).
+    #[cfg(target_os = "macos")]
+    pub fn planes_showing(&self) -> bool {
+        self.layer_present
+            .as_ref()
+            .and_then(|present| present.layer.as_ref())
+            .is_some_and(|layer| layer.planes_shown())
+    }
     /// Frames wait for drawables a refresh behind (macOS): the host skips
     /// one tick to put them back in phase. The last wait, once.
     #[cfg(target_os = "macos")]
