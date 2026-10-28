@@ -5396,8 +5396,13 @@ impl Scene {
         let node = self.node(id);
         let old = &node.style;
         let known = *kept == Some(node.style_writes);
+        // `way(id)`, from the node at hand: its parent the tree's own.
+        let way = Way {
+            own: node.rtl,
+            parent: node.parent.is_some_and(|parent| self.tree_node(parent).rtl),
+        };
         if (self.contents_count > 0 && node.special.any())
-            || !laid_out_as_given(style, self.way(id))
+            || !laid_out_as_given(style, way)
             || !(known
                 || match (&old.layout_options, &style.layout_options) {
                     (Some(old), Some(new)) => Arc::ptr_eq(old, new),
@@ -5885,7 +5890,12 @@ impl Scene {
         let mut first = true;
         let mut marked = 0u64;
         let (mut parent, mut ink) = loop {
-            let node = self.node_mut(current);
+            // Past `id`, a parent the tree led to (`tree_node_mut`).
+            let node = if first {
+                self.node_mut(current)
+            } else {
+                self.tree_node_mut(current)
+            };
             let boundary = !first && Self::is_layout_boundary(node);
             let parent = node.parent;
             let ink = node.bounds_valid.replace(0);
@@ -5923,7 +5933,7 @@ impl Scene {
         // marked node. Add exactly that many layer revisions in one visit.
         if layers {
             while let Some(id) = parent {
-                let node = self.node_mut(id);
+                let node = self.tree_node_mut(id);
                 if node.isolated || node.promoted {
                     node.layer_revision = node.layer_revision.wrapping_add(marked);
                 }
@@ -5934,7 +5944,7 @@ impl Scene {
             }
         } else if ink & BOUNDS_VALID != 0 {
             while let Some(id) = parent {
-                let node = self.node(id);
+                let node = self.tree_node(id);
                 if node.bounds_valid.replace(0) & BOUNDS_VALID == 0 {
                     break;
                 }
