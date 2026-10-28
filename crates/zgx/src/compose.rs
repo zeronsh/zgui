@@ -1457,6 +1457,11 @@ pub fn text(value: impl Into<String>) -> View {
 pub fn text_signal(compute: impl FnMut() -> String + 'static) -> View {
     View::new(Kind::BoundText(Box::new(compute)))
 }
+/// A localized message's text, following its locale, its file and its
+/// arguments (`i18n.t("inbox.count").arg("n", count)`).
+pub fn text_message(message: crate::i18n::Message) -> View {
+    text_signal(move || message.get())
+}
 pub use crate::compose_context_menu::ContextMenuEvent;
 /// Where anchored popovers and menus open (`View::placement`).
 pub use crate::compose_modal::ModalPlacement;
@@ -6165,7 +6170,7 @@ pub mod prelude {
         image_signal, keyed, measured_rows, measured_virtual_list, menu, menu_item, modal, overlay,
         popover, progress, provide, provide_with, radio, radio_group, row, scroll, scroll_x,
         scrollbar, slider, submenu, switch, text, text_area, text_area_value, text_input,
-        text_input_value, text_signal, variable_virtual_list, virtual_list,
+        text_input_value, text_message, text_signal, variable_virtual_list, virtual_list,
     };
     pub use super::{RichTextView, TextSpan, rich_text, rich_text_signal, text_span};
     pub use super::{SplitOptions, split};

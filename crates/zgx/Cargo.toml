@@ -25,6 +25,14 @@ icu_provider = { version = "~2.4", default-features = false, optional = true }
 icu_collections = { version = "~2.4", default-features = false, features = ["alloc"], optional = true }
 zerotrie = { version = "0.2.5", default-features = false, optional = true }
 zerovec = { version = "0.11.7", default-features = false, optional = true }
+# Localized messages' plurals and numbers (`i18n`), and dates
+# (`i18n-dates`), by ICU4X's compiled data for every locale.
+icu_plurals = { version = "~2.4", default-features = false, features = ["compiled_data"], optional = true }
+icu_decimal = { version = "~2.4", default-features = false, features = ["compiled_data"], optional = true }
+icu_locale_core = { version = "~2.4", default-features = false, optional = true }
+fixed_decimal = { version = "0.7", default-features = false, features = ["ryu"], optional = true }
+icu_datetime = { version = "~2.4", default-features = false, features = ["compiled_data"], optional = true }
+icu_calendar = { version = "~2.4", default-features = false, features = ["compiled_data"], optional = true }
 # Find in page folds accents and composed forms (`find`).
 unicode-normalization = "0.1.24"
 taffy = { package = "zgx-taffy", version = "=0.9.1", path = "../../vendor/taffy", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
@@ -40,6 +48,11 @@ default = ["cjk-thai-words"]
 # 2.25 MB of a release binary, paged in only when used. Off, those scripts
 # select by Unicode's word boundaries (UAX #29): a character at a time.
 cjk-thai-words = ["dep:icu_segmenter", "dep:icu_provider", "dep:icu_collections", "dep:zerotrie", "dep:zerovec"]
+# Localized messages' plural rules and numbers from ICU4X (`zgx::i18n`);
+# without it, plurals follow English and numbers show as Rust writes them.
+i18n = ["dep:icu_plurals", "dep:icu_decimal", "dep:icu_locale_core", "dep:fixed_decimal"]
+# Localized dates from ICU4X (several MB of data); without it, ISO 8601.
+i18n-dates = ["i18n", "dep:icu_datetime", "dep:icu_calendar"]
 # `ZGX_PROFILE=1` also times styles and text within their phases: a check
 # in every style and text run, so only in builds that ask for it.
 profile-nested = []

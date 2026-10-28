@@ -344,6 +344,52 @@ fn preference_tokens(preferences: SystemPreferences) -> Vec<(TokenId, TokenInput
     tokens
 }
 
+/// The user's preferred languages, most preferred first, as BCP 47 tags
+/// (`zgx::i18n::set_system_languages`): macOS's list, Windows' UI
+/// languages (elsewhere zgx reads the environment itself).
+#[cfg(any(target_os = "macos", windows))]
+pub(crate) fn preferred_languages() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::NSLocale;
+        NSLocale::preferredLanguages()
+            .iter()
+            .map(|language| language.to_string())
+            .collect()
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+        let (mut count, mut length) = (0_u32, 0_u32);
+        // SAFETY: first the length the list takes, then the list into a
+        // buffer that long: NUL-separated names ending in two NULs.
+        let mut buffer = Vec::new();
+        unsafe {
+            if GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, None, &mut length)
+                .is_err()
+            {
+                return Vec::new();
+            }
+            buffer.resize(length as usize, 0_u16);
+            if GetUserPreferredUILanguages(
+                MUI_LANGUAGE_NAME,
+                &mut count,
+                Some(windows::core::PWSTR(buffer.as_mut_ptr())),
+                &mut length,
+            )
+            .is_err()
+            {
+                return Vec::new();
+            }
+        }
+        buffer
+            .split(|&c| c == 0)
+            .filter(|name| !name.is_empty())
+            .map(String::from_utf16_lossy)
+            .collect()
+    }
+}
+
 /// The way the user's language runs (`ZGX_DIRECTION=rtl` or `ltr`
 /// overrides it): macOS's first preferred language, Windows' display
 /// locale's reading layout, the Linux environment's `LC_ALL`,

@@ -693,6 +693,9 @@ impl Application {
     pub fn new() -> Self {
         // Dates' "today" is the local one.
         zgx::local_time::set_offset(crate::local_time::offset);
+        // Localized text follows the user's preferred languages.
+        #[cfg(any(target_os = "macos", windows))]
+        zgx::i18n::set_system_languages(crate::system_colors::preferred_languages);
         Self {
             fonts: Vec::new(),
             options: WindowOptions::default(),
