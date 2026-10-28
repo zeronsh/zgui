@@ -165,7 +165,7 @@ fn main() {
             passes += stats.render_passes;
         }
     }
-    let measured = (ticks - 60).max(1) as f64;
+    let measured = ticks.saturating_sub(60).max(1) as f64;
     times.sort();
     let at = |q: f64| {
         times

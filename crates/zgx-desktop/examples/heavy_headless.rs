@@ -120,7 +120,7 @@ fn main() {
             nodes += report.layout_nodes;
         }
     }
-    let measured = (ticks - 60).max(1) as f64;
+    let measured = ticks.saturating_sub(60).max(1) as f64;
     let ms = |d: Duration| d.as_secs_f64() * 1e3 / measured;
     let mb = |bytes: usize| bytes as f64 / 1048576.;
     let caches = gpu.debug_cache_stats();

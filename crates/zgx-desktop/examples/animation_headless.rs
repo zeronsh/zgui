@@ -135,7 +135,7 @@ fn main() {
             render += done - laid;
         }
     }
-    let measured = (frames - warmup).max(1) as f64;
+    let measured = frames.saturating_sub(warmup).max(1) as f64;
     let cpu = (cpu_time() - cpu_start).as_secs_f64() * 1e6 / measured;
     let us = |d: Duration| d.as_secs_f64() * 1e6 / measured;
     println!(

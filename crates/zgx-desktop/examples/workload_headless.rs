@@ -176,7 +176,7 @@ fn main() {
             damaged += stats.damaged_pixels;
         }
     }
-    let measured = (ticks - 60).max(1) as f64;
+    let measured = ticks.saturating_sub(60).max(1) as f64;
     let Some(gpu) = gpu else {
         println!(
             "{mode:?} without rendering: layout {:.3} ms per tick",
