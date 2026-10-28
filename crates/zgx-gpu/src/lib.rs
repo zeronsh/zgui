@@ -734,12 +734,15 @@ impl CopyBlocker {
 /// keeps it from it otherwise: its content is one contiguous run of paint
 /// items free of masks, layers and filters; beneath it the clip shows a
 /// single opaque rectangle (or the window background); above it nothing
-/// paints in the clip outside this frame's damage.
+/// paints in the clip outside this frame's damage. What paints above or
+/// shows beneath it and repaints where it is still had its pixels in the
+/// frame copied: `carried` gets where the copy puts them, to repaint.
 fn copy_blocker(
     scene: &Scene,
     scroll: &zgx::scene::ScrollMove,
     damage: &[Rect],
     scale: f32,
+    carried: &mut Vec<Rect>,
 ) -> Option<CopyBlocker> {
     let clip = scroll.clip;
     let items = scene.layer_items_within(None, Some(&[clip]));
@@ -750,6 +753,8 @@ fn copy_blocker(
     let last = items.iter().rposition(content).expect("found above");
     let paints = |item: &zgx::scene::PaintItem<'_>| -> Option<Rect> {
         let bounds = match item.kind {
+            // A layer: all it holds, turned and scaled as it is.
+            _ if item.isolated => scene.layer_ink(item)?,
             NodeKind::Container(_) if item.effects.blur_radius <= 0. => return None,
             NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => quad.paint_bounds(item.bounds),
             _ => item.bounds,
@@ -775,11 +780,23 @@ fn copy_blocker(
             return Some(CopyBlocker::Effect(item.id));
         }
     }
-    if let Some(over) = items[last + 1..]
-        .iter()
-        .find(|item| paints(item).is_some_and(|rect| !repainted(rect)))
-    {
-        return Some(CopyBlocker::Over(over.id));
+    let carry = |rect: Rect| {
+        Rect::new(
+            rect.x + scroll.dx,
+            rect.y + scroll.dy,
+            rect.width,
+            rect.height,
+        )
+        .intersection(clip)
+    };
+    for item in &items[last + 1..] {
+        let Some(rect) = paints(item) else {
+            continue;
+        };
+        if !repainted(rect) {
+            return Some(CopyBlocker::Over(item.id));
+        }
+        carried.extend(carry(rect));
     }
     // Content opaque across the whole clip (a list's rows) hides whatever
     // lies under it, before the move and after.
@@ -817,6 +834,7 @@ fn copy_blocker(
         if !repainted(rect) {
             return Some(CopyBlocker::Under(item.id));
         }
+        carried.extend(carry(rect));
     }
     None
 }
@@ -8077,6 +8095,7 @@ impl GpuRenderer {
         let serial = scene.flush_serial();
         let mut copies = Vec::new();
         let mut repaint = Vec::new();
+        let mut carried = Vec::new();
         // On Apple GPUs a process's first texture blit makes the driver hold
         // over 100 MB of graphics memory (see vendor/wgpu-hal/ZGX_PATCH.md):
         // repaint there, unless presenting surfaces of its own, which copy
@@ -8093,6 +8112,7 @@ impl GpuRenderer {
             if scroll.serial != serial {
                 continue;
             }
+            carried.clear();
             let whole = |value: f32| {
                 let scaled = value * self.scale;
                 ((scaled - scaled.round()).abs() < 1e-3).then_some(scaled.round() as i32)
@@ -8138,7 +8158,7 @@ impl GpuRenderer {
                 Some(copy) => Ok(copy),
             };
             match refused {
-                Ok(copy) => match copy_blocker(scene, scroll, damage, self.scale) {
+                Ok(copy) => match copy_blocker(scene, scroll, damage, self.scale, &mut carried) {
                     None => match scene.scroll_corners(scroll.node) {
                         // Rounded clips around it that stay where they are:
                         // the copy moves their edges and what lies outside
@@ -8164,6 +8184,7 @@ impl GpuRenderer {
                                     .flatten(),
                                 );
                             }
+                            repaint.append(&mut carried);
                             copies.push(copy);
                         }
                         None => {
@@ -13013,7 +13034,7 @@ mod copy_blocker_tests {
             let damage = ui.scene.borrow_mut().flush().damage;
             let scene = ui.scene.borrow();
             let scroll = scene.scroll_moves().last().expect("it moved").clone();
-            let blocker = copy_blocker(&scene, &scroll, &damage, 1.);
+            let blocker = copy_blocker(&scene, &scroll, &damage, 1., &mut Vec::new());
             if covered {
                 let Some(blocker @ CopyBlocker::Over(_)) = blocker else {
                     panic!("the square over the list keeps it from copying: {blocker:?}");

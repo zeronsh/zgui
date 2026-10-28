@@ -3281,6 +3281,19 @@ impl Scene {
         self.note_geometry_read(id);
         self.transformed_world_bounds(id)
     }
+    /// Where a layer's item (`PaintItem::isolated`) can paint, in window
+    /// points: its whole subtree's ink, after its transform. An item of the
+    /// window's paint walk, whose ancestors translate it alone. Renderer
+    /// plumbing, not a stable API.
+    #[doc(hidden)]
+    pub fn layer_ink(&self, item: &PaintItem<'_>) -> Option<Rect> {
+        let node = self.node(item.id);
+        let ink = self.ink(item.id)?;
+        Some(ink.translated(Transform {
+            x: item.bounds.x - node.bounds.x - node.transform.x,
+            y: item.bounds.y - node.bounds.y - node.transform.y,
+        }))
+    }
     /// `transformed_bounds`, read by the scene's and the frame's own work:
     /// noted by no mount.
     pub(crate) fn transformed_world_bounds(&self, id: NodeId) -> Rect {

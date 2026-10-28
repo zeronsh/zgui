@@ -286,3 +286,10 @@ Render instructions fell 2.6–3% on both, and 5% on lab `stream`.
   shifts (half the copies gone): neither is worth two levels on an edge.
   Tests that compare copies with a fresh render use square content, or
   content that moves with its copy by even device pixels.
+- **A region repainted through a window's surfaces** (found with #834,
+  October 2026) can differ from the scene drawn whole by a level on rounded
+  corners, and by up to five on glyphs, at fractional offsets: the same
+  class, invisible, and kept. Scroll copies and partial repaints switched
+  off change nothing in it. `layer_frames`' random scrolling scenes allow
+  six levels on edges for both; anything drawn in the wrong place differs
+  by far more (every bug it found was off by 80 or more).

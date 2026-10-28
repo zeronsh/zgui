@@ -165,6 +165,329 @@ fn panel(offset: Signal<f32>) -> View {
 }
 #[cfg(target_os = "macos")]
 fn rounded_panel_scrolled_through_surfaces_matches_drawing_whole() {
+    let copies = scrolled_matches_drawing_whole(panel, STEPS);
+    // Each step moved by whole pixels: each copied, its corners repainted.
+    assert!(copies > 0, "no scroll copied");
+}
+
+/// A scroll view's content under something that stays where it is: a
+/// translucent veil, or a turned card (a layer).
+#[cfg(target_os = "macos")]
+fn under_a_still(offset: Signal<f32>, turned: bool) -> View {
+    let mut cards = column().gap(6.).p(6.);
+    for i in 0..40 {
+        cards = cards.child(div().w(300.).h(36.).bg(if i % 2 == 0 {
+            Color(34, 51, 68, 255)
+        } else {
+            Color(42, 58, 74, 255)
+        }));
+    }
+    let still = div().left(60.).top(300.).size(160., 40.);
+    let still = match turned {
+        true => still.rounded(6.).bg(Color(90, 60, 200, 255)).rotate(0.2),
+        false => still.bg(Color(250, 250, 250, 255)).opacity(0.4),
+    };
+    overlay()
+        .size(SIZE.0, SIZE.1)
+        .bg(Color(47, 107, 58, 255))
+        .child(
+            scroll(offset)
+                .w(330.)
+                .h(380.)
+                .left(20.)
+                .top(10.)
+                .bg(Color(17, 17, 17, 255))
+                .child(cards),
+        )
+        .child(still)
+}
+/// Scrolled far enough that the strip scrolled in covers what lies over
+/// the content: drawn there afresh, its pixels in the frame before must not
+/// move with the copy (a ghost of it up the view).
+#[cfg(target_os = "macos")]
+fn still_over_a_scroll_repainted_where_it_is_leaves_no_ghost() {
+    let steps = [0., 120., 240., 120., 360., 0.];
+    let copies = scrolled_matches_drawing_whole(|offset| under_a_still(offset, false), &steps);
+    let turned = scrolled_matches_drawing_whole(|offset| under_a_still(offset, true), &steps);
+    assert!(
+        copies > 0 && turned > 0,
+        "no scroll copied: {copies}, {turned}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+struct Rng(u64);
+#[cfg(target_os = "macos")]
+impl Rng {
+    fn below(&mut self, n: u64) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0 % n.max(1)
+    }
+    fn chance(&mut self, percent: u64) -> bool {
+        self.below(100) < percent
+    }
+}
+
+/// A random scene of scroll views (plain, in rounded panels, nested) under
+/// and among moving, fading and turning things, for `seed`: `tick` changes
+/// what moves, `offsets` scroll.
+#[cfg(target_os = "macos")]
+fn scrolling_scene(seed: u64, tick: Signal<u32>, offsets: &[Signal<f32>]) -> View {
+    let mut rng = Rng(seed);
+    let rows = |rng: &mut Rng, count: u32, width: f32, inner: Option<Signal<f32>>| {
+        let mut list = column()
+            .gap(rng.below(3) as f32 * 3.)
+            .p(rng.below(2) as f32 * 4.);
+        for i in 0..count {
+            let fill = Color(30 + (i * 17 % 60) as u8, 50, 70 + (i * 29 % 80) as u8, 255);
+            let mut row = div().w(width).h(24. + rng.below(3) as f32 * 9.).bg(fill);
+            match rng.below(8) {
+                0 => row = row.rounded(8.),
+                1 => row = row.bg(Color(fill.0, fill.1, fill.2, 140)),
+                2 => {
+                    row = row.shadow(zgx::scene::BoxShadow {
+                        color: Color(0, 0, 0, 150),
+                        offset: zgx::scene::Transform { x: 2., y: 3. },
+                        blur_radius: 4.,
+                        spread: 0.,
+                    })
+                }
+                3 => row = row.border(1.).border_color(Color(220, 220, 220, 255)),
+                _ => {}
+            }
+            if rng.chance(30) {
+                row = row.child(
+                    text(format!("Row {i} of {seed}")).text_color(Color(230, 230, 230, 255)),
+                );
+            }
+            if rng.chance(15) {
+                let (tick, phase) = (tick.clone(), i);
+                row = row.reactive_style(move || {
+                    let on = (tick.get() + phase) % 3 == 0;
+                    Styles::new()
+                        .bg(if on { Color(200, 90, 50, 255) } else { fill })
+                        .translate(if on { 6. } else { 0. }, 0.)
+                });
+            }
+            list = list.child(row);
+        }
+        if let Some(offset) = inner {
+            list = list.child(
+                scroll(offset)
+                    .w(width - 20.)
+                    .h(90.)
+                    .bg(Color(12, 12, 16, 255))
+                    .child(rows_plain(width - 30., 12)),
+            );
+        }
+        list
+    };
+    let mut root = overlay().size(SIZE.0, SIZE.1).bg(Color(47, 107, 58, 255));
+    for (n, offset) in offsets.iter().enumerate() {
+        let (x, y) = (10. + n as f32 * 210., 8. + rng.below(4) as f32 * 7.);
+        let inner = (n == 0).then(|| offsets[offsets.len() - 1].clone());
+        let mut view = scroll(offset.clone())
+            .w(190.)
+            .h(300. + rng.below(3) as f32 * 20.)
+            .child(rows(&mut rng, 24, 180., inner));
+        if rng.chance(60) {
+            view = view.bg(Color(17, 17, 17, 255));
+        }
+        if rng.chance(30) {
+            view = view.edge_fade(12.);
+        }
+        let holder = if rng.chance(50) {
+            div()
+                .left(x)
+                .top(y)
+                .rounded(4. + rng.below(3) as f32 * 6.)
+                .bg(Color(17, 17, 17, 255))
+                .overflow_hidden()
+                .child(view)
+        } else {
+            div().left(x).top(y).child(view)
+        };
+        root = root.child(holder);
+        if n == offsets.len() - 2 {
+            break;
+        }
+    }
+    // Over and among them: a badge that moves, a veil that fades, a card
+    // that turns.
+    if rng.chance(70) {
+        let tick = tick.clone();
+        let size = (60. + rng.below(40) as f32, 30.);
+        root = root.child(
+            div()
+                .size(size.0, size.1)
+                .bg(Color(200, 60, 40, 255))
+                .reactive_style(move || {
+                    let t = tick.get();
+                    Styles::new()
+                        .left(40. + (t % 5) as f32 * 37.)
+                        .top(60. + (t % 3) as f32 * 41.)
+                }),
+        );
+    }
+    if rng.chance(50) {
+        let tick = tick.clone();
+        root = root.child(
+            div()
+                .left(150.)
+                .top(200.)
+                .size(160., 60.)
+                .bg(Color(250, 250, 250, 255))
+                .reactive_style(move || Styles::new().opacity(0.2 + (tick.get() % 4) as f32 * 0.2)),
+        );
+    }
+    if rng.chance(40) {
+        root = root.child(
+            div()
+                .left(320.)
+                .top(120.)
+                .size(80., 50.)
+                .rounded(6.)
+                .bg(Color(90, 60, 200, 255))
+                .rotate(0.2),
+        );
+    }
+    root
+}
+#[cfg(target_os = "macos")]
+fn rows_plain(width: f32, count: u32) -> View {
+    column().children((0..count).map(move |i| {
+        div()
+            .w(width)
+            .h(20.)
+            .bg(Color(60 + (i * 13 % 90) as u8, 40, 40, 255))
+    }))
+}
+/// How far antialiased edges may differ from drawing whole, per channel.
+#[cfg(target_os = "macos")]
+const EDGE_LEVELS: u8 = 6;
+/// Random scenes of scroll views among moving things, scrolled and changed
+/// at random through a window's own surfaces: each frame shows what
+/// drawing it whole shows (scroll copies, kept frames and damage together).
+#[cfg(target_os = "macos")]
+fn random_scrolling_scenes_through_surfaces_match_drawing_whole() {
+    let renderer = |host: &objc2::rc::Retained<objc2_quartz_core::CALayer>| {
+        let mut gpu =
+            GpuRenderer::debug_for_layer(host.clone(), (SIZE.0 * 2.) as u32, (SIZE.1 * 2.) as u32)
+                .unwrap();
+        gpu.set_scale_factor(2.);
+        gpu
+    };
+    let seeds: u64 = std::env::var("ZGX_SCROLL_SEEDS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(6);
+    let mut copies = 0;
+    for seed in 1..=seeds {
+        let seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let host = objc2_quartz_core::CALayer::new();
+        let mut gpu = renderer(&host);
+        let mut ui = Ui::new(SIZE.0, SIZE.1);
+        ui.scene.borrow_mut().set_pixel_scale(2.);
+        gpu.install_text(&mut ui.scene.borrow_mut());
+        let tick = ui.signal(0u32);
+        let offsets: Vec<Signal<f32>> = (0..4).map(|_| ui.signal(0.)).collect();
+        ui.mount(scrolling_scene(seed, tick.clone(), &offsets));
+        // Drawn whole each step: one renderer a seed (a fresh one a step
+        // makes the GPU driver run out of contexts it has yet to free).
+        let whole_host = objc2_quartz_core::CALayer::new();
+        let mut whole = renderer(&whole_host);
+        let mut rng = Rng(seed ^ 0xD1B5_4A32_D192_ED03);
+        for step in 0..30 {
+            let mut did = Vec::new();
+            for (n, offset) in offsets.iter().enumerate() {
+                if rng.chance(50) {
+                    // Mostly whole device pixels (copies), some between
+                    // (repaints).
+                    let at = rng.below(400) as f32 * 0.5 + if rng.chance(20) { 0.25 } else { 0. };
+                    offset.set(at);
+                    did.push(format!("offset{n}={at}"));
+                }
+            }
+            if rng.chance(40) {
+                tick.set(tick.with_untracked(|t| t + 1));
+                did.push("tick".into());
+            }
+            ui.prepare_frame();
+            let damage = ui.scene.borrow_mut().flush().damage;
+            copies += gpu
+                .render(&ui.scene.borrow(), &damage)
+                .unwrap()
+                .scroll_copies;
+            gpu.present().unwrap();
+            let shown = gpu.shown_pixels().expect("a surface shown").2;
+            whole
+                .render(
+                    &ui.scene.borrow(),
+                    &[zgx::scene::Rect::new(0., 0., SIZE.0, SIZE.1)],
+                )
+                .unwrap();
+            whole.present().unwrap();
+            let expected = whole.shown_pixels().expect("a surface shown").2;
+            // Curved and text edges may differ by a few levels: a copy by an
+            // odd number of device pixels (docs/performance-feature-audit.md),
+            // and a region repainted (rounded corners by a level, glyphs by a
+            // few). Anything drawn in the wrong place differs by far more.
+            let off = |(a, b): (&[u8], &[u8])| {
+                a.iter()
+                    .zip(b)
+                    .map(|(a, b)| a.abs_diff(*b))
+                    .max()
+                    .unwrap_or(0)
+            };
+            let worst = shown
+                .chunks(4)
+                .zip(expected.chunks(4))
+                .map(off)
+                .max()
+                .unwrap_or(0);
+            if worst > EDGE_LEVELS {
+                let width = (SIZE.0 * 2.) as usize;
+                let spots: Vec<(usize, usize)> = shown
+                    .chunks(4)
+                    .zip(expected.chunks(4))
+                    .enumerate()
+                    .filter(|(_, pair)| off(*pair) > EDGE_LEVELS)
+                    .map(|(i, _)| (i % width, i / width))
+                    .collect();
+                let (xs, ys) = (
+                    (
+                        spots.iter().map(|s| s.0).min(),
+                        spots.iter().map(|s| s.0).max(),
+                    ),
+                    (
+                        spots.iter().map(|s| s.1).min(),
+                        spots.iter().map(|s| s.1).max(),
+                    ),
+                );
+                panic!(
+                    "seed {seed} step {step} ({}): {} pixels differ from drawing whole (by up to {worst}), x {xs:?} y {ys:?}",
+                    did.join(" "),
+                    spots.len()
+                );
+            }
+        }
+    }
+    assert!(copies > 0, "no scroll copied");
+}
+
+/// Offsets there and back, whole device pixels and between.
+#[cfg(target_os = "macos")]
+const STEPS: &[f32] = &[
+    0., 3.5, 9.25, 17., 30.5, 48., 71.75, 90., 120.5, 150., 200., 260., 200.5, 150., 95.5, 61.25,
+    40., 22.5, 8.75, 2., 0.,
+];
+/// Scroll `view`'s offset through `steps` through a window's own surfaces, each
+/// frame compared with the same scene drawn whole by a renderer of its own;
+/// returns how many scrolls copied.
+#[cfg(target_os = "macos")]
+fn scrolled_matches_drawing_whole(view: fn(Signal<f32>) -> View, steps: &[f32]) -> usize {
     let renderer = |host: &objc2::rc::Retained<objc2_quartz_core::CALayer>| {
         let mut gpu =
             GpuRenderer::debug_for_layer(host.clone(), (SIZE.0 * 2.) as u32, (SIZE.1 * 2.) as u32)
@@ -178,12 +501,9 @@ fn rounded_panel_scrolled_through_surfaces_matches_drawing_whole() {
     ui.scene.borrow_mut().set_pixel_scale(2.);
     gpu.install_text(&mut ui.scene.borrow_mut());
     let offset = ui.signal(0.);
-    ui.mount(panel(offset.clone()));
+    ui.mount(view(offset.clone()));
     let mut copies = 0;
-    for at in [
-        0., 3.5, 9.25, 17., 30.5, 48., 71.75, 90., 120.5, 150., 200., 260., 200.5, 150., 95.5,
-        61.25, 40., 22.5, 8.75, 2., 0.,
-    ] {
+    for &at in steps {
         offset.set(at);
         ui.prepare_frame();
         let damage = ui.scene.borrow_mut().flush().damage;
@@ -193,7 +513,6 @@ fn rounded_panel_scrolled_through_surfaces_matches_drawing_whole() {
             .scroll_copies;
         gpu.present().unwrap();
         let shown = gpu.shown_pixels().expect("a surface shown").2;
-        // The same scene drawn whole, by a renderer of its own.
         let whole_host = objc2_quartz_core::CALayer::new();
         let mut whole = renderer(&whole_host);
         whole
@@ -228,8 +547,7 @@ fn rounded_panel_scrolled_through_surfaces_matches_drawing_whole() {
             "scroll {at}: the surface shown differs from the scene drawn whole"
         );
     }
-    // Each step moved by whole pixels: each copied, its corners repainted.
-    assert!(copies > 0, "no scroll copied");
+    copies
 }
 
 /// The plain layer's tiles (one per surface shown, `Layer::tiles`): each
@@ -655,6 +973,10 @@ fn main() {
         println!("layer_frames: input after idle wakes the GPU once");
         rounded_panel_scrolled_through_surfaces_matches_drawing_whole();
         println!("layer_frames: a rounded panel scrolled through surfaces matches drawing whole");
+        still_over_a_scroll_repainted_where_it_is_leaves_no_ghost();
+        println!("layer_frames: a still over a scroll repainted where it is leaves no ghost");
+        random_scrolling_scenes_through_surfaces_match_drawing_whole();
+        println!("layer_frames: random scrolling scenes through surfaces match drawing whole");
         full_rate_frames_through_drawables_match_drawing_whole();
         println!("layer_frames: full-rate frames through drawables match drawing whole");
         switches_between_tiles_and_drawables_match_drawing_whole();
