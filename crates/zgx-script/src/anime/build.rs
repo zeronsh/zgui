@@ -170,10 +170,21 @@ impl Ctx {
     ) -> Result<f64, String> {
         let v = self.per_target(v, target, i, n)?;
         Ok(match number(&v) {
-            Some(t) => self.engine.ms(t).max(0.),
+            Some(t) => self.ms("a time", t)?.max(0.),
             None if v.is_nil() => default,
             None => return Err(format!("expected a time, got {}", v.type_name())),
         })
+    }
+    /// A time the script gave (`what`), in milliseconds: an error for one
+    /// that is no number of them (NaN, infinite), which the clock would
+    /// carry into every frame's arithmetic (0 × ∞ is NaN).
+    pub fn ms(&self, what: &str, value: f64) -> Result<f64, String> {
+        let ms = self.engine.ms(value);
+        if ms.is_finite() {
+            Ok(ms)
+        } else {
+            Err(format!("{what} takes milliseconds, not {value}"))
+        }
     }
     pub fn ease(&self, v: &mlua::Value) -> Result<Option<Ease>, String> {
         Ok(match v {
@@ -570,7 +581,7 @@ pub(crate) fn compile(
             .filter(|_| !explicit_duration)
             .unwrap_or(1000.);
         match number(&params.get(&["duration"])) {
-            Some(d) => ctx.engine.ms(d),
+            Some(d) => ctx.ms("duration", d)?.max(0.),
             None => fallback,
         }
     } else {
@@ -692,7 +703,17 @@ pub(crate) fn timing(ctx: &Ctx, params: &Params) -> Result<Timing, String> {
     let loops = match params.get(&["loop"]) {
         mlua::Value::Boolean(true) => f64::INFINITY,
         mlua::Value::Nil | mlua::Value::Boolean(false) => 0.,
-        v => number(&v).ok_or("loop is a count or true")?.max(0.),
+        v => number(&v)
+            .filter(|count| !count.is_nan())
+            .ok_or("loop is a count or true")?
+            .max(0.),
+    };
+    // A rate or frame rate that is no number would carry NaN into the clock.
+    let finite = |names: &[&str], what: &str| -> Result<Option<f64>, String> {
+        match number(&params.get(names)) {
+            Some(v) if !v.is_finite() => Err(format!("{what} is a number, not {v}")),
+            v => Ok(v),
+        }
     };
     let flag = |names: &[&str]| matches!(params.get(names), mlua::Value::Boolean(true));
     let direction = match params.get(&["direction"]) {
@@ -703,13 +724,15 @@ pub(crate) fn timing(ctx: &Ctx, params: &Params) -> Result<Timing, String> {
         delay: 0.,
         iteration: 0.,
         loops,
-        loop_delay: number(&params.get(&["loopDelay", "loop_delay"]))
-            .map_or(0., |v| ctx.engine.ms(v)),
+        loop_delay: match number(&params.get(&["loopDelay", "loop_delay"])) {
+            Some(v) => ctx.ms("loopDelay", v)?.max(0.),
+            None => 0.,
+        },
         alternate: flag(&["alternate"]) || direction == "alternate",
         reversed: flag(&["reversed"]) || direction == "reverse",
-        speed: number(&params.get(&["playbackRate", "playback_rate"])).unwrap_or(1.),
+        speed: finite(&["playbackRate", "playback_rate"], "playbackRate")?.unwrap_or(1.),
         playback_ease: ctx.ease(&params.get(&["playbackEase", "playback_ease"]))?,
-        frame_rate: number(&params.get(&["frameRate", "frame_rate"])),
+        frame_rate: finite(&["frameRate", "frame_rate"], "frameRate")?,
         // `autoplay = onScroll(…)` hands playback to the scroll.
         autoplay: !matches!(
             params.get(&["autoplay"]),
@@ -971,8 +994,10 @@ pub(crate) fn build_timeline(
                     defaults,
                 };
                 let mut timing = timing(ctx, &params_ref)?;
-                timing.iteration =
-                    number(&params_ref.get(&["duration"])).map_or(1000., |d| ctx.engine.ms(d));
+                timing.iteration = match number(&params_ref.get(&["duration"])) {
+                    Some(d) => ctx.ms("duration", d)?.max(0.),
+                    None => 1000.,
+                };
                 let length = if timing.total().is_finite() {
                     timing.total()
                 } else {

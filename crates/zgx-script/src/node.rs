@@ -2506,7 +2506,7 @@ fn fill_from(
             "tooltip_delay" => {
                 let ms: f64 = lua.unpack(value)?;
                 node.tooltip.get_or_insert_default().delay =
-                    Some(std::time::Duration::from_secs_f64(ms.max(0.) / 1000.));
+                    Some(crate::duration_ms("tooltip_delay", ms)?);
             }
             "pointer_events" => {
                 node.pointer_events = Some(match &value {
@@ -2592,7 +2592,7 @@ fn fill_from(
                             }
                             Some(Sweep {
                                 by: (num("x", 0.)? as f32, num("y", 0.)? as f32),
-                                period: std::time::Duration::from_secs_f64(ms / 1000.),
+                                period: crate::duration_ms("sweep's duration", ms)?,
                                 rate: num("frame_rate", 60.)?,
                             })
                         }
@@ -4063,7 +4063,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     );
                 }
                 let vm = env.vm.clone();
-                let period = std::time::Duration::from_secs_f64((ms / 1000.).max(0.001));
+                let period = crate::duration_ms(&format!("ui.{name}"), ms)?
+                    .max(std::time::Duration::from_millis(1));
                 let stop = env.timers.start(period, repeat, move || {
                     let Some(vm) = vm.upgrade() else { return false };
                     match vm.call::<Option<bool>>(&f, ()) {

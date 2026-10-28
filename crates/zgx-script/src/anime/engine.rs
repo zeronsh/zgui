@@ -163,7 +163,13 @@ impl Timing {
         if !self.iteration.is_finite() || !self.loops.is_finite() {
             return f64::INFINITY;
         }
-        self.delay + self.iterations() * self.iteration + self.loops * self.loop_delay
+        // No loops, no gaps between them (0 × ∞ would be NaN).
+        let gaps = if self.loops > 0. {
+            self.loops * self.loop_delay
+        } else {
+            0.
+        };
+        self.delay + self.iterations() * self.iteration + gaps
     }
 }
 
@@ -329,6 +335,11 @@ impl Clip {
             && let Err(error) = builder(self)
             && let Some(vm) = self.owner.upgrade()
         {
+            // Built after the call returned: the line that made it says where.
+            let error = match &*self.site.borrow() {
+                Some(site) => format!("{}: {error}", site.at),
+                None => error,
+            };
             vm.report(mlua::Error::runtime(error));
         }
         *self.builder.borrow_mut() = builder;
@@ -411,7 +422,8 @@ impl Clip {
         }
         let time = {
             let mut s = self.state.borrow_mut();
-            s.time = (s.time + step).clamp(0., total);
+            // `max`: a total below 0 would panic `clamp` (times are built ≥ 0).
+            s.time = (s.time + step).clamp(0., total.max(0.));
             s.time
         };
         self.render(time, engine, false);

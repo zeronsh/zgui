@@ -25,6 +25,8 @@ mod scene3d;
 #[cfg(not(feature = "scene3d"))]
 #[path = "../scene3d_off.rs"]
 mod scene3d_off;
+#[path = "../script_crashes.rs"]
+mod script_crashes;
 #[path = "../selection.rs"]
 mod selection;
 #[path = "../stack.rs"]

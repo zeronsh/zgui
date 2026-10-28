@@ -1127,7 +1127,16 @@ fn install_math(lua: &Lua, utils: &Table) -> mlua::Result<()> {
     utils.set(
         "clamp",
         lua.create_function(|_, (v, min, max): (f64, f64, f64)| {
-            Ok(v.clamp(min.min(max), max.max(min)))
+            // As anime.js compares: a NaN bound clamps nothing (`f64::clamp`
+            // panics on one).
+            let (low, high) = (min.min(max), max.max(min));
+            Ok(if v < low {
+                low
+            } else if v > high {
+                high
+            } else {
+                v
+            })
         })?,
     )?;
     utils.set(
@@ -1181,12 +1190,20 @@ fn install_math(lua: &Lua, utils: &Table) -> mlua::Result<()> {
     )?;
     utils.set(
         "roundPad",
-        lua.create_function(|_, (v, decimals): (f64, usize)| Ok(format!("{v:.decimals$}")))?,
+        lua.create_function(|_, (v, decimals): (f64, usize)| {
+            // `toFixed`'s range: more digits than that is no number.
+            if decimals > 100 {
+                return Err(mlua::Error::runtime(format!(
+                    "anime.utils.roundPad: 0 to 100 decimals, not {decimals}"
+                )));
+            }
+            Ok(format!("{v:.decimals$}"))
+        })?,
     )?;
     utils.set(
         "padStart",
         lua.create_function(
-            |_, (v, width, fill): (mlua::Value, usize, Option<String>)| {
+            |lua, (v, width, fill): (mlua::Value, usize, Option<String>)| {
                 let s = match v {
                     mlua::Value::String(s) => s.to_string_lossy(),
                     other => value::format_number(match other {
@@ -1196,11 +1213,10 @@ fn install_math(lua: &Lua, utils: &Table) -> mlua::Result<()> {
                     }),
                 };
                 let fill = fill.unwrap_or_else(|| " ".into());
-                let pad: String = fill
-                    .chars()
-                    .cycle()
-                    .take(width.saturating_sub(s.chars().count()))
-                    .collect();
+                let count = width.saturating_sub(s.chars().count());
+                let widest = fill.chars().map(char::len_utf8).max().unwrap_or(0);
+                crate::room_for(lua, "anime.utils.padStart", count.saturating_mul(widest))?;
+                let pad: String = fill.chars().cycle().take(count).collect();
                 Ok(pad + &s)
             },
         )?,
@@ -1208,7 +1224,7 @@ fn install_math(lua: &Lua, utils: &Table) -> mlua::Result<()> {
     utils.set(
         "padEnd",
         lua.create_function(
-            |_, (v, width, fill): (mlua::Value, usize, Option<String>)| {
+            |lua, (v, width, fill): (mlua::Value, usize, Option<String>)| {
                 let s = match v {
                     mlua::Value::String(s) => s.to_string_lossy(),
                     other => value::format_number(match other {
@@ -1218,11 +1234,10 @@ fn install_math(lua: &Lua, utils: &Table) -> mlua::Result<()> {
                     }),
                 };
                 let fill = fill.unwrap_or_else(|| " ".into());
-                let pad: String = fill
-                    .chars()
-                    .cycle()
-                    .take(width.saturating_sub(s.chars().count()))
-                    .collect();
+                let count = width.saturating_sub(s.chars().count());
+                let widest = fill.chars().map(char::len_utf8).max().unwrap_or(0);
+                crate::room_for(lua, "anime.utils.padEnd", count.saturating_mul(widest))?;
+                let pad: String = fill.chars().cycle().take(count).collect();
                 Ok(s + &pad)
             },
         )?,

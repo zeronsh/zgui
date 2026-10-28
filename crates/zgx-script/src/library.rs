@@ -1359,7 +1359,8 @@ fn toast(lua: &Lua, table: Table) -> mlua::Result<u64> {
     };
     toast.duration = table
         .get::<Option<f64>>("duration")?
-        .map(|ms| std::time::Duration::from_secs_f64(ms.max(0.) / 1000.));
+        .map(|ms| crate::duration_ms("ui.toast's duration", ms))
+        .transpose()?;
     if let Some(action) = table.get::<Option<Table>>("action")? {
         let label: String = action.get("label")?;
         let run: mlua::Function = action.get("run")?;

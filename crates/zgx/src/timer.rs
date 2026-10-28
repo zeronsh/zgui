@@ -168,9 +168,13 @@ pub struct Sleep {
     deadline: Instant,
     registration: Option<(Arc<Driver>, u64)>,
 }
-/// A future that resolves `duration` from now.
+/// The longest [`sleep`]: a longer one (a script's `ui.after(1e22, f)`)
+/// resolves after this instead of overflowing the clock.
+pub const MAX_SLEEP: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+/// A future that resolves `duration` from now, or [`MAX_SLEEP`] from now
+/// if that is sooner.
 pub fn sleep(duration: Duration) -> Sleep {
-    sleep_until(Instant::now() + duration)
+    sleep_until(Instant::now() + duration.min(MAX_SLEEP))
 }
 /// A future that resolves at `deadline` (at once if it has passed).
 pub fn sleep_until(deadline: Instant) -> Sleep {

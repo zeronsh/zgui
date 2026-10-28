@@ -572,6 +572,32 @@ pub(crate) fn check_duration(lua: &Lua, what: &str, ms: f64, looping: bool) {
         );
     }
 }
+/// A duration a script gives in milliseconds (`what` names where): an
+/// error for one that is no number of milliseconds (NaN, infinite), none
+/// for a negative one, and at most [`zgx::timer::MAX_SLEEP`] (a year).
+pub(crate) fn duration_ms(what: &str, ms: f64) -> mlua::Result<Duration> {
+    if !ms.is_finite() {
+        return Err(mlua::Error::runtime(format!(
+            "`{what}` takes milliseconds, not {ms}"
+        )));
+    }
+    let seconds = (ms / 1000.).clamp(0., zgx::timer::MAX_SLEEP.as_secs_f64());
+    Ok(Duration::from_secs_f64(seconds))
+}
+/// Errors unless the VM's memory limit leaves room for `bytes` more: what a
+/// builtin checks before it builds, in Rust, a string as long as the script
+/// asked (`anime.utils.padStart('x', 1e18)` would abort the process).
+pub(crate) fn room_for(lua: &Lua, what: &str, bytes: usize) -> mlua::Result<()> {
+    let limit = lua.app_data_ref::<MemoryLimit>().map_or(0, |limit| limit.0);
+    if limit > 0 && bytes > limit.saturating_sub(lua.used_memory()) {
+        return Err(mlua::Error::runtime(format!(
+            "{what}: {bytes} bytes is more than the script's memory leaves"
+        )));
+    }
+    Ok(())
+}
+/// A VM's memory limit in bytes (0: none), for builtins (`room_for`).
+struct MemoryLimit(usize);
 
 /// A script error, split for the banner: where it happened (`app.luau:12`),
 /// what happened, and the lines after (the traceback).
@@ -2282,6 +2308,7 @@ impl ScriptHost {
             limits.memory
         };
         lua.set_memory_limit(memory).map_err(fail)?;
+        lua.set_app_data(MemoryLimit(memory));
         let deadline: Rc<Cell<Option<Deadline>>> = Rc::default();
         let interrupt = interrupt::install(&lua, deadline.clone(), memory);
         let watch = interrupt.watch();
