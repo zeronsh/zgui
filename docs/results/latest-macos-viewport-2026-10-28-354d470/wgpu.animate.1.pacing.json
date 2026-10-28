@@ -1,0 +1,14 @@
+{
+ "framework": "wgpu",
+ "mode": "animate",
+ "repeat": 1,
+ "display_hz": 120,
+ "frames": 841,
+ "frames_per_second": 105.125,
+ "interval_p50_ms": 9.102,
+ "interval_p95_ms": 12.522,
+ "interval_p99_ms": 17.71,
+ "interval_max_ms": 18.65,
+ "long_intervals": 0,
+ "long_interval_fraction": 0.0
+}
