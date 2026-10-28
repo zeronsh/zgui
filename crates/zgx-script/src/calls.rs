@@ -618,13 +618,35 @@ impl Listener {
                 .extend_from_slice(&bytes[..bytes.len().min(room)]);
         }
         self.partial.extend_from_slice(bytes);
-        // Up to a character still to come; bytes that are no UTF-8 at all
-        // become U+FFFD.
-        let whole = match std::str::from_utf8(&self.partial) {
-            Err(e) if e.error_len().is_none() => e.valid_up_to(),
-            _ => self.partial.len(),
-        };
-        let text = String::from_utf8_lossy(&self.partial[..whole]).into_owned();
+        // Up to a character still to come, which waits for the next piece;
+        // bytes that are no UTF-8 at all become U+FFFD, as lossy decoding of
+        // the whole body makes them, and decoding goes on past them.
+        let mut text = String::new();
+        let mut rest = &self.partial[..];
+        loop {
+            match std::str::from_utf8(rest) {
+                Ok(valid) => {
+                    text.push_str(valid);
+                    rest = &[];
+                    break;
+                }
+                Err(e) => {
+                    let (valid, after) = rest.split_at(e.valid_up_to());
+                    text.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                    match e.error_len() {
+                        Some(bad) => {
+                            text.push(char::REPLACEMENT_CHARACTER);
+                            rest = &after[bad..];
+                        }
+                        None => {
+                            rest = after;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let whole = self.partial.len() - rest.len();
         self.partial.drain(..whole);
         self.tell(&text);
     }
@@ -681,11 +703,20 @@ struct Events {
     /// The last piece ended in a carriage return: a line feed starting the
     /// next ends no second line.
     after_cr: bool,
+    /// Some text has come: a byte order mark the stream starts with is
+    /// behind it.
+    started: bool,
 }
 impl Events {
     fn feed(&mut self, text: &str) -> Vec<Value> {
         let mut out = Vec::new();
         let mut text = text;
+        // One byte order mark the stream starts with is no part of its
+        // first field, as the HTML standard's parser drops it.
+        if !self.started && !text.is_empty() {
+            self.started = true;
+            text = text.strip_prefix('\u{feff}').unwrap_or(text);
+        }
         if self.after_cr {
             text = text.strip_prefix('\n').unwrap_or(text);
             self.after_cr = false;

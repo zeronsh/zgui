@@ -2,14 +2,23 @@
 //! HTTPS through ureq, TLS by rustls with Mozilla's roots, each request on
 //! a thread of its own so the window never waits for the network. The
 //! body reaches the script as it arrives (`on_chunk`, `on_event`); a
-//! cancelled fetch stops reading and closes its connection. A host that
+//! cancelled fetch closes its connection at once, whatever the peer is
+//! doing. A peer silent for five minutes ends the request. A host that
 //! brings its own transport replaces it (`ScriptHost::fetcher`).
 use std::{
+    cell::RefCell,
     future::Future,
     io::Read,
     pin::Pin,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, Weak},
     task::{Context, Poll, Waker},
+};
+use ureq::unversioned::{
+    resolver::DefaultResolver,
+    transport::{
+        Buffers, ConnectionDetails, Connector, DefaultConnector, NextTimeout, ShutdownHandle,
+        Transport,
+    },
 };
 use zgx_script::{Body, Request, Response, ScriptHost};
 
@@ -34,6 +43,9 @@ struct Heard {
     /// The task stopped listening: the thread stops reading.
     cancelled: bool,
     waker: Option<Waker>,
+    /// The connection the request is on now (`Tracked`), shut down by a
+    /// cancel: it alone closes, the pool's others stay open.
+    socket: Option<Weak<dyn ShutdownHandle>>,
 }
 type Shared = Arc<Mutex<Heard>>;
 
@@ -49,7 +61,7 @@ impl Fetching {
         let heard = shared.clone();
         std::thread::Builder::new()
             .name("zgx-run fetch".into())
-            .spawn(move || read(request, &heard))
+            .spawn(move || read(request, heard))
             .expect("a thread for the request");
         Self { shared, body }
     }
@@ -95,31 +107,146 @@ impl Future for Fetching {
     }
 }
 impl Drop for Fetching {
-    /// A task cancelled (or the script reloaded) drops this: the thread
-    /// stops at its next read.
+    /// A task cancelled (or the script reloaded) drops this: its
+    /// connection closes, waking a read or write blocked on a silent peer,
+    /// and the thread stops.
     fn drop(&mut self) {
-        self.shared.lock().unwrap().cancelled = true;
+        // Under the lock: the thread clears `socket` under it before a
+        // finished connection goes back to the pool, so no other request's
+        // connection is shut down.
+        let mut heard = self.shared.lock().unwrap();
+        heard.cancelled = true;
+        if let Some(socket) = heard.socket.take().and_then(|socket| socket.upgrade()) {
+            socket.shutdown();
+        }
     }
 }
 
-/// The agent every request goes through: connections are kept for reuse.
-/// A status other than 2xx is an answer the script reads (`ok` false), not
-/// an error.
+thread_local! {
+    /// The request this thread makes (a thread a request): where `Tracked`
+    /// records the connection it is on.
+    static ACTIVE: RefCell<Option<Shared>> = const { RefCell::new(None) };
+    /// The shutdown handle of the connection this thread just made.
+    static MADE: RefCell<Option<Weak<dyn ShutdownHandle>>> = const { RefCell::new(None) };
+}
+
+/// Record `socket` as the connection this thread's request is on, unless
+/// the request is over.
+fn claim(socket: &Weak<dyn ShutdownHandle>) {
+    ACTIVE.with_borrow(|active| {
+        if let Some(shared) = active {
+            let mut heard = shared.lock().unwrap();
+            if !heard.cancelled && !heard.ended {
+                heard.socket = Some(socket.clone());
+            }
+        }
+    });
+}
+
+/// ureq's connectors, each new connection's shutdown handle kept with it
+/// (`Tracked`) as it is registered with the agent.
+#[derive(Debug, Default)]
+struct Tracking(DefaultConnector);
+type Register = dyn Fn(Weak<dyn ShutdownHandle>) -> Result<(), ureq::Error> + Send + Sync;
+impl Connector for Tracking {
+    type Out = Box<dyn Transport>;
+    fn connect(
+        &self,
+        details: &ConnectionDetails,
+        chained: Option<()>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        let register = details.register_shutdown.clone();
+        let hook: Arc<Register> = Arc::new(move |socket: Weak<dyn ShutdownHandle>| {
+            claim(&socket);
+            MADE.set(Some(socket.clone()));
+            register(socket)
+        });
+        let tracked = ConnectionDetails {
+            uri: details.uri,
+            addrs: details.addrs.clone(),
+            config: details.config,
+            request_level: details.request_level,
+            resolver: details.resolver,
+            now: details.now,
+            timeout: details.timeout,
+            current_time: details.current_time.clone(),
+            run_connector: details.run_connector.clone(),
+            register_shutdown: hook,
+        };
+        let made = self.0.connect(&tracked, chained)?;
+        let socket = MADE.take();
+        Ok(made.map(|inner| Box::new(Tracked { inner, socket }) as Box<dyn Transport>))
+    }
+}
+
+/// A connection that tells the request using it which it is (`claim`), as
+/// it reads or writes: a request reusing a pooled connection is on it.
+struct Tracked {
+    inner: Box<dyn Transport>,
+    socket: Option<Weak<dyn ShutdownHandle>>,
+}
+impl std::fmt::Debug for Tracked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Tracked").field(&self.inner).finish()
+    }
+}
+impl Tracked {
+    fn claim(&self) {
+        if let Some(socket) = &self.socket {
+            claim(socket);
+        }
+    }
+}
+impl Transport for Tracked {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        self.inner.buffers()
+    }
+    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+        self.claim();
+        self.inner.transmit_output(amount, timeout)
+    }
+    fn maybe_await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        self.claim();
+        self.inner.maybe_await_input(timeout)
+    }
+    fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        self.claim();
+        self.inner.await_input(timeout)
+    }
+    fn is_open(&mut self) -> bool {
+        self.inner.is_open()
+    }
+    fn is_tls(&self) -> bool {
+        self.inner.is_tls()
+    }
+}
+
+/// The agent every request goes through: connections are kept for reuse,
+/// each closed alone by its request's cancel (`Tracking`). A status other
+/// than 2xx is an answer the script reads (`ok` false), not an error. A
+/// read or write waits at most five minutes: a stream may be quiet a while
+/// (a model thinking), a peer gone silent for good is not waited on
+/// forever.
 fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
-        ureq::Agent::config_builder()
+        let minutes = |n: u64| Some(std::time::Duration::from_secs(60 * n));
+        let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .user_agent(concat!("zgx-run/", env!("CARGO_PKG_VERSION")))
             .timeout_connect(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .into()
+            .timeout_per_read(minutes(5))
+            .timeout_per_write(minutes(5))
+            .build();
+        ureq::Agent::with_parts(config, Tracking::default(), DefaultResolver::default())
     })
 }
 
 /// Make `request` and read its answer into `heard`, waking its task as
 /// each part arrives, until it ends or the task stops listening.
-fn read(request: Request, heard: &Mutex<Heard>) {
+fn read(request: Request, shared: Shared) {
+    ACTIVE.set(Some(shared.clone()));
+    let heard: &Mutex<Heard> = &shared;
     let tell = |change: &mut dyn FnMut(&mut Heard)| -> bool {
         let waker = {
             let mut heard = heard.lock().unwrap();
@@ -158,7 +285,12 @@ fn read(request: Request, heard: &Mutex<Heard>) {
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => {
-                tell(&mut |heard| heard.ended = true);
+                // Done with the connection, which goes back to the pool: a
+                // cancel from now on closes nothing.
+                tell(&mut |heard| {
+                    heard.ended = true;
+                    heard.socket = None;
+                });
                 return;
             }
             Ok(n) => {
