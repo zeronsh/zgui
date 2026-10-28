@@ -746,6 +746,53 @@ between characters. Passing them does not resolve these burst failures or prove
 rapid-input reliability. Transaction backlogs and delayed stale serials remain
 open compatibility work.
 
+## Windows input methods with installed languages (manual review)
+
+`windows_tsf_chinese_smoke.py` (Microsoft Pinyin) and
+`windows_tsf_japanese_smoke.py` (the Microsoft Japanese IME), each through
+the Text Services Framework and through IMM32 (`--imm32`), run on WING-PC
+with Chinese (Simplified) and Japanese installed, a person watching. They
+are manual-review checks, not CI checks: CI has no language packs, and the
+probes print PENDING there.
+
+Oct 28, 2026, WING-PC (main 810a9da1):
+- **Pinyin:** passed through both paths. At b4e75f31, 4 of 4 (TSF ×2,
+  IMM32 ×2), every run ending exactly `first="你好" second=""`; at f9b8c071
+  again. No prompts appeared, and the cloud candidates stayed off.
+- **Japanese through IMM32:** passed at f9b8c071: the selected candidate
+  committed (日本語) and the target clause was underlined thick.
+- **Japanese through the Text Services Framework:** failed at f9b8c071 on
+  the probe, not zgx. `native_ime --open-ime` opens the IME through IMM32,
+  which doesn't reach a TSF window, so it stayed in direct input and
+  "nihongo" was typed as letters. `--open-tsf-ime` (the framework's
+  open-close and conversion compartments) replaces it; its rerun is next.
+- **Japanese reconversion (#886):** selecting 日本語 and pressing Convert
+  opened the candidates below it; Enter kept 日本語.
+
+What keeps them from accepting a prompt:
+- the keys they send: Pinyin gets letters, digits and Escape only;
+- a settings tripwire on the input methods' preferences, which stops a
+  probe on the keystroke that changed them and puts them back.
+
+Windows 11 draws its candidate UI in TextInputHost's "Windows Input
+Experience" window (a `Windows.UI.Core.CoreWindow` under an
+`ApplicationFrameWindow`), which `EnumWindows` doesn't list while the
+candidates show, so a check of new windows never sees it. Hit-testing the
+screen over the candidates (`WindowFromPoint`) finds it, and its UI
+Automation tree is readable: Menu "Microsoft Candidate UI" > List
+"Candidate Item Panel" > the candidates, and the toolbar buttons Previous
+Page, Next Page, Emoji and Symbol and Search Suggestion (the Japanese IME
+adds a "Pager" menu of "Page N" buttons, and both lay these out in unnamed
+Panes). The guard
+(014a4338) hit-tests just below the composition before every key and
+stops on anything else in that tree. Its first runs found the live host
+and stopped, sending nothing after the first key, on parts of ordinary
+candidate lists it didn't yet allow (unnamed Panes, the Japanese pager),
+and with "Next Page" taken off its list (`ZGX_GUARD_WITHOUT`) stopped on
+that button: input is blocked where it should be. With those parts allowed,
+its passing runs are next. The person's review of the screenshots
+stays part of each run.
+
 ## Wayland model and read-only composition cancellation
 
 The consolidated [native results](platform-validation/wayland-cancellation/metadata.json)

@@ -664,6 +664,9 @@ python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --insta
 python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean --tsf --replace-while-composing
 python scripts/windows_tsf_smoke.py target/debug/examples/native_ime.exe
 python scripts/windows_tsf_japanese_smoke.py target/debug/examples/native_ime.exe
+python scripts/windows_tsf_japanese_smoke.py target/debug/examples/native_ime.exe --imm32
+python scripts/windows_tsf_chinese_smoke.py target/debug/examples/native_ime.exe
+python scripts/windows_tsf_chinese_smoke.py target/debug/examples/native_ime.exe --imm32
 python scripts/windows_uia_find_smoke.py target/debug/examples/selectable_text.exe
 python scripts/windows_platform_smoke.py target/debug/examples
 python scripts/windows_settings_smoke.py target/debug/examples/scrollbars.exe --both
@@ -718,9 +721,49 @@ python scripts/windows_first_frame_probe.py target/release/examples/component_wo
   through zgx's text store, and typing after it reaches the editor. It needs
   no input method beyond English.
 - `windows_uia_find_smoke.py`: UI Automation finds text in a zgx document (`FindText`, AccessKit's zgx patch): a word forward, one without case, one backward, nothing for what it doesn't have, each match with its box.
-- `windows_tsf_japanese_smoke.py` (`ZGX_TSF=1`): the Microsoft Japanese IME
-  converts and commits 日本語 through the text store. It prints PENDING
-  without the Japanese typing features installed.
+- `windows_tsf_chinese_smoke.py`: Microsoft Pinyin composes "nihao", the
+  digit 1 takes 你好 and commits it, and pinyin composed then cancelled with
+  Escape commits nothing. Through the Text Services Framework, or IMM32 with
+  `--imm32`. It prints PENDING without Chinese (Simplified) installed.
+- `windows_tsf_japanese_smoke.py`: the Microsoft Japanese IME converts
+  "nihongo" and commits the candidate it selected (日本語, or what it has
+  learned to put first), the target clause underlined thick while converted.
+  Through the Text Services Framework, or IMM32 with `--imm32`. It prints
+  PENDING without the Japanese typing features installed.
+
+  **Manual review only.** Run them with a person watching the screen (CI
+  has no language packs, and they print PENDING there). Both ask Windows
+  for their language in the probe's own window (`windows_input.use_layout`),
+  never editing the user's languages, and answer no prompt. What keeps them
+  from accepting one:
+  - **The keys they send.** Pinyin's first-use cloud offer is accepted by
+    Space or Enter, so the Chinese probe sends only letters, digits (a
+    candidate by its number) and Escape. The Japanese IME converts with
+    Space and commits with Enter, so its runs need the person watching.
+  - **A settings tripwire.** The input methods' preferences (HKCU
+    `InputMethod\Settings\CHS`, `JPN`, `IME\15.0\IMEJP`) are read before
+    every key and after the last; a change (an offer accepted) stops the
+    probe on the key that caused it, with a screenshot, after putting them
+    back (`windows_input.guard_windows`).
+  - **New windows.** A top-level window that wasn't showing when the probe
+    began and isn't a classic candidate list stops it too, sending nothing.
+  - **The candidate list itself.** Windows 11 draws candidates, and offers
+    like Bing's, in TextInputHost's "Windows Input Experience" window (a
+    `Windows.UI.Core.CoreWindow` under an `ApplicationFrameWindow`) that
+    window enumeration (`EnumWindows`) doesn't list while it shows. The
+    guard finds it by hit-testing the screen just below the composition
+    (`WindowFromPoint`, `windows_input.below_caret`) and reads its UI
+    Automation tree: anything but its candidate UI (the "Microsoft Candidate
+    UI" menu, the "Candidate Item Panel" list and its items, and the
+    Previous Page, Next Page, Emoji and Symbol and Search Suggestion
+    buttons; the Japanese IME's "Pager" menu and its "Page N" buttons;
+    unnamed Panes lay it out and pass only as what they hold does)
+    stops the probe, as does a hit-test or read that fails.
+    Classic candidate windows are read through their child windows and UI
+    Automation the same way. `ZGX_GUARD_WITHOUT` takes names off that list,
+    to see the guard stop.
+
+  A pass is not a review: look at each run's screenshots in `--out`.
 
 ### The Text Services Framework (`ZGX_TSF=1`)
 

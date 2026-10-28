@@ -4,6 +4,9 @@
 //! `--replace-while-composing`: the app sets the first editor's text to
 //! "REPLACED" while an input method composes in it, which ends the
 //! composition (`scripts/windows_ime_smoke.py --replace-while-composing`).
+//! `--open-tsf-ime` (Windows, `ZGX_TSF=1`): the input method is opened
+//! through the Text Services Framework's compartments, as `--open-ime`
+//! opens it through IMM32 (`scripts/windows_tsf_japanese_smoke.py`).
 use std::time::Duration;
 use zgx::{
     compose::prelude::*,
@@ -80,12 +83,66 @@ fn open_input_method() {
     }
 }
 
+/// `--open-tsf-ime`: through Windows' Text Services Framework
+/// (`ZGX_TSF=1`), IMM32's context isn't the window's, so `--open-ime` can't
+/// reach the input method. Open it as the framework's own switch does: its
+/// thread's keyboard open-close compartment on, and the conversion mode
+/// native and full-shape (hiragana, for the Japanese IME). No key is sent.
+#[cfg(windows)]
+fn open_input_method_tsf() {
+    use windows::{
+        Win32::{
+            System::{
+                Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
+                Variant::{VARIANT, VT_I4},
+            },
+            UI::TextServices::{
+                CLSID_TF_ThreadMgr, GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION,
+                GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, ITfCompartmentMgr, ITfThreadMgr,
+            },
+        },
+        core::{GUID, Interface},
+    };
+    // SAFETY: the UI thread's own thread manager (COM is initialized there,
+    // and the app's text store activated it); each value a VT_I4 set whole.
+    let open = unsafe {
+        let thread: windows::core::Result<ITfThreadMgr> =
+            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER);
+        thread.and_then(|thread| {
+            let client = thread.Activate()?;
+            let set = |compartments: &ITfCompartmentMgr, guid: &GUID, value: i32| {
+                let mut variant = VARIANT::default();
+                let inner = &mut *variant.Anonymous.Anonymous;
+                inner.vt = VT_I4;
+                inner.Anonymous.lVal = value;
+                compartments
+                    .GetCompartment(guid)?
+                    .SetValue(client, &variant)
+            };
+            let done = thread.cast::<ITfCompartmentMgr>().and_then(|compartments| {
+                set(&compartments, &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, 1)?;
+                // TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_FULLSHAPE.
+                set(
+                    &compartments,
+                    &GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION,
+                    0x9,
+                )
+            });
+            let _ = thread.Deactivate();
+            done
+        })
+    };
+    println!("IME_OPEN {} (text services)", open.is_ok());
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let observe = std::env::args().any(|arg| arg == "--native-observe");
     let password = std::env::args().any(|arg| arg == "--password");
     let replace = std::env::args().any(|arg| arg == "--replace-while-composing");
     #[cfg(windows)]
     let open_ime = std::env::args().any(|arg| arg == "--open-ime");
+    #[cfg(windows)]
+    let open_tsf_ime = std::env::args().any(|arg| arg == "--open-tsf-ime");
     Application::new()
         .window(WindowOptions {
             title: "zgx native IME".into(),
@@ -167,6 +224,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     #[cfg(windows)]
                     if open_ime && !COMPOSED.load(std::sync::atomic::Ordering::Relaxed) {
                         open_input_method();
+                    }
+                    // Through the framework no preedit event comes: until the
+                    // first field shows a composition.
+                    #[cfg(windows)]
+                    if open_tsf_ime
+                        && first_editor
+                            .as_ref()
+                            .is_none_or(|editor| editor.editor.borrow().preedit().is_none())
+                    {
+                        open_input_method_tsf();
                     }
                     // The app's own edit while the input method composes.
                     if replace && !replaced {
