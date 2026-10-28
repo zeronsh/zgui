@@ -266,6 +266,51 @@ fn glass_over_a_native_view_gets_a_platform_backdrop_shaped_to_the_node() {
 }
 
 #[test]
+fn glass_scaled_over_a_native_view_keeps_its_platform_backdrop() {
+    // A transform makes the glass a layer of its own, whose contents the
+    // split walks with the root's effects taken off; its blur is still
+    // over the page, as a selector's pill is while it scales to a width.
+    let mut ui = Ui::new(1000., 600.);
+    let natives = supported();
+    let web = WebView::new(&ui.runtime, WebViewOptions::default());
+    let view = ui.mount(provide(
+        natives.clone(),
+        overlay()
+            .w(1000.)
+            .h(600.)
+            .child(web_view(&web).id("page").w_full().h_full())
+            .child(
+                div()
+                    .id("pill")
+                    .absolute()
+                    .left(100.)
+                    .top(100.)
+                    .w(100.)
+                    .h(40.)
+                    .rounded(20.)
+                    .blur(12.)
+                    .bg(rgba(0xffffff30))
+                    .transform_origin(0., 0.)
+                    .scale_xy(2., 1.),
+            ),
+    ));
+    ui.prepare_frame();
+    let (split, _) = split(&ui, &natives, &PlaneSplit::default());
+    let pill = view.find("pill").unwrap();
+    let backdrops = split.backdrops();
+    assert_eq!(backdrops.len(), 1, "the scaled glass keeps its backdrop");
+    let glass = &backdrops[0];
+    assert_eq!(glass.node, pill);
+    assert_eq!(glass.rect, Rect::new(100., 100., 200., 40.));
+    assert_eq!(glass.radii, [20.; 4], "corners scale by the lesser axis");
+    assert_eq!(glass.sigma, 12. * 2f32.sqrt());
+    assert!(split.in_overlay(pill));
+    let (again, damage) = PlaneSplit::compute(&ui.scene.borrow(), &natives.nodes(), &split);
+    assert_eq!(again.backdrops(), split.backdrops());
+    assert!(damage.is_empty(), "a still pill adds no damage");
+}
+
+#[test]
 fn without_native_views_everything_is_base_and_nothing_is_computed() {
     let mut ui = Ui::new(400., 300.);
     let natives = supported();

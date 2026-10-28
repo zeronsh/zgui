@@ -659,7 +659,17 @@ impl Walk<'_> {
                 .collect();
             rounded.extend(context.rounded.iter().copied());
             if item.isolated {
-                let inner = self.scene.layer_items(Some(item.id));
+                let mut inner = self.scene.layer_items(Some(item.id));
+                // The layer's root comes without its effects (its composite
+                // applies them), but its backdrop blur is over what is under
+                // it, native views included: the platform still draws it.
+                if item.effects.blur_radius > 0.
+                    && let Some(root) = inner
+                        .iter_mut()
+                        .find(|inner| inner.id == item.id && !inner.border_pass)
+                {
+                    root.effects.blur_radius = item.effects.blur_radius;
+                }
                 let matrix = match (item.projective(), context.matrix) {
                     (Some(own), Some(outer)) => Some(own.then(outer)),
                     (own, outer) => own.or(outer),
