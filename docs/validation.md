@@ -731,6 +731,12 @@ commits. Candidate popup placement is not asserted. Private D-Bus disables
 service activation to avoid unrelated portal processes and mounts. CI installs
 the explicit input-method dependencies.
 
+`wayland-input-modes` (`wayland_ime_smoke.py --input-modes`) runs `native_ime
+--input-modes` in the same session: focusing its email field, then its numeric
+one, the client sends each field's content purpose with the input method's
+enable (`set_content_type` with email, then digits), as HTML's `inputmode`
+asks. What an input method or on-screen keyboard makes of it is not asserted.
+
 The [initial passing run](platform-validation/wayland-ime/native/result.json)
 and [metadata](platform-validation/wayland-ime/metadata.json) preserve 162 inputs
 and a freshly rebuilt native fixture. No Rust code changed. Later functional

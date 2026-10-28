@@ -19,6 +19,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=pathlib.Path)
     parser.add_argument('--output', type=pathlib.Path, required=True)
+    parser.add_argument('--input-modes', action='store_true',
+                        help="native_ime --input-modes: each field's input mode reaches the input method as its "
+                             "content purpose (email, then digits)")
     args = parser.parse_args()
     for name in ('Xvfb', 'openbox', 'sway', 'swaymsg', 'dbus-daemon', 'fcitx5', 'fcitx5-remote', 'xdotool', 'xwininfo', 'grim'):
         if not shutil.which(name):
@@ -83,7 +86,8 @@ def main():
                 if time.monotonic()>deadline or ime.poll() is not None: raise RuntimeError('Fcitx startup failed')
                 time.sleep(.1)
             with (args.output/'protocol.log').open('w') as protocol, (args.output/'application.log').open('w') as log:
-                app = subprocess.Popen([str(args.binary.resolve())], env=native, stdout=log, stderr=protocol)
+                command = [str(args.binary.resolve())] + (['--input-modes'] if args.input_modes else [])
+                app = subprocess.Popen(command, env=native, stdout=log, stderr=protocol)
                 deadline = time.monotonic()+10
                 while 'MODEL ' not in (args.output/'application.log').read_text():
                     if time.monotonic()>deadline or app.poll() is not None: raise RuntimeError('IME fixture failed')
@@ -131,6 +135,29 @@ def main():
                     snapshots.append(sample)
                     (args.output/'snapshots.json').write_text(json.dumps(snapshots,indent=2)+'\n')
                     subprocess.run(['grim',str((args.output/f'ime-{stage}.png').resolve())],env=env,check=True)
+                if args.input_modes:
+                    # text-input-v3's content types, as the app sends them
+                    # with each enable: (hint, purpose), email 6, digits 2.
+                    sent = []
+                    for y, purpose in ((82, 6), (174, 2)):
+                        offset = len((args.output/'protocol.log').read_text())
+                        click(100, y)
+                        deadline = time.monotonic()+6
+                        while True:
+                            found = re.findall(r'zwp_text_input_v3[#@]\d+\.set_content_type\((\d+), (\d+)\)',
+                                               (args.output/'protocol.log').read_text()[offset:])
+                            if found or time.monotonic()>deadline or app.poll() is not None: break
+                            time.sleep(.05)
+                        sent.append((y, purpose, found))
+                        if not found or int(found[-1][1]) != purpose:
+                            raise AssertionError(f'the field at y={y} sent content types {found}, not purpose {purpose}')
+                    subprocess.run(['swaymsg',f'[pid={app.pid}] kill'],env=env,capture_output=True)
+                    app.wait(timeout=25)
+                    result=dict(result='pass', backend='native Wayland text-input-v3 / Sway / Fcitx5',
+                                checks=['email content purpose','digits content purpose'], sent=sent)
+                    (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+                    print('PASS: '+', '.join(result['checks']))
+                    return
                 click(100,82)
                 # Fcitx answers before its Pinyin engine has loaded: switch
                 # once it can.
