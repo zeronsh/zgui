@@ -2643,6 +2643,11 @@ pub struct Scene {
     walk_hints: std::cell::Cell<(usize, usize)>,
     /// Dirty fixed-size containers whose ancestors stayed clean.
     layout_roots: Vec<NodeId>,
+    /// Rows and columns that shrank their children, each no further than its
+    /// automatic minimum (`min-width: auto`): a child's content says where
+    /// it stops, so a change inside one is laid out from here, not at the
+    /// child alone (`prepare_layout_active`). Few, kept until they go.
+    floored: rustc_hash::FxHashSet<NodeId>,
     /// Nodes holding more than `MEASUREMENT_ALTERNATES` results of this pass,
     /// trimmed when it ends.
     overfull: Vec<NodeId>,
@@ -2848,6 +2853,7 @@ impl Scene {
             content_revision: 0,
             walk_hints: Default::default(),
             layout_roots: Vec::new(),
+            floored: Default::default(),
             overfull: Vec::new(),
             relative_count: 0,
             contents_count: 0,
@@ -5388,6 +5394,9 @@ impl Scene {
         if node.style.fade_overflow {
             self.overflow_fades.retain(|(entry, _)| *entry != id);
         }
+        if !self.floored.is_empty() {
+            self.floored.remove(&id);
+        }
         for child in node.head.children.into_inner() {
             crate::deep(0, || self.free_subtree(child));
         }
@@ -6031,6 +6040,13 @@ impl Scene {
             && (node.style.flex_shrink == 0.
                 || node.style.absolute
                 || (measured.size.0 >= width && measured.size.1 >= height))
+    }
+    /// Count `id` among the rows and columns that shrink their children to
+    /// their automatic minimum (`floored`).
+    #[cold]
+    #[inline(never)]
+    fn hold_at_floor(&mut self, id: NodeId) {
+        self.floored.insert(id);
     }
     /// Mark every ancestor up to the root, ignoring boundaries.
     fn invalidate_layout_to_root(&mut self, mut id: NodeId) {
@@ -7402,6 +7418,7 @@ impl Scene {
                     // clips (a scroll container's is 0) or sets its own.
                     floors.clear();
                     floors.resize(ids.len(), None);
+                    let mut shrinking = false;
                     for _ in 0..=ids.len() {
                         let used: f32 = sizes
                             .iter()
@@ -7415,6 +7432,7 @@ impl Scene {
                         if remaining.abs() < 0.001 {
                             break;
                         }
+                        shrinking |= remaining < 0.0;
                         weights.clear();
                         weights.extend(ids.iter().enumerate().map(|(i, child)| {
                             let s = &self.node(*child).style;
@@ -7488,6 +7506,11 @@ impl Scene {
                         if !clamped {
                             break;
                         }
+                    }
+                    // Its children may stop at their content's least: a
+                    // change inside one moves them (`prepare_layout_active`).
+                    if shrinking {
+                        self.hold_at_floor(id);
                     }
                 }
                 // A flex item receives a definite main allocation even when
@@ -8432,6 +8455,18 @@ impl Scene {
         for id in roots {
             if !self.contains(id) || self.node(id).dirty & LAYOUT == 0 {
                 continue;
+            }
+            // Under a row or column that shrank its children, each no
+            // further than its content's least: a change inside it may lower
+            // that, and its parent shrink it further (`floored`).
+            let mut id = id;
+            if !self.floored.is_empty()
+                && let Some(parent) = self.node(id).parent
+                && self.floored.contains(&parent)
+            {
+                // Laid out from that parent, under the room it had.
+                self.invalidate_with(parent, LAYOUT, false, false);
+                id = parent;
             }
             let Some((constraints, size)) = self
                 .node(id)

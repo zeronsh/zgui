@@ -26,6 +26,8 @@ mod layout_feedback;
 mod layout_fit_content;
 #[path = "../layout_growing_boxes.rs"]
 mod layout_growing_boxes;
+#[path = "../layout_history.rs"]
+mod layout_history;
 #[path = "../panel_layout.rs"]
 mod panel_layout;
 #[path = "../resize_regions.rs"]

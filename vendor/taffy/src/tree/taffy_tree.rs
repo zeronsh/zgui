@@ -829,7 +829,17 @@ impl<NodeContext> TaffyTree<NodeContext> {
     /// Sets the [`Style`] of the provided `node`
     #[inline]
     pub fn set_style(&mut self, node: NodeId, style: Style) -> TaffyResult<()> {
-        self.nodes[node.into()].style = style;
+        let key = node.into();
+        // zgx: a node's display chooses how its children are sized (a grid
+        // sizes them otherwise than flex does), which their cache keys leave
+        // out: a child's result from the old algorithm served the new one.
+        let display_changed = self.nodes[key].style.display != style.display;
+        self.nodes[key].style = style;
+        if display_changed {
+            for child in self.children[key].iter() {
+                self.nodes[(*child).into()].cache.clear();
+            }
+        }
         self.mark_dirty(node)?;
         Ok(())
     }
