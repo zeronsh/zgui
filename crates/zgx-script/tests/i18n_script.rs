@@ -232,6 +232,8 @@ return ui.column {
     ui.menu_item { label = ui.t("search"), id = "item" },
     ui.modal { label = ui.t("greeting", { name = "Ada" }), open = ui.state("open", true), ui.text { "In the dialog" } },
     ui.modal { label = title, open = ui.state("open2", true), layer = true, ui.text { "Another" } },
+    ui.checkbox { label = ui.t("search"), value = ui.state("on", false) },
+    ui.input { label = title, value = ui.state("q", "") },
 }
 "#;
     let path = app("labels", code, &[("en", EN), ("fr", FR)]);
@@ -245,9 +247,16 @@ return ui.column {
     let mut dialogs = labels(&mut h, Role::Dialog);
     dialogs.sort();
     assert_eq!(dialogs, vec!["Draft".to_string(), "Hello, Ada".to_string()]);
+    assert_eq!(labels(&mut h, Role::CheckBox), vec!["Search".to_string()]);
+    assert_eq!(labels(&mut h, Role::TextInput), vec!["Draft".to_string()]);
     assert!(h.host.run_command("fr"));
     assert!(h.host.run_command("rename"));
     h.settle();
+    assert_eq!(
+        labels(&mut h, Role::CheckBox),
+        vec!["Rechercher".to_string()]
+    );
+    assert_eq!(labels(&mut h, Role::TextInput), vec!["Final".to_string()]);
     assert_eq!(h.text("item"), "Rechercher", "drawn as it is named");
     assert_eq!(
         labels(&mut h, Role::MenuItem),

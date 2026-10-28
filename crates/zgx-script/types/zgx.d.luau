@@ -1153,6 +1153,10 @@ export type Reactive<T> = T | Readable<T> | (() -> T) | Binding
 export type TextValue = (string | number | boolean)?
 -- Text: a string (`"{name}"` shows the state named `name`), a number, or
 -- a function of state.
+-- A name for assistive technology (and what a menu item shows): a message
+-- (`ui.t`) or a state or function is followed, the locale or the state
+-- changing it.
+export type Label = string | Message | Readable<string> | (() -> string)
 export type Text = string | number | (() -> TextValue) | Message
 -- Children: nodes, strings (text), functions (computed text) and lists of
 -- them, which flatten; `false` and `nil` are skipped.
@@ -2662,7 +2666,7 @@ export type ContainerProps = {
 	-- The name assistive technology reads for it, instead of its text: a
 	-- switch, a button showing only an icon. A state or function is
 	-- followed: a list row's name made from what it shows now.
-	label: (string | Readable<string> | (() -> string))?,
+	label: Label?,
 }
 export type ScrollProps = {
 	-- Size and position.
@@ -2993,7 +2997,7 @@ export type ScrollProps = {
 	-- The name assistive technology reads for it, instead of its text: a
 	-- switch, a button showing only an icon. A state or function is
 	-- followed: a list row's name made from what it shows now.
-	label: (string | Readable<string> | (() -> string))?,
+	label: Label?,
 	-- The scroll position in points, both ways.
 	offset: State<number>?,
 	-- Stays at the end while the content grows, until scrolled away.
@@ -4362,7 +4366,7 @@ export type ImageProps = {
 	-- one, shown as it is.
 	src: Reactive<string> | Bitmap | Readable<Bitmap?> | (() -> Bitmap?),
 	-- For accessibility.
-	label: string?,
+	label: Label?,
 	-- Shown in its place while a remote picture loads and if it fails (an
 	-- avatar's initials).
 	fallback: Node?,
@@ -4692,7 +4696,7 @@ export type SvgProps = {
 	[number]: never,
 	src: Reactive<string>?,
 	code: string?,
-	label: string?,
+	label: Label?,
 }
 -- A 3D object of `ui.scene3d` (`ui.mesh`, `ui.light`, `ui.group`).
 declare extern type Object3D with
@@ -5437,7 +5441,7 @@ export type CanvasProps = {
 	-- What it shows, read by assistive technology as an image's name (a
 	-- chart's summary: "Price, now 143.9, high 150.1"). A state or
 	-- function is followed. Without one, it is decoration.
-	label: (string | Readable<string> | (() -> string))?,
+	label: Label?,
 	-- Its drawing's pan and zoom, `{ x, y, zoom }`: drawn at `zoom` times
 	-- its size, then moved by `x`, `y` (a board's view). Followed without
 	-- calling `draw` again: a pan or zoom places what it drew.
@@ -5784,7 +5788,7 @@ export type CheckboxProps = {
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
-	label: string?,
+	label: Label?,
 	-- Neither on nor off while true: a dash, and "mixed" to assistive
 	-- technology (a "select all" box with some of its group on).
 	mixed: State<boolean>?,
@@ -6124,7 +6128,7 @@ export type InputProps = {
 	-- The text on Enter, or on leaving the input changed: where an
 	-- inspector's field applies, and undo records.
 	on_commit: ((text: string) -> ...unknown)?,
-	label: string?,
+	label: Label?,
 	-- input only: several lines (textarea always has them).
 	multiline: boolean?,
 	-- Shown while the value is empty (never part of it), in the input's
@@ -6504,7 +6508,7 @@ export type ProgressProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	value: State<number> | State<number?>,
-	label: string?,
+	label: Label?,
 }
 export type SliderProps = {
 	-- Size and position.
@@ -6833,7 +6837,7 @@ export type SliderProps = {
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
-	label: string?,
+	label: Label?,
 	-- 0 and 1 by default; min < max.
 	min: number?,
 	max: number?,
@@ -7174,7 +7178,7 @@ export type SegmentedProps = {
 	-- A list of strings or of numbers as it is (Luau's tables are
 	-- invariant: `{ string }` is not a `{ SegmentedOption }`).
 	options: { string } | { number } | { SegmentedOption },
-	label: string?,
+	label: Label?,
 }
 -- A number field with buttons that step it; the arrows step it, Page Up
 -- and Down ten steps, Home and End to its ends; typing applies on Enter.
@@ -7505,7 +7509,7 @@ export type StepperProps = {
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
-	label: string?,
+	label: Label?,
 	min: number?,
 	max: number?,
 	step: number?,
@@ -7842,7 +7846,7 @@ export type DisclosureProps = {
 	-- The name assistive technology reads for it, instead of its text: a
 	-- switch, a button showing only an icon. A state or function is
 	-- followed: a list row's name made from what it shows now.
-	label: (string | Readable<string> | (() -> string))?,
+	label: Label?,
 	open: State<boolean>,
 	summary: string | Node,
 }
@@ -8498,7 +8502,7 @@ export type SectionProps = {
 	-- The name assistive technology reads for it, instead of its text: a
 	-- switch, a button showing only an icon. A state or function is
 	-- followed: a list row's name made from what it shows now.
-	label: (string | Readable<string> | (() -> string))?,
+	label: Label?,
 	id: any,
 	title: string,
 }
@@ -9163,7 +9167,7 @@ export type TabsProps = {
 	reorderable: boolean?,
 	-- Asked before a tab closes: false keeps it (an editor asking to save).
 	on_close: ((id: string) -> boolean?)?,
-	label: string?,
+	label: Label?,
 }
 -- An item of `ui.tree`: `children` (items) open under it; `lazy = true`
 -- without children: loading until the app adds them (`on_open`).
@@ -9501,7 +9505,7 @@ export type TreeProps = {
 	on_open: ((id: string) -> ...unknown)?,
 	-- Enter or a double click.
 	on_activate: ((id: string) -> ...unknown)?,
-	label: string?,
+	label: Label?,
 }
 -- A column of `ui.data_grid`: its cells show each row's field `id`.
 export type GridColumn = {
@@ -9856,7 +9860,7 @@ export type DataGridProps = {
 	on_edit: ((row: number, column: string, text: string) -> ...unknown)?,
 	-- Enter on a cell that doesn't edit, or a double click.
 	on_activate: ((row: number) -> ...unknown)?,
-	label: string?,
+	label: Label?,
 }
 -- A month of days to choose a date from (WAI-ARIA's date picker grid): one
 -- Tab stop keeping focus; Left and Right move a day, Up and Down a week,
@@ -10194,7 +10198,7 @@ export type CalendarProps = {
 	-- Days that can't be chosen (a weekend, a booked one); `weekday` is 0
 	-- for Sunday to 6 for Saturday.
 	unavailable: ((date: string, weekday: number) -> boolean)?,
-	label: string?,
+	label: Label?,
 }
 -- A button showing a date that opens a calendar to choose it; chosen, the
 -- calendar closes. Down opens it too.
@@ -10527,7 +10531,7 @@ export type DatePickerProps = {
 	unavailable: ((date: string, weekday: number) -> boolean)?,
 	-- How the button writes the date (`"2026-10-23"` unless set).
 	format: ((date: string) -> string)?,
-	label: string?,
+	label: Label?,
 }
 -- A time of day in hour and minute segments, each a spin button: Up and
 -- Down step, digits type, Left and Right move between them, Backspace
@@ -10860,7 +10864,7 @@ export type TimeFieldProps = {
 	hour12: boolean?,
 	-- What Up and Down step the minutes by.
 	minute_step: number?,
-	label: string?,
+	label: Label?,
 }
 export type ComboItem = string | { label: string, value: any?, detail: string? }
 -- A field with suggestions listed under it as it is typed in (WAI-ARIA's
@@ -11201,7 +11205,7 @@ export type ComboboxProps = {
 	loading: State<boolean>?,
 	-- What the list says with no options ("No results").
 	empty: string?,
-	label: string?,
+	label: Label?,
 }
 export type PaletteCommand = { id: string, title: string?, detail: string?, shortcut: string? }
 -- A field over a list of commands, filtered by a fuzzy match: Up and Down
@@ -11867,7 +11871,7 @@ export type SelectProps = {
 	options: { string } | { number } | { SelectOption },
 	-- Shown while no option is chosen.
 	placeholder: string?,
-	label: string?,
+	label: Label?,
 }
 -- Two panes (its two children) and a divider between them that drags to
 -- resize the first; the second fills the rest.
@@ -12199,7 +12203,7 @@ export type SplitProps = {
 	-- The name assistive technology reads for it, instead of its text: a
 	-- switch, a button showing only an icon. A state or function is
 	-- followed: a list row's name made from what it shows now.
-	label: (string | Readable<string> | (() -> string))?,
+	label: Label?,
 	-- The first pane's size in points, both ways: the divider writes it as
 	-- it drags (a `ui.persist` keeps it across launches).
 	size: State<number>,
@@ -12538,7 +12542,7 @@ export type ListProps = {
 	context_menu_below: Props_context_menu_below,
 	[number]: never,
 	-- The name assistive technology reads for it: "Messages".
-	label: string?,
+	label: Label?,
 	-- The row count (with `heights`, their length).
 	count: Reactive<number>?,
 	-- An interactive scrollbar over the trailing edge (none by default).
@@ -12926,7 +12930,7 @@ export type LayerProps = {
 	-- Other containers don't take it.
 	variant: ("primary" | "ghost" | "danger" | "default")?,
 	open: State<boolean>?,
-	label: string?,
+	label: Label?,
 	placement: ModalPlacement?,
 }
 export type ModalProps = {
@@ -13259,7 +13263,7 @@ export type ModalProps = {
 	-- Its content, built each time it opens (a form starting from what it
 	-- edits, its state new), and kept while it closes.
 	build: (() -> Node)?,
-	label: string?,
+	label: Label?,
 	placement: ModalPlacement?,
 	autofocus: boolean?,
 	-- false: a click outside doesn't close it (a dialog that must be
@@ -13605,7 +13609,7 @@ export type PopoverProps = {
 	build: (() -> Node)?,
 	-- The trigger, shown where the popover is written.
 	anchor: Node,
-	label: string?,
+	label: Label?,
 	placement: Placement?,
 	-- Focus its first control as it opens (true); false keeps the panel
 	-- itself focused (a menu whose search field waits to be clicked).
@@ -13942,7 +13946,7 @@ export type MenuItemProps = {
 	-- rather than at the pointer.
 	context_menu_below: Props_context_menu_below,
 	[number]: Child,
-	label: string?,
+	label: Label?,
 	-- Chosen, it leaves the menu open (a toggle, a pin).
 	keep_open: boolean?,
 	-- A check in its gutter while true (a toggle item); `radio = true`: a
@@ -14280,7 +14284,7 @@ export type SubmenuProps = {
 	-- Other containers don't take it.
 	variant: ("primary" | "ghost" | "danger" | "default")?,
 	open: State<boolean>,
-	label: string?,
+	label: Label?,
 	-- Its trigger row, drawn by the app (a `ui.menu_item` with an icon, the
 	-- label, a value, a chevron); the label and a "›" otherwise. It opens
 	-- when the pointer moves onto it.

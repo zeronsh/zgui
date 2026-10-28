@@ -1146,6 +1146,10 @@ export type Reactive<T> = T | Readable<T> | (() -> T) | Binding
 export type TextValue = (string | number | boolean)?
 -- Text: a string (`"{name}"` shows the state named `name`), a number, or
 -- a function of state.
+-- A name for assistive technology (and what a menu item shows): a message
+-- (`ui.t`) or a state or function is followed, the locale or the state
+-- changing it.
+export type Label = string | Message | Readable<string> | (() -> string)
 export type Text = string | number | (() -> TextValue) | Message
 -- Children: nodes, strings (text), functions (computed text) and lists of
 -- them, which flatten; `false` and `nil` are skipped.
@@ -1767,7 +1771,7 @@ export type ContainerProps = Merge<Props, {
 	-- The name assistive technology reads for it, instead of its text: a
 	-- switch, a button showing only an icon. A state or function is
 	-- followed: a list row's name made from what it shows now.
-	label: (string | Readable<string> | (() -> string))?,
+	label: Label?,
 }>
 export type ScrollProps = Merge<ContainerProps, {
 	-- The scroll position in points, both ways.
@@ -1854,7 +1858,7 @@ export type ImageProps = Merge<Props, {
 	-- one, shown as it is.
 	src: Reactive<string> | Bitmap | Readable<Bitmap?> | (() -> Bitmap?),
 	-- For accessibility.
-	label: string?,
+	label: Label?,
 	-- Shown in its place while a remote picture loads and if it fails (an
 	-- avatar's initials).
 	fallback: Node?,
@@ -1863,7 +1867,7 @@ export type ImageProps = Merge<Props, {
 export type SvgProps = Merge<Props, {
 	src: Reactive<string>?,
 	code: string?,
-	label: string?,
+	label: Label?,
 }>
 -- A 3D object of `ui.scene3d` (`ui.mesh`, `ui.light`, `ui.group`).
 declare extern type Object3D with
@@ -1967,7 +1971,7 @@ export type CanvasProps = Merge<Props, {
 	-- What it shows, read by assistive technology as an image's name (a
 	-- chart's summary: "Price, now 143.9, high 150.1"). A state or
 	-- function is followed. Without one, it is decoration.
-	label: (string | Readable<string> | (() -> string))?,
+	label: Label?,
 	-- Its drawing's pan and zoom, `{ x, y, zoom }`: drawn at `zoom` times
 	-- its size, then moved by `x`, `y` (a board's view). Followed without
 	-- calling `draw` again: a pan or zoom places what it drew.
@@ -1993,7 +1997,7 @@ export type CheckboxProps = Merge<Props, {
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
-	label: string?,
+	label: Label?,
 	-- Neither on nor off while true: a dash, and "mixed" to assistive
 	-- technology (a "select all" box with some of its group on).
 	mixed: State<boolean>?,
@@ -2012,7 +2016,7 @@ export type InputProps = Merge<Props, {
 	-- The text on Enter, or on leaving the input changed: where an
 	-- inspector's field applies, and undo records.
 	on_commit: ((text: string) -> ...unknown)?,
-	label: string?,
+	label: Label?,
 	-- input only: several lines (textarea always has them).
 	multiline: boolean?,
 	-- Shown while the value is empty (never part of it), in the input's
@@ -2069,14 +2073,14 @@ export type InputProps = Merge<Props, {
 }>
 -- `value` from 0 to 1, or nil: indeterminate (work of unknown size), a
 -- stretch of the bar sweeping across.
-export type ProgressProps = Merge<Props, { value: State<number> | State<number?>, label: string? }>
+export type ProgressProps = Merge<Props, { value: State<number> | State<number?>, label: Label? }>
 export type SliderProps = Merge<Props, {
 	-- Required unless `field` gives it.
 	value: (State<number>)?,
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
-	label: string?,
+	label: Label?,
 	-- 0 and 1 by default; min < max.
 	min: number?,
 	max: number?,
@@ -2096,7 +2100,7 @@ export type SegmentedProps = Merge<Props, {
 	-- A list of strings or of numbers as it is (Luau's tables are
 	-- invariant: `{ string }` is not a `{ SegmentedOption }`).
 	options: { string } | { number } | { SegmentedOption },
-	label: string?,
+	label: Label?,
 }>
 -- A number field with buttons that step it; the arrows step it, Page Up
 -- and Down ten steps, Home and End to its ends; typing applies on Enter.
@@ -2106,7 +2110,7 @@ export type StepperProps = Merge<Props, {
 	-- One of a `ui.form`'s fields (`form.fields.email`): its value, its
 	-- leaving, its error (and, a one-line input, Enter submitting the form).
 	field: FormField?,
-	label: string?,
+	label: Label?,
 	min: number?,
 	max: number?,
 	step: number?,
@@ -2142,7 +2146,7 @@ export type TabsProps = Merge<Props, {
 	reorderable: boolean?,
 	-- Asked before a tab closes: false keeps it (an editor asking to save).
 	on_close: ((id: string) -> boolean?)?,
-	label: string?,
+	label: Label?,
 }>
 -- An item of `ui.tree`: `children` (items) open under it; `lazy = true`
 -- without children: loading until the app adds them (`on_open`).
@@ -2160,7 +2164,7 @@ export type TreeProps = Merge<Props, {
 	on_open: ((id: string) -> ...unknown)?,
 	-- Enter or a double click.
 	on_activate: ((id: string) -> ...unknown)?,
-	label: string?,
+	label: Label?,
 }>
 -- A column of `ui.data_grid`: its cells show each row's field `id`.
 export type GridColumn = {
@@ -2195,7 +2199,7 @@ export type DataGridProps = Merge<Props, {
 	on_edit: ((row: number, column: string, text: string) -> ...unknown)?,
 	-- Enter on a cell that doesn't edit, or a double click.
 	on_activate: ((row: number) -> ...unknown)?,
-	label: string?,
+	label: Label?,
 }>
 -- A month of days to choose a date from (WAI-ARIA's date picker grid): one
 -- Tab stop keeping focus; Left and Right move a day, Up and Down a week,
@@ -2212,7 +2216,7 @@ export type CalendarProps = Merge<Props, {
 	-- Days that can't be chosen (a weekend, a booked one); `weekday` is 0
 	-- for Sunday to 6 for Saturday.
 	unavailable: ((date: string, weekday: number) -> boolean)?,
-	label: string?,
+	label: Label?,
 }>
 -- A button showing a date that opens a calendar to choose it; chosen, the
 -- calendar closes. Down opens it too.
@@ -2224,7 +2228,7 @@ export type DatePickerProps = Merge<Props, {
 	unavailable: ((date: string, weekday: number) -> boolean)?,
 	-- How the button writes the date (`"2026-10-23"` unless set).
 	format: ((date: string) -> string)?,
-	label: string?,
+	label: Label?,
 }>
 -- A time of day in hour and minute segments, each a spin button: Up and
 -- Down step, digits type, Left and Right move between them, Backspace
@@ -2236,7 +2240,7 @@ export type TimeFieldProps = Merge<Props, {
 	hour12: boolean?,
 	-- What Up and Down step the minutes by.
 	minute_step: number?,
-	label: string?,
+	label: Label?,
 }>
 export type ComboItem = string | { label: string, value: any?, detail: string? }
 -- A field with suggestions listed under it as it is typed in (WAI-ARIA's
@@ -2257,7 +2261,7 @@ export type ComboboxProps = Merge<Props, {
 	loading: State<boolean>?,
 	-- What the list says with no options ("No results").
 	empty: string?,
-	label: string?,
+	label: Label?,
 }>
 export type PaletteCommand = { id: string, title: string?, detail: string?, shortcut: string? }
 -- A field over a list of commands, filtered by a fuzzy match: Up and Down
@@ -2281,7 +2285,7 @@ export type SelectProps = Merge<Props, {
 	options: { string } | { number } | { SelectOption },
 	-- Shown while no option is chosen.
 	placeholder: string?,
-	label: string?,
+	label: Label?,
 }>
 -- Two panes (its two children) and a divider between them that drags to
 -- resize the first; the second fills the rest.
@@ -2303,7 +2307,7 @@ export type SplitProps = Merge<ContainerProps, {
 -- A virtualized list: only visible rows are built.
 export type ListProps = Merge<Props, {
 	-- The name assistive technology reads for it: "Messages".
-	label: string?,
+	label: Label?,
 	-- The row count (with `heights`, their length).
 	count: Reactive<number>?,
 	-- An interactive scrollbar over the trailing edge (none by default).
@@ -2364,13 +2368,13 @@ export type ModalPlacement = {
 	y: ("start" | "center" | "end")?,
 	inset: (number | { number })?,
 }
-export type LayerProps = Merge<ContainerProps, { open: State<boolean>?, label: string?, placement: ModalPlacement? }>
+export type LayerProps = Merge<ContainerProps, { open: State<boolean>?, label: Label?, placement: ModalPlacement? }>
 export type ModalProps = Merge<ContainerProps, {
 	open: State<boolean>,
 	-- Its content, built each time it opens (a form starting from what it
 	-- edits, its state new), and kept while it closes.
 	build: (() -> Node)?,
-	label: string?,
+	label: Label?,
 	placement: ModalPlacement?,
 	autofocus: boolean?,
 	-- false: a click outside doesn't close it (a dialog that must be
@@ -2391,7 +2395,7 @@ export type PopoverProps = Merge<ContainerProps, {
 	build: (() -> Node)?,
 	-- The trigger, shown where the popover is written.
 	anchor: Node,
-	label: string?,
+	label: Label?,
 	placement: Placement?,
 	-- Focus its first control as it opens (true); false keeps the panel
 	-- itself focused (a menu whose search field waits to be clicked).
@@ -2412,7 +2416,7 @@ export type PopoverProps = Merge<ContainerProps, {
 -- (an icon, the label, a shortcut).
 export type MenuItemProps = Merge<Props, {
 	[number]: Child,
-	label: string?,
+	label: Label?,
 	-- Chosen, it leaves the menu open (a toggle, a pin).
 	keep_open: boolean?,
 	-- A check in its gutter while true (a toggle item); `radio = true`: a
@@ -2425,7 +2429,7 @@ export type MenuItemProps = Merge<Props, {
 }>
 export type SubmenuProps = Merge<ContainerProps, {
 	open: State<boolean>,
-	label: string?,
+	label: Label?,
 	-- Its trigger row, drawn by the app (a `ui.menu_item` with an icon, the
 	-- label, a value, a chevron); the label and a "›" otherwise. It opens
 	-- when the pointer moves onto it.

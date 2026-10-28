@@ -3740,9 +3740,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {
         lua.create_function(move |lua, table: Table| {
             crate::form::apply_field(lua, &table, false)?;
-            let label: Option<String> = table.get("label")?;
             let value = expect_state(&table.get("value")?, "`value`")?;
-            let kind = build(label.unwrap_or_default(), value, &table)?;
+            let kind = build(label(&table)?, value, &table)?;
             node_ud(lua, fill(lua, Node::new(owner(lua)?, kind), Some(&table))?)
         })
     };
@@ -3768,7 +3767,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 let one_line =
                     !always_multiline && !table.get::<Option<bool>>("multiline")?.unwrap_or(false);
                 crate::form::apply_field(lua, &table, one_line)?;
-                let label: Option<String> = table.get("label")?;
+                let label = label(&table)?;
                 let value = match table.get::<mlua::Value>("value")? {
                     v @ (mlua::Value::Function(_)
                     | mlua::Value::String(_)
@@ -3800,7 +3799,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     }
                 };
                 let kind = Kind::Input {
-                    label: label.unwrap_or_default(),
+                    label,
                     value,
                     multiline: always_multiline
                         || table.get::<Option<bool>>("multiline")?.unwrap_or(false),
