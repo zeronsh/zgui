@@ -273,3 +273,17 @@ Render instructions fell 2.6–3% on both, and 5% on lab `stream`.
   two-area work without a pair to merge. Kept: the same change cut the heavy
   dashboard's prepare by 1.4%, and the cost is under the gate's 1%. Found by
   `suite.py ab 7d559ad origin/main` and bisecting.
+- **A scroll copy of antialiased edges by an odd number of device
+  pixels** (found with #800, October 2026) differs from a fresh render by a
+  level or two in those edges' pixels: invisible, and kept. The quad shader
+  sizes its antialiasing by fine derivatives (`fwidthFine`, `dpdxFine` in
+  `draw.wgsl`), and a pixel's fine derivative is the difference with its
+  neighbour in its 2×2 block, left or right by its parity: a curved edge
+  drawn an odd number of pixels away has another neighbour, so a slightly
+  different width. The copy itself is exact (`copy_offset`'s `textureLoad`),
+  and even shifts reproduce a fresh render. Making odd shifts exact would
+  take an analytic antialiasing width (every rounded edge's pixels change,
+  and transformed content still needs the derivatives) or copying only even
+  shifts (half the copies gone): neither is worth two levels on an edge.
+  Tests that compare copies with a fresh render use square content, or
+  content that moves with its copy by even device pixels.
