@@ -135,6 +135,17 @@ impl TextStore {
             }
         }
     }
+    /// Where the document's `start..end` shows (`GetTextExt`), in the
+    /// window's points: around it across every line it runs on, its caret's
+    /// place for an empty range. `None` with no editor, or where its text
+    /// has no lines to ask (a password's).
+    pub(crate) fn area(&self, start: usize, end: usize) -> Option<zgx::scene::Rect> {
+        let editor = self.editor.as_ref()?;
+        let end = end.min(self.len());
+        let start = start.min(end);
+        let (a, b) = (shown_byte(editor, start), shown_byte(editor, end));
+        editor.text_area(a..b)
+    }
     /// The selection (`GetSelection`): the caret or selection in the
     /// composition while there is one, else the editor's; its start, its end,
     /// and whether the caret is at the start.
@@ -253,10 +264,9 @@ impl TextStore {
             self.composing.clear();
         }
     }
-    /// The input method marked its composition's clauses (`OnUpdateComposition`,
-    /// from its display attributes): document ranges and how each is marked.
-    // Fed by `tsf.rs` once it reads display attributes (the next stage).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The input method marked its composition's clauses (its display
+    /// attributes, read after each of its edits): document ranges and how
+    /// each is marked. Ranges outside the composition are left out.
     pub(crate) fn mark_clauses(&mut self, clauses: &[(Range<usize>, ClauseStyle)]) {
         let (Some(editor), Some(composition)) = (self.editor.clone(), self.composition.clone())
         else {
@@ -275,7 +285,11 @@ impl TextStore {
         let clauses: Vec<_> = clauses
             .iter()
             .map(|(range, style)| (byte(range.start)..byte(range.end), *style))
+            .filter(|(range, _)| !range.is_empty())
             .collect();
+        if editor.editor.borrow().preedit_clauses() == clauses {
+            return;
+        }
         editor.set_composition(&preedit.text, preedit.cursor, &clauses);
         self.seen = Some(seen(&editor));
     }
@@ -328,6 +342,38 @@ struct Parts {
     preedit: Option<Vec<u16>>,
     /// The committed text's length.
     len: usize,
+}
+
+/// The byte in the text `editor` shows (the composition in place of the
+/// selection) at the document's UTF-16 offset `at`.
+fn shown_byte(editor: &EditorHandle, at: usize) -> usize {
+    let e = editor.editor.borrow();
+    let Some(preedit) = e.preedit() else {
+        return e.utf16_to_byte(at);
+    };
+    let selection = e.selection().range();
+    let before = e.byte_to_utf16(selection.start);
+    let units = preedit.text.encode_utf16().count();
+    if at <= before {
+        e.utf16_to_byte(at)
+    } else if at < before + units {
+        // Within the composition: the character holding the unit (inside a
+        // surrogate pair, its start).
+        let mut counted = 0;
+        let inside = preedit
+            .text
+            .char_indices()
+            .find(|(_, c)| {
+                counted += c.len_utf16();
+                counted > at - before
+            })
+            .map_or(preedit.text.len(), |(i, _)| i);
+        selection.start + inside
+    } else {
+        // After it: the committed text past what it stands in place of.
+        let cut = e.byte_to_utf16(selection.end) - before;
+        e.utf16_to_byte(at - units + cut) - selection.len() + preedit.text.len()
+    }
 }
 
 fn seen(editor: &EditorHandle) -> Seen {
@@ -410,6 +456,32 @@ mod tests {
         assert_eq!(value.get(), "a日本b");
         assert!(!store.is_composing());
         assert_eq!(store.selection(), (3, 3, false));
+    }
+
+    /// `GetTextExt`: a range of the document is where the editor shows it,
+    /// the composition in place of the selection.
+    #[test]
+    fn a_ranges_area_is_where_the_editor_shows_it() {
+        let (_ui, mut store, _) = store("ab");
+        store.set_selection(1, 1, false);
+        store.start_composition(1..1);
+        store.replace(1, 1, &utf16("😀本語"));
+        let editor = store.editor().unwrap().clone();
+        assert!(editor.text_area(0..1).is_some());
+        // Before the composition, in it (😀 is two units, four bytes), after.
+        assert_eq!(store.area(0, 1), editor.text_area(0..1));
+        assert_eq!(store.area(1, 3), editor.text_area(1..5));
+        assert_eq!(store.area(3, 5), editor.text_area(5..11));
+        assert_eq!(store.area(5, 6), editor.text_area(11..12));
+        assert_eq!(store.area(6, 6), editor.text_area(12..12));
+        // Inside 😀's pair: from its start.
+        assert_eq!(store.area(2, 3), editor.text_area(1..5));
+        // A clause marked outside the composition is left out.
+        store.mark_clauses(&[(0..1, ClauseStyle::Target), (3..5, ClauseStyle::Target)]);
+        assert_eq!(
+            editor.editor.borrow().preedit_clauses(),
+            [(4..10, ClauseStyle::Target)]
+        );
     }
 
     /// Focus moving mid-composition commits it into the editor it began in,

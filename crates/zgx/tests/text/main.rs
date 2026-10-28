@@ -14,6 +14,8 @@ mod links;
 mod selectable_text;
 #[path = "../system_preferences.rs"]
 mod system_preferences;
+#[path = "../text_range_area.rs"]
+mod text_range_area;
 #[path = "../theme.rs"]
 mod theme;
 #[path = "../zoomed_text_geometry.rs"]

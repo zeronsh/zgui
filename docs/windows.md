@@ -727,13 +727,19 @@ Editors take input methods through winit's IMM32 path by default. With
   editor's text in UTF-16 offsets, with the composition in place of the
   selection while one is open.
 - **What it gives input methods.** They read the text around the caret and
-  place their candidates at the clause they convert. Text services (the emoji
-  panel, dictation, the touch keyboard) insert at the selection.
+  ask where any range of it shows (`GetTextExt`, through
+  `EditorHandle::text_area`: the box around it across its lines, in the
+  window's points through any zoom and the editor's scroll), to place their
+  candidates and prediction lists at the clause they convert. Text services
+  (the emoji panel, dictation, the touch keyboard) insert at the selection.
 - **The composition** is the editor's preedit, committed when the input
-  method ends it, as on other platforms.
+  method ends it, as on other platforms. Its clauses are the input method's
+  display attributes (`GUID_PROP_ATTRIBUTE`), read after each of its edits
+  (`ITfTextEditSink::OnEndEdit`): each clause underlined apart from the next,
+  thick under the one being converted.
 
-Clauses from display attributes, reconversion and input scopes are the next
-stages; the framework becomes the default after them.
+Reconversion and input scopes are the next stages; the framework becomes the
+default after them.
 - `windows_platform_smoke.py`: selected display text copied as text and HTML
   and read by another process, text from another process pasted into an
   editor, the file picker, the save dialog (a name typed into it reaches the
