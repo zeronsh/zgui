@@ -2614,6 +2614,15 @@ pub struct Scene {
     walk_hints: std::cell::Cell<(usize, usize)>,
     /// Dirty fixed-size containers whose ancestors stayed clean.
     layout_roots: Vec<NodeId>,
+    /// Absolute boxes whose box changed, each with its parent, to be placed
+    /// again without the parent's layout (`place_later`).
+    placing: Vec<(NodeId, NodeId)>,
+    /// Tests lay boxes out without `place_later`, to compare.
+    #[cfg(test)]
+    no_placing: bool,
+    /// Parents `place_children` placed in, counted for tests.
+    #[cfg(test)]
+    placed_parents: u64,
     /// Nodes holding more than `MEASUREMENT_ALTERNATES` results of this pass,
     /// trimmed when it ends.
     overfull: Vec<NodeId>,
@@ -2819,6 +2828,11 @@ impl Scene {
             content_revision: 0,
             walk_hints: Default::default(),
             layout_roots: Vec::new(),
+            placing: Vec::new(),
+            #[cfg(test)]
+            no_placing: false,
+            #[cfg(test)]
+            placed_parents: 0,
             overfull: Vec::new(),
             relative_count: 0,
             contents_count: 0,
@@ -5409,6 +5423,8 @@ impl Scene {
         old.margin = style.margin;
         // Only its box changed: laid out again, it is `repaint::BOX_ONLY`.
         match reads {
+            // Placed again in its parent alone, where that is exact.
+            true if self.place_later(id) => {}
             true => self.invalidate_layout_with(id, true, false),
             false => self.invalidate_layout_with(id, false, false),
         }
@@ -8289,6 +8305,9 @@ impl Scene {
         self.settle_children();
         let _span = crate::profile::span(crate::profile::Phase::Layout);
         self.layout_pass = self.layout_pass.wrapping_add(1);
+        if !self.placing.is_empty() {
+            self.settle_placements(full);
+        }
         let mut report = FrameReport::default();
         if full {
             self.measure_full(self.root, Constraints::default());
@@ -8303,6 +8322,10 @@ impl Scene {
         roots.dedup();
         let mut relayout_all = false;
         for id in roots {
+            if !self.placing.is_empty() && self.contains(id) && self.place_children(id, &mut report)
+            {
+                continue;
+            }
             if !self.contains(id) || self.node(id).dirty & LAYOUT == 0 {
                 continue;
             }
@@ -11685,6 +11708,8 @@ mod nonfinite_transform_tests {
 
 #[path = "scene_layout.rs"]
 mod advanced_layout;
+#[path = "scene_place.rs"]
+mod place;
 #[path = "scene_select.rs"]
 mod select;
 pub use select::{TextHighlight, TextLeaf, TextMark};
