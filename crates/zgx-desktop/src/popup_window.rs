@@ -546,6 +546,22 @@ mod macos {
             bounds
         }
     }
+    /// Whether the window server shadows popup `root`'s window: not when
+    /// its panel paints a shadow of its own. The window then takes in that
+    /// shadow's ink, and the window server's shadow, which follows what the
+    /// window shows, would outline the whole soft shadow (on macOS 26 a
+    /// dark rim round it) besides the panel's own.
+    fn window_shadow(scene: &Scene, root: NodeId) -> bool {
+        let Some(panel) = scene.children(root).first() else {
+            return true;
+        };
+        match scene.kind(*panel) {
+            NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => {
+                quad.shadows().iter().all(|shadow| shadow.color.3 == 0)
+            }
+            _ => true,
+        }
+    }
     /// A mask of `material`'s shape (its rounded box and arrow), the size of
     /// its bounds, top-down.
     fn arrow_mask(material: &Material) -> Retained<objc2_app_kit::NSImage> {
@@ -1382,6 +1398,12 @@ mod macos {
                 panel.renderer.as_mut().expect("made above").present()?;
                 panel.back(material, frame);
                 panel.place(&parent, &content, frame);
+                if panel.preview.is_none() {
+                    let shadow = window_shadow(scene, root);
+                    if panel.window.hasShadow() != shadow {
+                        panel.window.setHasShadow(shadow);
+                    }
+                }
                 if new {
                     panel.host.setHidden(false);
                 }
@@ -1528,7 +1550,7 @@ mod macos {
 
     #[cfg(test)]
     mod tests {
-        use super::Material;
+        use super::{Material, window_shadow};
         use objc2_app_kit::NSVisualEffectMaterial;
         use zgx::{compose::prelude::*, widgets::Ui};
 
@@ -1559,6 +1581,35 @@ mod macos {
             assert!(material(chip(), true).is_none());
             // Opaque: nothing shows behind it.
             assert!(material(chip().blur(24.).bg(rgb(0x202020)), true).is_none());
+        }
+
+        #[test]
+        fn a_panel_painting_its_own_shadow_takes_none_from_the_window_server() {
+            use zgx::scene::{BoxShadow, Transform};
+            let shadowed = |color| {
+                div().child(chip().shadow(BoxShadow {
+                    color: rgba(color),
+                    offset: Transform { x: 0., y: 24. },
+                    blur_radius: 64.,
+                    spread: 0.,
+                }))
+            };
+            let shadow = |view: View| {
+                let mut ui = Ui::new(400., 300.);
+                let handle = ui.mount(view);
+                ui.prepare_frame();
+                window_shadow(&ui.scene.borrow(), handle.node())
+            };
+            assert!(!shadow(shadowed(0x00000099)));
+            assert!(shadow(div().child(chip())), "a menu's or popover's rim");
+            assert!(
+                shadow(shadowed(0x00000000)),
+                "a clear shadow paints nothing"
+            );
+            // The panel keeps its own box: the shadow's ink is no material.
+            let material = material(shadowed(0x00000099), false).expect("a material");
+            assert_eq!(material.bounds(), material.rect);
+            assert_eq!((material.rect.width, material.rect.height), (120., 28.));
         }
 
         #[test]
