@@ -456,3 +456,49 @@ fn a_dropped_editor_lets_go_of_its_layout_and_shaper() {
         );
     }
 }
+
+/// The text the frame draws, in paint order.
+fn shown_text(ui: &Ui) -> Vec<String> {
+    ui.scene
+        .borrow()
+        .paint_items()
+        .filter_map(|item| match item.kind {
+            NodeKind::Text { text, .. } => Some(text.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn replacing_text_with_the_same_ends_the_drawn_composition() {
+    let mut ui = Ui::new(400., 200.);
+    let model = ui.signal(String::from("abc"));
+    let view = ui.mount(zgx::compose::text_area("test", model).size(300., 120.));
+    ui.prepare_frame();
+    ui.input.focus(&ui.scene, Some(view.node()));
+    let editor = ui.focused_editor().unwrap();
+    editor.set_selection(1, 2);
+    editor.set_composition("候補", Some((0, 6)), &[]);
+    ui.prepare_frame();
+    // Nothing committed changes, but the composition ends.
+    assert!(!editor.replace_text(0..3, "abc"));
+    ui.prepare_frame();
+    assert!(editor.editor.borrow().preedit().is_none());
+    let drawn = shown_text(&ui);
+    editor.refresh();
+    ui.prepare_frame();
+    assert_eq!(
+        drawn,
+        shown_text(&ui),
+        "the frame still drew the composition"
+    );
+}
+
+#[test]
+fn a_long_editor_takes_a_character_straddling_a_chunk_cut() {
+    for wide in ["é", "候", "😀"] {
+        let text = format!("{}{wide}{}", "a".repeat(6143), "b".repeat(60_000));
+        let editor = zgx::text_edit::TextEditor::new(text.clone());
+        assert_eq!(editor.text(), text, "{wide}");
+    }
+}

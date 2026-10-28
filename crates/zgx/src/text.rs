@@ -62,14 +62,15 @@ fn cut(text: &str) -> Vec<Chunk> {
     let mut chunks = Vec::with_capacity(text.len() / CHUNK + 1);
     let mut rest = text;
     while rest.len() > CHUNK {
-        let mut end = CHUNK;
-        while !rest.is_char_boundary(end) {
-            end -= 1;
-        }
+        let end = rest.floor_char_boundary(CHUNK);
         // A line break in the last quarter, if there is one: end after it.
-        if let Some(at) = rest[CHUNK * 3 / 4..end].rfind('\n') {
-            end = CHUNK * 3 / 4 + at + 1;
-        }
+        // (Both bounds on character boundaries: a character may straddle
+        // either.)
+        let quarter = rest.floor_char_boundary(CHUNK * 3 / 4);
+        let end = match rest[quarter..end].rfind('\n') {
+            Some(at) => quarter + at + 1,
+            None => end,
+        };
         chunks.push(Chunk::new(&rest[..end]));
         rest = &rest[end..];
     }
@@ -571,6 +572,42 @@ impl std::fmt::Display for TextValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 2-, 3- and 4-byte character at every byte around where chunks are
+    /// cut (the last quarter's start, a chunk's end, the next chunk's),
+    /// with and without line breaks: the text cut, sliced and edited there
+    /// is the text, and every chunk ends on a character boundary.
+    #[test]
+    fn a_character_straddling_any_cut_is_kept_whole() {
+        for wide in ["é", "候", "😀"] {
+            for around in [CHUNK * 3 / 4, CHUNK, 2 * CHUNK, 2 * CHUNK + CHUNK * 3 / 4] {
+                for at in around - 5..around + 5 {
+                    for newline in [false, true] {
+                        let mut plain = "a".repeat(at);
+                        plain.push_str(wide);
+                        plain.push_str(&"b".repeat(3 * CHUNK - at));
+                        if newline {
+                            plain.insert(CHUNK * 3 / 4 + 40, '\n');
+                        }
+                        let mut text = Text::new(&plain);
+                        assert_eq!(text.to_cow(), plain, "{wide} at {at}");
+                        assert!(text.chunks().all(|chunk| !chunk.is_empty()));
+                        let start = plain.find(wide).unwrap();
+                        let end = start + wide.len();
+                        assert_eq!(text.slice(start..end), wide);
+                        // Edited where it is: removed, and put back twice.
+                        text.replace_range(start..end, "");
+                        plain.replace_range(start..end, "");
+                        assert_eq!(text.to_cow(), plain, "{wide} removed at {at}");
+                        let twice = wide.repeat(2);
+                        text.replace_range(start..start, &twice);
+                        plain.replace_range(start..start, &twice);
+                        assert_eq!(text.to_cow(), plain, "{wide} put back at {at}");
+                    }
+                }
+            }
+        }
+    }
 
     fn lines(n: usize) -> String {
         (0..n)

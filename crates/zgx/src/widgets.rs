@@ -608,12 +608,16 @@ impl EditorHandle {
             return false;
         }
         self.preferred_x.set(None);
+        let composing = self.editor.borrow().preedit().is_some();
         let changed = self
             .editor
             .borrow_mut()
             .replace_range(range, &normalize_text(text, self.multiline));
         if changed {
             self.hint.value.write(&self.editor);
+            self.refresh();
+        } else if composing && self.editor.borrow().preedit().is_none() {
+            // The same text, but its composition ended: drawn without it.
             self.refresh();
         }
         changed
