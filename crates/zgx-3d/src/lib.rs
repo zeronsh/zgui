@@ -1,0 +1,40 @@
+//! Retained 3D scenes for zgx.
+//!
+//! A [`World`] holds meshes ([`Object`]: a [`Geometry`] in a [`Material`],
+//! placed by a [`Transform`], grouped under parents), [`Light`]s and a
+//! [`Camera`]. Its GPU view ([`World::view`]) shows it in any box
+//! (`zgx::compose::gpu_view`), drawn with depth, 4x multisampling and
+//! metallic-roughness shading. It draws a frame only when the world changes:
+//! a still scene costs nothing, and its pipelines and buffers are made with
+//! its first frame.
+//!
+//! ```no_run
+//! use zgx::compose::prelude::*;
+//! use zgx_3d::*;
+//!
+//! let world = World::new();
+//! let cube = world.add(Object::mesh(Geometry::cuboid(1., 1., 1.), Material::rgb(0x4a90e2)));
+//! world.add_light(Light::Directional {
+//!     direction: vec3(-1., -2., -1.),
+//!     color: [1., 1., 1.],
+//!     intensity: 3.,
+//! });
+//! world.set_camera(Camera::looking_at([2., 1.5, 3.], [0., 0., 0.]));
+//! let view = gpu_view("A cube", world.view()).w_full().h(320.);
+//! // Turning it draws one frame:
+//! world.update(cube, |o| o.transform.rotation = Quat::from_euler(0., 0.5, 0.));
+//! ```
+#![warn(missing_docs)]
+
+mod geometry;
+mod math;
+mod orbit;
+mod render;
+mod world;
+
+pub use geometry::{Geometry, Vertex};
+pub use math::{Mat4, Quat, Transform, Vec3, vec3};
+pub use orbit::Orbit;
+pub use world::{
+    Camera, Light, LightId, Material, Object, ObjectId, POINT_LIGHTS, World, srgb_to_linear,
+};

@@ -1,0 +1,19 @@
+[package]
+name = "zgx-3d"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+rust-version.workspace = true
+description = "Retained 3D scenes for zgx: meshes, a camera, lights and a PBR material, drawn in a GPU view only when they change."
+keywords = ["gui", "3d", "wgpu", "pbr", "zgx"]
+categories = ["gui", "rendering"]
+
+[dependencies]
+zgx = { path = "../zgx", version = "0.1.4", default-features = false }
+zgx-gpu = { path = "../zgx-gpu", version = "0.1.4", default-features = false }
+bytemuck = { version = "1.25", features = ["derive"] }
+
+[dev-dependencies]
+zgx-desktop = { path = "../zgx-desktop", default-features = false }

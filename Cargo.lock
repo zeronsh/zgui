@@ -4674,6 +4674,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zgx-3d"
+version = "0.1.4"
+dependencies = [
+ "bytemuck",
+ "zgx",
+ "zgx-desktop",
+ "zgx-gpu",
+]
+
+[[package]]
 name = "zgx-components"
 version = "0.1.4"
 dependencies = [
