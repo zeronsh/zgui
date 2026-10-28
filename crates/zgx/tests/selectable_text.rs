@@ -388,6 +388,49 @@ fn links_and_buttons_inside_click_and_a_drag_from_one_selects() {
     assert_eq!(ui.selected_text(), "Press\nAfter");
 }
 
+/// A button that is itself the selectable root clicks, and a drag from it
+/// selects, as one inside a selectable box does.
+#[test]
+fn a_button_that_is_the_selectable_root_clicks_and_a_drag_selects() {
+    let mut ui = Ui::new(400., 300.);
+    let clicks = Rc::new(Cell::new(0));
+    let counted = clicks.clone();
+    ui.mount(
+        button()
+            .child(text("Press"))
+            .on_click(move || counted.set(counted.get() + 1))
+            .selectable(true),
+    );
+    ui.prepare_frame();
+    let label = ui.scene.borrow().bounds(texts(&ui)[0]);
+    let (x, y) = (label.x + 1., label.y + label.height / 2.);
+    press(&mut ui, x, y, false);
+    release(&mut ui, x, y);
+    assert_eq!(clicks.get(), 1);
+    assert!(!ui.has_text_selection());
+    press(&mut ui, x, y, false);
+    move_to(&mut ui, 200., 290.);
+    release(&mut ui, 200., 290.);
+    assert_eq!(clicks.get(), 1, "a drag does not activate it");
+    assert_eq!(ui.selected_text(), "Press");
+}
+
+/// A heading that is itself the selectable root copies as a heading, as
+/// one inside a selectable box does.
+#[test]
+fn selected_heading_root_stays_a_heading() {
+    let mut ui = Ui::new(400., 300.);
+    let view = ui.mount(text("Notes").heading(2).selectable(true));
+    ui.prepare_frame();
+    assert!(ui.select_all_text(view.node()));
+    assert_eq!(ui.selected_html(), "<meta charset=\"utf-8\"><h2>Notes</h2>");
+    let mut ui = Ui::new(400., 300.);
+    ui.mount(column().selectable(true).child(text("Notes").heading(2)));
+    ui.prepare_frame();
+    assert!(ui.select_all_text(texts(&ui)[0]));
+    assert_eq!(ui.selected_html(), "<meta charset=\"utf-8\"><h2>Notes</h2>");
+}
+
 #[test]
 fn editors_inside_a_selectable_region_select_their_own_text() {
     let mut ui = Ui::new(400., 300.);
@@ -877,6 +920,63 @@ fn copied_html_nests_lists() {
         "<meta charset=\"utf-8\"><ol><li>outer<ul><li>inner</li></ul></li><li>next</li></ol>"
     );
     assert_eq!(ui.selected_text(), "outer\ninner\nnext");
+}
+
+/// A list that is itself the selectable root copies as the same list does
+/// inside a selectable box: as a list, not a paragraph of its items.
+#[test]
+fn a_list_that_is_the_selectable_root_copies_as_a_list() {
+    use zgx::semantics::Role;
+    let item = |marker: &str, body: &str| {
+        row()
+            .role(Role::ListItem)
+            .gap(8.)
+            .child(text(marker.to_owned()).accessible_hidden())
+            .child(text(body.to_owned()))
+    };
+    let list = || {
+        column()
+            .role(Role::List)
+            .children([item("3.", "three"), item("4.", "four")])
+    };
+    let copied = |view: View| {
+        let mut ui = Ui::new(400., 300.);
+        ui.mount(view);
+        ui.prepare_frame();
+        assert!(ui.select_all_text(texts(&ui)[0]));
+        ui.prepare_frame();
+        (ui.selected_html(), ui.selected_text())
+    };
+    let wrapped = copied(column().selectable(true).child(list()));
+    let root = copied(list().selectable(true));
+    assert_eq!(
+        wrapped.0,
+        "<meta charset=\"utf-8\"><ol start=\"3\"><li>three</li><li>four</li></ol>"
+    );
+    assert_eq!(root, wrapped);
+    assert_eq!(root.1, "three\nfour");
+    // A list in one of its items nests in the root list's `<li>`.
+    let nested = copied(
+        column()
+            .role(Role::List)
+            .selectable(true)
+            .child(
+                row()
+                    .role(Role::ListItem)
+                    .child(text("1.").accessible_hidden())
+                    .child(
+                        column()
+                            .child(text("outer"))
+                            .child(column().role(Role::List).child(item("•", "inner"))),
+                    ),
+            )
+            .child(item("2.", "next")),
+    );
+    assert_eq!(
+        nested.0,
+        "<meta charset=\"utf-8\"><ol><li>outer<ul><li>inner</li></ul></li><li>next</li></ol>"
+    );
+    assert_eq!(nested.1, "outer\ninner\nnext");
 }
 
 #[test]

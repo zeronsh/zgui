@@ -1716,15 +1716,22 @@ impl Ui {
         // The lists a text node is in, outermost first: each list, the item
         // of it the node is in, and the list's tag (`ol` as its marker reads
         // a number, with that number to start from).
+        // A node's ancestors up to the selectable root, the root among them:
+        // a list that is itself the root is the list its items are in.
+        let root = state.root;
+        let up_to_root = |id: NodeId| {
+            let mut past = false;
+            scene.ancestors(id).take_while(move |at| {
+                let inside = !past;
+                past |= root == Some(*at);
+                inside
+            })
+        };
         let items_of = |id: NodeId| -> Vec<(NodeId, NodeId)> {
-            let mut items: Vec<(NodeId, NodeId)> = scene
-                .ancestors(id)
-                .take_while(|at| state.root != Some(*at))
+            let mut items: Vec<(NodeId, NodeId)> = up_to_root(id)
                 .filter(|at| semantics.get(*at).is_some_and(|n| n.role == Role::ListItem))
                 .filter_map(|item| {
-                    let list = scene
-                        .ancestors(item)
-                        .take_while(|at| state.root != Some(*at))
+                    let list = up_to_root(item)
                         .find(|at| semantics.get(*at).is_some_and(|n| n.role == Role::List))?;
                     Some((list, item))
                 })
@@ -1753,9 +1760,10 @@ impl Ui {
         // The block a text node is in: a heading, preformatted text, a list
         // item's, or a paragraph.
         let block_of = |id: NodeId| -> HtmlBlock {
+            // The node, then its ancestors up to the root, the root among
+            // them: a heading that is itself the root is the block.
             let heading = std::iter::once(id)
-                .chain(scene.ancestors(id))
-                .take_while(|at| state.root != Some(*at))
+                .chain(up_to_root(id).filter(|_| root != Some(id)))
                 .find_map(|at| {
                     semantics
                         .get(at)
