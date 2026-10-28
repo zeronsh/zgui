@@ -168,6 +168,8 @@ enum Event {
 /// Commands are queued onto the UI thread; the operating system may decline requests.
 #[derive(Debug)]
 enum WindowCommand {
+    Glass(Option<crate::Glass>),
+    Theme(Option<zgx::theme::Appearance>),
     Bounds(crate::WindowBounds),
     PointerPassthrough(bool),
     Level(crate::WindowLevel),
@@ -197,6 +199,9 @@ struct WindowState {
     minimized: bool,
     maximized: bool,
     focus_requested: bool,
+    /// The light or dark the app asked of the window (`set_theme`), kept
+    /// for a window made again; none: the system's.
+    theme: Option<zgx::theme::Appearance>,
 }
 impl Default for WindowState {
     fn default() -> Self {
@@ -205,12 +210,15 @@ impl Default for WindowState {
             minimized: false,
             maximized: false,
             focus_requested: false,
+            theme: None,
         }
     }
 }
 impl WindowState {
     fn apply(&mut self, options: &mut WindowOptions, command: &WindowCommand) {
         match command {
+            WindowCommand::Glass(glass) => options.glass = *glass,
+            WindowCommand::Theme(theme) => self.theme = *theme,
             WindowCommand::Bounds(bounds) => options.bounds = Some(*bounds),
             WindowCommand::Fullscreen(value) => options.fullscreen = *value,
             WindowCommand::Decorations(value) => options.decorations = *value,
@@ -315,6 +323,25 @@ impl WindowHandle {
     /// `WindowOptions::level`).
     pub fn set_level(&self, level: crate::WindowLevel) {
         self.command(WindowCommand::Level(level));
+    }
+    /// Show `glass` behind the window in place of its glass (`None`: no
+    /// glass), as `WindowOptions::glass` asks at its start. The content
+    /// shows it only where the window is transparent: a window that will
+    /// gain glass later is made `transparent` (or with glass) to begin
+    /// with. A window stays as transparent as it was made: with `None`,
+    /// what is behind it shows through, unblurred, where its content paints
+    /// nothing or paints translucent, so an app that drops its glass paints
+    /// its background opaque (its theme's `background`). A window made
+    /// again keeps it.
+    pub fn set_glass(&self, glass: Option<crate::Glass>) {
+        self.command(WindowCommand::Glass(glass));
+    }
+    /// Show the window light or dark whatever the system shows (`None`:
+    /// as the system does again): its title bar and controls, and zgx's
+    /// themes that follow the system (`Themes::follow_system`). A window
+    /// made again keeps it.
+    pub fn set_theme(&self, theme: Option<zgx::theme::Appearance>) {
+        self.command(WindowCommand::Theme(theme));
     }
     /// Show or drop the platform's shadow (see `WindowOptions::shadow`).
     pub fn set_shadow(&self, shadow: bool) {
@@ -1210,6 +1237,13 @@ enum StartupTrim {
     Done,
 }
 /// The system's light or dark appearance, as zgx's themes take it.
+/// The window theme for zgx's `theme`.
+fn native_theme(theme: zgx::theme::Appearance) -> winit::window::Theme {
+    match theme {
+        zgx::theme::Appearance::Light => winit::window::Theme::Light,
+        zgx::theme::Appearance::Dark => winit::window::Theme::Dark,
+    }
+}
 fn appearance_of(theme: winit::window::Theme) -> zgx::theme::Appearance {
     match theme {
         winit::window::Theme::Light => zgx::theme::Appearance::Light,
@@ -2737,6 +2771,10 @@ impl Host {
             None => attributes,
         };
         let window = Arc::new(event_loop.create_window(attributes)?);
+        // Made again, it keeps the light or dark it was asked for.
+        if let Some(theme) = self.state.theme {
+            window.set_theme(Some(native_theme(theme)));
+        }
         #[cfg(target_os = "macos")]
         {
             content_never_moves_window();
@@ -3090,6 +3128,16 @@ impl Host {
                 }
                 #[cfg(not(target_os = "macos"))]
                 let _ = (entries, x, y);
+            }
+            WindowCommand::Glass(glass) => {
+                crate::window_chrome::set_glass(window, glass);
+                window.request_redraw();
+            }
+            WindowCommand::Theme(theme) => {
+                window.set_theme(theme.map(native_theme));
+                if let Some(appearance) = theme.or_else(|| window.theme().map(appearance_of)) {
+                    self.context.ui.theme().set_system_appearance(appearance);
+                }
             }
             WindowCommand::Decorations(value) => window.set_decorations(value),
             WindowCommand::PointerPassthrough(value) => {
@@ -6927,6 +6975,26 @@ mod tests {
         state.apply(&mut options, &WindowCommand::Maximized(false));
         assert!(state.visible);
         assert!(!state.minimized && !state.maximized);
+    }
+    #[test]
+    fn a_window_made_again_keeps_its_glass_and_theme() {
+        use zgx::theme::Appearance;
+        let mut options = WindowOptions::default();
+        let mut state = WindowState::default();
+        let glass = crate::Glass::new(crate::GlassMaterial::Popover);
+        state.apply(&mut options, &WindowCommand::Glass(Some(glass)));
+        state.apply(&mut options, &WindowCommand::Theme(Some(Appearance::Light)));
+        assert_eq!(options.glass, Some(glass));
+        assert!(
+            options.is_transparent(),
+            "glass makes the window transparent"
+        );
+        assert_eq!(state.theme, Some(Appearance::Light));
+        state.apply(&mut options, &WindowCommand::Glass(None));
+        state.apply(&mut options, &WindowCommand::Theme(None));
+        assert_eq!(options.glass, None);
+        assert_eq!(state.theme, None, "the system's again");
+        assert_eq!(native_theme(Appearance::Dark), winit::window::Theme::Dark);
     }
     #[test]
     fn requested_window_size_rejects_nonfinite_and_unrepresentable_dimensions() {

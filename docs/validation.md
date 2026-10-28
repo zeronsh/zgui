@@ -995,6 +995,15 @@ still reach the app while ⌘K stays the page's; with the terminal focused ⌘U
 and ⌘⇧L reach the app and ⌘K stays Ghostty's. AppKit's own menu keys act
 with each focused: ⌘H hides the app, ⌘M minimizes the window and ⌘Q quits.
 Passed on macOS 26 (M5), 2026-10-28.
+## macOS glass and appearance set while a window shows
+
+`glass_counter --appearance-fixture` replaces the window's glass with
+another material (`WindowHandle::set_glass`), takes it away and gives it
+back, checking the effect views AppKit has under the content each time (one,
+of the material asked for, then none, then one again); then it shows the
+window light and dark (`set_theme`) and as the system does, checking
+`NSWindow.appearance` (Aqua, DarkAqua, none) and the appearance zgx's themes
+follow. Passed on macOS 26 (M5), 2026-10-28.
 
 ## macOS cursors, Insert, held drags, file drops and title bars
 

@@ -9,6 +9,12 @@
 //! AppKit state, prints `FIXTURE` lines, then exits (non-zero on failure).
 //! `ZGX_GLASS_MATERIAL=window` or `titlebar` frosts the window with that
 //! material instead of the heads-up glass (`windows_glass_smoke.py`).
+//! `-- --appearance-fixture` (macOS, Windows): replaces, takes away and
+//! gives back the glass (`WindowHandle::set_glass`) and shows the window
+//! light, dark and as the system does (`set_theme`), checking AppKit's
+//! views and appearance (Windows: the DWM backdrop and dark mode) and zgx's
+//! theme each time; `APPEARANCE` lines, then it exits. With `--decorated`
+//! the window has the platform's own title bar, which follows the theme.
 use zgx::{
     compose::prelude::*,
     input::{EventPhase, InputEvent, Key},
@@ -23,16 +29,24 @@ const TITLEBAR: f32 = 40.;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = std::env::args().any(|arg| arg == "--fixture");
+    let appearance = std::env::args().any(|arg| arg == "--appearance-fixture");
+    // `--decorated`: the platform's own title bar, as a standard window has
+    // it (on Windows, to see it follow `set_theme`).
+    let decorated = std::env::args().any(|arg| arg == "--decorated");
     Application::new()
         .window(WindowOptions {
             title: TITLE.into(),
             width: WIDTH,
             height: HEIGHT,
             transparent: true,
-            decorations: cfg!(target_os = "macos"),
+            decorations: decorated || cfg!(target_os = "macos"),
             min_size: Some((280., 340.)),
             // Content under inset traffic lights, on frosted glass.
-            titlebar: Titlebar::Inset,
+            titlebar: if decorated {
+                Titlebar::Standard
+            } else {
+                Titlebar::Inset
+            },
             glass: Some(match std::env::var("ZGX_GLASS_MATERIAL").as_deref() {
                 Ok("window") => Glass::new(GlassMaterial::WindowBackground),
                 Ok("titlebar") => Glass::new(GlassMaterial::Titlebar),
@@ -43,6 +57,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run(move |cx| {
             if fixture {
                 run_fixture(cx);
+            }
+            if appearance {
+                run_appearance_fixture(cx);
             }
             let view = cx.render(component(move |cx| {
                 let count = cx.state(0_i64);
@@ -310,4 +327,218 @@ fn run_fixture(cx: &mut zgx_desktop::WindowContext) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = cx;
+}
+
+/// `--appearance-fixture`: the glass and appearance a window is given while
+/// it shows, as AppKit has them, and the theme zgx follows.
+fn run_appearance_fixture(cx: &mut zgx_desktop::WindowContext) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSApplication, NSVisualEffectMaterial, NSVisualEffectView};
+        use zgx::theme::Appearance;
+        let window = cx.window.clone();
+        let themes = cx.ui.theme().clone();
+        cx.tasks.spawn(async move {
+            let pause = || zgx::timer::sleep(std::time::Duration::from_millis(400));
+            pause().await;
+            let mtm = MainThreadMarker::new().expect("the UI thread");
+            let Some(ns) = NSApplication::sharedApplication(mtm)
+                .windows()
+                .into_iter()
+                .find(|w| w.title().to_string() == TITLE)
+            else {
+                println!("APPEARANCE FAIL window");
+                std::process::exit(1);
+            };
+            // The effect views zgx put under the content, by material.
+            let glass = || -> Vec<isize> {
+                // SAFETY: the content view's superview, the window's frame
+                // view, which the window keeps while it holds its content.
+                let Some(frame) = ns.contentView().and_then(|c| unsafe { c.superview() }) else {
+                    return Vec::new();
+                };
+                frame
+                    .subviews()
+                    .into_iter()
+                    .filter(|view| view.class().name().to_bytes() == b"ZgxWindowGlass")
+                    .filter_map(|view| view.downcast::<NSVisualEffectView>().ok())
+                    .map(|view| view.material().0)
+                    .collect()
+            };
+            let appearance = || {
+                // SAFETY: NSWindow's `appearance` (an NSAppearance or nil)
+                // and NSAppearance's `name` (an NSString), retained here.
+                unsafe {
+                    let appearance: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> =
+                        objc2::msg_send![&*ns, appearance];
+                    appearance.map(|appearance| {
+                        let name: objc2::rc::Retained<objc2_foundation::NSString> =
+                            objc2::msg_send![&*appearance, name];
+                        name.to_string()
+                    })
+                }
+            };
+            let mut failures = 0;
+            let mut check = |name: &str, ok: bool, detail: String| {
+                println!(
+                    "APPEARANCE {} {name}: {detail}",
+                    if ok { "ok" } else { "FAIL" }
+                );
+                failures += usize::from(!ok);
+            };
+            let hud = NSVisualEffectMaterial::HUDWindow.0;
+            let popover = NSVisualEffectMaterial::Popover.0;
+            check(
+                "starts with its glass",
+                glass() == [hud],
+                format!("{:?}", glass()),
+            );
+            window.set_glass(Some(Glass::new(GlassMaterial::Popover)));
+            pause().await;
+            check(
+                "glass replaced, not stacked",
+                glass() == [popover],
+                format!("{:?}", glass()),
+            );
+            window.set_glass(None);
+            pause().await;
+            check(
+                "glass taken away",
+                glass().is_empty(),
+                format!("{:?}", glass()),
+            );
+            window.set_glass(Some(Glass::default()));
+            pause().await;
+            check(
+                "glass given back",
+                glass() == [hud],
+                format!("{:?}", glass()),
+            );
+            for (theme, name) in [
+                (Appearance::Light, "NSAppearanceNameAqua"),
+                (Appearance::Dark, "NSAppearanceNameDarkAqua"),
+            ] {
+                window.set_theme(Some(theme));
+                pause().await;
+                check(
+                    &format!("{theme:?}"),
+                    appearance().as_deref() == Some(name) && themes.system_appearance() == theme,
+                    format!("{:?} zgx={:?}", appearance(), themes.system_appearance()),
+                );
+            }
+            window.set_theme(None);
+            pause().await;
+            check(
+                "the system's again",
+                appearance().is_none(),
+                format!("{:?}", appearance()),
+            );
+            println!(
+                "APPEARANCE {}",
+                if failures == 0 { "PASS" } else { "FAILED" }
+            );
+            std::process::exit(i32::from(failures > 0));
+        });
+    }
+    #[cfg(windows)]
+    {
+        use windows::{
+            Win32::{
+                Foundation::HWND,
+                Graphics::Dwm::{
+                    DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmGetWindowAttribute,
+                },
+                UI::WindowsAndMessaging::FindWindowW,
+            },
+            core::HSTRING,
+        };
+        use zgx::theme::Appearance;
+        let window = cx.window.clone();
+        let themes = cx.ui.theme().clone();
+        cx.tasks.spawn(async move {
+            let pause = || zgx::timer::sleep(std::time::Duration::from_millis(500));
+            pause().await;
+            // SAFETY: looks up a top-level window of this title.
+            let Ok(hwnd) = (unsafe { FindWindowW(None, &HSTRING::from(TITLE)) }) else {
+                println!("APPEARANCE FAIL window");
+                std::process::exit(1);
+            };
+            // A DWM attribute of the window, as an integer.
+            let attribute = |hwnd: HWND, attribute| {
+                let mut value = 0_i32;
+                // SAFETY: reads one documented attribute of our own window
+                // into a local of its size.
+                let read = unsafe {
+                    DwmGetWindowAttribute(
+                        hwnd,
+                        attribute,
+                        &mut value as *mut _ as *mut _,
+                        size_of_val(&value) as u32,
+                    )
+                };
+                read.ok().map(|()| value)
+            };
+            let backdrop = || attribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE);
+            let dark = || attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE);
+            let mut failures = 0;
+            let mut check = |name: &str, ok: bool, detail: String| {
+                println!(
+                    "APPEARANCE {} {name}: {detail}",
+                    if ok { "ok" } else { "FAIL" }
+                );
+                failures += usize::from(!ok);
+            };
+            // DWMSBT_NONE 1, DWMSBT_MAINWINDOW (Mica) 2, DWMSBT_TRANSIENTWINDOW (Acrylic) 3.
+            check(
+                "starts with Acrylic",
+                backdrop() == Some(3),
+                format!("{:?}", backdrop()),
+            );
+            window.set_glass(Some(Glass::new(GlassMaterial::WindowBackground)));
+            pause().await;
+            check(
+                "replaced by Mica",
+                backdrop() == Some(2),
+                format!("{:?}", backdrop()),
+            );
+            window.set_glass(None);
+            pause().await;
+            check(
+                "taken away",
+                backdrop() == Some(1),
+                format!("{:?}", backdrop()),
+            );
+            window.set_glass(Some(Glass::default()));
+            pause().await;
+            check(
+                "given back",
+                backdrop() == Some(3),
+                format!("{:?}", backdrop()),
+            );
+            for (theme, want) in [(Appearance::Light, 0), (Appearance::Dark, 1)] {
+                window.set_theme(Some(theme));
+                pause().await;
+                check(
+                    &format!("{theme:?}"),
+                    dark() == Some(want) && themes.system_appearance() == theme,
+                    format!("dark={:?} zgx={:?}", dark(), themes.system_appearance()),
+                );
+            }
+            window.set_theme(None);
+            pause().await;
+            println!(
+                "APPEARANCE ok the system's again: dark={:?} zgx={:?}",
+                dark(),
+                themes.system_appearance()
+            );
+            println!(
+                "APPEARANCE {}",
+                if failures == 0 { "PASS" } else { "FAILED" }
+            );
+            std::process::exit(i32::from(failures > 0));
+        });
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    cx.window.close();
 }

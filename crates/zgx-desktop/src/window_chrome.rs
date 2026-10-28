@@ -136,6 +136,19 @@ pub(crate) fn apply(
     }
 }
 
+/// Give `window` `glass` in place of the glass it has (`None`: none), as
+/// `WindowHandle::set_glass` asks. Its content shows the glass only where
+/// it is transparent: a window made opaque (neither `transparent` nor with
+/// glass) shows none.
+pub(crate) fn set_glass(window: &winit::window::Window, glass: Option<Glass>) {
+    #[cfg(target_os = "macos")]
+    mac::set_glass(window, glass);
+    #[cfg(windows)]
+    win::set_glass(window, glass);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = (window, glass);
+}
+
 /// Place an inset title bar's window buttons for a window zoomed to `zoom`
 /// (`Ui::zoom`): on macOS the traffic lights, which AppKit places in points
 /// the zoom does not touch, move to where the zoomed content's strip has
@@ -207,7 +220,7 @@ mod win {
         Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::{
             Dwm::{
-                DWM_SYSTEMBACKDROP_TYPE, DWMSBT_MAINWINDOW, DWMSBT_TABBEDWINDOW,
+                DWM_SYSTEMBACKDROP_TYPE, DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TABBEDWINDOW,
                 DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
                 DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmExtendFrameIntoClientArea,
                 DwmSetWindowAttribute,
@@ -322,6 +335,35 @@ mod win {
             | GlassMaterial::Sheet
             | GlassMaterial::FullScreenUi
             | GlassMaterial::Selection => DWMSBT_TRANSIENTWINDOW,
+        }
+    }
+
+    /// The window's backdrop replaced (`super::set_glass`): `None` takes the
+    /// system's backdrop and the frame extended under the client away.
+    pub(super) fn set_glass(window: &Window, glass: Option<Glass>) {
+        let Some(hwnd) = hwnd(window) else {
+            return;
+        };
+        match glass {
+            Some(glass) => frost(
+                hwnd,
+                glass,
+                window.theme() != Some(winit::window::Theme::Light),
+            ),
+            None => {
+                let margins = MARGINS::default();
+                let kind = DWMSBT_NONE;
+                // SAFETY: our own window; the attribute is given its size.
+                unsafe {
+                    let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+                    let _ = DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_SYSTEMBACKDROP_TYPE,
+                        &kind as *const _ as *const _,
+                        size_of_val(&kind) as u32,
+                    );
+                }
+            }
         }
     }
 
@@ -1751,7 +1793,7 @@ pub(crate) fn double_click(window: &winit::window::Window) {
 mod mac {
     use super::{Glass, Titlebar};
     use objc2::{
-        DefinedClass, MainThreadOnly, define_class, msg_send,
+        ClassType, DefinedClass, MainThreadOnly, define_class, msg_send,
         rc::Retained,
         runtime::{AnyClass, AnyObject},
         sel,
@@ -1925,6 +1967,31 @@ mod mac {
             }
         }
     );
+
+    /// The window's glass replaced (`super::set_glass`): the effect view
+    /// `frost` put under the content goes, and `glass`'s takes its place.
+    pub(super) fn set_glass(window: &winit::window::Window, glass: Option<Glass>) {
+        use objc2::runtime::NSObjectProtocol as _;
+        let Some(window) = ns_window(window) else {
+            return;
+        };
+        // SAFETY: the window's frame view, kept while it holds its content.
+        let Some(frame) = window
+            .contentView()
+            .and_then(|content| unsafe { content.superview() })
+        else {
+            return;
+        };
+        for view in frame.subviews() {
+            if view.isKindOfClass(GlassView::class()) {
+                view.removeFromSuperview();
+            }
+        }
+        match glass {
+            Some(glass) => frost(&window, glass),
+            None => window.invalidateShadow(),
+        }
+    }
 
     /// Put a behind-window effect view under the (transparent) zgx view.
     /// Unlike the private CGS window blur, it can be clipped to the window's
