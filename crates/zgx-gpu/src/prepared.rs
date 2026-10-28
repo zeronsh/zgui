@@ -230,17 +230,22 @@ impl Compact {
                     .sum::<usize>();
             }
         }
-        let index = slab.room(3 * words + glyphs);
+        let length = 3 * words + glyphs;
+        let index = slab.room(length);
         let chunk = slab.chunks[index].as_mut().expect("live chunk");
-        let start = chunk.data.len();
+        let end = chunk.data.len();
+        // A text of no words at the start, where its chunk always reaches:
+        // at the end, it would be left past it when the text before it went
+        // (`Slab::drop`).
+        let start = if length == 0 { 0 } else { end };
         // Its words, then their advances, filled in place.
-        chunk.data.resize(start + 3 * words + glyphs, 0);
-        let (packed, advances) = chunk.data[start..].split_at_mut(3 * words);
+        chunk.data.resize(end + length, 0);
+        let (packed, advances) = chunk.data[end..].split_at_mut(3 * words);
         let (packed, _) = packed.as_chunks_mut::<3>();
         let mut compact = Self {
             chunk: index as u32,
             start: start as u32,
-            end: (start + 3 * words + glyphs) as u32,
+            end: (start + length) as u32,
             words: words as u32,
             spans: smallvec::SmallVec::with_capacity(spans),
             lines: smallvec::SmallVec::with_capacity(lines.len()),
@@ -290,7 +295,7 @@ impl Compact {
         })();
         if filled.is_none() {
             // As if made and dropped at once: no gap, no text counted.
-            slab.unmake(index, start);
+            slab.unmake(index, end);
             return None;
         }
         Some(compact)
@@ -506,7 +511,11 @@ impl Slab {
             let to = self.room(data.len());
             let chunk = self.chunks[to].as_mut().expect("live chunk");
             compact.chunk = to as u32;
-            compact.start = chunk.data.len() as u32;
+            // One of no words stays at the start (`Compact::of`).
+            compact.start = match data.is_empty() {
+                true => 0,
+                false => chunk.data.len() as u32,
+            };
             compact.end = compact.start + data.len() as u32;
             chunk.data.extend_from_slice(data);
         }
@@ -1880,6 +1889,27 @@ mod tests {
             .collect();
         assert_eq!(long.len(), 1, "earlier states were superseded");
         assert_eq!(long[0].key.text.len(), end - 7);
+    }
+
+    /// A text of no words sits at its chunk's start: one made at a chunk's
+    /// end was left past it when the text before it went, and measured out
+    /// of bounds.
+    #[test]
+    fn a_text_of_no_words_measures_after_the_text_before_it_goes() {
+        let mut fonts = FontSystem::new();
+        let font = FontStyle::default();
+        let mut cache = TextCache::default();
+        let before: Arc<str> = "a\n".into();
+        let empty: Arc<str> = "\n".into();
+        cache.measure_plain(&mut fonts, &before, 14., &font, None);
+        let size = cache.measure_plain(&mut fonts, &empty, 14., &font, None);
+        let entry = cache.remove(Key::plain_hash(&before, 14., &font));
+        cache.retire(entry);
+        // At another width: measured from its compact, not a size kept.
+        let wrapped = cache.measure_plain(&mut fonts, &empty, 14., &font, Some(200.));
+        assert_eq!(wrapped, size);
+        let fresh = ShapedText::with_font(&mut fonts, empty.clone(), 14., Some(200.), &font);
+        assert_eq!(wrapped, fresh.size());
     }
 
     /// Compact measurements go in chunks, and a chunk whose texts are all
