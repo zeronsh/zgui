@@ -1,0 +1,35 @@
+{
+  "layer0_count": 2,
+  "layer0_on_screen_count": 1,
+  "owned_windows": [
+    {
+      "bounds": {
+        "Height": 500,
+        "Width": 500,
+        "X": 0,
+        "Y": 617
+      },
+      "id": 14454,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 753,
+        "Width": 960,
+        "X": 384,
+        "Y": 215
+      },
+      "id": 14453,
+      "layer": 0,
+      "on_screen": true
+    }
+  ],
+  "pid": 57167,
+  "screens": [
+    {
+      "maximum_hz": 120,
+      "name": "Built-in Retina Display"
+    }
+  ]
+}

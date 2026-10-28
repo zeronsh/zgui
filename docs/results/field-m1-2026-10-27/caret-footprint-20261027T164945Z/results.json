@@ -1,0 +1,5336 @@
+{
+  "kind": "caret-footprint",
+  "build": {
+    "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+    "source": "~/Developer/zgx-caret-layer-diag",
+    "binaries": {
+      "zgx-blink": {
+        "path": "~/Developer/zgx-caret-layer-diag/targets/zgx/release/examples/blink_workload",
+        "sha256": "abf6664f9562b7c747f6a63701708f6c3c9f7c41b9e32bca999f43d7c78b6bdc"
+      },
+      "zgx-caret": {
+        "path": "~/Developer/zgx-caret-layer-diag/targets/zgx/release/examples/caret_idle",
+        "sha256": "44d13e3a95dd2fb1854a1c43096fdc86ff8c3c3b9de3f4c65edcaf1c1f0e1a57"
+      },
+      "gpui-blink": {
+        "path": "~/Developer/zgx-caret-layer-diag/targets/gpui-fast/dist/blink",
+        "sha256": "86d5c51c79980d40c708571adb163546650cfc1524e95ff048e19df0e9077d75"
+      },
+      "rune-blink": {
+        "path": "~/Developer/zgx-caret-layer-diag/targets/rune/dist/blink",
+        "sha256": "aed5ad0f2f6b19ae850cea0a18bc05f2a2c3aa2cebe059ff74bd5e9a37296da4"
+      },
+      "mygo-blink": {
+        "path": "~/Developer/zgx-caret-layer-diag/comparisons/mygo/bin-blink",
+        "sha256": "e4cd118673286a6877c0329702990b295bcc50766a783b71fb484e11b544d025"
+      }
+    },
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "go": "go version go1.27.1 darwin/arm64",
+    "profiles": {
+      "zgx": "release",
+      "gpui_fast": "dist",
+      "rune": "dist",
+      "mygo": "trimpath, stripped,CGO0"
+    },
+    "incremental": false,
+    "dev_debug": 0,
+    "rune_commit": "998bef587f09e359d877b35c66e48b8f355e73cb",
+    "rune_patch_sha256": "17d01a2fb86e35e619947368e307e43a82272956200fc94ae7910b7a7eb05535",
+    "window_count": {
+      "path": "~/bench/m1-max-baseline-2026-10-26/caret-window-count",
+      "sha256": "0a8b53d47ea70e1a4ed185b69e77bd93ac7245355d565a4b27e22c1af85f18ee"
+    },
+    "lockfiles": {
+      "zgx": "5973ba1e7cb132f3ff3a5f4f04f76d4798d3931d639cfead13feec23f21cb559",
+      "gpui-fast": "5b7284008df8c48f5eb1489ce8c09846a5f9300189233bee21b41497a6480d10",
+      "rune": "d3939d4f6222750df8f03ae2f84a334c898c2d018e08007b5c7b0e75c0dc0bff",
+      "mygo": "03ec69fd24efbb048abc12dacd8b606ba3e623edaff732172839805daf90c683"
+    },
+    "completed_utc": "2026-10-27T16:49:45.937794+00:00"
+  },
+  "cases": {
+    "zgx-blink": {
+      "cell": "zgx-blink",
+      "binary": "targets/zgx/release/examples/blink_workload",
+      "env": {},
+      "args": [],
+      "source_binary": "~/Developer/zgx-caret-layer-diag/targets/zgx/release/examples/blink_workload",
+      "staged_binary": "/tmp/zgx-staged/abf6664f9562b7c7/blink_workload"
+    },
+    "gpui-blink": {
+      "cell": "gpui-blink",
+      "binary": "targets/gpui-fast/dist/blink",
+      "env": {},
+      "args": [],
+      "source_binary": "~/Developer/zgx-caret-layer-diag/targets/gpui-fast/dist/blink",
+      "staged_binary": "/tmp/zgx-staged/86d5c51c79980d40/blink"
+    },
+    "mygo-blink": {
+      "cell": "mygo-blink",
+      "binary": "comparisons/mygo/bin-blink",
+      "env": {},
+      "args": [],
+      "source_binary": "~/Developer/zgx-caret-layer-diag/comparisons/mygo/bin-blink",
+      "staged_binary": "/tmp/zgx-staged/e4cd118673286a68/bin-blink"
+    },
+    "rune-blink": {
+      "cell": "rune-blink",
+      "binary": "targets/rune/dist/blink",
+      "env": {},
+      "args": [],
+      "source_binary": "~/Developer/zgx-caret-layer-diag/targets/rune/dist/blink",
+      "staged_binary": "/tmp/zgx-staged/aed5ad0f2f6b19ae/blink"
+    },
+    "zgx-caret-focused": {
+      "cell": "zgx-caret-focused",
+      "binary": "targets/zgx/release/examples/caret_idle",
+      "env": {},
+      "args": [],
+      "source_binary": "~/Developer/zgx-caret-layer-diag/targets/zgx/release/examples/caret_idle",
+      "staged_binary": "/tmp/zgx-staged/44d13e3a95dd2fb1/caret_idle"
+    },
+    "zgx-caret-unfocused": {
+      "cell": "zgx-caret-unfocused",
+      "binary": "targets/zgx/release/examples/caret_idle",
+      "env": {
+        "ZGX_FOCUS": "0"
+      },
+      "args": [],
+      "source_binary": "~/Developer/zgx-caret-layer-diag/targets/zgx/release/examples/caret_idle",
+      "staged_binary": "/tmp/zgx-staged/44d13e3a95dd2fb1/caret_idle"
+    },
+    "zgx-caret-held": {
+      "cell": "zgx-caret-held",
+      "binary": "targets/zgx/release/examples/caret_idle",
+      "env": {},
+      "args": [
+        "-NSTextInsertionPointBlinkPeriodOn",
+        "3600000"
+      ],
+      "source_binary": "~/Developer/zgx-caret-layer-diag/targets/zgx/release/examples/caret_idle",
+      "staged_binary": "/tmp/zgx-staged/44d13e3a95dd2fb1/caret_idle"
+    }
+  },
+  "runs": [
+    {
+      "cell": "zgx-blink",
+      "repeat": 0,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.016975,
+          "footprint_bytes": 39241920,
+          "phys_footprint_bytes": 39274688
+        },
+        {
+          "seconds": 0.770975,
+          "footprint_bytes": 50415808,
+          "phys_footprint_bytes": 50448576
+        },
+        {
+          "seconds": 1.197975,
+          "footprint_bytes": 50415808,
+          "phys_footprint_bytes": 50448576
+        },
+        {
+          "seconds": 1.748975,
+          "footprint_bytes": 50415808,
+          "phys_footprint_bytes": 50448576
+        },
+        {
+          "seconds": 2.252975,
+          "footprint_bytes": 50382976,
+          "phys_footprint_bytes": 50415744
+        },
+        {
+          "seconds": 2.774975,
+          "footprint_bytes": 50382976,
+          "phys_footprint_bytes": 50415744
+        },
+        {
+          "seconds": 3.262975,
+          "footprint_bytes": 50382976,
+          "phys_footprint_bytes": 50415744
+        },
+        {
+          "seconds": 3.752975,
+          "footprint_bytes": 50382976,
+          "phys_footprint_bytes": 50415744
+        },
+        {
+          "seconds": 4.269975,
+          "footprint_bytes": 50382976,
+          "phys_footprint_bytes": 50415744
+        },
+        {
+          "seconds": 4.775975,
+          "footprint_bytes": 50448512,
+          "phys_footprint_bytes": 50481280
+        },
+        {
+          "seconds": 5.275975,
+          "footprint_bytes": 50448512,
+          "phys_footprint_bytes": 50481280
+        },
+        {
+          "seconds": 5.764975,
+          "footprint_bytes": 50448512,
+          "phys_footprint_bytes": 50481280
+        },
+        {
+          "seconds": 6.251975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 6.765975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 7.269975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 7.750975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 8.269975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 8.749975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 9.254975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 9.745975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 10.256975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 10.752975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 11.255975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 11.703975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 12.250975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 12.770975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 13.269975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 13.753975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 14.252975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 14.747975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 15.241975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 15.751975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 16.264975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 16.757975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 17.246975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 17.750975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 18.249975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 18.752975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 19.252975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        },
+        {
+          "seconds": 19.749975,
+          "footprint_bytes": 50317440,
+          "phys_footprint_bytes": 50350208
+        }
+      ],
+      "first_bytes": 39241920,
+      "last_bytes": 50317440,
+      "min_bytes": 39241920,
+      "max_bytes": 50448512,
+      "cpu_seconds": 0.09614524999999999,
+      "cpu_seconds_until_readiness": 0.12752341666666667,
+      "cpu_seconds_since_launch_at_window_end": 0.22366866666666665,
+      "cpu_window_seconds": 20.005655792,
+      "verbose_start_seconds": 15.001062542,
+      "graphics_lines": [
+        "unmapped -         unmapped [9c45239fbd]      34      34       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [a07a485545]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [cc12427349]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [64247e5a45]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [f77a6bb9dd]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [c3ec33b1c5]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [b5f3c3dab4]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [400c084656]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [763b39bd11]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [f93223b6d5]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [febeb1becc]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "3031040 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.268147459000005,
+      "spawn_to_sample_seconds": 0.26558658300001525,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 58475,
+        "ready": true,
+        "ready_ms": 174.68702793121338,
+        "window_id": 14481
+      },
+      "window_counts": {
+        "layer0_count": 2,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14482,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 748,
+              "Width": 956,
+              "X": 386,
+              "Y": 118
+            },
+            "id": 14481,
+            "layer": 0,
+            "on_screen": true
+          }
+        ],
+        "pid": 58475,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-blink.0.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-blink.0.verbose.log",
+      "completed_utc": "2026-10-27T16:53:59.154546+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:53:27.581955+00:00",
+        "kind": "caret-launch",
+        "app": "zgx-blink",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2035.9
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 36.3,
+          "busiest": [
+            "Zeron Engine 20.0%",
+            "zeron 3.0%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.0%",
+            "locationd 1.3%",
+            "logioptionsplus_agent 1.3%",
+            "bluetoothd 1.0%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 20.0%",
+            "zeron (44222) 3.0%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 3.0,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "gpui-blink",
+      "repeat": 0,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.013026,
+          "footprint_bytes": 52414528,
+          "phys_footprint_bytes": 52447296
+        },
+        {
+          "seconds": 0.769026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 1.269026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 1.764026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 2.234026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 2.769026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 3.224026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 3.757026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 4.217026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 4.765026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 5.256026,
+          "footprint_bytes": 52430912,
+          "phys_footprint_bytes": 52463680
+        },
+        {
+          "seconds": 5.755026,
+          "footprint_bytes": 52381760,
+          "phys_footprint_bytes": 52414528
+        },
+        {
+          "seconds": 6.234026,
+          "footprint_bytes": 52299840,
+          "phys_footprint_bytes": 52332608
+        },
+        {
+          "seconds": 6.760026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 7.224026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 7.753026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 8.222026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 8.752026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 9.251026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 9.765026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 10.233026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 10.756026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 11.261026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 11.758026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 12.220026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 12.759026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 13.225026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 13.757026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 14.222026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 14.754026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 15.226026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 15.765026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 16.223026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 16.761026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 17.228026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 17.756026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 18.228026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 18.756026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 19.221026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 19.758026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        },
+        {
+          "seconds": 20.259026,
+          "footprint_bytes": 52267072,
+          "phys_footprint_bytes": 52299840
+        }
+      ],
+      "first_bytes": 52414528,
+      "last_bytes": 52267072,
+      "min_bytes": 52267072,
+      "max_bytes": 52430912,
+      "cpu_seconds": 0.23398995833333333,
+      "cpu_seconds_until_readiness": 0.13236558333333334,
+      "cpu_seconds_since_launch_at_window_end": 0.3663555416666667,
+      "cpu_window_seconds": 20.022194042000024,
+      "verbose_start_seconds": 15.011813625000002,
+      "graphics_lines": [
+        "unmapped -         unmapped [268a1fd7bc]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [c71761ec02]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [38496d24b0]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [234e8b0aaa]      34      34       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [09766b8316]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [3aca47f70f]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [e4792393d1]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [593bb3563d]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [d2bf1415bd]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [82fc2fa735]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [5559dbe313]     698       0       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2506752 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.288986833000024,
+      "spawn_to_sample_seconds": 0.4071010829999864,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 58883,
+        "ready": true,
+        "ready_ms": 283.16497802734375,
+        "window_id": 14485
+      },
+      "window_counts": {
+        "layer0_count": 2,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 755,
+              "Width": 962,
+              "X": 383,
+              "Y": 214
+            },
+            "id": 14485,
+            "layer": 0,
+            "on_screen": true
+          },
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14486,
+            "layer": 0,
+            "on_screen": false
+          }
+        ],
+        "pid": 58883,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/gpui-blink.0.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/gpui-blink.0.verbose.log",
+      "completed_utc": "2026-10-27T16:54:59.283947+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:54:27.488142+00:00",
+        "kind": "caret-launch",
+        "app": "gpui-blink",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2035.9
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 48.0,
+          "busiest": [
+            "Zeron Engine 19.3%",
+            "sysmond 9.3%",
+            "zeron 2.3%",
+            "systemstats 2.0%",
+            "launchd 2.0%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.0%"
+          ],
+          "window_server_percent": 1.0,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 19.3%",
+            "zeron (44222) 2.3%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 2.3,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "mygo-blink",
+      "repeat": 0,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.011999,
+          "footprint_bytes": 46648000,
+          "phys_footprint_bytes": 46664384
+        },
+        {
+          "seconds": 0.754999,
+          "footprint_bytes": 58084032,
+          "phys_footprint_bytes": 58116800
+        },
+        {
+          "seconds": 1.258999,
+          "footprint_bytes": 69143232,
+          "phys_footprint_bytes": 69176000
+        },
+        {
+          "seconds": 1.766999,
+          "footprint_bytes": 69176000,
+          "phys_footprint_bytes": 69208768
+        },
+        {
+          "seconds": 2.262999,
+          "footprint_bytes": 69356224,
+          "phys_footprint_bytes": 69388992
+        },
+        {
+          "seconds": 2.768999,
+          "footprint_bytes": 69372608,
+          "phys_footprint_bytes": 69405376
+        },
+        {
+          "seconds": 3.268999,
+          "footprint_bytes": 69372608,
+          "phys_footprint_bytes": 69405376
+        },
+        {
+          "seconds": 3.754999,
+          "footprint_bytes": 69405376,
+          "phys_footprint_bytes": 69438144
+        },
+        {
+          "seconds": 4.265999,
+          "footprint_bytes": 69405376,
+          "phys_footprint_bytes": 69438144
+        },
+        {
+          "seconds": 4.765999,
+          "footprint_bytes": 69421760,
+          "phys_footprint_bytes": 69454528
+        },
+        {
+          "seconds": 5.265999,
+          "footprint_bytes": 69421760,
+          "phys_footprint_bytes": 69454528
+        },
+        {
+          "seconds": 5.761999,
+          "footprint_bytes": 69421760,
+          "phys_footprint_bytes": 69454528
+        },
+        {
+          "seconds": 6.268999,
+          "footprint_bytes": 69520128,
+          "phys_footprint_bytes": 69552896
+        },
+        {
+          "seconds": 6.770999,
+          "footprint_bytes": 69651200,
+          "phys_footprint_bytes": 69683968
+        },
+        {
+          "seconds": 7.267999,
+          "footprint_bytes": 69667584,
+          "phys_footprint_bytes": 69700352
+        },
+        {
+          "seconds": 7.705999,
+          "footprint_bytes": 69667584,
+          "phys_footprint_bytes": 69700352
+        },
+        {
+          "seconds": 8.266999,
+          "footprint_bytes": 69765888,
+          "phys_footprint_bytes": 69798656
+        },
+        {
+          "seconds": 8.759999,
+          "footprint_bytes": 69765888,
+          "phys_footprint_bytes": 69798656
+        },
+        {
+          "seconds": 9.268999,
+          "footprint_bytes": 69782272,
+          "phys_footprint_bytes": 69815040
+        },
+        {
+          "seconds": 9.757999,
+          "footprint_bytes": 69782272,
+          "phys_footprint_bytes": 69815040
+        },
+        {
+          "seconds": 10.263999,
+          "footprint_bytes": 69782272,
+          "phys_footprint_bytes": 69815040
+        },
+        {
+          "seconds": 10.769999,
+          "footprint_bytes": 69798656,
+          "phys_footprint_bytes": 69831424
+        },
+        {
+          "seconds": 11.265999,
+          "footprint_bytes": 69798656,
+          "phys_footprint_bytes": 69831424
+        },
+        {
+          "seconds": 11.757999,
+          "footprint_bytes": 69798656,
+          "phys_footprint_bytes": 69831424
+        },
+        {
+          "seconds": 12.263999,
+          "footprint_bytes": 69815040,
+          "phys_footprint_bytes": 69847808
+        },
+        {
+          "seconds": 12.761999,
+          "footprint_bytes": 69815040,
+          "phys_footprint_bytes": 69847808
+        },
+        {
+          "seconds": 13.259999,
+          "footprint_bytes": 69831424,
+          "phys_footprint_bytes": 69864192
+        },
+        {
+          "seconds": 13.764999,
+          "footprint_bytes": 69831424,
+          "phys_footprint_bytes": 69864192
+        },
+        {
+          "seconds": 14.262999,
+          "footprint_bytes": 69831424,
+          "phys_footprint_bytes": 69864192
+        },
+        {
+          "seconds": 14.706999,
+          "footprint_bytes": 69831424,
+          "phys_footprint_bytes": 69864192
+        },
+        {
+          "seconds": 15.260999,
+          "footprint_bytes": 69847808,
+          "phys_footprint_bytes": 69880576
+        },
+        {
+          "seconds": 15.754999,
+          "footprint_bytes": 69847808,
+          "phys_footprint_bytes": 69880576
+        },
+        {
+          "seconds": 16.265999,
+          "footprint_bytes": 69847808,
+          "phys_footprint_bytes": 69880576
+        },
+        {
+          "seconds": 16.766999,
+          "footprint_bytes": 69880576,
+          "phys_footprint_bytes": 69913344
+        },
+        {
+          "seconds": 17.267999,
+          "footprint_bytes": 69880576,
+          "phys_footprint_bytes": 69913344
+        },
+        {
+          "seconds": 17.757999,
+          "footprint_bytes": 69880576,
+          "phys_footprint_bytes": 69913344
+        },
+        {
+          "seconds": 18.264999,
+          "footprint_bytes": 69880576,
+          "phys_footprint_bytes": 69913344
+        },
+        {
+          "seconds": 18.752999,
+          "footprint_bytes": 69880576,
+          "phys_footprint_bytes": 69913344
+        },
+        {
+          "seconds": 19.264999,
+          "footprint_bytes": 69896960,
+          "phys_footprint_bytes": 69929728
+        },
+        {
+          "seconds": 19.769999,
+          "footprint_bytes": 69929728,
+          "phys_footprint_bytes": 69962496
+        },
+        {
+          "seconds": 20.258999,
+          "footprint_bytes": 69929728,
+          "phys_footprint_bytes": 69962496
+        }
+      ],
+      "first_bytes": 46648000,
+      "last_bytes": 69929728,
+      "min_bytes": 46648000,
+      "max_bytes": 69929728,
+      "cpu_seconds": 0.13766008333333332,
+      "cpu_seconds_until_readiness": 0.13798941666666667,
+      "cpu_seconds_since_launch_at_window_end": 0.2756495,
+      "cpu_window_seconds": 20.02698191600001,
+      "verbose_start_seconds": 15.013928041000042,
+      "graphics_lines": [
+        "unmapped -         unmapped [fee48c5179]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [bf90cd9049]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [eb1608d4e5]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [9a15278d9e]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [491b0bddf0]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [0f6ba76ee1]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [127c5beef4]      34      34       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [3ce25114dd]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [fb4e6485b2]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [0bdb4352db]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2506752 B           0 B           0 B         10    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.280362208000042,
+      "spawn_to_sample_seconds": 0.36204708399998253,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 59038,
+        "ready": true,
+        "ready_ms": 270.64692974090576,
+        "window_id": 14489
+      },
+      "window_counts": {
+        "layer0_count": 6,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14494,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14493,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14491,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 752,
+              "Width": 960,
+              "X": 384,
+              "Y": 116
+            },
+            "id": 14489,
+            "layer": 0,
+            "on_screen": true
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14490,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14492,
+            "layer": 0,
+            "on_screen": false
+          }
+        ],
+        "pid": 59038,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/mygo-blink.0.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/mygo-blink.0.verbose.log",
+      "completed_utc": "2026-10-27T16:55:40.087354+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:55:08.422456+00:00",
+        "kind": "caret-launch",
+        "app": "mygo-blink",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2035.9
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 73.0,
+          "busiest": [
+            "syspolicyd 29.3%",
+            "launchd 16.3%",
+            "Zeron Engine 12.3%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.7%",
+            "locationd 1.3%",
+            "logioptionsplus_agent 1.3%"
+          ],
+          "window_server_percent": 1.0,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 12.3%",
+            "zeron (44222) 1.0%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 1.0,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "rune-blink",
+      "repeat": 0,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.0141,
+          "footprint_bytes": 47204480,
+          "phys_footprint_bytes": 47237248
+        },
+        {
+          "seconds": 0.7711,
+          "footprint_bytes": 69961856,
+          "phys_footprint_bytes": 69994624
+        },
+        {
+          "seconds": 1.2641,
+          "footprint_bytes": 70011008,
+          "phys_footprint_bytes": 70043776
+        },
+        {
+          "seconds": 1.7701,
+          "footprint_bytes": 70076544,
+          "phys_footprint_bytes": 70109312
+        },
+        {
+          "seconds": 2.2661,
+          "footprint_bytes": 70109312,
+          "phys_footprint_bytes": 70142080
+        },
+        {
+          "seconds": 2.7711,
+          "footprint_bytes": 70109312,
+          "phys_footprint_bytes": 70142080
+        },
+        {
+          "seconds": 3.2691,
+          "footprint_bytes": 70125696,
+          "phys_footprint_bytes": 70158464
+        },
+        {
+          "seconds": 3.7701,
+          "footprint_bytes": 70125696,
+          "phys_footprint_bytes": 70158464
+        },
+        {
+          "seconds": 4.2661,
+          "footprint_bytes": 70142080,
+          "phys_footprint_bytes": 70174848
+        },
+        {
+          "seconds": 4.7641,
+          "footprint_bytes": 70142080,
+          "phys_footprint_bytes": 70174848
+        },
+        {
+          "seconds": 5.2701,
+          "footprint_bytes": 70142080,
+          "phys_footprint_bytes": 70174848
+        },
+        {
+          "seconds": 5.7681,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 6.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 6.7781,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 7.2731,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 7.7651,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 8.2641,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 8.7651,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 9.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 9.7651,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 10.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 10.7661,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 11.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 11.7701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 12.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 12.7691,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 13.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 13.7661,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 14.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 14.7661,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 15.2631,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 15.7681,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 16.2691,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 16.7701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 17.2671,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 17.7711,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 18.2731,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 18.7711,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 19.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 19.7641,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        },
+        {
+          "seconds": 20.2701,
+          "footprint_bytes": 70158464,
+          "phys_footprint_bytes": 70191232
+        }
+      ],
+      "first_bytes": 47204480,
+      "last_bytes": 70158464,
+      "min_bytes": 47204480,
+      "max_bytes": 70158464,
+      "cpu_seconds": 2.983484125,
+      "cpu_seconds_until_readiness": 0.139485875,
+      "cpu_seconds_since_launch_at_window_end": 3.12297,
+      "cpu_window_seconds": 20.01069320800002,
+      "verbose_start_seconds": 15.007343708000008,
+      "graphics_lines": [
+        "unmapped -         unmapped [620787da13]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [9e9a65c556]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [a735e5ed3b]     264     264       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [3bf8e51229]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [fdc84fe6cd]      34      34       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [b06b85df05]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [d0cbd4551c]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [be5b814051]       3       3       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [f82054679b]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [f648fc581b]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [f3d81dfb58]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [c531cca4bd]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [6c3cb10a11]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "7405568 B           0 B           0 B         13    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.305565375000015,
+      "spawn_to_sample_seconds": 0.2779997920000028,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 59347,
+        "ready": true,
+        "ready_ms": 178.26402187347412,
+        "window_id": 14497
+      },
+      "window_counts": {
+        "layer0_count": 6,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14501,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14498,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 746,
+              "Width": 952,
+              "X": 388,
+              "Y": 119
+            },
+            "id": 14497,
+            "layer": 0,
+            "on_screen": true
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14499,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14502,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14500,
+            "layer": 0,
+            "on_screen": false
+          }
+        ],
+        "pid": 59347,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/rune-blink.0.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/rune-blink.0.verbose.log",
+      "completed_utc": "2026-10-27T16:56:20.468042+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:55:49.103758+00:00",
+        "kind": "caret-launch",
+        "app": "rune-blink",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 26.7,
+          "busiest": [
+            "Zeron Engine 9.7%",
+            "duetexpertd 2.0%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.0%",
+            "codex 1.3%",
+            "locationd 1.3%",
+            "wifip2pd 1.0%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 9.7%",
+            "zeron (44222) 0.7%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 0.7,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "zgx-caret-focused",
+      "repeat": 0,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.013871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 0.768871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 1.234871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 1.741871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 2.240871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 2.747871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 3.235871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 3.743871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 4.251871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 4.762871,
+          "footprint_bytes": 32720960,
+          "phys_footprint_bytes": 32753728
+        },
+        {
+          "seconds": 5.251871,
+          "footprint_bytes": 32671808,
+          "phys_footprint_bytes": 32704576
+        },
+        {
+          "seconds": 5.764871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 6.260871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 6.745871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 7.270871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 7.756871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 8.240871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 8.741871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 9.264871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 9.743871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 10.241871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 10.743871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 11.240871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 11.749871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 12.260871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 12.753871,
+          "footprint_bytes": 32622656,
+          "phys_footprint_bytes": 32655424
+        },
+        {
+          "seconds": 13.241871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 13.739871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 14.234871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 14.742871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 15.253871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 15.746871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 16.235871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 16.749871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 17.258871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 17.751871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 18.235871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 18.752871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 19.236871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        },
+        {
+          "seconds": 19.756871,
+          "footprint_bytes": 32737344,
+          "phys_footprint_bytes": 32770112
+        }
+      ],
+      "first_bytes": 32720960,
+      "last_bytes": 32737344,
+      "min_bytes": 32622656,
+      "max_bytes": 32737344,
+      "cpu_seconds": 0.11497191666666667,
+      "cpu_seconds_until_readiness": 0.12681495833333334,
+      "cpu_seconds_since_launch_at_window_end": 0.241786875,
+      "cpu_window_seconds": 20.018295999999964,
+      "verbose_start_seconds": 15.014005791999978,
+      "graphics_lines": [
+        "unmapped -         unmapped [744f332f6d]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [33befe6277]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [45d26e7425]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [ad1aa02428]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [9419f369bc]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [8b8e18ce29]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [c8bee2bd75]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [3ce25114dd]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [55db208401]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [a52059ee48]       9       9       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [fc6322fe36]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2621440 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.25698829199996,
+      "spawn_to_sample_seconds": 0.24607787500002587,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 59558,
+        "ready": true,
+        "ready_ms": 160.12191772460938,
+        "window_id": 14505
+      },
+      "window_counts": {
+        "layer0_count": 6,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14510,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14509,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14506,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 272,
+              "Width": 598,
+              "X": 565,
+              "Y": 236
+            },
+            "id": 14505,
+            "layer": 0,
+            "on_screen": true
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14508,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14507,
+            "layer": 0,
+            "on_screen": false
+          }
+        ],
+        "pid": 59558,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-focused.0.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-focused.0.verbose.log",
+      "completed_utc": "2026-10-27T16:57:00.976841+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:56:29.569121+00:00",
+        "kind": "caret-launch",
+        "app": "zgx-caret-focused",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 37.3,
+          "busiest": [
+            "Zeron Engine 7.7%",
+            "runningboardd 3.7%",
+            "duetexpertd 3.0%",
+            "locationd 2.7%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.0%",
+            "bluetoothd 1.7%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 7.7%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 0,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "zgx-caret-unfocused",
+      "repeat": 0,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.01294,
+          "footprint_bytes": 29460672,
+          "phys_footprint_bytes": 29493440
+        },
+        {
+          "seconds": 0.77194,
+          "footprint_bytes": 29509824,
+          "phys_footprint_bytes": 29542592
+        },
+        {
+          "seconds": 1.22494,
+          "footprint_bytes": 29509824,
+          "phys_footprint_bytes": 29542592
+        },
+        {
+          "seconds": 1.76394,
+          "footprint_bytes": 29509824,
+          "phys_footprint_bytes": 29542592
+        },
+        {
+          "seconds": 2.24394,
+          "footprint_bytes": 29476992,
+          "phys_footprint_bytes": 29509760
+        },
+        {
+          "seconds": 2.76194,
+          "footprint_bytes": 29476992,
+          "phys_footprint_bytes": 29509760
+        },
+        {
+          "seconds": 3.22294,
+          "footprint_bytes": 29476992,
+          "phys_footprint_bytes": 29509760
+        },
+        {
+          "seconds": 3.76794,
+          "footprint_bytes": 29476992,
+          "phys_footprint_bytes": 29509760
+        },
+        {
+          "seconds": 4.22494,
+          "footprint_bytes": 29476992,
+          "phys_footprint_bytes": 29509760
+        },
+        {
+          "seconds": 4.76494,
+          "footprint_bytes": 29476992,
+          "phys_footprint_bytes": 29509760
+        },
+        {
+          "seconds": 5.25394,
+          "footprint_bytes": 29476992,
+          "phys_footprint_bytes": 29509760
+        },
+        {
+          "seconds": 5.76494,
+          "footprint_bytes": 29362304,
+          "phys_footprint_bytes": 29460608
+        },
+        {
+          "seconds": 6.26394,
+          "footprint_bytes": 29345920,
+          "phys_footprint_bytes": 29378688
+        },
+        {
+          "seconds": 6.77094,
+          "footprint_bytes": 29345920,
+          "phys_footprint_bytes": 29378688
+        },
+        {
+          "seconds": 7.24094,
+          "footprint_bytes": 29345920,
+          "phys_footprint_bytes": 29378688
+        },
+        {
+          "seconds": 7.76994,
+          "footprint_bytes": 29345920,
+          "phys_footprint_bytes": 29378688
+        },
+        {
+          "seconds": 8.21194,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 8.76794,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 9.22094,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 9.75994,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 10.17694,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 10.76394,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 11.22194,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 11.76694,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 12.22494,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 12.76394,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 13.22894,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 13.76094,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 14.16794,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 14.76394,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 15.21894,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 15.76794,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 16.25694,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 16.76794,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 17.22494,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 17.76094,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 18.26894,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 18.76094,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 19.24894,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        },
+        {
+          "seconds": 19.76494,
+          "footprint_bytes": 28280960,
+          "phys_footprint_bytes": 28313728
+        }
+      ],
+      "first_bytes": 29460672,
+      "last_bytes": 28280960,
+      "min_bytes": 28280960,
+      "max_bytes": 29509824,
+      "cpu_seconds": 0.01208341666666668,
+      "cpu_seconds_until_readiness": 0.12342554166666667,
+      "cpu_seconds_since_launch_at_window_end": 0.13550895833333335,
+      "cpu_window_seconds": 20.010326167000017,
+      "verbose_start_seconds": 15.00303820900001,
+      "graphics_lines": [
+        "unmapped -         unmapped [6045e622d4]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [8c5967674e]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [8f8b8335c2]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [bab8947487]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [09f950011b]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [c7b140e325]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [6668be9696]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [916b3047e0]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [3ebe4467b3]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [7608b24853]       9       9       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [4e434016db]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2621440 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.18476800000002,
+      "spawn_to_sample_seconds": 0.25926016599999,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 59831,
+        "ready": true,
+        "ready_ms": 159.22701358795166,
+        "window_id": 14513
+      },
+      "window_counts": {
+        "layer0_count": 2,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14514,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 272,
+              "Width": 598,
+              "X": 565,
+              "Y": 236
+            },
+            "id": 14513,
+            "layer": 0,
+            "on_screen": true
+          }
+        ],
+        "pid": 59831,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {
+        "ZGX_FOCUS": "0"
+      },
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-unfocused.0.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-unfocused.0.verbose.log",
+      "completed_utc": "2026-10-27T16:57:41.577214+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:57:10.126537+00:00",
+        "kind": "caret-launch",
+        "app": "zgx-caret-unfocused",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 66.0,
+          "busiest": [
+            "Zeron Engine 20.0%",
+            "launchd 19.3%",
+            "syspolicyd 8.3%",
+            "com.apple.DriverKit-AppleBCMWLAN 3.3%",
+            "zeron 2.7%",
+            "locationd 1.7%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 20.0%",
+            "zeron (44222) 2.7%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 2.7,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "zgx-caret-held",
+      "repeat": 0,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.013627,
+          "footprint_bytes": 32737408,
+          "phys_footprint_bytes": 32770176
+        },
+        {
+          "seconds": 0.761627,
+          "footprint_bytes": 32786560,
+          "phys_footprint_bytes": 32819328
+        },
+        {
+          "seconds": 1.245627,
+          "footprint_bytes": 32786560,
+          "phys_footprint_bytes": 32819328
+        },
+        {
+          "seconds": 1.743627,
+          "footprint_bytes": 32786560,
+          "phys_footprint_bytes": 32819328
+        },
+        {
+          "seconds": 2.237627,
+          "footprint_bytes": 32770176,
+          "phys_footprint_bytes": 32802944
+        },
+        {
+          "seconds": 2.761627,
+          "footprint_bytes": 32770176,
+          "phys_footprint_bytes": 32802944
+        },
+        {
+          "seconds": 3.241627,
+          "footprint_bytes": 32770176,
+          "phys_footprint_bytes": 32802944
+        },
+        {
+          "seconds": 3.766627,
+          "footprint_bytes": 32770176,
+          "phys_footprint_bytes": 32802944
+        },
+        {
+          "seconds": 4.244627,
+          "footprint_bytes": 32770176,
+          "phys_footprint_bytes": 32802944
+        },
+        {
+          "seconds": 4.752627,
+          "footprint_bytes": 32770176,
+          "phys_footprint_bytes": 32802944
+        },
+        {
+          "seconds": 5.253627,
+          "footprint_bytes": 32721024,
+          "phys_footprint_bytes": 32753792
+        },
+        {
+          "seconds": 5.733627,
+          "footprint_bytes": 32639104,
+          "phys_footprint_bytes": 32671872
+        },
+        {
+          "seconds": 6.260627,
+          "footprint_bytes": 32639104,
+          "phys_footprint_bytes": 32671872
+        },
+        {
+          "seconds": 6.731627,
+          "footprint_bytes": 32639104,
+          "phys_footprint_bytes": 32671872
+        },
+        {
+          "seconds": 7.262627,
+          "footprint_bytes": 32639104,
+          "phys_footprint_bytes": 32671872
+        },
+        {
+          "seconds": 7.734627,
+          "footprint_bytes": 32639104,
+          "phys_footprint_bytes": 32671872
+        },
+        {
+          "seconds": 8.256627,
+          "footprint_bytes": 31590528,
+          "phys_footprint_bytes": 31623296
+        },
+        {
+          "seconds": 8.758627,
+          "footprint_bytes": 31590528,
+          "phys_footprint_bytes": 31623296
+        },
+        {
+          "seconds": 9.230627,
+          "footprint_bytes": 31590528,
+          "phys_footprint_bytes": 31623296
+        },
+        {
+          "seconds": 9.744627,
+          "footprint_bytes": 31590528,
+          "phys_footprint_bytes": 31623296
+        },
+        {
+          "seconds": 10.250627,
+          "footprint_bytes": 31590528,
+          "phys_footprint_bytes": 31623296
+        },
+        {
+          "seconds": 10.727627,
+          "footprint_bytes": 31590528,
+          "phys_footprint_bytes": 31623296
+        },
+        {
+          "seconds": 11.248627,
+          "footprint_bytes": 31590528,
+          "phys_footprint_bytes": 31623296
+        },
+        {
+          "seconds": 11.729627,
+          "footprint_bytes": 31590528,
+          "phys_footprint_bytes": 31623296
+        },
+        {
+          "seconds": 12.234627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 12.729627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 13.240627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 13.733627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 14.228627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 14.740627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 15.247627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 15.736627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 16.231627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 16.733627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 17.226627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 17.730627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 18.245627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 18.732627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 19.233627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 19.733627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        },
+        {
+          "seconds": 20.226627,
+          "footprint_bytes": 29247616,
+          "phys_footprint_bytes": 29280384
+        }
+      ],
+      "first_bytes": 32737408,
+      "last_bytes": 29247616,
+      "min_bytes": 29247616,
+      "max_bytes": 32786560,
+      "cpu_seconds": 0.017022791666666703,
+      "cpu_seconds_until_readiness": 0.14219591666666664,
+      "cpu_seconds_since_launch_at_window_end": 0.15921870833333335,
+      "cpu_window_seconds": 20.02499262499998,
+      "verbose_start_seconds": 15.00767354200002,
+      "graphics_lines": [
+        "unmapped -         unmapped [08a77303ee]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [44937c36a3]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [0ddb773137]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [c3fb446f2c]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [f0f665ad5f]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [fe5c0380d8]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [00bdd63158]       9       9       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [0666c35855]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [530506e063]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [eb08be57c9]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [5b7b61a296]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2621440 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.26902554200001,
+      "spawn_to_sample_seconds": 0.2765936249999754,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 60157,
+        "ready": true,
+        "ready_ms": 175.90808868408203,
+        "window_id": 14517
+      },
+      "window_counts": {
+        "layer0_count": 6,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14520,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14518,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14522,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 272,
+              "Width": 598,
+              "X": 565,
+              "Y": 236
+            },
+            "id": 14517,
+            "layer": 0,
+            "on_screen": true
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14521,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14519,
+            "layer": 0,
+            "on_screen": false
+          }
+        ],
+        "pid": 60157,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [
+        "-NSTextInsertionPointBlinkPeriodOn",
+        "3600000"
+      ],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-held.0.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-held.0.verbose.log",
+      "completed_utc": "2026-10-27T16:58:41.037133+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:58:09.417504+00:00",
+        "kind": "caret-launch",
+        "app": "zgx-caret-held",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 69.7,
+          "busiest": [
+            "syspolicyd 21.7%",
+            "launchd 19.3%",
+            "Zeron Engine 12.0%",
+            "com.apple.DriverKit-AppleBCMWLAN 3.0%",
+            "zeron 1.3%",
+            "logioptionsplus_agent 1.0%"
+          ],
+          "window_server_percent": 1.0,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 12.0%",
+            "zeron (44222) 1.3%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 1.3,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "gpui-blink",
+      "repeat": 1,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.017036,
+          "footprint_bytes": 52529216,
+          "phys_footprint_bytes": 52561984
+        },
+        {
+          "seconds": 0.760036,
+          "footprint_bytes": 52561984,
+          "phys_footprint_bytes": 52594752
+        },
+        {
+          "seconds": 1.274036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 1.733036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 2.250036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 2.762036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 3.251036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 3.771036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 4.249036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 4.749036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 5.247036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 5.735036,
+          "footprint_bytes": 52578368,
+          "phys_footprint_bytes": 52611136
+        },
+        {
+          "seconds": 6.240036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 6.686036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 7.234036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 7.766036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 8.228036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 8.724036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 9.228036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 9.747036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 10.268036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 10.732036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 11.256036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 11.745036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 12.265036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 12.757036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 13.230036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 13.738036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 14.262036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 14.734036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 15.230036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 15.730036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 16.273036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 16.736036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 17.232036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 17.764036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 18.239036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 18.730036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 19.235036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 19.756036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        },
+        {
+          "seconds": 20.268036,
+          "footprint_bytes": 52496448,
+          "phys_footprint_bytes": 52529216
+        }
+      ],
+      "first_bytes": 52529216,
+      "last_bytes": 52496448,
+      "min_bytes": 52496448,
+      "max_bytes": 52578368,
+      "cpu_seconds": 0.2259364166666666,
+      "cpu_seconds_until_readiness": 0.12809991666666667,
+      "cpu_seconds_since_launch_at_window_end": 0.3540363333333333,
+      "cpu_window_seconds": 20.008507957999996,
+      "verbose_start_seconds": 15.012743250000085,
+      "graphics_lines": [
+        "unmapped -         unmapped [7614d47128]     698       0       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [123127db64]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [ce8569652f]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [915172dab9]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [2d429742fb]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [bebd1d41d8]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [416c961786]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [969e5efa28]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [2d504239b9]      34      34       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [efe8394430]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [2fe1f40645]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2506752 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.299715041000013,
+      "spawn_to_sample_seconds": 0.39528329199993095,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 60352,
+        "ready": true,
+        "ready_ms": 281.3379764556885,
+        "window_id": 14525
+      },
+      "window_counts": {
+        "layer0_count": 2,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14526,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 755,
+              "Width": 962,
+              "X": 383,
+              "Y": 214
+            },
+            "id": 14525,
+            "layer": 0,
+            "on_screen": true
+          }
+        ],
+        "pid": 60352,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/gpui-blink.1.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/gpui-blink.1.verbose.log",
+      "completed_utc": "2026-10-27T16:59:21.814025+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:58:50.100848+00:00",
+        "kind": "caret-launch",
+        "app": "gpui-blink",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 34.3,
+          "busiest": [
+            "Zeron Engine 15.0%",
+            "locationd 2.0%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.0%",
+            "bluetoothd 1.7%",
+            "codex 1.3%",
+            "searchpartyd 1.3%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 15.0%",
+            "zeron (44222) 1.3%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 1.3,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "mygo-blink",
+      "repeat": 1,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.011812,
+          "footprint_bytes": 46910144,
+          "phys_footprint_bytes": 46942912
+        },
+        {
+          "seconds": 0.729812,
+          "footprint_bytes": 58231488,
+          "phys_footprint_bytes": 58264256
+        },
+        {
+          "seconds": 1.240812,
+          "footprint_bytes": 69323456,
+          "phys_footprint_bytes": 69356224
+        },
+        {
+          "seconds": 1.762812,
+          "footprint_bytes": 69421824,
+          "phys_footprint_bytes": 69454592
+        },
+        {
+          "seconds": 2.247812,
+          "footprint_bytes": 69602112,
+          "phys_footprint_bytes": 69634880
+        },
+        {
+          "seconds": 2.755812,
+          "footprint_bytes": 69618496,
+          "phys_footprint_bytes": 69651264
+        },
+        {
+          "seconds": 3.244812,
+          "footprint_bytes": 69618496,
+          "phys_footprint_bytes": 69651264
+        },
+        {
+          "seconds": 3.730812,
+          "footprint_bytes": 69618496,
+          "phys_footprint_bytes": 69651264
+        },
+        {
+          "seconds": 4.254812,
+          "footprint_bytes": 69634880,
+          "phys_footprint_bytes": 69667648
+        },
+        {
+          "seconds": 4.737812,
+          "footprint_bytes": 69651264,
+          "phys_footprint_bytes": 69684032
+        },
+        {
+          "seconds": 5.272812,
+          "footprint_bytes": 69667648,
+          "phys_footprint_bytes": 69700416
+        },
+        {
+          "seconds": 5.748812,
+          "footprint_bytes": 69634880,
+          "phys_footprint_bytes": 69667648
+        },
+        {
+          "seconds": 6.267812,
+          "footprint_bytes": 69634880,
+          "phys_footprint_bytes": 69667648
+        },
+        {
+          "seconds": 6.727812,
+          "footprint_bytes": 69634880,
+          "phys_footprint_bytes": 69667648
+        },
+        {
+          "seconds": 7.246812,
+          "footprint_bytes": 69634880,
+          "phys_footprint_bytes": 69667648
+        },
+        {
+          "seconds": 7.755812,
+          "footprint_bytes": 69634880,
+          "phys_footprint_bytes": 69667648
+        },
+        {
+          "seconds": 8.249812,
+          "footprint_bytes": 69634880,
+          "phys_footprint_bytes": 69667648
+        },
+        {
+          "seconds": 8.730812,
+          "footprint_bytes": 69634880,
+          "phys_footprint_bytes": 69667648
+        },
+        {
+          "seconds": 9.240812,
+          "footprint_bytes": 69651264,
+          "phys_footprint_bytes": 69684032
+        },
+        {
+          "seconds": 9.724812,
+          "footprint_bytes": 69667648,
+          "phys_footprint_bytes": 69700416
+        },
+        {
+          "seconds": 10.236812,
+          "footprint_bytes": 69684032,
+          "phys_footprint_bytes": 69716800
+        },
+        {
+          "seconds": 10.730812,
+          "footprint_bytes": 69684032,
+          "phys_footprint_bytes": 69716800
+        },
+        {
+          "seconds": 11.239812,
+          "footprint_bytes": 69684032,
+          "phys_footprint_bytes": 69716800
+        },
+        {
+          "seconds": 11.744812,
+          "footprint_bytes": 69700416,
+          "phys_footprint_bytes": 69733184
+        },
+        {
+          "seconds": 12.264812,
+          "footprint_bytes": 69716800,
+          "phys_footprint_bytes": 69749568
+        },
+        {
+          "seconds": 12.721812,
+          "footprint_bytes": 69716800,
+          "phys_footprint_bytes": 69749568
+        },
+        {
+          "seconds": 13.267812,
+          "footprint_bytes": 69716800,
+          "phys_footprint_bytes": 69749568
+        },
+        {
+          "seconds": 13.762812,
+          "footprint_bytes": 69716800,
+          "phys_footprint_bytes": 69749568
+        },
+        {
+          "seconds": 14.248812,
+          "footprint_bytes": 69716800,
+          "phys_footprint_bytes": 69749568
+        },
+        {
+          "seconds": 14.767812,
+          "footprint_bytes": 69716800,
+          "phys_footprint_bytes": 69749568
+        },
+        {
+          "seconds": 15.235812,
+          "footprint_bytes": 69716800,
+          "phys_footprint_bytes": 69749568
+        },
+        {
+          "seconds": 15.749812,
+          "footprint_bytes": 69716800,
+          "phys_footprint_bytes": 69749568
+        },
+        {
+          "seconds": 16.249812,
+          "footprint_bytes": 69733184,
+          "phys_footprint_bytes": 69765952
+        },
+        {
+          "seconds": 16.735812,
+          "footprint_bytes": 69733184,
+          "phys_footprint_bytes": 69765952
+        },
+        {
+          "seconds": 17.235812,
+          "footprint_bytes": 69733184,
+          "phys_footprint_bytes": 69765952
+        },
+        {
+          "seconds": 17.727812,
+          "footprint_bytes": 69733184,
+          "phys_footprint_bytes": 69765952
+        },
+        {
+          "seconds": 18.227812,
+          "footprint_bytes": 69749568,
+          "phys_footprint_bytes": 69782336
+        },
+        {
+          "seconds": 18.746812,
+          "footprint_bytes": 69765952,
+          "phys_footprint_bytes": 69798720
+        },
+        {
+          "seconds": 19.255812,
+          "footprint_bytes": 69765952,
+          "phys_footprint_bytes": 69798720
+        },
+        {
+          "seconds": 19.742812,
+          "footprint_bytes": 69831488,
+          "phys_footprint_bytes": 69864256
+        }
+      ],
+      "first_bytes": 46910144,
+      "last_bytes": 69831488,
+      "min_bytes": 46910144,
+      "max_bytes": 69831488,
+      "cpu_seconds": 0.13712733333333332,
+      "cpu_seconds_until_readiness": 0.15192479166666667,
+      "cpu_seconds_since_launch_at_window_end": 0.289052125,
+      "cpu_window_seconds": 20.02202441599991,
+      "verbose_start_seconds": 15.024549124999908,
+      "graphics_lines": [
+        "unmapped -         unmapped [93ea16a714]      34      34       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [33c36d80e5]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [123127db64]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [451a2ef524]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [63cc3d9909]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [42e43367ae]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [763b39bd11]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [5906aef606]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [598a0994e5]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [39f6b2aa2e]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2506752 B           0 B           0 B         10    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.274650540999914,
+      "spawn_to_sample_seconds": 0.3890721670001085,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 60562,
+        "ready": true,
+        "ready_ms": 286.27097606658936,
+        "window_id": 14529
+      },
+      "window_counts": {
+        "layer0_count": 6,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14534,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14530,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14531,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 752,
+              "Width": 960,
+              "X": 384,
+              "Y": 116
+            },
+            "id": 14529,
+            "layer": 0,
+            "on_screen": true
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14533,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14532,
+            "layer": 0,
+            "on_screen": false
+          }
+        ],
+        "pid": 60562,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/mygo-blink.1.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/mygo-blink.1.verbose.log",
+      "completed_utc": "2026-10-27T17:00:02.638895+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T16:59:30.883833+00:00",
+        "kind": "caret-launch",
+        "app": "mygo-blink",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 30.0,
+          "busiest": [
+            "Zeron Engine 13.7%",
+            "locationd 1.7%",
+            "zeron 1.7%",
+            "com.apple.DriverKit-AppleBCMWLAN 1.7%",
+            "duetexpertd 1.3%",
+            "logioptionsplus_agent 1.0%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 13.7%",
+            "zeron (44222) 1.7%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 1.7,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "rune-blink",
+      "repeat": 1,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.013222,
+          "footprint_bytes": 46778496,
+          "phys_footprint_bytes": 46811264
+        },
+        {
+          "seconds": 0.771222,
+          "footprint_bytes": 69421184,
+          "phys_footprint_bytes": 69453952
+        },
+        {
+          "seconds": 1.266222,
+          "footprint_bytes": 69421184,
+          "phys_footprint_bytes": 69453952
+        },
+        {
+          "seconds": 1.768222,
+          "footprint_bytes": 69093504,
+          "phys_footprint_bytes": 69109888
+        },
+        {
+          "seconds": 2.265222,
+          "footprint_bytes": 69175424,
+          "phys_footprint_bytes": 69142656
+        },
+        {
+          "seconds": 2.764222,
+          "footprint_bytes": 69208192,
+          "phys_footprint_bytes": 69240960
+        },
+        {
+          "seconds": 3.268222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 3.771222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 4.264222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 4.770222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 5.270222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 5.770222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 6.267222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 6.766222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 7.270222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 7.769222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 8.266222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 8.770222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 9.269222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 9.769222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 10.266222,
+          "footprint_bytes": 69224576,
+          "phys_footprint_bytes": 69257344
+        },
+        {
+          "seconds": 10.766222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 11.263222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 11.770222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 12.267222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 12.767222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 13.267222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 13.773222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 14.272222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 14.770222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 15.263222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 15.770222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 16.264222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 16.770222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 17.266222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 17.764222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 18.271222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 18.770222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 19.270222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 19.767222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        },
+        {
+          "seconds": 20.265222,
+          "footprint_bytes": 69240960,
+          "phys_footprint_bytes": 69273728
+        }
+      ],
+      "first_bytes": 46778496,
+      "last_bytes": 69240960,
+      "min_bytes": 46778496,
+      "max_bytes": 69421184,
+      "cpu_seconds": 2.8532285,
+      "cpu_seconds_until_readiness": 0.139356125,
+      "cpu_seconds_since_launch_at_window_end": 2.992584625,
+      "cpu_window_seconds": 20.013645166999936,
+      "verbose_start_seconds": 15.02740474999996,
+      "graphics_lines": [
+        "unmapped -         unmapped [72823f7f9d]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [a0682ea8e0]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [7bbe64a63c]      34      34       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [1ff1f9364c]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [011d880003]       3       3       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [30cdb28e8d]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [fc6322fe36]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [12ff15cad1]     264     264       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [e59cf4325d]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [1b5e5e87e3]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [b5daa7d73a]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [61df678598]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [6ca02faa6b]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "7405568 B           0 B           0 B         13    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.306029792000004,
+      "spawn_to_sample_seconds": 0.27997579099996983,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 60866,
+        "ready": true,
+        "ready_ms": 176.23698711395264,
+        "window_id": 14537
+      },
+      "window_counts": {
+        "layer0_count": 6,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14541,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14538,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 746,
+              "Width": 952,
+              "X": 388,
+              "Y": 119
+            },
+            "id": 14537,
+            "layer": 0,
+            "on_screen": true
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14540,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 33,
+              "Width": 1728,
+              "X": 0,
+              "Y": 0
+            },
+            "id": 14539,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14542,
+            "layer": 0,
+            "on_screen": false
+          }
+        ],
+        "pid": 60866,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/rune-blink.1.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/rune-blink.1.verbose.log",
+      "completed_utc": "2026-10-27T17:00:43.346155+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T17:00:11.752483+00:00",
+        "kind": "caret-launch",
+        "app": "rune-blink",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 45.0,
+          "busiest": [
+            "Zeron Engine 25.3%",
+            "zeron 3.7%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.3%",
+            "locationd 1.7%",
+            "wifip2pd 1.0%",
+            "bluetoothd 1.0%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 25.3%",
+            "zeron (44222) 3.7%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 3.7,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "zgx-caret-focused",
+      "repeat": 1,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.012211,
+          "footprint_bytes": 31508608,
+          "phys_footprint_bytes": 31541376
+        },
+        {
+          "seconds": 0.766211,
+          "footprint_bytes": 31508608,
+          "phys_footprint_bytes": 31541376
+        },
+        {
+          "seconds": 1.253211,
+          "footprint_bytes": 31508608,
+          "phys_footprint_bytes": 31541376
+        },
+        {
+          "seconds": 1.751211,
+          "footprint_bytes": 31508608,
+          "phys_footprint_bytes": 31541376
+        },
+        {
+          "seconds": 2.260211,
+          "footprint_bytes": 31492224,
+          "phys_footprint_bytes": 31524992
+        },
+        {
+          "seconds": 2.723211,
+          "footprint_bytes": 31492224,
+          "phys_footprint_bytes": 31524992
+        },
+        {
+          "seconds": 3.259211,
+          "footprint_bytes": 31492224,
+          "phys_footprint_bytes": 31524992
+        },
+        {
+          "seconds": 3.724211,
+          "footprint_bytes": 31492224,
+          "phys_footprint_bytes": 31524992
+        },
+        {
+          "seconds": 4.261211,
+          "footprint_bytes": 31492224,
+          "phys_footprint_bytes": 31524992
+        },
+        {
+          "seconds": 4.759211,
+          "footprint_bytes": 31492224,
+          "phys_footprint_bytes": 31524992
+        },
+        {
+          "seconds": 5.266211,
+          "footprint_bytes": 31492224,
+          "phys_footprint_bytes": 31524992
+        },
+        {
+          "seconds": 5.718211,
+          "footprint_bytes": 31361152,
+          "phys_footprint_bytes": 31393920
+        },
+        {
+          "seconds": 6.260211,
+          "footprint_bytes": 31361152,
+          "phys_footprint_bytes": 31393920
+        },
+        {
+          "seconds": 6.722211,
+          "footprint_bytes": 31361152,
+          "phys_footprint_bytes": 31393920
+        },
+        {
+          "seconds": 7.263211,
+          "footprint_bytes": 31361152,
+          "phys_footprint_bytes": 31393920
+        },
+        {
+          "seconds": 7.720211,
+          "footprint_bytes": 31361152,
+          "phys_footprint_bytes": 31393920
+        },
+        {
+          "seconds": 8.260211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 8.745211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 9.256211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 9.768211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 10.260211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 10.720211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 11.259211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 11.723211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 12.264211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 12.715211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 13.255211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 13.720211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 14.259211,
+          "footprint_bytes": 30296192,
+          "phys_footprint_bytes": 30328960
+        },
+        {
+          "seconds": 14.768211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 15.251211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 15.727211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 16.255211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 16.724211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 17.259211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 17.720211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 18.267211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 18.716211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 19.263211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 19.754211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        },
+        {
+          "seconds": 20.267211,
+          "footprint_bytes": 27953280,
+          "phys_footprint_bytes": 27986048
+        }
+      ],
+      "first_bytes": 31508608,
+      "last_bytes": 27953280,
+      "min_bytes": 27953280,
+      "max_bytes": 31508608,
+      "cpu_seconds": 0.012213583333333361,
+      "cpu_seconds_until_readiness": 0.13527004166666665,
+      "cpu_seconds_since_launch_at_window_end": 0.147483625,
+      "cpu_window_seconds": 20.029159584000013,
+      "verbose_start_seconds": 15.020855709000102,
+      "graphics_lines": [
+        "unmapped -         unmapped [ee8d413385]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [90ce98c72e]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [026c92e6e2]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [ad1aa02428]       9       9       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [9e7f6faac5]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [aff41b1b1a]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [72823f7f9d]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [d0d5587a3a]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [fae9af6263]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [fb4e6485b2]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [5559dbe313]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2621440 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.30764379200002,
+      "spawn_to_sample_seconds": 0.2787644159999445,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 61021,
+        "ready": true,
+        "ready_ms": 176.9639253616333,
+        "window_id": 14545
+      },
+      "window_counts": {
+        "layer0_count": 2,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14546,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 272,
+              "Width": 598,
+              "X": 565,
+              "Y": 236
+            },
+            "id": 14545,
+            "layer": 0,
+            "on_screen": true
+          }
+        ],
+        "pid": 61021,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-focused.1.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-focused.1.verbose.log",
+      "completed_utc": "2026-10-27T17:01:24.195482+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T17:00:52.549618+00:00",
+        "kind": "caret-launch",
+        "app": "zgx-caret-focused",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 54.7,
+          "busiest": [
+            "syspolicyd 25.3%",
+            "Zeron Engine 15.0%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.0%",
+            "zeron 1.7%",
+            "locationd 1.7%",
+            "logioptionsplus_agent 1.3%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 15.0%",
+            "zeron (44222) 1.7%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 1.7,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "zgx-caret-unfocused",
+      "repeat": 1,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.01203,
+          "footprint_bytes": 29427904,
+          "phys_footprint_bytes": 29460672
+        },
+        {
+          "seconds": 0.76403,
+          "footprint_bytes": 29444288,
+          "phys_footprint_bytes": 29477056
+        },
+        {
+          "seconds": 1.25803,
+          "footprint_bytes": 29444288,
+          "phys_footprint_bytes": 29477056
+        },
+        {
+          "seconds": 1.74203,
+          "footprint_bytes": 29444288,
+          "phys_footprint_bytes": 29477056
+        },
+        {
+          "seconds": 2.24803,
+          "footprint_bytes": 29427904,
+          "phys_footprint_bytes": 29460672
+        },
+        {
+          "seconds": 2.69203,
+          "footprint_bytes": 29427904,
+          "phys_footprint_bytes": 29460672
+        },
+        {
+          "seconds": 3.23703,
+          "footprint_bytes": 29427904,
+          "phys_footprint_bytes": 29460672
+        },
+        {
+          "seconds": 3.73503,
+          "footprint_bytes": 29427904,
+          "phys_footprint_bytes": 29460672
+        },
+        {
+          "seconds": 4.24603,
+          "footprint_bytes": 29427904,
+          "phys_footprint_bytes": 29460672
+        },
+        {
+          "seconds": 4.74003,
+          "footprint_bytes": 29427904,
+          "phys_footprint_bytes": 29460672
+        },
+        {
+          "seconds": 5.24103,
+          "footprint_bytes": 29427904,
+          "phys_footprint_bytes": 29460672
+        },
+        {
+          "seconds": 5.74003,
+          "footprint_bytes": 29329600,
+          "phys_footprint_bytes": 29362368
+        },
+        {
+          "seconds": 6.23903,
+          "footprint_bytes": 29329600,
+          "phys_footprint_bytes": 29362368
+        },
+        {
+          "seconds": 6.76003,
+          "footprint_bytes": 29329600,
+          "phys_footprint_bytes": 29362368
+        },
+        {
+          "seconds": 7.27003,
+          "footprint_bytes": 29329600,
+          "phys_footprint_bytes": 29362368
+        },
+        {
+          "seconds": 7.74103,
+          "footprint_bytes": 29329600,
+          "phys_footprint_bytes": 29362368
+        },
+        {
+          "seconds": 8.25903,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 8.74303,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 9.23903,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 9.75303,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 10.25903,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 10.74003,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 11.23803,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 11.74203,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 12.24303,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 12.69103,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 13.24503,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 13.69103,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 14.24503,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 14.75103,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 15.23603,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 15.69303,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 16.23903,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 16.73603,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 17.24103,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 17.74703,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 18.23403,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 18.74303,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 19.23403,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 19.69103,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        },
+        {
+          "seconds": 20.24803,
+          "footprint_bytes": 28281024,
+          "phys_footprint_bytes": 28313792
+        }
+      ],
+      "first_bytes": 29427904,
+      "last_bytes": 28281024,
+      "min_bytes": 28281024,
+      "max_bytes": 29444288,
+      "cpu_seconds": 0.012170416666666656,
+      "cpu_seconds_until_readiness": 0.12417770833333333,
+      "cpu_seconds_since_launch_at_window_end": 0.136348125,
+      "cpu_window_seconds": 20.012832125000045,
+      "verbose_start_seconds": 15.009029707999957,
+      "graphics_lines": [
+        "unmapped -         unmapped [50e5a9331f]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [b77360c52e]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [091b7fdd0e]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [66fabd48b1]       9       9       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [5daae1721a]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [011c4c6af7]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [f82cef6ba9]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [a0682ea8e0]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [16c39d9433]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [d9b330b2a0]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [d57327c14a]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2621440 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.284374957999944,
+      "spawn_to_sample_seconds": 0.26541679199999635,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 61247,
+        "ready": true,
+        "ready_ms": 173.07603359222412,
+        "window_id": 14549
+      },
+      "window_counts": {
+        "layer0_count": 2,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14550,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 272,
+              "Width": 598,
+              "X": 565,
+              "Y": 236
+            },
+            "id": 14549,
+            "layer": 0,
+            "on_screen": true
+          }
+        ],
+        "pid": 61247,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {
+        "ZGX_FOCUS": "0"
+      },
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-unfocused.1.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-unfocused.1.verbose.log",
+      "completed_utc": "2026-10-27T17:02:04.557545+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T17:01:33.281701+00:00",
+        "kind": "caret-launch",
+        "app": "zgx-caret-unfocused",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.0
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 40.0,
+          "busiest": [
+            "Zeron Engine 13.7%",
+            "airportd 5.0%",
+            "locationd 4.0%",
+            "com.apple.DriverKit-AppleBCMWLAN 3.0%",
+            "zeron 1.7%",
+            "logioptionsplus_agent 1.3%"
+          ],
+          "window_server_percent": 1.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 13.7%",
+            "zeron (44222) 1.7%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 1.7,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "zgx-caret-held",
+      "repeat": 1,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.012746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 0.754746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 1.253746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 1.760746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 2.253746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 2.708746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 3.259746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 3.752746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 4.259746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 4.751746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 5.257746,
+          "footprint_bytes": 31393856,
+          "phys_footprint_bytes": 31426624
+        },
+        {
+          "seconds": 5.761746,
+          "footprint_bytes": 31295552,
+          "phys_footprint_bytes": 31328320
+        },
+        {
+          "seconds": 6.261746,
+          "footprint_bytes": 31295552,
+          "phys_footprint_bytes": 31328320
+        },
+        {
+          "seconds": 6.708746,
+          "footprint_bytes": 31295552,
+          "phys_footprint_bytes": 31328320
+        },
+        {
+          "seconds": 7.249746,
+          "footprint_bytes": 31295552,
+          "phys_footprint_bytes": 31328320
+        },
+        {
+          "seconds": 7.656746,
+          "footprint_bytes": 31295552,
+          "phys_footprint_bytes": 31328320
+        },
+        {
+          "seconds": 8.254746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 8.749746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 9.262746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 9.710746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 10.244746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 10.754746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 11.202746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 11.701746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 12.255746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 12.655746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 13.257746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 13.754746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 14.250746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 14.756746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 15.203746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 15.760746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 16.258746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 16.753746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 17.248746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 17.747746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 18.253746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 18.704746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 19.202746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        },
+        {
+          "seconds": 19.762746,
+          "footprint_bytes": 30230592,
+          "phys_footprint_bytes": 30263360
+        }
+      ],
+      "first_bytes": 31393856,
+      "last_bytes": 30230592,
+      "min_bytes": 30230592,
+      "max_bytes": 31393856,
+      "cpu_seconds": 0.013410249999999999,
+      "cpu_seconds_until_readiness": 0.118934375,
+      "cpu_seconds_since_launch_at_window_end": 0.132344625,
+      "cpu_window_seconds": 20.01990083299995,
+      "verbose_start_seconds": 15.00421187500001,
+      "graphics_lines": [
+        "unmapped -         unmapped [c297bb98ac]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [cfc1231da6]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [52a7f7c4a4]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [0476f19516]       9       9       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [8fbfdddea0]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [948f59d9f2]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [555928bb13]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [4ee58a9f14]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [48f0b64518]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [962b5851e0]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [f938b5660d]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "2621440 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.276872291000018,
+      "spawn_to_sample_seconds": 0.25624087500000314,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 61554,
+        "ready": true,
+        "ready_ms": 166.86594486236572,
+        "window_id": 14553
+      },
+      "window_counts": {
+        "layer0_count": 2,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14554,
+            "layer": 0,
+            "on_screen": false
+          },
+          {
+            "bounds": {
+              "Height": 272,
+              "Width": 598,
+              "X": 565,
+              "Y": 236
+            },
+            "id": 14553,
+            "layer": 0,
+            "on_screen": true
+          }
+        ],
+        "pid": 61554,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [
+        "-NSTextInsertionPointBlinkPeriodOn",
+        "3600000"
+      ],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-held.1.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-caret-held.1.verbose.log",
+      "completed_utc": "2026-10-27T17:02:45.225837+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T17:02:13.765483+00:00",
+        "kind": "caret-launch",
+        "app": "zgx-caret-held",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.1
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 28.0,
+          "busiest": [
+            "Zeron Engine 12.7%",
+            "duetexpertd 2.7%",
+            "locationd 2.3%",
+            "zeron 1.7%",
+            "BiomeAgent 1.0%",
+            "logioptionsplus_agent 1.0%"
+          ],
+          "window_server_percent": 0.3,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 12.7%",
+            "zeron (44222) 1.7%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 1.7,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "cell": "zgx-blink",
+      "repeat": 1,
+      "source_commit": "63cfc5dc04993cfc6cd55c255dc59c8f17e09816",
+      "valid": true,
+      "footprint_points": [
+        {
+          "seconds": 0.012693,
+          "footprint_bytes": 39094336,
+          "phys_footprint_bytes": 39127104
+        },
+        {
+          "seconds": 0.745693,
+          "footprint_bytes": 50251840,
+          "phys_footprint_bytes": 50284608
+        },
+        {
+          "seconds": 1.219693,
+          "footprint_bytes": 50251840,
+          "phys_footprint_bytes": 50284608
+        },
+        {
+          "seconds": 1.729693,
+          "footprint_bytes": 50251840,
+          "phys_footprint_bytes": 50284608
+        },
+        {
+          "seconds": 2.232693,
+          "footprint_bytes": 50235456,
+          "phys_footprint_bytes": 50268224
+        },
+        {
+          "seconds": 2.734693,
+          "footprint_bytes": 50235456,
+          "phys_footprint_bytes": 50268224
+        },
+        {
+          "seconds": 3.227693,
+          "footprint_bytes": 50235456,
+          "phys_footprint_bytes": 50268224
+        },
+        {
+          "seconds": 3.732693,
+          "footprint_bytes": 50235456,
+          "phys_footprint_bytes": 50268224
+        },
+        {
+          "seconds": 4.261693,
+          "footprint_bytes": 50235456,
+          "phys_footprint_bytes": 50268224
+        },
+        {
+          "seconds": 4.768693,
+          "footprint_bytes": 50235456,
+          "phys_footprint_bytes": 50268224
+        },
+        {
+          "seconds": 5.238693,
+          "footprint_bytes": 50235456,
+          "phys_footprint_bytes": 50268224
+        },
+        {
+          "seconds": 5.751693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 6.213693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 6.749693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 7.217693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 7.750693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 8.231693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 8.762693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 9.224693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 9.749693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 10.256693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 10.749693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 11.251693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 11.753693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 12.238693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 12.753693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 13.270693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 13.763693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 14.255693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 14.764693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 15.211693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 15.761693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 16.224693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 16.771693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 17.229693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 17.730693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 18.254693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 18.732693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 19.222693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 19.739693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        },
+        {
+          "seconds": 20.216693,
+          "footprint_bytes": 50104384,
+          "phys_footprint_bytes": 50137152
+        }
+      ],
+      "first_bytes": 39094336,
+      "last_bytes": 50104384,
+      "min_bytes": 39094336,
+      "max_bytes": 50251840,
+      "cpu_seconds": 0.09134533333333333,
+      "cpu_seconds_until_readiness": 0.13242508333333333,
+      "cpu_seconds_since_launch_at_window_end": 0.22377041666666667,
+      "cpu_window_seconds": 20.011212083000032,
+      "verbose_start_seconds": 15.007440125000016,
+      "graphics_lines": [
+        "unmapped -         unmapped [1ab31fc7ae]      73      73       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [58b9676712]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [fe5bfd519a]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [9e8df06f8b]       2       2       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [6f6742f216]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [a624015ab4]      13      13       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [d229f8e17d]      32      32       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [4a411c0b82]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [a2bad2a961]      34      34       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [9e7f6faac5]       1       1       0       0   Owned physical footprint (unmapped) (graphics)",
+        "unmapped -         unmapped [a81b74b600]      26      26       0       0   Owned physical footprint (unmapped) (graphics)",
+        "3031040 B           0 B           0 B         11    Owned physical footprint (unmapped) (graphics)"
+      ],
+      "graphics_status": "reported",
+      "observation_seconds": 20.26006991600002,
+      "spawn_to_sample_seconds": 0.2870694169999979,
+      "ready": {
+        "activation_fallback": false,
+        "pid": 62016,
+        "ready": true,
+        "ready_ms": 175.73893070220947,
+        "window_id": 14557
+      },
+      "window_counts": {
+        "layer0_count": 2,
+        "layer0_on_screen_count": 1,
+        "owned_windows": [
+          {
+            "bounds": {
+              "Height": 750,
+              "Width": 956,
+              "X": 386,
+              "Y": 117
+            },
+            "id": 14557,
+            "layer": 0,
+            "on_screen": true
+          },
+          {
+            "bounds": {
+              "Height": 500,
+              "Width": 500,
+              "X": 0,
+              "Y": 617
+            },
+            "id": 14558,
+            "layer": 0,
+            "on_screen": false
+          }
+        ],
+        "pid": 62016,
+        "screens": [
+          {
+            "maximum_hz": 120,
+            "name": "Built-in Retina Display"
+          }
+        ]
+      },
+      "environment": {},
+      "args": [],
+      "raw_trace": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-blink.1.footprint.log",
+      "raw_verbose": "~/bench/m1-max-baseline-2026-10-26/baseline-attempts/caret-footprint-20261027T164945Z/zgx-blink.1.verbose.log",
+      "completed_utc": "2026-10-27T17:03:44.884231+00:00",
+      "ended_by_runner": true,
+      "preflight": {
+        "utc": "2026-10-27T17:03:13.513452+00:00",
+        "kind": "caret-launch",
+        "app": "zgx-blink",
+        "quiet": true,
+        "state": {
+          "displays": [
+            {
+              "name": "Color LCD",
+              "resolution": "1728 x 1117 @ 120.00Hz",
+              "pixels": "3456 x 2234",
+              "main": true
+            }
+          ],
+          "display_count": 1,
+          "wallpaper_apps": [],
+          "power_mode": "powermode 2",
+          "on_battery": false,
+          "macos": "26.0.1 (25A362)",
+          "uptime_hours": 2036.1
+        },
+        "findings": {
+          "heavy": [],
+          "other_cpu_percent": 41.3,
+          "busiest": [
+            "Zeron Engine 22.0%",
+            "zeron 4.0%",
+            "com.apple.DriverKit-AppleBCMWLAN 2.3%",
+            "runningboardd 2.0%",
+            "bluetoothd 1.3%",
+            "logioptionsplus_agent 1.0%"
+          ],
+          "window_server_percent": 0.7,
+          "residents": [],
+          "zeron": [
+            "Zeron Engine (28865) 22.0%",
+            "zeron (44222) 4.0%"
+          ],
+          "dialogs": [],
+          "zeron_ui_pids": [
+            44222
+          ],
+          "zeron_ui_cpu_percent": 4.0,
+          "zeron_ui_windows": [
+            {
+              "covering_windows": [],
+              "frontmost_pid": 752,
+              "pid": 44222,
+              "system_dialog_windows": [],
+              "window_exists": false
+            }
+          ],
+          "permissions": {
+            "accessibility_trusted": true,
+            "screen_capture_preflight": true,
+            "screen_locked": false,
+            "screens": [
+              {
+                "maximum_hz": 120,
+                "mode_hz": 120,
+                "name": "Built-in Retina Display",
+                "scale": 2
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "protocol": {
+    "seconds": 20,
+    "footprint_interval": 0.5,
+    "verbose_at": 15,
+    "rounds": 2,
+    "no_capture": true,
+    "no_macsample": true,
+    "no_GUI_polling_during_measurement": true,
+    "window_count": "at readiness before sampling",
+    "cpu": "proc_pid_rusageV0, Mach timebase, start/end of measured window"
+  },
+  "complete": true,
+  "finished_utc": "2026-10-27T17:03:44.892837+00:00"
+}

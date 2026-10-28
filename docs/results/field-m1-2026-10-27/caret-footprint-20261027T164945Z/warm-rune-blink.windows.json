@@ -1,0 +1,79 @@
+{
+  "layer0_count": 6,
+  "layer0_on_screen_count": 1,
+  "owned_windows": [
+    {
+      "bounds": {
+        "Height": 33,
+        "Width": 1728,
+        "X": 0,
+        "Y": 0
+      },
+      "id": 14469,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 33,
+        "Width": 1728,
+        "X": 0,
+        "Y": 0
+      },
+      "id": 14467,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 33,
+        "Width": 1728,
+        "X": 0,
+        "Y": 0
+      },
+      "id": 14466,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 746,
+        "Width": 952,
+        "X": 388,
+        "Y": 119
+      },
+      "id": 14465,
+      "layer": 0,
+      "on_screen": true
+    },
+    {
+      "bounds": {
+        "Height": 33,
+        "Width": 1728,
+        "X": 0,
+        "Y": 0
+      },
+      "id": 14468,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 500,
+        "Width": 500,
+        "X": 0,
+        "Y": 617
+      },
+      "id": 14470,
+      "layer": 0,
+      "on_screen": false
+    }
+  ],
+  "pid": 58062,
+  "screens": [
+    {
+      "maximum_hz": 120,
+      "name": "Built-in Retina Display"
+    }
+  ]
+}

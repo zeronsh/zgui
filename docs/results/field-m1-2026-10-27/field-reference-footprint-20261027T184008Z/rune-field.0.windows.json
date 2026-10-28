@@ -1,0 +1,83 @@
+{
+  "frontmost_pid": 14078,
+  "frontmost_pid_after_snapshot": 14078,
+  "is_frontmost": true,
+  "key_window_state": "not queried (AX omitted)",
+  "layer0_count": 6,
+  "layer0_on_screen_count": 1,
+  "owned_windows": [
+    {
+      "bounds": {
+        "Height": 500,
+        "Width": 500,
+        "X": 0,
+        "Y": 617
+      },
+      "id": 15417,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 33,
+        "Width": 1728,
+        "X": 0,
+        "Y": 0
+      },
+      "id": 15415,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 33,
+        "Width": 1728,
+        "X": 0,
+        "Y": 0
+      },
+      "id": 15414,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 33,
+        "Width": 1728,
+        "X": 0,
+        "Y": 0
+      },
+      "id": 15413,
+      "layer": 0,
+      "on_screen": false
+    },
+    {
+      "bounds": {
+        "Height": 752,
+        "Width": 962,
+        "X": 383,
+        "Y": 116
+      },
+      "id": 15412,
+      "layer": 0,
+      "on_screen": true
+    },
+    {
+      "bounds": {
+        "Height": 33,
+        "Width": 1728,
+        "X": 0,
+        "Y": 0
+      },
+      "id": 15416,
+      "layer": 0,
+      "on_screen": false
+    }
+  ],
+  "pid": 14078,
+  "screens": [
+    {
+      "maximum_hz": 120,
+      "name": "Built-in Retina Display"
+    }
+  ]
+}

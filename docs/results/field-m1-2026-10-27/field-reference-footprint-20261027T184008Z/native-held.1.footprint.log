@@ -1,0 +1,1960 @@
+Time: 2026-10-27 11:45:41.361-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:42.112-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:42.615-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:43.118-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:43.590-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:44.109-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:44.601-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:45.110-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:45.599-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:46.112-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25512000 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1805933 B           0 B           0 B        858    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        943    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   353737 B           0 B           0 B       2459    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   327680 B           0 B       32768 B         14    stack
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        615    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B        994    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1002    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1024    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25512000 B    18792448 B       32768 B       8084    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25561152 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:46.585-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:47.122-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:47.603-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:48.122-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:48.593-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:49.120-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:49.613-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:50.117-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:50.593-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:51.120-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:51.602-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25430080 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   344064 B    18186240 B           0 B         26    mapped file
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25430080 B    18792448 B       32768 B       8160    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25462848 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:52.122-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:52.579-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:53.113-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:53.595-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:54.111-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:54.577-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:55.113-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:55.586-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:56.125-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:56.582-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:57.120-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25086016 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   229376 B           0 B       32768 B         10    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25086016 B    15433728 B       32768 B       8159    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25118784 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:57.594-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25036864 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   180224 B           0 B       32768 B          8    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25036864 B    15433728 B       32768 B       8157    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25069632 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:58.125-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25036864 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   180224 B           0 B       32768 B          8    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25036864 B    15433728 B       32768 B       8157    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25069632 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:58.604-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25036864 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   180224 B           0 B       32768 B          8    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25036864 B    15433728 B       32768 B       8157    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25069632 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:59.121-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25036864 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   180224 B           0 B       32768 B          8    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25036864 B    15433728 B       32768 B       8157    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25069632 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:45:59.582-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25036864 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   180224 B           0 B       32768 B          8    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25036864 B    15433728 B       32768 B       8157    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25069632 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:46:00.121-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25036864 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   180224 B           0 B       32768 B          8    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25036864 B    15433728 B       32768 B       8157    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25069632 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:46:00.606-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25036864 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   180224 B           0 B       32768 B          8    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25036864 B    15433728 B       32768 B       8157    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25069632 B
+    phys_footprint_peak: 26740800 B
+
+Time: 2026-10-27 11:46:01.113-07:00
+======================================================================
+native_field [15947]: 64-bit    Footprint: 25036864 B (16384 bytes per page)
+======================================================================
+
+      Dirty         Clean   Reclaimable    Regions    Category
+        ---           ---           ---        ---    ---
+ 15204352 B           0 B           0 B         16    MALLOC_SMALL
+  1806893 B           0 B           0 B        868    __DATA_DIRTY
+   983040 B           0 B           0 B         13    MALLOC metadata
+   945242 B           0 B           0 B        953    __DATA
+   819200 B           0 B           0 B          3    CG image
+   802816 B           0 B           0 B          1    MALLOC_LARGE
+   638976 B           0 B           0 B         29    ColorSync
+   606208 B           0 B           0 B         13    CoreAnimation
+   559168 B           0 B           0 B          1    page table
+   475136 B           0 B           0 B         28    untagged (VM_ALLOCATE)
+   369161 B           0 B           0 B       2481    unused dyld shared cache area
+   311296 B           0 B           0 B          1    MALLOC_TINY
+   270216 B           0 B           0 B        623    __AUTH
+   262144 B           0 B           0 B          2    CoreUI image data
+   180224 B           0 B       32768 B          8    stack
+   131072 B           0 B           0 B          1    Accelerate image backing stores
+   131072 B           0 B           0 B         13    IOSurface
+   114688 B           0 B           0 B       1004    __AUTH_CONST
+    98280 B           0 B           0 B          2    __TPRO_CONST
+    65536 B           0 B           0 B          2    IOAccelerator
+    49152 B           0 B           0 B          1    dyld private memory
+    49152 B           0 B           0 B          6    IOKit
+    32768 B       16384 B           0 B       1012    __DATA_CONST
+    32768 B           0 B           0 B          1    Activity Tracing
+    32768 B           0 B           0 B          2    CoreGraphics
+    16384 B           0 B           0 B          1    MALLOC_NANO
+    16384 B           0 B           0 B          1    IOAccelerator (graphics)
+    16384 B           0 B           0 B          1    os_alloc_once
+    16384 B           0 B           0 B          1    Foundation
+        0 B    14827520 B           0 B         25    mapped file
+        0 B      524288 B           0 B       1034    __TEXT
+        0 B       65536 B           0 B          5    __LINKEDIT
+        0 B           0 B           0 B          1    __FONT_DATA
+        0 B           0 B           0 B          1    __INFO_FILTER
+        0 B           0 B           0 B          1    __CTF
+        ---           ---           ---        ---    ---
+ 25036864 B    15433728 B       32768 B       8157    TOTAL
+
+Auxiliary data:
+    phys_footprint: 25069632 B
+    phys_footprint_peak: 26740800 B
+

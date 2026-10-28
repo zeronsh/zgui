@@ -29,7 +29,7 @@ Animate's WindowServer CPU is the lowest of all (17.8 against 18.3–22.1).
 
 ### The field on an M1 Max
 
-These are references for the field cells the site shows (`field-macos-2026-10-27-238ef98`, on the M5 Max), from the M1 runner's run `field-reference-footprint-20261027T184008Z`: an M1 Max, macOS 26.0.1 (25A362), each framework's own focused field left alone.
+These are references for the field cells the site shows (`field-macos-2026-10-27-238ef98`, on the M5 Max), from the M1 runner's run [`field-reference-footprint-20261027T184008Z`](field-m1-2026-10-27/field-reference-footprint-20261027T184008Z/) (source `4ea3e16f`): an M1 Max (MacBookPro18,2, 10 CPU and 32 GPU cores, built-in 120 Hz ProMotion display), macOS 26.0.1 (25A362), each framework's own focused field left alone. The model comes from the runner's session record; the runs themselves record only macOS and the display.
 
 | | Memory (MiB) | App CPU (%) | WindowServer CPU (%) |
 | --- | --- | --- | --- |
@@ -40,7 +40,9 @@ These are references for the field cells the site shows (`field-macos-2026-10-27
 | AppKit's NSTextField | 23.9 | 0.25 | 5.7 |
 
 - **The caret's cost to WindowServer.** Focused against held still, the native caret costs WindowServer 4.6 points on the M1, and zgx's costs 1.5. So what a blinking caret costs there is the platform's (ProMotion after a change), and zgx's caret costs about a third of AppKit's own.
-- **No driver hold on the M1.** The M5 Max keeps about 176 MB of Metal driver memory for a command queue while frames come every few seconds. The M1 kept none: its graphics footprint stayed at 2.4–7.1 MiB in every cell of the caret cohort (`caret-footprint-20261027T164945Z`). That hold depends on the machine and the macOS version (26.0.1 there, 26.4 on the M5).
+- **No driver hold on the M1.** The M5 Max keeps about 176 MB of Metal driver memory for a command queue while frames come every few seconds. The M1 kept none: its graphics footprint stayed at 2.4–7.1 MiB in every cell of the caret cohort ([`caret-footprint-20261027T164945Z`](field-m1-2026-10-27/caret-footprint-20261027T164945Z/), the older CA-blink build `63cfc5dc`). That hold depends on the machine and the macOS version (26.0.1 there, 26.4 on the M5).
+
+Both runs are in [`field-m1-2026-10-27`](field-m1-2026-10-27/) as the runner recorded them, with two changes: home paths read `~` and the temporary directory `$TMPDIR`, and each launch's recorded environment drops `HOME`, `PATH`, `TMPDIR` and `USER` (the `ZGX_*` variables and `LANG` stay). Each run's `vmmap`-style region dumps (`*.verbose.log`, 31 MB) are packed in its `verbose-logs.tar.gz`. The runner's archive before these changes had sha256 `ef034f34babb93cd5ee017a618467c8eb6d3bda80b82de77af25ca352ed17568`; the binaries' and helpers' hashes in each record are unchanged.
 
 # Windows suite (2026-10-27): DWM's CPU in cycles, on `ffbae9d`
 

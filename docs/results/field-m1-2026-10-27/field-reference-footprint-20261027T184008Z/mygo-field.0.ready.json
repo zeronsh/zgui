@@ -1,0 +1,29 @@
+{
+  "activation_attempts": 0,
+  "activation_fallback": false,
+  "pid": 13970,
+  "ready": true,
+  "ready_ms": 286.3049507141113,
+  "required_layer0_count": 6,
+  "window_id": 15404,
+  "windows": {
+    "all": {
+      "0": 6
+    },
+    "on_screen": {
+      "0": 1
+    }
+  },
+  "launch_protocol": "LaunchServices approved exception",
+  "wrapper": "/private/tmp/zgx-caret-launchservices/518b252166b1ae13/mygo-field.app",
+  "executable": "/private/tmp/zgx-caret-launchservices/518b252166b1ae13/mygo-field.app/Contents/MacOS/mygo-field",
+  "binary_sha256": "518b252166b1ae1350fc09e5a2081fe3c110a15dd0addcd0731c0652fd0ed3c2",
+  "explicit_environment": {
+    "LANG": "C.UTF-8",
+    "ZGX_SECONDS": "30",
+    "ZGUI_SECONDS": "30",
+    "ZGX_FONT_FILE": "/tmp/zgx-staged/7da195a74c55bef9/DejaVuSans.ttf"
+  },
+  "helper_sha256": "386249a65693835a49c442bbcae5ce020b40676fbab915b01107a10c70eea4a2",
+  "helper_exit": 0
+}

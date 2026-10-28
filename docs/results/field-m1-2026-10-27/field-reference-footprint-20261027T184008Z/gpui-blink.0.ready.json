@@ -1,0 +1,29 @@
+{
+  "activation_attempts": 0,
+  "activation_fallback": false,
+  "pid": 13775,
+  "ready": true,
+  "ready_ms": 286.92007064819336,
+  "required_layer0_count": 6,
+  "window_id": 15396,
+  "windows": {
+    "all": {
+      "0": 6
+    },
+    "on_screen": {
+      "0": 1
+    }
+  },
+  "launch_protocol": "LaunchServices approved exception",
+  "wrapper": "/private/tmp/zgx-caret-launchservices/7205a0e40f9f7685/gpui-blink.app",
+  "executable": "/private/tmp/zgx-caret-launchservices/7205a0e40f9f7685/gpui-blink.app/Contents/MacOS/blink",
+  "binary_sha256": "7205a0e40f9f7685a249c0c9db99ab0adf11d08d939e9f15e5596fbbcadcdf81",
+  "explicit_environment": {
+    "LANG": "C.UTF-8",
+    "ZGX_SECONDS": "30",
+    "ZGUI_SECONDS": "30",
+    "ZGX_FONT_FILE": "/tmp/zgx-staged/7da195a74c55bef9/DejaVuSans.ttf"
+  },
+  "helper_sha256": "386249a65693835a49c442bbcae5ce020b40676fbab915b01107a10c70eea4a2",
+  "helper_exit": 0
+}

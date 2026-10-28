@@ -1,0 +1,29 @@
+{
+  "activation_attempts": 0,
+  "activation_fallback": false,
+  "pid": 13469,
+  "ready": true,
+  "ready_ms": 499.34303760528564,
+  "required_layer0_count": 6,
+  "window_id": 15374,
+  "windows": {
+    "all": {
+      "0": 6
+    },
+    "on_screen": {
+      "0": 1
+    }
+  },
+  "launch_protocol": "LaunchServices approved exception",
+  "wrapper": "/private/tmp/zgx-caret-launchservices/f08792ae5e8c1ecd/native-focused.app",
+  "executable": "/private/tmp/zgx-caret-launchservices/f08792ae5e8c1ecd/native-focused.app/Contents/MacOS/native_field",
+  "binary_sha256": "f08792ae5e8c1ecdf5b295457523d36909c5f48c07355aea180fe006e1b5fbc9",
+  "explicit_environment": {
+    "LANG": "C.UTF-8",
+    "ZGX_SECONDS": "30",
+    "ZGUI_SECONDS": "30",
+    "ZGX_FONT_FILE": "/tmp/zgx-staged/7da195a74c55bef9/DejaVuSans.ttf"
+  },
+  "helper_sha256": "386249a65693835a49c442bbcae5ce020b40676fbab915b01107a10c70eea4a2",
+  "helper_exit": 0
+}
