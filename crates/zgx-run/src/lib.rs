@@ -9,6 +9,17 @@ use zgx::input::{Key, Modifiers};
 use zgx_desktop::{AppMenu, AppMenuEntry, Application, MenuAccelerator, WindowOptions};
 use zgx_script::{Command, ScriptHost};
 
+#[cfg(feature = "fetch")]
+mod fetch;
+/// Give `host` the fetcher `run` gives a script (feature `fetch`, on by
+/// default): `ui.fetch` and remote images over HTTP and HTTPS, each request
+/// on a thread of its own, its body streamed to the script as it arrives,
+/// a cancelled one stopped. For a host made outside `run`.
+#[cfg(feature = "fetch")]
+pub fn install_fetcher(host: &ScriptHost) {
+    fetch::install(host);
+}
+
 /// Menus in the order the script first names them, items in its order.
 pub fn menus(commands: &[Command]) -> Vec<AppMenu> {
     let mut menus: Vec<AppMenu> = Vec::new();
@@ -262,7 +273,8 @@ pub fn run_with(path: &Path, args: Vec<String>) -> Result<(), Box<dyn std::error
 
 /// As [`run_with`], `host` given the script's host before it loads: an app
 /// that serves its script (a fetcher, actions, shared state) keeps
-/// everything `run` gives it, the menu bar of its commands included.
+/// everything `run` gives it, the menu bar of its commands included. A
+/// fetcher it sets replaces the default one (`install_fetcher`).
 pub fn run_hosting(
     path: &Path,
     args: Vec<String>,
@@ -335,6 +347,9 @@ pub fn run_hosting(
         );
         // `ui.window.zoom`: the window's zoom, as its keys or the script set it.
         host.window_zoom(&cx.ui);
+        // The network, unless the host's setup brings its own transport.
+        #[cfg(feature = "fetch")]
+        fetch::install(&host);
         configure(&host);
         let _ = host.reload();
         cx.tasks.spawn(host.watch(Duration::from_millis(250)));
