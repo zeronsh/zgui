@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.88"
 name = "zgx-mlua"
-version = "0.12.4"
+version = "0.12.5"
 authors = [
     "Aleksandr Orlenko <zxteam@pm.me>",
     "kyren <catherine@kyju.org>",
@@ -131,11 +131,11 @@ optional = true
 version = "0.13.0"
 package = "mlua-sys"
 
-# zgx patch: mlua-sys builds whichever Luau 0.22 resolves, and Luau 744
-# (luau0-src 0.22.1) fails mlua 0.12.2's setup ("attempt to load a text
-# chunk (mode is 'b')"): held to 0.22.0 (Luau 740) until mlua takes it.
+
+# zgx patch: any Luau 0.22, 740 or 744 and later: Luau 744's bytecode
+# (version 13) loads through zgx's own check (ZGX_PATCH.md).
 [dependencies.luau0-src]
-version = "=0.22.0"
+version = "0.22"
 optional = true
 
 [dependencies.futures-util]
@@ -183,3 +183,7 @@ check-cfg = [
 
 # zgx: its own workspace, outside zgx's (whose crates depend on it by path).
 [workspace]
+
+# zgx patch: what the library's own tests use (cargo test --features luau --lib).
+[dev-dependencies.static_assertions]
+version = "1"

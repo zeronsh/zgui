@@ -755,8 +755,9 @@ impl Chunk<'_> {
             if source.starts_with(ffi::LUA_SIGNATURE) {
                 return ChunkMode::Binary;
             }
+            // zgx patch: zgx's check, not mlua-sys's (`luau::is_bytecode`).
             #[cfg(feature = "luau")]
-            if unsafe { ffi::luaL_isbytecode(source.as_ptr().cast(), source.len()) } {
+            if crate::luau::is_bytecode(source) {
                 return ChunkMode::Binary;
             }
         }

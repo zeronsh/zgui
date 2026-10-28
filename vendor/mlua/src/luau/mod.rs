@@ -19,6 +19,87 @@ use crate::types::MaybeSend;
 pub use heap_dump::HeapDump;
 pub use require::{FsRequirer, NavigateError, Require};
 
+/// zgx patch: whether `data` is Luau bytecode, by the versions Luau 0.22
+/// loads (`LBC_VERSION_MAX`, 14 in Luau 744). mlua-sys 0.13's
+/// `luaL_isbytecode` takes versions up to 11, and Luau 744 writes 13: its
+/// compiled chunks read as text there, and loading one as binary failed
+/// ("attempt to load a text chunk (mode is 'b')").
+pub(crate) fn is_bytecode(data: &[u8]) -> bool {
+    const LBC_VERSION_MAX: u8 = 14;
+    match *data {
+        [] => false,
+        // An error chunk (0) or a version before types (below '\t').
+        [version, ..] if version < b'\t' => true,
+        // From version 4, a types version follows: text never starts with
+        // a tab, a newline or a carriage return followed by a control
+        // character from 1 to 3.
+        [version, types, ..] if version <= LBC_VERSION_MAX => (1..=3).contains(&types),
+        _ => false,
+    }
+}
+
+/// zgx patch: mlua-sys 0.13's `luaL_loadbufferenv`, line for line, but
+/// for its bytecode check (`is_bytecode`): text is compiled and loaded,
+/// bytecode loaded as it is, the mode allowing each.
+#[allow(non_snake_case)]
+pub(crate) unsafe fn luaL_loadbufferenv(
+    L: *mut ffi::lua_State,
+    data: *const std::os::raw::c_char,
+    mut size: usize,
+    name: *const std::os::raw::c_char,
+    mode: *const std::os::raw::c_char,
+    mut env: c_int,
+) -> c_int {
+    use std::os::raw::{c_char, c_void};
+    unsafe extern "C" {
+        fn free(p: *mut c_void);
+    }
+
+    unsafe extern "C" fn data_dtor(_: *mut ffi::lua_State, data: *mut c_void) {
+        free(*(data as *mut *mut c_char) as *mut c_void);
+    }
+
+    let is_bytecode = is_bytecode(std::slice::from_raw_parts(data.cast(), size));
+    if !mode.is_null() {
+        let modeb = CStr::from_ptr(mode).to_bytes();
+        let allow_binary = modeb.contains(&b'b');
+        let allow_text = modeb.contains(&b't');
+        if is_bytecode && !allow_binary {
+            ffi::lua_pushfstring(L, cstr!("attempt to load a binary chunk (mode is '%s')"), mode);
+            return ffi::LUA_ERRSYNTAX;
+        } else if !is_bytecode && !allow_text {
+            ffi::lua_pushfstring(L, cstr!("attempt to load a text chunk (mode is '%s')"), mode);
+            return ffi::LUA_ERRSYNTAX;
+        }
+    }
+
+    let status = if !is_bytecode {
+        if env < 0 {
+            env -= 1;
+        }
+        let data_ud = ffi::lua_newuserdatadtor(L, std::mem::size_of::<*mut c_char>(), data_dtor) as *mut *mut c_char;
+        let data = ffi::luau_compile_(data, size, ptr::null_mut(), &mut size);
+        ptr::write(data_ud, data);
+        // By deferring the `free(data)` to the userdata destructor, we ensure that
+        // even if `luau_load` throws an error, the `data` is still released.
+        let status = ffi::luau_load(L, name, data, size, env);
+        ffi::lua_replace(L, -2); // replace data with the result
+        status
+    } else {
+        ffi::luau_load(L, name, data, size, env)
+    };
+
+    if status != 0 {
+        if ffi::lua_isstring(L, -1) != 0 && CStr::from_ptr(ffi::lua_tostring(L, -1)) == c"not enough memory" {
+            // A case for Luau >= 0.679
+            return ffi::LUA_ERRMEM;
+        }
+        return ffi::LUA_ERRSYNTAX;
+    }
+
+    ffi::LUA_OK
+}
+
 #[cfg(feature = "luau-jit")]
 pub(crate) fn init_jit_flags() {
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -170,3 +251,31 @@ unsafe extern "C-unwind" fn lua_loadstring(state: *mut ffi::lua_State) -> c_int 
 mod heap_dump;
 mod json;
 mod require;
+
+#[cfg(test)]
+mod zgx_tests {
+    use super::is_bytecode;
+
+    #[test]
+    fn bytecode_of_every_luau_0_22_version_is_bytecode_and_text_is_not() {
+        // An error chunk, and versions before a types version follows.
+        assert!(is_bytecode(&[0, b'e']));
+        assert!(is_bytecode(&[3, 0, 0]));
+        // Luau 740 writes 9 (a tab), Luau 744 writes 13 (a carriage
+        // return), each with a types version from 1 to 3; mlua-sys 0.13
+        // took up to 11.
+        for version in 9..=14 {
+            for types in 1..=3 {
+                assert!(is_bytecode(&[version, types, 0]), "{version} {types}");
+            }
+        }
+        // Text, even starting with a tab or a line break.
+        assert!(!is_bytecode(b""));
+        assert!(!is_bytecode(b"return 1"));
+        assert!(!is_bytecode(b"\treturn 1"));
+        assert!(!is_bytecode(b"\r\nreturn 1"));
+        assert!(!is_bytecode(b"\n"));
+        // Versions Luau 0.22 doesn't load.
+        assert!(!is_bytecode(&[15, 3, 0]));
+    }
+}

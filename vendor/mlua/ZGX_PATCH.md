@@ -96,12 +96,24 @@ comparison of its own, `mount_bench` ran 0.35% more instructions.
 Checked: `the_interrupt_is_set_by_the_memory_alarm` (zgx-script), and the
 memory-limit tests listed above, in debug and release builds.
 
-## Luau held to 740 (zgx-mlua 0.12.3)
+## Luau 744's bytecode loads (zgx-mlua 0.12.5)
 
 mlua-sys 0.13.0 builds Luau from `luau0-src` 0.22, and 0.22.1 (Luau 744,
-2026-10-24) fails mlua 0.12.2's setup as a Lua state is made: "Error
-configuring Luau: attempt to load a text chunk (mode is 'b')". zgx's
-lockfile held 0.22.0, so only an app resolving afresh met it, and every
-Luau app panicked at start. The `luau` feature now depends on
-`luau0-src = "=0.22.0"` (unused as code: it holds the one 0.22 version a
-build may have). Drop it once mlua works with Luau 744.
+2026-10-24, since yanked) failed mlua 0.12.2's setup as a Lua state was
+made: "Error configuring Luau: attempt to load a text chunk (mode is 'b')"
+(#633). Luau 744's compiler writes bytecode version 13, and mlua-sys's
+`luaL_isbytecode` takes versions up to 11 for bytecode: mlua compiles a
+chunk, then loads it as binary, and mlua-sys read it as text. zgx-mlua
+0.12.3 held `luau0-src` at 0.22.0 (Luau 740).
+
+zgx-mlua checks for bytecode itself (`luau::is_bytecode`, by the versions
+Luau 0.22 loads, 14 at most): `Chunk::detect_mode` asks it, and chunks
+load through `luau::luaL_loadbufferenv`, mlua-sys's loader copied line for
+line but for that check (`RawLua::load_chunk_inner` calls it): a load does
+the work it did, and Luau 744's bytecode loads as bytecode. `luau0-src` is
+any 0.22 again. Drop this once mlua-sys knows version 13 (`LBC_VERSION_MAX`
+in its `src/luau/compat.rs`).
+
+The library's own tests run (`cargo test --features luau --lib`) with
+`static_assertions` as a dev-dependency, which the published package
+leaves out.

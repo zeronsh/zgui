@@ -8,6 +8,12 @@ use std::ptr::{self, NonNull};
 use std::sync::Arc;
 
 use crate::chunk::ChunkMode;
+// zgx patch: Luau's chunks load through zgx's copy of mlua-sys's loader,
+// which takes Luau 744's bytecode for bytecode (`luau::luaL_loadbufferenv`).
+#[cfg(feature = "luau")]
+use crate::luau::luaL_loadbufferenv as load_buffer;
+#[cfg(not(feature = "luau"))]
+use ffi::luaL_loadbufferenv as load_buffer;
 use crate::error::{Error, Result};
 use crate::function::Function;
 use crate::memory::{ALLOCATOR, MemoryState};
@@ -391,7 +397,7 @@ impl RawLua {
         mode: *const c_char,
         source: &[u8],
     ) -> c_int {
-        let status = ffi::luaL_loadbufferenv(
+        let status = load_buffer(
             state,
             source.as_ptr() as *const c_char,
             source.len(),
