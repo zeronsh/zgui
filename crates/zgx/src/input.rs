@@ -619,8 +619,13 @@ struct State {
     captured: Option<NodeId>,
     capture_button: Option<PointerButton>,
     /// The hovered node (the pointer's hit target) and its ancestors, up to
-    /// the active modal root: each has had its enter, none its leave yet.
+    /// the active modal root.
     hover: Vec<NodeId>,
+    /// The nodes told of hover, outermost first: each has had its enter,
+    /// none its leave yet. `set_hover` tells them until they are `hover`,
+    /// a step at a time, so a listener's own dispatch takes them on from
+    /// where they are.
+    hover_told: Vec<NodeId>,
     /// Where the pointer last was over the window (None: outside it).
     pointer: Option<(f32, f32)>,
     file_hovered: Option<NodeId>,
@@ -1220,6 +1225,7 @@ impl InputDispatcher {
                 .chain(s.key_pressed.as_ref().map(|(id, _)| *id))
                 .chain(s.clicks.0.map(|click| click.target))
                 .chain(s.hover.iter().copied())
+                .chain(s.hover_told.iter().copied())
                 .chain(s.file_hovered)
                 .chain(s.scroll_latch.map(|(id, ..)| id))
                 .chain(s.drag.iter().flat_map(drag::DragSession::nodes))
@@ -1304,37 +1310,46 @@ impl InputDispatcher {
                 node = scene.parent(id);
             }
         }
-        let entering = {
-            let mut state = self.state.borrow_mut();
-            let old = std::mem::take(&mut state.hover);
-            let common = old
-                .iter()
-                .rev()
-                .zip(next.iter().rev())
-                .take_while(|(a, b)| a == b)
-                .count();
-            let entering: Vec<NodeId> = next[..next.len() - common].to_vec();
-            state.hover = next;
-            drop(state);
-            let mut heard = false;
-            for &id in &old[..old.len() - common] {
-                heard |= self.hover_event(scene, id, InputEvent::PointerLeave);
-            }
-            (entering, heard)
-        };
-        let (entering, mut heard) = entering;
-        // A leave handler that moved hover again (it dispatched) owns it now.
-        if self.state.borrow().hover.first().copied() != hit {
-            return heard;
+        self.state.borrow_mut().hover = next;
+        let mut heard = false;
+        // Leave the innermost told node past where they agree, else enter
+        // the next hovered one past it, and look again: a listener that
+        // dispatched may have moved hover on. (Both are ancestor chains:
+        // told from the outermost, hover from the hit.)
+        loop {
+            let step = {
+                let mut state = self.state.borrow_mut();
+                let state = &mut *state;
+                let common = state
+                    .hover_told
+                    .iter()
+                    .zip(state.hover.iter().rev())
+                    .take_while(|(told, hovered)| told == hovered)
+                    .count();
+                if state.hover_told.len() > common {
+                    state
+                        .hover_told
+                        .pop()
+                        .map(|id| (id, InputEvent::PointerLeave))
+                } else if state.hover.len() > common {
+                    let id = state.hover[state.hover.len() - 1 - common];
+                    state.hover_told.push(id);
+                    Some((id, InputEvent::PointerEnter))
+                } else {
+                    None
+                }
+            };
+            let Some((id, event)) = step else {
+                return heard;
+            };
+            heard |= self.hover_event(scene, id, event);
         }
-        for &id in entering.iter().rev() {
-            heard |= self.hover_event(scene, id, InputEvent::PointerEnter);
-        }
-        heard
     }
-    /// Deliver an enter or leave to `node`'s own listeners only; whether
-    /// it has any.
+    /// Deliver an enter or leave to `node`'s own listeners only, while it
+    /// still holds (a listener's dispatch may have left or entered it
+    /// again); whether it has any.
     fn hover_event(&self, scene: &Rc<RefCell<Scene>>, node: NodeId, event: InputEvent) -> bool {
+        let entering = matches!(event, InputEvent::PointerEnter);
         if !scene.borrow().contains(node) {
             return false;
         }
@@ -1356,12 +1371,18 @@ impl InputDispatcher {
         };
         let mut ctx = EventContext::new(event, node);
         for (token, callback) in callbacks {
-            let attached = self
-                .state
-                .borrow()
-                .entries
-                .get(&node)
-                .is_some_and(|entries| entries.iter().any(|entry| entry.token == token));
+            let (attached, current) = {
+                let state = self.state.borrow();
+                let attached = state
+                    .entries
+                    .get(&node)
+                    .is_some_and(|entries| entries.iter().any(|entry| entry.token == token));
+                (attached, state.hover_told.contains(&node) == entering)
+            };
+            // A listener before it moved hover: what follows was told anew.
+            if !current {
+                break;
+            }
             if !attached || !scene.borrow().contains(node) {
                 continue;
             }

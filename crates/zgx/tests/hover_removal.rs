@@ -133,3 +133,49 @@ fn hiding_a_hovered_view_from_its_enter_handler_does_not_panic() {
     assert!(!shown.get());
     assert!(view.find("hovered").is_none());
 }
+
+/// A parent's enter handler that moves the pointer on (a dispatch of its
+/// own) leaves no child hovered: the move it made told them as they are.
+#[test]
+fn late_enter_keeps_hover_style_on_after_pointer_redirect() {
+    use std::cell::Cell;
+    use zgx::{compose::prelude::*, scene::NodeKind, widgets::Ui};
+    let mut ui = Ui::new(200., 100.);
+    let input = ui.input.clone();
+    let scene = ui.scene.clone();
+    let once = Cell::new(true);
+    let view = ui.mount(
+        row()
+            .child(
+                column()
+                    .size(50., 50.)
+                    .on_event(move |e| {
+                        if matches!(e.event, InputEvent::PointerEnter) && once.replace(false) {
+                            input.dispatch(&scene, InputEvent::PointerMove { x: 75., y: 10. });
+                        }
+                    })
+                    .child(
+                        div()
+                            .id("a")
+                            .size(50., 50.)
+                            .bg(rgb(0x112233))
+                            .hover(|s| s.bg(rgb(0xff0000)))
+                            .on_click(|| {}),
+                    ),
+            )
+            .child(div().id("b").size(50., 50.).on_click(|| {})),
+    );
+    ui.prepare_frame();
+    let a = view.find("a").unwrap();
+    let b = view.find("b").unwrap();
+    ui.dispatch(InputEvent::PointerMove { x: 10., y: 10. });
+    ui.dispatch(InputEvent::PointerMove { x: 75., y: 10. });
+    ui.prepare_frame();
+    assert_eq!(ui.input.hovered(), Some(b));
+    let actual = match ui.scene.borrow().kind(a) {
+        NodeKind::Rect(c) => *c,
+        NodeKind::Panel { quad, .. } => quad.fill,
+        other => panic!("unexpected {other:?}"),
+    };
+    assert_eq!(actual, rgb(0x112233));
+}

@@ -26,6 +26,8 @@ mod focus_groups;
 mod focus_removal;
 #[path = "../focus_visible.rs"]
 mod focus_visible;
+#[path = "../hover_nested.rs"]
+mod hover_nested;
 #[path = "../hover_refresh.rs"]
 mod hover_refresh;
 #[path = "../hover_removal.rs"]
