@@ -121,7 +121,7 @@ def main():
                                      "-ac"], stdout=subprocess.PIPE, stderr=(args.output / "xvfb.log").open("w"),
                                     text=True)
             processes.append(xvfb)
-            if not select.select([xvfb.stdout], [], [], 10)[0]:
+            if not select.select([xvfb.stdout], [], [], 30)[0]:
                 raise RuntimeError("Xvfb startup timed out")
             x11 = dict(base, DISPLAY=":" + xvfb.stdout.readline().strip())
             launch("openbox", ["openbox"], x11)

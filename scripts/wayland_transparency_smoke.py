@@ -56,7 +56,7 @@ def main():
                 env.pop(name, None)
             xvfb = launch("xvfb", ["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0",
                                    "1400x1000x24", "-ac"], stdout=subprocess.PIPE, text=True)
-            assert select.select([xvfb.stdout], [], [], 8)[0], "owned Xvfb startup timed out"
+            assert select.select([xvfb.stdout], [], [], 30)[0], "owned Xvfb startup timed out"
             env["DISPLAY"] = ":" + xvfb.stdout.readline().strip()
             wm = launch("openbox", ["openbox"], env=env)
             wait_for_openbox(env, args.output, wm)

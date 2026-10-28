@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Xvfb for the parallel Linux smokes (`linux_smokes.py` puts this first on
+PATH): the real Xvfb, started again when it exits before reporting a display.
+
+With `-displayfd`, Xvfb takes the first display whose lock it can make. A
+probe that just stopped its server has removed the lock while its socket
+lingers, so a new server taking that number fails ("server already running")
+and exits without a display: the probe waiting for one timed out. Here such a
+start is retried; the server that reports passes its number on as Xvfb would,
+and dies with this process (SIGTERM forwarded, or the parent-death signal)."""
+import ctypes
+import os
+import select
+import signal
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def real_xvfb():
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if entry and os.path.abspath(entry) != HERE:
+            path = os.path.join(entry, "Xvfb")
+            if os.access(path, os.X_OK):
+                return path
+    sys.exit("Xvfb: no real Xvfb on PATH")
+
+
+def die_with_parent():
+    # PR_SET_PDEATHSIG: a killed wrapper takes its server with it.
+    ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)
+
+
+def main():
+    real, args = real_xvfb(), sys.argv[1:]
+    if "-displayfd" not in args:
+        os.execv(real, [real, *args])
+    at = args.index("-displayfd") + 1
+    report = int(args[at])
+    for attempt in range(5):
+        read, write = os.pipe()
+        child = subprocess.Popen([real, *args[:at], str(write), *args[at + 1:]], pass_fds=(write,),
+                                 preexec_fn=die_with_parent)
+        os.close(write)
+        number = b""
+        while not number.endswith(b"\n") and select.select([read], [], [], 60)[0]:
+            chunk = os.read(read, 64)
+            if not chunk:
+                break
+            number += chunk
+        os.close(read)
+        if number.strip():
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                signal.signal(sig, lambda s, _: child.send_signal(s))
+            os.write(report, number)
+            os.close(report)
+            sys.exit(child.wait())
+        child.kill()
+        child.wait()
+        print(f"Xvfb exited without a display (attempt {attempt + 1}); starting it again",
+              file=sys.stderr, flush=True)
+        time.sleep(0.2 * (attempt + 1))
+    sys.exit("Xvfb: no display after 5 starts")
+
+
+if __name__ == "__main__":
+    main()

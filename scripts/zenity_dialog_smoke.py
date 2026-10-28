@@ -36,7 +36,7 @@ def main():
         env.pop("WAYLAND_DISPLAY", None)
         xvfb = launch("xvfb", ["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env,
                       stdout=subprocess.PIPE, text=True)
-        if not select.select([xvfb.stdout], [], [], 10)[0]:
+        if not select.select([xvfb.stdout], [], [], 30)[0]:
             raise RuntimeError("Xvfb startup timed out")
         env["DISPLAY"] = ":" + xvfb.stdout.readline().strip()
         # A session bus with no portal on it.

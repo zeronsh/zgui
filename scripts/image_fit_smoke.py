@@ -64,7 +64,7 @@ def main():
         try:
             with (args.output / "xvfb.log").open("w") as log:
                 xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "800x600x24", "-ac"], stdout=subprocess.PIPE, stderr=log, text=True)
-                if not select.select([xvfb.stdout], [], [], 8)[0]:
+                if not select.select([xvfb.stdout], [], [], 30)[0]:
                     raise RuntimeError("owned Xvfb startup timed out")
                 display = ":" + xvfb.stdout.readline().strip()
             env = dict(os.environ, DISPLAY=display, XDG_RUNTIME_DIR=runtime, WINIT_X11_SCALE_FACTOR="1", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent", GSETTINGS_BACKEND="memory", XDG_CONFIG_HOME=str(pathlib.Path(runtime, "config")), XDG_CACHE_HOME=str(pathlib.Path(runtime, "cache")))

@@ -49,7 +49,7 @@ def main():
                 return subprocess.Popen(command, env=process_env, stderr=log, stdout=kwargs.pop('stdout', log), **kwargs)
         try:
             xvfb = launch('xvfb', ['Xvfb','-r','-noreset','-displayfd','1','-screen','0','1400x1000x24','-ac'], stdout=subprocess.PIPE, text=True)
-            if not select.select([xvfb.stdout], [], [], 10)[0]: raise RuntimeError('Xvfb timeout')
+            if not select.select([xvfb.stdout], [], [], 30)[0]: raise RuntimeError('Xvfb timeout')
             env['DISPLAY'] = ':'+xvfb.stdout.readline().strip()
             bus = launch('dbus', ['dbus-daemon','--config-file='+str(bus_config),'--nofork','--print-address=1'], stdout=subprocess.PIPE, text=True, start_new_session=True)
             if not select.select([bus.stdout], [], [], 10)[0]: raise RuntimeError('D-Bus timeout')

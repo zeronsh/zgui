@@ -42,7 +42,7 @@ def main():
 
         try:
             xvfb = launch("xvfb", ["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1200x900x24", "-ac"], stdout=subprocess.PIPE, text=True)
-            assert select.select([xvfb.stdout], [], [], 10)[0], "owned Xvfb startup timed out"
+            assert select.select([xvfb.stdout], [], [], 30)[0], "owned Xvfb startup timed out"
             display = ":" + xvfb.stdout.readline().strip()
             assert display != ":", "owned Xvfb failed"
             env = dict(os.environ, DISPLAY=display, XDG_RUNTIME_DIR=runtime,

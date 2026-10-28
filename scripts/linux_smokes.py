@@ -172,7 +172,7 @@ def desktop(log):
     """A private Xvfb/Openbox desktop: (processes, environment)."""
     xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"],
                             stdout=subprocess.PIPE, stderr=log, text=True)
-    if not select.select([xvfb.stdout], [], [], 10)[0]:
+    if not select.select([xvfb.stdout], [], [], 30)[0]:
         xvfb.kill()
         raise RuntimeError("Xvfb startup timed out")
     display = ":" + xvfb.stdout.readline().strip()
@@ -251,6 +251,9 @@ def main():
     # probes at once took longer than their wait for the window. Every probe
     # shares one cache, warmed by one window first.
     os.environ.setdefault("MESA_SHADER_CACHE_DIR", str(args.output / "zgx-mesa-shader-cache"))
+    # Each probe starts its own Xvfb, many at once: one that loses a display
+    # number to a server still closing is started again (`xvfb_retry/Xvfb`).
+    os.environ["PATH"] = str(pathlib.Path(__file__).resolve().parent / "xvfb_retry") + os.pathsep + os.environ["PATH"]
     warm = args.output / "zgx-warm-shaders"
     warm.mkdir(exist_ok=True)
     with (warm / "desktop.log").open("w") as log:

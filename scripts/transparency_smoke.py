@@ -80,7 +80,7 @@ def main():
             return process
         try:
             xvfb = launch("xvfb", ["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "900x700x24", "-ac"], stdout=subprocess.PIPE, text=True)
-            assert select.select([xvfb.stdout], [], [], 10)[0], "Xvfb startup timed out"
+            assert select.select([xvfb.stdout], [], [], 30)[0], "Xvfb startup timed out"
             display = ":" + xvfb.stdout.readline().strip()
             env = dict(os.environ, DISPLAY=display, XDG_RUNTIME_DIR=runtime,
                        WINIT_X11_SCALE_FACTOR="1", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent",

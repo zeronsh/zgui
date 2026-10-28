@@ -341,7 +341,7 @@ def x11(args, output):
             xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0",
                                      "2304x1800x24", "-ac"], stdout=subprocess.PIPE,
                                     stderr=log, text=True)
-            if not select.select([xvfb.stdout], [], [], 10)[0]:
+            if not select.select([xvfb.stdout], [], [], 30)[0]:
                 raise RuntimeError("Xvfb did not report a display number")
             display = ":" + xvfb.stdout.readline().strip()
             if display == ":":

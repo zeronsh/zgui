@@ -67,7 +67,7 @@ Native examples run under Xvfb with Openbox, using llvmpipe Vulkan:
 - The workbench passes virtual-row selection, note editing/autosave across selection changes, menu opening/dismissal, modal confirmation and viewport resizing. See [workbench](images/workbench.png) and [dialog](images/workbench-dialog.png). Its draft storage is session-only memory.
 - GPUI, QuickGUI and zgx render the same frozen deterministic workload using their actual pinned frameworks. Geometry/content/colors match; native text rasterization/baseline differences remain. See the [comparison protocol](benchmarking.md) and [raw results](results/README.md).
 
-Further native Linux probes, each on a private Xvfb/Openbox desktop or a nested Sway or Weston compositor:
+Further native Linux probes, each on a private Xvfb/Openbox desktop or a nested Sway or Weston compositor. `scripts/linux_smokes.py` runs them many at once; an Xvfb that exits before reporting a display (a number taken from a server still closing) is started again by `scripts/xvfb_retry/Xvfb`, and each probe waits up to 30 s for its display:
 
 - Wayland clipboard: copy and paste go through the compositor (`set_selection`, `receive`, `send` in the protocol trace) via one data device per seat, which Weston requires (`wayland_input_smoke.py`).
 - The primary selection: an editor's double-clicked word and Ctrl+A reach other clients, and another client's selection lands where a middle click puts the caret, on X11 (`xclip`) and as a native Wayland client of Sway (`wl-paste`/`wl-copy --primary`) (`primary_selection_smoke.py`). Selected display text is the primary selection too (`selectable_text_smoke.py`).

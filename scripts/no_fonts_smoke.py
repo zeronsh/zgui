@@ -39,7 +39,7 @@ def main():
             xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "1280x900x24", "-ac"], env=env,
                                     stdout=subprocess.PIPE, stderr=(args.output / "xvfb.log").open("w"), text=True)
             processes.append(xvfb)
-            if not select.select([xvfb.stdout], [], [], 10)[0]:
+            if not select.select([xvfb.stdout], [], [], 30)[0]:
                 raise RuntimeError("Xvfb startup timed out")
             env["DISPLAY"] = ":" + xvfb.stdout.readline().strip()
             log = args.output / "gallery.log"

@@ -25,7 +25,7 @@ def main():
             with (args.output / "xvfb.log").open("w") as log:
                 xvfb = subprocess.Popen(["Xvfb", "-r", "-noreset", "-displayfd", "1", "-screen", "0", "900x650x24", "-ac"], stdout=subprocess.PIPE, stderr=log, text=True)
                 owned.append(xvfb)
-                if not select.select([xvfb.stdout], [], [], 10)[0]:
+                if not select.select([xvfb.stdout], [], [], 30)[0]:
                     raise RuntimeError("Xvfb startup timed out")
                 display = ":" + xvfb.stdout.readline().strip()
                 if display == ":":
