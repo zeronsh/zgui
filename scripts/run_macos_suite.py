@@ -44,6 +44,9 @@ def main():
     started = datetime.datetime.now(datetime.timezone.utc)
     out = ROOT / 'docs/results' / f'suite-macos-{started:%Y-%m-%d}-{commit[:7]}'
     out.mkdir(parents=True, exist_ok=True)
+    # Package power where sudo runs powermetrics without asking.
+    power = comparison.powermetrics_allowed()
+    print(f"powermetrics: {'on' if power else 'off (sudo would ask)'}", flush=True)
     found = preflight.wait_until_quiet(log=lambda line: print(line, flush=True))
     hidden = comparison.hide(args.hide) if args.hide else False
     results = {}
@@ -53,6 +56,7 @@ def main():
             print(f'== {scene}', flush=True)
             done = subprocess.run([sys.executable, '-u', str(ROOT / 'scripts/run_macos_comparison.py'), '--suite',
                                    '--scene', scene, '--skip-build', '--no-preflight', '--hide', '',
+                                   *(['--powermetrics'] if power else []),
                                    '--out', str(out / scene)], cwd=ROOT)
             audit = out / scene / 'audit.json'
             accepted = done.returncode == 0 and audit.exists() and json.loads(audit.read_text())['accepted']
@@ -64,6 +68,7 @@ def main():
     manifest = {'commit': commit, 'started_utc': started.isoformat(),
                 'finished_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'preflight': found, 'scenes': results, 'frameworks': comparison.SUITE_FRAMEWORKS,
+                'powermetrics': power,
                 'protocol': {**comparison.SUITE, 'spread_for_extra_trials': comparison.SPREAD,
                              'extra_trials': comparison.EXTRA}}
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=1) + '\n')

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -7,6 +8,23 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import run_macos_comparison as comparison
+
+
+class PowermetricsTests(unittest.TestCase):
+    def test_samples_end_with_nul_and_each_is_read(self):
+        # powermetrics -f plist ends each sample's plist with "\n\0".
+        sample = lambda cpu, gpu: plistlib.dumps({'processor': {
+            'cpu_power': cpu, 'gpu_power': gpu, 'combined_power': cpu + gpu}}) + b'\0'
+        process = Mock()
+        process.communicate.return_value = (sample(100., 2.) + sample(300., 4.), None)
+        self.assertEqual(comparison.power_of(process), {'package_mw': 203., 'cpu_mw': 200., 'gpu_mw': 3.})
+
+    def test_meter_waits_as_long_as_the_sampler(self):
+        with patch.object(comparison.subprocess, 'Popen') as spawn:
+            comparison.powermetrics(comparison.IDLE_SETTLE)
+        command = spawn.call_args.args[0][2]
+        self.assertTrue(command.startswith(f'sleep {comparison.IDLE_SETTLE};'))
+        self.assertIn(f'-n {comparison.SAMPLED}', command)
 
 
 class ReadinessTests(unittest.TestCase):

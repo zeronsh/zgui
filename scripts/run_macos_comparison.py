@@ -38,9 +38,11 @@ a whole capture, near the window server's latch in some and not others, so
 one capture's 99th-percentile interval swings by 5 ms or more between
 captures, for every framework.
 
-`--powermetrics` also records package and GPU power with `sudo powermetrics`
-(run `sudo -v` first in the same terminal; without cached credentials the
-columns stay empty).
+`--powermetrics` also records package, CPU and GPU power with `sudo
+powermetrics`, over the same seconds as the other meters. It needs sudo to run
+`/usr/bin/powermetrics` without asking (a sudoers rule, or `sudo -v` first in
+the same terminal); without it the columns stay empty. The suite turns it on
+whenever that holds.
 
 `--quick` is for iterating, not publishing: zgx and GPUI Fast only, two
 repeats, and pacing captured during the sampling trials instead
@@ -352,15 +354,24 @@ def finish(process, seconds):
         return process.wait(timeout=10), True
 
 
-def powermetrics():
-    """Package, CPU and GPU power over the sampled window, if sudo allows."""
-    command = f'sleep {WARMUP}; exec sudo -n /usr/bin/powermetrics --samplers cpu_power,gpu_power -f plist -i 1000 -n {SAMPLED}'
+def powermetrics(start):
+    """Package, CPU and GPU power over the sampled window, if sudo allows:
+    from `start` seconds after the window is ready, as the sampler's."""
+    command = f'sleep {start}; exec sudo -n /usr/bin/powermetrics --samplers cpu_power,gpu_power -f plist -i 1000 -n {SAMPLED}'
     return subprocess.Popen(['/bin/sh', '-c', command], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+
+def powermetrics_allowed():
+    """Whether `sudo powermetrics` runs without asking (a sudoers rule for
+    /usr/bin/powermetrics, or cached credentials)."""
+    return subprocess.run(['sudo', '-n', '/usr/bin/powermetrics', '--samplers', 'cpu_power', '-i', '100', '-n', '1'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
 def power_of(process):
     output, _ = process.communicate()
-    samples = [plistlib.loads(doc.strip() + b'</plist>') for doc in output.split(b'</plist>') if doc.strip()]
+    # One plist a sample, each ended by a NUL.
+    samples = [plistlib.loads(doc) for doc in output.split(b'\0') if doc.strip()]
     processor = [s.get('processor', {}) for s in samples]
     mean = lambda key: statistics.mean(p[key] for p in processor) if processor and all(key in p for p in processor) else ''
     return {'package_mw': mean('combined_power'), 'cpu_mw': mean('cpu_power'), 'gpu_mw': mean('gpu_power')}
@@ -431,14 +442,14 @@ def one_trial(scene, framework, mode, repeat, out, power, paced=None):
     # Idle: the 5-20 s window too, alongside the settled one, for the record.
     early = subprocess.Popen([str(SAMPLER), str(process.pid), str(WARMUP), str(SAMPLED), str(INTERVAL)],
                              stdout=subprocess.PIPE, text=True) if idle else None
-    meter = powermetrics() if power else None
+    start = IDLE_SETTLE if idle else WARMUP
+    meter = powermetrics(start) if power else None
     pacer = None
     if paced is not None and framework != 'desktop' and mode != 'idle':
         # As long as a pacing trial's capture: one running to the app's own
         # end loses its stream as the window closes.
         pacer = subprocess.Popen([str(PACER), str(process.pid), str(WARMUP), str(PACING_SECONDS)],
                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    start = IDLE_SETTLE if idle else WARMUP
     sample = json.loads(run([str(SAMPLER), str(process.pid), str(start), str(SAMPLED), str(INTERVAL)]))
     if early is not None:
         sample.update({f'early_{key}': value for key, value in json.loads(early.communicate()[0]).items()})
