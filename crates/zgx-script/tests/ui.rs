@@ -1348,6 +1348,43 @@ fn virtual_lists_take_each_rows_height() {
 }
 
 #[test]
+fn a_following_list_follows_its_first_rows_and_after_being_cleared() {
+    // A chat transcript: empty at first, ten 20-point rows in a 60-point
+    // view arrive, it is cleared and they arrive again. Each time it rests
+    // at its end, 140 points down, measured or with its heights given.
+    for kind in ["data = items, measured = true", "heights = hs"] {
+        let mut h = Harness::inline(&format!(
+            r##"local items = ui.state("items", {{}})
+            local hs = ui.state("hs", {{}})
+            local off = ui.state("off", 0)
+            local function fill(n)
+                local list, heights = {{}}, {{}}
+                for i = 1, n do list[i] = i; heights[i] = 20 end
+                items:set(list)
+                hs:set(heights)
+            end
+            return ui.column {{
+                ui.button {{ id = "add", on_click = function() fill(10) end, "add" }},
+                ui.button {{ id = "clear", on_click = function() fill(0) end, "clear" }},
+                ui.text {{ id = "off", function() return tostring(off:get()) end }},
+                ui.list {{ {kind}, follow = true, offset = off, overscan = 0,
+                    height = 20, w = 160, h = 60,
+                    row = function(i) return ui.row {{ h = 20, ui.text("row") }} end }},
+            }}"##
+        ));
+        h.click("add");
+        h.frames(3);
+        assert_eq!(h.text("off"), "140", "{kind}: its first rows");
+        h.click("clear");
+        h.frames(3);
+        h.click("add");
+        h.frames(3);
+        assert_eq!(h.text("off"), "140", "{kind}: cleared and filled again");
+        assert_eq!(h.host.error().get(), None);
+    }
+}
+
+#[test]
 fn sticky_rows_hold_the_top_until_the_next_arrives() {
     // Sections of a 30-point header and three 10-point rows, 60 points each.
     let mut h = Harness::inline(

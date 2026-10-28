@@ -568,14 +568,27 @@ fn variable_list<K: Eq + std::hash::Hash + Clone + 'static>(
                         discovery = None;
                     }
                     let geometry: Vec<_> = model.rows(range).collect();
-                    let next_anchor = first.map(|index| Anchor {
-                        revision,
-                        length,
-                        position,
-                        index,
-                        within: (position - model.row_offset(index)).max(0.),
-                        at_end: limit - position <= 0.5,
-                    });
+                    // An empty list keeps whether it is at its end (it is):
+                    // its first rows then follow the end as later ones do.
+                    let next_anchor = match first {
+                        Some(index) => Some(Anchor {
+                            revision,
+                            length,
+                            position,
+                            index,
+                            within: (position - model.row_offset(index)).max(0.),
+                            at_end: limit - position <= 0.5,
+                        }),
+                        None if length == 0 => Some(Anchor {
+                            revision,
+                            length,
+                            position,
+                            index: 0,
+                            within: 0.,
+                            at_end: true,
+                        }),
+                        None => None,
+                    };
                     (length, total, position, target, geometry, next_anchor)
                 };
                 // Release the index borrow before application key/build callbacks.

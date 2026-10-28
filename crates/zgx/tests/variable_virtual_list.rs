@@ -619,3 +619,53 @@ fn explicit_scroll_request_from_key_callback_is_not_overwritten() {
     assert!(view.find("row-10").is_some());
     assert!(view.find("row-0").is_none());
 }
+
+/// An end-anchored list's offset once it holds ten 20-point rows in a
+/// 60-point view: `initial` rows first, cleared first or not, measured or
+/// with known heights, anchored at its end or not.
+fn grown(initial: usize, clear_first: bool, measured: bool, end: bool) -> f32 {
+    let mut ui = Ui::new(200., 100.);
+    let offset = ui.signal(0.);
+    let heights = VariableHeights::new(&ui.runtime, initial, 20.);
+    let heights = if end { heights.anchor_end() } else { heights };
+    let list = if measured {
+        measured_virtual_list(
+            offset.clone(),
+            heights.clone(),
+            0,
+            |i| i,
+            |_, _, _| div().h(20.),
+        )
+    } else {
+        variable_virtual_list(
+            offset.clone(),
+            heights.clone(),
+            0,
+            |i| i,
+            |_, _, _| div().h(20.),
+        )
+    };
+    let _view = ui.mount(list.size(160., 60.));
+    ui.try_prepare_frame().unwrap();
+    if clear_first {
+        heights.resize(0).unwrap();
+        ui.try_prepare_frame().unwrap();
+    }
+    assert_eq!(offset.get(), 0.);
+    heights.resize(10).unwrap();
+    ui.try_prepare_frame().unwrap();
+    offset.get()
+}
+/// A chat transcript empty at first, or cleared and filled again, sticks
+/// to its last rows as they come: an empty list stays at its end.
+#[test]
+fn an_end_anchored_list_follows_its_first_rows_after_being_empty() {
+    assert_eq!(grown(0, false, false, true), 140.);
+    assert_eq!(grown(1, true, false, true), 140.);
+    assert_eq!(grown(0, false, true, true), 140.);
+    assert_eq!(grown(1, true, true, true), 140.);
+    // As before: one with rows follows, one not anchored stays at its top.
+    assert_eq!(grown(1, false, false, true), 140.);
+    assert_eq!(grown(1, false, true, true), 140.);
+    assert_eq!(grown(0, false, false, false), 0.);
+}

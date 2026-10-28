@@ -18,6 +18,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- A list that follows its end (`VariableHeights::anchor_end`, Luau `ui.list { follow = true }` with `measured` or `heights`) follows its first rows after being empty: a transcript with no messages yet, or one cleared and filled again, stayed at its top.
 - A grid item's span or start too large for grid lines (a `column_span` of 32768, or a start of 32767 spanning 2) no longer panics in layout. Lines reach ±10,000, as in Firefox.
 - A text of no words, such as `"\n"`, no longer panics when it is measured at a new width after the text prepared just before it was dropped. Its measurement pointed past the end of its storage.
 - A child given an aspect ratio in a grid, its parent then made flex, lays out as flex sizes it. It kept the height the grid gave it.
