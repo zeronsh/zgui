@@ -212,6 +212,9 @@ impl Tsf {
     /// After zgx's dispatch: tell the input method what changed that it
     /// didn't do, then grant a lock it asked for meanwhile.
     pub(crate) fn after_dispatch(&self) {
+        // The two reads' own cost, back to back, to subtract.
+        let (a, b) = (diag::cycles(), diag::cycles());
+        diag::note("boundary", b - a);
         let start = diag::cycles();
         self.after_dispatch_inner();
         diag::note("after_dispatch", diag::cycles() - start);
