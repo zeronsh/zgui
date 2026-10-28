@@ -3384,12 +3384,29 @@ impl Scene {
         let zoomed = zoom != 1.;
         if self.node(id).special.has(ZOOMED) != zoomed {
             self.set_special(id, ZOOMED, zoomed);
-            // Laid out as `snap` while zoomed (`restyle_special`).
-            let given = self.style(id);
-            self.restyle(id, given, true);
+            // Laid out as `snap` while zoomed (`restyle_special`,
+            // `sync_contents`).
+            if self.node(id).contents() {
+                self.sync_contents(id);
+            } else {
+                let given = self.style(id);
+                self.restyle(id, given, true);
+            }
         }
         // Its room and the room it takes change: laid out again.
         self.invalidate_layout(id);
+        // So do the contents parents it lays out as, each its parent's last
+        // child: sized as it is styled (`sync_contents`), they take no
+        // change from it otherwise.
+        let mut lead = id;
+        while self.contents_count > 0
+            && let Some(parent) = self.node(lead).parent
+            && self.node(parent).contents()
+            && self.children_of(self.node(parent)).last() == Some(&lead)
+        {
+            self.invalidate_layout(parent);
+            lead = parent;
+        }
         self.invalidate(id, COMPOSITE);
     }
     /// Give `id` `transform` and `zoom`, damaging its subtree where it
@@ -4167,10 +4184,14 @@ impl Scene {
         let own = self.contents_styles.get(&id).cloned().unwrap_or_default();
         let way = self.way(id);
         let own = laid_out_style(own, way);
-        let style = match self.children_of(self.node(id)).last() {
+        let node = self.node(id);
+        // Zoomed, as `restyle_special` lays a zoomed node out.
+        let zoomed = node.special.has(ZOOMED);
+        let mut style = match self.children_of(node).last() {
             Some(lead) => contents_style(own, &self.node(*lead).style),
             None => own,
         };
+        style.snap |= zoomed;
         self.apply_style(id, style);
     }
     /// After `parent` gained, lost or reordered children: queued already
@@ -5488,21 +5509,35 @@ impl Scene {
         // own points from `snap` (`set_zoom`); the style given is kept.
         let mut laid = laid_out_style(style.clone(), self.way(id));
         laid.snap = true;
+        // Its snap, which `snap_zoomed` reads from the given style, changes
+        // nothing in the style it lays out as.
+        let snapped = self.given_styles.get(&id).is_some_and(|given| given.snap);
+        let snap = style.snap;
         self.given_styles.insert(id, style);
         self.restyle(id, laid, false);
+        if snap != snapped {
+            self.invalidate_layout(id);
+        }
     }
     /// `set_style` for a contents node: keep `style` as its own, and lay it
     /// out as its last child in its place.
     #[cold]
     #[inline(never)]
     fn set_contents_style(&mut self, id: NodeId, style: Style) {
-        let changed = match self.contents_styles.get(&id) {
+        let own = self.contents_styles.get(&id);
+        let changed = match own {
             Some(own) => *own != style,
             None => style != Style::default(),
         };
         if changed {
+            // Zoomed, it lays out as snap whatever its own says, which
+            // `snap_zoomed` reads (as `restyle_special`).
+            let snap = own.is_some_and(|own| own.snap) != style.snap;
             self.keep_contents_style(id, style);
             self.sync_contents(id);
+            if snap && self.node(id).special.has(ZOOMED) {
+                self.invalidate_layout(id);
+            }
         }
     }
     /// Lay `id` out by `style` (normalized) from now on: what a contents
@@ -7864,10 +7899,13 @@ impl Scene {
         }
         let zoom = node.zoom();
         // Laid out since its parent last measured it under this room: its
-        // result in its own points is the one to serve again.
+        // result in its own points is the one to serve again, unless the
+        // node changed since (a result from before is stale, as
+        // `store_measurement` drops one).
         if node.local.as_deref().and_then(|local| local.placed) == Some(constraints)
             && let Some(measurement) = &node.measurement
             && measurement.constraints.width.is_some_and(f32::is_nan)
+            && (node.dirty & LAYOUT == 0 || measurement.pass == self.layout_pass)
         {
             let size = measurement.size;
             let outer = (size.0 * zoom, size.1 * zoom);
@@ -7889,10 +7927,18 @@ impl Scene {
         node.measurement = None;
         let size = self.measured(id, &mut inner, true);
         let outer = (size.0 * zoom, size.1 * zoom);
+        let pass = self.layout_pass;
         let node = self.node_mut(id);
         node.special = node.special.with(ZOOMED, true);
         node.alternates = alternates;
         node.sizes = sizes;
+        // A changed node's results from before are stale, as
+        // `store_measurement` drops them (set aside, it did not see them):
+        // from before a zoom, they are in other points.
+        if node.dirty & LAYOUT != 0 {
+            node.alternates.retain(|m| m.pass == pass);
+            node.sizes.retain(|m| m.pass == pass);
+        }
         if let Some(measurement) = &mut node.measurement {
             measurement.constraints = constraints;
             measurement.size = outer;
@@ -8147,11 +8193,31 @@ impl Scene {
     #[cold]
     #[inline(never)]
     fn snap_zoomed(&mut self, id: NodeId, x: f32, y: f32) -> (f32, f32) {
-        let (x, y) = match self.given_styles.get(&id).is_some_and(|given| given.snap) {
+        // A contents node's given style is its own.
+        let asked = match self.node(id).contents() {
+            true => self.contents_styles.get(&id).is_some_and(|own| own.snap),
+            false => self.given_styles.get(&id).is_some_and(|given| given.snap),
+        };
+        let zoom = self.node(id).zoom();
+        // Arranged again since, not measured (its parent placed it again,
+        // its size unchanged): its result is in its own points already.
+        let node = self.node_mut(id);
+        let measurement = node.measurement.as_mut().unwrap();
+        if measurement.constraints.width.is_some_and(f32::is_nan) {
+            if !asked {
+                return (x, y);
+            }
+            // Its edges snap where it is now, from its size in its parent's
+            // points.
+            if let Some(placed) = node.local.as_deref().and_then(|local| local.placed) {
+                measurement.constraints = placed;
+                measurement.size = (measurement.size.0 * zoom, measurement.size.1 * zoom);
+            }
+        }
+        let (x, y) = match asked {
             true => self.snap_edges(id, x, y),
             false => (x, y),
         };
-        let zoom = self.node(id).zoom();
         let node = self.node_mut(id);
         let measurement = node.measurement.as_mut().unwrap();
         let parents = std::mem::replace(&mut measurement.constraints, UNMATCHED);

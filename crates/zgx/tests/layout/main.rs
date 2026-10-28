@@ -36,3 +36,5 @@ mod rtl_layout;
 mod rtl_scroll;
 #[path = "../wrapped_text_in_capped_box.rs"]
 mod wrapped_text_in_capped_box;
+#[path = "../zoom_relayout.rs"]
+mod zoom_relayout;
