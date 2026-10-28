@@ -243,3 +243,35 @@ fn a_still_world_draws_no_frame() {
     world.set_material(cube, Material::rgb(0x00ff00));
     assert_eq!(window.draw().image_uploads, 1, "two changes, one frame");
 }
+
+#[test]
+fn translucent_meshes_are_drawn_back_to_front_whatever_their_order() {
+    let mut red = Material::rgb(0xff0000);
+    red.unlit = true;
+    red.color[3] = 0.6;
+    let mut blue = Material::rgb(0x0000ff);
+    blue.unlit = true;
+    blue.color[3] = 0.6;
+    let near = || Object::mesh(Geometry::cuboid(1., 1., 0.1), red).at([0., 0., 0.5]);
+    let far = || Object::mesh(Geometry::cuboid(1., 1., 0.1), blue).at([0., 0., -0.5]);
+    for near_first in [true, false] {
+        let world = World::new();
+        world.set_camera(Camera::looking_at([0., 0., 4.], [0., 0., 0.]));
+        if near_first {
+            world.add(near());
+            world.add(far());
+        } else {
+            world.add(far());
+            world.add(near());
+        }
+        let Some(mut window) = Window::new(&world) else {
+            return;
+        };
+        window.draw();
+        let [r, _, b, _] = window.pixel(50, 50);
+        assert!(
+            r > b,
+            "the nearer over the farther ({near_first}): {r} against {b}"
+        );
+    }
+}

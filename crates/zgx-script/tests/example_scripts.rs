@@ -48,3 +48,9 @@ fn anime_showcase_runs() {
 fn stream_runs() {
     runs("stream/app.luau", None);
 }
+
+#[cfg(feature = "scene3d")]
+#[test]
+fn scene3d() {
+    runs("scene3d/app.luau", None);
+}

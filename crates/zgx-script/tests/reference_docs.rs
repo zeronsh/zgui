@@ -45,6 +45,9 @@ fn examples() -> Vec<Example> {
     ] {
         pages.push(Path::new(DOCS).join(page));
     }
+    // 3D scenes are the `scene3d` feature's.
+    #[cfg(not(feature = "scene3d"))]
+    pages.retain(|p| p.file_name() != Some(std::ffi::OsStr::new("3d.md")));
     // `ZGX_REFERENCE_PAGE=text.md` runs one page's.
     if let Some(only) = zgx::env::var_os("ZGX_REFERENCE_PAGE") {
         pages.retain(|p| p.file_name() == Some(only.as_os_str()));

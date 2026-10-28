@@ -14,7 +14,7 @@ description = "Run a zgx Luau script as a desktop app, with hot reload: `zgx-run
 # mimalloc as the runner's allocator (zgx-desktop's `mimalloc`): 6-10%
 # less CPU for script, text and layout work, for about 2 MB more memory.
 # `--no-default-features` keeps the system's.
-default = ["mimalloc", "inspect", "fetch"]
+default = ["mimalloc", "inspect", "fetch", "scene3d"]
 mimalloc = ["zgx-desktop/mimalloc"]
 # Devtools for agents (`zgx run --inspect`, `zgx inspect`): a user-only
 # local socket a running app answers on, when asked. A build for shipping
@@ -26,6 +26,8 @@ inspect = ["zgx-script/inspect"]
 # roots. An app that brings its own transport, or none, leaves it out
 # (`--no-default-features`) and with it ureq, rustls and ring.
 fetch = ["dep:ureq"]
+# `ui.scene3d` (zgx-script's `scene3d`): 3D scenes, drawn with zgx-3d.
+scene3d = ["zgx-script/scene3d"]
 
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.4", default-features = false }

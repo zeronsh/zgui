@@ -120,7 +120,7 @@ Apps keep their own depth and MSAA textures, sized from `frame.size`. Input work
 4. **Idle stays idle.** A view renders only on `invalidate`, resize or `animate(true)` (FrameClock: the display link runs only while asked). zgx-3d renders only when a bound value, the orbit (until settled) or a playing clip changes.
 5. **Binary size, measured.**
    - A: a few KB in zgx and zgx-gpu (wgpu is already linked).
-   - B: a new crate, `zgx-3d`, linked only if used; zgx-script gets it under a `scene3d` feature and glTF under `gltf`. Both default on only if the measured size cost (zgx bin, stripped, release) is small. My threshold proposal: ≤150 KB for `scene3d`, else opt-in. The glTF reader is my own over the serde_json already in zgx-script, not the `gltf` crate, unless it's measured smaller.
+   - B: a new crate, `zgx-3d`, linked only if used; zgx-script gets it under a `scene3d` feature and glTF under `gltf`. Both default on only if the measured size cost (zgx bin, stripped, release) is small. My threshold proposal: ≤150 KB for `scene3d`, else opt-in. (Landed: `scene3d` is off by default in zgx-script and on in zgx-run. A headless host would otherwise link wgpu for it, 1.7 MB in the gate's `list_state_bench`. In a host that already links the renderer it costs zgx-run 123 KiB built for shipping (`dist`, on against off at one commit; 158 KiB in `release`).) The glTF reader is my own over the serde_json already in zgx-script, not the `gltf` crate, unless it's measured smaller.
 6. **Gates**: exact container gate.py ≤0 on all 31 cells (ticks 60/300/900 to tell constants from per-tick), heap peak ≤ main, style/anime/script benches, offset_of, symsizes.
 
 ## 5. Cost with a view on screen, measured against a minimal wgpu app

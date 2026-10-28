@@ -107,7 +107,9 @@ jobs:
           unzip -q -o "$dir.zip" -d "$dir"
           echo "LUAU_LSP=$dir/luau-lsp" >> "$GITHUB_ENV"
           LUAU_LSP="$dir/luau-lsp" cargo run -q -p zgx-script --bin zgx --locked -- check crates/zgx-script/examples crates/zgx-desktop/examples
-      - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --locked
+      # With 3D scenes (zgx-script's `scene3d`, off by default; the Windows
+      # and macOS jobs test without it).
+      - run: cargo test -p zgx -p zgx-components -p zgx-desktop -p zgx-workload -p zgx-script --all-targets --features zgx-script/scene3d --locked
       # Words in Chinese, Japanese and Thai with `cjk-thai-words` off:
       # Unicode's word boundaries, as before the dictionaries.
       # Quoted: an unquoted `words:: ` would be read as a YAML key, and the

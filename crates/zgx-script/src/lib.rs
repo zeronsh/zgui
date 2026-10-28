@@ -59,6 +59,8 @@ mod motion;
 mod node;
 mod opens;
 mod persist;
+#[cfg(feature = "scene3d")]
+mod scene3d;
 mod sorted;
 mod term;
 pub mod testing;
@@ -442,6 +444,37 @@ fn describe(name: &str, error: &mlua::Error) -> String {
             "\n(the script's VM reached its memory limit: `Limits::memory` for the app's \
              scripts, 1 GiB by default, or `Limits::plugin_memory` for a plugin's, 32 MiB; \
              a host raises them with `ScriptHost::limits`)",
+        );
+    }
+    message
+}
+
+/// A script that failed calling `ui.scene3d` (or one of its objects) in a
+/// host built without the `scene3d` feature: `message`, saying so. Luau
+/// names no field in "attempt to call a nil value", so the line its
+/// message points at is read from the script (`code`).
+#[cfg(not(feature = "scene3d"))]
+fn without_scene3d(mut message: String, code: &[u8]) -> String {
+    let line = message
+        .lines()
+        .find(|line| line.contains("attempt to call a nil value"))
+        .and_then(|line| {
+            line.split(':')
+                .find_map(|part| part.trim().parse::<usize>().ok())
+        });
+    let calls = line
+        .and_then(|n| code.split(|&b| b == b'\n').nth(n.wrapping_sub(1)))
+        .map(String::from_utf8_lossy)
+        .is_some_and(|line| {
+            ["ui.scene3d", "ui.mesh", "ui.light", "ui.group"]
+                .iter()
+                .any(|call| line.contains(call))
+        });
+    if calls {
+        message.push_str(
+            "\n(ui.scene3d, ui.mesh, ui.light and ui.group are zgx-script's `scene3d` \
+             feature, which this host was built without: zgx-run has it, and a Rust host \
+             turns it on with `features = [\"scene3d\"]`)",
         );
     }
     message
@@ -2298,11 +2331,17 @@ impl ScriptHost {
         let result = self.0.runtime.untracked(|| {
             vm.guard(limits.load, || {
                 files
-                    .chunk(lua.load(code).set_name(format!("@{name}")))
+                    .chunk(lua.load(code.as_slice()).set_name(format!("@{name}")))
                     .eval::<mlua::Value>()
             })
         });
-        let root = match result.map_err(fail)? {
+        let result = result.map_err(|error| {
+            let message = fail(error);
+            #[cfg(not(feature = "scene3d"))]
+            let message = without_scene3d(message, &code);
+            message
+        });
+        let root = match result? {
             mlua::Value::Nil => None,
             mlua::Value::UserData(ud) if ud.is::<node::NodeUd>() => {
                 Some(ud.borrow::<node::NodeUd>().map_err(fail)?.0.clone())

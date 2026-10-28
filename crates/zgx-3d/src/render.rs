@@ -126,8 +126,9 @@ impl Viewport for Renderer {
             bytemuck::bytes_of(&frame_uniforms(&world, view_projection, encode)),
         );
 
-        // Meshes by geometry, translucent ones after, back to front.
-        let mut drawn = world.drawn();
+        // Meshes by geometry, translucent ones after, back to front: by a
+        // key of one integer (a sort of integers, not of meshes).
+        let all = world.drawn();
         let depth = |m: &Mat4| {
             let p = view.project(Vec3::from([
                 m.columns[3][0],
@@ -137,16 +138,24 @@ impl Viewport for Renderer {
             -p.z
         };
         let translucent = |d: &crate::world::Drawn| d.material.color[3] < 1.;
-        drawn.sort_by(|a, b| {
-            translucent(a).cmp(&translucent(b)).then_with(|| {
-                if translucent(a) {
-                    depth(&b.matrix).total_cmp(&depth(&a.matrix))
+        let key = |d: &crate::world::Drawn| {
+            if translucent(d) {
+                // Its depth's bits in total order, the farthest least.
+                let bits = depth(&d.matrix).to_bits();
+                let ordered = if bits >> 31 == 1 {
+                    !bits
                 } else {
-                    a.geometry.id().cmp(&b.geometry.id())
-                }
-            })
-        });
-        let instances: Vec<Instance> = drawn.iter().map(instance).collect();
+                    bits | 1 << 31
+                };
+                1 << 63 | u64::from(!ordered)
+            } else {
+                d.geometry.id() & !(1 << 63)
+            }
+        };
+        let mut order: Vec<(u64, usize)> = all.iter().map(key).zip(0..).collect();
+        order.sort_unstable();
+        let drawn: Vec<&crate::world::Drawn> = order.iter().map(|&(_, i)| &all[i]).collect();
+        let instances: Vec<Instance> = drawn.iter().map(|d| instance(d)).collect();
         if !instances.is_empty() {
             let bytes: &[u8] = bytemuck::cast_slice(&instances);
             if gpu
@@ -237,7 +246,7 @@ impl Viewport for Renderer {
         // Runs of one geometry, of one pass (opaque, then translucent).
         let mut start = 0;
         while start < drawn.len() {
-            let (geometry, glass) = (drawn[start].geometry.id(), translucent(&drawn[start]));
+            let (geometry, glass) = (drawn[start].geometry.id(), translucent(drawn[start]));
             let end = start
                 + drawn[start..]
                     .iter()
@@ -309,7 +318,10 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
         points: [[[0.; 4]; 2]; POINT_LIGHTS],
         params: [0., if encode { 1. } else { 0. }, 1., 0.],
     };
-    let mut points = Vec::new();
+    // The point lights nearest the camera's target, nearest first, past the
+    // four a frame shades with (ties in the order they were added).
+    let target = world.camera.target;
+    let mut points: Vec<(f32, [[f32; 4]; 2])> = Vec::with_capacity(POINT_LIGHTS + 1);
     for light in world.lights() {
         match *light {
             // The first sun shades; others add to it as one.
@@ -336,33 +348,32 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
                     *sum += c * intensity;
                 }
             }
-            Light::Point { .. } => points.push(*light),
+            Light::Point {
+                position,
+                color,
+                intensity,
+                range,
+            } => {
+                let distance = (position - target).length();
+                let at = points
+                    .iter()
+                    .position(|(nearer, _)| distance.total_cmp(nearer).is_lt())
+                    .unwrap_or(points.len());
+                if at < POINT_LIGHTS {
+                    let slot = [
+                        [position.x, position.y, position.z, range.max(1e-3)],
+                        [color[0], color[1], color[2], intensity],
+                    ];
+                    points.insert(at, (distance, slot));
+                    points.truncate(POINT_LIGHTS);
+                }
+            }
         }
     }
-    // The nearest the camera's target, past the four a frame shades with.
-    let target = world.camera.target;
-    points.sort_by(|a, b| {
-        let distance = |l: &Light| match l {
-            Light::Point { position, .. } => (*position - target).length(),
-            _ => 0.,
-        };
-        distance(a).total_cmp(&distance(b))
-    });
-    for (slot, light) in uniforms.points.iter_mut().zip(&points) {
-        if let Light::Point {
-            position,
-            color,
-            intensity,
-            range,
-        } = *light
-        {
-            *slot = [
-                [position.x, position.y, position.z, range.max(1e-3)],
-                [color[0], color[1], color[2], intensity],
-            ];
-        }
+    for (slot, (_, light)) in uniforms.points.iter_mut().zip(&points) {
+        *slot = *light;
     }
-    uniforms.params[0] = points.len().min(POINT_LIGHTS) as f32;
+    uniforms.params[0] = points.len() as f32;
     uniforms
 }
 
@@ -604,3 +615,33 @@ fn encode(c: vec3<f32>) -> vec3<f32> {
     return vec4(lit * alpha, alpha);
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Camera, World, math::vec3};
+
+    #[test]
+    fn a_frame_shades_with_the_four_point_lights_nearest_the_target() {
+        let world = World::new();
+        world.set_camera(Camera::looking_at([0., 0., 9.], [0., 0., 0.]));
+        // Along x at these distances from the target; the second 1 is
+        // added after the first.
+        for (x, intensity) in [(5., 1.), (1., 1.), (3., 1.), (2., 1.), (4., 1.), (1., 2.)] {
+            world.add_light(Light::Point {
+                position: vec3(x, 0., 0.),
+                color: [1.; 3],
+                intensity,
+                range: 10.,
+            });
+        }
+        let uniforms = frame_uniforms(&world.inner(), Mat4::IDENTITY, false);
+        let shaded: Vec<(f32, f32)> = uniforms
+            .points
+            .iter()
+            .map(|[position, color]| (position[0], color[3]))
+            .collect();
+        assert_eq!(shaded, [(1., 1.), (1., 2.), (2., 1.), (3., 1.)]);
+        assert_eq!(uniforms.params[0], 4.);
+    }
+}

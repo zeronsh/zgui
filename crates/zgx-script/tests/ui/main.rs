@@ -19,6 +19,12 @@ mod layout_motion;
 mod regions;
 #[path = "../rtl.rs"]
 mod rtl;
+#[cfg(feature = "scene3d")]
+#[path = "../scene3d.rs"]
+mod scene3d;
+#[cfg(not(feature = "scene3d"))]
+#[path = "../scene3d_off.rs"]
+mod scene3d_off;
 #[path = "../selection.rs"]
 mod selection;
 #[path = "../stack.rs"]

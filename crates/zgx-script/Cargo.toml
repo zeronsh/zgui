@@ -21,6 +21,11 @@ cjk-thai-words = ["zgx/cjk-thai-words"]
 # dates and times, combobox, select, tabs, toasts, command palette and
 # controls.
 components = ["dep:zgx-components"]
+# `ui.scene3d` and its objects (`ui.mesh`, `ui.light`, `ui.group`): 3D
+# scenes drawn with zgx-3d. Off by default: it links the renderer (wgpu),
+# which a headless host (tests, tools, a server) would not otherwise.
+# zgx-run turns it on, so apps it runs have it.
+scene3d = ["dep:zgx-3d"]
 svg = ["zgx-gpu/svg"]
 png = ["zgx-gpu/png"]
 jpeg = ["zgx-gpu/jpeg"]
@@ -36,6 +41,7 @@ inspect = ["zgx/trace", "dep:png"]
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.4", default-features = false }
 zgx-components = { path = "../zgx-components", version = "0.1.4", optional = true }
+zgx-3d = { path = "../zgx-3d", version = "0.1.4", optional = true }
 # Image decoding for `ui.image` (PNG, JPEG).
 zgx-gpu = { path = "../zgx-gpu", version = "0.1.4", default-features = false }
 mlua = { package = "zgx-mlua", version = "0.12.5", path = "../../vendor/mlua", features = ["luau"] }
@@ -72,6 +78,10 @@ path = "examples/layout_bench.rs"
 [[example]]
 name = "script_web_view"
 path = "examples/web_view.rs"
+
+[[example]]
+name = "scene3d"
+required-features = ["scene3d"]
 
 [dev-dependencies]
 zgx-desktop = { path = "../zgx-desktop" }

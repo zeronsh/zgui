@@ -484,6 +484,16 @@ impl World {
         let index = inner.live(id.index, id.generation)?;
         inner.world_of(index)
     }
+    /// Its background as a colour in linear light (alpha 1: opaque), or
+    /// `None` for transparent.
+    pub fn set_background_linear(&self, color: Option<[f32; 4]>) {
+        let color = color.filter(|c| c.iter().all(|v| v.is_finite()));
+        self.change(|inner| std::mem::replace(&mut inner.background, color) != color);
+    }
+    #[cfg(test)]
+    pub(crate) fn inner(&self) -> std::cell::Ref<'_, Inner> {
+        self.inner.borrow()
+    }
     /// Changes made so far: a frame is drawn for each run of them.
     pub fn revision(&self) -> u64 {
         self.inner.borrow().revision

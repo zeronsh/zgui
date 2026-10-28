@@ -1140,6 +1140,8 @@ fn kind_view(
         }
         Kind::WebView(spec) => web_view_of(spec, vm, low),
         Kind::Terminal(term) => zgx::terminal::terminal(term),
+        #[cfg(feature = "scene3d")]
+        Kind::Scene3d(spec) => crate::scene3d::lower(spec, vm, need(&mut cx)),
         Kind::Canvas(draw, options) => {
             let (draw, vm) = (draw.clone(), vm.clone());
             let theme = match cx.as_deref().map(Context::theme) {
