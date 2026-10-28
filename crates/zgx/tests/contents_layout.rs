@@ -504,3 +504,39 @@ fn contents_wrappers_lay_out_as_if_absent_right_to_left_too() {
         }
     }
 }
+
+/// Contents nested a thousand deep take a style from the leaf they end in
+/// with a bounded stack: each passed its last child's style up by calling
+/// itself, a frame pair a level, which ended a 2 MiB thread.
+#[test]
+fn deep_contents_propagation_uses_a_bounded_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let mut scene = Scene::new(200., 200.);
+            let mut parent = scene.root();
+            for _ in 0..1000 {
+                let child = scene.append(
+                    parent,
+                    NodeKind::Container(Layout::Column),
+                    Style::default(),
+                );
+                scene.set_contents(child, true);
+                parent = child;
+            }
+            let leaf = scene.append(
+                parent,
+                NodeKind::Container(Layout::Column),
+                Style {
+                    width: Some(10.),
+                    height: Some(10.),
+                    ..Default::default()
+                },
+            );
+            scene.flush();
+            assert_eq!(scene.bounds(leaf).width, 10.);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

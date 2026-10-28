@@ -2651,6 +2651,8 @@ pub struct Scene {
     walk_hints: std::cell::Cell<(usize, usize)>,
     /// Dirty fixed-size containers whose ancestors stayed clean.
     layout_roots: Vec<NodeId>,
+    /// How deep the contents syncs running now nest (`sync_contents`).
+    syncing: u32,
     /// Nodes holding more than `MEASUREMENT_ALTERNATES` results of this pass,
     /// trimmed when it ends.
     overfull: Vec<NodeId>,
@@ -2856,6 +2858,7 @@ impl Scene {
             content_revision: 0,
             walk_hints: Default::default(),
             layout_roots: Vec::new(),
+            syncing: 0,
             overfull: Vec::new(),
             relative_count: 0,
             contents_count: 0,
@@ -4213,7 +4216,13 @@ impl Scene {
             None => own,
         };
         style.snap |= zoomed;
-        self.apply_style(id, style);
+        // Its style passes on to a contents parent it lays out as, through
+        // `restyle` calling this again, a level a call: contents nest as
+        // deep as an app makes them. Counted, so that the stack is looked at
+        // every fourth level, not at every sync.
+        self.syncing += 1;
+        crate::deep(self.syncing, || self.apply_style(id, style));
+        self.syncing -= 1;
     }
     /// After `parent` gained, lost or reordered children: queued already
     /// (`invalidate_layout`), it repaints with `CHILDREN`.
