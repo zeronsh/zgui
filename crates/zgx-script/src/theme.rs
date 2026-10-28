@@ -91,18 +91,38 @@ fn script_value(value: TokenValue) -> Value {
     }
 }
 
-/// `path` resolved from the script's directory, which it must stay in.
-fn file(dir: &Option<PathBuf>, path: &str) -> mlua::Result<PathBuf> {
+/// `path` resolved from the script's directory, or `@name/…` from one of
+/// the app's packages: it must stay in one of them.
+fn file(
+    dir: &Option<PathBuf>,
+    packages: &[(String, PathBuf)],
+    path: &str,
+) -> mlua::Result<PathBuf> {
     let Some(dir) = dir else {
         return Err(mlua::Error::runtime(
             "ui.theme.load needs a script loaded from a file",
         ));
     };
     let root = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-    let full = crate::normalize(&root.join(path));
-    if !crate::within(&root, &full) {
+    let package = |name: &str| packages.iter().find(|(n, _)| n == name).map(|(_, d)| d);
+    let full = match path
+        .strip_prefix('@')
+        .map(|rest| rest.split_once('/').unwrap_or((rest, "")))
+    {
+        Some((name, rest)) => {
+            let Some(dir) = package(name) else {
+                return Err(mlua::Error::runtime(format!(
+                    "ui.theme.load(\"{path}\"): no package `{name}`"
+                )));
+            };
+            crate::normalize(&dir.join(rest))
+        }
+        None => crate::normalize(&root.join(path)),
+    };
+    if !crate::within(&root, &full) && !packages.iter().any(|(_, dir)| crate::within(dir, &full)) {
         return Err(mlua::Error::runtime(format!(
-            "ui.theme.load(\"{path}\"): theme files come from the script's directory or below"
+            "ui.theme.load(\"{path}\"): theme files come from the script's directory or below, \
+             or a package"
         )));
     }
     Ok(full)
@@ -243,7 +263,12 @@ fn token_tree(lua: &Lua, names: &[std::sync::Arc<str>]) -> mlua::Result<Table> {
 }
 
 /// Installs `ui.theme`.
-pub(crate) fn install(lua: &Lua, ui: &Table, dir: Option<PathBuf>) -> mlua::Result<()> {
+pub(crate) fn install(
+    lua: &Lua,
+    ui: &Table,
+    dir: Option<PathBuf>,
+    packages: Vec<(String, PathBuf)>,
+) -> mlua::Result<()> {
     let theme = lua.create_table()?;
     theme.set(
         "set",
@@ -266,7 +291,7 @@ pub(crate) fn install(lua: &Lua, ui: &Table, dir: Option<PathBuf>) -> mlua::Resu
     theme.set(
         "load",
         lua.create_function(move |lua, path: String| {
-            let path = file(&dir, &path)?;
+            let path = file(&dir, &packages, &path)?;
             let themes = themes(lua)?;
             off_clock(lua, || themes.load(&path)).map_err(fail)
         })?,

@@ -11,7 +11,9 @@ hidden, glass) and app_id, where ui.persist keeps its data and, on Linux,
 the desktop file ID its windows carry (app_id.desktop). Its ui.command
 entries are the menu bar. What follows the script is its ui.args, and the
 files among them open with it (ui.on_open); with an application_id
-(reverse-DNS) in zgx.json, so do those the system opens with it.
+(reverse-DNS) in zgx.json, so do those the system opens with it. Its
+packages ({ \"kit\": \"../shared/kit\" }) are module folders outside the
+script's directory it may require (require(\"@kit/button\")).
 
 --inspect serves devtools for agents: `zgx inspect help` drives the
 running app (its tree, states, clicks, typing, keys) over a socket only

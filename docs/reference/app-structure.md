@@ -27,7 +27,7 @@ my-app/
 }
 ```
 
-zgx resolves `require` as Luau does, from this `.luaurc` (beside the script) and the requiring file: `require("./state")` and `require("../theme")` relative to the requiring file, `require("@components/card")` through an alias, `require("@self/x")` from the requiring file's own directory, a directory as its `init.luau`. luau-lsp reads the same file, so editors and `zgx check` follow the same requires and check every module strictly. Modules stay inside the script's directory, run once per load, and return what they return.
+zgx resolves `require` as Luau does, from this `.luaurc` (beside the script) and the requiring file: `require("./state")` and `require("../theme")` relative to the requiring file, `require("@components/card")` through an alias, `require("@self/x")` from the requiring file's own directory, a directory as its `init.luau`. luau-lsp reads the same file, so editors and `zgx check` follow the same requires and check every module strictly. Modules stay inside the script's directory, run once per load, and return what they return. Modules several apps share go in a package, a folder outside it the host lists (zgx.json's `"packages": { "kit": "../shared/kit" }`, `ScriptHost::package`): `require("@kit/button")`, or a `.luaurc` alias into it so luau-lsp follows it too.
 
 ## Sharing state
 

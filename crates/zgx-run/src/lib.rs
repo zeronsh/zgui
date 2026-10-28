@@ -122,6 +122,13 @@ impl AppConfig {
     /// The config for the script at `script`: its directory's `zgx.json`
     /// (or `zgui.json`, deprecated), or the defaults (named after the directory). rename-to-zgx: keep
     pub fn for_script(script: &Path) -> Result<Self, String> {
+        Self::read(script).map(|(config, _)| config)
+    }
+    /// As [`for_script`](Self::for_script), with its `"packages"`: module
+    /// folders outside the script's directory it may require
+    /// (`{ "kit": "../shared/kit" }`, from the config's directory), for
+    /// `ScriptHost::package`.
+    fn read(script: &Path) -> Result<(Self, Vec<(String, PathBuf)>), String> {
         let dir = script.parent().unwrap_or(Path::new("."));
         let name = dir
             .canonicalize()
@@ -146,7 +153,7 @@ impl AppConfig {
             path = old;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {
-            return Ok(config);
+            return Ok((config, Vec::new()));
         };
         let fail = |e: String| format!("{}: {e}", path.display());
         let json: serde_json::Value =
@@ -183,6 +190,7 @@ impl AppConfig {
                 "glass",
                 "app_id",
                 "application_id",
+                "packages",
             ]
             .contains(&key.as_str())
             {
@@ -219,7 +227,29 @@ impl AppConfig {
             config.app_id = id;
         }
         config.application_id = string("application_id")?;
-        Ok(config)
+        let mut packages = Vec::new();
+        if let Some(listed) = object.get("packages") {
+            let listed = listed
+                .as_object()
+                .ok_or_else(|| fail("`packages` is not an object of names and folders".into()))?;
+            for (name, folder) in listed {
+                let folder = folder
+                    .as_str()
+                    .ok_or_else(|| fail(format!("package `{name}` is not a folder's path")))?;
+                let folder = dir.join(folder);
+                if name.is_empty() || name.contains('/') {
+                    return Err(fail(format!("package `{name}`: a name, without a `/`")));
+                }
+                if !folder.is_dir() {
+                    return Err(fail(format!(
+                        "package `{name}`: {} is not a folder",
+                        folder.display()
+                    )));
+                }
+                packages.push((name.clone(), folder));
+            }
+        }
+        Ok((config, packages))
     }
 }
 
@@ -286,7 +316,7 @@ pub fn run_hosting(
     if !script.is_file() {
         return Err(format!("{}: no such script", script.display()).into());
     }
-    let config = AppConfig::for_script(&script)?;
+    let (config, packages) = AppConfig::read(&script)?;
     let options = WindowOptions {
         title: config.title.clone(),
         width: config.width,
@@ -330,9 +360,11 @@ pub fn run_hosting(
             });
     }
     app.run(move |cx| {
-        let host = ScriptHost::new(&cx.ui.runtime, script.clone())
-            .app_id(&config.app_id)
-            .args(args.clone());
+        let host = packages.iter().fold(
+            ScriptHost::new(&cx.ui.runtime, script.clone()),
+            |host, (name, folder)| host.package(name, folder),
+        );
+        let host = host.app_id(&config.app_id).args(args.clone());
         // The launch's files, and what the system opened meanwhile:
         // they wait for the script's `ui.on_open`.
         host.open(launched.clone(), Vec::new());
@@ -543,6 +575,22 @@ mod tests {
         .unwrap();
         let config = AppConfig::for_script(&script).unwrap();
         assert_eq!(config.application_id.as_deref(), Some("dev.zgx.code"));
+        // Packages, from the config's directory, are folders.
+        std::fs::create_dir_all(dir.join("kit")).unwrap();
+        std::fs::write(
+            dir.join("zgx.json"),
+            r#"{ "packages": { "kit": "./kit" } }"#,
+        )
+        .unwrap();
+        let (_, packages) = AppConfig::read(&script).unwrap();
+        assert_eq!(packages, [("kit".to_string(), dir.join("./kit"))]);
+        std::fs::write(
+            dir.join("zgx.json"),
+            r#"{ "packages": { "kit": "./none" } }"#,
+        )
+        .unwrap();
+        let error = AppConfig::read(&script).unwrap_err();
+        assert!(error.contains("is not a folder"), "{error}");
         std::fs::remove_dir_all(dir).ok();
     }
 
