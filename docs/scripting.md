@@ -387,8 +387,11 @@ A plugin can also add next to any element of the app, or in its place, without a
 | windows of its own (`ui.window`) | yes | with `Capability::Windows` (one could pose as the app's, or the system's asking for a password); never the app's title bar (`ui.window.titlebar_area`, `controls`) |
 | files: modules, themes, images | from its directory | from its directory or below, links followed (one pointing outside is outside) |
 | commands (`ui.command`) | yes | yes, as `<plugin>/<id>`; a shortcut the app (or an earlier plugin) has stays theirs |
+| the app's modules (`@app/…`) | requires them | replaces one with `ui.override` given `Capability::Override(module)` (or `"*"`), **a trust grant**: the replacement runs as the app's own code; never requires them |
 
 A plugin's files are source, always: Luau checks no bytecode it loads, so a plugin's (or a module's) bytecode is read as source and fails to parse, rather than run. Only an app's bundle carries bytecode, its build's.
+
+**Module overrides.** A plugin replaces one of the app's modules, as a WordPress plugin replaces a theme's template: `ui.override { module = "@app/components/card", with = "./card" }` loads the plugin's `card.luau` wherever the app requires `@app/components/card`, and the replacement may `require("@app-original/components/card")` to wrap the original. Only what the app requires as `@app/…` (its own directory, under zgx's `app` alias) can be replaced; a relative require stays the app's. **`Capability::Override` on a module is a trust grant, not a permission over the interface:** the replacement runs in the app's VM with everything the app's scripts may do, so `Override("@app/…")` trusts the plugin with that module and `Override("*")` with the app. Grant it as you would install the plugin's code into the app. `@app-original/…` is reached from the replacement alone; a `.luaurc` cannot define `app` or `app-original`.
 
 Reaching for something it was not given is an error that names what it needs; a plugin that fails to load is left out, and the app and the other plugins load. `Capability::Named(..)` is the app's own vocabulary for what `expose_*` asks. The terminal example's plugins (`examples/terminal/plugins.rs`) are a whole system on top: a folder per plugin with a manifest saying what it needs, a sheet asking the user to allow it, and its panels opened from ⌘K.
 

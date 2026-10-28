@@ -1376,6 +1376,9 @@ pub(crate) struct Env {
     pub contributions: RefCell<Vec<Contribution>>,
     /// What it added at the app's elements (`ui.contribute { target }`).
     pub hooks: RefCell<Vec<HookContribution>>,
+    /// The app's modules it replaces (`ui.override`): module name and the
+    /// replacement.
+    pub overrides: RefCell<Vec<(String, ModuleOverride)>>,
     pub engine: Rc<crate::anime::Engine>,
     pub runtime: Runtime,
     /// The component instance being built, if any.
@@ -1568,6 +1571,79 @@ fn state_of(value: &mlua::Value) -> Option<Signal<Value>> {
 pub(crate) fn expect_state(value: &mlua::Value, what: &str) -> mlua::Result<Signal<Value>> {
     state_of(value).ok_or_else(|| mlua::Error::runtime(format!("{what} must be a ui.state")))
 }
+/// A plugin's module in place of one of the app's (`ui.override`): its file,
+/// the plugin's directory (what its own requires reach) and the plugin's
+/// name. It runs in the app's VM, as the app's own code.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ModuleOverride {
+    pub with: std::path::PathBuf,
+    pub dir: std::path::PathBuf,
+    pub owner: Rc<str>,
+}
+
+/// An `@app/…` module's name, as overrides and requires both write it:
+/// `components/card` for `components/card`, `components/card.luau` and
+/// `components/card/init.luau`.
+pub(crate) fn module_name(path: &str) -> String {
+    let path = path.trim_start_matches("./").trim_matches('/');
+    let path = path.strip_suffix(".luau").unwrap_or(path);
+    let path = path.strip_suffix("/init").unwrap_or(path);
+    path.to_owned()
+}
+
+/// `ui.override { module = "@app/…", with = "./mine" }` from a plugin: the
+/// app's module replaced by the plugin's, which runs as the app's own code
+/// and may require the original as `@app-original/…`. Takes
+/// `Capability::Override` of the module as written, or of `"*"`: a trust
+/// grant, not a permission over the interface.
+fn module_override(env: &Env, table: &Table) -> mlua::Result<(String, ModuleOverride)> {
+    let module: String = table.get::<Option<String>>("module")?.ok_or_else(|| {
+        mlua::Error::runtime("ui.override: `module` names the app's module (\"@app/…\")")
+    })?;
+    let Some(rest) = module.strip_prefix("@app/") else {
+        return Err(mlua::Error::runtime(format!(
+            "ui.override {{ module = \"{module}\" }}: only the app's `@app/…` modules are overridden"
+        )));
+    };
+    let own = crate::Capability::Override(module.clone());
+    let any = crate::Capability::Override("*".into());
+    if !env.grants.allows(&own) && !env.grants.allows(&any) {
+        return Err(mlua::Error::runtime(format!(
+            "ui.override {{ module = \"{module}\" }}: {} needs {own:?}, a trust grant: the \
+             module would run as the app's own code",
+            env.owner
+        )));
+    }
+    let with: String = table
+        .get::<Option<String>>("with")?
+        .ok_or_else(|| mlua::Error::runtime("ui.override: `with` names the plugin's module"))?;
+    let base = env
+        .vm
+        .upgrade()
+        .and_then(|vm| vm.base.clone())
+        .ok_or_else(|| mlua::Error::runtime("ui.override needs a plugin loaded from a file"))?;
+    let dir = base.canonicalize().unwrap_or(base);
+    let mut path = crate::normalize(&dir.join(&with));
+    if path.is_dir() {
+        path = path.join("init.luau");
+    } else if path.extension().is_none() {
+        path.set_extension("luau");
+    }
+    if !crate::within(&dir, &path) {
+        return Err(mlua::Error::runtime(format!(
+            "ui.override {{ with = \"{with}\" }}: the replacement is one of the plugin's own files"
+        )));
+    }
+    Ok((
+        module_name(rest),
+        ModuleOverride {
+            with: path,
+            dir,
+            owner: env.owner.clone(),
+        },
+    ))
+}
+
 /// `ui.contribute { target, before | after | replace }`: the target read,
 /// one place, and what the script may do there. Adding before or after an
 /// element is open, unless the host asks a capability for that target
@@ -4586,6 +4662,15 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     table.as_ref(),
                 )?,
             )
+        })?,
+    )?;
+    ui.set(
+        "override",
+        lua.create_function(|lua, table: Table| {
+            let env = env(lua)?;
+            let replaced = module_override(&env, &table)?;
+            env.overrides.borrow_mut().push(replaced);
+            Ok(())
         })?,
     )?;
     ui.set(
