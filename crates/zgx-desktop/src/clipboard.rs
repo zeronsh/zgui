@@ -202,7 +202,10 @@ pub(crate) fn write_image(images: &Images, image: &zgx::image::ImageData) -> Res
 
 /// The clipboard's DIB on Windows, decoded by `dib`; none where a PNG is
 /// there too (the better copy, which arboard reads) or the DIB is of a kind
-/// `dib` leaves to arboard.
+/// `dib` leaves to arboard. It reads the DIB the app put there, CF_DIB or
+/// CF_DIBV5 (`dib::placed`): Windows makes the other from it, and the
+/// CF_DIBV5 it makes of a BI_BITFIELDS CF_DIB repeats the masks after the
+/// V5 header, which nothing in the block tells from pixels.
 #[cfg(windows)]
 fn windows_dib() -> Option<zgx::image::ImageData> {
     use windows::{
@@ -210,8 +213,8 @@ fn windows_dib() -> Option<zgx::image::ImageData> {
             Foundation::HGLOBAL,
             System::{
                 DataExchange::{
-                    CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
-                    RegisterClipboardFormatW,
+                    CloseClipboard, EnumClipboardFormats, GetClipboardData,
+                    IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
                 },
                 Memory::{GlobalLock, GlobalSize, GlobalUnlock},
                 Ole::CF_DIBV5,
@@ -234,8 +237,13 @@ fn windows_dib() -> Option<zgx::image::ImageData> {
                 false
             }
         })?;
-        let data = GetClipboardData(u32::from(CF_DIBV5.0))
-            .ok()
+        // Formats in the order the app put them, those Windows makes after.
+        let formats = std::iter::successors(Some(EnumClipboardFormats(0)), |format| {
+            Some(EnumClipboardFormats(*format))
+        })
+        .take_while(|format| *format != 0);
+        let data = dib::placed(formats)
+            .and_then(|format| GetClipboardData(format).ok())
             .and_then(|handle| {
                 let global = HGLOBAL(handle.0);
                 let pointer = GlobalLock(global);
@@ -256,11 +264,25 @@ fn windows_dib() -> Option<zgx::image::ImageData> {
 /// by arboard's decoder, which takes a V4 or V5 header with bit fields to be
 /// followed by its colour masks again: where they aren't (Firefox's DIBs,
 /// arboard's own), it failed, or shifted every pixel where the block had
-/// slack at its end.
+/// slack at its end. As the format has it, masks follow only a
+/// BITMAPINFOHEADER; a V4 or V5 header holds its own, and its pixels follow
+/// it (and any colour table) whatever slack the block has.
 #[cfg(any(windows, test))]
 mod dib {
     const BI_RGB: u32 = 0;
     const BI_BITFIELDS: u32 = 3;
+    const BI_ALPHABITFIELDS: u32 = 6;
+    pub(super) const CF_DIB: u32 = 8;
+    pub(super) const CF_DIBV5: u32 = 17;
+
+    /// Of the clipboard's `formats` in the order Windows lists them (those
+    /// the app put there first, in its order, then those Windows makes),
+    /// the DIB format the app put there: the first of CF_DIB and CF_DIBV5.
+    pub(super) fn placed(formats: impl IntoIterator<Item = u32>) -> Option<u32> {
+        formats
+            .into_iter()
+            .find(|format| matches!(*format, CF_DIB | CF_DIBV5))
+    }
 
     /// Straight RGBA rows top to bottom from a packed DIB (`CF_DIBV5`,
     /// `CF_DIB`): a BITMAPINFOHEADER, V4 or V5 header and 24- or 32-bit
@@ -290,21 +312,18 @@ mod dib {
                 let alpha = if size > 40 { at(52)? } else { 0 };
                 [0xff_0000, 0xff00, 0xff, alpha & 0xff00_0000]
             }
+            // A BITMAPINFOHEADER's masks follow it: red, green and blue,
+            // and alpha too with BI_ALPHABITFIELDS.
             (32, BI_BITFIELDS) if size == 40 => {
                 offset += 12;
                 [at(40)?, at(44)?, at(48)?, 0]
             }
-            (32, BI_BITFIELDS) => {
-                let masks = [at(40)?, at(44)?, at(48)?, at(52)?];
-                // Some writers repeat the colour masks after a V4 or V5
-                // header, where a BITMAPINFOHEADER's go.
-                if (0..3).all(|i| at(size + 4 * i) == Some(masks[i]))
-                    && data.len() >= size + 12 + length
-                {
-                    offset += 12;
-                }
-                masks
+            (32, BI_ALPHABITFIELDS) if size == 40 => {
+                offset += 16;
+                [at(40)?, at(44)?, at(48)?, at(52)?]
             }
+            // A V4 or V5 header's are in it.
+            (32, BI_BITFIELDS | BI_ALPHABITFIELDS) => [at(40)?, at(44)?, at(48)?, at(52)?],
             _ => return None,
         };
         // A colour table, which these depths need not have.
@@ -379,18 +398,118 @@ mod tests {
     const RGBA: [u8; 16] = [1, 2, 3, 0, 5, 6, 7, 64, 10, 20, 30, 255, 50, 60, 70, 128];
 
     #[test]
-    fn a_v5_dib_with_an_alpha_mask_decodes_whole_with_or_without_masks_after() {
+    fn a_v5_dib_with_an_alpha_mask_decodes_whole_with_or_without_slack() {
         let plain = [header(124, 2, 2, 32, 3), BOTTOM_UP.to_vec()].concat();
         assert_eq!(super::dib::decode(&plain), Some((2, 2, RGBA.to_vec())));
-        let masks: Vec<u8> = [0xff_0000u32, 0xff00, 0xff]
-            .iter()
-            .flat_map(|m| m.to_le_bytes())
-            .collect();
-        let repeated = [header(124, 2, 2, 32, 3), masks, BOTTOM_UP.to_vec()].concat();
-        assert_eq!(super::dib::decode(&repeated), Some((2, 2, RGBA.to_vec())));
         // Slack at the end of the block shifts nothing.
         let slack = [plain, vec![0; 12]].concat();
         assert_eq!(super::dib::decode(&slack), Some((2, 2, RGBA.to_vec())));
+    }
+
+    /// Pixels that read as the colour masks are pixels: a V5 header holds
+    /// its masks, and none follow it, slack or not.
+    #[test]
+    fn a_v5_dibs_first_pixels_are_never_taken_for_masks() {
+        let mut v5 = header(124, 4, 1, 32, 3);
+        v5[52..56].copy_from_slice(&0u32.to_le_bytes());
+        let pixels: Vec<u8> = [0xff_0000u32, 0xff00, 0xff, 0xff11_2233]
+            .iter()
+            .flat_map(|p| p.to_le_bytes())
+            .collect();
+        let rgba = [
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0x11, 0x22, 0x33, 255,
+        ];
+        let exact = [v5, pixels].concat();
+        assert_eq!(super::dib::decode(&exact), Some((4, 1, rgba.to_vec())));
+        let slack = [exact, vec![0; 12]].concat();
+        assert_eq!(super::dib::decode(&slack), Some((4, 1, rgba.to_vec())));
+    }
+
+    /// A BITMAPINFOHEADER's masks follow it: three with BI_BITFIELDS, four
+    /// with BI_ALPHABITFIELDS.
+    #[test]
+    fn a_plain_headers_masks_follow_it() {
+        let masks =
+            |masks: &[u32]| -> Vec<u8> { masks.iter().flat_map(|m| m.to_le_bytes()).collect() };
+        let rgb = [
+            header(40, 2, 2, 32, 3),
+            masks(&[0xff_0000, 0xff00, 0xff]),
+            BOTTOM_UP.to_vec(),
+        ]
+        .concat();
+        let opaque: Vec<u8> = RGBA
+            .chunks(4)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect();
+        assert_eq!(super::dib::decode(&rgb), Some((2, 2, opaque)));
+        let rgba = [
+            header(40, 2, 2, 32, 6),
+            masks(&[0xff_0000, 0xff00, 0xff, 0xff00_0000]),
+            BOTTOM_UP.to_vec(),
+            vec![0; 12],
+        ]
+        .concat();
+        assert_eq!(super::dib::decode(&rgba), Some((2, 2, RGBA.to_vec())));
+    }
+
+    /// The CF_DIBV5 Windows made, on WING-PC, of a 40×30 CF_DIB with
+    /// BI_BITFIELDS masks after its header: its first 136 bytes, the V5
+    /// header and then the masks again (124..136), before the same pixels.
+    const SYNTHESIZED_V5: [u8; 136] = [
+        0x7c, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x01, 0x00, 0x20,
+        0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
+        0xff, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x42, 0x47, 0x52, 0x73,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff, 0x00, 0x00,
+        0x00,
+    ];
+
+    /// The smoke's 40×30 opaque pattern: RGBA rows top to bottom, and as a
+    /// 32-bit DIB's rows (BGR and an unused fourth byte, bottom row first).
+    fn pattern() -> (Vec<u8>, Vec<u8>) {
+        let (mut rgba, mut rows) = (Vec::new(), Vec::new());
+        for y in 0..30usize {
+            for x in 0..40usize {
+                rgba.extend([
+                    (x * 6 % 256) as u8,
+                    (y * 8 % 256) as u8,
+                    ((x + y) * 3 % 256) as u8,
+                    255,
+                ]);
+            }
+        }
+        for row in rgba.chunks(40 * 4).rev() {
+            rows.extend(row.chunks(4).flat_map(|p| [p[2], p[1], p[0], 0]));
+        }
+        (rgba, rows)
+    }
+
+    /// The DIB read is the one the app put on the clipboard: Windows lists
+    /// it first, then what it makes of it.
+    #[test]
+    fn the_dib_the_app_placed_is_read_not_the_one_windows_made() {
+        use super::dib::{CF_DIB, CF_DIBV5, placed};
+        const CF_BITMAP: u32 = 2;
+        assert_eq!(placed([13, CF_DIB, 16, CF_DIBV5]), Some(CF_DIB));
+        assert_eq!(placed([CF_DIBV5, 13, CF_DIB]), Some(CF_DIBV5));
+        assert_eq!(placed([CF_BITMAP, CF_DIB, CF_DIBV5]), Some(CF_DIB));
+        assert_eq!(placed([1, 13]), None);
+        // What Windows made of a BI_BITFIELDS DIB: read as the format has
+        // it, the repeated masks are pixels, so the original is read.
+        let (rgba, rows) = pattern();
+        let mut original = header(40, 40, 30, 32, 3);
+        for mask in [0xff_0000u32, 0xff00, 0xff] {
+            original.extend(mask.to_le_bytes());
+        }
+        original.extend(&rows);
+        assert_eq!(super::dib::decode(&original), Some((40, 30, rgba.clone())));
+        let synthesized = [SYNTHESIZED_V5.to_vec(), rows].concat();
+        assert_eq!(synthesized.len(), 4936, "GlobalSize on WING-PC");
+        assert_ne!(super::dib::decode(&synthesized), Some((40, 30, rgba)));
     }
 
     #[test]

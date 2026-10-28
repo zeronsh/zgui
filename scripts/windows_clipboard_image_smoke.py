@@ -4,7 +4,11 @@
 - images other apps put there paste whole: a 24-bit DIB (as screenshots and
   older apps copy), a 32-bit DIB whose fourth byte is unused (a GDI bitmap's,
   as Paint copies: opaque, not transparent), a DIBV5 whose alpha mask gives
-  it alpha (as Firefox copies), and a PNG alone (as browsers and image
+  it alpha (as Firefox copies), a DIBV5 without an alpha mask whose first
+  pixels read like colour masks, its block longer than its pixels (a V5
+  header holds its masks: none follow it), a DIB with BI_BITFIELDS masks
+  after its header (read as placed: the DIBV5 Windows makes of it repeats
+  the masks after its header), and a PNG alone (as browsers and image
   editors add);
 - an image zgx copies is there as a PNG and as a DIB with its alpha, and
   Windows offers the plain DIB older apps read: each read back here, every
@@ -72,13 +76,32 @@ def dib(width, height, rgba, bits, fourth=None):
     return header + b"".join(rows)
 
 
-def dibv5(width, height, rgba):
-    """A bottom-up DIBV5 of `rgba` with an alpha mask (BI_BITFIELDS)."""
-    masks = struct.pack("<IIII", 0xFF0000, 0xFF00, 0xFF, 0xFF000000)
+def dibv5(width, height, rgba, alpha=True, slack=0):
+    """A bottom-up DIBV5 of `rgba` (BI_BITFIELDS), with an alpha mask or
+    without one (its fourth bytes then 0), and `slack` bytes after it."""
+    masks = struct.pack("<IIII", 0xFF0000, 0xFF00, 0xFF, 0xFF000000 if alpha else 0)
     header = struct.pack("<IiiHHIIiiII", 124, width, height, 1, 32, 3, width * height * 4, 0, 0, 0, 0)
     header += masks + struct.pack("<I", 0x73524742) + bytes(36) + bytes(12) + struct.pack("<IIII", 4, 0, 0, 0)
     assert len(header) == 124
-    return header + dib(width, height, rgba, 32)[40:]
+    return header + dib(width, height, rgba, 32, fourth=None if alpha else 0)[40:] + bytes(slack)
+
+
+def dib_fields(width, height, rgba):
+    """A bottom-up 32-bit DIB of `rgba` whose colour masks (BI_BITFIELDS)
+    follow its BITMAPINFOHEADER, the fourth byte unused."""
+    header = struct.pack("<IiiHHIIiiII", 40, width, height, 1, 32, 3, 0, 0, 0, 0, 0)
+    masks = struct.pack("<III", 0xFF0000, 0xFF00, 0xFF)
+    return header + masks + dib(width, height, rgba, 32, fourth=0)[40:]
+
+
+def masks_first(width, height):
+    """An opaque pattern whose stored first pixels (the bottom row's) are
+    pure red, green and blue: words equal to the colour masks."""
+    rgba = bytearray(pattern(width, height, lambda x, y: 255))
+    bottom = (height - 1) * width * 4
+    for i, colour in enumerate(((255, 0, 0), (0, 255, 0), (0, 0, 255))):
+        rgba[bottom + i * 4 : bottom + i * 4 + 3] = bytes(colour)
+    return bytes(rgba)
 
 
 def png(width, height, rgba):
@@ -197,6 +220,12 @@ def main():
         ("24-bit DIB", [(CF_DIB, dib(w, h, opaque, 24))], opaque),
         ("32-bit DIB, fourth byte unused", [(CF_DIB, dib(w, h, opaque, 32, fourth=0))], opaque),
         ("DIBV5 with alpha", [(CF_DIBV5, dibv5(w, h, alpha))], alpha),
+        (
+            "DIBV5, first pixels like masks, with slack",
+            [(CF_DIBV5, dibv5(w, h, masks_first(w, h), alpha=False, slack=12))],
+            masks_first(w, h),
+        ),
+        ("DIB with masks after its header", [(CF_DIB, dib_fields(w, h, opaque))], opaque),
         ("PNG alone", [(PNG, png(w, h, alpha))], alpha),
     ]
     saved = save_clipboard()
