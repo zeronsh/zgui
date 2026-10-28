@@ -131,9 +131,6 @@ struct Inner {
     /// Room `newest_first` orders `queued` in, kept between flushes.
     order: RefCell<Order>,
     active: Cell<Option<EffectId>>,
-    /// How many of the running effect's dependencies from before this run
-    /// it has read again (`track_as`): all of them, and none is stale.
-    reread: Cell<usize>,
     /// Effects made so far (`Effects::insert`'s `born`).
     next: Cell<u64>,
     /// Effects stopped whose handles still live (`Effect::stop`).
@@ -148,27 +145,20 @@ struct Inner {
 /// again when it drops, a panicking callback's unwind included, so later
 /// reads never subscribe an effect that is no longer running.
 struct Active<'a> {
-    inner: &'a Inner,
+    slot: &'a Cell<Option<EffectId>>,
     previous: Option<EffectId>,
-    reread: usize,
 }
 impl<'a> Active<'a> {
-    fn run(inner: &'a Inner, id: EffectId) -> Self {
+    fn run(slot: &'a Cell<Option<EffectId>>, id: EffectId) -> Self {
         Self {
-            inner,
-            previous: inner.active.replace(Some(id)),
-            reread: inner.reread.replace(0),
+            slot,
+            previous: slot.replace(Some(id)),
         }
-    }
-    /// What the run has read again so far (`Inner::reread`).
-    fn reread(&self) -> usize {
-        self.inner.reread.get()
     }
 }
 impl Drop for Active<'_> {
     fn drop(&mut self) {
-        self.inner.active.set(self.previous);
-        self.inner.reread.set(self.reread);
+        self.slot.set(self.previous);
     }
 }
 /// `newest_first`'s room: a bit for each effect born in the range queued,
@@ -261,31 +251,24 @@ impl Inner {
     /// queued is left alone. Returns whether it ran.
     #[inline(always)]
     fn run(&self, id: EffectId) -> bool {
-        let (callback, before) = {
+        let callback = {
             let mut effects = self.effects.borrow_mut();
             let Some(record) = effects.get_mut(&id).filter(|record| record.queued) else {
                 return false;
             };
             record.queued = false;
             record.run = record.run.wrapping_add(1);
-            // What it read before this run, `KEPT` aside.
-            let before = record.dependencies.iter().filter(|d| d.run != KEPT).count();
-            (record.callback.clone(), before)
+            record.callback.clone()
         };
         #[cfg(feature = "trace")]
         let traced = crate::trace::enabled().then(std::time::Instant::now);
-        let reread = {
-            let active = Active::run(self, id);
+        {
+            let _active = Active::run(&self.active, id);
             (*callback.borrow_mut())();
-            active.reread()
-        };
+        }
         #[cfg(feature = "trace")]
         if let Some(started) = traced {
             crate::trace::ran(id, started);
-        }
-        // Read all it read before (most runs): nothing to drop.
-        if reread == before {
-            return true;
         }
         // Drop subscriptions this run no longer read. The record may be
         // gone if the callback disposed its own effect.
@@ -422,7 +405,7 @@ impl Runtime {
             runtime: Rc::downgrade(&self.inner),
         };
         {
-            let _active = Active::run(&self.inner, id);
+            let _active = Active::run(&self.inner.active, id);
             (*callback.borrow_mut())();
         }
         effect
@@ -457,7 +440,7 @@ impl Runtime {
     /// Run `f` with its reads subscribing effect `id`, as if it were part of
     /// its last run: a draw a mount deferred from an effect.
     pub(crate) fn run_as(&self, id: EffectId, f: &dyn Fn()) {
-        let _active = Active::run(&self.inner, id);
+        let _active = Active::run(&self.inner.active, id);
         f();
     }
     /// [`Runtime::batch`], whose flush, if `watched` says it once `f` has
@@ -862,9 +845,7 @@ impl<T: 'static> Signal<T> {
         let run = if kept { KEPT } else { record.run };
         // Effects read few signals; a linear scan beats any set lookup.
         if let Some(existing) = record.dependencies.iter_mut().find(|d| d.key == key) {
-            // Below `run` (below `KEPT` too): read last run, again now.
-            if existing.run < run {
-                runtime.reread.set(runtime.reread.get() + 1);
+            if existing.run != KEPT {
                 existing.run = run;
             }
         } else if self.inner.subscribers.borrow_mut().insert(id) {
