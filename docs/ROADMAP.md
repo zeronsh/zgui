@@ -13,6 +13,7 @@ Primary platforms: **Linux and macOS**, per user preference. Windows remains a p
 - [x] Keyed child reconciliation, dynamic conditional/list views and reusable components.
 - [x] Event dispatch, focus navigation, pointer capture and keyboard activation.
 - [x] Unicode text editing, selection, clipboard, IME composition, bounded undo/redo.
+- [ ] Known issue, for 0.1.6: a fixed-size row or column item held at its automatic minimum while its parent shrinks it (an 80-wide shrinkable column whose 80-wide child keeps it from narrowing, in a row too small for it and an 80-wide sibling) keeps its width when its content's least size drops (the child made narrower, clipped or absolute). A fresh layout makes it narrower, and the boxes after it move up. The item is a layout boundary (`is_layout_boundary`), so the change is laid out at the item alone, under its old room. Fixed on branch `layout/boundary-minimum` (tests in `crates/zgx/tests/layout_history.rs`), parked because every form so far adds work to hot layout paths (0.1% to 0.5% in app scenes).
 
 ## Rendering and platform
 
