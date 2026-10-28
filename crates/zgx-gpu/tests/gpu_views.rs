@@ -277,3 +277,28 @@ fn a_view_its_app_let_go_of_draws_while_its_box_shows_it() {
     assert_eq!(window.pixel(85., 30.), [255, 0, 0, 255]);
     assert!(zgx::gpu_view::painter(id).is_some());
 }
+
+#[test]
+fn a_view_drawn_by_a_renderer_on_another_device_hears_its_device_changed() {
+    let devices = Rc::new(RefCell::new(0));
+    let view = zgx_gpu::viewport::view(Fill {
+        color: Rc::new(RefCell::new(RED)),
+        drawn: Rc::default(),
+        devices: devices.clone(),
+    });
+    let (Ok(mut a), Ok(mut b)) = (GpuRenderer::new(16, 16), GpuRenderer::new(16, 16)) else {
+        return;
+    };
+    assert!(!a.context().shares_device(&b.context()));
+    let draw = |gpu: &mut GpuRenderer| {
+        let mut ui = Ui::new(16., 16.);
+        ui.mount(gpu_view("Model", &view).size(16., 16.));
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+    };
+    draw(&mut a);
+    draw(&mut b);
+    draw(&mut b);
+    assert_eq!(*devices.borrow(), 1, "once, on the second device");
+}

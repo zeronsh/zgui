@@ -14,7 +14,7 @@
 //! something other than wgpu, so a painter keeps no device of its own
 //! across frames without `Viewport::device_changed`.
 use crate::{GpuError, GpuRenderer};
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc};
 
 /// Draws a GPU view's frames.
 pub trait Viewport: 'static {
@@ -81,10 +81,12 @@ impl<'a> ViewportFrame<'a> {
     }
 }
 
-/// A view's painter, and the device it last drew with.
+/// A view's painter, and the context whose device it last drew with: by
+/// identity (wgpu's devices compare equal across instances), held weakly,
+/// so its allocation, not its device, outlives it.
 struct Painter {
     viewport: Box<dyn Viewport>,
-    device: Option<wgpu::Device>,
+    device: Option<std::rc::Weak<crate::GpuContextInner>>,
 }
 
 /// A GPU view drawn by `painter`: show it with `zgx::compose::gpu_view`.
@@ -109,6 +111,11 @@ struct Shown {
     targets: (wgpu::TextureView, Option<wgpu::TextureView>),
 }
 impl Views {
+    /// Forget views whose frames' textures are gone (pruned with their
+    /// boxes): their texture views go too.
+    pub(crate) fn retain_cached(&mut self, cached: impl Fn(u64) -> bool) {
+        self.shown.retain(|_, shown| cached(shown.image));
+    }
     /// The image ids views' textures are cached under: forgotten, their next
     /// frames draw anew (at a new scale).
     pub(crate) fn forget(&mut self) -> impl Iterator<Item = u64> + '_ {
@@ -144,9 +151,7 @@ impl GpuRenderer {
         // Views gone: their entries (their textures went with their frames).
         if views.shown.len() > 64 {
             let images = &self.images;
-            views
-                .shown
-                .retain(|_, shown| images.contains_key(&shown.image));
+            views.retain_cached(|image| images.contains_key(&image));
         }
         let (bind, bytes, texture, targets) = match kept {
             Some(kept) => kept,
@@ -177,13 +182,14 @@ impl GpuRenderer {
             })?;
             let mut painter = painter.borrow_mut();
             let painter = &mut *painter;
-            let (device, queue) = self.view_device();
-            if painter.device.as_ref() != Some(device) {
+            let context = &self.context.inner;
+            if painter.device.as_ref().map(std::rc::Weak::as_ptr) != Some(Rc::as_ptr(context)) {
                 if painter.device.is_some() {
                     painter.viewport.device_changed();
                 }
-                painter.device = Some(device.clone());
+                painter.device = Some(Rc::downgrade(context));
             }
+            let (device, queue) = self.view_device();
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("GPU view"),
             });
@@ -256,5 +262,59 @@ impl GpuRenderer {
             .get_downlevel_capabilities()
             .flags
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zgx::{compose::prelude::*, widgets::Ui};
+
+    struct Clear;
+    impl Viewport for Clear {
+        fn render(&mut self, frame: &mut ViewportFrame<'_>) {
+            frame
+                .encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("clear"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: frame.target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
+        }
+    }
+
+    fn draw(ui: &Ui, gpu: &mut GpuRenderer) {
+        ui.prepare_frame();
+        let damage = ui.scene.borrow_mut().flush().damage;
+        gpu.render(&ui.scene.borrow(), &damage).unwrap();
+    }
+
+    #[test]
+    fn views_gone_with_their_boxes_let_go_of_their_textures() {
+        let Ok(mut gpu) = GpuRenderer::new(64, 64) else {
+            return;
+        };
+        let mut ui = Ui::new(64., 64.);
+        for _ in 0..32 {
+            let view = view(Clear);
+            let id = view.id();
+            let handle = ui.mount(gpu_view("Model", &view).size(64., 64.));
+            draw(&ui, &mut gpu);
+            handle.unmount();
+            drop(view);
+            draw(&ui, &mut gpu);
+            assert!(zgx::gpu_view::painter(id).is_none());
+        }
+        assert!(gpu.views.as_ref().unwrap().shown.is_empty(), "pruned");
+        gpu.trim();
+        assert!(gpu.views.as_ref().unwrap().shown.is_empty());
     }
 }

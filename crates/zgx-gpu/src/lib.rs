@@ -4631,6 +4631,14 @@ impl GpuRenderer {
             }
             self.images.retain(|id, _| live_images.contains(id));
         }
+        self.retain_views();
+    }
+    /// Forget GPU views whose frames' textures are gone.
+    fn retain_views(&mut self) {
+        if let Some(views) = &mut self.views {
+            let images = &self.images;
+            views.retain_cached(|image| images.contains_key(&image));
+        }
     }
     /// Bring `id`'s layer texture up to date. `magnification`: how much its
     /// parent's content is magnified on screen (by transformed ancestors);
@@ -10756,6 +10764,7 @@ impl GpuRenderer {
         self.images.remove(&effects::EFFECT_ATLAS);
         self.spare = None;
         self.layers.retain(|_, cache| !cache.parked);
+        self.retain_views();
         // Idle: only the shown surface is needed; the next frame makes another.
         #[cfg(target_os = "macos")]
         if let Some(present) = &mut self.layer_present

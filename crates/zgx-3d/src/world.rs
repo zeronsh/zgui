@@ -232,6 +232,23 @@ struct Slot<T> {
     generation: u32,
     value: Option<T>,
 }
+/// Put `value` in the first free slot (or a new one): its index and
+/// generation.
+fn claim<T>(slots: &mut Vec<Slot<T>>, value: T) -> (u32, u32) {
+    let index = match slots.iter().position(|slot| slot.value.is_none()) {
+        Some(free) => free,
+        None => {
+            slots.push(Slot {
+                generation: 0,
+                value: None,
+            });
+            slots.len() - 1
+        }
+    };
+    let slot = &mut slots[index];
+    slot.value = Some(value);
+    (index as u32, slot.generation)
+}
 pub(crate) struct Inner {
     objects: Vec<Slot<Object>>,
     lights: Vec<Slot<Light>>,
@@ -365,22 +382,8 @@ impl World {
         object.transform = object.transform.sanitized();
         let mut id = None;
         self.change(|inner| {
-            let index = match inner.objects.iter().position(|slot| slot.value.is_none()) {
-                Some(free) => free,
-                None => {
-                    inner.objects.push(Slot {
-                        generation: 0,
-                        value: None,
-                    });
-                    inner.objects.len() - 1
-                }
-            };
-            let slot = &mut inner.objects[index];
-            slot.value = Some(object);
-            id = Some(ObjectId {
-                index: index as u32,
-                generation: slot.generation,
-            });
+            let (index, generation) = claim(&mut inner.objects, object);
+            id = Some(ObjectId { index, generation });
             true
         });
         id.unwrap()
@@ -429,14 +432,8 @@ impl World {
     pub fn add_light(&self, light: Light) -> LightId {
         let mut id = None;
         self.change(|inner| {
-            inner.lights.push(Slot {
-                generation: 0,
-                value: Some(light),
-            });
-            id = Some(LightId {
-                index: inner.lights.len() as u32 - 1,
-                generation: 0,
-            });
+            let (index, generation) = claim(&mut inner.lights, light);
+            id = Some(LightId { index, generation });
             true
         });
         id.unwrap()
@@ -490,5 +487,49 @@ impl World {
     /// Changes made so far: a frame is drawn for each run of them.
     pub fn revision(&self) -> u64 {
         self.inner.borrow().revision
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sun() -> Light {
+        Light::Directional {
+            direction: Vec3::Y,
+            color: [1.; 3],
+            intensity: 1.,
+        }
+    }
+
+    #[test]
+    fn removed_lights_free_their_slots() {
+        let world = World::new();
+        for _ in 0..4096 {
+            let id = world.add_light(sun());
+            world.remove_light(id);
+        }
+        assert!(world.inner.borrow().lights.len() <= 1);
+    }
+
+    #[test]
+    fn a_removed_lights_id_does_not_reach_the_one_in_its_slot() {
+        let world = World::new();
+        let old = world.add_light(sun());
+        world.remove_light(old);
+        let new = world.add_light(sun());
+        assert_eq!(new.index, old.index, "the slot is reused");
+        let revision = world.revision();
+        world.remove_light(old);
+        world.set_light(
+            old,
+            Light::Directional {
+                direction: crate::math::vec3(1., 0., 0.),
+                color: [1.; 3],
+                intensity: 2.,
+            },
+        );
+        assert_eq!(world.revision(), revision);
+        assert_eq!(world.inner.borrow().lights().count(), 1);
     }
 }
