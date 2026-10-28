@@ -401,3 +401,58 @@ fn reactive_editor_text_color_only_damages_paint() {
     ui.prepare_frame();
     assert!(ui.scene.borrow_mut().flush().is_idle());
 }
+
+/// Whether an editor of `long` text, mounted, edited and dropped with its
+/// whole interface, leaves its text shaper held: bound to a `TextValue`
+/// (`text_area_value`), or to a `String` (`text_area`).
+fn shaper_kept_after_drop(long: bool, string: bool) -> bool {
+    use zgx::text_layout::{FallbackTextLayout, FontStyle, TextLayout};
+    let owner = std::rc::Rc::new(());
+    let held = std::rc::Rc::downgrade(&owner);
+    {
+        let mut ui = Ui::new(320., 240.);
+        ui.scene.borrow_mut().set_font_text_shaper(
+            move |text: &str, size, width, font: &FontStyle| -> Box<dyn TextLayout> {
+                std::hint::black_box(&owner);
+                Box::new(FallbackTextLayout::with_font(text, size, width, font))
+            },
+        );
+        let text = if long {
+            "line of text\n".repeat(6000)
+        } else {
+            "short text".to_owned()
+        };
+        let area = if string {
+            zgx::compose::text_area("Notes", ui.signal(text))
+        } else {
+            zgx::compose::text_area_value("Notes", ui.signal(TextValue::from(text)))
+        };
+        let view = ui.mount(area.size(300., 200.));
+        ui.prepare_frame();
+        let editor = ui.editor(view.node()).unwrap();
+        // (A String's editor keeps it flat; its layout goes by lines all
+        // the same once it is long.)
+        if !string {
+            assert_eq!(editor.editor.borrow().long_text().is_some(), long);
+        }
+        editor.set_selection(0, 0);
+        ui.prepare_frame();
+        ui.scene.borrow_mut().flush();
+    }
+    held.upgrade().is_some()
+}
+
+#[test]
+fn a_dropped_editor_lets_go_of_its_layout_and_shaper() {
+    for string in [false, true] {
+        let bound = if string { "a String" } else { "a TextValue" };
+        assert!(
+            !shaper_kept_after_drop(false, string),
+            "a short editor of {bound}"
+        );
+        assert!(
+            !shaper_kept_after_drop(true, string),
+            "a long editor of {bound} (its lines' layout)"
+        );
+    }
+}

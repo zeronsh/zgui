@@ -97,6 +97,13 @@ struct Colored {
     used: u64,
 }
 impl LineCache {
+    /// Let go of the last layout, which holds this cache in turn: called as
+    /// its editor goes (`widgets`), or the two would keep each other, their
+    /// lines and the shaper alive.
+    pub(crate) fn forget_last(&self) {
+        self.last.borrow_mut().take();
+        self.last_revision.set(None);
+    }
     /// The layout of the text `text` makes, its last one if the text and
     /// shaping are the same: known by the text's `revision`
     /// (`TextEditor::revision`) if it is an editor's committed text, before

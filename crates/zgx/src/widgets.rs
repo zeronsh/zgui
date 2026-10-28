@@ -201,6 +201,14 @@ struct CodeHint {
     caret_drawn: Cell<Option<Caret>>,
     caret_told: Cell<Option<Caret>>,
 }
+impl Drop for CodeHint {
+    /// A long text's last layout and its line cache hold each other.
+    fn drop(&mut self) {
+        if let Some(lines) = self.lines.get_mut().take() {
+            lines.forget_last();
+        }
+    }
+}
 impl EditorHint {
     fn new(value: EditorValue) -> Self {
         Self {
