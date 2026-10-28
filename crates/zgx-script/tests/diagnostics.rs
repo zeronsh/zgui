@@ -302,3 +302,27 @@ fn a_debug_build_lints_its_scripts_after_each_load() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The same error raised twice reaches `on_error` twice: each is an error,
+/// though the banner (shown or not) is the same.
+#[test]
+fn a_repeated_error_reaches_the_error_hook_each_time() {
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    let mut h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(
+            runtime,
+            "hook_probe",
+            r#"return ui.button { id = "fail", w = 120, h = 35, "Fail", on_click = function() error("same-boom") end }"#,
+        )
+        .error_banner(false);
+        host.on_error(move |e| sink.borrow_mut().push(e.to_string()));
+        host
+    });
+    h.click("fail");
+    h.frames(1);
+    h.click("fail");
+    h.frames(1);
+    assert_eq!(seen.borrow().len(), 2, "{:?}", seen.borrow());
+    assert!(seen.borrow().iter().all(|e| e.contains("same-boom")));
+}

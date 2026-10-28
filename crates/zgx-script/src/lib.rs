@@ -396,8 +396,19 @@ impl Vm {
     pub(crate) fn report(&self, error: mlua::Error) {
         let message = describe(&self.name, &error);
         eprintln!("{message}");
-        self.errors.set(Some(message));
+        report(&self.errors, message);
     }
+}
+
+/// Make `message` the error shown, telling what follows the error (the
+/// banner, `ScriptHost::on_error`) even when it repeats the last one: the
+/// same error raised twice is two errors, reported twice. The banner,
+/// keyed by its message, stays as it is.
+fn report(errors: &Signal<Option<String>>, message: String) {
+    errors.mutate(|error| {
+        *error = Some(message);
+        true
+    });
 }
 
 /// A call's end (`Vm::guard`): the outer call's clock runs again, shifted
@@ -1760,7 +1771,7 @@ impl ScriptHost {
             }
             Err(error) => {
                 eprintln!("{error}");
-                self.0.error.set(Some(error.clone()));
+                report(&self.0.error, error.clone());
                 self.start_check();
                 Err(error)
             }
@@ -1799,7 +1810,7 @@ impl ScriptHost {
             Err(error) => {
                 let message = error.to_string();
                 eprintln!("{message}");
-                self.0.error.set(Some(message.clone()));
+                report(&self.0.error, message.clone());
                 *self.0.theme_error.borrow_mut() = Some(message);
                 true
             }
