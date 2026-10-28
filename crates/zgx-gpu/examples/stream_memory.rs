@@ -5,6 +5,23 @@ use std::fmt::Write;
 use zgx::{compose::prelude::*, widgets::Ui};
 use zgx_gpu::GpuRenderer;
 
+/// The working set: Windows has no `ps`.
+#[cfg(windows)]
+fn rss_mb() -> f64 {
+    use windows::Win32::System::{
+        ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS},
+        Threading::GetCurrentProcess,
+    };
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: fills `counters`, whose size it is given, for this process.
+    unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) }
+        .map_or(0., |()| counters.WorkingSetSize as f64 / 1024. / 1024.)
+}
+
+#[cfg(not(windows))]
 fn rss_mb() -> f64 {
     let out = std::process::Command::new("ps")
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
