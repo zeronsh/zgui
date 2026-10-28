@@ -130,6 +130,8 @@ pub struct ShaderUniforms {
 /// Each unset field keeps the plain style's.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Decoration {
+    /// Typed native surface recipe, kept on the cold detailed-paint path.
+    pub surface_recipe: Option<Arc<crate::surface::SurfaceRecipe>>,
     /// What fills the box; `None`, the style's `fill` colour.
     pub background: Option<Background>,
     /// Its corner radii; `None`, the style's `radius` at every corner.

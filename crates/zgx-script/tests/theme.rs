@@ -341,3 +341,43 @@ fn ui_prefers_follows_the_systems_display_settings() {
     h.frames(1);
     assert_eq!(h.text("p"), "true false true", "as the system changes");
 }
+
+#[test]
+fn native_material_properties_follow_state_and_color_tokens_without_remounting() {
+    use zgx::scene::{BackdropMaterial, BlendMode};
+    let mut h = Harness::inline(
+        r##"
+        local enabled = ui.state("enabled", true)
+        ui.theme.tokens { app = { glass_fill = "#12345678" } }
+        return ui.column {
+            ui.div { id = "glass", w = 100, h = 40,
+                backdrop_material = function() return if enabled:get() then "liquid" else "blur" end,
+                backdrop_tint = "#ffffff40", backdrop_fill = "$app.glass_fill", backdrop_fill_blend = "overlay" },
+            ui.button { id = "toggle", "Toggle", on_click = function() enabled:set(not enabled:peek()) end },
+        }
+    "##,
+    );
+    let node = h.find("glass").unwrap();
+    let effects = h.ui.scene.borrow().effects(node);
+    assert_eq!(
+        effects.backdrop_material,
+        BackdropMaterial::Liquid,
+        "node={:?}, children={:?}",
+        h.ui.scene.borrow().kind(node),
+        h.ui.scene
+            .borrow()
+            .children(node)
+            .iter()
+            .map(|child| (*child, h.ui.scene.borrow().effects(*child)))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(effects.backdrop_fill, Color(0x12, 0x34, 0x56, 0x78));
+    assert_eq!(effects.backdrop_fill_blend, BlendMode::Overlay);
+    h.click("toggle");
+    assert_eq!(h.find("glass"), Some(node));
+    assert_eq!(
+        h.ui.scene.borrow().effects(node).backdrop_material,
+        BackdropMaterial::Blur
+    );
+    assert_eq!(h.host.error().get(), None);
+}

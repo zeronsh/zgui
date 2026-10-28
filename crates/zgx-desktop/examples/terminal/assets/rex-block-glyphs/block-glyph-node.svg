@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--Generator: Apple Native CoreSVG 362-->
+<!DOCTYPE svg
+PUBLIC "-//W3C//DTD SVG 1.1//EN"
+       "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 116 116">
+ <defs>
+  <linearGradient id="linearGradient-1" x1="50%" y1="7.53974%" x2="50%" y2="90.9651%">
+   <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+   <stop offset="100%" stop-color="#ffffff" stop-opacity="0.5"/>
+  </linearGradient>
+  <linearGradient id="linearGradient-2" x1="50%" y1="7.53974%" x2="50%" y2="90.9651%">
+   <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+   <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+  </linearGradient>
+  <linearGradient id="linearGradient-3" x1="54.6215%" y1="23.1118%" x2="37.1102%" y2="44.4009%">
+   <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+   <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+  </linearGradient>
+  <linearGradient id="linearGradient-4" x1="-66.898%" y1="50%" x2="100%" y2="50%">
+   <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+   <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+  </linearGradient>
+ </defs>
+ <title>node</title>
+ <g fill="none" fill-rule="evenodd" id="node" stroke="none" stroke-width="1">
+  <g id="Group" transform="translate(7, 0)">
+   <path d="M53.7064 0.729065C52.0309-0.243022 49.9714-0.243022 48.2959 0.729065L3.65226 26.961C1.95398 27.9331 1 29.7678 1 31.7122L1 84.2855C1 86.2298 2.05998 88.0646 3.64995 89.0367L48.2959 115.271C49.9714 116.243 52.0309 116.243 53.7064 115.271L98.35 89.0367C100.048 88.0646 101 86.2298 101 84.2855L101 31.7122C101 29.7678 99.94 27.9354 98.35 26.961L53.7064 0.729065Z" fill="url(#linearGradient-1)" id="Path"/>
+   <path d="M47.8501 0.729065C49.1842-0.0359784 50.7589-0.198924 52.1955 0.240229L100.185 87.4924C99.7517 88.1142 99.1825 88.6454 98.4908 89.0367L53.324 115.271C51.9601 116.053 50.3446 116.206 48.8824 115.729L0.910828 28.6194C1.35337 27.9484 1.94971 27.376 2.68334 26.961L47.8501 0.729065Z" fill="url(#linearGradient-2)" id="Combined-Shape"/>
+   <path d="M52.1955 0.240229C52.5843 0.359076 52.963 0.522022 53.324 0.729065L98.4908 26.961C99.1644 27.369 99.744 27.9276 100.19 28.5818L83.9907 58.052L52.1955 0.240229Z" fill="url(#linearGradient-3)" id="Combined-Shape"/>
+   <path d="M1.39349 28.8807L1.55521 28.6194L17.6444 57.834L17.6444 58.268L1.60187 87.3813C1.35813 87.018 1.1553 86.6257 1 86.2138L1.00037 29.715C1.10799 29.4258 1.23934 29.1466 1.39349 28.8807Z" fill="url(#linearGradient-4)" id="Combined-Shape"/>
+  </g>
+ </g>
+</svg>

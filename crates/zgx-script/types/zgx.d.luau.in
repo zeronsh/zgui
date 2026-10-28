@@ -343,6 +343,71 @@ export type Sides = { number }
 export type ShadowSpec = { x: number?, y: number?, blur: number?, spread: number?, color: Color? }
 -- Or a shadow token (`"$shadow.md"`, an app's own too).
 export type Shadow = string | ShadowSpec | { ShadowSpec } | false
+
+-- Sparse native surface recipes. Omitted fields and explicit ui.null clears
+-- remain distinct. Color alpha and geometry opacity are independent.
+export type SurfaceRGBA = { red: number, green: number, blue: number, alpha: number?, colorSpace: string? }
+export type SurfaceColor = Color | {
+	role: string?,
+	color: { kind: string?, light: SurfaceRGBA?, dark: SurfaceRGBA? }?,
+	resolvedColor: Color?,
+}
+export type SurfaceGeometry = {
+	opacity: number?,
+	insets: { top: number?, trailing: number?, bottom: number?, leading: number? }?,
+	radius: { mode: "concentric" | "matchSurface" | "fixed", value: number? }?,
+	clipsToSurface: boolean?,
+}
+export type SurfaceBlend = "normal" | "overlay" | "color" | "plusLighter" | "plusDarker" | "multiply" | "screen"
+export type SurfaceLayer = {
+	color: SurfaceColor?,
+	blendMode: SurfaceBlend?,
+	geometry: SurfaceGeometry?,
+	isEnabled: boolean?,
+}
+export type SurfaceStroke = {
+	id: string?,
+	color: SurfaceColor?,
+	blendMode: SurfaceBlend?,
+	geometry: SurfaceGeometry?,
+	isEnabled: boolean?,
+	width: number?,
+	alignment: "inside" | "center" | "outside"?,
+	level: "belowContent" | "aboveContent"?,
+}
+export type SurfaceShadow = {
+	id: string?,
+	color: SurfaceColor?,
+	blendMode: SurfaceBlend?,
+	geometry: SurfaceGeometry?,
+	isEnabled: boolean?,
+	blurRadius: number?,
+	offsetX: number?,
+	offsetY: number?,
+	spread: number?,
+	inner: boolean?,
+	knockout: boolean?,
+}
+export type SurfaceRecipe = {
+	glass: {
+		isEnabled: boolean?,
+		tint: SurfaceColor?,
+		usesTint: boolean?,
+		geometry: SurfaceGeometry?,
+		style: string?,
+		windowMaterial: string?,
+	}?,
+	backdrop: SurfaceLayer?,
+	fill: SurfaceLayer?,
+	fill2: SurfaceLayer?,
+	strokes: { SurfaceStroke }?,
+	shadows: { SurfaceShadow }?,
+	innerShadow: SurfaceShadow?,
+	shape: { cornerRadius: number?, cornerCurve: string? }?,
+	contentOpacity: number?,
+	contentInsets: { top: number?, trailing: number?, bottom: number?, leading: number? }?,
+	clipsContent: boolean?,
+}
 -- Stops are colors (evenly spaced) or `{ offset, color }` pairs.
 export type Gradient = { read [number]: Color | { Color } } | { angle: number?, stops: { read [number]: Color | { Color } } }
 
@@ -906,6 +971,7 @@ export type TermOptions = {
 	cwd: string?,
 	env: { [string]: string }?,
 	font_size: number?,
+	font_family: string?,
 	-- Handlers (the latest run's are called).
 	on_title: ((title: string) -> ...unknown)?,
 	on_pwd: ((pwd: string) -> ...unknown)?,
@@ -1159,6 +1225,11 @@ export type Styles = {
 	blend: BlendMode?,
 	blur: number?,
 	backdrop_blur: Num?,
+	surface_recipe: SurfaceRecipe?,
+	backdrop_material: ("blur" | "liquid")?,
+	backdrop_tint: Color?,
+	backdrop_fill: Color?,
+	backdrop_fill_blend: BlendMode?,
 	fade: Pair?,
 	fade_x: Pair?,
 	fade_sides: Sides?,
@@ -1329,6 +1400,11 @@ export type StyleProps = {
 	blend: Reactive<BlendMode>?,
 	blur: Reactive<number>?,
 	backdrop_blur: Reactive<Num>?,
+	surface_recipe: Reactive<SurfaceRecipe>?,
+	backdrop_material: Reactive<"blur" | "liquid">?,
+	backdrop_tint: Reactive<Color>?,
+	backdrop_fill: Reactive<Color>?,
+	backdrop_fill_blend: Reactive<BlendMode>?,
 	fade: Reactive<Pair>?,
 	fade_x: Reactive<Pair>?,
 	fade_sides: Reactive<Sides>?,

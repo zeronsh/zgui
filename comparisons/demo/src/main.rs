@@ -164,6 +164,7 @@ impl Demo {
                     brightness: 1.,
                     contrast: 1.,
                     saturate: 1.,
+                    ..Effects::default()
                 },
             );
             label(

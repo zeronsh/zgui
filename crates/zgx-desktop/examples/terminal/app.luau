@@ -1,4 +1,5 @@
--- A terminal multiplexer: tabs in the titlebar, each a tree of split panes
+-- A terminal multiplexer: tabs in the sidebar (the titlebar while it is
+-- closed), each a tree of split panes
 -- running Ghostty terminals, or web pages. Panes resize by their dividers
 -- and move by the grip in their top padding, onto another pane's edge or
 -- onto a tab; tabs reorder by dragging. Everything is state that survives
@@ -19,6 +20,7 @@
 -- reaching only what the user allowed it when zterm found it.
 --   lib/           plain logic: the split tree, pane names
 local theme = require("./theme")
+local appearance = require("./appearance")
 local state = require("./state")
 local sessions = require("./sessions")
 local saved = require("./saved")
@@ -29,11 +31,13 @@ local content = require("@components/content")
 local confirm = require("@components/confirm")
 local palette = require("@components/palette")
 local consent = require("@components/consent")
+local appearance_sheet = require("@components/appearance")
 
 -- Open the last layout (or a first tab), keep it saved, declare the menus.
 saved.start()
 saved.save_on_change()
 commands.declare()
+appearance.start()
 
 -- The window's title follows the active tab (Mission Control, the Dock).
 ui.effect(function()
@@ -46,10 +50,12 @@ return ui.row {
 	h_full = true,
 	font = theme.font,
 	items = "stretch",
-	bg = theme.tint,
+	bg = appearance.root_bg,
+	theme = appearance.scope,
 	on_key = confirm.on_key,
+	appearance.RootLayers(),
 	-- The agents running in every tab, by status (components/sidebar.luau).
-	sidebar.Sidebar(),
+	sidebar.Sidebar(tabs.SidebarTabs()),
 	ui.column {
 		grow = 1,
 		shrink = 1,
@@ -65,4 +71,5 @@ return ui.row {
 	palette.Palette(),
 	-- A plugin found that has not been allowed asks (components/consent.luau).
 	consent.Sheet(),
+	appearance_sheet.Sheet(),
 }

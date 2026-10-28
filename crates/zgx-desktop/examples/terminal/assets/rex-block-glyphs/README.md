@@ -1,0 +1,1 @@
+These SVG glyphs were exported from the installed Rex Beta.app bundled block glyph assets through Apple CoreSVG. Their paths are retained; Display P3 color declarations are replaced with `currentColor` so zgx can rasterize and tint them. They are used only for matching the reference UI; zterm branding and unmatched session glyphs remain unchanged.

@@ -55,3 +55,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
 }
 ```
+
+
+`WindowHandle::set_glass` replaces or removes the native backdrop without
+restarting the window. Create a window with `transparent = true` when its
+backdrop will change. `GlassMaterial::Liquid` uses macOS 26's public
+`NSGlassEffectView` in an `NSGlassEffectContainerView`, regular style; older
+macOS uses an active, within-window popover material. Windows uses Acrylic.
+`Glass::tint`, `corner_radius`, `backdrop` and `fill` configure Liquid Glass's
+native tint, geometry and optional color layers. Classic material layers paint
+backdrop, tint, then fill; `GlassMaterial::None` retains those layers and an
+optional independent underlay without requesting blur. `GlassInnerShadow`
+retains its own fixed/concentric radius, insets and surface-clipping choice.
+Normal, color and overlay use Core Image compositing. Additive lighter/darker
+use the source application's exact `plusL`/`plusD` Core Animation tokens through
+the public `compositingFilter` property; those token values are undocumented.
+A GPU background
+cannot blend with a separate native glass view. Per-node `backdrop_blur` remains
+a separate renderer effect and is not native Liquid Glass. Typed per-node
+surface recipes use separate native backdrop, fill, stroke and shadow planes
+on macOS, including decoration-only surfaces. Their source alpha and geometry
+opacity remain separate. Per-node borders, fills and shadow paths use circular
+corners to match the GPU and native content clips. This is a framework-consistent
+approximation of the source application's continuous corners; visual parity has
+not been verified. Root window glass keeps its native continuous corners.
+
+`WindowOptions::theme` and `WindowHandle::set_theme` choose a native light/dark
+appearance; `None` follows the system. Glass and appearance requests survive
+native window recreation. `WindowInfo::focused` follows native window focus.
+
+On macOS, `python3 scripts/macos_appearance_smoke.py` runs native structure and
+Ghostty color fixtures: replacing/removing materials, regular style and corner
+radius, real compositing filters, native dark/light/automatic appearance, and a
+shell variable retained across live terminal color changes. It skips on Linux.

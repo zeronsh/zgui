@@ -4,6 +4,10 @@
 -- both; `ui.theme.set("zgx-light")` (or any other theme) restyles it live.
 ui.theme.tokens {
 	terminal = {
+		canvas = "{background}",
+		surface_raised = "{surface.raised}",
+		surface_subtle = "{surface.sunken}",
+		terminal_bg = "{surface.sunken}",
 		-- Each terminal's card.
 		pane = "{surface.sunken}",
 		-- A selected tab, a dialog's button.
@@ -12,6 +16,7 @@ ui.theme.tokens {
 		-- one under the pointer.
 		glass = "{pressed}",
 		glass_hover = "{hover}",
+		selection_line = "{border.subtle}",
 		-- The focused pane's border, when there are several.
 		ring = "{border.strong}",
 		-- A tab's icon tiles (dimmer in a background tab) and their edge.
@@ -24,7 +29,10 @@ ui.theme.tokens {
 		slot = "{hover}",
 		slot_line = "{border.strong}",
 		-- From the window's edge to the panes and the tools.
-		inset = 6,
+		inset = 8,
+		pane_radius = 10,
+		pane_header = 34,
+		sidebar = { width = 232, radius = 16.5 },
 		-- The interface's type scale: denser than the standard one, as a
 		-- terminal's chrome is.
 		type = {
@@ -33,7 +41,7 @@ ui.theme.tokens {
 			sm = 11.5,
 			md = 12,
 			-- Tabs' names, menus, most text.
-			body = 12.5,
+			body = 13,
 			lg = 13,
 			xl = 14,
 			xxl = 15,
@@ -53,8 +61,8 @@ ui.theme.tokens {
 		button = {
 			hover = "{pressed}",
 			line = "{border.subtle}",
-			radius = 8,
-			radius_sm = 7,
+			radius = 15,
+			radius_sm = 13,
 			gap = 6,
 			pad = 14,
 			pad_sm = 10,
@@ -78,10 +86,10 @@ ui.theme.tokens {
 			shadow = "{shadow.lg}",
 			pad = 18,
 			gap = 6,
-			radius = 14,
+			radius = 16.5,
 		},
 		-- ⌘K: its sheet, and how far down the window it sits.
-		palette = { bg = "{surface.overlay}", line = "{border}", shadow = "{shadow.lg}", top = 56 },
+		palette = { bg = "{surface.overlay}", line = "{border}", shadow = "{shadow.lg}", top = 56, radius = 16 },
 		-- Small labels: a key in a hint, a permission or panel, a status.
 		key = { bg = "{hover}", line = "{border.subtle}", pad = 5, radius = 5 },
 		chip = { bg = "{hover}", line = "{border.subtle}", gap = 5 },
@@ -125,10 +133,10 @@ ui.theme.tokens {
 		tab = {
 			-- The icons' tiles sit as far in from a tab's edge as from its
 			-- top; the name, without a tile, a little more.
-			inset = 3,
+			inset = 5,
 			["end"] = 10,
 			gap = 7,
-			radius = 8,
+			radius = 16.5,
 			-- Between the tiles in a tab, and between tabs in the strip.
 			tile_gap = 3,
 			strip_gap = 3,
@@ -176,9 +184,8 @@ return {
 	clear = "#00000000",
 	font = "$font.sans",
 
-	-- Space between the window's edge and the panes, and between panes
-	-- (less: two borders meet there, which reads as more space).
-	inset = 6,
-	gap = 4,
-	titlebar = 40,
+	-- The comfortable native layout's outer inset and pane gutter.
+	inset = 8,
+	gap = 8,
+	titlebar = 50,
 }

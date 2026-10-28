@@ -3,6 +3,8 @@
 //! retained zgx views and the script is not consulted again except by event
 //! handlers, components as they mount, and explicitly computed (function)
 //! properties.
+#[path = "surface_recipe.rs"]
+mod surface_recipe;
 use crate::{
     Vm,
     element::{Ref, RefUd},
@@ -1186,6 +1188,7 @@ pub(crate) enum Lit {
     Pair(f32, f32),
     Len(Length),
     Shadows(Arc<[BoxShadow]>),
+    SurfaceRecipe(Option<Arc<zgx::surface::SurfaceRecipe>>),
     Gradient(f32, Arc<[GradientStop]>),
     Corners(Corners),
     /// A theme token (`"$surface.raised"`), resolved when the node styles.
@@ -1262,6 +1265,7 @@ pub(crate) enum Ty {
     /// Points, `"50%"` or `"auto"`.
     Len,
     Shadow,
+    SurfaceRecipe,
     Gradient,
     Corners,
 }
@@ -1326,6 +1330,9 @@ props! {
     "shadow" => Shadow: Shadow, "inset_shadow" => InsetShadow: Shadow, "opacity" => Opacity: Num,
     "brightness" => Brightness: Num, "contrast" => Contrast: Num, "saturate" => Saturate: Num, "blur" => Blur: Num, "backdrop_blur" => BackdropBlur: Num,
     "blend" => Blend: Str,
+    "surface_recipe" => SurfaceRecipe: SurfaceRecipe,
+    "backdrop_material" => BackdropMaterial: Str, "backdrop_tint" => BackdropTint: Color,
+    "backdrop_fill" => BackdropFill: Color, "backdrop_fill_blend" => BackdropFillBlend: Str,
     "fade" => Fade: Pair, "fade_x" => FadeX: Pair, "fade_sides" => FadeSides: Corners,
     "fade_overflow" => FadeOverflow: Bool, "snap" => Snap: Bool,
     "zoom" => Zoom: Num, "zoom_fixed" => ZoomFixed: Bool,
@@ -1591,6 +1598,10 @@ pub(crate) fn lit(value: &Value, ty: Ty) -> Option<Lit> {
         }
         (Ty::Shadow, v @ Value::Map(_)) => Lit::Shadows(Arc::from([shadow(v)?])),
         (Ty::Shadow, Value::Bool(false) | Value::Nil) => Lit::Shadows(Arc::from([])),
+        (Ty::SurfaceRecipe, Value::Nil | Value::Bool(false)) => Lit::SurfaceRecipe(None),
+        (Ty::SurfaceRecipe, v @ Value::Map(_)) => {
+            Lit::SurfaceRecipe(Some(Arc::new(surface_recipe::parse(v)?)))
+        }
         (Ty::Gradient, v) => {
             let (angle, stops) = match v {
                 Value::List(stops) => (180., stops.clone()),

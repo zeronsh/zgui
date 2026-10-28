@@ -29,9 +29,13 @@ use super::{Shape, shapes, webkit};
 use objc2::{
     ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send,
     rc::Retained,
-    runtime::{AnyObject, NSObject},
+    runtime::{AnyClass, AnyObject, NSObject},
 };
-use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowOrderingMode};
+use objc2_app_kit::{
+    NSAppearanceCustomization, NSAutoresizingMaskOptions, NSColor, NSView,
+    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
+    NSWindowOrderingMode,
+};
 use objc2_core_foundation::{CFRetained, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColor, CGMutablePath};
 use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
@@ -47,9 +51,12 @@ use zgx::{
         BackdropPlacement, NativeContent, NativePlacement, NativeViews, PageReport, PlaneSplit,
         PointerRoute, PointerStep,
     },
-    scene::{NodeId, Rect, Scene},
+    scene::{BackdropMaterial, NodeId, Rect, Scene},
     widgets::Ui,
 };
+#[path = "macos_recipe.rs"]
+mod recipe_native;
+use recipe_native::RecipePlanes;
 
 /// Cut levels around a native view: its rectangular clip, its own corners
 /// and its two nearest rounded clipping ancestors (`RoundedClip`).
@@ -377,6 +384,7 @@ define_class!(
 
 pub(crate) struct BackdropState {
     radius: Cell<f64>,
+    native: bool,
 }
 define_class!(
     #[unsafe(super(NSView))]
@@ -391,6 +399,9 @@ define_class!(
         }
         #[unsafe(method_id(makeBackingLayer))]
         fn make_backing_layer(&self) -> Retained<CALayer> {
+            if self.ivars().native {
+                CALayer::new()
+            } else {
             // Samples the composited layer tree live (pages included).
             // SAFETY: CABackdropLayer is a private CALayer subclass (`class!`
             // panics if it is gone); `+layer` returns it autoreleased, which
@@ -406,6 +417,7 @@ define_class!(
                 // Blurred at a quarter of the pixels: a blur keeps no detail.
                 let _: () = msg_send![&*layer, setScale: 0.25f64];
                 layer
+            }
             }
         }
         #[unsafe(method(hitTest:))]
@@ -516,6 +528,15 @@ fn rounded_path(size: (f32, f32), radii: [f32; 4], top_down: bool) -> CFRetained
     }
     CGMutablePath::close_subpath(Some(&path));
     path
+}
+/// Match the circular outline used by scene rounded clips and the GPU.
+/// Per-node recipes share this with native masks; continuous corners would
+/// leave crescents where a terminal or painted child meets its border.
+fn rounded_layer(layer: &CALayer, radius: f32) {
+    layer.setCornerRadius(f64::from(radius));
+    unsafe {
+        let _: () = msg_send![layer, setCornerCurve: &*NSString::from_str("circular")];
+    }
 }
 fn black() -> CFRetained<CGColor> {
     CGColor::new_srgb(0., 0., 0., 1.)
@@ -642,7 +663,7 @@ impl Cut {
                 down,
             )));
         } else {
-            mask.setCornerRadius(radii[0] as CGFloat);
+            rounded_layer(mask, radii[0]);
         }
     }
 }
@@ -663,11 +684,22 @@ impl Clip {
         &self.cuts[self.cuts.len() - 1].view
     }
 }
+struct NativeGlass {
+    container: Retained<NSView>,
+    effect: Retained<NSView>,
+    fill: Retained<NSView>,
+    liquid: bool,
+}
 struct Backdrop {
+    material: BackdropMaterial,
+    glass: Option<NativeGlass>,
     cuts: Vec<Cut>,
     view: Retained<BackdropView>,
     own: Option<Retained<CALayer>>,
     placed: Option<BackdropPlacement>,
+    recipe: Option<RecipePlanes>,
+    above_cuts: Vec<Cut>,
+    recipe_environment: Option<(bool, u64)>,
 }
 
 pub(crate) struct Surfaces {
@@ -690,12 +722,18 @@ pub(crate) struct Surfaces {
 }
 /// A native view's cuts and what they hold, as diagnostics read them.
 type ClipViews = (NodeId, Vec<Retained<CutView>>, Option<Retained<NSView>>);
+/// A backdrop's retained clipping views and native effect for diagnostics.
+type BackdropViews = (
+    Vec<Retained<CutView>>,
+    Retained<BackdropView>,
+    Option<Retained<NSView>>,
+);
 /// What diagnostics read (live AppKit views).
 #[derive(Default)]
 struct Shared {
     parent: Option<Retained<NSView>>,
     clips: Vec<ClipViews>,
-    backdrops: Vec<(Vec<Retained<CutView>>, Retained<BackdropView>)>,
+    backdrops: Vec<BackdropViews>,
     overlay_view: Option<Retained<OverlayView>>,
     overlay_host: Option<Retained<CALayer>>,
     /// The window's zoom: reports give zgx's points, AppKit's over it.
@@ -1028,10 +1066,7 @@ impl Surfaces {
             self.clips
                 .sort_by_key(|(node, _)| wanted.iter().position(|other| other == node));
             for (_, clip) in &self.clips {
-                let above: Retained<NSView> = match self.backdrops.first() {
-                    Some(backdrop) => Retained::into_super(backdrop.cuts[0].view.clone()),
-                    None => Retained::into_super(self.overlay_view.clone()),
-                };
+                let above: Retained<NSView> = Retained::into_super(self.overlay_view.clone());
                 self.parent.addSubview_positioned_relativeTo(
                     clip.outer(),
                     NSWindowOrderingMode::Below,
@@ -1044,7 +1079,11 @@ impl Surfaces {
         {
             window.makeFirstResponder(Some(&view));
         }
-        self.apply_backdrops(split.backdrops(), &bounds);
+        self.apply_backdrops(
+            split.backdrops(),
+            &bounds,
+            order_changed || wanted != current,
+        );
         let mut shared = self.shared.borrow_mut();
         shared.clips = self
             .clips
@@ -1064,6 +1103,7 @@ impl Surfaces {
                 (
                     b.cuts.iter().map(|cut| cut.view.clone()).collect(),
                     b.view.clone(),
+                    b.glass.as_ref().map(|glass| glass.effect.clone()),
                 )
             })
             .collect();
@@ -1197,24 +1237,111 @@ impl Surfaces {
             clip.outer().setHidden(false);
         }
     }
-    fn apply_backdrops(&mut self, placements: &[BackdropPlacement], bounds: &NSRect) {
+    fn backdrop_view(&self, material: BackdropMaterial) -> Retained<BackdropView> {
+        // SAFETY: designated initializer on a fresh main-thread NSView subclass.
+        let view: Retained<BackdropView> = unsafe {
+            let object = self.mtm.alloc::<BackdropView>().set_ivars(BackdropState {
+                radius: Cell::new(-1.),
+                native: material != BackdropMaterial::Blur,
+            });
+            msg_send![super(object), initWithFrame: NSRect::ZERO]
+        };
+        view.setWantsLayer(true);
+        if let Some(layer) = view.layer() {
+            no_actions(&layer);
+        }
+        view
+    }
+    fn native_glass(&self) -> NativeGlass {
+        let mask = NSAutoresizingMaskOptions::ViewWidthSizable
+            | NSAutoresizingMaskOptions::ViewHeightSizable;
+        // SAFETY: macOS 26 classes are looked up, never statically linked. Their
+        // public NSView initializers and Regular style setter match the SDK.
+        let (container, effect, liquid) = unsafe {
+            match (
+                AnyClass::get(c"NSGlassEffectContainerView"),
+                AnyClass::get(c"NSGlassEffectView"),
+            ) {
+                (Some(container), Some(effect)) => {
+                    let container: Retained<NSView> =
+                        msg_send![msg_send![container, alloc], initWithFrame: NSRect::ZERO];
+                    let effect: Retained<NSView> =
+                        msg_send![msg_send![effect, alloc], initWithFrame: NSRect::ZERO];
+                    let _: () = msg_send![&*effect, setStyle: 0_isize];
+                    (container, effect, true)
+                }
+                _ => {
+                    let effect = NSVisualEffectView::initWithFrame(self.mtm.alloc(), NSRect::ZERO);
+                    effect.setMaterial(NSVisualEffectMaterial::Popover);
+                    effect.setBlendingMode(NSVisualEffectBlendingMode::WithinWindow);
+                    effect.setState(NSVisualEffectState::Active);
+                    let effect: Retained<NSView> = Retained::into_super(effect);
+                    (
+                        NSView::initWithFrame(self.mtm.alloc(), NSRect::ZERO),
+                        effect,
+                        false,
+                    )
+                }
+            }
+        };
+        container.setAutoresizingMask(mask);
+        effect.setAutoresizingMask(mask);
+        if liquid {
+            // Only contentView descendants participate in documented native
+            // glass container grouping and elevation.
+            unsafe {
+                let _: () = msg_send![&*container, setContentView: &*effect];
+                let _: () = msg_send![&*container, setSpacing: 0_f64];
+            }
+        } else {
+            container.addSubview(&effect);
+        }
+        let fill = NSView::initWithFrame(self.mtm.alloc(), NSRect::ZERO);
+        fill.setAutoresizingMask(mask);
+        fill.setWantsLayer(true);
+        if let Some(layer) = fill.layer() {
+            no_actions(&layer);
+        }
+        if liquid {
+            unsafe {
+                let _: () = msg_send![&*effect, setContentView: &*fill];
+            }
+        } else {
+            container.addSubview(&fill);
+        }
+        NativeGlass {
+            container,
+            effect,
+            fill,
+            liquid,
+        }
+    }
+    fn apply_backdrops(
+        &mut self,
+        placements: &[BackdropPlacement],
+        bounds: &NSRect,
+        order_changed: bool,
+    ) {
         while self.backdrops.len() > placements.len() {
             let backdrop = self.backdrops.pop().unwrap();
             backdrop.cuts[0].view.removeFromSuperview();
+            if let Some(cut) = backdrop.above_cuts.first() {
+                cut.view.removeFromSuperview();
+            }
         }
         while self.backdrops.len() < placements.len() {
             let cuts = self.cuts(BACKDROP_CUTS, bounds, None, Role::Passive, Role::Passive);
-            // SAFETY: NSView's designated initializer, on a fresh
-            // allocation with its ivars set.
-            let view: Retained<BackdropView> = unsafe {
-                let object = self.mtm.alloc::<BackdropView>().set_ivars(BackdropState {
-                    radius: Cell::new(-1.),
-                });
-                msg_send![super(object), initWithFrame: NSRect::ZERO]
-            };
-            view.setWantsLayer(true);
-            if let Some(layer) = view.layer() {
-                no_actions(&layer);
+            let placement = &placements[self.backdrops.len()];
+            let material = placement.material;
+            let view = self.backdrop_view(if placement.recipe.is_some() {
+                BackdropMaterial::None
+            } else {
+                material
+            });
+            let glass = (placement.recipe.is_none() && material == BackdropMaterial::Liquid)
+                .then(|| self.native_glass());
+            if let Some(glass) = &glass {
+                view.addSubview(&glass.container);
             }
             cuts.last().unwrap().view.addSubview(&view);
             for cut in &cuts[1..] {
@@ -1225,20 +1352,106 @@ impl Surfaces {
                 NSWindowOrderingMode::Below,
                 Some(&self.overlay_view),
             );
+            let recipe = placement
+                .recipe
+                .as_ref()
+                .map(|recipe| RecipePlanes::new(self, &view, recipe_native::glass_enabled(recipe)));
+            let above_cuts = if let Some(recipe) = &recipe {
+                let cuts = self.cuts(BACKDROP_CUTS, bounds, None, Role::Passive, Role::Passive);
+                cuts.last().unwrap().view.addSubview(&recipe.above);
+                for cut in &cuts[1..] {
+                    cut.view.setHidden(false);
+                }
+                self.parent.addSubview_positioned_relativeTo(
+                    &cuts[0].view,
+                    NSWindowOrderingMode::Below,
+                    Some(&self.overlay_view),
+                );
+                cuts
+            } else {
+                Vec::new()
+            };
             self.backdrops.push(Backdrop {
+                material,
+                glass,
                 cuts,
                 view,
                 own: None,
                 placed: None,
+                recipe,
+                above_cuts,
+                recipe_environment: None,
             });
         }
-        for (backdrop, placement) in self.backdrops.iter_mut().zip(placements) {
+        for (index, placement) in placements.iter().enumerate() {
+            let recipe_enabled = placement
+                .recipe
+                .as_ref()
+                .is_some_and(|r| recipe_native::glass_enabled(r));
+            let old_recipe_enabled = self.backdrops[index]
+                .placed
+                .as_ref()
+                .and_then(|p| p.recipe.as_ref())
+                .is_some_and(|r| recipe_native::glass_enabled(r));
+            if self.backdrops[index].material != placement.material
+                || self.backdrops[index].recipe.is_some() != placement.recipe.is_some()
+                || recipe_enabled != old_recipe_enabled
+            {
+                let view = self.backdrop_view(if placement.recipe.is_some() {
+                    BackdropMaterial::None
+                } else {
+                    placement.material
+                });
+                let glass = (placement.recipe.is_none()
+                    && placement.material == BackdropMaterial::Liquid)
+                    .then(|| self.native_glass());
+                if let Some(glass) = &glass {
+                    view.addSubview(&glass.container);
+                }
+                let recipe = placement
+                    .recipe
+                    .as_ref()
+                    .map(|_| RecipePlanes::new(self, &view, recipe_enabled));
+                let above_cuts = if let Some(recipe) = &recipe {
+                    let cuts = self.cuts(BACKDROP_CUTS, bounds, None, Role::Passive, Role::Passive);
+                    cuts.last().unwrap().view.addSubview(&recipe.above);
+                    for cut in &cuts[1..] {
+                        cut.view.setHidden(false);
+                    }
+                    self.parent.addSubview_positioned_relativeTo(
+                        &cuts[0].view,
+                        NSWindowOrderingMode::Below,
+                        Some(&self.overlay_view),
+                    );
+                    cuts
+                } else {
+                    Vec::new()
+                };
+                let backdrop = &mut self.backdrops[index];
+                if let Some(cut) = backdrop.above_cuts.first() {
+                    cut.view.removeFromSuperview();
+                }
+                backdrop.view.removeFromSuperview();
+                backdrop.cuts.last().unwrap().view.addSubview(&view);
+                backdrop.view = view;
+                backdrop.material = placement.material;
+                backdrop.glass = glass;
+                backdrop.placed = None;
+                backdrop.own = None;
+                backdrop.recipe = recipe;
+                backdrop.above_cuts = above_cuts;
+                backdrop.recipe_environment = None;
+            }
+            let backdrop = &mut self.backdrops[index];
             let Some(visible) = placement.visible() else {
                 backdrop.cuts[0].view.setHidden(true);
+                if let Some(cut) = backdrop.above_cuts.first() {
+                    cut.view.setHidden(true);
+                }
                 backdrop.placed = Some(placement.clone());
                 continue;
             };
-            for cut in &backdrop.cuts {
+            for cut in backdrop.cuts.iter().chain(&backdrop.above_cuts) {
                 if cut.view.frame() != *bounds {
                     cut.view.setFrame(*bounds);
                 }
@@ -1251,21 +1464,167 @@ impl Surfaces {
             {
                 cut.cut(shape);
             }
+            for (cut, shape) in backdrop.above_cuts.iter_mut().zip(shapes(
+                visible,
+                &placement.rounded,
+                BACKDROP_CUTS,
+            )) {
+                cut.cut(shape);
+            }
             if backdrop.cuts[0].view.isHidden() {
                 backdrop.cuts[0].view.setHidden(false);
             }
-            if backdrop.placed.as_ref() == Some(placement) {
+            if let Some(cut) = backdrop.above_cuts.first() {
+                cut.view.setHidden(false);
+            }
+            if order_changed || backdrop.placed.as_ref() != Some(placement) {
+                let anchor: &NSView = self
+                    .clips
+                    .get(placement.native_order)
+                    .map_or(&*self.overlay_view, |(_, clip)| clip.outer());
+                self.parent.addSubview_positioned_relativeTo(
+                    &backdrop.cuts[0].view,
+                    NSWindowOrderingMode::Below,
+                    Some(anchor),
+                );
+                if let Some(cut) = backdrop.above_cuts.first() {
+                    let anchor: &NSView = self
+                        .clips
+                        .get(placement.above_content_order)
+                        .map_or(&*self.overlay_view, |(_, clip)| clip.outer());
+                    self.parent.addSubview_positioned_relativeTo(
+                        &cut.view,
+                        NSWindowOrderingMode::Below,
+                        Some(anchor),
+                    );
+                }
+            }
+            let environment = placement.recipe.as_ref().map(|_| {
+                (
+                    self.parent
+                        .effectiveAppearance()
+                        .name()
+                        .to_string()
+                        .contains("Dark"),
+                    self.parent
+                        .window()
+                        .map_or(1., |window| window.backingScaleFactor())
+                        .to_bits(),
+                )
+            });
+            if backdrop.placed.as_ref() == Some(placement)
+                && backdrop.recipe_environment == environment
+            {
                 continue;
             }
-            backdrop.view.setFrame(ns(placement.rect));
+            backdrop.view.setFrame(ns(if placement.recipe.is_some() {
+                placement.visual_bounds
+            } else {
+                placement.rect
+            }));
             backdrop.cuts[0]
                 .view
                 .setAlphaValue(placement.opacity as f64);
+            if let (Some(source), Some(recipe)) = (&placement.recipe, &backdrop.recipe) {
+                if let Some(cut) = backdrop.above_cuts.first() {
+                    cut.view.setAlphaValue(placement.opacity as f64);
+                }
+                let changed = backdrop.recipe_environment != environment
+                    || backdrop.placed.as_ref().is_none_or(|old| {
+                        old.recipe != placement.recipe
+                            || old.scale != placement.scale
+                            || old.rect.width != placement.rect.width
+                            || old.rect.height != placement.rect.height
+                            || old.visual_bounds.width != placement.visual_bounds.width
+                            || old.visual_bounds.height != placement.visual_bounds.height
+                    });
+                if changed {
+                    let surface = Rect::new(
+                        placement.rect.x - placement.visual_bounds.x,
+                        placement.rect.y - placement.visual_bounds.y,
+                        placement.rect.width,
+                        placement.rect.height,
+                    );
+                    let raw_radius = source
+                        .shape
+                        .value()
+                        .and_then(|shape| shape.corner_radius.value())
+                        .map_or(placement.radii[0], |radius| radius * placement.scale);
+                    let (dark, retina) = environment.unwrap();
+                    recipe.sync(
+                        source,
+                        recipe_native::Frame {
+                            size: backdrop.view.bounds().size,
+                            surface,
+                            radius: raw_radius,
+                            scale: placement.scale,
+                            retina: f64::from_bits(retina),
+                            dark,
+                        },
+                    );
+                }
+                recipe.above.setFrame(ns(placement.visual_bounds));
+                if let Some(layer) = backdrop.view.layer() {
+                    layer.setMasksToBounds(false);
+                    unsafe { layer.setMask(None) };
+                }
+                backdrop.placed = Some(placement.clone());
+                backdrop.recipe_environment = environment;
+                continue;
+            }
             let Some(layer) = backdrop.view.layer() else {
                 continue;
             };
+            if let Some(glass) = &backdrop.glass {
+                glass.container.setFrame(backdrop.view.bounds());
+                glass.effect.setFrame(backdrop.view.bounds());
+                glass.fill.setFrame(backdrop.view.bounds());
+                if let Some(fill) = glass.fill.layer() {
+                    let color = placement.fill;
+                    fill.setBackgroundColor(Some(&CGColor::new_srgb(
+                        f64::from(color.0) / 255.,
+                        f64::from(color.1) / 255.,
+                        f64::from(color.2) / 255.,
+                        f64::from(color.3) / 255.,
+                    )));
+                    let name = match placement.fill_blend {
+                        zgx::scene::BlendMode::Overlay => Some("CIOverlayBlendMode"),
+                        zgx::scene::BlendMode::Color => Some("CIColorBlendMode"),
+                        zgx::scene::BlendMode::Multiply => Some("CIMultiplyBlendMode"),
+                        zgx::scene::BlendMode::Screen => Some("CIScreenBlendMode"),
+                        _ => None,
+                    };
+                    // SAFETY: public Core Image factory and nullable CALayer filter.
+                    unsafe {
+                        let filter = name.and_then(|name| {
+                            let class = AnyClass::get(c"CIFilter")?;
+                            let name = NSString::from_str(name);
+                            let filter: Option<Retained<AnyObject>> =
+                                msg_send![class, filterWithName: &*name];
+                            filter
+                        });
+                        let _: () = msg_send![&*fill, setCompositingFilter: filter.as_deref()];
+                    }
+                }
+                if glass.liquid {
+                    let color = placement.tint;
+                    let tint = (color.3 > 0).then(|| {
+                        NSColor::colorWithSRGBRed_green_blue_alpha(
+                            f64::from(color.0) / 255.,
+                            f64::from(color.1) / 255.,
+                            f64::from(color.2) / 255.,
+                            f64::from(color.3) / 255.,
+                        )
+                    });
+                    // SAFETY: native public setters, on the retained effect's main thread.
+                    unsafe {
+                        let _: () = msg_send![&*glass.effect, setTintColor: tint.as_deref()];
+                        let _: () = msg_send![&*glass.effect, setCornerRadius: f64::from(placement.radii[0])];
+                    }
+                }
+            }
             let radius = placement.sigma as f64;
-            if backdrop.view.ivars().radius.replace(radius) != radius {
+            if backdrop.glass.is_none() && backdrop.view.ivars().radius.replace(radius) != radius {
                 // Filters are copied into the render tree: a changed value
                 // takes a new filter.
                 // SAFETY: CAFilter is Core Animation's private filter class
@@ -1376,6 +1735,9 @@ impl Drop for Surfaces {
         }
         for backdrop in &self.backdrops {
             backdrop.cuts[0].view.removeFromSuperview();
+            if let Some(cut) = backdrop.above_cuts.first() {
+                cut.view.removeFromSuperview();
+            }
         }
         self.overlay_view.removeFromSuperview();
         drop(transaction);
@@ -1486,7 +1848,7 @@ impl NativeDiagnostics {
             shared
                 .backdrops
                 .iter()
-                .map(|(cuts, view)| {
+                .map(|(cuts, view, effect)| {
                     let layer = view.layer();
                     // SAFETY: CALayer's `filters` (an NSArray), its first
                     // CAFilter and that filter's `inputRadius` (an
@@ -1518,8 +1880,14 @@ impl NativeDiagnostics {
                         }),
                         masks: masks_of(cuts, shared.zoom),
                         index: index_in(parent, &cuts[0]),
-                        class: layer
-                            .map(|layer| layer.class().name().to_string_lossy().into_owned())
+                        class: effect
+                            .as_ref()
+                            .map(|effect| effect.class().name().to_string_lossy().into_owned())
+                            .or_else(|| {
+                                layer.map(|layer| {
+                                    layer.class().name().to_string_lossy().into_owned()
+                                })
+                            })
                             .unwrap_or_default(),
                         blur,
                     }

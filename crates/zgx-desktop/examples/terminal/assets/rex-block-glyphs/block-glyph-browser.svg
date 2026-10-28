@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--Generator: Apple Native CoreSVG 362-->
+<!DOCTYPE svg
+PUBLIC "-//W3C//DTD SVG 1.1//EN"
+       "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 480 480">
+ <defs>
+  <linearGradient id="linearGradient-1" x1="50%" x2="50%" y2="100%">
+   <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+   <stop offset="100%" stop-color="#ffffff" stop-opacity="0.800494"/>
+  </linearGradient>
+  <linearGradient id="linearGradient-2" x1="100%" x2="50%" y2="50%">
+   <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+   <stop offset="100%" stop-color="#ffffff" stop-opacity="0.800494"/>
+  </linearGradient>
+ </defs>
+ <title>web</title>
+ <g fill="none" fill-rule="evenodd" id="web" stroke="none" stroke-width="1">
+  <g id="Graphic" transform="translate(-2, -2)">
+   <g id="Group" transform="translate(23.9455, 23.9455)">
+    <path d="M434.109 217.054C434.109 336.929 336.929 434.109 217.054 434.109C97.1789 434.109 0 336.93 0 217.054C0 97.1786 97.1786 0 217.054 0C336.93 0 434.109 97.1789 434.109 217.054ZM32.4423 217.054C32.4423 319.012 115.096 401.667 217.054 401.667C319.012 401.667 401.667 319.012 401.667 217.054C401.667 115.096 319.012 32.4423 217.054 32.4423C115.096 32.4423 32.4423 115.096 32.4423 217.054Z" fill="url(#linearGradient-1)" fill-rule="nonzero" id="Path"/>
+    <path d="M176.659 176.659L205.584 205.584C202.649 208.52 200.833 212.575 200.833 217.054L200.833 217.255C200.833 226.214 208.096 233.476 217.054 233.476C221.585 233.476 225.682 231.619 228.625 228.624L257.448 257.451C254.225 260.674 250.118 262.744 231.757 270.302L176.879 292.9C149.479 304.183 140.223 307.728 131.456 309.966C127.491 310.978 124.626 311.364 122.831 311.279C122.745 309.484 123.132 306.618 124.144 302.654C126.381 293.888 129.925 284.637 141.21 257.23L163.806 202.354C171.371 183.981 173.437 179.88 176.659 176.659Z" fill="currentColor" fill-opacity="0.7" fill-rule="nonzero" id="Combined-Shape"/>
+    <path d="M311.279 122.831C311.364 124.626 310.978 127.491 309.966 131.456C307.728 140.223 304.183 149.479 292.9 176.879L270.303 231.754C262.742 250.123 260.673 254.227 257.451 257.448L257.449 257.449L228.625 228.624C231.501 225.697 233.276 221.683 233.276 217.255L233.276 217.054C233.276 208.096 226.013 200.833 217.054 200.833C212.575 200.833 208.52 202.649 205.585 205.584L176.658 176.658L176.756 176.563C179.964 173.396 184.165 171.295 202.354 163.806L257.23 141.21C284.637 129.925 293.888 126.381 302.654 124.144C306.618 123.132 309.484 122.745 311.279 122.831Z" fill="url(#linearGradient-2)" fill-rule="nonzero" id="Combined-Shape"/>
+   </g>
+  </g>
+ </g>
+</svg>

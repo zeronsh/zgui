@@ -1782,6 +1782,10 @@ mod tests {
                 1 => s.set_effects(
                     top,
                     Effects {
+                        backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                        backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                        backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                        backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                         opacity: 0.4,
                         ..Default::default()
                     },
@@ -1806,6 +1810,10 @@ mod tests {
         s.set_effects(
             glass,
             Effects {
+                backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                 opacity: 0.8,
                 blur_radius: 4.,
                 edge_fade: 8.,
@@ -2043,6 +2051,10 @@ mod isolation_tests {
         scene.set_effects(
             group,
             Effects {
+                backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                 opacity: 0.5,
                 ..Default::default()
             },
@@ -2238,6 +2250,10 @@ mod hidden_effect_tests {
             scene.set_effects(
                 group,
                 Effects {
+                    backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                    backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                     opacity: 0.,
                     blur_radius: 5.,
                     ..Default::default()
@@ -2263,6 +2279,10 @@ mod hidden_effect_tests {
             scene.set_effects(
                 group,
                 Effects {
+                    backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                    backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                     opacity: 1.,
                     blur_radius: 5.,
                     ..Default::default()
@@ -2274,6 +2294,10 @@ mod hidden_effect_tests {
             scene.set_effects(
                 group,
                 Effects {
+                    backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                    backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                     opacity: 0.,
                     blur_radius: 5.,
                     ..Default::default()

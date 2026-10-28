@@ -546,6 +546,24 @@ mod macos {
             bounds
         }
     }
+
+    // A painted shadow expands the transparent popup window's alpha bounds.
+    // A second WindowServer shadow outlines that expanded contour (a dark
+    // rounded rim on macOS 26), rather than the actual panel.
+    fn native_shadow(scene: &Scene, root: NodeId, preview: bool) -> bool {
+        if preview {
+            return false;
+        }
+        let Some(panel) = scene.children(root).first() else {
+            return true;
+        };
+        match scene.kind(*panel) {
+            NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => {
+                !quad.shadows().iter().any(|shadow| shadow.color.3 > 0)
+            }
+            _ => true,
+        }
+    }
     /// A mask of `material`'s shape (its rounded box and arrow), the size of
     /// its bounds, top-down.
     fn arrow_mask(material: &Material) -> Retained<objc2_app_kit::NSImage> {
@@ -1380,6 +1398,9 @@ mod macos {
                 CATransaction::begin();
                 CATransaction::setDisableActions(true);
                 panel.renderer.as_mut().expect("made above").present()?;
+                panel
+                    .window
+                    .setHasShadow(native_shadow(scene, root, preview.is_some()));
                 panel.back(material, frame);
                 panel.place(&parent, &content, frame);
                 if new {
@@ -1528,7 +1549,7 @@ mod macos {
 
     #[cfg(test)]
     mod tests {
-        use super::Material;
+        use super::{Material, native_shadow};
         use objc2_app_kit::NSVisualEffectMaterial;
         use zgx::{compose::prelude::*, widgets::Ui};
 
@@ -1567,6 +1588,59 @@ mod macos {
             let root = div().child(chip());
             assert!(material(root, false).is_some());
             assert!(material(chip().blur(24.), false).is_none());
+        }
+
+        #[test]
+        fn a_painted_popup_shadow_keeps_the_material_box_and_avoids_a_second_native_rim() {
+            use zgx::scene::{BoxShadow, Transform};
+            let mut ui = Ui::new(400., 300.);
+            let popup = ui.mount(div().child(chip().shadow(BoxShadow {
+                color: rgba(0x00000099),
+                offset: Transform { x: 0., y: 24. },
+                blur_radius: 64.,
+                spread: 0.,
+            })));
+            ui.prepare_frame();
+            let scene = ui.scene.borrow();
+            let material =
+                Material::of(&scene, &ui.semantics.borrow(), popup.node(), false).unwrap();
+            assert_eq!(
+                (material.rect.width, material.rect.height, material.radius),
+                (120., 28., 8.)
+            );
+            assert_eq!(
+                material.bounds(),
+                material.rect,
+                "shadow padding never becomes the material box"
+            );
+            // The renderer/window gets the full shadow ink; native material
+            // stays on the panel. Neither backing scale nor padding may turn
+            // that expanded window into the material's rounded rectangle.
+            let ink = scene.popup_bounds(popup.node()).unwrap();
+            assert!(ink.width > material.rect.width + 300.);
+            assert!(ink.height > material.rect.height + 300.);
+            let local = material.moved(-ink.x, -ink.y);
+            assert_eq!(local.rect.x, material.rect.x - ink.x);
+            assert_eq!(local.rect.y, material.rect.y - ink.y);
+            for backing_scale in [1., 2.] {
+                assert_eq!(local.rect.width * backing_scale, 120. * backing_scale);
+                assert_eq!(local.rect.height * backing_scale, 28. * backing_scale);
+                assert_eq!(local.radius * backing_scale, 8. * backing_scale);
+            }
+            assert!(!native_shadow(&scene, popup.node(), false));
+            assert!(!native_shadow(&scene, popup.node(), true));
+            drop(scene);
+            let plain = ui.mount(div().child(chip()));
+            ui.prepare_frame();
+            assert!(native_shadow(&ui.scene.borrow(), plain.node(), false));
+            let clear = ui.mount(div().child(chip().shadow(BoxShadow {
+                color: rgba(0x00000000),
+                offset: Transform { x: 0., y: 24. },
+                blur_radius: 64.,
+                spread: 0.,
+            })));
+            ui.prepare_frame();
+            assert!(native_shadow(&ui.scene.borrow(), clear.node(), false));
         }
     }
 }

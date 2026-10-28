@@ -17,6 +17,8 @@ mod ghostty;
 pub(crate) use ghostty::processes_changed;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "macos", test))]
+mod recipe;
 #[cfg(target_os = "macos")]
 mod webkit;
 #[cfg(all(windows, feature = "webview2"))]

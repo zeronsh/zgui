@@ -65,6 +65,8 @@ pub struct WindowOptions {
     /// A frosted desktop behind the window (macOS; Windows 11 as Acrylic or
     /// Mica): the window is then transparent, whatever `transparent` says.
     pub glass: Option<crate::Glass>,
+    /// Native window appearance; `None` follows the system.
+    pub theme: Option<zgx::theme::Appearance>,
     /// Open with this point of the content (logical) under the pointer
     /// (macOS, Windows): a tab torn off its window (`View::on_drag_outside`)
     /// opens where it was dropped, the tab under the pointer.
@@ -117,6 +119,7 @@ impl Default for WindowOptions {
             max_frame_rate: None,
             titlebar: crate::Titlebar::Standard,
             glass: None,
+            theme: None,
             under_pointer: None,
             tabbing: crate::Tabbing::Automatic,
             tabbing_identifier: None,
@@ -168,6 +171,8 @@ enum Event {
 /// Commands are queued onto the UI thread; the operating system may decline requests.
 #[derive(Debug)]
 enum WindowCommand {
+    Glass(Option<crate::Glass>),
+    Theme(Option<zgx::theme::Appearance>),
     Bounds(crate::WindowBounds),
     PointerPassthrough(bool),
     Level(crate::WindowLevel),
@@ -211,6 +216,8 @@ impl Default for WindowState {
 impl WindowState {
     fn apply(&mut self, options: &mut WindowOptions, command: &WindowCommand) {
         match command {
+            WindowCommand::Glass(glass) => options.glass = *glass,
+            WindowCommand::Theme(theme) => options.theme = *theme,
             WindowCommand::Bounds(bounds) => options.bounds = Some(*bounds),
             WindowCommand::Fullscreen(value) => options.fullscreen = *value,
             WindowCommand::Decorations(value) => options.decorations = *value,
@@ -291,6 +298,15 @@ pub struct WindowHandle {
     closed: Arc<AtomicBool>,
 }
 impl WindowHandle {
+    /// Replace or remove the native backdrop. Create the window transparent
+    /// to allow later glass changes without rebuilding its renderer.
+    pub fn set_glass(&self, glass: Option<crate::Glass>) {
+        self.command(WindowCommand::Glass(glass));
+    }
+    /// Set the native light/dark appearance, or follow the system again.
+    pub fn set_theme(&self, theme: Option<zgx::theme::Appearance>) {
+        self.command(WindowCommand::Theme(theme));
+    }
     /// Move and resize the window. A zero width or height is ignored.
     pub fn set_bounds(&self, bounds: crate::WindowBounds) {
         if bounds.size.0 > 0 && bounds.size.1 > 0 {
@@ -1210,6 +1226,12 @@ enum StartupTrim {
     Done,
 }
 /// The system's light or dark appearance, as zgx's themes take it.
+pub(crate) fn native_theme(theme: zgx::theme::Appearance) -> winit::window::Theme {
+    match theme {
+        zgx::theme::Appearance::Light => winit::window::Theme::Light,
+        zgx::theme::Appearance::Dark => winit::window::Theme::Dark,
+    }
+}
 fn appearance_of(theme: winit::window::Theme) -> zgx::theme::Appearance {
     match theme {
         winit::window::Theme::Light => zgx::theme::Appearance::Light,
@@ -3010,6 +3032,8 @@ impl Host {
         }
         let Some(window) = &self.window else { return };
         match command {
+            WindowCommand::Glass(glass) => crate::window_chrome::set_glass(window, glass),
+            WindowCommand::Theme(theme) => window.set_theme(theme.map(native_theme)),
             WindowCommand::Bounds(bounds) => {
                 if let Some((x, y)) = bounds.position {
                     if self.context.window_info.capabilities.get().placement {
@@ -3262,6 +3286,7 @@ impl Host {
             .input
             .dispatch(&self.context.ui.scene, InputEvent::PointerLeave);
         self.native_focused = false;
+        self.context.window_info.focused.set(false);
         self.ime_active = false;
         self.ime_restart = Default::default();
         self.ime_cancellation = Default::default();
@@ -3285,6 +3310,7 @@ impl Host {
         self.unregister_file_surface();
         self.context.ui.set_presented(false);
         self.context.window_info.ready.set(false);
+        self.context.window_info.focused.set(false);
         self.context.dialogs.attach(None);
         if let Some(window) = &self.window {
             window.set_visible(false);
@@ -3773,6 +3799,7 @@ impl Host {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.context.window_info.focused.set(false);
                 zgx_gpu::present_log::log(|| "window-focus false".into());
                 #[cfg(target_os = "linux")]
                 if let Some(caption) = &mut self.caption {
@@ -3800,6 +3827,7 @@ impl Host {
                 }
             }
             WindowEvent::Focused(true) => {
+                self.context.window_info.focused.set(true);
                 // The user may have changed the accent while it was at the back.
                 crate::system_colors::sync(&self.context.ui);
                 crate::scrollers::sync(&self.context.ui);
@@ -6854,6 +6882,8 @@ mod tests {
             WindowCommand::Focus,
             WindowCommand::Level(crate::WindowLevel::AlwaysOnTop),
             WindowCommand::Shadow(false),
+            WindowCommand::Glass(Some(crate::Glass::new(crate::GlassMaterial::Liquid))),
+            WindowCommand::Theme(Some(zgx::theme::Appearance::Light)),
         ] {
             state.apply(&mut options, &command);
         }
@@ -6861,6 +6891,11 @@ mod tests {
         // A window made again keeps its level and shadow.
         assert_eq!(options.level, crate::WindowLevel::AlwaysOnTop);
         assert!(!options.shadow);
+        assert_eq!(
+            options.glass,
+            Some(crate::Glass::new(crate::GlassMaterial::Liquid))
+        );
+        assert_eq!(options.theme, Some(zgx::theme::Appearance::Light));
         assert_eq!((options.width, options.height), (640., 480.));
         assert!(!state.visible);
         assert!(state.minimized && state.maximized && state.focus_requested);
@@ -6869,6 +6904,10 @@ mod tests {
         state.apply(&mut options, &WindowCommand::Maximized(false));
         assert!(state.visible);
         assert!(!state.minimized && !state.maximized);
+        state.apply(&mut options, &WindowCommand::Glass(None));
+        state.apply(&mut options, &WindowCommand::Theme(None));
+        assert_eq!(options.glass, None);
+        assert_eq!(options.theme, None);
     }
     #[test]
     fn requested_window_size_rejects_nonfinite_and_unrepresentable_dimensions() {

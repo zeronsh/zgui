@@ -44,19 +44,19 @@ M.button = ui.variants {
 		},
 		size = {
 			xs = {
-				h = 26,
+				h = 24,
 				px = "$terminal.button.pad_xs",
 				rounded = "$terminal.button.radius_sm",
 				text_size = "$terminal.type.md",
 				weight = "$font.weight.medium",
 			},
 			sm = {
-				h = 28,
+				h = 24,
 				px = "$terminal.button.pad_sm",
 				text_size = "$terminal.type.md",
 				weight = "$font.weight.medium",
 			},
-			md = { h = 30, px = "$terminal.button.pad", text_size = "$terminal.type.lg" },
+			md = { h = 28, px = "$terminal.button.pad", text_size = "$terminal.type.lg" },
 			icon = { w = 28, h = 28 },
 			icon_sm = { w = 26, h = 26, rounded = "$terminal.button.radius_sm" },
 		},
@@ -67,8 +67,8 @@ M.button = ui.variants {
 -- On or off, as a switch (its knob is `M.knob`).
 M.switch = ui.variants {
 	base = {
-		w = 34,
-		h = 20,
+		w = 36,
+		h = 16,
 		px = "$terminal.switch.pad",
 		rounded = "$radius.lg",
 		shrink = 0,
@@ -85,8 +85,8 @@ M.switch = ui.variants {
 }
 M.knob = ui.variants {
 	base = {
-		w = 16,
-		h = 16,
+		w = 12,
+		h = 12,
 		rounded = "$radius.full",
 		bg = "$terminal.switch.knob",
 		shadow = "$terminal.switch.knob_shadow",
@@ -121,7 +121,7 @@ M.sheet = ui.variants {
 			},
 			palette = {
 				items = "stretch",
-				rounded = "$radius.xl",
+				rounded = "$terminal.sheet.radius",
 				overflow = "hidden",
 				bg = "$terminal.palette.bg",
 				backdrop_blur = 40,
@@ -157,7 +157,8 @@ M.tile = ui.variants {
 -- An item's own colour at `alpha` (two hex digits): a tinted tile's fill or
 -- edge. The colour is the item's identity, not a theme's.
 function M.tint(color: string, alpha: string): string
-	return ui.raw(color .. alpha, "an item's own colour")
+	local value = if color:sub(1, 1) == "$" then ui.theme.get(color:sub(2)) :: string else color
+	return ui.raw(if alpha == "" then value else value:sub(1, 7) .. alpha, "an item's own colour")
 end
 
 -- A small label: a key in a hint, a permission or a panel, a status.

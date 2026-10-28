@@ -25,6 +25,10 @@ pub enum Field {
     TextColor,
     /// The border colour, `Styled::border_color`.
     BorderColor,
+    /// Native glass tint, separate from the painted fill.
+    BackdropTint,
+    /// Native glass fill, placed below native children.
+    BackdropFill,
     /// The corner radius of every corner, `Styled::rounded`.
     Radius,
     /// The border width, `Styled::border`.
@@ -265,6 +269,12 @@ pub(crate) fn apply(styles: &mut Styles, field: Field, value: &TokenValue) {
         Field::BorderColor => {
             s.border_color(color());
         }
+        Field::BackdropTint => {
+            s.backdrop_tint(color());
+        }
+        Field::BackdropFill => {
+            s.backdrop_fill(color());
+        }
         Field::Radius => {
             s.rounded(number());
         }
@@ -394,6 +404,8 @@ fn sets(styles: &Styles, field: Field) -> u8 {
         Field::Background => all(styles.background.is_some()),
         Field::TextColor => all(styles.text_color.is_some()),
         Field::BorderColor => all(styles.border_color.is_some()),
+        Field::BackdropTint => all(styles.overflow().backdrop_tint.is_some()),
+        Field::BackdropFill => all(styles.overflow().backdrop_fill.is_some()),
         Field::Radius => all(styles.radius.is_some()),
         Field::BorderWidth => all(styles.border_width.is_some()),
         Field::Padding(_) => sides(styles.padding.is_some(), styles.padding_sides),

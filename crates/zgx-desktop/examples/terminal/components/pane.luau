@@ -1,11 +1,14 @@
 -- A pane: a card placed where frames.luau puts it, holding a terminal, a
 -- browser or a panel (panel.luau), with a grip at the top to drag it by.
 local theme = require("../theme")
+local appearance = require("../appearance")
+local icons = require("../icons")
 local state = require("../state")
 local sessions = require("../sessions")
 local actions = require("../actions")
 local frames = require("../frames")
 local controls = require("./controls")
+local kit = require("./kit")
 local menu = require("./menu")
 local browser = require("./browser")
 local panel = require("./panel")
@@ -15,12 +18,91 @@ local layout = require("@lib/layout")
 
 local focus, zoom, drop, dragging = state.focus, state.zoom, state.drop, state.dragging
 
+-- The terminal's title and tools live inside its card, as native Rex panes do.
+-- Each action focuses this pane before using the shared split/zoom commands.
+local function terminal_header(pane: string, tab: string): Node
+	local function desc()
+		return sessions.describe(pane)
+	end
+	local function tool(svg: string, label: string, id: string, run: () -> ()): Node
+		return ui.button {
+			id = `{id}:{pane}`,
+			label = label,
+			variants = kit.button { tone = "ghost", size = "icon_sm" },
+			on_click = run,
+			ui.svg { code = svg, w = 14, h = 14, tint = theme.tertiary },
+		}
+	end
+	return ui.row {
+		id = `pane_header:{pane}`,
+		h = "$terminal.pane_header",
+		px = 10,
+		gap = 4,
+		shrink = 0,
+		min_w = 0,
+		items = "center",
+		on_click = function()
+			actions.focus_pane(tab, pane)
+		end,
+		controls.glyph(desc, 14, function()
+			return (focus:get())[tab] ~= pane
+		end),
+		ui.text {
+			function()
+				local name = desc().name
+				return if name ~= "" then name else "Terminal"
+			end,
+			grow = 1,
+			shrink = 1,
+			min_w = 0,
+			truncate = true,
+			text_size = "$terminal.type.lg",
+			weight = "$font.weight.semibold",
+			color = function()
+				return if (focus:get())[tab] == pane then theme.text else theme.secondary
+			end,
+		},
+		tool(icons.split_right, "Split Right", "pane_split_right", function()
+			actions.focus_pane(tab, pane)
+			actions.split("row")
+		end),
+		tool(icons.split_down, "Split Down", "pane_split_down", function()
+			actions.focus_pane(tab, pane)
+			actions.split("column")
+		end),
+		ui.button {
+			id = `pane_zoom:{pane}`,
+			label = function()
+				return if (zoom:get())[tab] == pane then "Unzoom Pane" else "Zoom Pane"
+			end,
+			variants = kit.button { tone = "ghost", size = "icon_sm" },
+			on_click = function()
+				actions.focus_pane(tab, pane)
+				zoom:set_key(tab, if (zoom:peek())[tab] == pane then nil else pane)
+			end,
+			ui.svg {
+				src = function()
+					return "code:" .. (if (zoom:get())[tab] == pane then icons.unzoom else icons.zoom)
+				end,
+				w = 14,
+				h = 14,
+				tint = theme.tertiary,
+			},
+		},
+		tool(icons.close, "Close Pane", "pane_close", function()
+			actions.close_pane(pane)
+		end),
+	}
+end
+
 -- The terminal, filling the card (zgx gives it the card's size; the
 -- desktop host hands Ghostty a size that keeps changing a few times a second).
 local function terminal_view(term: Term, pane: string, tab: string, inner: () -> number, several: () -> boolean): Node
 	return ui.overlay {
 		grow = 1,
 		min_h = 0,
+		-- The card supplies one continuous surface under its title and terminal.
+		bg = theme.clear,
 		ui.terminal {
 			term = term,
 			absolute = true,
@@ -127,7 +209,8 @@ return ui.component(function(props: Props)
 			near = bar_near:get() and not hooks.editing:get()
 		elseif term then
 			local p = term.pointer
-			near = p ~= nil and p.y >= 0 and p.y < 32 and p.x >= 0 and p.x <= frames.shown(element).w
+			near = bar_near:get()
+				or (p ~= nil and p.y >= 0 and p.y < 32 and p.x >= 0 and p.x <= frames.shown(element).w)
 		end
 		local d = dragging:get()
 		-- While dragging, only the dragged pane's grip (hiding the source
@@ -141,6 +224,7 @@ return ui.component(function(props: Props)
 		return frames.radius() - 1
 	end
 	return ui.column {
+		id = `pane:{pane}`,
 		-- Placed by zgx at its frame's insets, at every size of the area;
 		-- hidden while it has no frame (a panel in a tab not shown).
 		absolute = true,
@@ -184,8 +268,37 @@ return ui.component(function(props: Props)
 		items = "stretch",
 		rounded = frames.radius,
 		overflow = "hidden",
-		bg = theme.pane,
-		border = 1,
+		bg = function()
+			return if term then appearance.terminal_surface_bg(focused()) else appearance.pane_bg(focused())
+		end,
+		-- Capability is fixed by the host before loading. Nil keys keep the
+		-- previous running host compatible during passive script reloads.
+		surface_recipe = if appearance.recipe_supported()
+			then function()
+				return appearance.pane_surface(focused())
+			end
+			else nil,
+		backdrop_material = if appearance.native_liquid:peek() and not appearance.recipe_supported()
+			then function(): "liquid" | "blur"
+				return if appearance.pane_native(focused()) then "liquid" else "blur"
+			end
+			else nil,
+		backdrop_tint = if appearance.native_liquid:peek() and not appearance.recipe_supported()
+			then function()
+				return appearance.pane_tint(focused())
+			end
+			else nil,
+		backdrop_fill = if appearance.native_liquid:peek() and not appearance.recipe_supported()
+			then function()
+				return appearance.pane_fill(focused())
+			end
+			else nil,
+		backdrop_fill_blend = if appearance.native_liquid:peek() and not appearance.recipe_supported()
+			then function()
+				return appearance.pane_fill_blend(focused())
+			end
+			else nil,
+		border = if appearance.recipe_supported() then 0 else 1,
 		border_color = function()
 			if moving() then
 				return "$terminal.moving"
@@ -194,25 +307,45 @@ return ui.component(function(props: Props)
 		end,
 		-- Over a browser's or a panel's bar, zgx hears the pointer: the top
 		-- 32 points show the grip, as over a terminal.
-		on_pointer_move = if by_zgx
-			then function(e)
-				local near = e.local_y < 32
-				if bar_near:peek() ~= near then
-					bar_near:set(near)
-				end
+		on_pointer_move = function(e)
+			local near = e.local_y < 32
+			if bar_near:peek() ~= near then
+				bar_near:set(near)
 			end
-			else nil,
-		on_hover = if by_zgx
-			then function(inside)
-				if not inside and bar_near:peek() then
-					bar_near:set(false)
-				end
+		end,
+		on_hover = function(inside)
+			if not inside and bar_near:peek() then
+				bar_near:set(false)
 			end
-			else nil,
-		if is_browser
-			then browser.Body(pane, tab, inner, hooks)
-			elseif term then terminal_view(term, pane, tab, inner, several)
-			else panel.Body(pane, tab, inner),
+		end,
+		ui.div {
+			absolute = true,
+			left = 0,
+			top = 0,
+			right = 0,
+			bottom = 0,
+			pointer_events = "none",
+			bg = function()
+				return if appearance.pane_native(focused()) then theme.clear else appearance.pane_fill(focused())
+			end,
+			blend = function()
+				return appearance.pane_fill_blend(focused())
+			end,
+		},
+		ui.column {
+			grow = 1,
+			min_w = 0,
+			min_h = 0,
+			items = "stretch",
+			opacity = function()
+				return appearance.content_opacity(focused())
+			end,
+			if term then terminal_header(pane, tab) else nil,
+			if is_browser
+				then browser.Body(pane, tab, inner, hooks)
+				elseif term then terminal_view(term, pane, tab, inner, several)
+				else panel.Body(pane, tab, inner),
+		},
 		-- The grip, centred at the top.
 		ui.row {
 			absolute = true,
@@ -227,6 +360,7 @@ return ui.component(function(props: Props)
 				return grip:get() == 0
 			end,
 			ui.column {
+				id = `pane_grip:{pane}`,
 				w = 36,
 				h = 22,
 				rounded = "$terminal.grip.radius",

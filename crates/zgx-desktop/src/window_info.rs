@@ -117,6 +117,8 @@ pub struct WindowCapabilities {
 pub struct WindowInfo {
     /// Whether the native window exists; the rest is meaningful once it does.
     pub ready: Signal<bool>,
+    /// Whether this native window has keyboard focus.
+    pub focused: Signal<bool>,
     /// Its bounds.
     pub bounds: Signal<WindowBounds>,
     /// Whether it is fullscreen.
@@ -148,6 +150,7 @@ impl WindowInfo {
     pub(crate) fn new(ui: &Ui, width: f64, height: f64) -> Self {
         Self {
             ready: ui.signal(false),
+            focused: ui.signal(false),
             bounds: ui.signal(WindowBounds::new(
                 width.max(1.) as u32,
                 height.max(1.) as u32,
@@ -253,6 +256,7 @@ pub(crate) fn attributes(
         .with_inner_size(winit::dpi::LogicalSize::new(options.width, options.height))
         .with_resizable(options.resizable)
         .with_transparent(options.is_transparent())
+        .with_theme(options.theme.map(crate::application::native_theme))
         .with_decorations(options.decorations)
         .with_window_level(options.level.winit())
         .with_visible(false);

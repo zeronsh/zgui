@@ -8,7 +8,6 @@ local icons = require("../icons")
 local state = require("../state")
 local sessions = require("../sessions")
 local actions = require("../actions")
-local controls = require("./controls")
 local kit = require("./kit")
 local layout = require("@lib/layout")
 
@@ -234,6 +233,13 @@ local function entry(item: Item, index: number, typed: string): Node
 	return ui.row {
 		id = "open:" .. item.kind,
 		variants = kit.row { kind = "option" },
+		w_full = true,
+		min_w = 0,
+		h = 26,
+		px = 10,
+		gap = 8,
+		label = item.title .. ": " .. item.detail,
+		tooltip = item.detail,
 		on_hover = function(inside)
 			if inside and row:peek() ~= index then
 				row:set(index)
@@ -242,14 +248,9 @@ local function entry(item: Item, index: number, typed: string): Node
 		on_click = function()
 			M.choose(item)
 		end,
-		-- The highlight: one piece that slides to the chosen row.
-		controls.glass("palette-choice", chosen, "$terminal.row.option_radius"),
-		ui.row {
-			variants = kit.tile { size = "md" },
-			bg = kit.tint(item.tint, "1f"),
-			border_color = kit.tint(item.tint, "29"),
-			ui.svg { code = icons[item.icon], w = 16, h = 16, tint = kit.tint(item.tint, "") },
-		},
+		bg = function()
+			return if chosen() then "$terminal.primary.bg" else theme.clear
+		end,
 		ui.column {
 			grow = 1,
 			shrink = 1,
@@ -260,16 +261,8 @@ local function entry(item: Item, index: number, typed: string): Node
 				typed,
 				"$terminal.type.option",
 				"$font.weight.medium",
-				theme.text,
+				if chosen() then "$terminal.on_fill" else theme.text,
 				"$terminal.bright"
-			),
-			highlighted(
-				item.detail,
-				typed,
-				"$terminal.type.sm",
-				"$font.weight.regular",
-				theme.tertiary,
-				theme.secondary
 			),
 		},
 		-- Its own shortcut at rest; Return, where the choice is.
@@ -288,7 +281,6 @@ local function section(title: string): Node
 		px = 10,
 		text_size = "$terminal.type.xs",
 		weight = "$font.weight.semibold",
-		letter_spacing = 0.3,
 		color = theme.quaternary,
 	}
 end
@@ -306,16 +298,22 @@ function M.Palette(): Node
 	return ui.presence(function()
 		return if open:get() then "open" else nil
 	end, function(): Node
-		return ui.div {
-			variants = kit.scrim { kind = "palette" },
-			on_click = M.close,
+		return ui.popover {
+			open = open,
+			label = "Open a terminal, browser or panel",
+			anchor = ui.div { w = 0, h = 0 },
+			variants = kit.sheet { kind = "palette" },
+			w = 330,
+			rounded = "$terminal.palette.radius",
+			p = 0,
+			max_h = 406,
+			placement = { side = "bottom", align = "center", offset = 0 },
 			ui.column {
-				variants = kit.sheet { kind = "palette" },
-				w = 560,
+				id = "palette-surface",
+				w_full = true,
+				items = "stretch",
 				-- A short window: the list gives way and scrolls.
 				max_h = "100%",
-				-- Clicks on it stay on it.
-				on_click = function() end,
 				on_mount = function(el: Element)
 					anime.animate(el, {
 						opacity = { 0, 1 },
@@ -326,84 +324,91 @@ function M.Palette(): Node
 					})
 				end,
 				ui.row {
-					h = 54,
-					px = "$terminal.sheet.pad",
-					gap = "$space.3",
+					h = 30,
+					mx = 8,
+					mt = 8,
+					mb = 6,
+					px = 10,
+					rounded = 10,
+					bg = theme.hover,
+					gap = 6,
 					items = "center",
-					ui.svg { code = icons.search, w = 17, h = 17, shrink = 0, tint = theme.tertiary },
+					ui.svg { code = icons.search, w = 14, h = 14, shrink = 0, tint = theme.tertiary },
 					ui.input {
 						id = "palette-query",
 						label = "Open",
 						value = query,
-						placeholder = "Open a terminal, a browser or a panel…",
+						placeholder = "Search terminals, browsers, and panels…",
 						placeholder_color = theme.quaternary,
 						grow = 1,
 						h = 26,
 						px = 0,
-						text_size = "$terminal.type.xxl",
+						text_size = "$terminal.type.lg",
 						color = theme.text,
 						bg = theme.clear,
-						focus = { border = 0 },
+						border = 0,
+						outline = 0,
+						hover = { bg = theme.clear },
+						focus = { bg = theme.clear, border = 0, outline = 0 },
 						on_mount = function(el: Element)
 							el:focus()
 						end,
 						on_key = M.on_key,
 					},
-					key("esc"),
 				},
 				ui.div { h = 1, bg = "$terminal.key.bg" },
 				ui.scroll {
-					px = "$space.2",
-					pb = "$space.2",
+					id = "palette-options",
+					w_full = true,
+					px = 6,
+					pb = 6,
 					items = "stretch",
-					max_h = 380,
+					max_h = 320,
 					shrink = 1,
 					min_h = 0,
-					-- Unkeyed: a plugin's new title rebuilds its row.
-					ui.each(rows, function(r: Row): Node
-						if r.section then
-							return section(r.section)
-						end
-						return entry(r.item :: Item, r.index :: number, r.typed or "")
-					end),
 					ui.column {
-						hidden = function()
-							return #items:get() > 0
-						end,
-						py = 28,
-						gap = "$space.2",
-						items = "center",
-						ui.svg { code = icons.search, w = 22, h = 22, tint = theme.quaternary },
-						ui.text {
-							function()
-								return `Nothing matches “{query:get()}”`
+						w_full = true,
+						min_w = 0,
+						items = "stretch",
+						-- Unkeyed: a plugin's new title rebuilds its row.
+						ui.each(rows, function(r: Row): Node
+							if r.section then
+								return section(r.section)
+							end
+							return entry(r.item :: Item, r.index :: number, r.typed or "")
+						end),
+						ui.column {
+							hidden = function()
+								return #items:get() > 0
 							end,
-							text_size = "$terminal.type.body",
-							color = theme.tertiary,
+							py = 28,
+							gap = "$space.2",
+							items = "center",
+							ui.svg { code = icons.search, w = 22, h = 22, tint = theme.quaternary },
+							ui.text {
+								function()
+									return `Nothing matches “{query:get()}”`
+								end,
+								text_size = "$terminal.type.body",
+								color = theme.tertiary,
+							},
 						},
 					},
 				},
 				ui.div { h = 1, bg = theme.wash },
 				ui.row {
-					h = 36,
-					px = "$space.4",
-					gap = "$terminal.sheet.pad",
+					h = 29,
+					px = 8,
+					gap = 10,
 					items = "center",
 					bg = "$terminal.footer",
-					hint({ "↑", "↓" }, "Choose"),
-					hint({ "↵" }, "Open beside"),
-					hint({ "⇧", "↵" }, "New tab"),
+					hint({ "↑↓" }, "Choose"),
+					hint({ "↵" }, "Open"),
+					hint({ "⇧↵" }, "New tab"),
 				},
 			},
 		}
-	end, {
-		absolute = true,
-		top = 0,
-		left = 0,
-		right = 0,
-		bottom = 0,
-		enter = { opacity = { 0, 1 }, duration = 140, ease = "outQuad" },
-	})
+	end, { absolute = true, left = "50%", top = 56, w = 0, h = 0 })
 end
 
 return M

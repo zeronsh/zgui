@@ -111,6 +111,7 @@ impl Tasks {
     }
 }
 type Registry = Rc<RefCell<HashMap<String, Vec<NodeId>>>>;
+type PortalRegistry = Rc<RefCell<Vec<(NodeId, NodeId)>>>;
 /// What a virtual list knows of one of its rows: the run that last showed
 /// it, and the index and width it was last placed at.
 struct Placed {
@@ -122,6 +123,7 @@ pub(crate) struct Environment {
     pub(crate) services: ServiceScope,
     typography: Signal<Typography>,
     registry: Registry,
+    portals: PortalRegistry,
     portal: Option<(NodeId, Signal<bool>)>,
     menu: Option<Rc<crate::compose_menu::MenuContext>>,
     measure: crate::rich_text::TextMeasure,
@@ -2489,6 +2491,17 @@ impl Drop for IdRegistration {
         }
     }
 }
+struct PortalRegistration {
+    registry: PortalRegistry,
+    overlay: NodeId,
+}
+impl Drop for PortalRegistration {
+    fn drop(&mut self) {
+        self.registry
+            .borrow_mut()
+            .retain(|(_, overlay)| *overlay != self.overlay);
+    }
+}
 pub(crate) fn mount(
     ui: &mut Ui,
     parent: NodeId,
@@ -2799,6 +2812,17 @@ fn mount_portal_panel(
         .as_ref()
         .map(|(_, visible)| visible.clone());
     let portal = crate::compose_modal::create(ui, owner, portal_parent);
+    environment
+        .portals
+        .borrow_mut()
+        .push((owner, portal.overlay));
+    ui.retain(
+        portal.overlay,
+        PortalRegistration {
+            registry: environment.portals.clone(),
+            overlay: portal.overlay,
+        },
+    );
     if !anchored {
         // The theme's backdrop, following it.
         let (scene, theme, overlay) = (ui.scene.clone(), ui.theme_scope(), portal.overlay);
@@ -6022,11 +6046,31 @@ pub struct ViewHandle {
     ui: WeakUi,
     root: NodeId,
     registry: Registry,
+    portals: PortalRegistry,
 }
 impl ViewHandle {
     /// The tree's root node.
     pub fn node(&self) -> NodeId {
         self.root
+    }
+    /// Mounted portals owned by this view, as `(owner, overlay)` pairs in
+    /// mount order. Their overlays may live outside the physical subtree;
+    /// logical traversal follows these edges instead of the overlay's
+    /// scene parent. Anonymous portals are included.
+    pub fn portals(&self) -> Vec<(NodeId, NodeId)> {
+        let Some(ui) = self.ui.upgrade() else {
+            return Vec::new();
+        };
+        let scene = ui.scene.borrow();
+        if !scene.contains(self.root) {
+            return Vec::new();
+        }
+        self.portals
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|(owner, overlay)| scene.contains(*owner) && scene.contains(*overlay))
+            .collect()
     }
     /// Whether the tree is still in the scene.
     pub fn is_mounted(&self) -> bool {
@@ -6093,6 +6137,7 @@ impl Ui {
     /// Mount a declarative tree under the document root. The document owns its lifetime.
     pub fn mount(&mut self, view: View) -> ViewHandle {
         let registry = Registry::default();
+        let portals = PortalRegistry::default();
         let theme = self.theme().root().clone();
         // Text shows the theme's body colour, size and family unless a view
         // says otherwise; each text node reads them from its own scope.
@@ -6108,6 +6153,7 @@ impl Ui {
             services: ServiceScope::new(),
             typography,
             registry: registry.clone(),
+            portals: portals.clone(),
             portal: None,
             menu: None,
             measure: self.scene.borrow().text_measure(),
@@ -6144,6 +6190,7 @@ impl Ui {
             ui: self.downgrade(),
             root,
             registry,
+            portals,
         }
     }
     /// Replace root content explicitly. Ordinary property changes do not call this.
@@ -6479,6 +6526,52 @@ mod input_draw_tests {
     #[test]
     fn a_signal_written_by_a_deferred_shaper_waits_until_the_draw_finishes() {
         assert_eq!(shaper_write_case(false), shaper_write_case(true));
+    }
+}
+
+#[cfg(test)]
+mod portal_registry_tests {
+    use super::*;
+
+    #[test]
+    fn anonymous_portal_edges_follow_mount_ownership_and_are_removed_with_their_nodes() {
+        let mut ui = Ui::new(400., 300.);
+        let shown = ui.signal(true);
+        let read = shown.clone();
+        let open = ui.signal(true);
+        let nested_open = ui.signal(true);
+        let handle = ui.mount(switch(
+            move || read.get(),
+            move |shown, _| {
+                if shown {
+                    modal("Outer", open.clone())
+                        .child(modal("Inner", nested_open.clone()).child(text("inside")))
+                } else {
+                    div()
+                }
+            },
+        ));
+        let other = ui.mount(modal("Other", ui.signal(true)));
+        ui.prepare_frame();
+        let edges = handle.portals();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(other.portals().len(), 1);
+        assert_eq!(ui.scene.borrow().parent(edges[0].1), Some(ui.root()));
+        assert_eq!(ui.scene.borrow().parent(edges[1].1), Some(edges[0].1));
+        for _ in 0..3 {
+            shown.set(false);
+            ui.prepare_frame();
+            assert!(handle.portals().is_empty());
+            assert!(handle.portals.borrow().is_empty(), "no stale registrations");
+            assert_eq!(other.portals().len(), 1);
+            shown.set(true);
+            ui.prepare_frame();
+            assert_eq!(handle.portals().len(), 2);
+        }
+        handle.unmount();
+        assert!(handle.portals().is_empty());
+        assert!(handle.portals.borrow().is_empty());
+        assert_eq!(other.portals().len(), 1);
     }
 }
 

@@ -23,6 +23,7 @@ const TITLEBAR: f32 = 40.;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = std::env::args().any(|arg| arg == "--fixture");
+    let appearance_fixture = std::env::args().any(|arg| arg == "--appearance-fixture");
     Application::new()
         .window(WindowOptions {
             title: TITLE.into(),
@@ -43,6 +44,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run(move |cx| {
             if fixture {
                 run_fixture(cx);
+            }
+            if appearance_fixture {
+                run_appearance_fixture(cx);
             }
             let view = cx.render(component(move |cx| {
                 let count = cx.state(0_i64);
@@ -310,4 +314,144 @@ fn run_fixture(cx: &mut zgx_desktop::WindowContext) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = cx;
+}
+
+/// Native structure probe for dynamic Liquid Glass and appearance switching.
+fn run_appearance_fixture(cx: &mut zgx_desktop::WindowContext) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::{MainThreadMarker, msg_send, rc::Retained, runtime::AnyClass};
+        use objc2_app_kit::{NSAppearanceCustomization, NSApplication, NSView};
+        use objc2_foundation::NSString;
+        use zgx_desktop::{GlassBlend, GlassInnerShadow, GlassLayer};
+        let window = cx.window.clone();
+        cx.tasks.spawn(async move {
+            let pause = || zgx::timer::sleep(std::time::Duration::from_millis(100));
+            pause().await;
+            let mtm = MainThreadMarker::new().unwrap();
+            let ns = NSApplication::sharedApplication(mtm)
+                .windows()
+                .into_iter()
+                .find(|w| w.title().to_string() == TITLE)
+                .unwrap();
+            let content = ns.contentView().unwrap();
+            // SAFETY: the live native content view's frame view.
+            let frame = unsafe { content.superview() }.unwrap();
+            let effects = || {
+                frame
+                    .subviews()
+                    .into_iter()
+                    .filter(|view| {
+                        // SAFETY: NSView's public identifier getter.
+                        let id: Option<Retained<NSString>> =
+                            unsafe { msg_send![&**view, identifier] };
+                        id.is_some_and(|id| id.to_string() == "zgx.window.glass")
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let mut glass = Glass::new(GlassMaterial::Liquid);
+            glass.tint = Some(0x14151780);
+            glass.corner_radius = Some(12.);
+            glass.backdrop = Some(GlassLayer {
+                color: 0x24252880,
+                blend: GlassBlend::Color,
+            });
+            glass.fill = Some(GlassLayer {
+                color: 0x0000004d,
+                blend: GlassBlend::Overlay,
+            });
+            glass.inner_shadow = Some(GlassInnerShadow {
+                color: 0xffffff99,
+                blur: 2.5,
+                x: 0.,
+                y: 1.5,
+                blend: GlassBlend::Overlay,
+                knockout: true,
+                geometry: Default::default(),
+            });
+            for theme in [
+                Some(zgx::theme::Appearance::Dark),
+                Some(zgx::theme::Appearance::Light),
+                None,
+            ] {
+                window.set_theme(theme);
+                window.set_glass(Some(glass));
+                pause().await;
+                let views = effects();
+                assert_eq!(views.len(), 1, "a switch must replace the native effect");
+                let group = &views[0];
+                assert_eq!(
+                    group.class().name().to_string_lossy(),
+                    "ZgxWindowGlassContent"
+                );
+                let surface = group.subviews().objectAtIndex(0);
+                if AnyClass::get(c"NSGlassEffectView").is_some() {
+                    assert_eq!(
+                        surface.class().name().to_string_lossy(),
+                        "NSGlassEffectContainerView"
+                    );
+                    // SAFETY: public macOS 26 native glass properties and NSView.
+                    unsafe {
+                        let effect: Retained<NSView> = msg_send![&*surface, contentView];
+                        let style: isize = msg_send![&*effect, style];
+                        let radius: f64 = msg_send![&*effect, cornerRadius];
+                        assert_eq!((style, radius), (0, 12.));
+                        let overlays: Retained<NSView> = msg_send![&*effect, contentView];
+                        assert_eq!(overlays.subviews().len(), 2);
+                        for overlay in overlays.subviews() {
+                            let layer = overlay.layer().unwrap();
+                            let filter: Option<Retained<objc2::runtime::AnyObject>> =
+                                msg_send![&*layer, compositingFilter];
+                            assert!(filter.is_some(), "native blend filter installed");
+                        }
+                    }
+                } else {
+                    assert_eq!(surface.class().name().to_string_lossy(), "ZgxWindowGlass");
+                }
+                let inset = group.subviews().objectAtIndex(1);
+                assert_eq!(
+                    inset.class().name().to_string_lossy(),
+                    "ZgxWindowInnerShadow"
+                );
+                let root = inset.layer().unwrap();
+                // SAFETY: these are the CALayers installed by our own
+                // resource shadow view, retained on the UI thread.
+                let shape = unsafe { root.sublayers() }.unwrap().objectAtIndex(0);
+                let shadow = unsafe { shape.sublayers() }.unwrap().objectAtIndex(0);
+                assert_eq!(shadow.shadowRadius(), 2.5);
+                assert_eq!(
+                    shadow.shadowOffset(),
+                    objc2_foundation::NSSize::new(0., -1.5)
+                );
+                assert!(shadow.shadowPath().is_some());
+                assert!(
+                    !root.masksToBounds(),
+                    "resource surface clipping remains disabled"
+                );
+                assert!(
+                    shape.masksToBounds(),
+                    "inner shadow clips only to its own shape"
+                );
+                let mut resized = group.frame().size;
+                resized.width += 20.;
+                group.setFrameSize(resized);
+                let inset = group.subviews().objectAtIndex(1);
+                // SAFETY: the same owned shadow tree after its resize.
+                let shape = unsafe { inset.layer().unwrap().sublayers() }
+                    .unwrap()
+                    .objectAtIndex(0);
+                assert_eq!(shape.frame().size.width, resized.width);
+                assert_eq!(ns.appearance().is_some(), theme.is_some());
+                println!("APPEARANCE glass {theme:?} one native effect, resource blend layers");
+                window.set_glass(None);
+                pause().await;
+                assert!(effects().is_empty(), "opaque removes the native effect");
+                println!("APPEARANCE opaque {theme:?} no native effect");
+            }
+            println!("APPEARANCE PASS");
+            window.close();
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    cx.window.close();
 }

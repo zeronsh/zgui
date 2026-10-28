@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--Generator: Apple Native CoreSVG 362-->
+<!DOCTYPE svg
+PUBLIC "-//W3C//DTD SVG 1.1//EN"
+       "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 48 48">
+ <title>shell</title>
+ <g fill="none" fill-rule="nonzero" id="shell" stroke="none">
+  <path d="M5.32739 7.6808C6.26352 6.77349 7.7809 6.77349 8.71703 7.6808L23.0995 21.6207C24.0356 22.5279 24.0356 23.9988 23.0995 24.9061L8.71703 38.846C7.7809 39.7532 6.2635 39.7532 5.32739 38.846C4.39136 37.9387 4.39136 36.4678 5.32739 35.5606L18.015 23.2632L5.32739 10.9661C4.39129 10.0588 4.39129 8.58812 5.32739 7.6808ZM41.9782 35.6997C43.3021 35.6997 44.3753 36.7899 44.3753 38.1349C44.3753 39.4798 43.3021 40.57 41.9782 40.57L22.8016 40.57C21.4777 40.57 20.4046 39.4798 20.4046 38.1349C20.4046 36.7899 21.4777 35.6997 22.8016 35.6997L41.9782 35.6997Z" fill="currentColor" id="Combined-Shape"/>
+ </g>
+</svg>

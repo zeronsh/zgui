@@ -303,6 +303,8 @@ fn token_field(prop: Prop) -> Option<zgx::theme::Field> {
         InsetShadow => Field::InsetShadow,
         Opacity => Field::Opacity,
         BackdropBlur => Field::Blur,
+        BackdropTint => Field::BackdropTint,
+        BackdropFill => Field::BackdropFill,
         W => Field::Width,
         H => Field::Height,
         _ => return None,
@@ -5288,7 +5290,18 @@ fn apply<S: Styled>(s: S, prop: Prop, lit: &Lit) -> S {
         (InsetShadow, Lit::Shadows(shadows)) => s.inset_shadows(shadows.clone()),
         (Opacity, Lit::Num(v)) => s.opacity(v.clamp(0., 1.)),
         (Blur, Lit::Num(v)) => s.filter_blur(v.max(0.)),
+        (SurfaceRecipe, Lit::SurfaceRecipe(recipe)) => s.surface_recipe(recipe.clone()),
         (BackdropBlur, Lit::Num(v)) => s.blur(v.max(0.)),
+        (BackdropMaterial, Lit::Str(v)) => s.backdrop_material(if v.as_ref() == "liquid" {
+            zgx::scene::BackdropMaterial::Liquid
+        } else {
+            zgx::scene::BackdropMaterial::Blur
+        }),
+        (BackdropTint, Lit::Color(v)) => s.backdrop_tint(*v),
+        (BackdropFill, Lit::Color(v)) => s.backdrop_fill(*v),
+        (BackdropFillBlend, Lit::Str(v)) => {
+            s.backdrop_fill_blend(zgx::scene::BlendMode::parse(v).unwrap_or_default())
+        }
         (Brightness, Lit::Num(v)) => s.brightness(*v),
         (Contrast, Lit::Num(v)) => s.contrast(*v),
         (Saturate, Lit::Num(v)) => s.saturate(*v),

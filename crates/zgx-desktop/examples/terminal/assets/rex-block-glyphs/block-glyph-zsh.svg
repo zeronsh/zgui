@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--Generator: Apple Native CoreSVG 362-->
+<!DOCTYPE svg
+PUBLIC "-//W3C//DTD SVG 1.1//EN"
+       "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 480 392">
+ <title>zsh</title>
+ <g fill="none" id="zsh" stroke="none">
+  <circle cx="95.6378" cy="109" id="Oval" r="51" stroke="currentColor" stroke-width="30"/>
+  <circle cx="208.362" cy="273" id="Oval" r="51" stroke="currentColor" stroke-width="30"/>
+  <line id="Line" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-width="20" x1="38.9606" x2="265.039" y1="316.858" y2="62.811"/>
+  <line id="Line" stroke-linecap="round" stroke-linejoin="round" opacity="0.7" stroke="currentColor" stroke-width="22" x1="294" x2="448.408" y1="346" y2="345.65"/>
+ </g>
+</svg>

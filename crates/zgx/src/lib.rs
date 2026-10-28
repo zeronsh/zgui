@@ -4,6 +4,7 @@
 pub mod collections;
 pub mod reactive;
 pub mod scene;
+pub mod surface;
 pub mod task;
 pub mod view;
 pub mod virtual_list;

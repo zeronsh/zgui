@@ -1004,3 +1004,19 @@ the display's period from the spacing of its display link's output times
 rate, intermittently, as a window started. The app is launched as a direct
 child from a temporary directory and sends no input. Passed on macOS 26 (M5,
 120 Hz), 2026-10-25: 113.7, 117.2 and 116.7 fps.
+
+
+The macOS appearance probe (`scripts/macos_appearance_smoke.py`, macOS 26+)
+checks real native Liquid Glass container/effect hierarchy, resource color
+blend filters, replacement and removal, and dark/light/automatic appearance.
+Its Ghostty fixture changes default terminal colors on a live surface and
+checks a shell variable and startup options survive. This is structural and
+lifecycle validation, not a claim that another application's private layer
+hierarchy or per-node glass is identical. The Linux smoke registry reports
+this macOS-only probe as skipped.
+
+`scripts/macos_web_shortcuts_probe.py --app PID` is an operator probe for
+Cmd-K while a WebKit page has keyboard focus. It observes the inspected
+palette state but leaves focus and input to the operator. A pass depends on
+the operator confirming that the page was focused; it does not verify other
+browser editing shortcuts. The Linux smoke registry skips this macOS probe.

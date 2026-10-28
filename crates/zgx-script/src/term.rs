@@ -9,14 +9,17 @@ use crate::{Vm, node::env};
 use mlua::{Function, Lua, Table, UserData, Value as LuaValue};
 use std::{
     any::Any,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     path::PathBuf,
     rc::{Rc, Weak},
 };
 use zgx::{
     reactive::{Effect, Runtime, Signal},
-    terminal::{Terminal, TerminalEvent, TerminalOptions, TerminalState, TerminalSubscription},
+    terminal::{
+        Terminal, TerminalColorScheme, TerminalEvent, TerminalOptions, TerminalState,
+        TerminalSubscription,
+    },
 };
 
 /// What a session's events call: the latest run's handlers.
@@ -92,8 +95,32 @@ impl Fields {
 #[derive(Default)]
 pub(crate) struct Terms {
     entries: RefCell<HashMap<String, Entry>>,
+    colors: Cell<Option<(u32, u32)>>,
+    color_scheme: Cell<Option<TerminalColorScheme>>,
 }
 impl Terms {
+    pub(crate) fn set_colors(&self, background: u32, foreground: u32) {
+        if self.colors.replace(Some((background, foreground))) == Some((background, foreground)) {
+            return;
+        }
+        if let Some(mut scheme) = self.color_scheme.get() {
+            scheme.background = Some(background);
+            scheme.foreground = Some(foreground);
+            self.color_scheme.set(Some(scheme));
+        }
+        for entry in self.entries.borrow().values() {
+            entry.term.set_colors(background, foreground);
+        }
+    }
+    pub(crate) fn set_color_scheme(&self, scheme: TerminalColorScheme) {
+        if self.color_scheme.replace(Some(scheme)) == Some(scheme) {
+            return;
+        }
+        self.colors.set(scheme.background.zip(scheme.foreground));
+        for entry in self.entries.borrow().values() {
+            entry.term.set_color_scheme(scheme);
+        }
+    }
     fn session(
         self: &Rc<Self>,
         lua: &Lua,
@@ -134,6 +161,11 @@ impl Terms {
             None => TerminalOptions::default(),
         };
         let term = Terminal::new(&env.runtime, options);
+        if let Some(scheme) = self.color_scheme.get() {
+            term.set_color_scheme(scheme);
+        } else if let Some((background, foreground)) = self.colors.get() {
+            term.set_colors(background, foreground);
+        }
         let handlers = Rc::new(RefCell::new(handlers));
         let fields = Rc::new(Fields::default());
         let subscription = {
@@ -189,6 +221,7 @@ fn options(opts: &Table) -> mlua::Result<TerminalOptions> {
         working_directory,
         env,
         font_size: opts.get::<Option<f32>>("font_size")?,
+        font_family: opts.get::<Option<String>>("font_family")?,
     })
 }
 
@@ -373,8 +406,10 @@ pub(crate) fn install(lua: &Lua, ui: &Table, terms: Rc<Terms>) -> mlua::Result<(
             crate::node::env(lua)?.may(crate::Capability::Terminals, "ui.term")?;
             if let Some(opts) = &opts {
                 for (key, _) in opts.clone().pairs::<String, LuaValue>().flatten() {
-                    let known = matches!(key.as_str(), "command" | "cwd" | "env" | "font_size")
-                        || HANDLERS.contains(&key.as_str());
+                    let known = matches!(
+                        key.as_str(),
+                        "command" | "cwd" | "env" | "font_size" | "font_family"
+                    ) || HANDLERS.contains(&key.as_str());
                     if !known {
                         return Err(mlua::Error::runtime(format!(
                             "ui.term: unknown option `{key}`"
@@ -391,4 +426,92 @@ pub(crate) fn install(lua: &Lua, ui: &Table, terms: Rc<Terms>) -> mlua::Result<(
             })
         })?,
     )
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+    use zgx::terminal::{TerminalBackend, TerminalCommand};
+    #[derive(Default)]
+    struct Backend(RefCell<Vec<TerminalCommand>>);
+    impl TerminalBackend for Backend {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn run(&self, command: TerminalCommand) {
+            self.0.borrow_mut().push(command);
+        }
+    }
+    #[test]
+    fn host_colors_update_existing_sessions_and_apply_to_future_sessions() {
+        let runtime = Runtime::new();
+        let host = crate::ScriptHost::inline(
+            &runtime,
+            "colors.luau",
+            r#"
+            ui.term("first", {font_size=12,font_family="Menlo"})
+            ui.command {id="later",run=function() ui.term("later") end}
+            return ui.div {}
+        "#,
+        );
+        host.reload().unwrap();
+        let first = host.0.terms.entries.borrow()["first"].term.clone();
+        let options = first.options();
+        assert_eq!(options.font_family.as_deref(), Some("Menlo"));
+        let existing = Rc::new(Backend::default());
+        first.attach(existing.clone());
+        host.terminal_colors(0xffffffff, 0x111111ff);
+        assert_eq!(
+            *existing.0.borrow(),
+            vec![TerminalCommand::Colors(0xffffffff, 0x111111ff)]
+        );
+        host.terminal_colors(0xffffffff, 0x111111ff);
+        assert_eq!(existing.0.borrow().len(), 1, "unchanged colors do no work");
+        assert!(host.run_command("later"));
+        let later = host.0.terms.entries.borrow()["later"].term.clone();
+        let future = Rc::new(Backend::default());
+        later.attach(future.clone());
+        assert_eq!(
+            *future.0.borrow(),
+            vec![TerminalCommand::Colors(0xffffffff, 0x111111ff)]
+        );
+        assert_eq!(first.options(), options);
+        assert!(!first.is_closed() && !later.is_closed());
+    }
+
+    #[test]
+    fn host_color_schemes_reach_future_sessions_and_survive_script_reload() {
+        let runtime = Runtime::new();
+        let host = crate::ScriptHost::inline(
+            &runtime,
+            "scheme.luau",
+            "ui.term('first'); ui.command {id='later',run=function() ui.term('later') end}; return ui.div {}",
+        );
+        host.reload().unwrap();
+        let first = host.0.terms.entries.borrow()["first"].term.clone();
+        let scheme = TerminalColorScheme {
+            background: Some(0x0d1117ff),
+            foreground: Some(0xe6edf3ff),
+            ansi: Some([0x3fb950ff; 16]),
+            cursor: Some(0x2f81f7ff),
+            cursor_text: Some(0x6fc1ffff),
+            selection_background: Some(0xe6edf3ff),
+            selection_foreground: Some(0x0d1117ff),
+        };
+        host.terminal_color_scheme(scheme);
+        host.terminal_colors(0xffffffff, 0x1f2328ff);
+        let expected = TerminalColorScheme {
+            background: Some(0xffffffff),
+            foreground: Some(0x1f2328ff),
+            ..scheme
+        };
+        assert!(host.run_command("later"));
+        let later = host.0.terms.entries.borrow()["later"].term.clone();
+        assert_eq!(later.color_scheme(), expected);
+        assert_eq!(first.color_scheme(), expected);
+        host.reload().unwrap();
+        assert_eq!(host.0.terms.entries.borrow()["first"].term.id(), first.id());
+        assert_eq!(first.color_scheme(), expected);
+        assert!(!first.is_closed() && !later.is_closed());
+    }
 }

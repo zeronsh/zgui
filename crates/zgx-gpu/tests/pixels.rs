@@ -3107,6 +3107,10 @@ fn nonfinite_effects_normalize_to_stable_pixels_and_repeated_writes_stay_idle() 
         let baseline = gpu.readback().unwrap();
         for invalid in [
             Effects {
+                backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                backdrop_tint: Color(0, 0, 0, 0),
+                backdrop_fill: Color(0, 0, 0, 0),
+                backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                 opacity: f32::INFINITY,
                 blur_radius: -3.,
                 edge_fade: -4.,
@@ -3116,6 +3120,10 @@ fn nonfinite_effects_normalize_to_stable_pixels_and_repeated_writes_stay_idle() 
                 saturate: 1.,
             },
             Effects {
+                backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                backdrop_tint: Color(0, 0, 0, 0),
+                backdrop_fill: Color(0, 0, 0, 0),
+                backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                 opacity: f32::NAN,
                 blur_radius: f32::INFINITY,
                 edge_fade: f32::NEG_INFINITY,
@@ -3125,6 +3133,10 @@ fn nonfinite_effects_normalize_to_stable_pixels_and_repeated_writes_stay_idle() 
                 saturate: 1.,
             },
             Effects {
+                backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                backdrop_tint: Color(0, 0, 0, 0),
+                backdrop_fill: Color(0, 0, 0, 0),
+                backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                 opacity: f32::NAN,
                 blur_radius: f32::NAN,
                 edge_fade: f32::INFINITY,
@@ -3134,6 +3146,10 @@ fn nonfinite_effects_normalize_to_stable_pixels_and_repeated_writes_stay_idle() 
                 saturate: 1.,
             },
             Effects {
+                backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                backdrop_tint: Color(0, 0, 0, 0),
+                backdrop_fill: Color(0, 0, 0, 0),
+                backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                 opacity: 1.,
                 blur_radius: f32::NEG_INFINITY,
                 edge_fade: f32::NAN,
@@ -3146,6 +3162,10 @@ fn nonfinite_effects_normalize_to_stable_pixels_and_repeated_writes_stay_idle() 
             scene.set_effects(
                 foreground,
                 Effects {
+                    backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                    backdrop_tint: Color(0, 0, 0, 0),
+                    backdrop_fill: Color(0, 0, 0, 0),
+                    backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                     opacity: 0.5,
                     blur_radius: 2.,
                     edge_fade: 2.,

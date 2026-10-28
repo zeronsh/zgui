@@ -853,7 +853,7 @@ pub(crate) fn offer_current_key() -> bool {
         .is_some_and(|event| offer_key(&event))
 }
 #[cfg(target_os = "macos")]
-fn offer_key(event: &objc2_app_kit::NSEvent) -> bool {
+pub(crate) fn offer_key(event: &objc2_app_kit::NSEvent) -> bool {
     let Some(mtm) = objc2::MainThreadMarker::new() else {
         return false;
     };

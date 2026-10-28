@@ -22,7 +22,7 @@ local M = {}
 export type Shown = layout.Frames & { order: { string }, smooth: boolean }
 
 function M.radius(): number
-	return math.max(state.window_radius:get() - theme.inset, 6)
+	return ui.theme.get("terminal.pane_radius") :: number
 end
 
 local function live_root(id: string): layout.Tree?

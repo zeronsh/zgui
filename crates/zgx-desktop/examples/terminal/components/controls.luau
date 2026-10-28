@@ -1,5 +1,6 @@
 -- Small pieces the bars and tabs share.
 local theme = require("../theme")
+local appearance = require("../appearance")
 local icons = require("../icons")
 local names = require("@lib/names")
 local kit = require("./kit")
@@ -9,25 +10,54 @@ local M = {}
 -- The motion glass moves with (icons.zeron.sh's ease).
 local EASE = "cubicBezier(.22, 1, .36, 1)"
 
--- Frosted glass under a row's content (the row must be `relative`): a
--- clear tint over the window's own blur. No backdrop blur of its own: there
--- is nothing of zgx's behind it to blur, and its margin would reach over
--- the terminals below the tabs, putting it on the overlay plane above them
--- (a platform blur view for each move: the window flashed on every switch). One piece per `id`:
+-- A row's selected surface (the row must be `relative`). Hosts supporting
+-- native materials keep its glass behind the row's labels; earlier hosts
+-- use the material's translucent color layers. One piece per `id`:
 -- when `shown()` moves to another row, the glass slides there rather than
 -- one fading out while another fades in.
-function M.glass(id: string, shown: () -> boolean, radius: number | string): Node
+function M.glass(id: string, shown: () -> boolean, radius: number | string, node_id: string?, fade_in: boolean?): Node
 	return ui.presence(function()
 		return if shown() then "on" else nil
 	end, function(): Node
 		return ui.div {
+			id = node_id,
 			layout_id = id,
 			layout_duration = 320,
 			layout_ease = EASE,
 			w_full = true,
 			h_full = true,
 			rounded = radius,
-			bg = theme.glass,
+			bg = appearance.selection_bg,
+			surface_recipe = if appearance.recipe_supported() then appearance.selection_surface else nil,
+			backdrop_material = if appearance.native_liquid:peek() and not appearance.recipe_supported()
+				then appearance.selection_material
+				else nil,
+			backdrop_tint = if appearance.native_liquid:peek() and not appearance.recipe_supported()
+				then appearance.selection_tint
+				else nil,
+			backdrop_fill = if appearance.native_liquid:peek() and not appearance.recipe_supported()
+				then appearance.selection_fill
+				else nil,
+			backdrop_fill_blend = if appearance.native_liquid:peek() and not appearance.recipe_supported()
+				then appearance.selection_fill_blend
+				else nil,
+			border = if appearance.recipe_supported() then 0 else 1,
+			border_color = "$terminal.selection_line",
+			ui.div {
+				absolute = true,
+				left = 0,
+				top = 0,
+				right = 0,
+				bottom = 0,
+				rounded = radius,
+				pointer_events = "none",
+				bg = function()
+					return if appearance.native_liquid:get() and appearance.selection_material() == "liquid"
+						then theme.clear
+						else appearance.selection_fill()
+				end,
+				blend = appearance.selection_fill_blend,
+			},
 		}
 	end, {
 		absolute = true,
@@ -35,7 +65,7 @@ function M.glass(id: string, shown: () -> boolean, radius: number | string): Nod
 		left = 0,
 		right = 0,
 		bottom = 0,
-		enter = { opacity = { 0, 1 }, duration = 160 },
+		enter = if fade_in == false then nil else { opacity = { 0, 1 }, duration = 160 },
 	})
 end
 
@@ -51,9 +81,11 @@ function M.hover_glass(radius: number | string): (Node, (inside: boolean) -> ())
 		right = 0,
 		bottom = 0,
 		rounded = radius,
-		bg = theme.glass_hover,
-		border = 1,
-		border_color = theme.glass_hover,
+		bg = function()
+			return if appearance.recipe_supported() then theme.clear else appearance.hover_bg()
+		end,
+		surface_recipe = if appearance.recipe_supported() then appearance.hover_surface else nil,
+		border = 0,
 		opacity = 0,
 		on_mount = function(el: Element)
 			layer = el
@@ -109,8 +141,10 @@ function M.glyph(desc: () -> names.Description, size: number, dim: () -> boolean
 end
 
 -- A square icon button in the titlebar.
-function M.tool(svg: string, on_click: () -> ()): Node
+function M.tool(svg: string, on_click: () -> (), label: string?, id: string?): Node
 	return ui.button {
+		id = id,
+		label = label,
 		variants = kit.button { tone = "ghost", size = "icon" },
 		on_click = on_click,
 		ui.svg { code = svg, w = 15, h = 15, tint = theme.secondary },

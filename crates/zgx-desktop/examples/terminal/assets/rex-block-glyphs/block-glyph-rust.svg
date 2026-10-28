@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--Generator: Apple Native CoreSVG 362-->
+<!DOCTYPE svg
+PUBLIC "-//W3C//DTD SVG 1.1//EN"
+       "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 106 106">
+ <title>rust-logo</title>
+ <g fill="none" fill-rule="evenodd" id="rust-logo" stroke="none" stroke-width="1">
+  <g id="logo" stroke="currentColor" transform="translate(2, 2)">
+   <path d="M42.5 36.5L55.5 36.5C63.5 36.5 63.5 44.5 55.5 44.5L42.5 44.5L42.5 36.5ZM11.5 73.5L51.5 73.5L51.5 62.5L42.5 62.5L42.5 54.5L52.5 54.5C63.5 54.5 57.5 73.5 66.5 73.5L91.5 73.5L91.5 54.5L85.5 54.5L85.5 56.5C85.5 64.5 76.5 63.5 75.5 58.5C74.5 53.5 70.5 49.5 69.5 49.5C84.5 41.5 75.5 25.5 63.5 25.5L16.5 25.5L16.5 36.5L26.5 36.5L26.5 62.5L11.5 62.5L11.5 73.5Z" fill="currentColor" fill-rule="nonzero" id="r" stroke-linejoin="round"/>
+   <g id="gear">
+    <circle cx="51" cy="51" id="Oval" r="43" stroke-width="9"/>
+    <g fill="currentColor" id="cogs" stroke-linejoin="round" stroke-width="3">
+     <polygon id="cog" points="97 54 102 51 97 48"/>
+     <g id="cog-link" transform="translate(98.5681, 60.4619) rotate(11.25) translate(-98.5681, -60.4619)translate(96.0681, 57.4619)">
+      <polygon id="cog" points="1.42109e-14 6 5 3 1.42109e-14 0"/>
+     </g>
+     <g id="cog-link" transform="translate(95.8082, 69.5601) rotate(22.5) translate(-95.8082, -69.5601)translate(93.3082, 66.5601)">
+      <polygon id="cog" points="0 6 5 3 0 -3.55271e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(91.3263, 77.9452) rotate(33.75) translate(-91.3263, -77.9452)translate(88.8263, 74.9452)">
+      <polygon id="cog" points="0 6 5 3 0 -5.32907e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(85.2947, 85.2947) rotate(45) translate(-85.2947, -85.2947)translate(82.7947, 82.2947)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(77.9452, 91.3263) rotate(56.25) translate(-77.9452, -91.3263)translate(75.4452, 88.3263)">
+      <polygon id="cog" points="-1.42109e-14 6 5 3 -1.42109e-14 1.42109e-14"/>
+     </g>
+     <g id="cog-link" transform="translate(69.5601, 95.8082) rotate(67.5) translate(-69.5601, -95.8082)translate(67.0601, 92.8082)">
+      <polygon id="cog" points="0 6 5 3 0 3.55271e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(60.4619, 98.5681) rotate(78.75) translate(-60.4619, -98.5681)translate(57.9619, 95.5681)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(51, 99.5) rotate(90) translate(-51, -99.5)translate(48.5, 96.5)">
+      <polygon id="cog" points="0 6 5 3 0 7.10543e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(41.5381, 98.5681) rotate(101.25) translate(-41.5381, -98.5681)translate(39.0381, 95.5681)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(32.4399, 95.8082) rotate(112.5) translate(-32.4399, -95.8082)translate(29.9399, 92.8082)">
+      <polygon id="cog" points="-1.42109e-14 6 5 3 -1.42109e-14 0"/>
+     </g>
+     <g id="cog-link" transform="translate(24.0548, 91.3263) rotate(123.75) translate(-24.0548, -91.3263)translate(21.5548, 88.3263)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(16.7053, 85.2947) rotate(135) translate(-16.7053, -85.2947)translate(14.2053, 82.2947)">
+      <polygon id="cog" points="0 6 5 3 0 -1.42109e-14"/>
+     </g>
+     <g id="cog-link" transform="translate(10.6737, 77.9452) rotate(146.25) translate(-10.6737, -77.9452)translate(8.1737, 74.9452)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(6.1918, 69.5601) rotate(157.5) translate(-6.1918, -69.5601)translate(3.6918, 66.5601)">
+      <polygon id="cog" points="-3.55271e-15 6 5 3 -3.55271e-15 1.42109e-14"/>
+     </g>
+     <g id="cog-link" transform="translate(3.4319, 60.4619) rotate(168.75) translate(-3.4319, -60.4619)translate(0.9319, 57.4619)">
+      <polygon id="cog" points="-8.88178e-15 6 5 3 -8.88178e-15 0"/>
+     </g>
+     <g id="cog-link" transform="translate(2.5, 51) rotate(180) translate(-2.5, -51)translate(0, 48)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(3.4319, 41.5381) rotate(-168.75) translate(-3.4319, -41.5381)translate(0.9319, 38.5381)">
+      <polygon id="cog" points="-7.10543e-15 6 5 3 -7.10543e-15 -7.10543e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(6.1918, 32.4399) rotate(-157.5) translate(-6.1918, -32.4399)translate(3.6918, 29.4399)">
+      <polygon id="cog" points="0 6 5 3 0 -3.55271e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(10.6737, 24.0548) rotate(-146.25) translate(-10.6737, -24.0548)translate(8.1737, 21.0548)">
+      <polygon id="cog" points="-3.55271e-15 6 5 3 -3.55271e-15 3.55271e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(16.7053, 16.7053) rotate(-135) translate(-16.7053, -16.7053)translate(14.2053, 13.7053)">
+      <polygon id="cog" points="-1.06581e-14 6 5 3 -1.06581e-14 -8.88178e-16"/>
+     </g>
+     <g id="cog-link" transform="translate(24.0548, 10.6737) rotate(-123.75) translate(-24.0548, -10.6737)translate(21.5548, 7.6737)">
+      <polygon id="cog" points="7.10543e-15 6 5 3 7.10543e-15 -1.77636e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(32.4399, 6.1918) rotate(-112.5) translate(-32.4399, -6.1918)translate(29.9399, 3.1918)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(41.5381, 3.4319) rotate(-101.25) translate(-41.5381, -3.4319)translate(39.0381, 0.4319)">
+      <polygon id="cog" points="3.55271e-15 6 5 3 3.55271e-15 0"/>
+     </g>
+     <g id="cog-link" transform="translate(51, 2.5) rotate(-90) translate(-51, -2.5)translate(48.5, -0.5)">
+      <polygon id="cog" points="-8.88178e-16 6 5 3 -8.88178e-16 0"/>
+     </g>
+     <g id="cog-link" transform="translate(60.4619, 3.4319) rotate(-78.75) translate(-60.4619, -3.4319)translate(57.9619, 0.4319)">
+      <polygon id="cog" points="7.10543e-15 6 5 3 7.10543e-15 7.10543e-15"/>
+     </g>
+     <g id="cog-link" transform="translate(69.5601, 6.1918) rotate(-67.5) translate(-69.5601, -6.1918)translate(67.0601, 3.1918)">
+      <polygon id="cog" points="3.55271e-15 6 5 3 3.55271e-15 0"/>
+     </g>
+     <g id="cog-link" transform="translate(77.9452, 10.6737) rotate(-56.25) translate(-77.9452, -10.6737)translate(75.4452, 7.6737)">
+      <polygon id="cog" points="-7.10543e-15 6 5 3 -7.10543e-15 0"/>
+     </g>
+     <g id="cog-link" transform="translate(85.2947, 16.7053) rotate(-45) translate(-85.2947, -16.7053)translate(82.7947, 13.7053)">
+      <polygon id="cog" points="7.10543e-15 6 5 3 7.10543e-15 0"/>
+     </g>
+     <g id="cog-link" transform="translate(91.3263, 24.0548) rotate(-33.75) translate(-91.3263, -24.0548)translate(88.8263, 21.0548)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(95.8082, 32.4399) rotate(-22.5) translate(-95.8082, -32.4399)translate(93.3082, 29.4399)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+     <g id="cog-link" transform="translate(98.5681, 41.5381) rotate(-11.25) translate(-98.5681, -41.5381)translate(96.0681, 38.5381)">
+      <polygon id="cog" points="0 6 5 3 0 0"/>
+     </g>
+    </g>
+    <g fill="currentColor" id="mounts" stroke-linejoin="round" stroke-width="6" transform="translate(8.8925, 9)">
+     <polygon id="mount" points="35.1075 0 42.1075 7 49.1075 0"/>
+     <g id="mount-link" transform="translate(78.7232, 30.1028) rotate(72) translate(-78.7232, -30.1028)translate(71.7232, 26.6028)">
+      <polygon id="mount" points="0 0 7 7 14 0"/>
+     </g>
+     <g id="mount-link" transform="translate(64.7372, 73.1472) rotate(144) translate(-64.7372, -73.1472)translate(57.7372, 69.6472)">
+      <polygon id="mount" points="0 0 7 7 14 0"/>
+     </g>
+     <g id="mount-link" transform="translate(19.4778, 73.1472) rotate(-144) translate(-19.4778, -73.1472)translate(12.4778, 69.6472)">
+      <polygon id="mount" points="1.42109e-14 1.42109e-14 7 7 14 1.42109e-14"/>
+     </g>
+     <g id="mount-link" transform="translate(5.4918, 30.1028) rotate(-72) translate(-5.4918, -30.1028)translate(-1.5082, 26.6028)">
+      <polygon id="mount" points="0 0 7 7 14 0"/>
+     </g>
+    </g>
+   </g>
+  </g>
+ </g>
+</svg>

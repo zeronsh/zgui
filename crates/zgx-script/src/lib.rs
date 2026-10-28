@@ -1316,6 +1316,16 @@ impl ScriptHost {
     pub fn shared(&self, key: &str, initial: impl Into<Value>) -> Shared {
         Shared(self.0.shared.state(key, initial.into()))
     }
+    /// Default RGBA colors for this host's terminal surfaces, including
+    /// sessions created later. Existing surfaces keep their shell processes.
+    pub fn terminal_colors(&self, background: u32, foreground: u32) {
+        self.0.terms.set_colors(background, foreground);
+    }
+    /// Set app-scoped terminal palette, cursor and selection colors for existing
+    /// and future sessions. This does not replace their processes or fonts.
+    pub fn terminal_color_scheme(&self, scheme: zgx::terminal::TerminalColorScheme) {
+        self.0.terms.set_color_scheme(scheme);
+    }
     /// Keep `ui.window.titlebar_area` and `ui.window.controls` as the
     /// window the view shows in has them: pass its
     /// `WindowInfo::titlebar_area` and `controls`. Each is a rect in points

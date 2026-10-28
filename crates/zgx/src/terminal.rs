@@ -47,6 +47,8 @@ pub struct TerminalOptions {
     pub env: Vec<(String, String)>,
     /// Points; `None` uses the configured size.
     pub font_size: Option<f32>,
+    /// A font family for this surface; `None` preserves the user's configuration.
+    pub font_family: Option<String>,
 }
 
 /// A terminal session's state, kept by the controller.
@@ -79,6 +81,10 @@ pub struct TerminalState {
     pub columns: u16,
     /// Grid height in cells.
     pub rows: u16,
+    /// Native terminal cell width in backing pixels.
+    pub cell_width: u32,
+    /// Native terminal cell height in backing pixels.
+    pub cell_height: u32,
 }
 
 /// A program's own report of its state (the Program Status Protocol, OSC
@@ -194,6 +200,25 @@ pub enum TerminalEvent {
     },
 }
 
+/// App-scoped terminal colors. Unspecified entries retain the platform's configuration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TerminalColorScheme {
+    /// Default RGBA background; the host controls background transparency.
+    pub background: Option<u32>,
+    /// Default RGBA foreground.
+    pub foreground: Option<u32>,
+    /// The sixteen normal and bright ANSI RGBA colors, in index order.
+    pub ansi: Option<[u32; 16]>,
+    /// Cursor RGBA color.
+    pub cursor: Option<u32>,
+    /// Text under the cursor, as RGBA.
+    pub cursor_text: Option<u32>,
+    /// Selection RGBA background.
+    pub selection_background: Option<u32>,
+    /// Selection RGBA foreground.
+    pub selection_foreground: Option<u32>,
+}
+
 /// What a controller asks of its platform terminal.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminalCommand {
@@ -206,6 +231,11 @@ pub enum TerminalCommand {
     /// Run a Ghostty binding action (`copy_to_clipboard`, `clear_screen`,
     /// `increase_font_size:1`, `scroll_to_bottom`, ...).
     Binding(String),
+    /// Update the default RGBA background and foreground without restarting
+    /// the surface or its process (the background alpha belongs to the host).
+    Colors(u32, u32),
+    /// Apply an app-scoped color scheme without replacing the terminal process.
+    ColorScheme(TerminalColorScheme),
     /// End the session: the process is hung up and the view goes.
     Close,
 }
@@ -233,6 +263,7 @@ struct Inner {
     id: u64,
     /// How it starts; settable until a platform terminal starts it.
     options: RefCell<TerminalOptions>,
+    color_scheme: Cell<TerminalColorScheme>,
     /// A platform terminal started it (its process runs with `options`).
     started: Cell<bool>,
     state: Signal<TerminalState>,
@@ -296,6 +327,7 @@ impl Terminal {
         Self(Rc::new(Inner {
             id,
             options: RefCell::new(options),
+            color_scheme: Cell::new(TerminalColorScheme::default()),
             started: Cell::new(false),
             state: runtime.signal(TerminalState::default()),
             pointer: runtime.signal(None),
@@ -400,6 +432,24 @@ impl Terminal {
     pub fn binding(&self, action: impl Into<String>) {
         self.run(TerminalCommand::Binding(action.into()));
     }
+    /// Change the default terminal colors while keeping its process alive.
+    pub fn set_colors(&self, background: u32, foreground: u32) {
+        let mut scheme = self.0.color_scheme.get();
+        scheme.background = Some(background);
+        scheme.foreground = Some(foreground);
+        self.0.color_scheme.set(scheme);
+        self.run(TerminalCommand::Colors(background, foreground));
+    }
+    /// The app's current color overrides, retained across native view reattachment.
+    pub fn color_scheme(&self) -> TerminalColorScheme {
+        self.0.color_scheme.get()
+    }
+    /// Apply terminal colors while retaining the session, font and other settings.
+    pub fn set_color_scheme(&self, scheme: TerminalColorScheme) {
+        if self.0.color_scheme.replace(scheme) != scheme {
+            self.run(TerminalCommand::ColorScheme(scheme));
+        }
+    }
     /// End the session now (no confirmation; see
     /// [`Terminal::needs_confirm_close`]).
     pub fn close(&self) {
@@ -495,4 +545,85 @@ impl Drop for Inner {
 /// grow), round it, clip it, move and fade it.
 pub fn terminal(term: &Terminal) -> View {
     crate::web_view::native_view(NativeContent::Terminal(term.clone()))
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+    #[derive(Default)]
+    struct Backend(RefCell<Vec<TerminalCommand>>);
+    impl TerminalBackend for Backend {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn run(&self, command: TerminalCommand) {
+            self.0.borrow_mut().push(command);
+        }
+    }
+    #[test]
+    fn colors_reach_existing_and_later_surfaces_without_closing_them() {
+        let runtime = Runtime::new();
+        let term = Terminal::new(
+            &runtime,
+            TerminalOptions {
+                command: Some("owned-probe-shell".into()),
+                env: vec![("PROBE".into(), "kept".into())],
+                font_size: Some(12.),
+                font_family: Some("Menlo".into()),
+                ..Default::default()
+            },
+        );
+        let options = term.options();
+        term.set_colors(0x141517ff, 0xeeeeeeff);
+        let backend = Rc::new(Backend::default());
+        term.attach(backend.clone());
+        term.set_colors(0xffffffff, 0x111111ff);
+        assert_eq!(
+            *backend.0.borrow(),
+            vec![
+                TerminalCommand::Colors(0x141517ff, 0xeeeeeeff),
+                TerminalCommand::Colors(0xffffffff, 0x111111ff),
+            ]
+        );
+        assert!(!term.is_closed());
+        assert_eq!(term.options(), options);
+    }
+
+    #[test]
+    fn a_color_scheme_survives_reattachment_and_default_color_updates() {
+        let runtime = Runtime::new();
+        let term = Terminal::new(&runtime, TerminalOptions::default());
+        let scheme = TerminalColorScheme {
+            foreground: Some(0xe6edf3ff),
+            ansi: Some([0x3fb950ff; 16]),
+            cursor: Some(0x2f81f7ff),
+            selection_background: Some(0xe6edf3ff),
+            ..Default::default()
+        };
+        term.set_color_scheme(scheme);
+        let first = Rc::new(Backend::default());
+        term.attach(first.clone());
+        assert_eq!(
+            *first.0.borrow(),
+            vec![TerminalCommand::ColorScheme(scheme)]
+        );
+        term.set_color_scheme(scheme);
+        assert_eq!(first.0.borrow().len(), 1, "equal schemes do no work");
+        term.set_colors(0xffffffff, 0x1f2328ff);
+        let expected = TerminalColorScheme {
+            background: Some(0xffffffff),
+            foreground: Some(0x1f2328ff),
+            ..scheme
+        };
+        term.detach();
+        assert_eq!(term.color_scheme(), expected);
+        let second = Rc::new(Backend::default());
+        term.attach(second);
+        assert_eq!(
+            term.color_scheme(),
+            expected,
+            "a new native view reads these colors"
+        );
+        assert!(!term.is_closed());
+    }
 }

@@ -4,14 +4,17 @@
 -- the traffic lights, over the sidebar's header and the titlebar alike.
 local theme = require("../theme")
 local state = require("../state")
+local actions = require("../actions")
+local sessions = require("../sessions")
 local agents = require("../agents")
 local icons = require("../icons")
 local controls = require("./controls")
 local kit = require("./kit")
+local palette = require("./palette")
 
 local M = {}
 
-local WIDTH = 240
+local BASE_WIDTH = ui.theme.get("terminal.sidebar.width") :: number
 -- Where the toggle sits: this far past the traffic lights (where the window
 -- reports them, `ui.window.controls`: zoomed, they keep their size while
 -- this gap zooms with the rest), centred in the titlebar. The titlebar keeps
@@ -23,6 +26,21 @@ function M.toggle_left(): number
 	local buttons = ui.window.controls:get()
 	-- Not reported (a standard title bar, fullscreen): where they sit at 100%.
 	return if buttons then buttons.x + buttons.width + TOGGLE_GAP else 83
+end
+-- All window-level chrome follows the native buttons' logical-point center.
+-- The host already converts this rectangle for window zoom.
+function M.toolbar_center(): number
+	local buttons = ui.window.controls:get()
+	return if buttons then buttons.y + buttons.height / 2 else theme.titlebar / 2
+end
+function M.titlebar_height(): number
+	return M.toolbar_center() * 2
+end
+function M.width(): number
+	local group_gap = ui.theme.get("terminal.tab.strip_gap") :: number
+	local reserved = M.toggle_left() + M.TOGGLE_SIZE
+	local tools = M.TOGGLE_SIZE * 2 + group_gap
+	return math.max(BASE_WIDTH, reserved + tools + theme.inset)
 end
 -- The sidebar's motion, for what moves with it.
 M.EASE = "cubicBezier(.22, 1, .36, 1)"
@@ -104,7 +122,9 @@ function M.Toggle(): Node
 		variants = kit.button { tone = "ghost", size = "icon" },
 		absolute = true,
 		left = M.toggle_left,
-		top = (theme.titlebar - M.TOGGLE_SIZE) / 2,
+		top = function()
+			return M.toolbar_center() - M.TOGGLE_SIZE / 2
+		end,
 		on_click = function()
 			sidebar:set(not sidebar:peek())
 		end,
@@ -188,12 +208,13 @@ local function row(agent: () -> agents.Agent): Node
 			anime.animate(element, params)
 		end
 	end
-	local hover_layer, hover = controls.hover_glass("$terminal.button.radius")
+	local hover_layer, hover = controls.hover_glass("$terminal.sidebar.radius")
 	return ui.button {
 		id = "agent:" .. agent().pane,
 		-- The glass layers below are its hover and its selection: none of a
 		-- button's own fills (they are solid surfaces).
 		variants = kit.row { kind = "agent" },
+		rounded = "$terminal.sidebar.radius",
 		on_mount = function(el: Element)
 			element = el
 		end,
@@ -211,7 +232,7 @@ local function row(agent: () -> agents.Agent): Node
 		-- The active agent's frosted glass (one piece, sliding between rows)
 		-- over a fainter glass while the pointer is on the row.
 		hover_layer,
-		controls.glass("agent-active", current, "$terminal.button.radius"),
+		controls.glass("agent-active", current, "$terminal.sidebar.radius"),
 		controls.glyph(
 			function()
 				local a = agent()
@@ -237,7 +258,7 @@ local function row(agent: () -> agents.Agent): Node
 						return if a.name ~= "" then a.name else a.where
 					end,
 					text_size = "$terminal.type.lg",
-					weight = "$font.weight.medium",
+					weight = "$font.weight.semibold",
 					color = theme.text,
 					truncate = true,
 					grow = 1,
@@ -279,7 +300,7 @@ local function row(agent: () -> agents.Agent): Node
 	}
 end
 
-function M.Sidebar(): Node
+function M.Sidebar(session_tabs: Child): Node
 	return ui.div {
 		-- Opening slides it in: the space eases, the list lays out at once.
 		layout = "width",
@@ -287,7 +308,7 @@ function M.Sidebar(): Node
 		layout_ease = M.EASE,
 		layout_duration = M.DURATION,
 		w = function()
-			return if sidebar:get() then WIDTH else 0
+			return if sidebar:get() then M.width() else 0
 		end,
 		h_full = true,
 		shrink = 0,
@@ -297,16 +318,35 @@ function M.Sidebar(): Node
 			return if sidebar:get() then true else nil
 		end, function()
 			return ui.column {
-				w = WIDTH,
+				w = M.width,
 				h_full = true,
 				items = "stretch",
 				-- The header: room for the traffic lights and the toggle
 				-- (drawn over it, app.luau); it drags the window.
 				ui.row {
-					h = theme.titlebar,
+					id = "sidebar_toolbar",
+					h = M.titlebar_height,
+					items = "center",
 					shrink = 0,
-					controls.drag_space { grow = 1 },
+					pr = theme.inset,
+					controls.drag_space {
+						w = function()
+							return M.toggle_left() + M.TOGGLE_SIZE
+						end,
+						shrink = 0,
+					},
+					controls.drag_space { grow = 1, min_w = 0 },
+					ui.row {
+						items = "center",
+						gap = "$terminal.tab.strip_gap",
+						shrink = 0,
+						controls.tool(icons.search, palette.open, "Open Command Palette", "sidebar_palette"),
+						controls.tool(icons.plus, function()
+							actions.new_tab(sessions.cwd_of(actions.current()))
+						end, "New Tab", "sidebar_new_tab"),
+					},
 				},
+				session_tabs,
 				ui.row {
 					px = "$space.4",
 					pt = "$space.1",
@@ -382,7 +422,7 @@ function M.Sidebar(): Node
 					},
 				},
 			}
-		end, { w = WIDTH, h_full = true, exit = { opacity = 0, duration = M.DURATION, ease = M.EASE } }),
+		end, { w = M.width, h_full = true, exit = { opacity = 0, duration = M.DURATION, ease = M.EASE } }),
 	}
 end
 

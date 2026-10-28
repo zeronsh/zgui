@@ -121,6 +121,36 @@ fn warnings_find_collapsed_overflowing_and_unresolved_boxes() {
 }
 
 #[test]
+fn faded_overflow_does_not_warn_but_unfaded_overflow_does() {
+    let (ui, handle) = mounted(|_| {
+        column()
+            .child(
+                row()
+                    .id("faded")
+                    .w(80.)
+                    .h(20.)
+                    .overflow_hidden()
+                    .fade_edges_x(0., 12.)
+                    .fade_overflow(true)
+                    .child(div().w(160.).h(20.).shrink_0()),
+            )
+            .child(
+                row()
+                    .id("unfaded")
+                    .w(80.)
+                    .h(20.)
+                    .overflow_hidden()
+                    .fade_edges_x(12., 0.)
+                    .fade_overflow(true)
+                    .child(div().w(160.).h(20.).shrink_0()),
+            )
+    });
+    let warnings = layout_warnings(&ui);
+    assert!(!kinds(&warnings, handle.find("faded").unwrap()).contains(&WarningKind::Overflow));
+    assert!(kinds(&warnings, handle.find("unfaded").unwrap()).contains(&WarningKind::Overflow));
+}
+
+#[test]
 fn healthy_layouts_have_no_warnings() {
     let (ui, _) = mounted(|ui| {
         column()

@@ -1063,8 +1063,18 @@ fn check(ui: &Ui, labels: &HashMap<NodeId, Label>) -> Vec<Warning> {
             let t = scene.transform(id);
             let b = Rect::new(b.x - t.x, b.y - t.y, b.width, b.height);
             if let Some(e) = extent {
-                let over_x = (b.x - e.x).max(e.x + e.width - (b.x + b.width));
-                let over_y = (b.y - e.y).max(e.y + e.height - (b.y + b.height));
+                // A fade explicitly marks overflow at that edge as deliberate.
+                let over = |distance: f32, band: f32| {
+                    if style.fade_overflow && band > 0. {
+                        0.
+                    } else {
+                        distance
+                    }
+                };
+                let over_x = over(b.x - e.x, style.fade_edges_x[0])
+                    .max(over(e.x + e.width - (b.x + b.width), style.fade_edges_x[1]));
+                let over_y = over(b.y - e.y, style.fade_edges[0])
+                    .max(over(e.y + e.height - (b.y + b.height), style.fade_edges[1]));
                 let axis = if clip_y && over_y > 0.5 {
                     Some(("vertically", over_y, e.height, b.height))
                 } else if clip_x && over_x > 0.5 {

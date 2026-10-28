@@ -33,6 +33,10 @@ fn reactive_nonfinite_effects_normalize_before_equality_and_restore_sparse_base(
         );
         ui.prepare_frame();
         let expected = Effects {
+            backdrop_material: zgx::scene::BackdropMaterial::Blur,
+            backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill_blend: zgx::scene::BlendMode::Normal,
             opacity,
             blur_radius: 0.,
             edge_fade: 0.,
@@ -63,6 +67,10 @@ fn reactive_nonfinite_effects_normalize_before_equality_and_restore_sparse_base(
         assert_eq!(
             ui.scene.borrow().effects(view.node()),
             Effects {
+                backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                 opacity: 0.4,
                 blur_radius: 6.,
                 edge_fade: 8.,
@@ -112,6 +120,10 @@ fn a_size_only_restyle_leaves_paint_set_elsewhere() {
         let mut scene = ui.scene.borrow_mut();
         scene.set_transform(node, moved);
         let effects = Effects {
+            backdrop_material: zgx::scene::BackdropMaterial::Blur,
+            backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill_blend: zgx::scene::BlendMode::Normal,
             brightness: 0.5,
             ..scene.effects(node)
         };

@@ -34,6 +34,8 @@ private-api = []
 ghostty = ["dep:zgx-ghostty-sys", "zgx-ghostty-sys/link", "dep:libc"]
 # The terminal example's interface compiled into it (build.rs), as it ships.
 terminal-bundle = ["dep:zgx-script"]
+# The terminal example's opt-in development inspector.
+terminal-inspect = ["zgx-script/inspect"]
 # Web views (`zgx::web_view`) on Windows as WebView2 pages, in a
 # DirectComposition tree of the window's own (src/native_host/dcomp.rs and
 # webview2.rs).

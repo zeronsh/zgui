@@ -8,7 +8,6 @@ local actions = require("../actions")
 local sidebar = require("./sidebar")
 local controls = require("./controls")
 local menu = require("./menu")
-local kit = require("./kit")
 local layout = require("@lib/layout")
 local frames = require("../frames")
 
@@ -20,7 +19,7 @@ local dragging, tab_drop, tab_slot = state.dragging, state.tab_drop, state.tab_s
 local tab_style = ui.variants {
 	base = {
 		h = 28,
-		max_w = 210,
+		max_w = 170,
 		items = "center",
 		pl = "$terminal.tab.inset",
 		pr = "$terminal.tab.end",
@@ -49,50 +48,125 @@ local tab_style = ui.variants {
 	defaults = { kind = "tab" },
 }
 
--- A pane's icon in a tab: on a little tile of its own, tinted for agents.
+-- Extracted block glyphs retain Rex's actual vector paths. Custom program
+-- symbols and plugin icons continue through the existing description API.
+local BLOCK_GLYPHS: { [string]: string } = {
+	terminal = "terminal",
+	claude = "claude",
+	openai = "codex",
+	branch = "git",
+	browser = "browser",
+}
+local PROCESSES: { [string]: string } = {
+	zsh = "terminal",
+	bash = "terminal",
+	fish = "terminal",
+	node = "node",
+	python = "python",
+	python3 = "python",
+	cargo = "rust",
+	rustc = "rust",
+	git = "git",
+	claude = "claude",
+	codex = "codex",
+}
+local ICON_SIZE = 16
+-- glyphScale=1.25 belongs to Rex's block renderer, not a direct SVG size.
+-- glyphOffsetAmount=0.3 is retained as source evidence; its block-view use is unknown.
+local CARD_SCALE, ROTATION, MAX_ICONS = 0.15, 5, 3
+local CARD_WIDTH, CARD_HEIGHT = 20, 18
+local GLYPH_SIZE = 11
+local CARD_STEP, CARD_RISE = 3, 2
+
 local function badge(pane: string, dim: () -> boolean): Node
 	local desc = function()
 		return sessions.describe(pane)
 	end
-	return ui.row {
-		variants = kit.tile { dim = dim },
-		w = 20,
-		-- An agent's tile takes its own colour, from its session.
-		bg = function()
-			local tint = desc().tint
-			if tint then
-				return kit.tint(tint, if dim() then "1f" else "2e")
+	local function block_glyph(): string?
+		local d = desc()
+		if d.glyph then
+			return nil
+		end
+		local process = if sessions.is_terminal(pane) then ui.term(pane).process else ""
+		return PROCESSES[process] or BLOCK_GLYPHS[d.icon]
+	end
+	return ui.overlay {
+		id = `tab_badge:{pane}`,
+		shrink = 0,
+		border = 0.5,
+		rounded = "$terminal.tab.tile_radius",
+		w = CARD_WIDTH,
+		h = CARD_HEIGHT,
+		items = "center",
+		justify = "center",
+		gradient = function()
+			if block_glyph() == "claude" then
+				return { angle = 180, stops = { "#dc8666", "#d36e49" } }
 			end
-			return if dim() then "$terminal.tile_dim" else "$terminal.tile_bg"
+			return { angle = 180, stops = { "#515357", "#2b2d31" } }
 		end,
-		border_color = function()
-			local tint = desc().tint
-			return if tint then kit.tint(tint, "33") else "$terminal.tile_line"
-		end,
-		controls.glyph(desc, 12, dim),
-	}
-end
-
--- More panes than fit: "+3" on a tile like the icons'.
-local function more_badge(count: number, dim: () -> boolean): Node
-	return ui.row {
-		variants = kit.tile { dim = dim },
-		px = "$terminal.tab.tile_pad",
-		ui.text {
-			`+{count}`,
-			text_size = "$terminal.tab.tile_text",
-			weight = "$font.weight.semibold",
-			color = function()
-				return if dim() then theme.tertiary else theme.secondary
+		border_color = "#080a0dcc",
+		shadow = { y = 1, blur = 2, color = "#00000099" },
+		inset_shadow = { y = 1, color = "#ffffff40" },
+		ui.svg {
+			id = `tab_glyph:{pane}`,
+			src = function()
+				return "./assets/rex-block-glyphs/block-glyph-" .. (block_glyph() or "placeholder") .. ".svg"
 			end,
+			hidden = function()
+				return block_glyph() == nil
+			end,
+			w = GLYPH_SIZE,
+			h = GLYPH_SIZE,
+			tint = function()
+				local glyph = block_glyph()
+				if glyph == "claude" then
+					return "#ffffff"
+				end
+				if glyph == "codex" then
+					return "#ffffff"
+				end
+				if glyph == "terminal" or glyph == "zsh" or glyph == "bash" or glyph == "fish" then
+					return "#78e994"
+				end
+				return desc().tint or (if dim() then theme.tertiary else theme.text)
+			end,
+		},
+		ui.div {
+			hidden = function()
+				return block_glyph() ~= nil
+			end,
+			controls.glyph(desc, ICON_SIZE, dim),
 		},
 	}
 end
 
--- A tab's icon: a pane's, or the count of those that do not fit.
-type Badge = { key: string, pane: string?, more: number? }
+-- Keep the focus order separately from the split tree's spatial order.
+local icon_history = ui.state("tab_icon_history", {} :: { [string]: { string } })
+ui.effect(function()
+	local focused = focus:get()
+	local previous = icon_history:peek()
+	local next_history = table.clone(previous)
+	local changed = false
+	for tab, pane in focused do
+		local history = previous[tab] or {}
+		if pane ~= "" and history[1] ~= pane then
+			local reordered: { string } = { pane }
+			for _, id in history do
+				if id ~= pane and #reordered < MAX_ICONS then
+					table.insert(reordered, id)
+				end
+			end
+			next_history[tab] = reordered
+			changed = true
+		end
+	end
+	if changed then
+		icon_history:set(next_history)
+	end
+end)
 
--- A tab shows an icon per pane, three at most: past that, two and "+n".
+type Badge = { key: string, pane: string, index: number, count: number }
 local function tab_slots(id: string): State<{ Badge }>
 	return ui.computed(function()
 		local root: layout.Tree? = nil
@@ -101,31 +175,121 @@ local function tab_slots(id: string): State<{ Badge }>
 				root = tab.root
 			end
 		end
-		local panes = if root then layout.leaves(root) else {}
-		local slots: { Badge } = {}
-		for i, pane in panes do
-			if #panes > 3 and i == 3 then
-				table.insert(slots, { key = "more", more = #panes - 2 })
-				break
+		local panes: { string } = if root then layout.leaves(root) else {}
+		local ordered: { string } = {}
+		for _, recent in (icon_history:get())[id] or {} do
+			if table.find(panes, recent) then
+				table.insert(ordered, recent)
 			end
-			table.insert(slots, { key = pane, pane = pane })
+		end
+		for _, pane in panes do
+			if not table.find(ordered, pane) then
+				table.insert(ordered, pane)
+			end
+		end
+		local count = math.min(#ordered, MAX_ICONS)
+		local slots: { Badge } = {}
+		for i = count, 1, -1 do
+			-- Back-to-front order keeps the unscaled first card legible. Rex's
+			-- transform helpers are recovered; this paint-order mapping is inferred.
+			table.insert(slots, { key = ordered[i], pane = ordered[i], index = i - 1, count = count })
 		end
 		return slots
 	end)
 end
 
--- A tab's icons, `dim` while it is not active.
+type FanCard = { x: number, y: number, scale: number, angle: number }
+type FanGeometry = { width: number, height: number, cards: { FanCard } }
+-- Reserve the actual transformed paint bounds, with a shared vertical center.
+-- The helper's raw rect is not itself a layout box for rotated card paint.
+local function fan_geometry(count: number): FanGeometry
+	local cards: { FanCard } = {}
+	local left: number = math.huge
+	local top: number = math.huge
+	local right: number = -math.huge
+	local bottom: number = -math.huge
+	for index = 0, count - 1 do
+		local depth = if count < 2 then 0 else index / (count - 1)
+		local scale = 1 - CARD_SCALE * depth
+		-- A lone icon is not a fan. The caller-level singleton treatment is
+		-- explicit here; the recovered fan transform applies to groups only.
+		local angle = if count < 2 then 0 else ROTATION * (count - index) / count
+		local radians = math.rad(angle)
+		local half_w = (CARD_WIDTH * math.abs(math.cos(radians)) + CARD_HEIGHT * math.abs(math.sin(radians)))
+			* scale
+			/ 2
+		local half_h = (CARD_WIDTH * math.abs(math.sin(radians)) + CARD_HEIGHT * math.abs(math.cos(radians)))
+			* scale
+			/ 2
+		local center_x, center_y = index * CARD_STEP + CARD_WIDTH / 2, CARD_HEIGHT / 2 - index * CARD_RISE
+		left, right = math.min(left, center_x - half_w), math.max(right, center_x + half_w)
+		top, bottom = math.min(top, center_y - half_h), math.max(bottom, center_y + half_h)
+		table.insert(cards, { x = index * CARD_STEP, y = -index * CARD_RISE, scale = scale, angle = angle })
+	end
+	if count == 0 then
+		return { width = 0, height = CARD_HEIGHT, cards = cards }
+	end
+	for _, card in cards do
+		card.x -= left
+		card.y -= top
+	end
+	return { width = (right :: number) - left, height = (bottom :: number) - top, cards = cards }
+end
+
 local function badges(id: string, dim: () -> boolean): Node
-	return ui.each(tab_slots(id), function(slot: Badge)
-		if slot.more then
-			return more_badge(slot.more, dim)
-		end
-		return badge(slot.pane or "", dim)
-	end, {
-		key = function(slot: Badge)
-			return if slot.more then `more{slot.more}` else slot.key
+	local slots = tab_slots(id)
+	local geometry = ui.computed(function()
+		return fan_geometry(#slots:get())
+	end)
+	return ui.overlay {
+		id = `tab_fan:{id}`,
+		relative = true,
+		w = function()
+			return geometry:get().width
 		end,
-	})
+		h = function()
+			return geometry:get().height
+		end,
+		items = "center",
+		justify = "center",
+		shrink = 0,
+		-- The positioned each box is the cards' containing block, rather than
+		-- the tab whose top edge sits above the label's center.
+		ui.each(slots, function(slot: Badge)
+			local function card(): FanCard
+				return geometry:get().cards[slot.index + 1]
+			end
+			return ui.overlay {
+				id = `tab_fan_card:{id}:{slot.key}`,
+				absolute = true,
+				left = function()
+					return card().x
+				end,
+				top = function()
+					return card().y
+				end,
+				w = CARD_WIDTH,
+				h = CARD_HEIGHT,
+				items = "center",
+				justify = "center",
+				origin = { 0.5, 0.5 },
+				scale = function()
+					return card().scale
+				end,
+				rotate = function()
+					return card().angle
+				end,
+				badge(slot.pane, dim),
+			}
+		end, {
+			relative = true,
+			w_full = true,
+			h_full = true,
+			key = function(slot: Badge)
+				return `{slot.key}:{slot.index}`
+			end,
+		}),
+	}
 end
 
 local function never(): boolean
@@ -139,6 +303,7 @@ local function name_of(pane: string?): string
 end
 
 local M = {}
+M.fan_geometry = fan_geometry
 
 -- What follows the pointer while dragging a tab or a pane: the tab as it
 -- shows active in the strip (a pane alone, its own icon).
@@ -306,19 +471,24 @@ end
 -- A tab's padding, for the animations that fold it away and back.
 local INSET, END = ui.theme.get("terminal.tab.inset"), ui.theme.get("terminal.tab.end")
 
-local function tab_button(id: string): Node
+local function tab_button(id: string, vertical: boolean?): Node
 	local function pane(): string?
 		return (focus:get())[id]
 	end
 	local function is_active()
 		return active:get() == id
 	end
+	local function selection_shown(): boolean
+		return is_active() and (state.sidebar:get() == (vertical == true))
+	end
 	local hover_layer, hover = controls.hover_glass("$terminal.tab.radius")
 	-- Lifted out of the strip, it folds away (still mounted: unmounting the
 	-- dragged tab would end the drag), and unfolds where it lands.
 	local element: Element? = nil
 	local width = 0
-	local SPACE = { "width", "minWidth", "paddingLeft", "paddingRight", "marginRight", "opacity" }
+	local SPACE = if vertical
+		then { "height", "minHeight", "paddingTop", "paddingBottom", "marginBottom", "opacity" }
+		else { "width", "minWidth", "paddingLeft", "paddingRight", "marginRight", "opacity" }
 	ui.effect(function()
 		local out = state.lifted:get() == id
 		local el = element
@@ -326,32 +496,49 @@ local function tab_button(id: string): Node
 			return
 		end
 		if out then
-			width = el.width or 0
-			anime.animate(el, {
-				minWidth = 0,
-				width = 0,
-				paddingLeft = 0,
-				paddingRight = 0,
-				-- Its gap in the strip closes too.
-				marginRight = -3,
-				opacity = 0,
-				duration = 220,
-				ease = "outQuint",
-			})
+			width = if vertical then el.height or 0 else el.width or 0
+			local collapse: ElementParams = if vertical
+				then {
+					minHeight = 0,
+					height = 0,
+					paddingTop = 0,
+					paddingBottom = 0,
+					marginBottom = -3,
+				}
+				else {
+					minWidth = 0,
+					width = 0,
+					paddingLeft = 0,
+					paddingRight = 0,
+					-- Its gap in the strip closes too.
+					marginRight = -3,
+				}
+			collapse.opacity = 0
+			collapse.duration = 220
+			collapse.ease = "outQuint"
+			anime.animate(el, collapse)
 		elseif width > 0 then
 			local d = dragging:peek()
-			anime.animate(el, {
-				width = width,
-				paddingLeft = INSET,
-				paddingRight = END,
-				marginRight = 0,
-				opacity = if d.kind == "tab" and d.id == id then 0.35 else 1,
-				duration = 240,
-				ease = "outQuint",
-				onComplete = function()
-					anime.utils.cleanInlineStyles(el, SPACE)
-				end,
-			})
+			local expand: ElementParams = if vertical
+				then {
+					height = width,
+					paddingTop = 0,
+					paddingBottom = 0,
+					marginBottom = 0,
+				}
+				else {
+					width = width,
+					paddingLeft = INSET,
+					paddingRight = END,
+					marginRight = 0,
+				}
+			expand.opacity = if d.kind == "tab" and d.id == id then 0.35 else 1
+			expand.duration = 240
+			expand.ease = "outQuint"
+			expand.onComplete = function()
+				anime.utils.cleanInlineStyles(el, SPACE)
+			end
+			anime.animate(el, expand)
 			width = 0
 		end
 	end)
@@ -361,6 +548,18 @@ local function tab_button(id: string): Node
 				return if tab_drop:get() == id then "target" else "tab"
 			end,
 		},
+		id = if vertical then `sidebar_tab:{id}` else `tab:{id}`,
+		role = "tab",
+		selected = is_active,
+		focusable = true,
+		label = function()
+			return name_of(pane())
+		end,
+		h = if vertical then 33 else 30,
+		w_full = vertical or false,
+		max_w = if vertical then 10000 else 170,
+		pl = if vertical then 10 else "$terminal.tab.inset",
+		shrink = if vertical then 0 else 1,
 		relative = true,
 		on_mount = function(el: Element)
 			element = el
@@ -372,6 +571,13 @@ local function tab_button(id: string): Node
 		end,
 		on_click = function()
 			actions.activate(id)
+		end,
+		on_key = function(e)
+			if e.key == "Enter" or e.key == " " then
+				actions.activate(id)
+				return true
+			end
+			return false
 		end,
 		context_menu_style = menu.STYLE,
 		context_menu_below = true,
@@ -427,16 +633,18 @@ local function tab_button(id: string): Node
 		-- below). Near an edge, a tab takes this one's place as it passes (a
 		-- lifted one lands), and a pane opens a new tab beside it.
 		on_drag_over = function(payload: state.Payload, e)
+			local at = if vertical then e.local_y else e.local_x
+			local length = if vertical then e.h else e.w
 			if payload.kind == "tab" then
 				actions.land(payload.id)
 				-- Its outer quarters reorder, as a link's drop does in Chrome's
 				-- strip; its middle half is the tab.
-				local quarter = e.w / 4
-				if e.local_x < quarter or e.local_x > e.w - quarter then
+				local quarter = length / 4
+				if at < quarter or at > length - quarter then
 					if tab_drop:peek() == id then
 						tab_drop:set("")
 					end
-					actions.reorder(payload.id, id, if e.local_x < quarter then "before" else "after")
+					actions.reorder(payload.id, id, if at < quarter then "before" else "after")
 				elseif tab_drop:peek() ~= id then
 					tab_drop:set(id)
 				end
@@ -444,10 +652,10 @@ local function tab_button(id: string): Node
 			end
 			-- Its edges (thin, as the gaps between tabs are) open a new tab
 			-- beside it; the rest is the tab, which springs open.
-			local edge = math.min(10, e.w * 0.15)
-			if e.local_x < edge then
+			local edge = math.min(10, length * 0.15)
+			if at < edge then
 				actions.show_slot(payload.id, id)
-			elseif e.local_x > e.w - edge then
+			elseif at > length - edge then
 				local list = tabs:peek()
 				local after = ""
 				for i, other in list do
@@ -500,7 +708,13 @@ local function tab_button(id: string): Node
 		-- The active tab's frosted glass (one piece, sliding between tabs)
 		-- over a fainter glass while the pointer is on the tab.
 		hover_layer,
-		controls.glass("tab-active", is_active, "$terminal.tab.radius"),
+		controls.glass(
+			if vertical then "sidebar-tab-active" else "titlebar-tab-active",
+			selection_shown,
+			"$terminal.tab.radius",
+			`tab_selection:{if vertical then "sidebar" else "titlebar"}:{id}`,
+			false
+		),
 		ui.row {
 			gap = "$terminal.tab.tile_gap",
 			shrink = 0,
@@ -509,17 +723,25 @@ local function tab_button(id: string): Node
 				return not is_active()
 			end),
 		},
-		ui.text {
-			function()
-				return name_of(pane())
-			end,
+		ui.row {
+			id = `tab_label_clip:{id}`,
 			shrink = 1,
 			min_w = 0,
-			text_size = "$terminal.type.body",
-			truncate = true,
-			color = function()
-				return if is_active() then theme.text else theme.secondary
-			end,
+			overflow = "hidden",
+			fade_x = { 0, 12 },
+			fade_overflow = true,
+			ui.text {
+				id = `tab_label:{id}`,
+				function()
+					return name_of(pane())
+				end,
+				shrink = 0,
+				text_size = "$terminal.type.body",
+				weight = "$font.weight.semibold",
+				color = function()
+					return if is_active() then theme.text else theme.secondary
+				end,
+			},
 		},
 		-- The bell rang in a pane of a background tab.
 		ui.div {
@@ -557,11 +779,20 @@ end)
 
 -- Where a dragged pane would open as a tab: a ghost of that tab, opening
 -- up so the tabs after it slide over.
-local function slot_tab(pane: string): Node
+local function slot_tab(pane: string, vertical: boolean?): Node
 	return ui.row {
 		variants = tab_style { kind = "slot" },
+		w = if vertical then "100%" else 132,
+		h = if vertical then 33 else 30,
+		max_w = if vertical then 10000 else 210,
 		on_mount = function(el)
-			anime.animate(el, { width = { 0, 132 }, opacity = { 0, 1 }, duration = 200, ease = "outQuint" })
+			local enter: ElementParams = { opacity = { 0, 1 }, duration = 200, ease = "outQuint" }
+			if vertical then
+				enter.height = { 0, 33 }
+			else
+				enter.width = { 0, 132 }
+			end
+			anime.animate(el, enter)
 		end,
 		drop_when = function(payload: state.Payload)
 			return payload.kind == "pane"
@@ -583,10 +814,56 @@ local function slot_tab(pane: string): Node
 	}
 end
 
+-- Sidebar rows reuse every tab action and drop target; only their axis changes.
+function M.SidebarTabs(): Node
+	return ui.scroll {
+		id = "sidebar_tabs",
+		h = function()
+			return math.min(#strip:get() * 36 + 20, 260)
+		end,
+		min_h = 0,
+		shrink = 1,
+		fade = { 8, 8 },
+		fade_overflow = true,
+		ui.column {
+			role = "tablist",
+			label = "Terminal Tabs",
+			focus_group = "vertical",
+			px = 10,
+			py = 4,
+			gap = 3,
+			items = "stretch",
+			ui.each(strip, function(item: Item)
+				return if item.slot then slot_tab(item.slot, true) else tab_button(item.id, true)
+			end, {
+				key = function(item: Item)
+					return item.id
+				end,
+				animate = { duration = 240, ease = "outQuint" },
+			}),
+			ui.div {
+				h = 12,
+				drop_when = function(payload: state.Payload)
+					return payload.kind == "pane"
+				end,
+				on_drag_over = function(payload: state.Payload)
+					actions.show_slot(payload.id, "")
+				end,
+				on_drop = function()
+					actions.commit_slot()
+				end,
+			},
+		},
+	}
+end
+
 function M.Titlebar(): Node
 	return ui.row {
+		hidden = state.sidebar,
 		w_full = true,
-		h = theme.titlebar,
+		h = sidebar.titlebar_height,
+		id = "titlebar_toolbar",
+		shrink = 0,
 		items = "center",
 		-- A pane anywhere else on it (the new tab button, the tools) opens as
 		-- a tab where the slot shows, at the end if none does yet. A lifted
@@ -622,6 +899,9 @@ function M.Titlebar(): Node
 			shrink = 0,
 		},
 		ui.row {
+			role = "tablist",
+			label = "Terminal Tabs",
+			focus_group = "horizontal",
 			gap = "$terminal.tab.strip_gap",
 			items = "center",
 			shrink = 1,
@@ -641,7 +921,7 @@ function M.Titlebar(): Node
 		},
 		controls.tool(icons.plus, function()
 			actions.new_tab(sessions.cwd_of(actions.current()))
-		end),
+		end, "New Tab", "titlebar_new_tab"),
 		-- Dropping a pane here gives it a tab of its own.
 		controls.drag_space {
 			grow = 1,
@@ -658,10 +938,10 @@ function M.Titlebar(): Node
 		},
 		controls.tool(icons.split_right, function()
 			actions.split("row")
-		end),
+		end, "Split Right", "titlebar_split_right"),
 		controls.tool(icons.split_down, function()
 			actions.split("column")
-		end),
+		end, "Split Down", "titlebar_split_down"),
 	}
 end
 

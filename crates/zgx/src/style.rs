@@ -123,6 +123,10 @@ impl std::fmt::Debug for Opt32 {
 /// allocates nothing once running.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Overflow {
+    pub(crate) backdrop_material: Option<crate::scene::BackdropMaterial>,
+    pub(crate) backdrop_tint: Option<Color>,
+    pub(crate) backdrop_fill: Option<Color>,
+    pub(crate) backdrop_fill_blend: Option<crate::scene::BlendMode>,
     pub(crate) object_fit: Option<ObjectFit>,
     pub(crate) layout: Option<Layout>,
     pub(crate) italic: Option<bool>,
@@ -142,6 +146,10 @@ pub(crate) struct Overflow {
 impl Overflow {
     /// Every property unset.
     pub(crate) const DEFAULT: Self = Self {
+        backdrop_material: None,
+        backdrop_tint: None,
+        backdrop_fill: None,
+        backdrop_fill_blend: None,
         object_fit: None,
         layout: None,
         italic: None,
@@ -390,6 +398,10 @@ styles! {
     // The properties few styles set (`Overflow`): each a bit in `set` as
     // the others, its value apart.
     @overflow {
+        backdrop_material = BACKDROP_MATERIAL;
+        backdrop_tint = BACKDROP_TINT;
+        backdrop_fill = BACKDROP_FILL;
+        backdrop_fill_blend = BACKDROP_FILL_BLEND;
         object_fit = OBJECT_FIT;
         layout = LAYOUT;
         italic = ITALIC;
@@ -720,6 +732,7 @@ impl TransformPatch {
 /// a `Styles` is copied and compared on every re-run.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RareStyles {
+    pub(crate) surface_recipe: Option<Option<std::sync::Arc<crate::surface::SurfaceRecipe>>>,
     pub(crate) min_width: Option<f32>,
     pub(crate) max_width: Option<f32>,
     pub(crate) min_height: Option<f32>,
@@ -778,6 +791,7 @@ pub(crate) enum ZoomStyle {
 pub(crate) type MaskImage = (std::sync::Arc<crate::image::ImageData>, (f32, f32));
 impl RareStyles {
     const NONE: Self = Self {
+        surface_recipe: None,
         min_width: None,
         max_width: None,
         min_height: None,
@@ -814,6 +828,9 @@ impl RareStyles {
     };
     /// Overlay explicitly supplied properties, preserving all others.
     fn merge(&mut self, other: &Self) {
+        if other.surface_recipe.is_some() {
+            self.surface_recipe = other.surface_recipe.clone();
+        }
         if other.min_width.is_some() {
             self.min_width = other.min_width;
         }
@@ -1154,6 +1171,26 @@ impl Styles {
         }
         if other.opacity.is_some() {
             self.fields_mut(bit::OPACITY).opacity = other.opacity;
+        }
+        if other.overflow().backdrop_material.is_some() {
+            self.fields_mut(bit::BACKDROP_MATERIAL)
+                .overflow_mut()
+                .backdrop_material = other.overflow().backdrop_material;
+        }
+        if other.overflow().backdrop_tint.is_some() {
+            self.fields_mut(bit::BACKDROP_TINT)
+                .overflow_mut()
+                .backdrop_tint = other.overflow().backdrop_tint;
+        }
+        if other.overflow().backdrop_fill.is_some() {
+            self.fields_mut(bit::BACKDROP_FILL)
+                .overflow_mut()
+                .backdrop_fill = other.overflow().backdrop_fill;
+        }
+        if other.overflow().backdrop_fill_blend.is_some() {
+            self.fields_mut(bit::BACKDROP_FILL_BLEND)
+                .overflow_mut()
+                .backdrop_fill_blend = other.overflow().backdrop_fill_blend;
         }
         if other.overflow().blur.is_some() {
             self.fields_mut(bit::BLUR).overflow_mut().blur = other.overflow().blur;
@@ -2127,6 +2164,48 @@ pub trait Styled: Sized {
     fn blur(mut self, value: impl Into<crate::theme::Themed<f32>>) -> Self {
         value_or_token!(self, value, crate::theme::Field::Blur);
         self.styles_mut().fields_mut(bit::BLUR).overflow_mut().blur = Some(value).into();
+        self
+    }
+    /// Render a typed surface recipe, including decoration-only (non-glass) profiles.
+    fn surface_recipe(
+        mut self,
+        recipe: Option<std::sync::Arc<crate::surface::SurfaceRecipe>>,
+    ) -> Self {
+        self.styles_mut().rare_mut().surface_recipe = Some(recipe);
+        self
+    }
+    /// A native material behind this node, including retained clips and opacity.
+    fn backdrop_material(mut self, material: crate::scene::BackdropMaterial) -> Self {
+        self.styles_mut()
+            .fields_mut(bit::BACKDROP_MATERIAL)
+            .overflow_mut()
+            .backdrop_material = Some(material);
+        self
+    }
+    /// Native material tint, independent of the node's painted background.
+    fn backdrop_tint(mut self, color: impl Into<crate::theme::Themed<Color>>) -> Self {
+        value_or_token!(self, color, crate::theme::Field::BackdropTint);
+        self.styles_mut()
+            .fields_mut(bit::BACKDROP_TINT)
+            .overflow_mut()
+            .backdrop_tint = Some(color);
+        self
+    }
+    /// A fill above a native material, below native children such as terminals.
+    fn backdrop_fill(mut self, color: impl Into<crate::theme::Themed<Color>>) -> Self {
+        value_or_token!(self, color, crate::theme::Field::BackdropFill);
+        self.styles_mut()
+            .fields_mut(bit::BACKDROP_FILL)
+            .overflow_mut()
+            .backdrop_fill = Some(color);
+        self
+    }
+    /// The native fill's compositing operation.
+    fn backdrop_fill_blend(mut self, blend: crate::scene::BlendMode) -> Self {
+        self.styles_mut()
+            .fields_mut(bit::BACKDROP_FILL_BLEND)
+            .overflow_mut()
+            .backdrop_fill_blend = Some(blend);
         self
     }
     /// Content blur (CSS `filter: blur()`): the node and its subtree blur by

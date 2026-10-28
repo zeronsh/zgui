@@ -290,6 +290,25 @@ impl NativePlacement {
 /// draws the node's own tint, border and content on top.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackdropPlacement {
+    /// Typed recipe; None retains the legacy blur/material properties.
+    pub recipe: Option<std::sync::Arc<crate::surface::SurfaceRecipe>>,
+    /// Bounds of external strokes and shadows, separate from the surface rect.
+    pub visual_bounds: Rect,
+    /// Scale from recipe points to the transformed surface coordinates.
+    pub scale: f32,
+    /// Native views preceding the above-content decoration plane.
+    pub above_content_order: usize,
+    /// Platform material and its native tint.
+    pub material: crate::scene::BackdropMaterial,
+    /// Its native tint, independent of the overlay's painted fill.
+    pub tint: crate::scene::Color,
+    /// Fill above the material, below native content in the pane.
+    pub fill: crate::scene::Color,
+    /// Native compositing operation of the fill.
+    pub fill_blend: crate::scene::BlendMode,
+    /// Count of native views painted before this material. A pane's glass
+    /// precedes its terminal; an overlay's glass follows the native content.
+    pub native_order: usize,
     /// The overlay node with the blur.
     pub node: NodeId,
     /// The blurred box in window coordinates.
@@ -308,9 +327,14 @@ pub struct BackdropPlacement {
 impl BackdropPlacement {
     /// The part of `rect` its clip leaves visible, if any.
     pub fn visible(&self) -> Option<Rect> {
+        let bounds = if self.recipe.is_some() {
+            self.visual_bounds
+        } else {
+            self.rect
+        };
         match self.clip {
-            Some(clip) => self.rect.intersection(clip),
-            None => (self.rect.width > 0. && self.rect.height > 0.).then_some(self.rect),
+            Some(clip) => bounds.intersection(clip),
+            None => (bounds.width > 0. && bounds.height > 0.).then_some(bounds),
         }
     }
 }
@@ -569,9 +593,19 @@ pub fn corner_radii(kind: &NodeKind, bounds: Rect) -> [f32; 4] {
         }
     })
 }
+fn surface_recipe<'a>(
+    item: &'a PaintItem<'_>,
+) -> Option<&'a std::sync::Arc<crate::surface::SurfaceRecipe>> {
+    match item.kind {
+        NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => {
+            quad.decoration.as_ref()?.surface_recipe.as_ref()
+        }
+        _ => None,
+    }
+}
 /// Whether an item draws anything of its own.
 fn paints(item: &PaintItem<'_>) -> bool {
-    if item.effects.blur_radius > 0. {
+    if item.effects.has_backdrop() {
         return true;
     }
     match item.kind {
@@ -659,7 +693,19 @@ impl Walk<'_> {
                 .collect();
             rounded.extend(context.rounded.iter().copied());
             if item.isolated {
-                let inner = self.scene.layer_items(Some(item.id));
+                let mut inner = self.scene.layer_items(Some(item.id));
+                // The layer's root has its effects stripped for GPU
+                // compositing. Native backdrops still need those effects on
+                // the root when walking the transformed layer's contents.
+                if item.effects.has_backdrop()
+                    && let Some(root) = inner.iter_mut().find(|child| child.id == item.id)
+                {
+                    root.effects.backdrop_material = item.effects.backdrop_material;
+                    root.effects.backdrop_tint = item.effects.backdrop_tint;
+                    root.effects.backdrop_fill = item.effects.backdrop_fill;
+                    root.effects.backdrop_fill_blend = item.effects.backdrop_fill_blend;
+                    root.effects.blur_radius = item.effects.blur_radius;
+                }
                 let matrix = match (item.projective(), context.matrix) {
                     (Some(own), Some(outer)) => Some(own.then(outer)),
                     (own, outer) => own.or(outer),
@@ -742,10 +788,13 @@ impl Walk<'_> {
             }) else {
                 continue;
             };
-            let on_overlay = !self.native_rects.is_empty() && self.overlaps(painted);
+            let liquid = item.effects.backdrop_material == crate::scene::BackdropMaterial::Liquid;
+            let recipe = surface_recipe(item);
+            let native_surface = liquid || recipe.is_some();
+            let on_overlay = native_surface || self.overlaps(painted);
             let was = self.previous.overlay.get(&item.id).copied();
             if on_overlay {
-                if item.effects.blur_radius > 0. {
+                if item.effects.has_backdrop() {
                     let area = frame;
                     if self.region.iter().any(|held| held.intersects(area)) {
                         self.split.blur_needed.insert(item.id);
@@ -753,6 +802,21 @@ impl Walk<'_> {
                     let radii = corner_radii(item.kind, item.bounds);
                     let scale = axis_scales(context.matrix).map_or(1., |(sx, sy)| sx.min(sy));
                     self.split.backdrops.push(BackdropPlacement {
+                        recipe: recipe.cloned(),
+                        visual_bounds: recipe.map_or(frame, |recipe| {
+                            map_rect(context.matrix, recipe.visual_bounds(item.bounds))
+                        }),
+                        scale,
+                        above_content_order: 0,
+                        native_order: if native_surface {
+                            self.split.natives.len()
+                        } else {
+                            usize::MAX
+                        },
+                        material: item.effects.backdrop_material,
+                        tint: item.effects.backdrop_tint,
+                        fill: item.effects.backdrop_fill,
+                        fill_blend: item.effects.backdrop_fill_blend,
                         node: item.id,
                         rect: frame,
                         radii: radii.map(|radius| radius * scale),
@@ -761,6 +825,19 @@ impl Walk<'_> {
                         sigma: item.effects.blur_radius * magnification(context.matrix),
                         opacity,
                     });
+                }
+                // A material that contains a native child is underneath that
+                // child. Its own backdrop paint stays on the base plane;
+                // following labels join the overlay through this region.
+                if native_surface
+                    && self
+                        .natives
+                        .iter()
+                        .any(|native| self.scene.is_within(*native, item.id))
+                {
+                    self.add_region(painted);
+                    base = true;
+                    continue;
                 }
                 self.split.overlay.insert(item.id, painted);
                 self.split.overlay_bounds = Some(match self.split.overlay_bounds {
@@ -798,7 +875,8 @@ impl PlaneSplit {
             .copied()
             .filter(|node| scene.contains(*node))
             .collect();
-        if natives.is_empty() {
+        let native_backdrops = scene.has_native_backdrop();
+        if natives.is_empty() && !native_backdrops {
             let damage = previous.overlay.values().copied().collect();
             let split = Self {
                 changed_layers: previous
@@ -838,7 +916,7 @@ impl PlaneSplit {
                 changed: HashSet::new(),
                 left: HashSet::new(),
             };
-            let everything = attempt == 3;
+            let everything = attempt == 3 || native_backdrops;
             let items = match everything {
                 true => scene.layer_items(None),
                 false => scene.layer_items_within(None, Some(&reach)),
@@ -902,6 +980,15 @@ impl PlaneSplit {
             attempt += 1;
         };
         let mut split = std::mem::take(&mut walk.split);
+        for backdrop in &mut split.backdrops {
+            backdrop.above_content_order = split
+                .natives
+                .iter()
+                .filter(|native| scene.is_within(native.node, backdrop.node))
+                .map(|native| native.order + 1)
+                .max()
+                .unwrap_or(backdrop.native_order);
+        }
         let mut damage = std::mem::take(&mut walk.damage);
         // Paint that left the overlay unvisited (it moved out of reach, or
         // is gone): the overlay erases it, the base draws it where it is now.
@@ -946,6 +1033,8 @@ impl PlaneSplit {
         }
         for backdrop in &mut split.backdrops {
             backdrop.rect = rect(backdrop.rect);
+            backdrop.visual_bounds = rect(backdrop.visual_bounds);
+            backdrop.scale *= zoom;
             backdrop.radii = backdrop.radii.map(|radius| radius * zoom);
             backdrop.clip = backdrop.clip.map(rect);
             backdrop.rounded.iter_mut().for_each(round);

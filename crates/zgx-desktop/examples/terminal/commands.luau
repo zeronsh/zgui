@@ -4,6 +4,7 @@ local state = require("./state")
 local sessions = require("./sessions")
 local actions = require("./actions")
 local palette = require("@components/palette")
+local appearance = require("@components/appearance")
 local layout = require("@lib/layout")
 
 local active, zoom = state.active, state.zoom
@@ -105,6 +106,7 @@ function M.declare()
 	command("toggle_sidebar", "Toggle Agents Sidebar", "View", "cmd+ctrl+s", function()
 		state.sidebar:set(not state.sidebar:peek())
 	end)
+	command("appearance", "Appearance…", "View", "cmd+,", appearance.open)
 	command("equalize", "Equalize Panes", "View", "cmd+ctrl+=", function()
 		local root = actions.root_of(active:peek())
 		if root then

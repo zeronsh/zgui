@@ -282,3 +282,57 @@ return ui.column {
 - `gap` is points only; `gap_x` and `gap_y` take percentages.
 - A transparent border still takes its width; a ring that must not move content is `border_over = true`.
 - `bg_fit` and the shape of `mask`, `bg_shader`, `shader_params`, `layer_shader` and `layer_params` are read once, as literals.
+
+### Native backdrop materials
+
+`backdrop_material = "liquid"` requests a retained native material behind the
+node; `"blur"` restores the existing `backdrop_blur` path. On macOS 26 and
+later this uses `NSGlassEffectContainerView` and Regular `NSGlassEffectView`.
+Older macOS uses a Popover `NSVisualEffectView`, WithinWindow blending and
+Active state. Other platforms retain ordinary paint; the Liquid material is
+currently macOS-only.
+
+`backdrop_tint` sets the native glass tint independently from `bg`.
+`backdrop_fill` paints above the material and below native children such as
+terminals; `backdrop_fill_blend` supports `normal`, `overlay`, `color`,
+`multiply` and `screen` on macOS (other blend modes currently use normal).
+Colors, material and fill blend may follow state. Color tokens are supported.
+Native material placements retain the node's ancestor clips, corner radii,
+opacity and paint order. A pane material stays below its native child, while
+its title and controls remain on the overlay. A standalone selection can use
+native glass without overlapping a web view or terminal. Stable placements
+reuse their views and do not request animation frames.
+
+The terminal example gates these properties with its host's `native_liquid`
+capability so older running hosts can reload its scripts without recognizing
+new property names.
+
+### Native surface recipes
+
+`surface_recipe` supplies typed native decoration independently of Gaussian
+blur. It accepts `glass`, `backdrop`, `fill`, `fill2`, `strokes`, `shadows`,
+`innerShadow`, `shape`, and content geometry. Layers retain their original
+color, blend mode, enabled flag, and geometry. Color specifications can retain
+semantic `role`, fixed/adaptive source RGBA, color space and a separately
+`resolvedColor`. Source alpha and geometry opacity are multiplied at paint
+time; the source data is not flattened into an opaque color.
+
+Omitted fields, explicit `ui.null` clears, and values remain distinct in the
+typed transport. Stroke and shadow array order and IDs are retained. Profile
+inheritance and source-specific defaults belong to the app's profile resolver;
+the node property itself does not merge arbitrary recipes by ID.
+
+On macOS the native compositor retains separate shadow, material, backdrop,
+fill and stroke planes. `plusLighter` and `plusDarker` use the native layer
+compositing operations. Strokes retain inside/center/outside alignment and
+above/below-content levels. Disabled glass retains decoration without adding
+Gaussian blur. External edges and shadows use conservative visual bounds and
+ancestor clips; a layer's own `clipsToSurface` controls its surface clipping.
+Below-content paint precedes descendant native views, above-content strokes
+follow them, and scripted labels remain on the overlay. Stable placements
+reuse the native views without adding idle frame work.
+
+These native recipe planes are currently macOS-only. The terminal example
+constructs the property only when the host publishes
+`native_surface_recipe_schema = 1`; older hosts retain their existing styling
+fallback. The capability differs from the earlier `native_liquid` flag.

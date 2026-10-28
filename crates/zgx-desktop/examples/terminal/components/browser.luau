@@ -122,7 +122,7 @@ function M.Body(pane: string, tab: string, inner: () -> number, hooks: Hooks): N
 	end
 	hooks.focus_address = focus_address
 	local bar = ui.row {
-		h = 38,
+		h = 34,
 		pl = 6,
 		pr = 6,
 		gap = 1,
@@ -184,6 +184,7 @@ function M.Body(pane: string, tab: string, inner: () -> number, hooks: Hooks): N
 		-- it, so editing moves nothing).
 		ui.row {
 			-- Its width is what is left, whatever the address's length.
+			id = `browser-address-shell:{pane}`,
 			w = 0,
 			grow = 1,
 			min_w = 0,
@@ -193,7 +194,7 @@ function M.Body(pane: string, tab: string, inner: () -> number, hooks: Hooks): N
 			pr = "$space.1",
 			gap = 2,
 			items = "center",
-			rounded = "$terminal.button.radius_sm",
+			rounded = "$radius.full",
 			overflow = "hidden",
 			bg = function()
 				return if editing:get() then "$terminal.field.editing" else "$terminal.field.bg"
@@ -221,6 +222,7 @@ function M.Body(pane: string, tab: string, inner: () -> number, hooks: Hooks): N
 				min_w = 0,
 				h = 24,
 				ui.input {
+					id = `browser-address:{pane}`,
 					label = "Address",
 					value = address,
 					placeholder = "Search or enter address",
@@ -234,7 +236,9 @@ function M.Body(pane: string, tab: string, inner: () -> number, hooks: Hooks): N
 						return if editing:get() then theme.text else theme.secondary
 					end,
 					bg = theme.clear,
-					focus = { border = 0 },
+					border = 0,
+					outline = 0,
+					focus = { border = 0, outline = 0 },
 					ref = field,
 					on_focus = function()
 						if not editing:peek() then

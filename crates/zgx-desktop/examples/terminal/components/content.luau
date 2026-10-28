@@ -15,6 +15,9 @@ return function(): Node
 		min_h = 0,
 		mx = theme.inset,
 		mb = theme.inset,
+		mt = function()
+			return if state.sidebar:get() then theme.inset else 0
+		end,
 		-- The box the panes' insets count from (not the lists' own nodes).
 		relative = true,
 		on_mount = function(el)

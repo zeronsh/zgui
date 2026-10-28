@@ -12,7 +12,7 @@ use objc2::{
     runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject},
     sel,
 };
-use objc2_app_kit::{NSColor, NSView};
+use objc2_app_kit::{NSColor, NSEvent, NSEventMask, NSEventModifierFlags, NSView};
 use objc2_foundation::{
     NSData, NSDictionary, NSError, NSHTTPURLResponse, NSKeyValueChangeKey,
     NSKeyValueObservingOptions, NSNumber, NSObjectNSKeyValueObserverRegistration, NSRect, NSString,
@@ -575,6 +575,60 @@ thread_local! {
     // WebKit flushes cookies (learned in comet-native's browser).
     static STORES: ManuallyDrop<RefCell<HashMap<WebProfile, Retained<WKWebsiteDataStore>>>> =
         ManuallyDrop::new(RefCell::new(HashMap::new()));
+    static SHORTCUT_VIEWS: RefCell<Vec<Weak<WKWebView>>> = const { RefCell::new(Vec::new()) };
+    static WATCHING_SHORTCUTS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Give app menu shortcuts priority while WebKit's content view has focus.
+/// Unclaimed events continue to WebKit, including ordinary editing keys.
+fn route_shortcut(web_focused: bool, modified: bool, offer: impl FnOnce() -> bool) -> bool {
+    web_focused && modified && offer()
+}
+
+fn watch_shortcuts(view: &Retained<WKWebView>) {
+    SHORTCUT_VIEWS.with(|views| views.borrow_mut().push(Weak::from_retained(view)));
+    if WATCHING_SHORTCUTS.replace(true) {
+        return;
+    }
+    let block = block2::RcBlock::new(|event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: AppKit supplies a live event for the callback.
+        let key = unsafe { event.as_ref() };
+        let modified = key.modifierFlags().intersects(
+            NSEventModifierFlags::Command
+                | NSEventModifierFlags::Control
+                | NSEventModifierFlags::Option,
+        );
+        let focused = if modified {
+            MainThreadMarker::new()
+                .and_then(|mtm| key.window(mtm))
+                .filter(|window| window.isKeyWindow())
+                .and_then(|window| window.firstResponder())
+                .and_then(|responder| responder.downcast::<NSView>().ok())
+                .is_some_and(|responder| {
+                    SHORTCUT_VIEWS.with(|views| {
+                        let mut views = views.borrow_mut();
+                        views.retain(|view| view.load().is_some());
+                        views
+                            .iter()
+                            .filter_map(Weak::load)
+                            .any(|view| responder.isDescendantOf(&view))
+                    })
+                })
+        } else {
+            false
+        };
+        if route_shortcut(focused, modified, || crate::app_menu::offer_key(key)) {
+            std::ptr::null_mut()
+        } else {
+            event.as_ptr()
+        }
+    });
+    // SAFETY: AppKit owns the monitor for the process lifetime; the callback
+    // returns either the original live event or null when the menu handled it.
+    let monitor = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &block)
+    };
+    std::mem::forget(monitor);
 }
 fn data_store(profile: &WebProfile, mtm: MainThreadMarker) -> Retained<WKWebsiteDataStore> {
     // Each ephemeral view gets a store of its own.
@@ -720,6 +774,7 @@ impl MacWebView {
             }
             WKWebView::initWithFrame_configuration(mtm.alloc(), NSRect::ZERO, &configuration)
         };
+        watch_shortcuts(&view);
         *observer.ivars().view.borrow_mut() = Weak::from_retained(&view);
         // SAFETY: the delegates and KVO registrations hold `observer`
         // unretained: `Self` keeps it, and `Drop` unregisters it before it
@@ -988,4 +1043,72 @@ pub(crate) fn backend(web: &WebView, mtm: MainThreadMarker) -> Rc<dyn WebViewBac
     let backend: Rc<dyn WebViewBackend> = Rc::new(MacWebView::new(web, mtm));
     web.attach(backend.clone());
     backend
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::route_shortcut;
+    use std::cell::Cell;
+
+    #[test]
+    fn only_modified_keys_in_a_focused_web_view_are_offered_to_the_app_menu() {
+        let offered = Cell::new(0);
+        let offer = || {
+            offered.set(offered.get() + 1);
+            true
+        };
+        assert!(!route_shortcut(false, true, offer));
+        assert!(!route_shortcut(true, false, offer));
+        assert_eq!(offered.get(), 0);
+        assert!(route_shortcut(true, true, offer));
+        assert_eq!(offered.get(), 1);
+        assert!(
+            !route_shortcut(true, true, || false),
+            "unclaimed keys reach WebKit"
+        );
+    }
+
+    #[test]
+    fn command_k_reaches_the_palette_action_from_a_focused_web_view() {
+        use crate::app_menu::{AppMenu, AppMenuEntry, MenuAccelerator, MenuAction};
+        use std::{cell::RefCell, rc::Rc};
+        use zgx::{
+            input::{EventPhase, InputEvent, Key, Modifiers},
+            widgets::Ui,
+        };
+        let ui = Ui::new(400., 300.);
+        let root = ui.scene.borrow().root();
+        let chosen = Rc::new(RefCell::new(Vec::new()));
+        let output = chosen.clone();
+        let _listener = ui.input.listen(root, move |event| {
+            if event.phase != EventPhase::Capture
+                && let InputEvent::Action(action) = &event.event
+                && let Some(action) = action.downcast_ref::<MenuAction>()
+            {
+                output.borrow_mut().push(action.0.clone());
+                event.prevent_default();
+            }
+        });
+        let menus = [AppMenu::new(
+            "Shell",
+            [AppMenuEntry::item("Open Panel", "open_panel")
+                .accelerator(MenuAccelerator::primary(Key::Character("k".into())))],
+        )];
+        let _binding = ui.input.bind_keys(root, crate::app_menu::keymap(&menus));
+        assert!(route_shortcut(true, true, || {
+            ui.input.dispatch(
+                &ui.scene,
+                InputEvent::KeyDown {
+                    key: Key::Character("k".into()),
+                    modifiers: Modifiers {
+                        meta: true,
+                        ..Default::default()
+                    },
+                    repeat: false,
+                },
+            );
+            !chosen.borrow().is_empty()
+        }));
+        assert_eq!(*chosen.borrow(), ["open_panel"]);
+    }
 }

@@ -1,4 +1,4 @@
--- Context menus: frosted like the rest of the window.
+-- Context menus share the chrome's charcoal surface and quiet strokes.
 local theme = require("../theme")
 
 local M = {}
@@ -8,7 +8,7 @@ local STYLE: Styles = {
 	w = 180,
 	p = "$terminal.menu.pad",
 	gap = 0,
-	rounded = "$radius.lg",
+	rounded = "$terminal.button.radius",
 	bg = "$terminal.menu.bg",
 	backdrop_blur = 30,
 	border = 1,

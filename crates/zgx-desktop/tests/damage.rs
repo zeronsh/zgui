@@ -137,6 +137,10 @@ fn run(seed: u64, steps: usize, filters: bool) {
             2 => scene.set_effects(
                 id,
                 Effects {
+                    backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                    backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                     opacity: random.n(101) as f32 / 100.0,
                     edge_fade: random.n(14) as f32,
                     blur_radius: 0.0,
@@ -186,6 +190,10 @@ fn run(seed: u64, steps: usize, filters: bool) {
             9 => scene.set_effects(
                 id,
                 Effects {
+                    backdrop_material: zgx::scene::BackdropMaterial::Blur,
+                    backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+                    backdrop_fill_blend: zgx::scene::BlendMode::Normal,
                     opacity: 0.7,
                     blur_radius: if random.n(3) == 0 {
                         0.0
@@ -259,6 +267,10 @@ fn removing_last_blur_restores_incremental_compositing_without_ghosts() {
     scene.set_effects(
         filter,
         Effects {
+            backdrop_material: zgx::scene::BackdropMaterial::Blur,
+            backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill_blend: zgx::scene::BlendMode::Normal,
             blur_radius: 5.0,
             edge_fade: 8.0,
             opacity: 0.7,
@@ -274,6 +286,10 @@ fn removing_last_blur_restores_incremental_compositing_without_ghosts() {
     scene.set_effects(
         filter,
         Effects {
+            backdrop_material: zgx::scene::BackdropMaterial::Blur,
+            backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill_blend: zgx::scene::BlendMode::Normal,
             edge_fade: 4.0,
             opacity: 0.4,
             ..Effects::default()
@@ -283,6 +299,10 @@ fn removing_last_blur_restores_incremental_compositing_without_ghosts() {
     scene.set_effects(
         filter,
         Effects {
+            backdrop_material: zgx::scene::BackdropMaterial::Blur,
+            backdrop_tint: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill: zgx::scene::Color(0, 0, 0, 0),
+            backdrop_fill_blend: zgx::scene::BlendMode::Normal,
             blur_radius: 3.0,
             ..Effects::default()
         },

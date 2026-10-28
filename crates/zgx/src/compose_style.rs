@@ -536,6 +536,18 @@ fn finite_style_effects(
         effects.opacity = finite_opacity(value);
     }
     let overflow = resolved.overflow();
+    if let Some(value) = overflow.backdrop_material {
+        effects.backdrop_material = value;
+    }
+    if let Some(value) = overflow.backdrop_tint {
+        effects.backdrop_tint = value;
+    }
+    if let Some(value) = overflow.backdrop_fill {
+        effects.backdrop_fill = value;
+    }
+    if let Some(value) = overflow.backdrop_fill_blend {
+        effects.backdrop_fill_blend = value;
+    }
     if let Some(value) = overflow.blur.get() {
         effects.blur_radius = finite_radius(value);
     }
@@ -553,6 +565,13 @@ fn finite_style_effects(
     }
     if let Some(value) = overflow.saturate.get() {
         effects.saturate = finite_factor(value);
+    }
+    if let Some(recipe) = &resolved.rare().surface_recipe {
+        effects.backdrop_material = match recipe {
+            Some(recipe) if recipe.glass_enabled() => crate::scene::BackdropMaterial::Liquid,
+            Some(_) => crate::scene::BackdropMaterial::None,
+            None => crate::scene::BackdropMaterial::Blur,
+        };
     }
     effects
 }
@@ -1494,8 +1513,29 @@ pub(crate) fn mount_style_with_intrinsic(
                 if let Some(value) = next.opacity.get() {
                     effects.opacity = value;
                 }
+                if let Some(value) = next.overflow().backdrop_material {
+                    effects.backdrop_material = value;
+                }
+                if let Some(value) = next.overflow().backdrop_tint {
+                    effects.backdrop_tint = value;
+                }
+                if let Some(value) = next.overflow().backdrop_fill {
+                    effects.backdrop_fill = value;
+                }
+                if let Some(value) = next.overflow().backdrop_fill_blend {
+                    effects.backdrop_fill_blend = value;
+                }
                 if let Some(value) = next.overflow().blur.get() {
                     effects.blur_radius = value;
+                }
+                if let Some(recipe) = &next.rare().surface_recipe {
+                    effects.backdrop_material = match recipe {
+                        Some(recipe) if recipe.glass_enabled() => {
+                            crate::scene::BackdropMaterial::Liquid
+                        }
+                        Some(_) => crate::scene::BackdropMaterial::None,
+                        None => crate::scene::BackdropMaterial::Blur,
+                    };
                 }
                 if let Some(value) = next.overflow().edge_fade.get() {
                     effects.edge_fade = value;
@@ -1753,8 +1793,27 @@ fn apply_resolved(
     if let Some(value) = resolved.opacity.get() {
         effects.opacity = value;
     }
+    if let Some(value) = resolved.overflow().backdrop_material {
+        effects.backdrop_material = value;
+    }
+    if let Some(value) = resolved.overflow().backdrop_tint {
+        effects.backdrop_tint = value;
+    }
+    if let Some(value) = resolved.overflow().backdrop_fill {
+        effects.backdrop_fill = value;
+    }
+    if let Some(value) = resolved.overflow().backdrop_fill_blend {
+        effects.backdrop_fill_blend = value;
+    }
     if let Some(value) = resolved.overflow().blur.get() {
         effects.blur_radius = value;
+    }
+    if let Some(recipe) = &resolved.rare().surface_recipe {
+        effects.backdrop_material = match recipe {
+            Some(recipe) if recipe.glass_enabled() => crate::scene::BackdropMaterial::Liquid,
+            Some(_) => crate::scene::BackdropMaterial::None,
+            None => crate::scene::BackdropMaterial::Blur,
+        };
     }
     if let Some(value) = resolved.overflow().edge_fade.get() {
         effects.edge_fade = value;
@@ -1851,6 +1910,7 @@ fn apply_resolved(
                 || resolved.rare().shadows.is_some()
                 || resolved.rare().inset_shadows.is_some()
                 || resolved.rare().clip_feather.is_some()
+                || resolved.rare().surface_recipe.is_some()
             {
                 let mut detail = quad.decoration.as_deref().cloned().unwrap_or_default();
                 if let Some(value) = &resolved.paint_background {
@@ -1873,6 +1933,9 @@ fn apply_resolved(
                 }
                 if let Some(value) = resolved.rare().clip_feather {
                     detail.clip_feather = value;
+                }
+                if let Some(value) = &resolved.rare().surface_recipe {
+                    detail.surface_recipe = value.clone();
                 }
                 quad.decoration = (detail != crate::decoration::Decoration::default())
                     .then(|| std::sync::Arc::new(detail));
@@ -1949,6 +2012,10 @@ mod tests {
         let originals = [
             Effects::default(),
             Effects {
+                backdrop_material: crate::scene::BackdropMaterial::Blur,
+                backdrop_tint: crate::scene::Color(0, 0, 0, 0),
+                backdrop_fill: crate::scene::Color(0, 0, 0, 0),
+                backdrop_fill_blend: crate::scene::BlendMode::Normal,
                 opacity: 0.25,
                 blur_radius: 2.,
                 edge_fade: 3.,
@@ -1958,6 +2025,10 @@ mod tests {
                 saturate: 0.5,
             },
             Effects {
+                backdrop_material: crate::scene::BackdropMaterial::Blur,
+                backdrop_tint: crate::scene::Color(0, 0, 0, 0),
+                backdrop_fill: crate::scene::Color(0, 0, 0, 0),
+                backdrop_fill_blend: crate::scene::BlendMode::Normal,
                 opacity: -0.,
                 blur_radius: f32::from_bits(1),
                 edge_fade: -0.,
@@ -2019,6 +2090,10 @@ mod tests {
                     }
                     let overflow = styles.overflow();
                     let raw = Effects {
+                        backdrop_material: crate::scene::BackdropMaterial::Blur,
+                        backdrop_tint: crate::scene::Color(0, 0, 0, 0),
+                        backdrop_fill: crate::scene::Color(0, 0, 0, 0),
+                        backdrop_fill_blend: crate::scene::BlendMode::Normal,
                         opacity: styles.opacity.get().unwrap_or(original.opacity),
                         blur_radius: overflow.blur.get().unwrap_or(original.blur_radius),
                         edge_fade: overflow.edge_fade.get().unwrap_or(original.edge_fade),
@@ -2032,6 +2107,10 @@ mod tests {
                     scene.set_effects(
                         node,
                         Effects {
+                            backdrop_material: crate::scene::BackdropMaterial::Blur,
+                            backdrop_tint: crate::scene::Color(0, 0, 0, 0),
+                            backdrop_fill: crate::scene::Color(0, 0, 0, 0),
+                            backdrop_fill_blend: crate::scene::BlendMode::Normal,
                             opacity: 0.125,
                             blur_radius: 17.,
                             edge_fade: 19.,
@@ -2757,6 +2836,10 @@ mod tests {
         let mut ui = Ui::new(200., 200.);
         let node = ui.container(ui.root(), Layout::Column, Style::default());
         let effects = Effects {
+            backdrop_material: crate::scene::BackdropMaterial::Blur,
+            backdrop_tint: crate::scene::Color(0, 0, 0, 0),
+            backdrop_fill: crate::scene::Color(0, 0, 0, 0),
+            backdrop_fill_blend: crate::scene::BlendMode::Normal,
             opacity: 0.75,
             ..Effects::default()
         };
@@ -2797,6 +2880,10 @@ mod tests {
                 scene.set_effects(
                     node,
                     Effects {
+                        backdrop_material: crate::scene::BackdropMaterial::Blur,
+                        backdrop_tint: crate::scene::Color(0, 0, 0, 0),
+                        backdrop_fill: crate::scene::Color(0, 0, 0, 0),
+                        backdrop_fill_blend: crate::scene::BlendMode::Normal,
                         opacity: 0.4,
                         ..effects
                     },

@@ -49,6 +49,7 @@ impl App {
                     "zoom_window",
                     "close_window",
                     "set_title",
+                    "set_appearance",
                     "end_session",
                     "keep_sessions",
                     "plugins_rescan",
@@ -68,6 +69,8 @@ impl App {
                 host.action("save_layout", move |layout| *keep.borrow_mut() = layout);
                 host.shared("launch_dir", "/tmp");
                 host.shared("home", "/Users/someone");
+                host.shared("terminal_font_family", "Menlo");
+                host.shared("native_liquid", true);
                 host.shared("saved_layout", layout);
                 setup(&host);
                 host
@@ -141,6 +144,27 @@ impl App {
         rects.sort_by(|a, b| (a.x, a.y).partial_cmp(&(b.x, b.y)).unwrap());
         rects
     }
+    /// The card holding a native terminal, including its header.
+    fn pane_card(&mut self, terminal: Rect) -> Rect {
+        self.h.ui.prepare_frame();
+        let node = self
+            .h
+            .natives
+            .nodes()
+            .into_iter()
+            .find(|n| self.h.ui.scene.borrow().bounds(*n) == terminal)
+            .expect("the native terminal");
+        let scene = self.h.ui.scene.borrow();
+        let mut parent = scene.parent(node);
+        while let Some(node) = parent {
+            let bounds = scene.bounds(node);
+            if bounds.y < terminal.y && bounds.width > terminal.width {
+                return bounds;
+            }
+            parent = scene.parent(node);
+        }
+        panic!("terminal has no pane card");
+    }
 }
 
 #[test]
@@ -168,6 +192,141 @@ fn the_sidebar_toggle_sits_a_gap_past_the_window_buttons_at_any_zoom() {
         "{}",
         toggle(&mut app)
     );
+}
+
+#[test]
+fn window_toolbar_buttons_follow_the_native_control_center_in_both_sidebar_modes() {
+    fn bounds(app: &mut App, id: &str) -> Rect {
+        app.h.ui.prepare_frame();
+        let node = app.h.find(id).unwrap_or_else(|| panic!("missing {id}"));
+        app.h.ui.scene.borrow().bounds(node)
+    }
+    fn centered(rect: Rect, y: f32, id: &str) {
+        assert!(
+            (rect.y + rect.height / 2. - y).abs() < 0.1,
+            "{id}: {rect:?}, expected center {y}"
+        );
+    }
+    let mut app = App::new();
+    let area = app.h.ui.signal(None);
+    let controls = app.h.ui.signal(None);
+    app.h.host.window_chrome(area, controls.clone());
+    for width in [520., 910.] {
+        app.h.ui.scene.borrow_mut().resize(width, 522.);
+        for native in [
+            None,
+            Some(Rect::new(12., 13., 60., 14.)),
+            Some(Rect::new(12., 16., 48., 11.2)),
+        ] {
+            controls.set(native);
+            app.settle();
+            let y = native.map_or(25., |r| r.y + r.height / 2.);
+            let toggle = bounds(&mut app, "sidebar_toggle");
+            centered(toggle, y, "sidebar_toggle");
+            for id in [
+                "titlebar_new_tab",
+                "titlebar_split_right",
+                "titlebar_split_down",
+                "tab:t1",
+            ] {
+                let rect = bounds(&mut app, id);
+                centered(rect, y, id);
+                assert!(
+                    rect.x >= toggle.x + toggle.width - 0.1,
+                    "{id} overlaps the native-controls reservation: {rect:?}"
+                );
+                assert!(
+                    rect.x + rect.width <= width + 0.1,
+                    "{id} escapes a {width}-point window: {rect:?}"
+                );
+            }
+            app.run("toggle_sidebar");
+            let toggle = bounds(&mut app, "sidebar_toggle");
+            let search = bounds(&mut app, "sidebar_palette");
+            let new_tab = bounds(&mut app, "sidebar_new_tab");
+            for (id, rect) in [
+                ("sidebar_toggle", toggle),
+                ("sidebar_palette", search),
+                ("sidebar_new_tab", new_tab),
+            ] {
+                centered(rect, y, id);
+            }
+            assert!(
+                search.x >= toggle.x + toggle.width - 0.1,
+                "toolbar groups overlap: {toggle:?}, {search:?}"
+            );
+            assert!(
+                new_tab.x >= search.x + search.width - 0.1,
+                "toolbar buttons overlap: {search:?}, {new_tab:?}"
+            );
+            let header = bounds(&mut app, "pane_header:p2");
+            let center = header.y + header.height / 2.;
+            for id in [
+                "pane_split_right:p2",
+                "pane_split_down:p2",
+                "pane_zoom:p2",
+                "pane_close:p2",
+            ] {
+                centered(bounds(&mut app, id), center, id);
+            }
+            app.run("toggle_sidebar");
+        }
+    }
+    assert_eq!(app.h.host.error().get(), None);
+}
+
+#[test]
+fn terminal_headers_and_bodies_share_one_pane_background() {
+    use zgx::scene::{Color, NodeKind};
+    let mut app = App::new();
+    app.h.ui.scene.borrow_mut().resize(910., 522.);
+    let fill = |app: &mut App, id: &str| {
+        let node = app.h.find(id).unwrap_or_else(|| panic!("missing {id}"));
+        let scene = app.h.ui.scene.borrow();
+        match scene.kind(node) {
+            NodeKind::Rect(color) => *color,
+            NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => quad.fill,
+            _ => Color(0, 0, 0, 0),
+        }
+    };
+    // The native Ghostty view remains transparent. The header and body must
+    // inherit the same card rather than receiving separate opaque strips.
+    for scheme in ["appearance-scheme-dark", "appearance-scheme-light"] {
+        app.run("appearance");
+        app.h.click(scheme);
+        app.settle();
+        for mode in ["appearance-mode-glass", "appearance-mode-opaque"] {
+            app.h.click(mode);
+            app.settle();
+            assert_eq!(
+                fill(&mut app, "pane_header:p2").3,
+                0,
+                "no independent header band"
+            );
+            let term = app.h.natives.nodes()[0];
+            let card = app.h.find("pane:p2").unwrap();
+            let scene = app.h.ui.scene.borrow();
+            let mut parent = scene.parent(term);
+            while let Some(node) = parent {
+                if node == card {
+                    break;
+                }
+                match scene.kind(node) {
+                    NodeKind::Rect(color) => {
+                        assert_eq!(color.3, 0, "an opaque body strip creates a seam")
+                    }
+                    NodeKind::Quad(quad) | NodeKind::Panel { quad, .. } => {
+                        assert_eq!(quad.fill.3, 0, "an opaque body strip creates a seam")
+                    }
+                    _ => {}
+                }
+                parent = scene.parent(node);
+            }
+        }
+        app.h.click("appearance-done");
+        app.settle();
+    }
+    assert_eq!(app.h.host.error().get(), None);
 }
 
 #[test]
@@ -271,7 +430,8 @@ fn dragging_a_pane_by_its_grip_previews_and_moves_it() {
     term.set_pointer(Some((left.width / 2., 10.)));
     app.settle();
     // The grip: centered, 6 points below the pane's top.
-    let (gx, gy) = (left.x + left.width / 2., left.y + 1. + 6. + 11.);
+    let card = app.pane_card(left);
+    let (gx, gy) = (card.x + card.width / 2., card.y + 1. + 6. + 11.);
     app.h.ui.dispatch(InputEvent::PointerMove { x: gx, y: gy });
     app.h.ui.dispatch(InputEvent::PointerDown {
         x: gx,
@@ -305,7 +465,7 @@ fn dragging_a_pane_by_its_grip_previews_and_moves_it() {
     app.settle();
     // Dropped: kept as previewed, the dragged pane below the other.
     assert_eq!(app.panes(), preview);
-    assert!(preview[0].y < preview[1].y && preview[0].height > 100.);
+    assert!(preview[0].y < preview[1].y && app.pane_card(preview[0]).height > 100.);
     assert_eq!(app.h.host.error().get(), None);
 }
 
@@ -328,7 +488,229 @@ impl App {
 }
 
 #[test]
-fn a_tab_shows_an_icon_per_pane_and_counts_past_three() {
+fn bundled_tab_glyphs_rasterize_without_disappearing() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../zgx-desktop/examples/terminal/assets/rex-block-glyphs");
+    for glyph in ["terminal", "zsh", "bash", "fish", "codex", "claude"] {
+        let bytes = std::fs::read(root.join(format!("block-glyph-{glyph}.svg"))).unwrap();
+        let image = zgx_gpu::assets::decode_svg(&bytes, 32, 32).unwrap();
+        assert!(
+            image.pixels().chunks_exact(4).any(|pixel| pixel[3] > 0),
+            "{glyph} rasterized without visible pixels"
+        );
+    }
+}
+
+#[test]
+fn tab_selection_slides_between_tabs_in_both_layouts() {
+    let mut app = App::with_host(Value::Nil, |host| {
+        host.shared("native_surface_recipe_schema", 1.0);
+    });
+    app.run("new_tab");
+    for (tab_prefix, selection_prefix) in [("tab", "titlebar"), ("sidebar_tab", "sidebar")] {
+        let from = format!("tab_selection:{selection_prefix}:t3");
+        let to = format!("tab_selection:{selection_prefix}:t1");
+        let old = app.h.find(&from).expect("current selection");
+        let old_bounds = app.h.ui.scene.borrow().transformed_bounds(old);
+        app.h.click(&format!("{tab_prefix}:t1"));
+        app.h.frame();
+        let next = app.h.find(&to).expect("next selection");
+        let scene = app.h.ui.scene.borrow();
+        let (planes, _) = zgx::native_view::PlaneSplit::compute(
+            &scene,
+            &app.h.natives.nodes(),
+            &Default::default(),
+        );
+        assert!(
+            planes
+                .backdrops()
+                .iter()
+                .any(|b| b.node == next && b.opacity > 0.99),
+            "the moving native glass must be visible on its first frame"
+        );
+        drop(scene);
+        for _ in 0..3 {
+            app.h.frame();
+        }
+        let target = app.h.bounds(&format!("{tab_prefix}:t1"));
+        let scene = app.h.ui.scene.borrow();
+        let shown = scene.transformed_bounds(next);
+        let (planes, _) = zgx::native_view::PlaneSplit::compute(
+            &scene,
+            &app.h.natives.nodes(),
+            &Default::default(),
+        );
+        let material = planes
+            .backdrops()
+            .iter()
+            .find(|b| b.node == next)
+            .unwrap_or_else(|| panic!("selection {next:?} missing: {:?}", planes.backdrops()));
+        let visible = material.visible();
+        let material_rect = material.rect;
+        drop(scene);
+        let distance = |a: Rect, b: Rect| (a.x - b.x).abs() + (a.y - b.y).abs();
+        assert!(
+            distance(shown, old_bounds) < distance(target, old_bounds),
+            "selection did not start near the previous tab: old {old_bounds:?}, shown {shown:?}, target {target:?}"
+        );
+        assert!(
+            visible
+                .is_some_and(|rect| rect.width * rect.height
+                    >= material_rect.width * material_rect.height * 0.9),
+            "moving glass was clipped: rect {material_rect:?}, visible {visible:?}"
+        );
+        for _ in 0..4 {
+            app.h.frame();
+        }
+        let scene = app.h.ui.scene.borrow();
+        let (planes, _) = zgx::native_view::PlaneSplit::compute(
+            &scene,
+            &app.h.natives.nodes(),
+            &Default::default(),
+        );
+        let moved = planes
+            .backdrops()
+            .iter()
+            .find(|b| b.node == next)
+            .unwrap()
+            .rect;
+        assert!(
+            distance(moved, target) < distance(material_rect, target),
+            "native glass did not advance toward the selected tab: {material_rect:?} -> {moved:?}, target {target:?}"
+        );
+        drop(scene);
+        app.settle();
+        app.h.click(&format!("{tab_prefix}:t3"));
+        app.settle();
+        if selection_prefix == "titlebar" {
+            app.run("toggle_sidebar");
+        }
+    }
+}
+
+#[test]
+fn horizontal_glass_keeps_its_corner_scale_when_tabs_have_different_widths() {
+    let mut app = App::with_host(Value::Nil, |host| {
+        host.shared("native_surface_recipe_schema", 1.0);
+    });
+    app.h.ui.scene.borrow_mut().resize(910., 522.);
+    app.terminals()[0].update_state(|state| {
+        state.process = "codex".into();
+        state.title = "A significantly longer terminal tab title".into();
+    });
+    app.settle();
+    app.run("new_tab");
+    app.h.click("tab:t1");
+    app.settle();
+    let long = app.h.bounds("tab:t1");
+    let short = app.h.bounds("tab:t3");
+    assert!(long.width > short.width + 30.);
+    app.h.click("tab:t3");
+    for _ in 0..4 {
+        app.h.frame();
+    }
+    let node = app.h.find("tab_selection:titlebar:t3").unwrap();
+    let scene = app.h.ui.scene.borrow();
+    let (planes, _) =
+        zgx::native_view::PlaneSplit::compute(&scene, &app.h.natives.nodes(), &Default::default());
+    let glass = planes
+        .backdrops()
+        .iter()
+        .find(|p| p.node == node)
+        .expect("native glass stays present while its width changes");
+    assert!(
+        glass.rect.width > short.width,
+        "glass begins at the long tab's width"
+    );
+    assert!(
+        (glass.scale - 1.).abs() < 0.01,
+        "horizontal resizing must not enlarge material corners and strokes: {glass:?}"
+    );
+}
+
+#[test]
+fn long_horizontal_tab_titles_clip_with_a_fade_without_widening_the_tab() {
+    let mut app = App::new();
+    app.h.ui.scene.borrow_mut().resize(910., 522.);
+    let term = app.terminals()[0].clone();
+    term.update_state(|state| {
+        state.process = "codex".into();
+        state.title = "A long terminal title that extends well beyond the tab".into();
+    });
+    app.settle();
+    let tab = app.h.find("tab:t1").unwrap();
+    let clip = app.h.find("tab_label_clip:t1").unwrap();
+    let label = app.h.find("tab_label:t1").unwrap();
+    let scene = app.h.ui.scene.borrow();
+    let tab_bounds = scene.bounds(tab);
+    let clip_bounds = scene.bounds(clip);
+    let text_bounds = scene.bounds(label);
+    let style = scene.style(clip);
+    assert!(tab_bounds.width <= 170., "wide tab: {tab_bounds:?}");
+    assert!(
+        text_bounds.width > clip_bounds.width,
+        "text must overflow the fade clip: {text_bounds:?}, {clip_bounds:?}"
+    );
+    assert_eq!(style.fade_edges_x, [0., 12.]);
+    assert!(style.fade_overflow);
+    drop(scene);
+    term.update_state(|state| state.title = "Short".into());
+    app.settle();
+    assert!(
+        app.h.bounds("tab:t1").width < tab_bounds.width,
+        "short titles should not reserve the maximum width"
+    );
+}
+
+#[test]
+fn horizontal_tab_selection_keeps_its_position_when_reversed_mid_flight() {
+    let mut app = App::with_host(Value::Nil, |host| {
+        host.shared("native_surface_recipe_schema", 1.0);
+    });
+    app.h.ui.scene.borrow_mut().resize(910., 522.);
+    app.run("new_tab");
+    app.h.click("tab:t1");
+    for _ in 0..5 {
+        app.h.frame();
+    }
+    let first = app.h.find("tab_selection:titlebar:t1").unwrap();
+    let before = app.h.ui.scene.borrow().transformed_bounds(first);
+    app.h.click("tab:t3");
+    app.h.frame();
+    let second = app.h.find("tab_selection:titlebar:t3").unwrap();
+    let scene = app.h.ui.scene.borrow();
+    let (planes, _) =
+        zgx::native_view::PlaneSplit::compute(&scene, &app.h.natives.nodes(), &Default::default());
+    let after = planes
+        .backdrops()
+        .iter()
+        .find(|b| b.node == second)
+        .expect("native glass stays visible during reversal")
+        .rect;
+    drop(scene);
+    assert!(
+        (before.x - after.x).abs() < 25.,
+        "selection jumped: {before:?} -> {after:?}"
+    );
+}
+
+#[test]
+fn focused_pane_leads_its_tab_icon_stack() {
+    let mut app = App::new();
+    app.run("split_right");
+    let first = "tab_fan_card:t1:p2";
+    let second = "tab_fan_card:t1:p3";
+    let x = |app: &mut App, id: &str| app.h.bounds(id).x;
+    assert!(x(&mut app, second) < x(&mut app, first));
+    app.run("next_pane");
+    assert!(x(&mut app, first) < x(&mut app, second));
+    app.run("next_pane");
+    assert!(x(&mut app, second) < x(&mut app, first));
+    assert_eq!(app.h.host.error().get(), None);
+}
+
+#[test]
+fn a_tab_shows_the_three_most_recent_panes_without_an_overflow_badge() {
     let mut app = App::new();
     app.run("split_right");
     app.run("split_down");
@@ -338,11 +720,22 @@ fn a_tab_shows_an_icon_per_pane_and_counts_past_three() {
     );
     app.run("split_down");
     assert_eq!(app.panes().len(), 4);
-    assert!(
-        app.texts().iter().any(|t| t == "+2"),
-        "two icons and +2: {:?}",
-        app.texts()
-    );
+    assert!(!app.texts().iter().any(|t| t.starts_with('+')));
+    for pane in ["p7", "p5", "p3"] {
+        assert!(
+            app.h.find(&format!("tab_fan_card:t1:{pane}")).is_some(),
+            "recent {pane}"
+        );
+    }
+    assert!(app.h.find("tab_fan_card:t1:p2").is_none());
+    app.run("next_pane");
+    for pane in ["p2", "p7", "p5"] {
+        assert!(
+            app.h.find(&format!("tab_fan_card:t1:{pane}")).is_some(),
+            "recent {pane}"
+        );
+    }
+    assert!(app.h.find("tab_fan_card:t1:p3").is_none());
 }
 
 #[test]
@@ -364,7 +757,8 @@ fn dropping_a_pane_on_the_tab_bar_opens_it_as_a_tab_where_previewed() {
     term.set_pointer(Some((left.width / 2., 10.)));
     app.settle();
     let named = |app: &mut App| app.texts().iter().filter(|t| *t == "Terminal").count();
-    let (gx, gy) = (left.x + left.width / 2., left.y + 1. + 6. + 11.);
+    let card = app.pane_card(left);
+    let (gx, gy) = (card.x + card.width / 2., card.y + 1. + 6. + 11.);
     app.h.ui.dispatch(InputEvent::PointerMove { x: gx, y: gy });
     app.h.ui.dispatch(InputEvent::PointerDown {
         x: gx,
@@ -418,7 +812,9 @@ impl App {
                 && &**text == "Terminal"
                 && scene.bounds(n).y < 40.
             {
-                out.push(scene.bounds(n));
+                if let Some(visible) = scene.visible_bounds(n) {
+                    out.push(visible);
+                }
             }
             stack.extend(scene.children(n).iter().copied());
         }
@@ -481,7 +877,8 @@ impl App {
         term.set_pointer(Some((pane.width / 2., 10.)));
         self.settle();
         // The grip: centered, 6 points below the pane's top.
-        let (x, y) = (pane.x + pane.width / 2., pane.y + 1. + 6. + 11.);
+        let card = self.pane_card(pane);
+        let (x, y) = (card.x + card.width / 2., card.y + 1. + 6. + 11.);
         self.h
             .ui
             .dispatch(zgx::input::InputEvent::PointerMove { x, y });
@@ -548,6 +945,99 @@ fn the_active_tab_dragged_onto_the_next_tabs_pane_joins_it() {
     app.release(target);
     assert_eq!(app.panes().len(), 3, "its pane joined the first tab");
     assert_eq!(app.tab_names().len(), 1, "one tab left");
+    assert_eq!(app.h.host.error().get(), None);
+}
+
+#[test]
+fn palette_highlights_fill_the_options_width_after_navigation_and_filtering() {
+    use zgx::{input::Key, scene::NodeKind};
+    let mut app = App::new();
+    for width in [360., 910.] {
+        app.h.ui.scene.borrow_mut().resize(width, 522.);
+        app.run("open_panel");
+        for selected in ["terminal", "browser", "plugins"] {
+            app.h.ui.prepare_frame();
+            let list = app.h.find("palette-options").unwrap();
+            let options: Vec<_> = ["terminal", "browser", "plugins"]
+                .into_iter()
+                .map(|kind| (kind, app.h.find(&format!("open:{kind}")).unwrap()))
+                .collect();
+            let scene = app.h.ui.scene.borrow();
+            let bounds = scene.bounds(list);
+            for (kind, node) in options {
+                let row = scene.bounds(node);
+                assert!(
+                    (row.x - bounds.x - 6.).abs() < 0.1,
+                    "{kind}: {row:?}, list {bounds:?}"
+                );
+                assert!(
+                    (row.width - bounds.width + 12.).abs() < 0.1,
+                    "{kind}: {row:?}, list {bounds:?}"
+                );
+                let NodeKind::Panel { quad, .. } = scene.kind(node) else {
+                    panic!("option has no highlight surface");
+                };
+                assert_eq!(
+                    quad.fill.3 > 0,
+                    kind == selected,
+                    "selected {selected}, row {kind}"
+                );
+            }
+            drop(scene);
+            app.h.key(Key::ArrowDown);
+            app.settle();
+        }
+        app.h
+            .ui
+            .dispatch(zgx::input::InputEvent::Text("browser".into()));
+        app.settle();
+        let list = app.h.find("palette-options").unwrap();
+        let row = app.h.find("open:browser").unwrap();
+        let scene = app.h.ui.scene.borrow();
+        assert!((scene.bounds(row).width - scene.bounds(list).width + 12.).abs() < 0.1);
+        drop(scene);
+        app.h.key(Key::Escape);
+        app.settle();
+    }
+    assert_eq!(app.h.host.error().get(), None);
+}
+
+#[test]
+fn browser_address_focus_paints_one_outer_ring_and_no_inner_outline() {
+    use zgx::scene::NodeKind;
+    let mut app = App::new();
+    app.run("new_browser");
+    let field = app.h.ui.input.focused().unwrap();
+    let shell = app.h.find("browser-address-shell:p3").unwrap();
+    let assert_rings = |app: &App, focused: bool| {
+        let scene = app.h.ui.scene.borrow();
+        let NodeKind::Panel { quad, .. } = scene.kind(shell) else {
+            panic!("address shell has no border");
+        };
+        assert_eq!(quad.border_width, if focused { 2. } else { 1. });
+        assert!(quad.border_over, "focus must not change the field's layout");
+        assert!(quad.border_color.3 > 0, "the outer ring is visible");
+        let mut stack = vec![field];
+        while let Some(node) = stack.pop() {
+            if let NodeKind::Panel { quad, .. } | NodeKind::Quad(quad) = scene.kind(node) {
+                assert_eq!(quad.border_width, 0., "no inner border");
+                assert!(
+                    quad.outline.is_none_or(|outline| outline.width == 0.),
+                    "no inner focus outline: {quad:?}"
+                );
+            }
+            stack.extend(scene.children(node).iter().copied());
+        }
+    };
+    assert_rings(&app, true);
+    let before = app.h.ui.scene.borrow().bounds(shell);
+    app.h.ui.input.focus(&app.h.ui.scene, None);
+    app.settle();
+    assert_rings(&app, false);
+    assert!(app.h.ui.input.focus(&app.h.ui.scene, Some(field)));
+    app.settle();
+    assert_rings(&app, true);
+    assert_eq!(app.h.ui.scene.borrow().bounds(shell), before);
     assert_eq!(app.h.host.error().get(), None);
 }
 
@@ -689,6 +1179,176 @@ fn the_agents_sidebar_opens_beside_the_panes() {
 }
 
 #[test]
+fn sidebar_tabs_switch_by_click_and_keyboard_and_keep_the_inset_panes() {
+    let mut app = App::new();
+    app.h.ui.scene.borrow_mut().resize(910., 522.);
+    app.run("split_right");
+    app.run("new_tab");
+    app.run("toggle_sidebar");
+    let terminal = app.panes()[0];
+    let card = app.pane_card(terminal);
+    assert_eq!((card.x, card.y), (240., 8.));
+    app.h.click("sidebar_tab:t1");
+    app.settle();
+    assert_eq!(app.panes().len(), 2);
+    // The other tab can be activated without clicking it.
+    let tab = app.h.find("sidebar_tab:t5").expect("the second tab");
+    assert!(app.h.ui.input.focus(&app.h.ui.scene, Some(tab)));
+    app.h.key(zgx::input::Key::Enter);
+    app.settle();
+    assert_eq!(app.panes().len(), 1);
+    app.h.click("sidebar_palette");
+    app.settle();
+    assert!(app.h.find("palette-query").is_some());
+    app.h.key(zgx::input::Key::Escape);
+    app.run("toggle_sidebar");
+    assert_eq!(app.tab_names().len(), 2, "tabs stay available when closed");
+    assert_eq!(app.h.host.error().get(), None);
+}
+
+#[test]
+fn sidebar_tabs_reorder_at_their_vertical_edges() {
+    let mut app = App::new();
+    app.h.ui.scene.borrow_mut().resize(910., 522.);
+    app.run("new_tab");
+    app.run("new_tab");
+    app.run("toggle_sidebar");
+    let first = app.h.bounds("sidebar_tab:t1");
+    let last = app.h.bounds("sidebar_tab:t5");
+    let from = (first.x + first.width / 2., first.y + first.height / 2.);
+    let to = (last.x + last.width / 2., last.y + last.height - 2.);
+    app.drag(from, to);
+    app.release(to);
+    let saved = app.saved.borrow();
+    let Some(Value::List(tabs)) = saved.field("tabs") else {
+        panic!("no saved tabs");
+    };
+    let ids: Vec<_> = tabs
+        .iter()
+        .map(|tab| match tab.field("id") {
+            Some(Value::Str(id)) => id.to_string(),
+            _ => panic!("no tab id"),
+        })
+        .collect();
+    assert_eq!(ids, ["t3", "t5", "t1"]);
+    assert_eq!(app.h.host.error().get(), None);
+}
+
+#[test]
+fn pane_header_actions_apply_to_their_own_pane_and_keep_existing_sessions() {
+    let mut app = App::new();
+    app.h.ui.scene.borrow_mut().resize(1000., 700.);
+    app.run("split_right");
+    let before = app.panes();
+    // The right pane has focus. Clicking the left header must split the left.
+    app.h.click("pane_split_down:p2");
+    app.settle();
+    let split = app.panes();
+    assert_eq!(split.len(), 3);
+    assert_eq!(split[2], before[1], "the right pane stayed in place");
+    assert!(split[0].y < split[1].y && split[0].x == split[1].x);
+    app.h.click("pane_zoom:p2");
+    app.settle();
+    assert_eq!(app.panes().len(), 1);
+    app.h.click("pane_zoom:p2");
+    app.settle();
+    assert_eq!(app.panes(), split);
+    app.h.click("pane_close:p2");
+    app.settle();
+    assert_eq!(app.panes().len(), 2);
+    assert!(app.actions.borrow().iter().any(|a| a == "end_session p2"));
+    assert_eq!(app.h.host.error().get(), None);
+}
+
+#[test]
+fn claude_badge_uses_a_shaded_tile_and_a_white_glyph() {
+    use zgx::{decoration::Background, scene::NodeKind};
+    let mut app = App::new();
+    app.terminals()[0].update_state(|state| state.process = "claude".into());
+    app.settle();
+    let badge = app.h.find("tab_badge:p2").expect("tab badge");
+    let glyph = app.h.find("tab_glyph:p2").expect("tab glyph");
+    let scene = app.h.ui.scene.borrow();
+    let NodeKind::Panel { quad, .. } = scene.kind(badge) else {
+        panic!("badge has no painted tile");
+    };
+    assert!(
+        matches!(
+            quad.decoration.as_ref().and_then(|d| d.background.as_ref()),
+            Some(Background::Linear { .. })
+        ),
+        "badge decoration: {:?}",
+        quad.decoration
+    );
+    let svg = scene
+        .children(glyph)
+        .iter()
+        .find_map(|child| match scene.kind(*child) {
+            NodeKind::Svg(svg) => Some(svg),
+            _ => None,
+        })
+        .expect("badge has no SVG glyph");
+    assert_eq!(svg.tint(), Some(zgx::scene::Color(255, 255, 255, 255)));
+}
+
+#[test]
+fn appearance_options_select_distinct_materials_and_survive_reload_without_replacing_shells() {
+    fn request(app: &App) -> Value {
+        let log = app.actions.borrow();
+        let json = log
+            .iter()
+            .rev()
+            .find_map(|line| line.strip_prefix("set_appearance "))
+            .expect("a native appearance request");
+        Value::from_json(json).expect("appearance JSON")
+    }
+    fn field(request: &Value, key: &str) -> String {
+        match request.field(key) {
+            Some(Value::Str(value)) => value.to_string(),
+            other => panic!("no {key}: {other:?}"),
+        }
+    }
+    let mut app = App::new();
+    app.h.ui.scene.borrow_mut().resize(910., 522.);
+    let shell = app.terminals()[0].id();
+    app.run("appearance");
+    app.h.click("appearance-scheme-dark");
+    app.settle();
+    let glass = request(&app);
+    assert_eq!(field(&glass, "interface_style"), "blendTheme");
+    assert_eq!(field(&glass, "mode"), "glass");
+    assert_eq!(field(&glass, "tint_color"), "#0c0e1180");
+    app.h.click("appearance-tint");
+    app.settle();
+    assert_eq!(field(&request(&app), "interface_style"), "modern");
+    app.h.click("appearance-mode-opaque");
+    app.settle();
+    assert_eq!(field(&request(&app), "interface_style"), "system");
+    app.h.click("appearance-tint");
+    app.settle();
+    let opaque = request(&app);
+    assert_eq!(field(&opaque, "interface_style"), "useTheme");
+    assert_eq!(field(&opaque, "mode"), "opaque");
+    app.h.click("appearance-scheme-light");
+    app.settle();
+    assert_eq!(field(&request(&app), "terminal_background"), "#ffffff");
+    app.h.click("appearance-done");
+    app.settle();
+    assert_eq!(app.terminals()[0].id(), shell);
+    app.h.host.reload().unwrap();
+    app.settle();
+    let restored = request(&app);
+    assert_eq!(field(&restored, "mode"), "opaque");
+    assert_eq!(field(&restored, "resolved_scheme"), "light");
+    assert_eq!(
+        app.terminals()[0].id(),
+        shell,
+        "the shell outlives restyling"
+    );
+    assert_eq!(app.h.host.error().get(), None);
+}
+
+#[test]
 fn a_long_address_stays_inside_its_browser_pane() {
     use zgx::input::InputEvent;
     let mut app = App::new();
@@ -697,9 +1357,9 @@ fn a_long_address_stays_inside_its_browser_pane() {
     let long = format!("example.com/?{}", "solution=3893d11c553cebd6&".repeat(12));
     app.h.ui.dispatch(InputEvent::Text(long));
     app.settle();
-    // The browser is the right half; its card ends 6 points in from the
+    // The browser is the right half; its card ends 8 points in from the
     // window's 400-point edge.
-    let right = 400. - 6.;
+    let right = 400. - 8.;
     let field = app.h.ui.input.focused().unwrap();
     let scene = app.h.ui.scene.borrow();
     // The address input and the bar row holding it end inside the pane.
@@ -739,6 +1399,8 @@ fn a_new_tab_starts_where_its_terminal_is_unless_that_is_the_root() {
         terms[0].options().working_directory
     };
     let first = app.terminals()[0].clone();
+    assert_eq!(first.options().font_size, Some(12.));
+    assert_eq!(first.options().font_family.as_deref(), Some("Menlo"));
     first.update_state(|s| s.pwd = "file://mac/Users/someone/src".into());
     app.run("new_tab");
     assert_eq!(start(&mut app), Some("/Users/someone/src".into()));
@@ -865,16 +1527,36 @@ fn snapshot(ui: &zgx::widgets::Ui, name: &str) -> Vec<u8> {
 fn any_theme_styles_it_the_light_theme_too() {
     use zgx::scene::Color;
     let mut app = App::new();
+    app.run("appearance");
+    app.h.click("appearance-mode-opaque");
     app.settle();
-    // Its own theme: exactly the palette theme.luau used to hold.
+    app.h.click("appearance-done");
+    app.settle();
+    // The audited Merino Dark palette. The native host owns the root
+    // backdrop; the transparent GPU root must not paint another canvas.
     assert_eq!(&*app.h.ui.theme().current(), "terminal-glass");
     let glass = colors(&app.h.ui);
+    let request = {
+        let log = app.actions.borrow();
+        let json = log
+            .iter()
+            .rev()
+            .find_map(|line| line.strip_prefix("set_appearance "))
+            .unwrap();
+        Value::from_json(json).unwrap()
+    };
     assert!(
-        glass.contains(&Color(0x13, 0x14, 0x18, 0x73)),
-        "the glass tint"
+        matches!(request.field("backdrop_color"), Some(Value::Str(color)) if color.as_ref() == "#0c0e11ff")
     );
-    assert!(glass.contains(&Color(0x0a, 0x0b, 0x0e, 0x4d)), "the pane");
-    assert!(glass.contains(&Color(255, 255, 255, 0xeb)), "the text");
+    assert!(matches!(
+        request.field("glass_enabled"),
+        Some(Value::Bool(false))
+    ));
+    assert!(
+        glass.contains(&Color(0x0d, 0x11, 0x17, 255)),
+        "the continuous terminal surface"
+    );
+    assert!(glass.contains(&Color(0xe6, 0xed, 0xf3, 255)), "the text");
     let dark = snapshot(&app.h.ui, "terminal-glass");
     // The built-in light theme knows nothing of the terminal, yet styles it:
     // its own tokens default to standard ones.
@@ -882,22 +1564,19 @@ fn any_theme_styles_it_the_light_theme_too() {
     app.settle();
     let light = colors(&app.h.ui);
     assert!(
-        light.contains(&Color(0xf5, 0xf6, 0xf8, 0xb3)),
-        "light glass"
-    );
-    assert!(
         light.contains(&Color(0xec, 0xee, 0xf2, 255)),
         "panes on the sunken surface"
     );
     assert!(light.contains(&Color(0x1a, 0x1f, 0x29, 255)), "dark text");
     assert!(
-        !light.contains(&Color(255, 255, 255, 0xeb)),
+        !light.contains(&Color(0xe6, 0xed, 0xf3, 255)),
         "no glass text left"
     );
     let lit = snapshot(&app.h.ui, "terminal-light");
-    // Beside the panes, only the window's tint shows: it is light now.
+    // Compare the pane's paint; the native root is deliberately absent in
+    // this headless renderer and cannot prove native material optics.
     let at = |pixels: &[u8]| {
-        let i = (150 * 400 + 2) * 4;
+        let i = (150 * 400 + 150) * 4;
         pixels[i] as u32 + pixels[i + 1] as u32 + pixels[i + 2] as u32
     };
     assert!(at(&lit) > at(&dark) + 200, "{} vs {}", at(&lit), at(&dark));
@@ -905,7 +1584,7 @@ fn any_theme_styles_it_the_light_theme_too() {
     app.h.ui.theme().set("terminal-glass").unwrap();
     app.settle();
     assert_eq!(colors(&app.h.ui).len(), glass.len());
-    assert!(colors(&app.h.ui).contains(&Color(0x0a, 0x0b, 0x0e, 0x4d)));
+    assert!(colors(&app.h.ui).contains(&Color(0x0d, 0x11, 0x17, 255)));
 }
 
 /// A plugin with a panel, as terminal.rs would find it and load it.
@@ -1516,6 +2195,7 @@ fn a_pane_dragged_by_its_grip_is_a_small_picture_of_it_below_the_pointer() {
     let mut app = App::new();
     app.run("split_right");
     let left = app.panes()[0];
+    let card_bounds = app.pane_card(left);
     app.press_grip(left);
     let at = (left.x + 60., left.y + 120.);
     app.drag_to(at);
@@ -1530,7 +2210,10 @@ fn a_pane_dragged_by_its_grip_is_a_small_picture_of_it_below_the_pointer() {
     let scene = app.h.ui.scene.borrow();
     // The pane alone, in proportion to its card, a fraction of its size.
     let shown = scene.bounds(preview);
-    let (card, small) = (left.width / left.height, shown.width / shown.height);
+    let (card, small) = (
+        card_bounds.width / card_bounds.height,
+        shown.width / shown.height,
+    );
     assert!(
         (card - small).abs() < 0.1,
         "in proportion: {left:?} {shown:?}"

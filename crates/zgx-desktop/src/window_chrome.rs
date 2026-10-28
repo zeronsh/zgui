@@ -30,7 +30,7 @@ pub enum Titlebar {
 /// `NSVisualEffectView`, cut to the window's rounded corners; on Windows 11
 /// the system backdrop nearest its material, Acrylic or Mica). The window is
 /// transparent where zgx paints nothing (or translucent colour).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Glass {
     /// The blur's material.
     pub material: GlassMaterial,
@@ -38,6 +38,121 @@ pub struct Glass {
     /// 60-point gaussian, as gpui's `BlurredView` (for apps laying their own
     /// tint over it).
     pub plain: bool,
+    /// Optional RGBA tint for native Liquid Glass (macOS 26+).
+    pub tint: Option<u32>,
+    /// Optional native glass corner radius in points; otherwise the window's.
+    pub corner_radius: Option<f64>,
+    /// Native layers over Liquid Glass, in backdrop then fill order.
+    pub backdrop: Option<GlassLayer>,
+    /// The upper native color layer, above `backdrop`.
+    pub fill: Option<GlassLayer>,
+    /// Optional inset shadow composited over the native effect.
+    pub inner_shadow: Option<GlassInnerShadow>,
+    /// A separate, lower window-background material, behind this surface.
+    pub underlay: Option<GlassUnderlay>,
+    /// Keep classic material active when unfocused; false follows the window.
+    pub active: bool,
+}
+/// A behind-window material that follows native window activation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlassUnderlay {
+    /// Its native material, independent of the upper surface's material.
+    pub material: GlassMaterial,
+    /// Whether this layer is hidden (it remains in the native hierarchy).
+    pub hidden: bool,
+}
+/// A resource-defined inner shadow, in logical points and top-down offsets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlassInnerShadow {
+    /// RGBA shadow color.
+    pub color: u32,
+    /// Shadow blur radius in points.
+    pub blur: f64,
+    /// Horizontal offset.
+    pub x: f64,
+    /// Downward offset.
+    pub y: f64,
+    /// How the shadow combines with the material.
+    pub blend: GlassBlend,
+    /// Remove the source shape, retaining only the inset shadow.
+    pub knockout: bool,
+    /// Shape and clipping independent of the material's own rounded mask.
+    pub geometry: GlassGeometry,
+}
+/// Geometry of a native resource layer, in logical points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlassGeometry {
+    /// Insets in top, right, bottom, left order.
+    pub insets: [f64; 4],
+    /// How its corners relate to the surface.
+    pub radius: GlassRadius,
+    /// Clip to the surface's shape in addition to this layer's own shape.
+    pub clips_to_surface: bool,
+}
+impl Default for GlassGeometry {
+    fn default() -> Self {
+        Self {
+            insets: [0.; 4],
+            radius: GlassRadius::Concentric(0.),
+            clips_to_surface: false,
+        }
+    }
+}
+/// A resource radius is either independent or concentric with the surface.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GlassRadius {
+    /// Use the surface's own radius.
+    MatchSurface,
+    /// A fixed radius in points.
+    Fixed(f64),
+    /// Inset the surface's effective radius; the stored source value is retained.
+    Concentric(f64),
+}
+impl GlassGeometry {
+    #[cfg(any(target_os = "macos", test))]
+    fn resolved(self, width: f64, height: f64, surface_radius: f64) -> ([f64; 4], f64) {
+        let [top, right, bottom, left] = self.insets;
+        let rect = [
+            left,
+            top,
+            (width - left - right).max(0.),
+            (height - top - bottom).max(0.),
+        ];
+        let radius = match self.radius {
+            GlassRadius::MatchSurface => surface_radius,
+            GlassRadius::Fixed(radius) => radius,
+            GlassRadius::Concentric(_) => {
+                surface_radius.max(0.).min(width / 2.).min(height / 2.)
+                    - top.min(right).min(bottom).min(left)
+            }
+        }
+        .max(0.)
+        .min(rect[2] / 2.)
+        .min(rect[3] / 2.);
+        (rect, radius)
+    }
+}
+/// A native color layer composited with the glass underneath it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlassLayer {
+    /// RGBA, with the alpha byte last.
+    pub color: u32,
+    /// How this color combines with the native pixels behind it.
+    pub blend: GlassBlend,
+}
+/// Public Core Image blend filters used by native glass layers on macOS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlassBlend {
+    /// Normal alpha compositing.
+    Normal,
+    /// Core Image's color blend mode.
+    Color,
+    /// Core Image's overlay blend mode.
+    Overlay,
+    /// Rex's additive light operation (Core Animation's undocumented `plusL` token).
+    PlusLighter,
+    /// Rex's additive dark operation (Core Animation's undocumented `plusD` token).
+    PlusDarker,
 }
 impl Glass {
     /// Glass of `material`, tinted and saturated as the platform's is.
@@ -45,6 +160,13 @@ impl Glass {
         Self {
             material,
             plain: false,
+            tint: None,
+            corner_radius: None,
+            backdrop: None,
+            fill: None,
+            inner_shadow: None,
+            underlay: None,
+            active: true,
         }
     }
     /// The same glass, untinted and unsaturated (see `Glass::plain`).
@@ -52,15 +174,89 @@ impl Glass {
         self.plain = true;
         self
     }
+
+    // Classic material surfaces keep tint between their backdrop and fill.
+    // Liquid Glass applies its tint through the effect view's own setter.
+    #[cfg(any(target_os = "macos", test))]
+    fn classic_layers(&self) -> [Option<GlassLayer>; 3] {
+        [
+            self.backdrop,
+            self.tint.map(|color| GlassLayer {
+                color,
+                blend: GlassBlend::Normal,
+            }),
+            self.fill,
+        ]
+    }
 }
 impl Default for Glass {
     fn default() -> Self {
         Self::new(GlassMaterial::Hud)
     }
 }
+
+#[cfg(test)]
+mod glass_layer_tests {
+    use super::*;
+
+    #[test]
+    fn classic_material_tint_follows_backdrop_and_precedes_fill() {
+        let mut glass = Glass {
+            backdrop: Some(GlassLayer {
+                color: 0x24252880,
+                blend: GlassBlend::Color,
+            }),
+            tint: Some(0x14151780),
+            fill: Some(GlassLayer {
+                color: 0x0000004d,
+                blend: GlassBlend::Overlay,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            glass.classic_layers(),
+            [
+                glass.backdrop,
+                Some(GlassLayer {
+                    color: 0x14151780,
+                    blend: GlassBlend::Normal,
+                }),
+                glass.fill,
+            ]
+        );
+        glass.tint = None;
+        assert_eq!(glass.classic_layers(), [glass.backdrop, None, glass.fill]);
+    }
+
+    #[test]
+    fn resource_geometry_preserves_fixed_corners_and_top_down_insets() {
+        let geometry = GlassGeometry {
+            insets: [2., 4., 6., 8.],
+            radius: GlassRadius::Fixed(16.),
+            clips_to_surface: false,
+        };
+        assert_eq!(geometry.resolved(100., 80., 12.), ([8., 2., 88., 72.], 16.));
+        assert_eq!(geometry.resolved(20., 10., 12.), ([8., 2., 8., 2.], 1.));
+        let match_surface = GlassGeometry {
+            radius: GlassRadius::MatchSurface,
+            ..geometry
+        };
+        assert_eq!(match_surface.resolved(100., 80., 12.).1, 12.);
+        let concentric = GlassGeometry {
+            radius: GlassRadius::Concentric(0.),
+            ..geometry
+        };
+        assert_eq!(concentric.resolved(100., 80., 12.).1, 10.);
+    }
+}
 /// The glass's material (`NSVisualEffectMaterial`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GlassMaterial {
+    /// No native material, retaining optional color layers and underlay.
+    None,
+    /// Native Liquid Glass on macOS 26+, within-window popover glass on older macOS, Acrylic
+    /// on Windows. Uses the platform's regular glass style without a tint.
+    Liquid,
     /// A dark, saturated heads-up-display glass.
     #[default]
     Hud,
@@ -95,10 +291,11 @@ impl GlassMaterial {
     /// Its `NSVisualEffectMaterial` value.
     pub fn appkit_value(self) -> isize {
         match self {
+            Self::None => 0,
             Self::Titlebar => 3,
             Self::Selection => 4,
             Self::Menu => 5,
-            Self::Popover => 6,
+            Self::Popover | Self::Liquid => 6,
             Self::Sidebar => 7,
             Self::HeaderView => 10,
             Self::Sheet => 11,
@@ -111,6 +308,17 @@ impl GlassMaterial {
             Self::UnderPageBackground => 22,
         }
     }
+}
+
+/// Replace the existing native backdrop without stacking effect views.
+/// The window must have been created transparent for its renderer to blend.
+pub(crate) fn set_glass(window: &winit::window::Window, glass: Option<Glass>) {
+    #[cfg(target_os = "macos")]
+    mac::set_glass(window, glass);
+    #[cfg(windows)]
+    win::set_glass(window, glass);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = (window, glass);
 }
 
 /// Style `window` as `titlebar` and `glass` ask: its corner radius in points
@@ -207,7 +415,7 @@ mod win {
         Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::{
             Dwm::{
-                DWM_SYSTEMBACKDROP_TYPE, DWMSBT_MAINWINDOW, DWMSBT_TABBEDWINDOW,
+                DWM_SYSTEMBACKDROP_TYPE, DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TABBEDWINDOW,
                 DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
                 DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmExtendFrameIntoClientArea,
                 DwmSetWindowAttribute,
@@ -309,13 +517,15 @@ mod win {
     /// under title bars and headers.
     fn backdrop(material: GlassMaterial) -> DWM_SYSTEMBACKDROP_TYPE {
         match material {
+            GlassMaterial::None => DWMSBT_NONE,
             GlassMaterial::UnderWindowBackground
             | GlassMaterial::UnderPageBackground
             | GlassMaterial::WindowBackground
             | GlassMaterial::ContentBackground
             | GlassMaterial::Sidebar => DWMSBT_MAINWINDOW,
             GlassMaterial::Titlebar | GlassMaterial::HeaderView => DWMSBT_TABBEDWINDOW,
-            GlassMaterial::Hud
+            GlassMaterial::Liquid
+            | GlassMaterial::Hud
             | GlassMaterial::Menu
             | GlassMaterial::Popover
             | GlassMaterial::ToolTip
@@ -356,6 +566,28 @@ mod win {
                 &kind as *const _ as *const _,
                 size_of_val(&kind) as u32,
             );
+        }
+    }
+
+    pub(super) fn set_glass(window: &Window, glass: Option<Glass>) {
+        let Some(hwnd) = hwnd(window) else { return };
+        if let Some(glass) = glass {
+            frost(
+                hwnd,
+                glass,
+                window.theme() != Some(winit::window::Theme::Light),
+            );
+        } else {
+            let kind = DWMSBT_NONE;
+            // SAFETY: the documented backdrop attribute of our own window.
+            unsafe {
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_SYSTEMBACKDROP_TYPE,
+                    &kind as *const _ as *const _,
+                    size_of_val(&kind) as u32,
+                );
+            }
         }
     }
 
@@ -1749,7 +1981,7 @@ pub(crate) fn double_click(window: &winit::window::Window) {
 
 #[cfg(target_os = "macos")]
 mod mac {
-    use super::{Glass, Titlebar};
+    use super::{Glass, GlassBlend, GlassInnerShadow, GlassLayer, GlassMaterial, Titlebar};
     use objc2::{
         DefinedClass, MainThreadOnly, define_class, msg_send,
         rc::Retained,
@@ -1757,12 +1989,17 @@ mod mac {
         sel,
     };
     use objc2_app_kit::{
-        NSAutoresizingMaskOptions, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-        NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowStyleMask,
-        NSWindowTitleVisibility,
+        NSAutoresizingMaskOptions, NSColor, NSView, NSVisualEffectBlendingMode,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     };
-    use objc2_foundation::NSString;
+    use objc2_core_graphics::CGMutablePath;
+    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+    use objc2_quartz_core::{CALayer, CAShapeLayer};
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    #[link(name = "CoreImage", kind = "framework")]
+    unsafe extern "C" {}
 
     pub(super) fn ns_window(window: &winit::window::Window) -> Option<Retained<NSWindow>> {
         let handle = window.window_handle().ok()?;
@@ -1938,6 +2175,25 @@ mod mac {
         let Some(frame) = (unsafe { content.superview() }) else {
             return;
         };
+        if glass.material == GlassMaterial::None {
+            let effect = NSView::initWithFrame(window.mtm().alloc(), frame.bounds());
+            effect.setAutoresizingMask(
+                NSAutoresizingMaskOptions::ViewWidthSizable
+                    | NSAutoresizingMaskOptions::ViewHeightSizable,
+            );
+            for layer in glass.classic_layers().into_iter().flatten() {
+                effect.addSubview(&glass_layer(window, &frame, layer));
+            }
+            attach_glass(window, &frame, &content, &effect, glass);
+            return;
+        }
+        if glass.material == GlassMaterial::Liquid
+            && !glass.plain
+            && let Some(effect) = liquid(window, &frame, glass)
+        {
+            attach_glass(window, &frame, &content, &effect, glass);
+            return;
+        }
         let mtm = window.mtm();
         // SAFETY: NSView's designated initializer, on a fresh allocation
         // with its ivars set.
@@ -1953,11 +2209,19 @@ mod mac {
         );
         // Behind-window blending, always active.
         effect.setMaterial(NSVisualEffectMaterial(glass.material.appkit_value()));
-        effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        effect.setState(NSVisualEffectState::Active);
+        effect.setBlendingMode(if glass.material == GlassMaterial::Liquid {
+            NSVisualEffectBlendingMode::WithinWindow
+        } else {
+            NSVisualEffectBlendingMode::BehindWindow
+        });
+        effect.setState(if glass.active {
+            NSVisualEffectState::Active
+        } else {
+            NSVisualEffectState::FollowsWindowActiveState
+        });
         effect.setWantsLayer(true);
         if let Some(layer) = effect.layer() {
-            layer.setCornerRadius(radius(window));
+            layer.setCornerRadius(glass.corner_radius.unwrap_or_else(|| radius(window)));
             // SAFETY: `setCornerCurve:` takes a CALayerCornerCurve, an
             // NSString ("continuous" is `kCACornerCurveContinuous`'s value).
             unsafe {
@@ -1970,11 +2234,350 @@ mod mac {
                 unsafe { strip_layer(&layer) };
             }
         }
-        frame.addSubview_positioned_relativeTo(
-            &effect,
-            objc2_app_kit::NSWindowOrderingMode::Below,
-            Some(&content),
+        if !glass.plain {
+            for layer in glass.classic_layers().into_iter().flatten() {
+                effect.addSubview(&glass_layer(window, &frame, layer));
+            }
+        }
+        attach_glass(window, &frame, &content, &effect, glass);
+    }
+
+    /// Public macOS 26 API, looked up at runtime so older systems retain
+    /// the HUD fallback. No private blur filters or guessed tint layers.
+    fn liquid(window: &NSWindow, frame: &NSView, glass: Glass) -> Option<Retained<NSView>> {
+        let effect_class = AnyClass::get(c"NSGlassEffectView")?;
+        let container_class = AnyClass::get(c"NSGlassEffectContainerView")?;
+        // SAFETY: both classes inherit NSView's designated initializer;
+        // setters are declared by the macOS 26 NSGlassEffectView.h SDK.
+        unsafe {
+            let effect: Retained<NSView> = msg_send![
+                msg_send![effect_class, alloc], initWithFrame: frame.bounds()
+            ];
+            let container: Retained<NSView> = msg_send![
+                msg_send![container_class, alloc], initWithFrame: frame.bounds()
+            ];
+            let mask = NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable;
+            effect.setAutoresizingMask(mask);
+            container.setAutoresizingMask(mask);
+            let _: () = msg_send![&*effect, setStyle: 0_isize]; // Regular.
+            let tint = glass.tint.map(|rgba| {
+                NSColor::colorWithSRGBRed_green_blue_alpha(
+                    f64::from((rgba >> 24) & 255) / 255.,
+                    f64::from((rgba >> 16) & 255) / 255.,
+                    f64::from((rgba >> 8) & 255) / 255.,
+                    f64::from(rgba & 255) / 255.,
+                )
+            });
+            let _: () = msg_send![&*effect, setTintColor: tint.as_deref()];
+            let _: () = msg_send![&*effect, setCornerRadius: glass.corner_radius.unwrap_or_else(|| radius(window))];
+            let overlays: Retained<GlassContentView> = {
+                let view = window.mtm().alloc::<GlassContentView>().set_ivars(());
+                msg_send![super(view), initWithFrame: frame.bounds()]
+            };
+            overlays.setAutoresizingMask(mask);
+            overlays.setAutoresizesSubviews(true);
+            for layer in [glass.backdrop, glass.fill].into_iter().flatten() {
+                overlays.addSubview(&glass_layer(window, frame, layer));
+            }
+            let _: () = msg_send![&*effect, setContentView: &*overlays];
+            let _: () = msg_send![&*container, setContentView: &*effect];
+            let _: () = msg_send![&*container, setSpacing: 0_f64];
+            Some(container)
+        }
+    }
+
+    fn glass_layer(window: &NSWindow, frame: &NSView, layer: GlassLayer) -> Retained<NSView> {
+        let view = NSView::initWithFrame(window.mtm().alloc(), frame.bounds());
+        view.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
+        view.setWantsLayer(true);
+        if let Some(native) = view.layer() {
+            let rgba = layer.color;
+            let color = NSColor::colorWithSRGBRed_green_blue_alpha(
+                f64::from((rgba >> 24) & 255) / 255.,
+                f64::from((rgba >> 16) & 255) / 255.,
+                f64::from((rgba >> 8) & 255) / 255.,
+                f64::from(rgba & 255) / 255.,
+            );
+            native.setBackgroundColor(Some(&color.CGColor()));
+            set_layer_blend(&native, layer.blend);
+        }
+        view
+    }
+
+    fn set_layer_blend(layer: &CALayer, blend: GlassBlend) {
+        // CALayer's property is public; these two string values are
+        // undocumented, but are the exact values used by Rex's layer helper.
+        let token = match blend {
+            GlassBlend::PlusLighter => Some("plusL"),
+            GlassBlend::PlusDarker => Some("plusD"),
+            _ => None,
+        };
+        if let Some(token) = token {
+            unsafe {
+                let token = NSString::from_str(token);
+                let _: () = msg_send![layer, setCompositingFilter: &*token];
+            }
+            return;
+        }
+        let name = match blend {
+            GlassBlend::Color => Some("CIColorBlendMode"),
+            GlassBlend::Overlay => Some("CIOverlayBlendMode"),
+            _ => None,
+        };
+        unsafe {
+            let filter = name.and_then(|name| {
+                let class = AnyClass::get(c"CIFilter")?;
+                let name = NSString::from_str(name);
+                let filter: Option<Retained<AnyObject>> = msg_send![class, filterWithName: &*name];
+                filter
+            });
+            let _: () = msg_send![layer, setCompositingFilter: filter.as_deref()];
+        }
+    }
+
+    pub(crate) struct InnerShadowState {
+        radius: f64,
+        shadow: GlassInnerShadow,
+    }
+    // AppKit may lay out a glass content view without applying spring/strut
+    // autoresizing to its descendants. These resource layers fill it exactly.
+    // SAFETY: the standard NSView frame setters, forwarded to their superclass.
+    define_class!(
+        #[unsafe(super(NSView))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "ZgxWindowGlassContent"]
+        #[ivars = ()]
+        pub(crate) struct GlassContentView;
+        impl GlassContentView {
+            #[unsafe(method(setFrame:))]
+            fn frame_changed(&self, frame: NSRect) {
+                let _: () = unsafe { msg_send![super(self), setFrame: frame] };
+                self.fit_children();
+            }
+            #[unsafe(method(setFrameSize:))]
+            fn size_changed(&self, size: NSSize) {
+                let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+                self.fit_children();
+            }
+        }
+    );
+    impl GlassContentView {
+        fn fit_children(&self) {
+            for view in self.subviews() {
+                view.setFrame(self.bounds());
+            }
+        }
+    }
+    // SAFETY: a main-thread NSView subclass; setFrameSize: has NSView's
+    // signature and always calls its superclass before updating its layers.
+    define_class!(
+        #[unsafe(super(NSView))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "ZgxWindowInnerShadow"]
+        #[ivars = InnerShadowState]
+        pub(crate) struct InnerShadowView;
+        impl InnerShadowView {
+            #[unsafe(method(setFrame:))]
+            fn frame_changed(&self, frame: NSRect) {
+                // SAFETY: NSView's own frame setter; autoresizing uses this
+                // selector directly rather than necessarily setFrameSize:.
+                let _: () = unsafe { msg_send![super(self), setFrame: frame] };
+                self.update_shadow();
+            }
+            #[unsafe(method(setFrameSize:))]
+            fn resize(&self, size: NSSize) {
+                // SAFETY: NSView's own frame-size setter.
+                let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+                self.update_shadow();
+            }
+        }
+    );
+    impl InnerShadowView {
+        fn update_shadow(&self) {
+            let Some(root) = self.layer() else { return };
+            let bounds = self.bounds();
+            let spec = self.ivars().shadow;
+            let ([x, top, w, h], radius) =
+                spec.geometry
+                    .resolved(bounds.size.width, bounds.size.height, self.ivars().radius);
+            let shape_bounds = NSRect::new(NSPoint::ZERO, NSSize::new(w, h));
+            // The inner shadow clips to its own shape. Surface clipping is
+            // independent, so fixed-radius resource shapes can cross it.
+            let inner = CALayer::new();
+            inner.setFrame(NSRect::new(
+                NSPoint::new(x, bounds.size.height - top - h),
+                NSSize::new(w, h),
+            ));
+            inner.setCornerRadius(radius);
+            inner.setMasksToBounds(true);
+            let path = CGMutablePath::new();
+            let outset = spec.blur * 4. + spec.x.abs() + spec.y.abs() + 1.;
+            // Outer rectangle and oppositely wound rounded hole: the
+            // nonzero shadow path leaves the content transparent.
+            unsafe {
+                CGMutablePath::add_rect(
+                    Some(&path),
+                    std::ptr::null(),
+                    NSRect::new(
+                        NSPoint::new(-outset, -outset),
+                        NSSize::new(w + 2. * outset, h + 2. * outset),
+                    ),
+                );
+                CGMutablePath::move_to_point(Some(&path), std::ptr::null(), radius, 0.);
+                CGMutablePath::add_arc_to_point(
+                    Some(&path),
+                    std::ptr::null(),
+                    0.,
+                    0.,
+                    0.,
+                    h,
+                    radius,
+                );
+                CGMutablePath::add_arc_to_point(Some(&path), std::ptr::null(), 0., h, w, h, radius);
+                CGMutablePath::add_arc_to_point(Some(&path), std::ptr::null(), w, h, w, 0., radius);
+                CGMutablePath::add_arc_to_point(
+                    Some(&path),
+                    std::ptr::null(),
+                    w,
+                    0.,
+                    0.,
+                    0.,
+                    radius,
+                );
+            }
+            CGMutablePath::close_subpath(Some(&path));
+            let shadow = CAShapeLayer::new();
+            shadow.setFrame(shape_bounds);
+            shadow.setPath(Some(&path));
+            shadow.setFillColor(Some(&NSColor::whiteColor().CGColor()));
+            let c = spec.color;
+            let color = NSColor::colorWithSRGBRed_green_blue_alpha(
+                f64::from(c >> 24) / 255.,
+                f64::from((c >> 16) & 255) / 255.,
+                f64::from((c >> 8) & 255) / 255.,
+                f64::from(c & 255) / 255.,
+            );
+            let source = color.CGColor();
+            inner.setBackgroundColor((!spec.knockout).then_some(&source));
+            shadow.setShadowColor(Some(&color.CGColor()));
+            shadow.setShadowOpacity(1.);
+            shadow.setShadowRadius(spec.blur);
+            shadow.setShadowOffset(NSSize::new(spec.x, -spec.y));
+            shadow.setShadowPath(Some(&path));
+            set_layer_blend(&root, spec.blend);
+            root.setCornerRadius(self.ivars().radius);
+            root.setMasksToBounds(spec.geometry.clips_to_surface);
+            // SAFETY: the fresh shadow has no superlayer and replaces only
+            // this view's own layer children.
+            unsafe { root.setSublayers(None) };
+            inner.addSublayer(&shadow);
+            root.addSublayer(&inner);
+        }
+    }
+
+    fn inner_shadow(
+        window: &NSWindow,
+        frame: &NSView,
+        glass: Glass,
+        shadow: GlassInnerShadow,
+    ) -> Retained<NSView> {
+        // SAFETY: NSView's designated initializer on a fresh subclass.
+        let view: Retained<InnerShadowView> = unsafe {
+            let view = window
+                .mtm()
+                .alloc::<InnerShadowView>()
+                .set_ivars(InnerShadowState {
+                    radius: glass.corner_radius.unwrap_or_else(|| radius(window)),
+                    shadow,
+                });
+            msg_send![super(view), initWithFrame: frame.bounds()]
+        };
+        view.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        view.setWantsLayer(true);
+        view.update_shadow();
+        Retained::into_super(view)
+    }
+
+    fn attach_glass(
+        window: &NSWindow,
+        frame: &NSView,
+        content: &NSView,
+        effect: &NSView,
+        glass: Glass,
+    ) {
+        let group;
+        let root = if glass.underlay.is_some() || glass.inner_shadow.is_some() {
+            // SAFETY: NSView's designated initializer on a new content host.
+            let holder: Retained<GlassContentView> = unsafe {
+                let view = window.mtm().alloc::<GlassContentView>().set_ivars(());
+                msg_send![super(view), initWithFrame: frame.bounds()]
+            };
+            holder.setAutoresizingMask(
+                NSAutoresizingMaskOptions::ViewWidthSizable
+                    | NSAutoresizingMaskOptions::ViewHeightSizable,
+            );
+            if let Some(underlay) = glass.underlay {
+                let lower = NSVisualEffectView::initWithFrame(window.mtm().alloc(), frame.bounds());
+                lower.setMaterial(NSVisualEffectMaterial(underlay.material.appkit_value()));
+                lower.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+                lower.setState(NSVisualEffectState::FollowsWindowActiveState);
+                lower.setHidden(underlay.hidden);
+                lower.setAutoresizingMask(
+                    NSAutoresizingMaskOptions::ViewWidthSizable
+                        | NSAutoresizingMaskOptions::ViewHeightSizable,
+                );
+                holder.addSubview(&lower);
+            }
+            holder.addSubview(effect);
+            if let Some(shadow) = glass.inner_shadow {
+                holder.addSubview(&inner_shadow(window, frame, glass, shadow));
+            }
+            group = holder;
+            &*group as &NSView
+        } else {
+            effect
+        };
+        // SAFETY: NSUserInterfaceIdentification's NSString identifier setter.
+        unsafe {
+            let identifier = NSString::from_str("zgx.window.glass");
+            let _: () = msg_send![root, setIdentifier: &*identifier];
+        }
+        frame.addSubview_positioned_relativeTo(
+            root,
+            objc2_app_kit::NSWindowOrderingMode::Below,
+            Some(content),
+        );
+        window.invalidateShadow();
+    }
+
+    pub(super) fn set_glass(window: &winit::window::Window, glass: Option<Glass>) {
+        let Some(window) = ns_window(window) else {
+            return;
+        };
+        let Some(content) = window.contentView() else {
+            return;
+        };
+        // SAFETY: the live content view's frame view, on the main thread.
+        let Some(frame) = (unsafe { content.superview() }) else {
+            return;
+        };
+        for view in frame.subviews() {
+            // SAFETY: NSView conforms to NSUserInterfaceIdentification.
+            let identifier: Option<Retained<NSString>> = unsafe { msg_send![&*view, identifier] };
+            if identifier.is_some_and(|id| id.to_string() == "zgx.window.glass") {
+                view.removeFromSuperview();
+            }
+        }
+        if let Some(glass) = glass {
+            frost(&window, glass);
+        }
         window.invalidateShadow();
     }
 

@@ -3,6 +3,7 @@
 -- this run asks for them by pane id.
 local state = require("./state")
 local names = require("@lib/names")
+local font_family = ui.shared("terminal_font_family", "")
 
 local M = {}
 
@@ -62,6 +63,8 @@ function M.session(pane: string): Term?
 	local attach = state.attach
 	return ui.term(pane, {
 		cwd = cwd,
+		font_size = 12,
+		font_family = if font_family:peek() ~= "" then font_family:peek() else nil,
 		command = if attach ~= "" then `{attach} --attach {quote(pane)} --cwd {quote(cwd)}` else nil,
 		-- The process exited (no question), or a close binding asked.
 		on_close = function(alive)

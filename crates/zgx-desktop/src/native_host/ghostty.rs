@@ -161,6 +161,7 @@ fn after(_mtm: MainThreadMarker, seconds: f64, work: impl FnOnce() + 'static) {
 
 struct App {
     app: g::ghostty_app_t,
+    config: g::ghostty_config_t,
 }
 thread_local! {
     static APP: OnceCell<Option<App>> = const { OnceCell::new() };
@@ -184,7 +185,8 @@ impl App {
         // messages are NUL-terminated strings the config owns, copied before
         // it goes. The callbacks match `ghostty_runtime_config_s`'s types and
         // never dereference their userdata. `ghostty_app_new` copies the
-        // config (embedded.zig `App.init` clones it), so this one is freed.
+        // config (embedded.zig `App.init` clones it); this one remains the
+        // base for per-surface color changes for the lifetime of the app.
         unsafe {
             if g::ghostty_init(0, std::ptr::null_mut()) != g::GHOSTTY_SUCCESS as i32 {
                 eprintln!("zgx: ghostty_init failed");
@@ -224,14 +226,15 @@ impl App {
                 close_surface_cb: Some(close_surface),
             };
             let app = g::ghostty_app_new(&runtime, config);
-            // The app keeps its own copy.
-            g::ghostty_config_free(config);
             if app.is_null() {
+                g::ghostty_config_free(config);
                 eprintln!("zgx: ghostty_app_new failed");
                 return None;
             }
             g::ghostty_app_set_focus(app, true);
-            Some(Self { app })
+            // Kept as the base for per-surface appearance updates; the
+            // thread-local app and its configuration live for the process.
+            Some(Self { app, config })
         }
     }
 }
@@ -427,7 +430,16 @@ extern "C" fn action(
             });
             true
         }
-        g::GHOSTTY_ACTION_CELL_SIZE => true,
+        g::GHOSTTY_ACTION_CELL_SIZE => {
+            on_main(move || {
+                let Some(view) = view_of(surface) else { return };
+                // SAFETY: the view checks that the surface is still live.
+                if let Some(grid) = view.with_surface(|s| unsafe { g::ghostty_surface_size(s) }) {
+                    view.publish_grid(grid);
+                }
+            });
+            true
+        }
         _ => false,
     }
 }
@@ -770,6 +782,15 @@ const RIGHT_SHIFT: usize = 0x04;
 const RIGHT_CONTROL: usize = 0x2000;
 const RIGHT_ALT: usize = 0x40;
 const RIGHT_COMMAND: usize = 0x10;
+
+// A focused native terminal participates in the app's shortcuts before
+// its own bindings. Query lazily: a menu action can change that terminal.
+fn app_shortcut_before_terminal(
+    app: impl FnOnce() -> bool,
+    terminal: impl FnOnce() -> bool,
+) -> bool {
+    app() || terminal()
+}
 
 fn mods(flags: NSEventModifierFlags) -> g::ghostty_input_mods_e {
     let mut mods = g::GHOSTTY_MODS_NONE;
@@ -1512,12 +1533,17 @@ impl TerminalView {
         }) else {
             return;
         };
+        self.publish_grid(grid);
+    }
+    fn publish_grid(&self, grid: g::ghostty_surface_size_s) {
         let term = self.ivars().term.clone();
         zgx::native_view::post(move || {
             if let Some(term) = term.upgrade() {
                 term.update_state(|state| {
                     state.columns = grid.columns;
                     state.rows = grid.rows;
+                    state.cell_width = grid.cell_width_px;
+                    state.cell_height = grid.cell_height_px;
                 });
             }
         });
@@ -1870,20 +1896,27 @@ impl TerminalView {
         if surface.is_null() {
             return false;
         }
-        // A Ghostty binding (copy, paste, font size, ...): Ghostty's.
-        let mut key = key_event(event, g::GHOSTTY_ACTION_PRESS, None);
-        let chars = event
-            .characters()
-            .map(|chars| chars.to_string())
-            .unwrap_or_default();
-        let chars = CString::new(chars).unwrap_or_default();
-        key.text = chars.as_ptr();
-        let mut flags: g::ghostty_binding_flags_e = 0;
-        // SAFETY: non-null, so live (`free` nulls it first); main thread.
-        // `key.text` is a NUL-terminated `CString` alive past the call;
-        // `flags` is a writable local.
-        if unsafe { g::ghostty_surface_key_is_binding(surface, key, &mut flags) } {
-            self.handle_key_down(event);
+        if app_shortcut_before_terminal(
+            || crate::app_menu::offer_key(event),
+            || {
+                // Unclaimed keys retain Ghostty's copy/paste, font and other bindings.
+                let mut key = key_event(event, g::GHOSTTY_ACTION_PRESS, None);
+                let chars = event
+                    .characters()
+                    .map(|chars| chars.to_string())
+                    .unwrap_or_default();
+                let chars = CString::new(chars).unwrap_or_default();
+                key.text = chars.as_ptr();
+                let mut flags: g::ghostty_binding_flags_e = 0;
+                // SAFETY: a live main-thread surface; text and flags outlive this call.
+                if unsafe { g::ghostty_surface_key_is_binding(surface, key, &mut flags) } {
+                    self.handle_key_down(event);
+                    true
+                } else {
+                    false
+                }
+            },
+        ) {
             return true;
         }
         let ignoring = event
@@ -2015,6 +2048,78 @@ fn replays_after_commit(event: &NSEvent) -> bool {
 // ---------------------------------------------------------------------------
 // The backend.
 
+/// Override only the explicit app colors and font; retain other user settings.
+fn surface_config(
+    options: &zgx::terminal::TerminalOptions,
+    colors: zgx::terminal::TerminalColorScheme,
+) -> String {
+    let mut text = String::new();
+    for (key, color) in [
+        ("background", colors.background),
+        ("foreground", colors.foreground),
+        ("cursor-color", colors.cursor),
+        ("cursor-text", colors.cursor_text),
+        ("selection-background", colors.selection_background),
+        ("selection-foreground", colors.selection_foreground),
+    ] {
+        if let Some(color) = color {
+            text.push_str(&format!("{key} = #{:06x}\n", color >> 8));
+        }
+    }
+    if let Some(palette) = colors.ansi {
+        for (index, color) in palette.into_iter().enumerate() {
+            text.push_str(&format!("palette = {index}=#{:06x}\n", color >> 8));
+        }
+    }
+    if let Some(size) = options.font_size {
+        text.push_str(&format!("font-size = {size}\n"));
+    }
+    if let Some(family) = &options.font_family {
+        let family = family
+            .replace(['\n', '\r'], "")
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        text.push_str(&format!("font-family = \"\"\nfont-family = \"{family}\"\n"));
+    }
+    text
+}
+
+/// Update this surface while preserving its process, zoom and adjusted font size.
+fn update_surface_config(
+    surface: g::ghostty_surface_t,
+    options: &zgx::terminal::TerminalOptions,
+    colors: zgx::terminal::TerminalColorScheme,
+) {
+    APP.with(|cell| {
+        let Some(app) = cell.get().and_then(Option::as_ref) else {
+            return;
+        };
+        let text = surface_config(options, colors);
+        let path = std::env::temp_dir().join(format!(
+            "zgx-ghostty-surface-{}-{:x}.conf",
+            std::process::id(),
+            surface as usize
+        ));
+        if std::fs::write(&path, text).is_ok()
+            && let Ok(name) = CString::new(path.to_string_lossy().as_bytes())
+        {
+            // SAFETY: main thread, live original config and surface. Ghostty
+            // copies the new configuration without replacing the process,
+            // and preserves a manually adjusted live font size itself.
+            unsafe {
+                let config = g::ghostty_config_clone(app.config);
+                if !config.is_null() {
+                    g::ghostty_config_load_file(config, name.as_ptr());
+                    g::ghostty_config_finalize(config);
+                    g::ghostty_surface_update_config(surface, config);
+                    g::ghostty_config_free(config);
+                }
+            }
+        }
+        let _ = std::fs::remove_file(path);
+    });
+}
+
 /// A Ghostty surface in its view: the platform side of a `Terminal`.
 pub(crate) struct MacTerminal {
     view: Retained<TerminalView>,
@@ -2084,6 +2189,9 @@ impl MacTerminal {
         SURFACES.with(|surfaces| surfaces.borrow_mut().insert(surface as usize, view.clone()));
         // SAFETY: just made, live; main thread.
         unsafe { g::ghostty_surface_set_focus(surface, false) };
+        if options.font_family.is_some() || term.color_scheme() != Default::default() {
+            update_surface_config(surface, &options, term.color_scheme());
+        }
         refresh_process(surface as usize);
         view.scale_changed();
         Some(Self { view })
@@ -2174,6 +2282,11 @@ impl TerminalBackend for MacTerminal {
                     )
                 };
             }
+            TerminalCommand::Colors(..) | TerminalCommand::ColorScheme(_) if !surface.is_null() => {
+                if let Some(term) = self.view.ivars().term.upgrade() {
+                    update_surface_config(surface, &term.options(), term.color_scheme());
+                }
+            }
             TerminalCommand::Close => self.free(),
             _ => {}
         }
@@ -2263,5 +2376,125 @@ mod iosurface {
             })
             .flatten()
         }
+    }
+}
+
+#[cfg(test)]
+mod color_scheme_tests {
+    use super::surface_config;
+    use zgx::terminal::{TerminalColorScheme, TerminalOptions};
+
+    #[test]
+    fn scoped_colors_override_exact_ansi_cursor_and_selection_without_resetting_features() {
+        let palette = std::array::from_fn(|i| ((i as u32) << 24) | 0x1234ff);
+        let scheme = TerminalColorScheme {
+            background: Some(0x0d1117ff),
+            foreground: Some(0xe6edf3ff),
+            ansi: Some(palette),
+            cursor: Some(0x2f81f7ff),
+            cursor_text: Some(0x6fc1ffff),
+            selection_background: Some(0xe6edf3ff),
+            selection_foreground: Some(0x0d1117ff),
+        };
+        let config = surface_config(&TerminalOptions::default(), scheme);
+        assert_eq!(
+            config
+                .lines()
+                .filter(|line| line.starts_with("palette = "))
+                .count(),
+            16
+        );
+        assert!(config.contains("palette = 0=#001234\n"));
+        assert!(config.contains("palette = 15=#0f1234\n"));
+        assert!(config.contains("cursor-color = #2f81f7\n"));
+        assert!(config.contains("cursor-text = #6fc1ff\n"));
+        assert!(config.contains("selection-background = #e6edf3\n"));
+        assert!(config.contains("selection-foreground = #0d1117\n"));
+        assert!(!config.contains("font-size"));
+        assert!(!config.contains("keybind"));
+        assert!(!config.contains("background-opacity"));
+        assert!(
+            surface_config(&TerminalOptions::default(), TerminalColorScheme::default()).is_empty()
+        );
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::app_shortcut_before_terminal;
+    use std::cell::Cell;
+
+    #[test]
+    fn an_app_shortcut_wins_even_when_the_focused_terminal_has_the_same_binding() {
+        let app_calls = Cell::new(0);
+        assert!(app_shortcut_before_terminal(
+            || {
+                app_calls.set(app_calls.get() + 1);
+                true
+            },
+            || panic!("Ghostty must not consume an app-declared shortcut"),
+        ));
+        assert_eq!(app_calls.get(), 1);
+    }
+
+    #[test]
+    fn command_k_dispatches_the_declared_palette_action_before_a_terminal_binding() {
+        use crate::app_menu::{AppMenu, AppMenuEntry, MenuAccelerator, MenuAction};
+        use std::{cell::RefCell, rc::Rc};
+        use zgx::{
+            input::{EventPhase, InputEvent, Key, Modifiers},
+            widgets::Ui,
+        };
+        let ui = Ui::new(400., 300.);
+        let root = ui.scene.borrow().root();
+        let chosen = Rc::new(RefCell::new(Vec::new()));
+        let output = chosen.clone();
+        let _listener = ui.input.listen(root, move |event| {
+            if event.phase != EventPhase::Capture
+                && let InputEvent::Action(action) = &event.event
+                && let Some(action) = action.downcast_ref::<MenuAction>()
+            {
+                output.borrow_mut().push(action.0.clone());
+                event.prevent_default();
+            }
+        });
+        let menus = [AppMenu::new(
+            "View",
+            [AppMenuEntry::item("Command Palette", "palette")
+                .accelerator(MenuAccelerator::primary(Key::Character("k".into())))],
+        )];
+        let _binding = ui.input.bind_keys(root, crate::app_menu::keymap(&menus));
+        assert!(app_shortcut_before_terminal(
+            || {
+                ui.input.dispatch(
+                    &ui.scene,
+                    InputEvent::KeyDown {
+                        key: Key::Character("k".into()),
+                        modifiers: Modifiers {
+                            meta: true,
+                            ..Default::default()
+                        },
+                        repeat: false,
+                    },
+                );
+                !chosen.borrow().is_empty()
+            },
+            || panic!("the conflicting Ghostty clear-screen binding must not run"),
+        ));
+        assert_eq!(*chosen.borrow(), ["palette"]);
+    }
+
+    #[test]
+    fn unclaimed_or_disabled_app_shortcuts_preserve_terminal_bindings_and_fallback() {
+        let terminal_calls = Cell::new(0);
+        assert!(app_shortcut_before_terminal(
+            || false,
+            || {
+                terminal_calls.set(terminal_calls.get() + 1);
+                true
+            }
+        ));
+        assert_eq!(terminal_calls.get(), 1);
+        assert!(!app_shortcut_before_terminal(|| false, || false));
     }
 }

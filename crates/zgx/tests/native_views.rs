@@ -641,3 +641,269 @@ fn a_hollow_box_over_a_page_takes_the_pointer_only_while_it_shows_something() {
         assert_eq!(at(&ui), route, "mode {mode}");
     }
 }
+
+#[test]
+fn liquid_material_places_without_a_native_overlap_and_keeps_its_label_above() {
+    use zgx::scene::BackdropMaterial;
+    let mut ui = Ui::new(320., 180.);
+    let natives = supported();
+    let view = ui.mount(provide(
+        natives.clone(),
+        column().child(
+            div()
+                .id("pill")
+                .w(200.)
+                .h(34.)
+                .rounded(17.)
+                .backdrop_material(BackdropMaterial::Liquid)
+                .backdrop_tint(rgba(0xffffff40))
+                .child(text("Session").id("label")),
+        ),
+    ));
+    ui.prepare_frame();
+    let (first, _) = split(&ui, &natives, &PlaneSplit::default());
+    assert_eq!(first.backdrops().len(), 1);
+    let material = &first.backdrops()[0];
+    assert_eq!(material.material, BackdropMaterial::Liquid);
+    assert_eq!(material.tint, rgba(0xffffff40));
+    assert_eq!(material.radii, [17.; 4]);
+    assert!(first.in_overlay(view.find("label").unwrap()));
+    let (again, damage) = split(&ui, &natives, &first);
+    assert_eq!(
+        again.backdrops(),
+        first.backdrops(),
+        "unchanged placements retain the native view"
+    );
+    assert!(damage.is_empty(), "a stable material schedules no damage");
+}
+
+#[test]
+fn nonuniformly_scaled_liquid_retains_its_material_and_corner_scale() {
+    use zgx::scene::{BackdropMaterial, LocalTransform};
+    let mut ui = Ui::new(500., 180.);
+    let natives = supported();
+    let view = ui.mount(provide(
+        natives.clone(),
+        column().child(
+            div()
+                .id("pill")
+                .w(100.)
+                .h(34.)
+                .rounded(17.)
+                .backdrop_material(BackdropMaterial::Liquid)
+                .backdrop_tint(rgba(0xffffff40)),
+        ),
+    ));
+    ui.prepare_frame();
+    let pill = view.find("pill").unwrap();
+    ui.scene.borrow_mut().set_local_transform(
+        pill,
+        LocalTransform {
+            scale: (2., 1.),
+            ..LocalTransform::IDENTITY
+        },
+    );
+    ui.prepare_frame();
+    let (planes, _) = split(&ui, &natives, &PlaneSplit::default());
+    let glass = planes
+        .backdrops()
+        .iter()
+        .find(|p| p.node == pill)
+        .expect("transformed native material must remain visible");
+    assert_eq!(glass.material, BackdropMaterial::Liquid);
+    assert_eq!(glass.tint, rgba(0xffffff40));
+    assert_eq!(glass.rect.width, 200.);
+    assert_eq!(glass.scale, 1.);
+}
+
+#[test]
+fn a_panes_liquid_and_fill_precede_its_native_child() {
+    use zgx::scene::{BackdropMaterial, BlendMode};
+    let mut ui = Ui::new(500., 300.);
+    let natives = supported();
+    let web = WebView::new(&ui.runtime, WebViewOptions::default());
+    let view = ui.mount(provide(
+        natives.clone(),
+        column().p(12.).child(
+            column()
+                .id("pane")
+                .w(300.)
+                .h(250.)
+                .bg(rgba(0x10101033))
+                .rounded(10.)
+                .overflow_hidden()
+                .backdrop_material(BackdropMaterial::Liquid)
+                .backdrop_fill(rgba(0x00000033))
+                .backdrop_fill_blend(BlendMode::Overlay)
+                .child(text("Title").id("title"))
+                .child(web_view(&web).id("page").grow()),
+        ),
+    ));
+    ui.prepare_frame();
+    let (first, _) = split(&ui, &natives, &PlaneSplit::default());
+    let glass = &first.backdrops()[0];
+    assert_eq!(
+        glass.native_order, 0,
+        "glass and fill stay below the first native child"
+    );
+    assert_eq!(glass.fill, rgba(0x00000033));
+    assert_eq!(glass.fill_blend, BlendMode::Overlay);
+    assert!(
+        !first.in_overlay(view.find("pane").unwrap()),
+        "ancestor backdrop paint must not cover its native content"
+    );
+    assert!(first.in_overlay(view.find("title").unwrap()));
+    assert_eq!(first.natives()[0].node, view.find("page").unwrap());
+}
+
+#[test]
+fn reactive_native_material_changes_keep_the_node_and_ancestor_clip() {
+    use zgx::scene::BackdropMaterial;
+    let mut ui = Ui::new(400., 250.);
+    let natives = supported();
+    let enabled = ui.signal(true);
+    let changed = enabled.clone();
+    let view = ui.mount(provide(
+        natives.clone(),
+        div().w(160.).h(70.).rounded(14.).overflow_hidden().child(
+            div().id("glass").w(200.).h(90.).reactive_style(move || {
+                Styles::new().backdrop_material(if changed.get() {
+                    BackdropMaterial::Liquid
+                } else {
+                    BackdropMaterial::Blur
+                })
+            }),
+        ),
+    ));
+    ui.prepare_frame();
+    let node = view.find("glass").unwrap();
+    let (first, _) = split(&ui, &natives, &PlaneSplit::default());
+    assert_eq!(
+        first.backdrops()[0].visible(),
+        Some(Rect::new(0., 0., 160., 70.))
+    );
+    assert!(!first.backdrops()[0].rounded.is_empty());
+    enabled.set(false);
+    ui.prepare_frame();
+    let (hidden, _) = split(&ui, &natives, &first);
+    assert!(hidden.backdrops().is_empty());
+    enabled.set(true);
+    ui.prepare_frame();
+    let (again, _) = split(&ui, &natives, &hidden);
+    assert_eq!(again.backdrops()[0].node, node);
+}
+
+#[test]
+fn decoration_only_recipes_keep_external_edges_and_split_around_native_children_at_zoom() {
+    use std::sync::Arc;
+    use zgx::{
+        scene::BackdropMaterial,
+        style::StrokeAlign,
+        surface::{SurfaceField as F, SurfaceGeometry, SurfaceLayer, SurfaceRecipe, SurfaceStroke},
+    };
+    let mut ui = Ui::new(800., 600.);
+    let natives = supported();
+    let web = WebView::new(&ui.runtime, WebViewOptions::default());
+    let recipe = Arc::new(SurfaceRecipe {
+        strokes: vec![SurfaceStroke {
+            width: F::Value(1.),
+            alignment: F::Value(StrokeAlign::Outside),
+            layer: SurfaceLayer {
+                geometry: SurfaceGeometry {
+                    insets: F::Value([-2.; 4]),
+                    clips_to_surface: F::Value(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let view = ui.mount(provide(
+        natives.clone(),
+        column().p(10.).zoom(2.).child(
+            column()
+                .id("recipe-pane")
+                .w(150.)
+                .h(100.)
+                .rounded(10.)
+                .overflow_hidden()
+                .surface_recipe(Some(recipe.clone()))
+                .child(text("Title").id("recipe-title"))
+                .child(web_view(&web).id("recipe-native").grow()),
+        ),
+    ));
+    ui.prepare_frame();
+    let (first, _) = split(&ui, &natives, &PlaneSplit::default());
+    assert_eq!(first.backdrops().len(), 1);
+    let placement = &first.backdrops()[0];
+    assert_eq!(
+        placement.material,
+        BackdropMaterial::None,
+        "no Gaussian blur for disabled glass"
+    );
+    assert_eq!(placement.recipe.as_ref(), Some(&recipe));
+    assert_eq!(placement.scale, 2.);
+    assert_eq!(placement.visual_bounds, placement.rect.expand(6.));
+    let window_zoomed = first.zoomed(1.5);
+    let zoomed = &window_zoomed.backdrops()[0];
+    assert_eq!(
+        zoomed.scale, 3.,
+        "recipe units follow window zoom as well as ancestor zoom"
+    );
+    assert_eq!(zoomed.visual_bounds, zoomed.rect.expand(9.));
+    assert_eq!(zoomed.visual_bounds.x, placement.visual_bounds.x * 1.5);
+    assert_eq!(zoomed.visual_bounds.y, placement.visual_bounds.y * 1.5);
+    assert_eq!(
+        zoomed.visual_bounds.width,
+        placement.visual_bounds.width * 1.5
+    );
+    assert_eq!(
+        zoomed.visual_bounds.height,
+        placement.visual_bounds.height * 1.5
+    );
+    assert_eq!(
+        placement.visible(),
+        Some(placement.visual_bounds),
+        "own clipping must not cut external edges"
+    );
+    assert_eq!(
+        placement.native_order, 0,
+        "fill and below-content stroke precede native content"
+    );
+    assert_eq!(
+        placement.above_content_order, 1,
+        "above-content strokes follow the descendant native"
+    );
+    assert_eq!(first.natives()[0].node, view.find("recipe-native").unwrap());
+    assert!(first.in_overlay(view.find("recipe-title").unwrap()));
+    let (again, damage) = split(&ui, &natives, &first);
+    assert_eq!(again.backdrops(), first.backdrops());
+    assert!(damage.is_empty(), "stable recipes introduce no idle damage");
+}
+
+#[test]
+fn clearing_a_recipe_removes_native_decoration_without_remounting() {
+    use std::sync::Arc;
+    use zgx::surface::SurfaceRecipe;
+    let mut ui = Ui::new(400., 250.);
+    let natives = supported();
+    let enabled = ui.signal(true);
+    let changed = enabled.clone();
+    let view = ui.mount(provide(
+        natives.clone(),
+        div().id("recipe").w(100.).h(60.).reactive_style(move || {
+            Styles::new().surface_recipe(changed.get().then(|| Arc::new(SurfaceRecipe::default())))
+        }),
+    ));
+    ui.prepare_frame();
+    let id = view.find("recipe").unwrap();
+    let (first, _) = split(&ui, &natives, &PlaneSplit::default());
+    assert_eq!(first.backdrops()[0].node, id);
+    enabled.set(false);
+    ui.prepare_frame();
+    let (cleared, _) = split(&ui, &natives, &first);
+    assert!(cleared.backdrops().is_empty());
+    assert_eq!(view.find("recipe"), Some(id));
+}
