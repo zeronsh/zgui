@@ -48,6 +48,8 @@ mod editor_streaming_history;
 mod editor_text_drag;
 #[path = "../editor_text_drag_windows.rs"]
 mod editor_text_drag_windows;
+#[path = "../editor_theme_marks.rs"]
+mod editor_theme_marks;
 #[path = "../editor_undo_keys.rs"]
 mod editor_undo_keys;
 #[path = "../editor_wrap_navigation.rs"]

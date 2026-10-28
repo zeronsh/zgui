@@ -173,7 +173,28 @@ struct EditorHint {
     /// What a code editor adds (`CodeHint`), made when first used: an
     /// editor without it carries a pointer's room.
     code: std::cell::OnceCell<Box<CodeHint>>,
+    /// The theme colours its default placeholder, gutter or marks have
+    /// shown in (`THEMED_*`), and what redraws it when one changes, made
+    /// when the first shows.
+    themed: Cell<u8>,
+    theme_watch: Cell<Option<Box<(u8, Effect)>>>,
 }
+/// Stops an editor's theme watch (`EditorHint::watch_theme`) with its node.
+struct ThemeUnwatch(Weak<EditorHint>);
+impl Drop for ThemeUnwatch {
+    fn drop(&mut self) {
+        if let Some(hint) = self.0.upgrade() {
+            drop(hint.theme_watch.take());
+        }
+    }
+}
+/// Theme colours an editor draws in only for what it may not have: a
+/// default placeholder (`text.tertiary`), line numbers (and
+/// `text.secondary`), a composition's underline and spelling marks.
+const THEMED_TERTIARY: u8 = 1;
+const THEMED_SECONDARY: u8 = 2;
+const THEMED_ACCENT: u8 = 4;
+const THEMED_DANGER: u8 = 8;
 /// What a code editor adds to an editor's hint: its long text's lines,
 /// marks behind its selection, its current line, Tab's indent, and who is
 /// told where its caret is.
@@ -195,8 +216,10 @@ struct CodeHint {
     /// when the first shows.
     decoration_layer: Cell<Option<NodeId>>,
     decoration_nodes: RefCell<Vec<NodeId>>,
-    /// Told where the caret is when it moves (`EditorHandle::on_caret`).
+    /// Told where the caret is when it moves (`EditorHandle::on_caret`),
+    /// and whether one listens (the slot is empty while it runs).
     on_caret: RefCell<Option<CaretListener>>,
+    caret_listened: Cell<bool>,
     /// Where it was last drawn, and last told.
     caret_drawn: Cell<Option<Caret>>,
     caret_told: Cell<Option<Caret>>,
@@ -222,7 +245,68 @@ impl EditorHint {
             reveal: Cell::default(),
             reveal_at: Cell::default(),
             code: std::cell::OnceCell::default(),
+            themed: Cell::default(),
+            theme_watch: Cell::default(),
         }
+    }
+    /// Redraw `root` when a theme colour it has shown in changes: one
+    /// effect, made again only when it shows in another, and stopped when
+    /// `root` goes (a handle may outlive it).
+    fn watch_theme(
+        hint: &Rc<Self>,
+        storage: &Weak<UiStorage>,
+        root: NodeId,
+        theme: &Rc<ThemeScope>,
+    ) {
+        let themed = hint.themed.get();
+        if themed == 0 {
+            return;
+        }
+        let watch = hint.theme_watch.take();
+        if watch.as_ref().is_some_and(|watch| watch.0 == themed) {
+            hint.theme_watch.set(watch);
+            return;
+        }
+        let Some(strong) = storage.upgrade() else {
+            return;
+        };
+        if watch.is_none() {
+            let mut owned = strong.owned.borrow_mut();
+            let Some(owned) = owned.get_mut(&root) else {
+                return;
+            };
+            owned
+                .resources
+                .push(Box::new(ThemeUnwatch(Rc::downgrade(hint))));
+        }
+        drop(watch);
+        let runtime = strong.runtime.clone();
+        drop(strong);
+        let (storage, theme) = (storage.clone(), theme.clone());
+        let mut first = true;
+        let effect = runtime.effect(move || {
+            for (bit, token) in [
+                (THEMED_TERTIARY, tok::TEXT_TERTIARY),
+                (THEMED_SECONDARY, tok::TEXT_SECONDARY),
+                (THEMED_ACCENT, tok::ACCENT),
+                (THEMED_DANGER, tok::DANGER),
+            ] {
+                if themed & bit != 0 {
+                    theme.color(token);
+                }
+            }
+            if std::mem::take(&mut first) {
+                return;
+            }
+            let Some(storage) = storage.upgrade() else {
+                return;
+            };
+            let handle = storage.editors.borrow().get(&root).cloned();
+            if let Some(handle) = handle {
+                storage.runtime.untracked(|| handle.refresh());
+            }
+        });
+        hint.theme_watch.set(Some(Box::new((themed, effect))));
     }
     fn code(&self) -> Option<&CodeHint> {
         self.code.get().map(|code| &**code)
@@ -485,6 +569,7 @@ impl EditorHandle {
     pub fn on_caret(&self, told: impl FnMut(Caret) + 'static) {
         let code = self.hint.code_made();
         *code.on_caret.borrow_mut() = Some(Box::new(told));
+        code.caret_listened.set(true);
         code.caret_told.set(None);
         self.refresh();
     }
@@ -3592,6 +3677,7 @@ impl Ui {
         // the text they are for.
         let draw_line_count: Cell<Option<(u64, usize)>> = Cell::new(None);
         let draw_semantic_revision: Cell<Option<u64>> = Cell::new(None);
+        let watched_theme = theme.clone();
         let refresh: Rc<dyn Fn()> = Rc::new(move || {
             let e = edit.borrow();
             let selection = e.selection();
@@ -3746,7 +3832,12 @@ impl Ui {
             let (shown_text, shown_color) = match shown {
                 Some((hint, hint_color)) => (
                     hint.as_ref(),
-                    hint_color.unwrap_or(theme.color_untracked(tok::TEXT_TERTIARY)),
+                    hint_color.unwrap_or_else(|| {
+                        draw_hint
+                            .themed
+                            .set(draw_hint.themed.get() | THEMED_TERTIARY);
+                        theme.color_untracked(tok::TEXT_TERTIARY)
+                    }),
                 ),
                 None => (display.as_ref(), color),
             };
@@ -4207,6 +4298,12 @@ impl Ui {
                     Style::default(),
                 ));
             }
+            if !numbers.is_empty() {
+                let themed = draw_hint.themed.get();
+                draw_hint
+                    .themed
+                    .set(themed | THEMED_TERTIARY | THEMED_SECONDARY);
+            }
             let (dim, bright) = (
                 theme.color_untracked(tok::TEXT_TERTIARY),
                 theme.color_untracked(tok::TEXT_SECONDARY),
@@ -4300,16 +4397,24 @@ impl Ui {
             while underline.len() > lines.len() {
                 s.remove(underline.pop().unwrap());
             }
-            while underline.len() < lines.len() {
-                underline.push(s.append(
-                    preedit_layer,
-                    surface(&theme, theme.color_untracked(tok::ACCENT)),
-                    Style::default(),
-                ));
-            }
-            for (id, (x, y, w, thick)) in underline.iter().zip(lines) {
-                s.set_style(*id, fixed(w, thick));
-                s.set_transform(*id, Transform { x, y });
+            if !lines.is_empty() {
+                draw_hint.themed.set(draw_hint.themed.get() | THEMED_ACCENT);
+                let accent = theme.color_untracked(tok::ACCENT);
+                while underline.len() < lines.len() {
+                    underline.push(s.append(
+                        preedit_layer,
+                        surface(&theme, accent),
+                        Style::default(),
+                    ));
+                }
+                for (id, (x, y, w, thick)) in underline.iter().zip(lines) {
+                    s.set_style(*id, fixed(w, thick));
+                    s.set_transform(*id, Transform { x, y });
+                    // Drawn before the accent changed: in the new one.
+                    if matches!(s.kind(*id), NodeKind::Quad(q) if q.fill != accent) {
+                        s.set_kind(*id, surface(&theme, accent));
+                    }
+                }
             }
             drop(underline);
             // Misspelled words: a dotted line under each, but not under the
@@ -4334,19 +4439,22 @@ impl Ui {
             while spelled.len() > marks.len() {
                 s.remove(spelled.pop().unwrap());
             }
-            while spelled.len() < marks.len() {
-                spelled.push(s.append(
-                    preedit_layer,
-                    spelling_mark(theme.color_untracked(tok::DANGER)),
-                    Style::default(),
-                ));
-            }
-            for (id, (x, y, w)) in spelled.iter().zip(marks) {
-                s.set_style(*id, fixed(w, 2.));
-                s.set_transform(*id, Transform { x, y });
+            if !marks.is_empty() {
+                draw_hint.themed.set(draw_hint.themed.get() | THEMED_DANGER);
+                let danger = theme.color_untracked(tok::DANGER);
+                while spelled.len() < marks.len() {
+                    spelled.push(s.append(preedit_layer, spelling_mark(danger), Style::default()));
+                }
+                for (id, (x, y, w)) in spelled.iter().zip(marks) {
+                    s.set_style(*id, fixed(w, 2.));
+                    s.set_transform(*id, Transform { x, y });
+                    if matches!(s.kind(*id), NodeKind::Quad(q) if q.border_color != danger) {
+                        s.set_kind(*id, spelling_mark(danger));
+                    }
+                }
             }
             if let Some(code) = draw_hint.code()
-                && code.on_caret.borrow().is_some()
+                && code.caret_listened.get()
             {
                 let focus = selection.focus.min(e.len());
                 let (line, start) = match &long_lines {
@@ -4417,21 +4525,31 @@ impl Ui {
         let refresh: Rc<dyn Fn()> = {
             let hook = interaction_refresh.clone();
             let told = hint.clone();
+            let storage = Rc::downgrade(&self.storage);
             Rc::new(move || {
                 refresh();
+                EditorHint::watch_theme(&told, &storage, root, &watched_theme);
                 // Where the caret is, told once drawn (nothing borrowed),
-                // if it moved; the callback is out while it runs.
+                // if it moved. The callback is out while it runs: a refresh
+                // it causes finds none and leaves the telling to this one,
+                // which tells again where that left the caret (a few times
+                // at most, should callbacks keep moving it).
                 if let Some(code) = told.code() {
-                    let caret = code.caret_drawn.get();
-                    if caret.is_some() && caret != code.caret_told.get() {
-                        code.caret_told.set(caret);
-                        let callback = code.on_caret.borrow_mut().take();
-                        if let (Some(mut callback), Some(caret)) = (callback, caret) {
-                            callback(caret);
-                            let mut slot = code.on_caret.borrow_mut();
-                            if slot.is_none() {
-                                *slot = Some(callback);
-                            }
+                    for _ in 0..4 {
+                        let Some(caret) = code.caret_drawn.get() else {
+                            break;
+                        };
+                        if Some(caret) == code.caret_told.get() {
+                            break;
+                        }
+                        let Some(mut callback) = code.on_caret.borrow_mut().take() else {
+                            break;
+                        };
+                        code.caret_told.set(Some(caret));
+                        callback(caret);
+                        let mut slot = code.on_caret.borrow_mut();
+                        if slot.is_none() {
+                            *slot = Some(callback);
                         }
                     }
                 }

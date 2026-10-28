@@ -322,6 +322,44 @@ fn turning_spellcheck_off_clears_the_marks_and_on_checks_again() {
     assert_eq!(marks(&ui).len(), 2, "on: the whole text checked");
 }
 
+#[test]
+fn spelling_marks_follow_the_danger_colour() {
+    use zgx::{
+        scene::{Color, NodeKind},
+        theme::{Theme, ThemeKind, tok},
+    };
+    let (red, green) = (Color(255, 0, 0, 255), Color(0, 255, 0, 255));
+    let mut ui = Ui::new(400., 200.);
+    ui.theme()
+        .register(Theme::new("a", ThemeKind::Dark).with(tok::DANGER, red));
+    ui.theme()
+        .register(Theme::new("b", ThemeKind::Dark).with(tok::DANGER, green));
+    ui.theme().set("a").unwrap();
+    let value = ui.signal("fix teh bug".to_owned());
+    ui.mount(provide(
+        zgx::platform::PlatformService(Rc::new(Speller::default())),
+        column()
+            .size(400., 200.)
+            .child(text_area("Notes", value).spellcheck(true).w(300.).h(80.)),
+    ));
+    ui.prepare_frame();
+    let colours = |ui: &Ui| -> Vec<Color> {
+        let scene = ui.scene.borrow();
+        scene
+            .paint_items()
+            .filter_map(|item| match scene.kind(item.id) {
+                NodeKind::Quad(quad) if quad.decoration.is_some() => Some(quad.border_color),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(marks(&ui).len(), 1);
+    assert_eq!(colours(&ui), [red]);
+    ui.theme().set("b").unwrap();
+    ui.prepare_frame();
+    assert_eq!(colours(&ui), [green]);
+}
+
 /// A platform that looks words up (macOS's dictionary), recording what it
 /// was asked.
 #[derive(Default)]
