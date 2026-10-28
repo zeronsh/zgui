@@ -367,12 +367,17 @@ impl Runtime {
         mount_pure: bool,
         callback: impl FnMut() + 'static,
     ) -> Effect {
+        self.effect_callback(mount_pure, Rc::new(RefCell::new(callback)))
+    }
+    /// [`Runtime::effect_marked`] with its callback already allocated: a
+    /// large closure moves into its allocation once.
+    pub(crate) fn effect_callback(&self, mount_pure: bool, callback: Callback) -> Effect {
         let born = self.inner.next.get();
         self.inner.next.set(born + 1);
         let id = self.inner.effects.borrow_mut().insert(
             born,
             EffectRecord {
-                callback: Rc::new(RefCell::new(callback)),
+                callback,
                 dependencies: Default::default(),
                 run: 0,
                 queued: true,

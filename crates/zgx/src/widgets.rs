@@ -1493,29 +1493,30 @@ impl Ui {
             "cannot bind a removed UI node"
         );
         let mut initial = self.storage.mount_initialization.borrow().clone();
-        self.runtime.clone().batch(|| {
-            let effect = self.runtime.effect_marked(mount_pure, move || {
-                let Some(token) = initial.take() else {
-                    f();
-                    return;
-                };
-                if token.failed.get()
-                    || token
-                        .ui
-                        .upgrade()
-                        .is_none_or(|ui| !ui.scene.borrow().contains(owner))
-                {
-                    return;
-                }
-                let scope = token.enter();
-                let mut guard = InitialBindingGuard {
-                    token,
-                    scope: Some(scope),
-                    completed: false,
-                };
+        let callback: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(move || {
+            let Some(token) = initial.take() else {
                 f();
-                guard.completed = true;
-            });
+                return;
+            };
+            if token.failed.get()
+                || token
+                    .ui
+                    .upgrade()
+                    .is_none_or(|ui| !ui.scene.borrow().contains(owner))
+            {
+                return;
+            }
+            let scope = token.enter();
+            let mut guard = InitialBindingGuard {
+                token,
+                scope: Some(scope),
+                completed: false,
+            };
+            f();
+            guard.completed = true;
+        }));
+        self.runtime.clone().batch(|| {
+            let effect = self.runtime.effect_callback(mount_pure, callback);
             #[cfg(feature = "trace")]
             if crate::trace::enabled() {
                 crate::trace::name(effect.number(), format!("@{} binding", owner.number()));
