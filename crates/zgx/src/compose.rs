@@ -388,6 +388,7 @@ pub(crate) struct Rare {
     placeholder_color: Option<Box<dyn FnMut() -> crate::scene::Color>>,
     select_on_focus: Option<bool>,
     secure: Option<bool>,
+    input_mode: Option<crate::text_edit::InputMode>,
     spellcheck: Option<Box<dyn FnMut() -> bool>>,
     line_numbers: Option<bool>,
     /// What a code editor adds to a text area (`View::highlighter`, …).
@@ -467,6 +468,9 @@ impl Rare {
         }
         if self.secure.is_some() {
             inner.secure = self.secure;
+        }
+        if self.input_mode.is_some() {
+            inner.input_mode = self.input_mode;
         }
         if self.line_numbers.is_some() {
             inner.line_numbers = self.line_numbers;
@@ -1138,6 +1142,15 @@ impl View {
     /// `EditorHandle::set_secure`). Only editor views take it.
     pub fn secure(mut self, secure: bool) -> Self {
         self.rare_mut().secure = Some(secure);
+        self
+    }
+    /// What kind of text the editor takes, as HTML's `inputmode` says it
+    /// (`InputMode::Email`, `Numeric`, …): which touch keyboard Windows
+    /// shows and what a Wayland input method offers, none for
+    /// `InputMode::None`. A hint, not a check: anything can still be typed.
+    /// Only editor views take it.
+    pub fn input_mode(mut self, mode: crate::text_edit::InputMode) -> Self {
+        self.rare_mut().input_mode = Some(mode);
         self
     }
     /// Check the spelling as it is typed, as a browser's text fields do
@@ -3368,6 +3381,10 @@ fn open_element(
         "spellcheck is only supported on editor views"
     );
     assert!(
+        rare.as_deref().is_none_or(|r| r.input_mode.is_none()) || is_editor,
+        "input_mode is only supported on editor views"
+    );
+    assert!(
         (rare.as_deref().is_none_or(|r| r.placeholder.is_none())
             && rare
                 .as_deref()
@@ -4269,6 +4286,9 @@ fn open_element(
         }
         if let Some(secure) = rare.as_deref().and_then(|r| r.secure) {
             editor.set_secure(secure);
+        }
+        if let Some(mode) = rare.as_deref().and_then(|r| r.input_mode) {
+            editor.set_input_mode(mode);
         }
         if let Some(check) = rare.as_deref_mut().and_then(|r| r.spellcheck.take())
             && rare.as_deref().and_then(|r| r.secure) != Some(true)

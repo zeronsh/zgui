@@ -183,3 +183,37 @@ fn hover_holds_across_children() {
     // The row: one enter, one leave; the first button its own two pairs.
     assert_eq!(h.text("log"), "[aAaA]");
 }
+
+/// HTML's `inputmode`: what kind of text a field takes, a hint the
+/// platform's input reads (Windows' touch keyboard and input scope).
+#[test]
+fn inputmode_says_what_kind_of_text_a_field_takes() {
+    use zgx::text_edit::InputMode;
+    let mut h = Harness::inline(
+        r##"local v = ui.state("v", "")
+        return ui.column {
+            ui.input { id = "email", label = "Email", value = v, w = 300, h = 24, inputmode = "email" },
+            ui.input { id = "pin", label = "PIN", value = v, w = 300, h = 24, inputmode = "numeric" },
+            ui.input { id = "keypad", label = "Amount", value = v, w = 300, h = 24, inputmode = "none" },
+            ui.input { id = "plain", label = "Name", value = v, w = 300, h = 24 },
+        }"##,
+    );
+    h.ui.prepare_frame();
+    let mut mode = |id: &str| {
+        let node = h.find(id).unwrap();
+        h.ui.editor(node).unwrap().input_mode()
+    };
+    assert_eq!(mode("email"), InputMode::Email);
+    assert_eq!(mode("pin"), InputMode::Numeric);
+    assert_eq!(mode("keypad"), InputMode::None);
+    assert_eq!(mode("plain"), InputMode::Text);
+}
+
+/// A mode it doesn't know is the script's error, naming those it does.
+#[test]
+#[should_panic(expected = "unknown inputmode `phone`: one of text, decimal, numeric, tel")]
+fn an_unknown_inputmode_is_an_error() {
+    Harness::inline(
+        r##"return ui.input { label = "Phone", value = ui.state("p", ""), inputmode = "phone" }"##,
+    );
+}

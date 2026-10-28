@@ -2,6 +2,12 @@
 
 zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps, newest first.
 
+## Unreleased
+
+### Added
+
+- **Input modes, as HTML's `inputmode`**: `View::input_mode(InputMode::Email)` (`Text`, `Decimal`, `Numeric`, `Tel`, `Search`, `Email`, `Url`, `None`), `EditorHandle::set_input_mode`, and Luau's `inputmode = "email"`, say what kind of text a field takes. It is a hint, never a check. On Windows (`ZGX_TSF=1`) it is the field's input scope, which the touch keyboard and input methods follow, and `None` shows no touch keyboard. Windows input methods also reconvert committed text in place (select it, press Convert or Hanja).
+
 ## 0.1.5 (2026-10-28)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.4 is an addition, and zgx-desktop and zgx-gpu 0.1.4 build against this zgx), and `zgx-3d` is a new crate. Two behaviours change, each below with what to check: a radio's, check box's, switch's or link's accessible name, and the button Enter or Space activates.

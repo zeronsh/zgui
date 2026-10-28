@@ -791,9 +791,16 @@ Editors take input methods through winit's IMM32 path by default. With
 - **Reconversion.** An input method opening its composition over committed
   text (selected, then Convert or Hanja) composes that text in its place:
   what it ends as replaces it, and ending it unchanged edits nothing.
+- **Input scopes.** An editor's input mode (`View::input_mode`, Luau's
+  `inputmode`, HTML's) is its input scope (`GUID_PROP_INPUTSCOPE`, an
+  `ITfInputScope`): `IS_DIGITS` for numeric, `IS_NUMBER` for decimal,
+  `IS_TELEPHONE_FULLTELEPHONENUMBER`, `IS_SEARCH`, `IS_EMAIL_SMTPEMAILADDRESS`,
+  `IS_URL`, which the touch keyboard and input methods follow. Focus moving
+  to an editor of another mode tells them (`OnAttrsChange`). `None` shows no
+  touch keyboard.
 
-Input scopes are the next stage; the framework becomes the default after it
-and the Japanese and Chinese probes run on their installed languages.
+The framework becomes the default once the Japanese and Chinese probes run on
+their installed languages.
 - `windows_platform_smoke.py`: selected display text copied as text and HTML
   and read by another process, text from another process pasted into an
   editor, the file picker, the save dialog (a name typed into it reaches the

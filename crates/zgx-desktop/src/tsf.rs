@@ -23,29 +23,30 @@ use windows::{
         Foundation::{E_INVALIDARG, E_NOTIMPL, HWND, POINT, RECT},
         Graphics::Gdi::ClientToScreen,
         System::{
-            Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, FORMATETC, IDataObject},
-            Variant::VT_I4,
+            Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemAlloc, FORMATETC, IDataObject},
+            Variant::{VARIANT, VT_I4, VT_UNKNOWN},
         },
         UI::{
             TextServices::{
                 CLSID_TF_CategoryMgr, CLSID_TF_DisplayAttributeMgr, CLSID_TF_ThreadMgr,
-                GUID_PROP_ATTRIBUTE, ITextStoreACP2, ITextStoreACP2_Impl, ITextStoreACPSink,
-                ITfCategoryMgr, ITfCompositionView, ITfContext, ITfContextOwnerCompositionServices,
-                ITfContextOwnerCompositionSink, ITfContextOwnerCompositionSink_Impl,
-                ITfDisplayAttributeInfo, ITfDisplayAttributeMgr, ITfDocumentMgr, ITfEditRecord,
-                ITfRange, ITfRangeACP, ITfSource, ITfTextEditSink, ITfTextEditSink_Impl,
-                ITfThreadMgr, TEXT_STORE_LOCK_FLAGS, TEXT_STORE_TEXT_CHANGE_FLAGS,
-                TF_ATTR_CONVERTED, TF_ATTR_FIXEDCONVERTED, TF_ATTR_TARGET_CONVERTED,
-                TF_ATTR_TARGET_NOTCONVERTED, TF_DISPLAYATTRIBUTE, TF_IAS_QUERYONLY, TS_AE_END,
-                TS_AE_START, TS_ATTRVAL, TS_DEFAULT_SELECTION, TS_E_NOLOCK, TS_E_SYNCHRONOUS,
-                TS_LC_CHANGE, TS_LF_READ, TS_LF_READWRITE, TS_LF_SYNC, TS_RT_PLAIN, TS_RUNINFO,
-                TS_S_ASYNC, TS_SELECTION_ACP, TS_SELECTIONSTYLE, TS_SS_NOHIDDENTEXT, TS_STATUS,
-                TS_TEXTCHANGE,
+                GUID_PROP_ATTRIBUTE, GUID_PROP_INPUTSCOPE, ITextStoreACP2, ITextStoreACP2_Impl,
+                ITextStoreACPSink, ITfCategoryMgr, ITfCompositionView, ITfContext,
+                ITfContextOwnerCompositionServices, ITfContextOwnerCompositionSink,
+                ITfContextOwnerCompositionSink_Impl, ITfDisplayAttributeInfo,
+                ITfDisplayAttributeMgr, ITfDocumentMgr, ITfEditRecord, ITfInputScope,
+                ITfInputScope_Impl, ITfRange, ITfRangeACP, ITfSource, ITfTextEditSink,
+                ITfTextEditSink_Impl, ITfThreadMgr, InputScope, TEXT_STORE_LOCK_FLAGS,
+                TEXT_STORE_TEXT_CHANGE_FLAGS, TF_ATTR_CONVERTED, TF_ATTR_FIXEDCONVERTED,
+                TF_ATTR_TARGET_CONVERTED, TF_ATTR_TARGET_NOTCONVERTED, TF_DISPLAYATTRIBUTE,
+                TF_IAS_QUERYONLY, TS_AE_END, TS_AE_START, TS_ATTRVAL, TS_DEFAULT_SELECTION,
+                TS_E_NOLOCK, TS_E_SYNCHRONOUS, TS_LC_CHANGE, TS_LF_READ, TS_LF_READWRITE,
+                TS_LF_SYNC, TS_RT_PLAIN, TS_RUNINFO, TS_S_ASYNC, TS_SELECTION_ACP,
+                TS_SELECTIONSTYLE, TS_SS_NOHIDDENTEXT, TS_STATUS, TS_TEXTCHANGE,
             },
             WindowsAndMessaging::GetClientRect,
         },
     },
-    core::{BOOL, GUID, HRESULT, IUnknown, Interface, PCWSTR, PWSTR, Ref, Result, implement},
+    core::{BOOL, BSTR, GUID, HRESULT, IUnknown, Interface, PCWSTR, PWSTR, Ref, Result, implement},
 };
 use zgx::{scene::Rect, text_edit::ClauseStyle, widgets::EditorHandle};
 
@@ -68,6 +69,11 @@ struct Shared {
     /// What reads an input method's display attributes (how it marks its
     /// composition's clauses), made when one first composes.
     attributes: Option<(ITfCategoryMgr, ITfDisplayAttributeMgr)>,
+    /// The framework asked for the input scope (`RequestSupportedAttrs`),
+    /// to fetch with `RetrieveRequestedAttrs`.
+    scope_asked: bool,
+    /// The input scope it was last told of (`retell_scope`).
+    told_scope: i32,
 }
 
 /// The Text Services Framework for one window.
@@ -105,6 +111,8 @@ impl Tsf {
                 told_len: 0,
                 layout_changed: false,
                 attributes: None,
+                scope_asked: false,
+                told_scope: 0,
             }));
             let store: IUnknown = Store(shared.clone()).into();
             let (mut context, mut cookie) = (None, 0);
@@ -156,6 +164,7 @@ impl Tsf {
             shared.store.focus(editor);
             shared.told_len = shared.store.len();
         }
+        retell_scope(&self.shared);
         if on != self.focused {
             let hwnd = self.shared.borrow().hwnd;
             // SAFETY: the document manager outlives the association.
@@ -179,6 +188,11 @@ impl Tsf {
     /// After zgx's dispatch: tell the input method what changed that it
     /// didn't do, then grant a lock it asked for meanwhile.
     pub(crate) fn after_dispatch(&self) {
+        if self.shared.borrow().lock != 0 {
+            return;
+        }
+        // The focused editor's input mode set while it has focus.
+        retell_scope(&self.shared);
         let (sink, changes, layout) = {
             let mut shared = self.shared.borrow_mut();
             if shared.lock != 0 {
@@ -260,6 +274,27 @@ fn acp(at: usize) -> i32 {
 }
 fn at(acp: i32) -> usize {
     usize::try_from(acp).unwrap_or(0)
+}
+
+/// Tell the input method the input scope changed: focus moved to an editor
+/// of another mode, or the focused one's mode changed. One context serves
+/// every editor in the window, and an input method reads the scope again
+/// only when told. (Nothing is borrowed across the call: the framework asks
+/// for a lock in it.)
+fn retell_scope(shared: &Rc<RefCell<Shared>>) {
+    let (sink, len) = {
+        let mut s = shared.borrow_mut();
+        let scope = s.store.input_scope();
+        if scope == s.told_scope {
+            return;
+        }
+        s.told_scope = scope;
+        (s.sink.clone(), s.store.len())
+    };
+    if let Some(sink) = sink {
+        // SAFETY: the sink is alive while advised; no lock is held.
+        let _ = unsafe { sink.OnAttrsChange(0, acp(len), &[GUID_PROP_INPUTSCOPE]) };
+    }
 }
 
 /// Grant lock `flags` now: hold it while the sink reads or edits.
@@ -540,16 +575,20 @@ impl ITextStoreACP2_Impl for Store_Impl {
     ) -> Result<()> {
         Err(E_NOTIMPL.into())
     }
-    fn RequestSupportedAttrs(&self, _flags: u32, _count: u32, _attrs: *const GUID) -> Result<()> {
+    fn RequestSupportedAttrs(&self, _flags: u32, count: u32, attrs: *const GUID) -> Result<()> {
+        // The one attribute the store has: the editor's input scope.
+        self.0.borrow_mut().scope_asked = asks_scope(count, attrs);
         Ok(())
     }
     fn RequestAttrsAtPosition(
         &self,
         _at: i32,
-        _count: u32,
-        _attrs: *const GUID,
+        count: u32,
+        attrs: *const GUID,
         _flags: u32,
     ) -> Result<()> {
+        // The scope is the whole document's, at every position.
+        self.0.borrow_mut().scope_asked = asks_scope(count, attrs);
         Ok(())
     }
     fn RequestAttrsTransitioningAtPosition(
@@ -582,12 +621,36 @@ impl ITextStoreACP2_Impl for Store_Impl {
     }
     fn RetrieveRequestedAttrs(
         &self,
-        _count: u32,
-        _values: *mut TS_ATTRVAL,
+        count: u32,
+        values: *mut TS_ATTRVAL,
         fetched: *mut u32,
     ) -> Result<()> {
-        // SAFETY: the caller's out pointer.
-        unsafe { *fetched = 0 };
+        let scope = {
+            let mut shared = self.0.borrow_mut();
+            std::mem::take(&mut shared.scope_asked).then(|| shared.store.input_scope())
+        };
+        let (Some(scope), true) = (scope, count > 0 && !values.is_null()) else {
+            // SAFETY: the caller's out pointer.
+            unsafe { *fetched = 0 };
+            return Ok(());
+        };
+        // The scope as the framework takes it: an ITfInputScope in a
+        // VT_UNKNOWN, which the caller releases.
+        let mut value = VARIANT::default();
+        let scopes: ITfInputScope = Scopes(InputScope(scope)).into();
+        // SAFETY: a zeroed VARIANT, its type and pointer set as one; the
+        // caller's buffer, `count` long, and out pointer.
+        unsafe {
+            let inner = &mut *value.Anonymous.Anonymous;
+            inner.vt = VT_UNKNOWN;
+            inner.Anonymous.punkVal = std::mem::ManuallyDrop::new(Some(scopes.into()));
+            values.write(TS_ATTRVAL {
+                idAttr: GUID_PROP_INPUTSCOPE,
+                dwOverlapId: 0,
+                varValue: value,
+            });
+            *fetched = 1;
+        }
         Ok(())
     }
     fn GetEndACP(&self) -> Result<i32> {
@@ -772,6 +835,54 @@ fn clauses(
     Ok(clauses)
 }
 
+/// Whether `count` attributes at `attrs` ask for the input scope.
+fn asks_scope(count: u32, attrs: *const GUID) -> bool {
+    if attrs.is_null() {
+        return false;
+    }
+    // SAFETY: the caller's `count` attributes.
+    unsafe { std::slice::from_raw_parts(attrs, count as usize) }.contains(&GUID_PROP_INPUTSCOPE)
+}
+
+/// An editor's input scope (`text_store::input_scope`), as the framework
+/// reads it: one scope, no phrases or grammar.
+#[implement(ITfInputScope)]
+struct Scopes(InputScope);
+
+impl ITfInputScope_Impl for Scopes_Impl {
+    fn GetInputScopes(&self, scopes: *mut *mut InputScope, count: *mut u32) -> Result<()> {
+        // SAFETY: memory the caller frees with CoTaskMemFree, one scope
+        // long; the caller's out pointers.
+        unsafe {
+            let array = CoTaskMemAlloc(std::mem::size_of::<InputScope>()) as *mut InputScope;
+            if array.is_null() {
+                return Err(windows::Win32::Foundation::E_OUTOFMEMORY.into());
+            }
+            array.write(self.0);
+            *scopes = array;
+            *count = 1;
+        }
+        Ok(())
+    }
+    fn GetPhrase(&self, phrases: *mut *mut BSTR, count: *mut u32) -> Result<()> {
+        // SAFETY: the caller's out pointers.
+        unsafe {
+            *phrases = std::ptr::null_mut();
+            *count = 0;
+        }
+        Err(E_NOTIMPL.into())
+    }
+    fn GetRegularExpression(&self) -> Result<BSTR> {
+        Err(E_NOTIMPL.into())
+    }
+    fn GetSRGS(&self) -> Result<BSTR> {
+        Err(E_NOTIMPL.into())
+    }
+    fn GetXML(&self) -> Result<BSTR> {
+        Err(E_NOTIMPL.into())
+    }
+}
+
 /// A composition's range in the document: its start and length.
 fn extent(view: &ITfCompositionView) -> Option<(usize, usize)> {
     // SAFETY: a range the composition gives, read through its ACP view.
@@ -780,5 +891,170 @@ fn extent(view: &ITfCompositionView) -> Option<(usize, usize)> {
         let (mut start, mut len) = (0, 0);
         range.GetExtent(&mut start, &mut len).ok()?;
         Some((at(start), at(len)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The store as the framework drives it, through its COM interfaces,
+    //! with no framework: what zgx hands Windows. (What the touch keyboard
+    //! does with it is Windows'.)
+    use super::*;
+    use windows::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::TextServices::{
+            IS_DIGITS, IS_EMAIL_SMTPEMAILADDRESS, ITextStoreACPSink_Impl, TsLayoutCode,
+        },
+    };
+    use zgx::{compose::prelude::*, text_edit::InputMode, widgets::Ui};
+
+    /// A sink that keeps the attributes it was told changed.
+    #[implement(ITextStoreACPSink)]
+    struct Told(Rc<RefCell<Vec<GUID>>>);
+    impl ITextStoreACPSink_Impl for Told_Impl {
+        fn OnTextChange(
+            &self,
+            _flags: TEXT_STORE_TEXT_CHANGE_FLAGS,
+            _change: *const TS_TEXTCHANGE,
+        ) -> Result<()> {
+            Ok(())
+        }
+        fn OnSelectionChange(&self) -> Result<()> {
+            Ok(())
+        }
+        fn OnLayoutChange(&self, _code: TsLayoutCode, _view: u32) -> Result<()> {
+            Ok(())
+        }
+        fn OnStatusChange(&self, _flags: u32) -> Result<()> {
+            Ok(())
+        }
+        fn OnAttrsChange(
+            &self,
+            _start: i32,
+            _end: i32,
+            count: u32,
+            attrs: *const GUID,
+        ) -> Result<()> {
+            // SAFETY: the caller's `count` attributes.
+            let attrs = unsafe { std::slice::from_raw_parts(attrs, count as usize) };
+            self.0.borrow_mut().extend_from_slice(attrs);
+            Ok(())
+        }
+        fn OnLockGranted(&self, _flags: TEXT_STORE_LOCK_FLAGS) -> Result<()> {
+            Ok(())
+        }
+        fn OnStartEditTransaction(&self) -> Result<()> {
+            Ok(())
+        }
+        fn OnEndEditTransaction(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The scopes the store answers for: GUID_PROP_INPUTSCOPE asked for,
+    /// then fetched, its ITfInputScope read, as the framework does.
+    fn scopes(store: &ITextStoreACP2) -> Vec<i32> {
+        // SAFETY: the store's own methods, with buffers of the sizes given;
+        // the scope array freed with CoTaskMemFree, the value released.
+        unsafe {
+            store
+                .RequestSupportedAttrs(0, &[GUID_PROP_INPUTSCOPE])
+                .unwrap();
+            let mut values = [std::mem::zeroed::<TS_ATTRVAL>()];
+            let mut fetched = 0;
+            store
+                .RetrieveRequestedAttrs(&mut values, &mut fetched)
+                .unwrap();
+            assert_eq!(fetched, 1);
+            assert_eq!(values[0].idAttr, GUID_PROP_INPUTSCOPE);
+            let inner = &values[0].varValue.Anonymous.Anonymous;
+            assert_eq!(inner.vt, VT_UNKNOWN);
+            // A reference of its own: the VARIANT releases the one it holds
+            // as it drops, as the framework's VariantClear does.
+            let unknown = (*inner.Anonymous.punkVal).clone().unwrap();
+            let scope: ITfInputScope = unknown.cast().unwrap();
+            let (mut array, mut count) = (std::ptr::null_mut(), 0);
+            scope.GetInputScopes(&mut array, &mut count).unwrap();
+            let read = std::slice::from_raw_parts(array, count as usize)
+                .iter()
+                .map(|s| s.0)
+                .collect();
+            CoTaskMemFree(Some(array as *const _));
+            read
+        }
+    }
+
+    /// Each editor's input mode is the scope the framework reads, told
+    /// again when focus moves to another mode's editor and when the
+    /// focused editor's mode changes.
+    #[test]
+    fn the_framework_reads_each_editors_input_scope() {
+        let mut ui = Ui::new(400., 200.);
+        let value = ui.signal(String::new());
+        let view = ui.mount(
+            column()
+                .child(
+                    text_input("Email", value.clone())
+                        .id("email")
+                        .input_mode(InputMode::Email),
+                )
+                .child(
+                    text_input("PIN", value.clone())
+                        .id("pin")
+                        .input_mode(InputMode::Numeric),
+                )
+                .child(text_input("Name", value).id("name")),
+        );
+        ui.prepare_frame();
+        let told = Rc::new(RefCell::new(Vec::new()));
+        let sink: ITextStoreACPSink = Told(told.clone()).into();
+        let shared = Rc::new(RefCell::new(Shared {
+            store: TextStore::new(),
+            sink: Some(sink),
+            lock: 0,
+            pending: None,
+            hwnd: HWND::default(),
+            scale: 1.,
+            told_len: 0,
+            layout_changed: false,
+            attributes: None,
+            scope_asked: false,
+            told_scope: 0,
+        }));
+        let store: ITextStoreACP2 = Store(shared.clone()).into();
+        let focus = |id: &str| {
+            ui.input.focus(&ui.scene, view.find(id));
+            shared.borrow_mut().store.focus(ui.focused_editor());
+            retell_scope(&shared);
+        };
+        focus("email");
+        assert_eq!(scopes(&store), [IS_EMAIL_SMTPEMAILADDRESS.0]);
+        assert_eq!(told.borrow().as_slice(), [GUID_PROP_INPUTSCOPE]);
+        focus("pin");
+        assert_eq!(scopes(&store), [IS_DIGITS.0]);
+        assert_eq!(told.borrow().len(), 2, "told as focus moved");
+        // Its mode changed while it has focus: told after the dispatch.
+        ui.focused_editor()
+            .unwrap()
+            .set_input_mode(InputMode::Email);
+        retell_scope(&shared);
+        assert_eq!(scopes(&store), [IS_EMAIL_SMTPEMAILADDRESS.0]);
+        assert_eq!(told.borrow().len(), 3);
+        // Nothing changed: nothing told.
+        retell_scope(&shared);
+        assert_eq!(told.borrow().len(), 3);
+        focus("name");
+        assert_eq!(scopes(&store), [0], "IS_DEFAULT");
+        // Asked for nothing, the store fetches nothing.
+        // SAFETY: the store's own method, with a buffer of the size given.
+        unsafe {
+            store.RequestSupportedAttrs(0, &[]).unwrap();
+            let mut values = [std::mem::zeroed::<TS_ATTRVAL>()];
+            let mut fetched = 7;
+            store
+                .RetrieveRequestedAttrs(&mut values, &mut fetched)
+                .unwrap();
+            assert_eq!(fetched, 0);
+        }
     }
 }

@@ -1235,6 +1235,7 @@ fn kind_view(
             select_on_focus,
             line_numbers,
             secure,
+            input_mode,
             spellcheck,
             code,
         } => {
@@ -1310,6 +1311,9 @@ fn kind_view(
             }
             if let Some(control) = controlled {
                 view = view.on_event(control);
+            }
+            if *input_mode != zgx::text_edit::InputMode::Text {
+                view = view.input_mode(*input_mode);
             }
             if *secure {
                 view = view.secure(true);

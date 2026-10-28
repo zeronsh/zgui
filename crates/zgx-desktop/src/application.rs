@@ -1865,6 +1865,12 @@ impl Host {
         // drawing gates. Read-only editors retain logical focus but no IME context.
         let editor = crate::native_ime::editable_editor(&self.context.ui, self.native_focused);
         let target = editor.as_ref().map(|editor| editor.node);
+        // A field with its own keys (`InputMode::None`) shows no touch keyboard.
+        #[cfg(windows)]
+        let keyboard = target.is_some()
+            && editor
+                .as_ref()
+                .is_none_or(|editor| editor.input_mode() != zgx::text_edit::InputMode::None);
         // On Windows with the Text Services Framework, it takes the editor
         // instead of IMM32's context (`tsf.rs`).
         #[cfg(windows)]
@@ -1880,9 +1886,9 @@ impl Host {
                 tsf.focus(editor);
                 self.ime_target = target;
                 if let Some(window) = &self.window {
-                    if target.is_some() && self.touch_last {
+                    if keyboard && self.touch_last {
                         self.touch_keyboard = crate::input_pane::show(window);
-                    } else if target.is_none() && std::mem::take(&mut self.touch_keyboard) {
+                    } else if !keyboard && std::mem::take(&mut self.touch_keyboard) {
                         crate::input_pane::hide(window);
                     }
                 }
@@ -1907,9 +1913,9 @@ impl Host {
                 window.set_ime_allowed(true);
             }
             #[cfg(windows)]
-            if target.is_some() && self.touch_last {
+            if keyboard && self.touch_last {
                 self.touch_keyboard = crate::input_pane::show(window);
-            } else if target.is_none() && std::mem::take(&mut self.touch_keyboard) {
+            } else if !keyboard && std::mem::take(&mut self.touch_keyboard) {
                 crate::input_pane::hide(window);
             }
             self.ime_target = target;

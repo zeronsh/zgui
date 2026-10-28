@@ -816,6 +816,9 @@ pub(crate) enum Kind {
         code: Option<Rc<CodeProps>>,
         /// `secure = true`: a password field (masked, never copied).
         secure: bool,
+        /// `inputmode = "email"` (HTML's): what kind of text it takes, a
+        /// hint to touch keyboards and input methods.
+        input_mode: zgx::text_edit::InputMode,
         /// `spellcheck = true` (or a state or function of one): the system's
         /// checker marks misspellings.
         spellcheck: Option<Source>,
@@ -2153,6 +2156,7 @@ const WIDGET_FIELDS: &[&str] = &[
     "mixed",
     "select_on_focus",
     "secure",
+    "inputmode",
     "spellcheck",
     "line_numbers",
     "highlight",
@@ -3462,6 +3466,22 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                         .get::<Option<bool>>("select_on_focus")?
                         .unwrap_or(false),
                     secure: table.get::<Option<bool>>("secure")?.unwrap_or(false),
+                    input_mode: match table.get::<Option<String>>("inputmode")?.as_deref() {
+                        None | Some("text") => zgx::text_edit::InputMode::Text,
+                        Some("decimal") => zgx::text_edit::InputMode::Decimal,
+                        Some("numeric") => zgx::text_edit::InputMode::Numeric,
+                        Some("tel") => zgx::text_edit::InputMode::Tel,
+                        Some("search") => zgx::text_edit::InputMode::Search,
+                        Some("email") => zgx::text_edit::InputMode::Email,
+                        Some("url") => zgx::text_edit::InputMode::Url,
+                        Some("none") => zgx::text_edit::InputMode::None,
+                        Some(other) => {
+                            return Err(mlua::Error::runtime(format!(
+                                "unknown inputmode `{other}`: one of text, decimal, numeric, \
+                                 tel, search, email, url, none"
+                            )));
+                        }
+                    },
                     spellcheck: optional("spellcheck", Ty::Bool)?,
                     line_numbers: table.get::<Option<bool>>("line_numbers")?.unwrap_or(false),
                     code: {

@@ -7,6 +7,8 @@
 //! `--open-tsf-ime` (Windows, `ZGX_TSF=1`): the input method is opened
 //! through the Text Services Framework's compartments, as `--open-ime`
 //! opens it through IMM32 (`scripts/windows_tsf_japanese_smoke.py`).
+//! `--input-modes`: the first editor takes an email address and the second
+//! digits (`InputMode::Email`, `Numeric`): Windows' touch keyboard follows.
 use std::time::Duration;
 use zgx::{
     compose::prelude::*,
@@ -139,6 +141,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let observe = std::env::args().any(|arg| arg == "--native-observe");
     let password = std::env::args().any(|arg| arg == "--password");
     let replace = std::env::args().any(|arg| arg == "--replace-while-composing");
+    let modes = std::env::args().any(|arg| arg == "--input-modes");
+    let mode = |mode| {
+        if modes {
+            mode
+        } else {
+            zgx::text_edit::InputMode::Text
+        }
+    };
     #[cfg(windows)]
     let open_ime = std::env::args().any(|arg| arg == "--open-ime");
     #[cfg(windows)]
@@ -186,9 +196,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .gap(12.)
                     .text_color(Color(231, 236, 246, 255))
                     .child(text("Native input-method composition").h(24.))
-                    .child(editor("first", first.clone()).secure(password))
+                    .child(
+                        editor("first", first.clone())
+                            .secure(password)
+                            .input_mode(mode(zgx::text_edit::InputMode::Email)),
+                    )
                     .child(text("Second editor").h(24.))
-                    .child(editor("second", second.clone())),
+                    .child(
+                        editor("second", second.clone())
+                            .input_mode(mode(zgx::text_edit::InputMode::Numeric)),
+                    ),
             );
             let scene = cx.ui.scene.clone();
             let input = cx.ui.input.clone();

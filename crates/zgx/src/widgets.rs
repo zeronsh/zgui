@@ -156,6 +156,8 @@ struct EditorHint {
     select_on_focus: Cell<bool>,
     /// A password field: its text shows masked and never leaves it.
     secure: Cell<bool>,
+    /// What kind of text it takes (`View::input_mode`).
+    input_mode: Cell<crate::text_edit::InputMode>,
     /// Misspelled words (`View::spellcheck`), as byte ranges: marked with a
     /// dotted line. Usually none.
     misspelled: RefCell<Vec<std::ops::Range<usize>>>,
@@ -239,6 +241,7 @@ impl EditorHint {
             placeholder: RefCell::default(),
             select_on_focus: Cell::default(),
             secure: Cell::default(),
+            input_mode: Cell::default(),
             misspelled: RefCell::default(),
             clause: Cell::default(),
             composition_layer: Cell::default(),
@@ -474,6 +477,16 @@ impl EditorHandle {
     /// or cutting it gives nothing.
     pub fn set_secure(&self, secure: bool) {
         self.hint.secure.set(secure);
+    }
+    /// What kind of text it takes, as HTML's `inputmode` says it: a hint
+    /// to the platform's input (Windows' touch keyboard and input scope, a
+    /// Wayland input method's content purpose), not a check of the text.
+    pub fn set_input_mode(&self, mode: crate::text_edit::InputMode) {
+        self.hint.input_mode.set(mode);
+    }
+    /// `set_input_mode`'s; `InputMode::Text` until set.
+    pub fn input_mode(&self) -> crate::text_edit::InputMode {
+        self.hint.input_mode.get()
     }
     /// Text shown, never edited, while the editor is empty: in its own
     /// typography, coloured `color` (`None`: the theme's `muted`). It is

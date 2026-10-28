@@ -10,7 +10,10 @@
 //! commits what is left, as `InputEvent::ImeCommit` does: the editor's text
 //! changes only then, as on every other platform.
 use std::ops::Range;
-use zgx::{text_edit::ClauseStyle, widgets::EditorHandle};
+use zgx::{
+    text_edit::{ClauseStyle, InputMode},
+    widgets::EditorHandle,
+};
 
 /// What the store last told the input method about, to say what changed
 /// since: the editor's text revision, selection and preedit.
@@ -77,6 +80,15 @@ impl TextStore {
     }
     pub(crate) fn editor(&self) -> Option<&EditorHandle> {
         self.editor.as_ref()
+    }
+    /// The focused editor's input scope (`input_scope`), the default with
+    /// none.
+    pub(crate) fn input_scope(&self) -> i32 {
+        input_scope(
+            self.editor
+                .as_ref()
+                .map_or(InputMode::Text, EditorHandle::input_mode),
+        )
     }
     pub(crate) fn is_composing(&self) -> bool {
         self.composition.is_some()
@@ -440,6 +452,22 @@ impl TextStore {
     }
 }
 
+/// The Text Services Framework's input scope (`InputScope`, `IS_*`) for an
+/// editor's `InputMode`: which touch keyboard Windows shows, what its input
+/// methods offer. `None`'s keyboard isn't shown at all (the host's part);
+/// its scope is the default.
+pub(crate) fn input_scope(mode: InputMode) -> i32 {
+    match mode {
+        InputMode::Text | InputMode::None => 0, // IS_DEFAULT
+        InputMode::Url => 1,                    // IS_URL
+        InputMode::Email => 5,                  // IS_EMAIL_SMTPEMAILADDRESS
+        InputMode::Numeric => 28,               // IS_DIGITS
+        InputMode::Decimal => 29,               // IS_NUMBER
+        InputMode::Tel => 32,                   // IS_TELEPHONE_FULLTELEPHONENUMBER
+        InputMode::Search => 50,                // IS_SEARCH
+    }
+}
+
 struct Parts {
     /// Where the selection starts, and how much of the text the composition
     /// stands in place of.
@@ -515,7 +543,11 @@ fn seen(editor: &EditorHandle) -> Seen {
 #[cfg(test)]
 mod tests {
     use super::{Change, TextStore};
-    use zgx::{compose::prelude::*, text_edit::ClauseStyle, widgets::Ui};
+    use zgx::{
+        compose::prelude::*,
+        text_edit::{ClauseStyle, InputMode},
+        widgets::Ui,
+    };
 
     fn utf16(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
@@ -761,6 +793,37 @@ mod tests {
         store.replace(1, 1, &utf16("x"));
         store.end_composition();
         assert_eq!(value.get(), "axb");
+    }
+
+    /// An editor's input mode (HTML's `inputmode`) is the input scope the
+    /// framework asks for: the touch keyboard Windows shows.
+    #[test]
+    fn an_editors_input_mode_is_its_input_scope() {
+        let mut ui = Ui::new(400., 200.);
+        let value = ui.signal(String::new());
+        let view = ui.mount(
+            text_input("Email", value)
+                .input_mode(InputMode::Email)
+                .w(300.),
+        );
+        ui.prepare_frame();
+        let mut store = TextStore::new();
+        assert_eq!(store.input_scope(), 0, "IS_DEFAULT with no editor");
+        ui.input.focus(&ui.scene, Some(view.node()));
+        store.focus(ui.focused_editor());
+        assert_eq!(store.input_scope(), 5, "IS_EMAIL_SMTPEMAILADDRESS");
+        let scopes = [
+            InputMode::Text,
+            InputMode::Decimal,
+            InputMode::Numeric,
+            InputMode::Tel,
+            InputMode::Search,
+            InputMode::Email,
+            InputMode::Url,
+            InputMode::None,
+        ]
+        .map(super::input_scope);
+        assert_eq!(scopes, [0, 29, 28, 32, 50, 5, 1, 0]);
     }
 
     /// Focus moving mid-composition commits it into the editor it began in,

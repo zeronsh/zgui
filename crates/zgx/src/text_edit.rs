@@ -147,6 +147,30 @@ pub enum ClauseStyle {
     /// The clause being converted: a thick underline, the candidates under it.
     Target,
 }
+/// What kind of text an editor takes, as HTML's `inputmode` says it: a
+/// hint to the platform's input (which touch keyboard Windows shows, what
+/// a Wayland input method offers), never a check of what is typed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum InputMode {
+    /// Any text: the platform's usual keyboard.
+    #[default]
+    Text,
+    /// A number with a fraction: digits and the decimal separator.
+    Decimal,
+    /// Digits alone (a code, a PIN that may show).
+    Numeric,
+    /// A telephone number: digits, `*`, `#`, `+`.
+    Tel,
+    /// A search: the keyboard's Enter key searches.
+    Search,
+    /// An email address: `@` and `.` at hand.
+    Email,
+    /// A URL: `/` and `.com` at hand.
+    Url,
+    /// No virtual keyboard: the field brings its own keys (a keypad on the
+    /// page). A physical keyboard types into it as usual.
+    None,
+}
 /// What an editor keeps for an input method that reaches into its text
 /// (Windows' Text Services Framework), made when one first does: its
 /// composition's clauses, and where its text's UTF-16 offsets are.

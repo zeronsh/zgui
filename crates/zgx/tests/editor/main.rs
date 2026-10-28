@@ -24,6 +24,8 @@ mod editor_context_menu;
 mod editor_hints;
 #[path = "../editor_ingress_normalization.rs"]
 mod editor_ingress_normalization;
+#[path = "../editor_input_mode.rs"]
+mod editor_input_mode;
 #[path = "../editor_long_documents.rs"]
 mod editor_long_documents;
 #[path = "../editor_model_normalization.rs"]
