@@ -4501,6 +4501,8 @@ impl Ui {
             }
         });
         let scene = self.scene.clone();
+        // Which window's editor this is: a node id is each window's own.
+        let scene_identity = scene.borrow().identity();
         let input_storage = Rc::downgrade(&self.storage);
         // The byte a drop at `x`, `y` (the window's points) goes in at.
         let drop_point: Rc<dyn Fn(f32, f32) -> usize> = {
@@ -5001,7 +5003,12 @@ impl Ui {
                         let text = edit.slice(range.clone()).into_owned();
                         drop(edit);
                         cx.start_drag_from(
-                            crate::input::DraggedText::from_editor(text, root, range),
+                            crate::input::DraggedText::from_editor(
+                                text,
+                                scene_identity,
+                                root,
+                                range,
+                            ),
                             px,
                             py,
                         );
@@ -5036,7 +5043,7 @@ impl Ui {
                     match (drag.phase, dragged) {
                         // Out of this editor: other apps take it as text.
                         (crate::input::DragPhase::Start, Some(text))
-                            if text.from.as_ref().is_some_and(|(from, _)| *from == root) =>
+                            if text.taken_from(scene_identity, root).is_some() =>
                         {
                             cx.set_drag_export(vec![crate::input::DragItem::Text(
                                 text.text().to_owned(),
@@ -5081,12 +5088,14 @@ impl Ui {
                             } else {
                                 modifiers.control
                             };
-                            let moved_here = !copy
-                                && text.from.as_ref().is_some_and(|(from, range)| {
-                                    *from == root && edit.slice(range.clone()) == text.text()
-                                });
-                            let dropped = match &text.from {
-                                Some((_, range)) if moved_here => edit.move_text(range.clone(), at),
+                            // From this very editor (this window's), its text
+                            // still there: moved within it.
+                            let here = text
+                                .taken_from(scene_identity, root)
+                                .filter(|range| edit.holds((*range).clone(), text.text()));
+                            let moved_here = !copy && here.is_some();
+                            let dropped = match here {
+                                Some(range) if moved_here => edit.move_text(range.clone(), at),
                                 _ => edit.insert_dropped(at, text.text()),
                             };
                             if dropped {
@@ -5111,11 +5120,11 @@ impl Ui {
                         }
                         // Dragged out of here and moved elsewhere: let it go.
                         (crate::input::DragPhase::End, Some(text)) if text.taken.get() => {
-                            if let Some((from, range)) = &text.from
-                                && *from == root
-                            {
+                            // Only while its text is still where it was: an
+                            // app that changed it meanwhile keeps its own.
+                            if let Some(range) = text.taken_from(scene_identity, root) {
                                 let mut edit = editor.borrow_mut();
-                                if edit.slice(range.clone()) == text.text() {
+                                if edit.holds(range.clone(), text.text()) {
                                     edit.set_selection(range.start, range.end);
                                     changed = edit.backspace();
                                 }

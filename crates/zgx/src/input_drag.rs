@@ -82,8 +82,10 @@ pub struct DragEvent {
 #[derive(Debug)]
 pub struct DraggedText {
     text: String,
-    /// The editor it was selected in, and where: a drop there moves it.
-    pub(crate) from: Option<(NodeId, std::ops::Range<usize>)>,
+    /// The editor it was selected in (its scene's `identity`, as node ids
+    /// are each window's own, and its node), and where: a drop there moves
+    /// it.
+    pub(crate) from: Option<(u64, NodeId, std::ops::Range<usize>)>,
     /// A destination took it to keep (moved, not copied): its source lets
     /// it go as the drag ends.
     pub(crate) taken: std::cell::Cell<bool>,
@@ -97,12 +99,25 @@ impl DraggedText {
             taken: std::cell::Cell::new(false),
         }
     }
-    pub(crate) fn from_editor(text: String, editor: NodeId, range: std::ops::Range<usize>) -> Self {
+    pub(crate) fn from_editor(
+        text: String,
+        scene: u64,
+        editor: NodeId,
+        range: std::ops::Range<usize>,
+    ) -> Self {
         Self {
             text,
-            from: Some((editor, range)),
+            from: Some((scene, editor, range)),
             taken: std::cell::Cell::new(false),
         }
+    }
+    /// Where in editor `editor` of the scene `scene` (its `identity`) it was
+    /// selected, if there.
+    pub(crate) fn taken_from(&self, scene: u64, editor: NodeId) -> Option<&std::ops::Range<usize>> {
+        self.from
+            .as_ref()
+            .filter(|(of, node, _)| *of == scene && *node == editor)
+            .map(|(.., range)| range)
     }
     /// The text.
     pub fn text(&self) -> &str {

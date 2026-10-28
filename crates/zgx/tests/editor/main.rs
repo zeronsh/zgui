@@ -46,6 +46,8 @@ mod editor_shape_reuse;
 mod editor_streaming_history;
 #[path = "../editor_text_drag.rs"]
 mod editor_text_drag;
+#[path = "../editor_text_drag_windows.rs"]
+mod editor_text_drag_windows;
 #[path = "../editor_undo_keys.rs"]
 mod editor_undo_keys;
 #[path = "../editor_wrap_navigation.rs"]

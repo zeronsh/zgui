@@ -245,6 +245,16 @@ impl TextEditor {
     pub fn text(&self) -> Cow<'_, str> {
         self.text.to_cow()
     }
+    /// Whether bytes `range` of the committed text are `text`: within it,
+    /// on its characters' boundaries, and the same (what a drag took from
+    /// it, the text since unchanged there).
+    pub(crate) fn holds(&self, range: Range<usize>, text: &str) -> bool {
+        range.start <= range.end
+            && range.end <= self.text.len()
+            && self.text.is_char_boundary(range.start)
+            && self.text.is_char_boundary(range.end)
+            && self.text.slice(range) == text
+    }
     /// The committed text's length in bytes.
     pub fn len(&self) -> usize {
         self.text.len()
