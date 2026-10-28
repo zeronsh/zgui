@@ -41,15 +41,10 @@ impl Scene {
         {
             return false;
         }
+        // Where the walk would stop: the rest of the parent is looked at
+        // once, as it is placed (`place_children`).
         let owner = self.tree_node(parent);
-        if !Self::is_layout_boundary(owner)
-            || owner.dirty & LAYOUT != 0
-            || owner.special.any()
-            || owner.style.snap
-            || owner.advanced_layout.is_some()
-            || !owner.alternates.is_empty()
-            || !owner.sizes.is_empty()
-        {
+        if owner.dirty & LAYOUT != 0 || !Self::is_layout_boundary(owner) {
             return false;
         }
         // `invalidate_layout_with(id, true, false)`'s marks, the layout bits
@@ -100,6 +95,7 @@ impl Scene {
             .layout_roots
             .iter()
             .any(|root| self.contains(*root) && self.tree_node(*root).dirty & LAYOUT != 0);
+        let mut fell = false;
         placing.retain(|&(parent, id)| {
             let apart = !full
                 && self.contains(id)
@@ -109,18 +105,21 @@ impl Scene {
                 && self.tree_node(parent).dirty & LAYOUT == 0
                 && !(others && self.laid_out_above(parent));
             if !apart {
+                fell = true;
                 self.lay_out_queued(parent, id);
             }
             apart
         });
         // A parent one of whose boxes fell back is laid out whole.
-        placing.retain(|&(parent, id)| {
-            let apart = self.tree_node(parent).dirty & LAYOUT == 0;
-            if !apart {
-                self.lay_out_queued(parent, id);
-            }
-            apart
-        });
+        if fell {
+            placing.retain(|&(parent, id)| {
+                let apart = self.tree_node(parent).dirty & LAYOUT == 0;
+                if !apart {
+                    self.lay_out_queued(parent, id);
+                }
+                apart
+            });
+        }
         self.placing = placing;
     }
     /// Whether an ancestor of `id` is laid out this pass.
@@ -151,50 +150,48 @@ impl Scene {
     /// another of its children changed (then laid out whole, the queued ones
     /// with it).
     pub(super) fn place_children(&mut self, parent: NodeId, report: &mut FrameReport) -> bool {
-        let run = {
-            let start = self
-                .placing
-                .partition_point(|(owner, _)| owner.index < parent.index);
-            let end = start
-                + self.placing[start..]
-                    .iter()
-                    .take_while(|(owner, _)| owner.index == parent.index)
-                    .count();
-            start..end
-        };
-        if run.is_empty() || self.placing[run.start].0 != parent {
+        let start = self
+            .placing
+            .partition_point(|(owner, _)| owner.index < parent.index);
+        let end = start
+            + self.placing[start..]
+                .iter()
+                .take_while(|(owner, _)| *owner == parent)
+                .count();
+        if start == end {
             return false;
         }
-        let queued: Vec<NodeId> = self.placing[run.clone()]
-            .iter()
-            .map(|&(_, id)| id)
-            .collect();
-        self.placing.drain(run);
+        let queued = |scene: &Self, id: NodeId| {
+            scene.placing[start..end]
+                .iter()
+                .any(|&(_, queued)| queued == id)
+        };
         let owner = self.tree_node(parent);
         let last = owner.measurement.as_ref().unwrap();
+        // What placing apart takes as given: a plain box, laid out once this
+        // pass, no other child of it changed.
         let others = owner.dirty & LAYOUT != 0
+            || owner.special.any()
+            || owner.style.snap
+            || owner.advanced_layout.is_some()
+            || !owner.alternates.is_empty()
+            || !owner.sizes.is_empty()
             || last.children.iter().any(|&(child, ..)| {
-                self.tree_node(child).dirty & LAYOUT != 0 && !queued.contains(&child)
+                self.tree_node(child).dirty & LAYOUT != 0 && !queued(self, child)
             });
         if others {
-            for id in queued {
-                self.lay_out_queued(parent, id);
+            for at in start..end {
+                let (owner, id) = self.placing[at];
+                self.lay_out_queued(owner, id);
             }
             return false;
         }
         // As `measure_uncached` places an absolute child: inside the content
-        // box its own size leaves, from the style it resolves under the
-        // constraints it was measured with.
+        // box of the size it was measured at.
         let constraints = last.constraints;
         let (padding, inner_w, inner_h) = self.content_box(parent, constraints);
-        for at in 0..self
-            .tree_node(parent)
-            .measurement
-            .as_ref()
-            .unwrap()
-            .children
-            .len()
-        {
+        let count = last.children.len();
+        for at in 0..count {
             let child = self
                 .tree_node(parent)
                 .measurement
@@ -202,7 +199,7 @@ impl Scene {
                 .unwrap()
                 .children[at]
                 .0;
-            if !queued.contains(&child) {
+            if !queued(self, child) {
                 continue;
             }
             self.tree_node_mut(child).dirty |= LAYOUT;
@@ -241,7 +238,8 @@ impl Scene {
     /// in, measured under `constraints`: its padding and border, and the
     /// width and height inside them.
     fn content_box(&self, id: NodeId, constraints: Constraints) -> (Insets, f32, f32) {
-        let style = self.resolved_leaf_style(id, constraints);
+        // A boundary has no layout options: its style resolves to itself.
+        let style = &self.tree_node(id).style;
         let padding = style.padding_edges.unwrap_or(Insets::all(style.padding));
         let border = match &self.tree_node(id).kind {
             NodeKind::Panel { quad, .. } => quad.layout_border(),

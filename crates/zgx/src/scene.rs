@@ -8348,6 +8348,9 @@ impl Scene {
             let bounds = self.node(id).bounds;
             self.arrange_from(id, bounds.x, bounds.y, &mut report);
         }
+        // Each queued box was placed with its root or fell back to its
+        // layout.
+        self.placing.clear();
         if relayout_all && self.node(self.root).dirty & LAYOUT != 0 {
             self.measure_full(self.root, Constraints::default());
             self.arrange_from(self.root, 0.0, 0.0, &mut report);
