@@ -100,6 +100,11 @@ wgpu-hal = { version = "29.0.4", default-features = false, features = ["validati
 name = "layer_frames"
 harness = false
 
+# On the main thread, as layer presentation runs (`fn main`).
+[[test]]
+name = "native_paths"
+harness = false
+
 [[test]]
 name = "gif"
 required-features = ["gif"]
