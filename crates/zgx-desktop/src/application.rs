@@ -1331,6 +1331,12 @@ struct Host {
     /// The display the window shows on and its rate (`refresh_frame_interval`).
     #[cfg(target_os = "macos")]
     display_key: String,
+    /// Ticks skipped to put drawables back in phase (`rephased`), and the
+    /// latest frames' starts, kept for its log only.
+    #[cfg(target_os = "macos")]
+    rephases: u64,
+    #[cfg(target_os = "macos")]
+    frame_starts: std::collections::VecDeque<std::time::Instant>,
     /// A display refresh arrived since the last paint. While the display link
     /// runs, paints wait for it so input between refreshes cannot present
     /// extra frames (which would queue drawables and block the UI thread).
@@ -1678,6 +1684,10 @@ impl Host {
             frame_interval: crate::frame_source::DEFAULT_INTERVAL,
             #[cfg(target_os = "macos")]
             display_key: String::new(),
+            #[cfg(target_os = "macos")]
+            rephases: 0,
+            #[cfg(target_os = "macos")]
+            frame_starts: std::collections::VecDeque::new(),
             frame_deadline: None,
             frame_heartbeat: None,
             frame_redraw_requested: false,
@@ -1940,6 +1950,19 @@ impl Host {
         }
     }
     fn draw_frame(&mut self) -> Result<(), Box<dyn Error>> {
+        #[cfg(target_os = "macos")]
+        {
+            let now = std::time::Instant::now();
+            if let Some(renderer) = &mut self.renderer {
+                renderer.set_frame_start(now);
+            }
+            if cfg!(debug_assertions) || zgx::profile::enabled() {
+                self.frame_starts.push_back(now);
+                if self.frame_starts.len() > 32 {
+                    self.frame_starts.pop_front();
+                }
+            }
+        }
         self.sync_ime_cancellation();
         let Some(window) = self.window.clone() else {
             self.context.ui.cancel_interactions();
@@ -4450,11 +4473,51 @@ impl Host {
         if let Some(link) = &self.display_link {
             link.consumed();
         }
+        // Drawables a refresh behind (`zgx_gpu::GpuRenderer::take_rephase`):
+        // on the view's link, this refresh draws nothing, the pool gets a
+        // drawable back, and frames show a refresh sooner from the next.
+        #[cfg(target_os = "macos")]
+        if let Some(waited) = self
+            .renderer
+            .as_mut()
+            .and_then(|renderer| renderer.take_rephase())
+            && self
+                .display_link
+                .as_ref()
+                .is_some_and(|link| link.on_view_clock())
+        {
+            self.rephased(waited);
+            return;
+        }
         self.frame_arrived = true;
         self.frame_deadline = None;
         self.frame_heartbeat = Some(std::time::Instant::now());
         if self.frames_presented() {
             self.frames.deliver(frame);
+        }
+    }
+    /// A tick skipped to put drawables back in phase. Profiling
+    /// (`ZGX_PROFILE`) or in a debug build, what led to it: the longest
+    /// gaps between this window's last frames, as the stall that filled the
+    /// pool would show.
+    #[cfg(target_os = "macos")]
+    fn rephased(&mut self, waited: std::time::Duration) {
+        self.rephases += 1;
+        if cfg!(debug_assertions) || zgx::profile::enabled() {
+            let gaps: Vec<String> = self
+                .frame_starts
+                .iter()
+                .zip(self.frame_starts.iter().skip(1))
+                .map(|(a, b)| b.saturating_duration_since(*a))
+                .filter(|gap| *gap > self.frame_interval + self.frame_interval / 2)
+                .map(|gap| format!("{:.1}", gap.as_secs_f64() * 1e3))
+                .collect();
+            eprintln!(
+                "zgx: drawables back in phase ({}): {:.1} ms waits for a drawable; frame gaps over 1.5 refreshes before it: [{}] ms",
+                self.rephases,
+                waited.as_secs_f64() * 1e3,
+                gaps.join(", ")
+            );
         }
     }
     fn poll_frame_deadline(&mut self, now: std::time::Instant) {
@@ -4560,6 +4623,13 @@ impl Host {
             if let Some(renderer) = &mut self.renderer {
                 renderer.set_full_rate(wanted && rate.is_none());
             }
+            // Drawables are paced by the view's own link, tiles by the
+            // display's (see `frame_source::display_link`).
+            let drawables = self
+                .renderer
+                .as_ref()
+                .is_some_and(|renderer| renderer.drawables_showing());
+            link.set_view_clock(drawables);
             // Once the link has reported the grid, the timer continues it:
             // a scroll starting after a pause, or the grid going stale, keeps
             // its frames on the timer while the link reports again (see

@@ -27,6 +27,8 @@ pub use layer_present::Caret;
 mod metal_frame;
 #[cfg(target_os = "macos")]
 mod native_surface;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod phase_watch;
 mod planes;
 pub mod present_log;
 mod surface;
@@ -3367,6 +3369,9 @@ pub struct GpuRenderer {
     /// full-rate verdict's key (`set_display_key`).
     #[cfg(target_os = "macos")]
     display_key: String,
+    /// When the host began the frame being drawn (`set_frame_start`).
+    #[cfg(target_os = "macos")]
+    frame_started: Option<std::time::Instant>,
     /// Trimmed, and nothing drawn since: the next input wakes the GPU
     /// (`warm_up`).
     #[cfg(target_os = "macos")]
@@ -3811,6 +3816,8 @@ impl GpuRenderer {
             #[cfg(target_os = "macos")]
             #[cfg(target_os = "macos")]
             display_key: String::new(),
+            #[cfg(target_os = "macos")]
+            frame_started: None,
             #[cfg(target_os = "macos")]
             gpu_time: std::cell::Cell::new(None),
             #[cfg(target_os = "macos")]
@@ -9567,12 +9574,17 @@ impl GpuRenderer {
             // before wgpu is called again.
             let device = unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }
                 .map(|hal| hal.raw_device().clone());
+            // When the host began this frame, in host seconds (the drawables'
+            // presented times' clock).
+            let frame_started = self
+                .frame_started
+                .map(|at| present_log::now_ns() as f64 / 1e9 - at.elapsed().as_secs_f64());
             let next = device.and_then(|device| {
                 present
                     .layer
                     .as_mut()
                     .expect("attached above")
-                    .next_drawable(&device, width, height, wants_feedback)
+                    .next_drawable(&device, width, height, wants_feedback, frame_started)
             });
             next.map(|(texture, surface)| {
                 let id = surface.id();
@@ -10014,8 +10026,9 @@ impl GpuRenderer {
         {
             let line = || {
                 let (shown, skipped, median, p99, late) = feedback.summary();
+                let (latency, latency_p99) = feedback.latency().unwrap_or_default();
                 format!(
-                    "drawables shown={shown} skipped={skipped} gap_p50={median:.2}ms gap_p99={p99:.2}ms late={late}"
+                    "drawables shown={shown} skipped={skipped} gap_p50={median:.2}ms gap_p99={p99:.2}ms late={late} start_to_shown_p50={latency:.2}ms p99={latency_p99:.2}ms"
                 )
             };
             present_log::log(line);
@@ -10501,6 +10514,36 @@ impl GpuRenderer {
         if self.display_key != key {
             self.display_key = key.to_owned();
         }
+    }
+    /// The host begins a frame (macOS): its start to its showing is the
+    /// drawables' latency (`debug_drawable_latency`, the present log).
+    #[cfg(target_os = "macos")]
+    pub fn set_frame_start(&mut self, at: std::time::Instant) {
+        self.frame_started = Some(at);
+    }
+    /// Whether full-rate frames present as drawables now (macOS): the host
+    /// paces them on the view's own display link then.
+    #[cfg(target_os = "macos")]
+    pub fn drawables_showing(&self) -> bool {
+        self.layer_present
+            .as_ref()
+            .and_then(|present| present.layer.as_ref())
+            .is_some_and(|layer| layer.drawables_shown())
+    }
+    /// Frames wait for drawables a refresh behind (macOS): the host skips
+    /// one tick to put them back in phase. The last wait, once.
+    #[cfg(target_os = "macos")]
+    pub fn take_rephase(&mut self) -> Option<std::time::Duration> {
+        self.layer_present.as_mut()?.layer.as_mut()?.take_rephase()
+    }
+    /// Test hook: the latest drawables' start (`set_frame_start`) to their
+    /// showing, median and 99th percentile in ms (macOS, while feedback is
+    /// read: the present log or the trial).
+    #[cfg(target_os = "macos")]
+    #[doc(hidden)]
+    pub fn debug_drawable_latency(&self) -> Option<(f64, f64)> {
+        let present = self.layer_present.as_ref()?;
+        present.layer.as_ref()?.drawable_feedback()?.latency()
     }
     /// Test hook: drawables the window server presented and skipped so far,
     /// and the latest gaps' median and 99th percentile in ms (macOS).

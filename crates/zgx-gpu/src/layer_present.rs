@@ -504,6 +504,8 @@ struct FeedbackState {
     /// The last presented time (host seconds), and the latest gaps (ms).
     last: f64,
     gaps: std::collections::VecDeque<f64>,
+    /// The latest frames' start (the host's) to their showing (ms).
+    latency: std::collections::VecDeque<f64>,
     /// Shown frames that came over 1.5 refreshes after the one before: a
     /// refresh missed (the refresh, the shortest of the 8 gaps before).
     late: u64,
@@ -516,6 +518,30 @@ pub(crate) struct Mark {
     late: u64,
 }
 impl Feedback {
+    /// A frame begun at `started` (host seconds) shown at `presented`.
+    fn record_latency(&self, started: f64, presented: f64) {
+        if presented <= 0. || started <= 0. || presented < started {
+            return;
+        }
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.latency.push_back((presented - started) * 1e3);
+        if state.latency.len() > 600 {
+            state.latency.pop_front();
+        }
+    }
+    /// The latest frames' start to their showing: median and 99th
+    /// percentile (ms), none before any.
+    pub(crate) fn latency(&self) -> Option<(f64, f64)> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut latency: Vec<f64> = state.latency.iter().copied().collect();
+        latency.sort_by(f64::total_cmp);
+        let at = |q: f64| {
+            latency
+                .get(((latency.len() as f64 - 1.) * q) as usize)
+                .copied()
+        };
+        Some((at(0.5)?, at(0.99)?))
+    }
     fn record(&self, presented: f64) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if presented <= 0. {
@@ -588,6 +614,10 @@ struct Drawables {
     shown: bool,
     /// When each drawable was shown (`Feedback`).
     feedback: std::sync::Arc<Feedback>,
+    /// Whether frames wait for drawables a refresh behind (`phase_watch`),
+    /// and, once they do, the last wait, until the host skips a tick.
+    watch: crate::phase_watch::PhaseWatch,
+    rephase: Option<std::time::Duration>,
 }
 /// Hides the plain layer's tiles once the video layer above it shows a
 /// frame: until then they show the frame before; after, under a window's
@@ -963,6 +993,7 @@ impl Layer {
         width: u32,
         height: u32,
         feedback: bool,
+        started: Option<f64>,
     ) -> Option<(crate::metal_frame::Texture, CFRetained<IOSurfaceRef>)> {
         let opaque = self.opaque.get();
         let drawables = self.drawables.get_or_insert_with(|| {
@@ -974,12 +1005,12 @@ impl Layer {
             // Metal presents each when its work completes, not in a
             // transaction: no commit a frame.
             layer.setPresentsWithTransaction(false);
-            // Three: with 2 the pool is full and
-            // the window server hands every image back at once, which cost it
-            // 3-4 points of CPU per window (2026-10-26, M5, paired seconds
-            // against tiles: heavy stream +4.4 with 2, -0.3 with 3; animate
-            // +2.8, 0.0).
-            layer.setMaximumDrawableCount(3);
+            // Two: in phase (`phase_watch`), a frame shows a refresh sooner
+            // than with three, and holds a surface less: the frame's start to
+            // its showing 16 ms against 24.5 (M5 Max), 25 against 33 (M1 Max),
+            // 10 MiB less, the window server's CPU alike (2026-10-27). Out of
+            // phase, on the CVDisplayLink, two had cost it 3-4 points.
+            layer.setMaximumDrawableCount(2);
             // sRGB, as the tiles' surfaces are tagged.
             // SAFETY: CoreGraphics' constant CFString, read only.
             if let Some(space) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })) {
@@ -994,6 +1025,8 @@ impl Layer {
                 pending: None,
                 shown: false,
                 feedback: Default::default(),
+                watch: Default::default(),
+                rephase: None,
             }
         });
         let size = CGSize::new(width as f64, height as f64);
@@ -1003,7 +1036,12 @@ impl Layer {
         if drawables.layer.isOpaque() != opaque {
             transaction(|| drawables.layer.setOpaque(opaque));
         }
+        let asked = std::time::Instant::now();
         let drawable = drawables.layer.nextDrawable()?;
+        let waited = asked.elapsed();
+        if drawables.watch.observe(waited) {
+            drawables.rephase = Some(waited);
+        }
         // Feedback only while it is read (the trial, a log): a handler a
         // frame is work on Core Animation's thread.
         if feedback {
@@ -1011,7 +1049,11 @@ impl Layer {
             let handler = block2::RcBlock::new(
                 move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
                     // SAFETY: Metal passes the drawable presented, alive for the call.
-                    feedback.record(unsafe { shown.as_ref() }.presentedTime());
+                    let presented = unsafe { shown.as_ref() }.presentedTime();
+                    feedback.record(presented);
+                    if let Some(started) = started {
+                        feedback.record_latency(started, presented);
+                    }
                 },
             );
             // SAFETY: A live block taking the drawable, as the handler's type
@@ -1022,6 +1064,17 @@ impl Layer {
         let surface = texture.iosurface()?;
         drawables.pending = Some(drawable);
         Some((texture, surface.into()))
+    }
+    /// Whether drawables show (full-rate frames present through them).
+    pub fn drawables_shown(&self) -> bool {
+        self.drawables
+            .as_ref()
+            .is_some_and(|drawables| drawables.shown)
+    }
+    /// Frames wait for drawables a refresh behind (`phase_watch`): the last
+    /// wait, once, for the host to skip a tick.
+    pub fn take_rephase(&mut self) -> Option<std::time::Duration> {
+        self.drawables.as_mut()?.rephase.take()
     }
     /// The pending drawable, for the frame's own command buffer to present
     /// (`metal_frame::Frame::commit_presenting`).

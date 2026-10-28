@@ -9,6 +9,10 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 - `View::hollow()`: the pointer passes through a box while nothing it holds is displayed (`hidden` or `invisible`). A Luau `presence` box uses it: a page kept mounted but hidden no longer takes the presses meant for what is under it (a web page, the panes).
 - **Windows: input methods through the Text Services Framework**, opt-in with `ZGX_TSF=1` (IMM32 stays the default for now). Editors give Windows' input methods and text services a text store. They read the text around the caret, place candidates at the clause they convert, and insert at the caret: the emoji panel, dictation, the touch keyboard. For it, editors take an input method's clauses (`TextEditor::set_preedit_clauses`, `ClauseStyle`), each underlined, thick under the one being converted. They also take a replacement as one undo step (`TextEditor::replace_range`) and count UTF-16 offsets (`utf16_len`, `byte_to_utf16`, `utf16_to_byte`). `EditorHandle` makes these edits (`insert_text`, `replace_text`, `set_composition`, `commit_composition`, `cancel_composition`, `input_method_area`) ([windows](docs/windows.md)).
 
+### Changed
+
+- macOS: frames presented as `CAMetalLayer` drawables (`ZGX_PRESENT_DRAWABLE`, or `=auto` where its trial picks them) show a refresh or two sooner. They are paced by the view's own display link and kept in phase: when frames start waiting most of a refresh for a drawable (the pool full, as most launches of an M1 Max settled), one tick is skipped and they catch up. The pool is two drawables, not three. A frame's start to its showing: 16 ms against 27–32 on an M5 Max, 24 against 27–40 (median 36) on an M1 Max. The window server's CPU on an M1 Max drops from 34.2% to 31.3%, and each window holds 10 MiB less. Tiles, the default, are unchanged.
+
 ## 0.1.4 (2026-10-27)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.3 is an addition, and zgx-desktop and zgx-gpu 0.1.3 build against this zgx), unless it writes a `zgx_gpu::GpuStats` field by field (below). A few editor keys and clicks change, each below with what to check.

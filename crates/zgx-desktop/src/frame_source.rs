@@ -167,6 +167,16 @@ mod display_link {
     //! refreshes). `CVDisplayLink` fires on its own thread at the start of each
     //! refresh, leaving the whole interval to render and present.
     //!
+    //! Frames presented as `CAMetalLayer` drawables are the exception
+    //! (`DisplayLink::set_view_clock`): Metal hands each to the window server
+    //! for its refresh, and on the `CVDisplayLink` most launches of an M1 Max
+    //! settled with the pool full, each frame waiting most of a refresh for a
+    //! drawable and showing a refresh later (2026-10-27). On the view's
+    //! `CADisplayLink`, with a tick skipped when that starts (the host's
+    //! rephase), they show early: the window server's CPU 31.3% against 34.2
+    //! (M1 Max), and the frame's start to its showing 16 ms against 27–32 (M5
+    //! Max, a pool of 2).
+    //!
     //! `CVDisplayLinkStop` returns before the link's thread has necessarily
     //! finished its last callback, and releasing a link or anything its
     //! callback reads races that callback. So, as in GPUI: one link per
@@ -176,7 +186,11 @@ mod display_link {
     //! stop only on the main thread and never while the registry lock is held,
     //! since the callback takes that lock under CoreVideo's own locks.
     use super::*;
-    use objc2::{msg_send, rc::Retained, runtime::AnyObject};
+    use objc2::{
+        DeclaredClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
+        runtime::AnyObject, sel,
+    };
+    use objc2_foundation::{NSObject, NSObjectProtocol};
     use std::{
         collections::HashMap,
         ffi::c_void,
@@ -273,6 +287,9 @@ mod display_link {
         pending: AtomicBool,
         /// Deliver at most this often (millihertz; 0 for every refresh).
         max_rate: AtomicU64,
+        /// The view's `CADisplayLink` delivers, not the display's link
+        /// (`DisplayLink::set_view_clock`).
+        view_clock: AtomicBool,
         deliver: Box<dyn Fn(Frame) + Send + Sync>,
     }
     /// The refresh a display's link last reported starting (host time), and
@@ -364,7 +381,9 @@ mod display_link {
             .period
             .store(interval.as_nanos() as u64, Ordering::Release);
         for subscriber in &entry.subscribers {
-            if !subscriber.active.load(Ordering::Acquire) {
+            if !subscriber.active.load(Ordering::Acquire)
+                || subscriber.view_clock.load(Ordering::Acquire)
+            {
                 continue;
             }
             let max_rate = subscriber.max_rate.load(Ordering::Relaxed);
@@ -392,7 +411,7 @@ mod display_link {
             let wanted = entry
                 .subscribers
                 .iter()
-                .any(|s| s.active.load(Ordering::Acquire));
+                .any(|s| s.active.load(Ordering::Acquire) && !s.view_clock.load(Ordering::Acquire));
             (wanted != entry.running).then(|| {
                 entry.running = wanted;
                 (entry.link, wanted)
@@ -444,6 +463,143 @@ mod display_link {
         true
     }
 
+    /// A `CADisplayLink` target's state: the window's subscription and the
+    /// grid its ticks report.
+    struct Tick {
+        subscriber: Arc<Subscriber>,
+        grid: Arc<Grid>,
+    }
+    // SAFETY: an NSObject subclass, main-thread only (a display link made
+    // from a view calls back on the run loop it is added to, the main one),
+    // with nothing to clean up beyond its ivars; `tick:` takes the link.
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[thread_kind = MainThreadOnly]
+        #[ivars = Tick]
+        struct LinkTarget;
+        unsafe impl NSObjectProtocol for LinkTarget {}
+        impl LinkTarget {
+            #[unsafe(method(tick:))]
+            fn tick(&self, link: &AnyObject) {
+                self.deliver(link);
+            }
+        }
+    );
+    impl LinkTarget {
+        fn deliver(&self, link: &AnyObject) {
+            let tick = self.ivars();
+            // SAFETY: CADisplayLink's -timestamp (the refresh that started),
+            // -targetTimestamp (the next) and -duration, CFTimeIntervals in
+            // seconds on the host clock (CACurrentMediaTime's).
+            let (timestamp, target, duration): (f64, f64, f64) = unsafe {
+                (
+                    msg_send![link, timestamp],
+                    msg_send![link, targetTimestamp],
+                    msg_send![link, duration],
+                )
+            };
+            let interval = match duration > 0. && duration.is_finite() {
+                true => Duration::from_secs_f64(duration),
+                false => DEFAULT_INTERVAL,
+            };
+            // Host ticks from host seconds: the inverse of `nanos`.
+            let ns_per_tick = nanos(1_000_000_000) as f64 / 1e9;
+            let ticks = |seconds: f64| (seconds * 1e9 / ns_per_tick).max(0.) as u64;
+            tick.grid
+                .refreshed
+                .store(ticks(timestamp), Ordering::Release);
+            tick.grid
+                .period
+                .store(interval.as_nanos() as u64, Ordering::Release);
+            let subscriber = &tick.subscriber;
+            if !subscriber.active.load(Ordering::Acquire)
+                || !subscriber.view_clock.load(Ordering::Acquire)
+            {
+                return;
+            }
+            // SAFETY: reads the monotonic host clock.
+            let now = nanos(unsafe { mach_absolute_time() } as i128) as f64 / 1e9;
+            let ahead = (target - now).clamp(0., 1.);
+            let index = (target / interval.as_secs_f64()).round().max(0.) as u64;
+            let frame = Frame {
+                index,
+                time: Instant::now() + Duration::from_secs_f64(ahead),
+                interval,
+            };
+            let max_rate = subscriber.max_rate.load(Ordering::Relaxed);
+            if max_rate > 0 {
+                let refresh = 1. / interval.as_secs_f64();
+                let divisor = zgx::frame::divisor(refresh, max_rate as f64 / 1000.);
+                if !index.is_multiple_of(divisor) {
+                    return;
+                }
+            }
+            if !subscriber.pending.swap(true, Ordering::AcqRel) {
+                (subscriber.deliver)(frame);
+            }
+        }
+    }
+    /// The view's `CADisplayLink` and its target (`DisplayLink::set_view_clock`).
+    struct ViewLink {
+        link: Retained<AnyObject>,
+        _target: Retained<LinkTarget>,
+        /// The refreshes its ticks report.
+        grid: Arc<Grid>,
+    }
+    impl ViewLink {
+        fn new(view: &AnyObject, subscriber: Arc<Subscriber>) -> Option<Self> {
+            let mtm = MainThreadMarker::new()?;
+            // SAFETY: NSObject's -respondsToSelector:, on the main thread.
+            let has: bool = unsafe {
+                msg_send![view, respondsToSelector: sel!(displayLinkWithTarget:selector:)]
+            };
+            if !has {
+                return None;
+            }
+            let grid = Arc::new(Grid::default());
+            let target = LinkTarget::alloc(mtm).set_ivars(Tick {
+                subscriber,
+                grid: grid.clone(),
+            });
+            // SAFETY: NSObject's `init`, on a fresh allocation with its ivars set.
+            let target: Retained<LinkTarget> = unsafe { msg_send![super(target), init] };
+            // SAFETY: NSView -displayLinkWithTarget:selector: (macOS 14) returns a
+            // CADisplayLink calling `tick:` on `target` (which it retains until
+            // -invalidate); -setPaused: and -addToRunLoop:forMode: are its own,
+            // with the main run loop.
+            unsafe {
+                let link: Option<Retained<AnyObject>> =
+                    msg_send![view, displayLinkWithTarget: &*target, selector: sel!(tick:)];
+                let link = link?;
+                let _: () = msg_send![&*link, setPaused: true];
+                let run_loop: Retained<AnyObject> =
+                    msg_send![objc2::class!(NSRunLoop), mainRunLoop];
+                // Added in the common modes alone, by their name, it never
+                // fired (2026-10-27): the default mode too.
+                for mode in ["kCFRunLoopCommonModes", "kCFRunLoopDefaultMode"] {
+                    let mode = objc2_foundation::NSString::from_str(mode);
+                    let _: () = msg_send![&*link, addToRunLoop: &*run_loop, forMode: &*mode];
+                }
+                Some(Self {
+                    link,
+                    _target: target,
+                    grid,
+                })
+            }
+        }
+        fn set_paused(&self, paused: bool) {
+            // SAFETY: CADisplayLink's -setPaused:, on the main thread.
+            let _: () = unsafe { msg_send![&*self.link, setPaused: paused] };
+        }
+    }
+    impl Drop for ViewLink {
+        fn drop(&mut self) {
+            // SAFETY: CADisplayLink's -invalidate: removes it from its run loop
+            // and releases its target.
+            let _: () = unsafe { msg_send![&*self.link, invalidate] };
+        }
+    }
+
     /// A window's subscription to its display's refreshes.
     pub(crate) struct DisplayLink {
         view: Retained<AnyObject>,
@@ -453,7 +609,10 @@ mod display_link {
         grid: Arc<Grid>,
         /// When the window's display was last checked (an AppKit round trip).
         checked: Instant,
+        /// The view's own link, made the first time the view clock is asked for.
+        view_link: Option<ViewLink>,
     }
+
     impl DisplayLink {
         /// `deliver` runs on the link's thread, at most once per consumed
         /// refresh; hosts forward it to the UI thread.
@@ -484,6 +643,7 @@ mod display_link {
                     active: AtomicBool::new(false),
                     pending: AtomicBool::new(false),
                     max_rate: AtomicU64::new(0),
+                    view_clock: AtomicBool::new(false),
                     deliver: Box::new(deliver),
                 });
                 let entry = registry.displays.get_mut(&display)?;
@@ -496,6 +656,7 @@ mod display_link {
                 subscriber,
                 grid,
                 checked: Instant::now(),
+                view_link: None,
             })
         }
         pub(crate) fn running(&self) -> bool {
@@ -510,8 +671,34 @@ mod display_link {
             }
             if self.subscriber.active.swap(running, Ordering::AcqRel) != running {
                 self.subscriber.pending.store(false, Ordering::Release);
+                if let Some(view_link) = &self.view_link {
+                    view_link.set_paused(!(running && self.on_view_clock()));
+                }
                 reconcile(self.display);
             }
+        }
+        /// Refreshes come from the view's `CADisplayLink` (`on`), for frames
+        /// presented as drawables, or the display's `CVDisplayLink` (see the
+        /// module comment). Main thread only.
+        pub(crate) fn set_view_clock(&mut self, on: bool) {
+            if self.on_view_clock() == on {
+                return;
+            }
+            if on && self.view_link.is_none() {
+                self.view_link = ViewLink::new(&self.view, self.subscriber.clone());
+                if self.view_link.is_none() {
+                    return;
+                }
+            }
+            self.subscriber.view_clock.store(on, Ordering::Release);
+            self.subscriber.pending.store(false, Ordering::Release);
+            if let Some(view_link) = &self.view_link {
+                view_link.set_paused(!(on && self.running()));
+            }
+            reconcile(self.display);
+        }
+        pub(crate) fn on_view_clock(&self) -> bool {
+            self.subscriber.view_clock.load(Ordering::Acquire)
         }
         /// How far into a refresh of the window's display now is, and the
         /// refresh period, on the display's refresh grid as the link last
@@ -520,8 +707,12 @@ mod display_link {
         /// period read beside a refresh reported after it is off only while
         /// the display changes mode.
         pub(crate) fn refresh_phase(&self, fresh: Duration) -> Option<(Duration, Duration)> {
-            let refreshed = self.grid.refreshed.load(Ordering::Acquire);
-            let period = self.grid.period.load(Ordering::Acquire);
+            let grid = match &self.view_link {
+                Some(view_link) if self.on_view_clock() => &view_link.grid,
+                _ => &self.grid,
+            };
+            let refreshed = grid.refreshed.load(Ordering::Acquire);
+            let period = grid.period.load(Ordering::Acquire);
             if refreshed == 0 || period == 0 {
                 return None;
             }
@@ -578,6 +769,7 @@ mod display_link {
     impl Drop for DisplayLink {
         fn drop(&mut self) {
             self.subscriber.active.store(false, Ordering::Release);
+            self.view_link = None;
             if let Some(registry) = registry().as_mut()
                 && let Some(entry) = registry.displays.get_mut(&self.display)
             {
