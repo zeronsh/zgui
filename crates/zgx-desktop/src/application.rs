@@ -1292,6 +1292,10 @@ struct Host {
     /// When planes' frames were last drawn: once a refresh at most.
     #[cfg(target_os = "macos")]
     planes_drawn_at: Option<std::time::Instant>,
+    /// Until when frames keep to the view's link for a GPU view's plane
+    /// (`PlaneClock::View`).
+    #[cfg(target_os = "macos")]
+    plane_clock_until: Option<std::time::Instant>,
     /// Until when input keeps frames at the display's full rate (`INPUT_FULL_RATE`).
     #[cfg(any(target_os = "macos", windows))]
     input_until: Option<std::time::Instant>,
@@ -1669,6 +1673,8 @@ impl Host {
             plane_frames: 0,
             #[cfg(target_os = "macos")]
             planes_drawn_at: None,
+            #[cfg(target_os = "macos")]
+            plane_clock_until: None,
             #[cfg(any(target_os = "macos", windows))]
             input_until: None,
             #[cfg(any(target_os = "macos", windows))]
@@ -4691,11 +4697,19 @@ impl Host {
                 .is_some_and(|renderer| renderer.drawables_showing());
             // A GPU view's plane too, if so (`ZGX_PLANE_CLOCK=view`): its
             // drawables a refresh behind, the view's link skips a tick.
-            let planes = *PLANE_CLOCK == PlaneClock::View
+            // Kept a second after the last one hides: changing clocks loses
+            // a few frames, which a plane coming and going often (a menu
+            // over it) would lose each time.
+            let now = std::time::Instant::now();
+            if *PLANE_CLOCK == PlaneClock::View
                 && self
                     .renderer
                     .as_ref()
-                    .is_some_and(|renderer| renderer.planes_showing());
+                    .is_some_and(|renderer| renderer.planes_showing())
+            {
+                self.plane_clock_until = Some(now + std::time::Duration::from_secs(1));
+            }
+            let planes = self.plane_clock_until.is_some_and(|until| now < until);
             link.set_view_clock(drawables || planes);
             // Once the link has reported the grid, the timer continues it:
             // a scroll starting after a pause, or the grid going stale, keeps

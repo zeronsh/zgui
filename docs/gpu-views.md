@@ -41,6 +41,10 @@ A view whose painter covers every pixel opaquely says so with `GpuView::set_opaq
 - a frame of the view alone presents by itself and leaves the window's frame as it was;
 - a frame where the box moves, shows on its layer, or goes back into the window's frame (a clip, a fade, something drawn over it) commits with the window's frame, so no frame shows the view nowhere.
 
+While a plane shows, and for a second after the last one hides, the window's frames keep to the view's `CADisplayLink`, as drawables' do. A plane's drawables a refresh behind then put back in phase by skipping a tick. Left on the display's link, a plane's next drawable waited most of a refresh on the main thread every frame, in two launches of three on the M5.
+
+A frame that switches a view between its layer and the window's frame costs about two frames' worth of time. That's measured at four switches a second; a view doing so rarely doesn't notice.
+
 `scripts/viewport_probe.swift` captures `viewport_workload --mode switch` flipping between the two every quarter second, over magenta, and counts captures where magenta shows.
 
 ## Devices
