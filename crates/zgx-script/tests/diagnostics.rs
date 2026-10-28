@@ -137,6 +137,37 @@ fn handler_errors_show_and_the_banner_dismisses() {
     assert_eq!(h.text("label"), "Count: 1");
 }
 
+/// An error raised in an open modal: the banner shows over the modal and
+/// its × dismisses it, the click going to the banner, not to the modal's
+/// backdrop (which closed the modal and left the error).
+#[test]
+fn the_banner_dismisses_over_an_open_modal() {
+    let mut h = Harness::inline(
+        r#"local open = ui.state("open", true)
+return ui.column {
+    p = 12,
+    ui.text { id = "state", function() return if open:get() then "open" else "closed" end },
+    ui.modal {
+        open = open,
+        label = "Dialog",
+        w = 200, h = 120,
+        ui.button { id = "boom", w = 120, h = 40, on_click = function() error("boom") end, "Boom" },
+    },
+}
+"#,
+    );
+    assert_eq!(h.text("state"), "open");
+    h.click("boom");
+    assert!(h.find("script-error-banner").is_some());
+    h.click("script-error-dismiss");
+    assert_eq!(h.host.error().get(), None, "the click reached the banner");
+    assert!(h.find("script-error-banner").is_none());
+    assert_eq!(h.text("state"), "open", "the modal stays open");
+    // It still takes its own clicks.
+    h.click("boom");
+    assert!(h.find("script-error-banner").is_some());
+}
+
 #[test]
 fn the_inspector_names_nodes_by_the_script_line_that_made_them() {
     let inspector = Inspector::off();

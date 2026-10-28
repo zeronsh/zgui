@@ -627,7 +627,8 @@ fn locate(line: &str) -> Option<(usize, usize)> {
 
 /// The error banner: small and dark over the bottom of the window, the
 /// location in monospace, then the message and as much of the traceback
-/// as fits; × dismisses it.
+/// as fits; × dismisses it. It shows in a layer of its own over the
+/// interface (`error_layer`).
 fn banner(text: &str, dismiss: impl Fn() + 'static) -> View {
     let parts = split_error(text);
     let mono = |line: String| {
@@ -675,10 +676,7 @@ fn banner(text: &str, dismiss: impl Fn() + 'static) -> View {
         .map(|line| mono(line).text_color(rgb(0x9aa0ab)).truncate());
     column()
         .id("script-error-banner")
-        .absolute()
-        .left(12.)
-        .right(12.)
-        .bottom(12.)
+        .w_full()
         .max_h(200.)
         .overflow_hidden()
         .px(12.)
@@ -690,6 +688,29 @@ fn banner(text: &str, dismiss: impl Fn() + 'static) -> View {
         .border_color(rgba(0xff6b6b59))
         .child(headline)
         .children(details)
+}
+
+/// `banner` in a non-modal layer at the bottom of the window, as toasts
+/// show: over any modal or popover, its × taking its own clicks while a
+/// dialog holds focus (a click there reached the dialog's backdrop), and
+/// the pointer passing through the rest. Made only while an error shows.
+fn error_layer(banner: View, cx: &mut zgx::compose::Context) -> View {
+    let open = cx.runtime().signal(true);
+    zgx::compose::modal("Script error", open)
+        .layer()
+        .autofocus(false)
+        .modal_placement(zgx::compose::ModalPlacement {
+            x: zgx::compose::PlacementEdge::Start,
+            y: zgx::compose::PlacementEdge::End,
+            insets: [0., 0., 12., 0.],
+        })
+        .w_full()
+        .p(0.)
+        .px(12.)
+        .bg(zgx::scene::Color(0, 0, 0, 0))
+        .border(0.)
+        .shadow_none()
+        .child(banner)
 }
 
 #[derive(Clone)]
@@ -1944,8 +1965,8 @@ impl ScriptHost {
                 host.attach(&inspector);
             }
             // The banner exists only while there is an error: no node, no
-            // work otherwise. It is absolute, over the interface and taking
-            // none of its room; insets resolve against the window.
+            // work otherwise. It shows in a layer of its own, over the
+            // interface and any modal (`error_layer`).
             let (error, type_errors, lint) = (error.clone(), type_errors.clone(), lint.clone());
             let (dismiss_error, dismiss_types, dismiss_lint) = (
                 dismiss_error.clone(),
@@ -1973,17 +1994,18 @@ impl ScriptHost {
                         })
                         .flatten()
                 },
-                move |message, _| {
+                move |message, cx| {
                     let (error, types, lint) = (
                         dismiss_error.clone(),
                         dismiss_types.clone(),
                         dismiss_lint.clone(),
                     );
-                    banner(&message, move || {
+                    let banner = banner(&message, move || {
                         error.set(None);
                         types.set(None);
                         lint.set(None);
-                    })
+                    });
+                    error_layer(banner, cx)
                 },
             )
         })
