@@ -108,12 +108,15 @@ pub(crate) fn diag_phase(kind: &str) {
                     format!("p10 {:.2} p50 {:.2} p90 {:.2}", at(0.1), at(0.5), at(0.9))
                 };
                 let latency = std::mem::take(&mut *LATENCY.lock().unwrap_or_else(|e| e.into_inner()));
+                let start_latency =
+                    std::mem::take(&mut *START_LATENCY.lock().unwrap_or_else(|e| e.into_inner()));
                 eprintln!(
-                    "phase {kind} after tick ms {} | before target ms {} | drawable wait ms {} | tick to presented ms {} | rephases {}",
+                    "phase {kind} after tick ms {} | before target ms {} | drawable wait ms {} | tick to presented ms {} | start to presented ms {} | rephases {}",
                     quantiles(seen.iter().map(|x| x.0).collect()),
                     quantiles(seen.iter().map(|x| x.1).collect()),
                     quantiles(seen.iter().map(|x| x.2).collect()),
                     if latency.is_empty() { "-".into() } else { quantiles(latency) },
+                    if start_latency.is_empty() { "-".into() } else { quantiles(start_latency) },
                     REPHASES.load(Ordering::Relaxed),
                 );
                 seen.clear();
@@ -121,12 +124,36 @@ pub(crate) fn diag_phase(kind: &str) {
         });
     }
 }
+/// DIAGNOSTIC: when the host started the frame now drawing (host seconds,
+/// f64 bits), the one reference for latency on either clock.
+#[cfg(target_os = "macos")]
+static FRAME_START: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// DIAGNOSTIC: the host starts a frame's work (`draw_frame`).
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn diag_frame_start() {
+    let now = present_log::now_ns() as f64 / 1e9;
+    FRAME_START.store(now.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn diag_frame_started() -> f64 {
+    f64::from_bits(FRAME_START.load(std::sync::atomic::Ordering::Relaxed))
+}
 /// DIAGNOSTIC: tick-to-presented times of drawables lately (ms).
 #[cfg(target_os = "macos")]
 static LATENCY: std::sync::Mutex<Vec<f64>> = std::sync::Mutex::new(Vec::new());
 #[cfg(target_os = "macos")]
+static START_LATENCY: std::sync::Mutex<Vec<f64>> = std::sync::Mutex::new(Vec::new());
+#[cfg(target_os = "macos")]
 pub(crate) fn diag_latency(ms: f64) {
     let mut latency = LATENCY.lock().unwrap_or_else(|e| e.into_inner());
+    if latency.len() < 4096 {
+        latency.push(ms);
+    }
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn diag_start_latency(ms: f64) {
+    let mut latency = START_LATENCY.lock().unwrap_or_else(|e| e.into_inner());
     if latency.len() < 4096 {
         latency.push(ms);
     }

@@ -1853,6 +1853,9 @@ impl Host {
         }
     }
     fn draw_frame(&mut self) -> Result<(), Box<dyn Error>> {
+        // DIAGNOSTIC (ZGX_PHASE_LOG): the frame's start, for start-to-presented latency.
+        #[cfg(target_os = "macos")]
+        zgx_gpu::diag_frame_start();
         #[cfg(target_os = "macos")]
         let frame_started = std::time::Instant::now();
         self.sync_ime_cancellation();

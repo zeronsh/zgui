@@ -1281,6 +1281,7 @@ impl Layer {
         if feedback {
             let feedback = drawables.feedback.clone();
             let tick = crate::diag_last_tick().0;
+            let started = crate::diag_frame_started();
             let handler = block2::RcBlock::new(
                 move |shown: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
                     // SAFETY: Metal passes the drawable presented, alive for the call.
@@ -1288,6 +1289,9 @@ impl Layer {
                     feedback.record(presented);
                     if presented > 0. && tick > 0. {
                         crate::diag_latency((presented - tick) * 1e3);
+                    }
+                    if presented > 0. && started > 0. {
+                        crate::diag_start_latency((presented - started) * 1e3);
                     }
                 },
             );
