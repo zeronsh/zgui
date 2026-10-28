@@ -1836,6 +1836,16 @@ pub enum ImePurpose {
     ///
     /// For example, that could alter OSK on Wayland to show extra buttons.
     Terminal,
+    /// zgx patch: an email address (HTML's `inputmode="email"`).
+    Email,
+    /// zgx patch: a URL (`inputmode="url"`).
+    Url,
+    /// zgx patch: a number with a fraction (`inputmode="decimal"`).
+    Number,
+    /// zgx patch: digits alone (`inputmode="numeric"`).
+    Digits,
+    /// zgx patch: a telephone number (`inputmode="tel"`).
+    Phone,
 }
 
 /// An opaque token used to activate the [`Window`].

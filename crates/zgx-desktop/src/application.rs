@@ -1865,6 +1865,15 @@ impl Host {
         // drawing gates. Read-only editors retain logical focus but no IME context.
         let editor = crate::native_ime::editable_editor(&self.context.ui, self.native_focused);
         let target = editor.as_ref().map(|editor| editor.node);
+        // What kind of text it takes, for the input method (Wayland's content
+        // purpose; Windows' input scope through the framework, `tsf.rs`).
+        let purpose = crate::native_ime::ime_purpose(
+            editor
+                .as_ref()
+                .map_or(zgx::text_edit::InputMode::Text, |editor| {
+                    editor.input_mode()
+                }),
+        );
         // A field with its own keys (`InputMode::None`) shows no touch keyboard.
         #[cfg(windows)]
         let keyboard = target.is_some()
@@ -1910,6 +1919,7 @@ impl Host {
                 crate::native_ime::discard_native_composition(window);
             }
             if target.is_some() {
+                window.set_ime_purpose(purpose);
                 window.set_ime_allowed(true);
             }
             #[cfg(windows)]

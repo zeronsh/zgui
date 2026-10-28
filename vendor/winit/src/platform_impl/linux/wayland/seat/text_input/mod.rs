@@ -167,6 +167,12 @@ impl ZwpTextInputV3Ext for ZwpTextInputV3 {
             ImePurpose::Normal => (ContentHint::None, ContentPurpose::Normal),
             ImePurpose::Password => (ContentHint::SensitiveData, ContentPurpose::Password),
             ImePurpose::Terminal => (ContentHint::None, ContentPurpose::Terminal),
+            // zgx patch: HTML's input modes (vendor/winit/ZGX_PATCH.md).
+            ImePurpose::Email => (ContentHint::None, ContentPurpose::Email),
+            ImePurpose::Url => (ContentHint::None, ContentPurpose::Url),
+            ImePurpose::Number => (ContentHint::None, ContentPurpose::Number),
+            ImePurpose::Digits => (ContentHint::None, ContentPurpose::Digits),
+            ImePurpose::Phone => (ContentHint::None, ContentPurpose::Phone),
         };
         self.set_content_type(hint, purpose);
     }

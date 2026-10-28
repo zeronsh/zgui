@@ -1850,6 +1850,10 @@ export type InputProps = Merge<Props, {
 	-- A password field: its text shows as a bullet per character, and
 	-- copying or cutting it gives nothing.
 	secure: boolean?,
+	-- What kind of text it takes (HTML's `inputmode`): a hint to touch
+	-- keyboards and input methods, never a check of what is typed. "none"
+	-- shows no virtual keyboard (a field with its own keypad).
+	inputmode: ("text" | "decimal" | "numeric" | "tel" | "search" | "email" | "url" | "none")?,
 	-- Check its spelling as it is typed (HTML's `spellcheck`): the system's
 	-- checker marks misspelled words with a dotted line, and its context
 	-- menu offers guesses, Learn Spelling and Ignore Spelling. Not in a

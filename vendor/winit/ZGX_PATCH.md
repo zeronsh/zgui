@@ -236,3 +236,12 @@ and performed nothing, so WebKit found each key handled.
 
 `scripts/macos_key_routing_probe.py` (zgx) presses a menu key, a key the
 page takes and a binding in no menu with a page and a terminal focused.
+
+## Wayland: an input method hears what kind of text a field takes
+
+`ImePurpose` had only Normal, Password and Terminal, so text-input-v3's
+content purpose could not say email, URL, number, digits or phone (zgx's
+`InputMode`, HTML's `inputmode`). `ImePurpose` (`#[non_exhaustive]`) gains
+`Email`, `Url`, `Number`, `Digits` and `Phone` (`window.rs`), sent as
+those content purposes (`seat/text_input/mod.rs`); other platforms ignore a
+purpose, as before. zgx-desktop sets it as an editor takes the input method.

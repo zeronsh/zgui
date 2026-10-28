@@ -49,6 +49,22 @@ pub(crate) fn editable_editor(ui: &Ui, native_focused: bool) -> Option<zgx::widg
         .filter(|editor| !editor.is_read_only() && !editor.is_secure())
 }
 
+/// What an input method is told an editor takes (winit's `ImePurpose`, a
+/// Wayland text-input-v3 content purpose) for its `InputMode`. Wayland has
+/// no search purpose or one with no on-screen keyboard: those are normal.
+pub(crate) fn ime_purpose(mode: zgx::text_edit::InputMode) -> winit::window::ImePurpose {
+    use winit::window::ImePurpose;
+    use zgx::text_edit::InputMode;
+    match mode {
+        InputMode::Text | InputMode::Search | InputMode::None => ImePurpose::Normal,
+        InputMode::Email => ImePurpose::Email,
+        InputMode::Url => ImePurpose::Url,
+        InputMode::Decimal => ImePurpose::Number,
+        InputMode::Numeric => ImePurpose::Digits,
+        InputMode::Tel => ImePurpose::Phone,
+    }
+}
+
 /// Whether a password field has the keyboard: on macOS the host turns on
 /// secure keyboard entry meanwhile (`secure_input`), as Chrome and AppKit's
 /// secure text fields do, so no other process reads what it types.
@@ -241,6 +257,38 @@ fn preedit_cursor(text: &str, cursor: Option<(usize, usize)>) -> Option<(usize, 
 mod tests {
     use super::*;
     use crate::focus_memory::FocusMemory;
+
+    /// An editor's input mode is what its input method hears it takes:
+    /// Wayland's content purposes, the rest normal.
+    #[test]
+    fn input_modes_are_content_purposes() {
+        use winit::window::ImePurpose;
+        use zgx::text_edit::InputMode;
+        let purposes = [
+            InputMode::Text,
+            InputMode::Decimal,
+            InputMode::Numeric,
+            InputMode::Tel,
+            InputMode::Search,
+            InputMode::Email,
+            InputMode::Url,
+            InputMode::None,
+        ]
+        .map(ime_purpose);
+        assert_eq!(
+            purposes,
+            [
+                ImePurpose::Normal,
+                ImePurpose::Number,
+                ImePurpose::Digits,
+                ImePurpose::Phone,
+                ImePurpose::Normal,
+                ImePurpose::Email,
+                ImePurpose::Url,
+                ImePurpose::Normal,
+            ]
+        );
+    }
 
     #[test]
     fn rapid_read_only_toggle_keeps_native_reset_boundary() {
