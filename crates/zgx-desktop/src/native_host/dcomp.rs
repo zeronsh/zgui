@@ -527,6 +527,22 @@ pub(crate) struct Surfaces {
     focus: Option<NodeId>,
 }
 
+thread_local! {
+    /// Each window's router, by its handle: a page hands zgx the keys it
+    /// left alone (`webview2::Page::left_alone`).
+    static ROUTERS: RefCell<Vec<(isize, std::rc::Weak<Router>)>> = const { RefCell::new(Vec::new()) };
+}
+/// The router of window `hwnd`, if it has native views.
+pub(crate) fn router_of(hwnd: HWND) -> Option<Rc<Router>> {
+    ROUTERS.with(|routers| {
+        routers
+            .borrow()
+            .iter()
+            .find(|(window, _)| *window == hwnd.0 as isize)
+            .and_then(|(_, router)| router.upgrade())
+    })
+}
+
 impl Surfaces {
     pub fn new(
         window: &winit::window::Window,
@@ -546,8 +562,14 @@ impl Surfaces {
                 .map_err(|e| e.to_string())?;
             visual
         };
+        let router = Rc::new(router);
+        ROUTERS.with(|routers| {
+            let mut routers = routers.borrow_mut();
+            routers.retain(|(_, router)| router.strong_count() > 0);
+            routers.push((hwnd.0 as isize, Rc::downgrade(&router)));
+        });
         let pointer = Rc::new(Pointer {
-            router: Rc::new(router),
+            router,
             pressed: Cell::new(None),
             ui_press: Cell::new(false),
             hovered: Cell::new(None),

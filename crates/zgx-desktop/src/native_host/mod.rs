@@ -21,6 +21,8 @@ mod macos;
 mod webkit;
 #[cfg(all(windows, feature = "webview2"))]
 mod webview2;
+#[cfg(any(all(windows, feature = "webview2"), test))]
+mod webview2_keys;
 
 use std::rc::Rc;
 use zgx::{

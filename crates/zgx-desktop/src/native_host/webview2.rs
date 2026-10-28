@@ -429,6 +429,9 @@ pub(crate) struct Page {
     /// Commits the tree of the window it shows in, for changes made outside
     /// that window's frames (the page becoming ready, or going).
     commit: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Keys WebView2 saw pressed in it, for the page's word that it left
+    /// them alone (`webview2_keys`).
+    pressed: RefCell<super::webview2_keys::Pressed>,
 }
 
 /// The `WebViewBackend` of a page (its `as_any` finds the page).
@@ -503,6 +506,7 @@ pub(crate) fn backend(web: &WebView, parent: HWND, scale: f32) -> Option<Rc<Page
         files: RefCell::new(None),
         schemes: RefCell::new(Vec::new()),
         commit: RefCell::new(None),
+        pressed: RefCell::default(),
     });
     web.attach(Rc::new(Backend(page.clone())));
     let mut schemes: Vec<String> = Vec::new();
@@ -714,6 +718,8 @@ impl Page {
         if options.messages {
             scripts.push(CHANNEL_SCRIPT.into());
         }
+        // The keys the page leaves alone, for the app's shortcuts.
+        scripts.push(super::webview2_keys::SCRIPT.into());
         let view = ready.view.clone();
         *self.ready.borrow_mut() = Some(ready);
         self.apply_target();
@@ -886,8 +892,9 @@ impl Page {
                 })),
                 &mut token,
             );
-            if options.messages {
+            {
                 let page = on.clone();
+                let messages = options.messages;
                 let _ = view.add_WebMessageReceived(
                     &WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
                         let Some(args) = args else { return Ok(()) };
@@ -896,6 +903,13 @@ impl Page {
                             Ok(()) if !text.is_null() => take_pwstr(text),
                             _ => take(|v| args.WebMessageAsJson(v)),
                         };
+                        if let Some(key) = super::webview2_keys::parse(&body) {
+                            page(&|page| page.left_alone(&key));
+                            return Ok(());
+                        }
+                        if !messages {
+                            return Ok(());
+                        }
                         let origin = origin_of(&take(|v| args.Source(v)));
                         page(&|page| {
                             let (body, origin) = (body.clone(), origin.clone());
@@ -949,6 +963,28 @@ impl Page {
                 &mut token,
             );
             let page = on.clone();
+            let _ = ready.controller.add_AcceleratorKeyPressed(
+                &AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+                    let Some(args) = args else { return Ok(()) };
+                    let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
+                    let mut vk = 0u32;
+                    let _ = args.KeyEventKind(&mut kind);
+                    let _ = args.VirtualKey(&mut vk);
+                    if kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                        || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
+                    {
+                        let held = held_modifiers();
+                        page(&|page| {
+                            page.pressed
+                                .borrow_mut()
+                                .record(vk, held, std::time::Instant::now())
+                        });
+                    }
+                    Ok(())
+                })),
+                &mut token,
+            );
+            let page = on.clone();
             let _ = ready.controller.add_GotFocus(
                 &FocusChangedEventHandler::create(Box::new(move |_, _| {
                     page(&|page| page.focus_changed(true));
@@ -983,6 +1019,43 @@ impl Page {
                 &mut token,
             );
         }
+    }
+    /// The page's script says it left `key` alone: the app's shortcut, if
+    /// it was pressed in the page (`Pressed::take`), is not the browser's
+    /// own, and a key binding of the app's takes it (menus' included).
+    fn left_alone(&self, key: &super::webview2_keys::Forwarded) {
+        if !self
+            .pressed
+            .borrow_mut()
+            .take(key.vk, key.modifiers, std::time::Instant::now())
+            || super::webview2_keys::browsers(&key.key, key.modifiers)
+        {
+            return;
+        }
+        let Some(router) = super::dcomp::router_of(self.parent.get()) else {
+            return;
+        };
+        let (key, modifiers) = (key.key.clone(), key.modifiers);
+        zgx::native_view::post(move || {
+            let Some(scene) = router.scene.upgrade() else {
+                return;
+            };
+            if !router.input.binds_key(&scene.borrow(), &key, modifiers) {
+                return;
+            }
+            use zgx::input::InputEvent;
+            router.input.dispatch(
+                &scene,
+                InputEvent::KeyDown {
+                    key: key.clone(),
+                    modifiers,
+                    repeat: false,
+                },
+            );
+            router
+                .input
+                .dispatch(&scene, InputEvent::KeyUp { key, modifiers });
+        });
     }
     fn focus_changed(&self, focused: bool) {
         self.focused.set(focused);
@@ -1779,4 +1852,21 @@ fn error_message(status: COREWEBVIEW2_WEB_ERROR_STATUS) -> String {
         _ => "The page could not be loaded.",
     };
     message.into()
+}
+
+/// The modifiers held now, as the thread's keyboard state has them.
+fn held_modifiers() -> zgx::input::Modifiers {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+    // SAFETY: reads this thread's keyboard state.
+    let down = |key: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY| unsafe {
+        GetKeyState(i32::from(key.0)) < 0
+    };
+    zgx::input::Modifiers {
+        shift: down(VK_SHIFT),
+        control: down(VK_CONTROL),
+        alt: down(VK_MENU),
+        meta: down(VK_LWIN) || down(VK_RWIN),
+    }
 }
