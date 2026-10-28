@@ -41,6 +41,39 @@ use windows::{
 };
 use zgx::{scene::Rect, widgets::EditorHandle};
 
+/// DIAGNOSTIC BUILD ONLY (branch tsf-idle-diag, never merged): calls into
+/// the store by method, and the UI thread's cycles in `after_dispatch`.
+pub mod diag {
+    use std::{collections::BTreeMap, sync::Mutex};
+    static CALLS: Mutex<BTreeMap<&'static str, (u64, u64)>> = Mutex::new(BTreeMap::new());
+    pub(crate) fn cycles() -> u64 {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn QueryThreadCycleTime(thread: *mut std::ffi::c_void, cycles: *mut u64) -> i32;
+            fn GetCurrentThread() -> *mut std::ffi::c_void;
+        }
+        let mut c = 0;
+        // SAFETY: the calling thread's own counter.
+        unsafe {
+            QueryThreadCycleTime(GetCurrentThread(), &mut c);
+        }
+        c
+    }
+    pub(crate) fn note(name: &'static str, cycles: u64) {
+        let mut calls = CALLS.lock().unwrap();
+        let e = calls.entry(name).or_default();
+        e.0 += 1;
+        e.1 += cycles;
+    }
+    /// Every count since the last take: name, calls, cycles.
+    pub fn take() -> Vec<(&'static str, u64, u64)> {
+        std::mem::take(&mut *CALLS.lock().unwrap())
+            .into_iter()
+            .map(|(k, (n, c))| (k, n, c))
+            .collect()
+    }
+}
+
 /// The view cookie: an editor shows its text in one.
 const VIEW: u32 = 1;
 
@@ -158,6 +191,11 @@ impl Tsf {
     /// After zgx's dispatch: tell the input method what changed that it
     /// didn't do, then grant a lock it asked for meanwhile.
     pub(crate) fn after_dispatch(&self) {
+        let start = diag::cycles();
+        self.after_dispatch_inner();
+        diag::note("after_dispatch", diag::cycles() - start);
+    }
+    fn after_dispatch_inner(&self) {
         let (sink, changes, layout) = {
             let mut shared = self.shared.borrow_mut();
             if shared.lock != 0 {
@@ -273,6 +311,7 @@ impl Store {
 
 impl ITextStoreACP2_Impl for Store_Impl {
     fn AdviseSink(&self, riid: *const GUID, punk: Ref<IUnknown>, _mask: u32) -> Result<()> {
+        diag::note("AdviseSink", 0);
         // SAFETY: `riid` is a valid GUID from the caller.
         if unsafe { *riid } != ITextStoreACPSink::IID {
             return Err(E_INVALIDARG.into());
@@ -282,10 +321,12 @@ impl ITextStoreACP2_Impl for Store_Impl {
         Ok(())
     }
     fn UnadviseSink(&self, _punk: Ref<IUnknown>) -> Result<()> {
+        diag::note("UnadviseSink", 0);
         self.0.borrow_mut().sink = None;
         Ok(())
     }
     fn RequestLock(&self, flags: u32) -> Result<HRESULT> {
+        diag::note("RequestLock", 0);
         let busy = {
             let shared = self.0.borrow();
             shared.lock != 0
@@ -303,6 +344,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         Ok(grant(&self.0, flags))
     }
     fn GetStatus(&self) -> Result<TS_STATUS> {
+        diag::note("GetStatus", 0);
         Ok(TS_STATUS {
             dwDynamicFlags: 0,
             dwStaticFlags: TS_SS_NOHIDDENTEXT,
@@ -316,6 +358,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         result_start: *mut i32,
         result_end: *mut i32,
     ) -> Result<()> {
+        diag::note("QueryInsert", 0);
         // SAFETY: the caller's out pointers.
         unsafe {
             *result_start = start;
@@ -330,6 +373,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         selection: *mut TS_SELECTION_ACP,
         fetched: *mut u32,
     ) -> Result<()> {
+        diag::note("GetSelection", 0);
         let shared = self.read()?;
         if count == 0 || (index != 0 && index != TS_DEFAULT_SELECTION) {
             // SAFETY: the caller's out pointer.
@@ -352,6 +396,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         Ok(())
     }
     fn SetSelection(&self, count: u32, selection: *const TS_SELECTION_ACP) -> Result<()> {
+        diag::note("SetSelection", 0);
         let mut shared = self.write()?;
         if count == 0 {
             return Ok(());
@@ -375,6 +420,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         runs_given: *mut u32,
         next: *mut i32,
     ) -> Result<()> {
+        diag::note("GetText", 0);
         let shared = self.read()?;
         let len = shared.store.len();
         let end = if end < 0 { len } else { at(end).min(len) };
@@ -407,6 +453,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         text: &PCWSTR,
         cch: u32,
     ) -> Result<TS_TEXTCHANGE> {
+        diag::note("SetText", 0);
         let mut shared = self.write()?;
         // SAFETY: `cch` units at `text`, from the caller.
         let units = unsafe { std::slice::from_raw_parts(text.0, cch as usize) };
@@ -422,9 +469,11 @@ impl ITextStoreACP2_Impl for Store_Impl {
         })
     }
     fn GetFormattedText(&self, _start: i32, _end: i32) -> Result<IDataObject> {
+        diag::note("GetFormattedText", 0);
         Err(E_NOTIMPL.into())
     }
     fn GetEmbedded(&self, _at: i32, _service: *const GUID, _riid: *const GUID) -> Result<IUnknown> {
+        diag::note("GetEmbedded", 0);
         Err(E_NOTIMPL.into())
     }
     fn QueryInsertEmbedded(
@@ -432,6 +481,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         _service: *const GUID,
         _format: *const FORMATETC,
     ) -> Result<BOOL> {
+        diag::note("QueryInsertEmbedded", 0);
         Ok(false.into())
     }
     fn InsertEmbedded(
@@ -441,6 +491,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         _end: i32,
         _data: Ref<IDataObject>,
     ) -> Result<TS_TEXTCHANGE> {
+        diag::note("InsertEmbedded", 0);
         Err(E_NOTIMPL.into())
     }
     fn InsertTextAtSelection(
@@ -452,6 +503,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         end_out: *mut i32,
         change: *mut TS_TEXTCHANGE,
     ) -> Result<()> {
+        diag::note("InsertTextAtSelection", 0);
         let mut shared = self.write()?;
         let (start, end, _) = shared.store.selection();
         let range = if flags & TF_IAS_QUERYONLY.0 != 0 {
@@ -492,9 +544,11 @@ impl ITextStoreACP2_Impl for Store_Impl {
         _end: *mut i32,
         _change: *mut TS_TEXTCHANGE,
     ) -> Result<()> {
+        diag::note("InsertEmbeddedAtSelection", 0);
         Err(E_NOTIMPL.into())
     }
     fn RequestSupportedAttrs(&self, _flags: u32, _count: u32, _attrs: *const GUID) -> Result<()> {
+        diag::note("RequestSupportedAttrs", 0);
         Ok(())
     }
     fn RequestAttrsAtPosition(
@@ -504,6 +558,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         _attrs: *const GUID,
         _flags: u32,
     ) -> Result<()> {
+        diag::note("RequestAttrsAtPosition", 0);
         Ok(())
     }
     fn RequestAttrsTransitioningAtPosition(
@@ -513,6 +568,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         _attrs: *const GUID,
         _flags: u32,
     ) -> Result<()> {
+        diag::note("RequestAttrsTransitioningAtPosition", 0);
         Ok(())
     }
     fn FindNextAttrTransition(
@@ -526,6 +582,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         found: *mut BOOL,
         offset: *mut i32,
     ) -> Result<()> {
+        diag::note("FindNextAttrTransition", 0);
         // SAFETY: the caller's out pointers.
         unsafe {
             *next = halt;
@@ -540,17 +597,21 @@ impl ITextStoreACP2_Impl for Store_Impl {
         _values: *mut TS_ATTRVAL,
         fetched: *mut u32,
     ) -> Result<()> {
+        diag::note("RetrieveRequestedAttrs", 0);
         // SAFETY: the caller's out pointer.
         unsafe { *fetched = 0 };
         Ok(())
     }
     fn GetEndACP(&self) -> Result<i32> {
+        diag::note("GetEndACP", 0);
         Ok(acp(self.read()?.store.len()))
     }
     fn GetActiveView(&self) -> Result<u32> {
+        diag::note("GetActiveView", 0);
         Ok(VIEW)
     }
     fn GetACPFromPoint(&self, _view: u32, _point: *const POINT, _flags: u32) -> Result<i32> {
+        diag::note("GetACPFromPoint", 0);
         Err(E_NOTIMPL.into())
     }
     fn GetTextExt(
@@ -561,6 +622,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         rect: *mut RECT,
         clipped: *mut BOOL,
     ) -> Result<()> {
+        diag::note("GetTextExt", 0);
         let shared = self.read()?;
         let area = shared
             .store
@@ -575,6 +637,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
         Ok(())
     }
     fn GetScreenExt(&self, _view: u32) -> Result<RECT> {
+        diag::note("GetScreenExt", 0);
         let shared = self.0.borrow();
         let mut client = RECT::default();
         // SAFETY: a valid window and rect.
@@ -593,6 +656,7 @@ impl ITextStoreACP2_Impl for Store_Impl {
 
 impl ITfContextOwnerCompositionSink_Impl for Store_Impl {
     fn OnStartComposition(&self, view: Ref<ITfCompositionView>) -> Result<BOOL> {
+        diag::note("OnStartComposition", 0);
         let start = extent(view.ok()?).map_or(0, |(start, _)| start);
         self.0.borrow_mut().store.start_composition(start..start);
         Ok(true.into())
@@ -602,11 +666,13 @@ impl ITfContextOwnerCompositionSink_Impl for Store_Impl {
         _view: Ref<ITfCompositionView>,
         _range: Ref<ITfRange>,
     ) -> Result<()> {
+        diag::note("OnUpdateComposition", 0);
         // The composition's text came through SetText; its clauses
         // (display attributes) are read from S1 on.
         Ok(())
     }
     fn OnEndComposition(&self, _view: Ref<ITfCompositionView>) -> Result<()> {
+        diag::note("OnEndComposition", 0);
         let mut shared = self.0.borrow_mut();
         shared.store.end_composition();
         shared.told_len = shared.store.len();

@@ -106,7 +106,7 @@ pub mod terminal_process;
 #[cfg(any(windows, test))]
 mod text_store;
 #[cfg(windows)]
-mod tsf;
+pub mod tsf;
 pub use terminal_process::{
     ForegroundProcess, resolve_terminal_processes, terminal_processes_changed,
     terminal_processes_pushed,

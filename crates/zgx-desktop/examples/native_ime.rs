@@ -77,6 +77,93 @@ fn open_input_method() {
     }
 }
 
+/// DIAGNOSTIC BUILD ONLY (branch tsf-idle-diag): every message the UI
+/// thread takes (posted, sent), by message and window class, with
+/// `ZGX_IDLE_DIAG=1`; reported with the store's calls every 5 s.
+#[cfg(windows)]
+mod idle_diag {
+    use std::{collections::BTreeMap, sync::Mutex};
+    use windows::Win32::{
+        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+        System::{DataExchange::GetClipboardFormatNameW, Threading::GetCurrentThreadId},
+        UI::WindowsAndMessaging::{
+            CWPSTRUCT, CallNextHookEx, GetClassNameW, MSG, SetWindowsHookExW, WH_CALLWNDPROC,
+            WH_GETMESSAGE,
+        },
+    };
+    static COUNTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+    fn note(kind: &str, message: u32, wparam: usize, hwnd: HWND) {
+        let mut class = [0u16; 64];
+        // SAFETY: valid buffers; a window handle may be null.
+        let class = unsafe {
+            let n = GetClassNameW(hwnd, &mut class);
+            String::from_utf16_lossy(&class[..n.max(0) as usize])
+        };
+        let name = if message >= 0xC000 {
+            let mut buf = [0u16; 64];
+            // SAFETY: a registered message's atom; a valid buffer.
+            let n = unsafe { GetClipboardFormatNameW(message, &mut buf) };
+            format!(
+                "{:#x}={}",
+                message,
+                String::from_utf16_lossy(&buf[..n.max(0) as usize])
+            )
+        } else if message == 0x113 {
+            format!("WM_TIMER(id={wparam:#x})")
+        } else {
+            format!("{message:#x}")
+        };
+        *COUNTS
+            .lock()
+            .unwrap()
+            .entry(format!("{kind} {name} [{class}]"))
+            .or_default() += 1;
+    }
+    unsafe extern "system" fn get_message(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+        if code >= 0 && w.0 == 1 {
+            // SAFETY: WH_GETMESSAGE's lparam is the message taken.
+            let m = unsafe { &*(l.0 as *const MSG) };
+            note("posted", m.message, m.wParam.0, m.hwnd);
+        }
+        // SAFETY: passing the hook on.
+        unsafe { CallNextHookEx(None, code, w, l) }
+    }
+    unsafe extern "system" fn call_wnd(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+        if code >= 0 {
+            // SAFETY: WH_CALLWNDPROC's lparam is the message sent.
+            let c = unsafe { &*(l.0 as *const CWPSTRUCT) };
+            note(
+                if w.0 != 0 {
+                    "sent-by-other-thread"
+                } else {
+                    "sent"
+                },
+                c.message,
+                c.wParam.0,
+                c.hwnd,
+            );
+        }
+        // SAFETY: passing the hook on.
+        unsafe { CallNextHookEx(None, code, w, l) }
+    }
+    pub fn install() {
+        // SAFETY: hooks on this (the UI) thread, procedures in this module.
+        unsafe {
+            let thread = GetCurrentThreadId();
+            let _ = SetWindowsHookExW(WH_GETMESSAGE, Some(get_message), None, thread);
+            let _ = SetWindowsHookExW(WH_CALLWNDPROC, Some(call_wnd), None, thread);
+        }
+    }
+    pub fn report(tick: usize) {
+        for (key, n) in std::mem::take(&mut *COUNTS.lock().unwrap()) {
+            println!("MSG_DIAG {tick} {n} {key}");
+        }
+        for (name, n, cycles) in zgx_desktop::tsf::diag::take() {
+            println!("TSF_DIAG {tick} {name} calls={n} cycles={cycles}");
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let observe = std::env::args().any(|arg| arg == "--native-observe");
     let password = std::env::args().any(|arg| arg == "--password");
@@ -143,6 +230,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             });
             let window = cx.window.clone();
+            #[cfg(windows)]
+            let idle_diag = std::env::var_os("ZGX_IDLE_DIAG").is_some_and(|v| v == "1");
+            #[cfg(windows)]
+            if idle_diag {
+                idle_diag::install();
+            }
             cx.tasks.spawn(async move {
                 let ticks = zgx::env::var("ZGX_SECONDS")
                     .ok()
@@ -152,6 +245,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     zgx::timer::sleep(Duration::from_millis(500)).await;
                     if observe {
                         observe_native_focus(tick);
+                    }
+                    #[cfg(windows)]
+                    if idle_diag && tick % 10 == 9 {
+                        idle_diag::report(tick);
                     }
                     // Until composition starts: the test may switch the window
                     // to the input method's language only after it shows.
