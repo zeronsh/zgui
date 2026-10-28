@@ -4,7 +4,8 @@
     python3 scripts/perf/gate.py BASE [--threshold 1.0] [--markdown out.md]
 
 Builds this checkout and BASE (a revision, checked out in a worktree under
-/tmp/zgx-perf/gate-base) into one target directory, runs each scene under
+/tmp/zgx-perf at a path as long as this checkout's, `base_checkout`) into
+one target directory, runs each scene under
 valgrind's cachegrind without cache simulation, and compares the counted
 instructions (`I refs`): exact, and the same on any machine of the
 architecture, where hardware counters and time are not. Prints a table (and
@@ -122,12 +123,11 @@ SCENES = [
 ]
 
 # What a scene still moves by with no code changed (`same_run.c` fixes the
-# rest): app-chat's test waits for its fake server's timer thread, a
-# handoff between threads that real time decides; app-code waits for its
-# file thread the same way, and its count follows the build's layout too
-# (Luau's and mlua's hashing by address, as `RECOUNT` says), 0.05% between
-# two builds of one commit.
-SPREAD = {'app-chat': 0.2, 'app-code': 0.05, 'app-code-search': 0.05}
+# rest, and building both sides at paths of one length, `base_checkout`,
+# app-code's drift: main against itself now counts it the same): app-chat's
+# test waits for its fake server's timer thread, a handoff between threads
+# that real time decides.
+SPREAD = {'app-chat': 0.2}
 
 # A Luau scene's count follows where the heap places things (the value
 # cache and Luau's tables hash by address, its collector marks in their
@@ -349,6 +349,21 @@ def layout_of(deltas):
     return '; layout' if min(deltas) < 0 < max(deltas) else ''
 
 
+def base_checkout():
+    """Where the base is checked out to build: a path exactly as long as
+    the head's checkout. A binary keeps the path its sources were built
+    at (panics' locations, `file!`), and app-code's count follows that
+    path's length, by about 8,000 instructions a character (two builds of
+    one commit, 10 characters apart: 81,632; of equal length: 94), so a
+    base built elsewhere read as +0.09% on every change."""
+    want = len(str(ROOT.resolve()))
+    for parent in (WORK, pathlib.Path('/tmp')):
+        room = want - len(str(parent.resolve())) - 1
+        if room >= 1:
+            return parent / ('gate-base' + '_' * room)[:room]
+    sys.exit(f'no directory for the base as short as the checkout ({ROOT})')
+
+
 def same_run():
     """`same_run.c` built for preloading, once a run: it fixes what made
     one binary count differently from run to run (Luau's collector and
@@ -373,7 +388,7 @@ def main():
     # Both sides build into one target directory: CI's (ZGX_GATE_TARGET)
     # sits in the workspace's, where its cache keeps the dependencies.
     target = pathlib.Path(os.environ.get('ZGX_GATE_TARGET', WORK / 'gate-target')).resolve()
-    base = WORK / 'gate-base'
+    base = base_checkout()
     if base.exists():
         subprocess.run(['git', 'worktree', 'remove', '--force', str(base)], cwd=ROOT)
     subprocess.run(['git', 'worktree', 'add', '--detach', str(base), args.base], cwd=ROOT, check=True,
