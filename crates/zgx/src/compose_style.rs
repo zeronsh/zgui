@@ -191,8 +191,13 @@ pub(crate) struct Variants {
 /// active, focus and disabled styles when they changed since its last call,
 /// or `None` to keep them.
 pub(crate) type InteractionStyles = Box<dyn FnMut() -> Option<[Option<Styles>; 4]>>;
-#[derive(Clone, Copy, PartialEq)]
+/// The key holding a node pressed. Not an `Option`: with every field of
+/// `Interaction` a plain byte, comparing two (every style run does) is one
+/// load and compare instead of a branch per field.
+#[derive(Clone, Copy, Default, PartialEq)]
 enum ActivationKey {
+    #[default]
+    None,
     Space,
     Enter,
 }
@@ -203,7 +208,7 @@ struct Interaction {
     /// Pressed, but the pointer left it with the button held: it looks
     /// unpressed until the pointer comes back (as a native button does).
     pressed_outside: bool,
-    key_active: Option<ActivationKey>,
+    key_active: ActivationKey,
     focus: bool,
     /// The focus shows (CSS's `:focus-visible`): it came from the keyboard,
     /// the node edits text, or a key went to it since.
@@ -835,7 +840,7 @@ pub(crate) fn mount_style_with_intrinsic(
                     state.focus = false;
                     state.focus_visible = false;
                     state.pointer_active = false;
-                    state.key_active = None;
+                    state.key_active = ActivationKey::None;
                 }
                 // Pressed while the key that activates it is down.
                 InputEvent::KeyDown {
@@ -843,7 +848,7 @@ pub(crate) fn mount_style_with_intrinsic(
                     repeat: false,
                     ..
                 } if event.target == node && input.activates(node, &Key::Space) => {
-                    state.key_active = Some(ActivationKey::Space);
+                    state.key_active = ActivationKey::Space;
                     state.focus_visible = true;
                 }
                 InputEvent::KeyDown {
@@ -851,7 +856,7 @@ pub(crate) fn mount_style_with_intrinsic(
                     repeat: false,
                     ..
                 } if event.target == node && input.activates(node, &Key::Enter) => {
-                    state.key_active = Some(ActivationKey::Enter);
+                    state.key_active = ActivationKey::Enter;
                     state.focus_visible = true;
                 }
                 // A key to it (not a shortcut) shows its focus.
@@ -865,13 +870,13 @@ pub(crate) fn mount_style_with_intrinsic(
                 }
                 InputEvent::KeyUp {
                     key: Key::Space, ..
-                } if event.target == node && state.key_active == Some(ActivationKey::Space) => {
-                    state.key_active = None
+                } if event.target == node && state.key_active == ActivationKey::Space => {
+                    state.key_active = ActivationKey::None
                 }
                 InputEvent::KeyUp {
                     key: Key::Enter, ..
-                } if event.target == node && state.key_active == Some(ActivationKey::Enter) => {
-                    state.key_active = None
+                } if event.target == node && state.key_active == ActivationKey::Enter => {
+                    state.key_active = ActivationKey::None
                 }
                 _ => {}
             });
@@ -982,7 +987,8 @@ pub(crate) fn mount_style_with_intrinsic(
         let in_effect = [
             !is_disabled && state.hover,
             !is_disabled
-                && ((state.pointer_active && !state.pressed_outside) || state.key_active.is_some()),
+                && ((state.pointer_active && !state.pressed_outside)
+                    || state.key_active != ActivationKey::None),
             !is_disabled && state.focus && state.focus_visible,
             is_disabled,
         ];
