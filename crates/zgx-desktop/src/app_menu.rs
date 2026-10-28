@@ -144,6 +144,19 @@ impl StandardItem {
             Self::SelectAll => "Super+A",
         }
     }
+    /// Every standard item.
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Undo,
+        Self::Redo,
+        Self::Cut,
+        Self::Copy,
+        Self::Paste,
+        Self::SelectAll,
+    ];
+    /// The standard item whose action `action` is.
+    pub(crate) fn of(action: &MenuAction) -> Option<Self> {
+        Self::ALL.into_iter().find(|item| item.action() == *action)
+    }
     /// The action a rendered menu bar dispatches for it.
     pub fn action(self) -> MenuAction {
         MenuAction(format!(
@@ -300,7 +313,10 @@ pub(crate) fn enabled_action(menus: &[AppMenu], action: &MenuAction) -> bool {
                 ..
             } => *enabled && id == action,
             AppMenuEntry::Submenu(menu) => enabled_action(std::slice::from_ref(menu), action),
-            AppMenuEntry::Separator | AppMenuEntry::Standard(_) => false,
+            // AppKit's own on macOS (sent to the first responder); elsewhere
+            // an item of zgx's menu bar like any other.
+            AppMenuEntry::Standard(item) => !cfg!(target_os = "macos") && item.action() == *action,
+            AppMenuEntry::Separator => false,
         })
 }
 /// Accessible retained menus with keyboard traversal, Escape dismissal, focus

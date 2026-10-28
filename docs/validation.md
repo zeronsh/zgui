@@ -211,6 +211,13 @@ check logs are retained with that evidence. Closed panels keep their subscriptio
 this is not a claim that all hidden-subtree computation is suspended.
 
 
+Standard Edit items (Copy, Cut, Paste, Select All, Undo, Redo) in zgx's menu
+bar outside macOS do what their shortcut does to the focused editor and, with
+nothing to take them, reach the app as their action: on X11, the
+`standard_menu_items` example chooses Edit → Copy and an ordinary item through
+`WindowHandle::dispatch_menu_action` and hears `[standard:copy, control]`
+(`standard-menu-items` in `linux_smokes.py`). On macOS they stay AppKit's.
+
 Declarative menus now expose accessible menu/item roles, trigger popup/expanded
 state, retained component/keyed items, disabled-item skipping, bounded Unicode
 prefix search, arrow/Home/End navigation, Escape and Tab exit. Actions close the

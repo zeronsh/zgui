@@ -2403,6 +2403,40 @@ impl Host {
             None => self.context.ui.look_up_selection(&platform),
         }
     }
+    /// What a standard edit item does, as its shortcut does it: the
+    /// clipboard's commands as `clipboard_command`, Select All on the
+    /// focused editor, Undo and Redo as their keys to it. Whether anything
+    /// took it.
+    fn standard_edit(&mut self, item: crate::app_menu::StandardItem) -> bool {
+        use crate::app_menu::StandardItem;
+        let undo = |shift| InputEvent::KeyDown {
+            key: Key::Character("z".into()),
+            modifiers: zgx::input::Modifiers {
+                shift,
+                control: !cfg!(target_os = "macos"),
+                meta: cfg!(target_os = "macos"),
+                alt: false,
+            },
+            repeat: false,
+        };
+        match item {
+            StandardItem::Copy => self.clipboard_command("c"),
+            StandardItem::Cut => self.clipboard_command("x"),
+            StandardItem::Paste => self.clipboard_command("v"),
+            StandardItem::SelectAll => self
+                .context
+                .ui
+                .focused_editor()
+                .map(|editor| editor.select_all())
+                .is_some(),
+            StandardItem::Undo | StandardItem::Redo => {
+                self.context.ui.focused_editor().is_some()
+                    && self
+                        .dispatch_prevented(undo(item == StandardItem::Redo))
+                        .unwrap_or(false)
+            }
+        }
+    }
     fn clipboard_key(&mut self, key: &Key) -> bool {
         #[cfg(windows)]
         let alias = windows_clipboard_alias(key, self.modifiers);
@@ -2423,6 +2457,12 @@ impl Host {
         {
             return false;
         }
+        let k = k.to_owned();
+        self.clipboard_command(&k)
+    }
+    /// Copy (`c`), cut (`x`) or paste (`v`) in the focused editor, or copy
+    /// the selected display text; whether anything took it.
+    fn clipboard_command(&mut self, k: &str) -> bool {
         let Some(editor) = self.context.ui.focused_editor() else {
             // Selected display text (`View::selectable`) copies.
             if !k.eq_ignore_ascii_case("c") || !self.context.ui.has_text_selection() {
@@ -5319,6 +5359,14 @@ impl WindowManager {
         }
         if let Some(host) = self.hosts.get_mut(&token) {
             if host.context.window.is_closed() {
+                return;
+            }
+            // A standard edit item does what its shortcut does to what has
+            // focus (an editor's copy, paste, undo); with nothing to take
+            // it, it reaches the app.
+            if let Some(item) = crate::app_menu::StandardItem::of(&action)
+                && host.standard_edit(item)
+            {
                 return;
             }
             let handled = host

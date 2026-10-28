@@ -28,6 +28,7 @@ SMOKES = [
     ("failures", "python3 scripts/failures_smoke.py {bin}/failures", True),
     ("viewport", "python3 scripts/viewport_smoke.py {bin}/viewport", True),
     ("window-controls", "timeout 30s {bin}/window_controls --smoke-test", True),
+    ("standard-menu-items", "timeout 30s {bin}/standard_menu_items --smoke-test", True),
     ("form", "python3 scripts/form_smoke.py {bin}/form", True),
     ("checkbox", "python3 scripts/checkbox_smoke.py {bin}/checkbox --output {out}", True),
     ("slider", "python3 scripts/slider_smoke.py {bin}/slider --output {out}", True),
