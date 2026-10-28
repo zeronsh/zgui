@@ -81,14 +81,17 @@ impl TextStore {
     /// UTF-16 length and byte end), the preedit if any (in place of the
     /// selection), and the committed text after.
     fn parts(&self, editor: &EditorHandle) -> Parts {
-        let e = editor.editor.borrow();
-        match e.preedit() {
+        let mut e = editor.editor.borrow_mut();
+        match e
+            .preedit()
+            .map(|preedit| preedit.text.encode_utf16().collect())
+        {
             Some(preedit) => {
                 let range = e.selection().range();
                 Parts {
                     before: e.byte_to_utf16(range.start),
                     cut: e.byte_to_utf16(range.end) - e.byte_to_utf16(range.start),
-                    preedit: Some(preedit.text.encode_utf16().collect()),
+                    preedit: Some(preedit),
                     len: e.utf16_len(),
                 }
             }
@@ -116,12 +119,12 @@ impl TextStore {
         let end = end.min(self.len());
         let start = start.min(end);
         let parts = self.parts(editor);
-        let e = editor.editor.borrow();
+        let mut e = editor.editor.borrow_mut();
         // The committed text's units `from..to` exactly: a range starting or
         // ending between a surrogate pair's halves has the one half it holds,
         // so pages read one after another (`GetText` cut to its buffer) join
         // up as the text.
-        let committed = |from: usize, to: usize| -> Vec<u16> {
+        let mut committed = |from: usize, to: usize| -> Vec<u16> {
             if from >= to {
                 return Vec::new();
             }
@@ -177,19 +180,23 @@ impl TextStore {
         let Some(editor) = &self.editor else {
             return (0, 0, false);
         };
-        let e = editor.editor.borrow();
-        match e.preedit() {
-            Some(preedit) => {
-                let before = e.byte_to_utf16(e.selection().range().start);
-                let (a, b) = preedit
-                    .cursor
-                    .unwrap_or((preedit.text.len(), preedit.text.len()));
-                let unit = |at: usize| {
-                    preedit.text[..at.min(preedit.text.len())]
-                        .encode_utf16()
-                        .count()
-                };
-                (before + unit(a), before + unit(b), false)
+        let mut e = editor.editor.borrow_mut();
+        let cursor = e.preedit().map(|preedit| {
+            let (a, b) = preedit
+                .cursor
+                .unwrap_or((preedit.text.len(), preedit.text.len()));
+            let unit = |at: usize| {
+                preedit.text[..at.min(preedit.text.len())]
+                    .encode_utf16()
+                    .count()
+            };
+            (unit(a), unit(b))
+        });
+        match cursor {
+            Some((a, b)) => {
+                let start = e.selection().range().start;
+                let before = e.byte_to_utf16(start);
+                (before + a, before + b, false)
             }
             None => {
                 let s = e.selection();
@@ -219,7 +226,7 @@ impl TextStore {
             }
             None => {
                 let (from, to) = {
-                    let e = editor.editor.borrow();
+                    let mut e = editor.editor.borrow_mut();
                     (e.utf16_to_byte(start), e.utf16_to_byte(end))
                 };
                 if caret_at_start {
@@ -268,7 +275,7 @@ impl TextStore {
             return Some(composition.start + a..composition.start + a + text.len());
         }
         let (from, to, selection) = {
-            let e = editor.editor.borrow();
+            let mut e = editor.editor.borrow_mut();
             (
                 e.utf16_to_byte(start),
                 e.utf16_to_byte(end),
@@ -405,19 +412,24 @@ struct Parts {
 /// The byte in the text `editor` shows (the composition in place of the
 /// selection) at the document's UTF-16 offset `at`.
 fn shown_byte(editor: &EditorHandle, at: usize) -> usize {
-    let e = editor.editor.borrow();
-    let Some(preedit) = e.preedit() else {
+    let mut e = editor.editor.borrow_mut();
+    let Some((units, len)) = e
+        .preedit()
+        .map(|preedit| (preedit.text.encode_utf16().count(), preedit.text.len()))
+    else {
         return e.utf16_to_byte(at);
     };
     let selection = e.selection().range();
     let before = e.byte_to_utf16(selection.start);
-    let units = preedit.text.encode_utf16().count();
     if at <= before {
         e.utf16_to_byte(at)
     } else if at < before + units {
         // Within the composition: the character holding the unit (inside a
         // surrogate pair, its start).
         let mut counted = 0;
+        let Some(preedit) = e.preedit() else {
+            return selection.start;
+        };
         let inside = preedit
             .text
             .char_indices()
@@ -430,7 +442,7 @@ fn shown_byte(editor: &EditorHandle, at: usize) -> usize {
     } else {
         // After it: the committed text past what it stands in place of.
         let cut = e.byte_to_utf16(selection.end) - before;
-        e.utf16_to_byte(at - units + cut) - selection.len() + preedit.text.len()
+        e.utf16_to_byte(at - units + cut) - selection.len() + len
     }
 }
 

@@ -152,9 +152,15 @@ pub enum ClauseStyle {
 /// composition's clauses, and where its text's UTF-16 offsets are.
 #[derive(Default)]
 struct ImeState {
-    clauses: std::cell::RefCell<Vec<(Range<usize>, ClauseStyle)>>,
-    utf16: std::cell::RefCell<Option<Utf16Starts>>,
+    clauses: Vec<(Range<usize>, ClauseStyle)>,
+    utf16: Option<Utf16Starts>,
 }
+// An editor is Send, Sync and unwind-safe, as published releases' were:
+// losing one breaks code that shares or catches across it.
+const _: () = {
+    const fn holds<T: Send + Sync + std::panic::RefUnwindSafe + std::panic::UnwindSafe>() {}
+    holds::<TextEditor>();
+};
 /// The revision of a text, and its pieces' UTF-8 and UTF-16 starts then.
 type Utf16Starts = (u64, Vec<(usize, usize)>);
 /// `at` (a byte offset into `text`) on a character's start, back from it.
@@ -200,7 +206,7 @@ pub struct TextEditor {
     run: Option<Run>,
     /// For an input method that reaches into the text: one pointer until
     /// one does.
-    ime: std::cell::OnceCell<Box<ImeState>>,
+    ime: Option<Box<ImeState>>,
 }
 impl Default for TextEditor {
     fn default() -> Self {
@@ -237,7 +243,7 @@ impl TextEditor {
             history_limit: 100,
             history_bytes: 4 * 1024 * 1024,
             run: None,
-            ime: std::cell::OnceCell::new(),
+            ime: None,
         }
     }
     /// The committed text, without any preedit: borrowed while short, a
@@ -1047,8 +1053,8 @@ impl TextEditor {
         };
         let cursor = cursor.map(|(a, b)| (clamp(a), clamp(b)));
         self.preedit = Some(Preedit { text, cursor });
-        if let Some(ime) = self.ime.get() {
-            ime.clauses.borrow_mut().clear();
+        if let Some(ime) = &mut self.ime {
+            ime.clauses.clear();
         }
     }
     /// Set the preedit as `set_preedit` does, with the input method's
@@ -1077,19 +1083,19 @@ impl TextEditor {
             .collect();
         self.set_preedit(text, cursor);
         if self.preedit.is_some() && !clauses.is_empty() {
-            *self.ime().clauses.borrow_mut() = clauses;
+            self.ime().clauses = clauses;
         }
     }
     /// The preedit's clauses (`set_preedit_clauses`): none for a preedit set
     /// without them, or no preedit.
     pub fn preedit_clauses(&self) -> Vec<(Range<usize>, ClauseStyle)> {
-        match self.ime.get().filter(|_| self.preedit.is_some()) {
-            Some(ime) => ime.clauses.borrow().clone(),
+        match self.ime.as_ref().filter(|_| self.preedit.is_some()) {
+            Some(ime) => ime.clauses.clone(),
             None => Vec::new(),
         }
     }
-    fn ime(&self) -> &ImeState {
-        self.ime.get_or_init(Box::default)
+    fn ime(&mut self) -> &mut ImeState {
+        self.ime.get_or_insert_with(Box::default)
     }
     /// Replace the text in `range` (byte offsets, cut to grapheme
     /// boundaries) with `text` as one undo step, the caret after it: an input
@@ -1111,12 +1117,12 @@ impl TextEditor {
         changed
     }
     /// The committed text's length in UTF-16 code units, as Windows counts.
-    pub fn utf16_len(&self) -> usize {
+    pub fn utf16_len(&mut self) -> usize {
         self.utf16_starts(|starts, _| starts.last().map_or(0, |(_, u)| *u))
     }
     /// Byte offset `at` as a UTF-16 offset (a byte inside a character
     /// counts from that character's start).
-    pub fn byte_to_utf16(&self, at: usize) -> usize {
+    pub fn byte_to_utf16(&mut self, at: usize) -> usize {
         let at = at.min(self.text.len());
         self.utf16_starts(|starts, parts| {
             // The piece `at` is in, and on from its start.
@@ -1130,7 +1136,7 @@ impl TextEditor {
     }
     /// UTF-16 offset `at` as a byte offset, on a character's start (an
     /// offset between a surrogate pair's halves counts from the pair).
-    pub fn utf16_to_byte(&self, at: usize) -> usize {
+    pub fn utf16_to_byte(&mut self, at: usize) -> usize {
         self.utf16_starts(|starts, parts| {
             let piece = starts.partition_point(|(_, u)| *u <= at).saturating_sub(1);
             let (byte, unit) = starts[piece];
@@ -1149,14 +1155,11 @@ impl TextEditor {
     }
     /// `f` of each piece's UTF-8 and UTF-16 starts (the text's end last)
     /// and the pieces, kept for the revision until the text changes.
-    fn utf16_starts<R>(&self, f: impl FnOnce(&[(usize, usize)], &[&str]) -> R) -> R {
-        let ime = self.ime();
-        let mut cached = ime.utf16.borrow_mut();
+    fn utf16_starts<R>(&mut self, f: impl FnOnce(&[(usize, usize)], &[&str]) -> R) -> R {
+        let revision = self.revision;
+        let cached = &mut self.ime.get_or_insert_with(Box::default).utf16;
         self.text.with_parts(|parts| {
-            if cached
-                .as_ref()
-                .is_none_or(|(revision, _)| *revision != self.revision)
-            {
+            if cached.as_ref().is_none_or(|(at, _)| *at != revision) {
                 let mut starts = Vec::with_capacity(parts.len() + 1);
                 let (mut byte, mut unit) = (0, 0);
                 for part in parts {
@@ -1165,7 +1168,7 @@ impl TextEditor {
                     unit += part.encode_utf16().count();
                 }
                 starts.push((byte, unit));
-                *cached = Some((self.revision, starts));
+                *cached = Some((revision, starts));
             }
             f(&cached.as_ref().unwrap().1, parts)
         })
@@ -1318,7 +1321,7 @@ mod tests {
         assert_eq!(e.utf16_len(), 7, "counted again after an edit");
         // A long text, in chunks: offsets in a later chunk.
         let long = "x".repeat(super::LONG * 2) + "😀é";
-        let e = TextEditor::new(long.clone());
+        let mut e = TextEditor::new(long.clone());
         assert!(e.long_text().is_some());
         let n = super::LONG * 2;
         assert_eq!(e.utf16_len(), n + 3);
