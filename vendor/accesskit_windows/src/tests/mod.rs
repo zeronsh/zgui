@@ -336,5 +336,6 @@ impl IUIAutomationFocusChangedEventHandler_Impl for FocusEventHandler_Impl {
 
 mod cell_name;
 mod heading;
+mod find_text;
 mod simple;
 mod subclassed;

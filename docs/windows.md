@@ -663,6 +663,7 @@ python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --insta
 python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean --tsf
 python scripts/windows_tsf_smoke.py target/debug/examples/native_ime.exe
 python scripts/windows_tsf_japanese_smoke.py target/debug/examples/native_ime.exe
+python scripts/windows_uia_find_smoke.py target/debug/examples/selectable_text.exe
 python scripts/windows_platform_smoke.py target/debug/examples
 python scripts/windows_settings_smoke.py target/debug/examples/scrollbars.exe --both
 python scripts/windows_touch_smoke.py target/debug/examples
@@ -712,6 +713,7 @@ python scripts/windows_first_frame_probe.py target/release/examples/component_wo
 - `windows_tsf_smoke.py` (`ZGX_TSF=1`): the emoji panel (Win+., Enter) inserts
   through zgx's text store, and typing after it reaches the editor. It needs
   no input method beyond English.
+- `windows_uia_find_smoke.py`: UI Automation finds text in a zgx document (`FindText`, AccessKit's zgx patch): a word forward, one without case, one backward, nothing for what it doesn't have, each match with its box.
 - `windows_tsf_japanese_smoke.py` (`ZGX_TSF=1`): the Microsoft Japanese IME
   converts and commits 日本語 through the text store. It prints PENDING
   without the Japanese typing features installed.

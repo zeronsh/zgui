@@ -89,6 +89,19 @@ WebView2 set it. 0.35.1 and upstream main still leave it out.
      (`UiaHasServerSideProvider` sends `UiaRootObjectId`), it should take the
      same path as Narrator; an NVDA that reads such a window through MSAA
      instead takes the read-past-the-placeholder path.
+7. A text range finds text within it: `ITextRangeProvider::FindText`, which
+   upstream leaves a stub returning nothing (`text.rs`).
+   - It finds the first match of the text within the range, or the last with
+     `backward`, compared without case with `ignoreCase`, from one character
+     boundary to another. It returns a range over the match, or none where
+     there is no match.
+   - Why: Windows Speech Recognition's "select <word>", Narrator's find, and
+     UI Automation test tools search a field's text this way. They got
+     nothing from every zgx field and document.
+   - Tested by `tests::find_text` (text, case, backward, within the range,
+     none, bounds). `scripts/windows_uia_find_smoke.py` checks it on a real
+     zgx window.
+   - To offer upstream: it uses only the crate's own range and position API.
 
 Run the crate's tests on Windows with
 `cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --locked`.

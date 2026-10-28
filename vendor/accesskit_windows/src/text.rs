@@ -405,14 +405,78 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
 
     fn FindText(
         &self,
-        _text: &BSTR,
-        _backward: BOOL,
-        _ignore_case: BOOL,
+        text: &BSTR,
+        backward: BOOL,
+        ignore_case: BOOL,
     ) -> Result<ITextRangeProvider> {
-        // TODO: implement when there's a real-world use case that requires it
-        // Justification: Quorum doesn't implement this and is being used
-        // by blind students.
-        Err(Error::empty())
+        // zgx patch: the range over the first match of `text` within this
+        // range (the last with `backward`), compared without case with
+        // `ignore_case`, on character boundaries; none (a null range) where
+        // there is no match. Windows Speech Recognition's "select <word>",
+        // Narrator's find and UIA test tools search a field's text this way.
+        let needle = text.to_string();
+        if needle.is_empty() {
+            return Err(Error::empty());
+        }
+        let fold = |s: &str| {
+            if ignore_case.as_bool() {
+                s.to_lowercase()
+            } else {
+                s.to_owned()
+            }
+        };
+        let needle = fold(&needle);
+        let found = self.read(|range| {
+            // Each character's start in the range, and the text before it.
+            let mut stops = vec![(range.start(), 0)];
+            let mut text = String::new();
+            let mut at = range.start();
+            while at < range.end() && !at.is_document_end() {
+                let next = at.forward_to_character_end();
+                if next == at || next > range.end() {
+                    break;
+                }
+                let mut piece = range;
+                piece.set_start(at);
+                piece.set_end(next);
+                text.push_str(&piece.text());
+                at = next;
+                stops.push((at, text.len()));
+            }
+            // The first stop (the last, backward) from which characters up
+            // to a later stop fold to the needle.
+            let matches_from = |i: usize| -> Option<usize> {
+                for j in i + 1..stops.len() {
+                    let span = fold(&text[stops[i].1..stops[j].1]);
+                    if span == needle {
+                        return Some(j);
+                    }
+                    if span.len() >= needle.len() || !needle.starts_with(&span) {
+                        return None;
+                    }
+                }
+                None
+            };
+            let found = if backward.as_bool() {
+                (0..stops.len()).rev().find_map(|i| matches_from(i).map(|j| (i, j)))
+            } else {
+                (0..stops.len()).find_map(|i| matches_from(i).map(|j| (i, j)))
+            };
+            Ok(found.map(|(i, j)| {
+                let mut found = range;
+                found.set_start(stops[i].0);
+                found.set_end(stops[j].0);
+                found.downgrade()
+            }))
+        })?;
+        match found {
+            Some(range) => Ok(PlatformRange {
+                context: self.context.clone(),
+                state: RwLock::new(range),
+            }
+            .into()),
+            None => Err(Error::empty()),
+        }
     }
 
     fn GetAttributeValue(&self, id: UIA_TEXTATTRIBUTE_ID) -> Result<VARIANT> {

@@ -362,7 +362,7 @@ jobs:
       # vendor/accesskit_windows/ZGX_PATCH.md), alone: its other tests move
       # the foreground window. Built in the workspace's target, which shares
       # what it can of the build above.
-      - run: cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target --locked -- heading cell_name
+      - run: cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target --locked -- heading cell_name find_text
       # Direct3D 12 on WARP (no GPU on the runner): pixel tests of what the
       # D3D shader compiler alone gets wrong (coarse derivatives, #38), and
       # the device on DXGI's first low-power adapter (`adapter`, #217).
