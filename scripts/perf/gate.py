@@ -44,6 +44,7 @@ pull request looks for its base's once its own are, minutes after a merge
 to main rather than at once.
 """
 import argparse
+import hashlib
 import os
 import pathlib
 import re
@@ -357,10 +358,15 @@ def base_checkout():
     one commit, 10 characters apart: 81,632; of equal length: 94), so a
     base built elsewhere read as +0.09% on every change."""
     want = len(str(ROOT.resolve()))
+    # Named for this checkout: another checkout's gate (of the same
+    # length) shares /tmp, and the work directory may be shared too.
+    tag = hashlib.sha1(str(ROOT.resolve()).encode()).hexdigest()
     for parent in (WORK, pathlib.Path('/tmp')):
         room = want - len(str(parent.resolve())) - 1
-        if room >= 1:
-            return parent / ('gate-base' + '_' * room)[:room]
+        if room >= 10:
+            return parent / (f'gate-base-{tag}' + '_' * room)[:room]
+        if room >= 4:
+            return parent / (tag + '_' * room)[:room]
     sys.exit(f'no directory for the base as short as the checkout ({ROOT})')
 
 
@@ -389,8 +395,12 @@ def main():
     # sits in the workspace's, where its cache keeps the dependencies.
     target = pathlib.Path(os.environ.get('ZGX_GATE_TARGET', WORK / 'gate-target')).resolve()
     base = base_checkout()
+    # A worktree left from a run before (or registered, its directory gone
+    # with a reboot's /tmp): this checkout's, as `base_checkout` names it.
+    subprocess.run(['git', 'worktree', 'prune'], cwd=ROOT)
     if base.exists():
         subprocess.run(['git', 'worktree', 'remove', '--force', str(base)], cwd=ROOT)
+        shutil.rmtree(base, ignore_errors=True)
     subprocess.run(['git', 'worktree', 'add', '--detach', str(base), args.base], cwd=ROOT, check=True,
                    capture_output=True)
     cache = os.environ.get('ZGX_GATE_BIN_CACHE')
