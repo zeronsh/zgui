@@ -226,23 +226,6 @@ impl DamageGrid {
     fn full(&self) -> bool {
         self.full_before == self.cells.len()
     }
-    /// The first column from `column` on (before `columns`) whose cell in
-    /// `row` is `marked`, or `columns`.
-    fn seek(&self, row: usize, mut column: usize, columns: usize, marked: bool) -> usize {
-        let cells = &self.cells[row * self.stride..(row + 1) * self.stride];
-        while column < columns {
-            let word = cells[column / 64];
-            let bits = match marked {
-                true => word,
-                false => !word,
-            } >> (column % 64);
-            if bits != 0 {
-                return (column + bits.trailing_zeros() as usize).min(columns);
-            }
-            column = (column / 64 + 1) * 64;
-        }
-        columns
-    }
     /// Each row's runs of marked cells, a run repeated straight down the
     /// next rows joining them as one rectangle.
     #[inline(never)]
@@ -260,12 +243,45 @@ impl DamageGrid {
             // Both lists are ordered. Close each old run as soon as no
             // following run can extend it, keeping the old emission order.
             let (mut column, mut at) = (0, 0);
+            let mut word = if columns == 0 {
+                0
+            } else {
+                self.cells[row * self.stride]
+            };
             while column < columns {
-                let start = self.seek(row, column, columns, true);
-                if start == columns {
+                while word == 0 {
+                    column = (column / 64 + 1) * 64;
+                    if column >= columns {
+                        break;
+                    }
+                    word = self.cells[row * self.stride + column / 64];
+                }
+                if column >= columns {
                     break;
                 }
-                column = self.seek(row, start, columns, false);
+                let gap = word.trailing_zeros() as usize;
+                column += gap;
+                if column >= columns {
+                    break;
+                }
+                word >>= gap;
+                let start = column;
+                loop {
+                    let ones = word.trailing_ones() as usize;
+                    let boundary = (column / 64 + 1) * 64;
+                    if column + ones < boundary {
+                        column = (column + ones).min(columns);
+                        word >>= ones;
+                        break;
+                    }
+                    column = boundary;
+                    if column >= columns {
+                        column = columns;
+                        word = 0;
+                        break;
+                    }
+                    word = self.cells[row * self.stride + column / 64];
+                }
                 while at < open.len() && open[at].0 < start {
                     close(&open[at]);
                     at += 1;
