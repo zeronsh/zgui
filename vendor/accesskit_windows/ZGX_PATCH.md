@@ -101,7 +101,8 @@ WebView2 set it. 0.35.1 and upstream main still leave it out.
    - Tested by `tests::find_text` (text, case, backward, within the range,
      none, bounds). `scripts/windows_uia_find_smoke.py` checks it on a real
      zgx window.
-   - To offer upstream: it uses only the crate's own range and position API.
+   - Kept here: zgx maintains its forks for now and sends this upstream only
+     if that changes. It uses only the crate's own range and position API.
 
 Run the crate's tests on Windows with
 `cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --locked`.
