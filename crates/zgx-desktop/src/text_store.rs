@@ -33,6 +33,9 @@ pub(crate) enum Change {
     },
     /// The selection moved.
     Selection,
+    /// The editor dropped the composition (the app set its text or its
+    /// selection): the input method is to end its own, committing nothing.
+    CompositionCancelled,
 }
 
 pub(crate) struct TextStore {
@@ -42,6 +45,9 @@ pub(crate) struct TextStore {
     /// The composition's text, the store's own: an editor drops its preedit
     /// when it loses focus, and the composition is still committed into it.
     composing: String,
+    /// The editor's `composition_cancel_revision` as the composition began:
+    /// once it moves, the editor dropped it.
+    cancels: u64,
     seen: Option<Seen>,
 }
 
@@ -51,6 +57,7 @@ impl TextStore {
             editor: None,
             composition: None,
             composing: String::new(),
+            cancels: 0,
             seen: None,
         }
     }
@@ -235,6 +242,8 @@ impl TextStore {
         text: &[u16],
     ) -> Option<Range<usize>> {
         let editor = self.editor.clone()?;
+        // A composition the editor dropped is no longer the document's.
+        self.drop_cancelled();
         let (start, end) = (start.min(end), start.max(end).min(self.len()));
         let new = String::from_utf16_lossy(text);
         if let Some(composition) = self.composition.clone() {
@@ -280,10 +289,28 @@ impl TextStore {
     }
     /// The input method opened a composition over `range` (`OnStartComposition`).
     pub(crate) fn start_composition(&mut self, range: Range<usize>) {
-        if self.editor.is_some() {
+        if let Some(editor) = &self.editor {
+            self.cancels = editor.editor.borrow().composition_cancel_revision();
             self.composition = Some(range.start..range.start);
             self.composing.clear();
         }
+    }
+    /// Whether the editor dropped the open composition (the app set its text
+    /// or its selection, or made it read-only): then it is the store's no
+    /// longer, and nothing of it is committed. (A focus moving away commits
+    /// it first, `focus`.)
+    fn drop_cancelled(&mut self) -> bool {
+        let Some(editor) = &self.editor else {
+            return false;
+        };
+        if self.composition.is_none()
+            || editor.editor.borrow().composition_cancel_revision() == self.cancels
+        {
+            return false;
+        }
+        self.composition = None;
+        self.composing.clear();
+        true
     }
     /// The input method marked its composition's clauses (its display
     /// attributes, read after each of its edits): document ranges and how
@@ -333,12 +360,13 @@ impl TextStore {
     /// tell it (`OnTextChange`, `OnSelectionChange`). The whole text, once,
     /// for a text change: Windows takes a wider range than changed.
     pub(crate) fn changes(&mut self, old_len: usize) -> Vec<Change> {
+        let cancelled = self.drop_cancelled();
         let Some(editor) = &self.editor else {
             return Vec::new();
         };
         // Nothing changed (every dispatch but those that edit): compared in
         // place, nothing made.
-        if self.seen.as_ref().is_some_and(|seen| seen.is(editor)) {
+        if !cancelled && self.seen.as_ref().is_some_and(|seen| seen.is(editor)) {
             return Vec::new();
         }
         let now = seen(editor);
@@ -355,6 +383,10 @@ impl TextStore {
         }
         if before.selection != now.selection || before.preedit != now.preedit {
             changes.push(Change::Selection);
+        }
+        // After the text it no longer holds is told.
+        if cancelled {
+            changes.push(Change::CompositionCancelled);
         }
         changes
     }
@@ -563,6 +595,84 @@ mod tests {
             editor.editor.borrow().preedit_clauses(),
             [(4..10, ClauseStyle::Target)]
         );
+    }
+
+    /// A field "abcd" composing 候補 at 2, the input method's way.
+    fn composing() -> (Ui, TextStore, zgx::reactive::Signal<String>) {
+        let (ui, mut store, value) = store("abcd");
+        store.set_selection(2, 2, false);
+        store.start_composition(2..2);
+        store.replace(2, 2, &utf16("候補"));
+        assert_eq!(value.get(), "abcd");
+        assert!(store.editor().unwrap().editor.borrow().preedit().is_some());
+        (ui, store, value)
+    }
+
+    /// The app setting the text drops the composition (research A batch 012):
+    /// the input method is told to end its own, and ending it commits none.
+    #[test]
+    fn the_apps_edit_cancels_the_composition() {
+        let (_ui, mut store, value) = composing();
+        let before = store.len();
+        value.set("REPLACED".to_owned());
+        assert!(store.editor().unwrap().editor.borrow().preedit().is_none());
+        let changes = store.changes(before);
+        assert_eq!(changes.last(), Some(&Change::CompositionCancelled));
+        assert!(!store.is_composing());
+        store.end_composition();
+        assert_eq!(value.get(), "REPLACED");
+    }
+
+    /// After that edit, the input method writing at the selection it reads
+    /// types there (it panicked, on the composition's old range).
+    #[test]
+    fn writing_after_a_cancelled_composition_types_at_the_selection() {
+        let (_ui, mut store, value) = composing();
+        let before = store.len();
+        value.set("REPLACED".to_owned());
+        store.changes(before);
+        let (a, b, _) = store.selection();
+        assert!(a <= b && b <= store.len());
+        store.replace(a, b, &utf16("!"));
+        assert_eq!(value.get().matches('!').count(), 1);
+        // And without the change heard first.
+        let (_ui, mut store, value) = composing();
+        value.set("REPLACED".to_owned());
+        let (a, b, _) = store.selection();
+        store.replace(a, b, &utf16("!"));
+        assert_eq!(value.get().matches('!').count(), 1);
+    }
+
+    /// The app moving the selection drops the composition too.
+    #[test]
+    fn the_apps_selection_cancels_the_composition() {
+        let (_ui, mut store, value) = composing();
+        let before = store.len();
+        store.editor().unwrap().set_selection(0, 0);
+        assert!(store.editor().unwrap().editor.borrow().preedit().is_none());
+        assert!(
+            store
+                .changes(before)
+                .contains(&Change::CompositionCancelled)
+        );
+        store.end_composition();
+        assert_eq!(value.get(), "abcd");
+    }
+
+    /// An edit that leaves the text as it was keeps the composition live.
+    #[test]
+    fn an_edit_to_the_same_text_keeps_the_composition() {
+        let (_ui, mut store, value) = composing();
+        let before = store.len();
+        value.set("abcd".to_owned());
+        assert!(
+            !store
+                .changes(before)
+                .contains(&Change::CompositionCancelled)
+        );
+        assert!(store.editor().unwrap().editor.borrow().preedit().is_some());
+        store.end_composition();
+        assert_eq!(value.get(), "ab候補cd");
     }
 
     /// Focus moving mid-composition commits it into the editor it began in,

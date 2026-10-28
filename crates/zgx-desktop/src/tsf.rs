@@ -196,6 +196,7 @@ impl Tsf {
             }
             (shared.sink.clone(), changes, layout)
         };
+        let mut cancelled = false;
         if let Some(sink) = &sink {
             // SAFETY: the sink is alive while advised; the change is valid.
             unsafe {
@@ -216,12 +217,23 @@ impl Tsf {
                         Change::Selection => {
                             let _ = sink.OnSelectionChange();
                         }
+                        Change::CompositionCancelled => cancelled = true,
                     }
                 }
                 if layout {
                     let _ = sink.OnLayoutChange(TS_LC_CHANGE, VIEW);
                 }
             }
+        }
+        // The editor dropped the composition (the app set its text or its
+        // selection): the input method ends its own, with nothing of it left
+        // to commit (its OnEndComposition finds none). No borrow is held
+        // across the call: it calls back into the store.
+        if cancelled
+            && let Ok(services) = self._context.cast::<ITfContextOwnerCompositionServices>()
+        {
+            // SAFETY: the context's own services; no lock is held.
+            let _ = unsafe { services.TerminateComposition(None) };
         }
         let pending = self.shared.borrow_mut().pending.take();
         if let Some(flags) = pending {

@@ -36,6 +36,7 @@ Two behaviours change, each below with what to check: a radio's, check box's, sw
 
 ### Fixed
 
+- Windows (`ZGX_TSF=1`): the app setting an editor's text or selection while an input method composes in it ends the composition there, as the editor's preedit already ended. The text store kept the composition: ending it committed the cancelled text ("REPLACED候補"), and the input method's next write at the selection panicked.
 - `ScriptHost::on_error` hears an error raised again with the same message; it heard only the first.
 - A script's error banner shows over an open modal or popover and dismisses with its ×. Under a modal, the click went to the modal's backdrop, which closed the modal and left the error.
 - **A Luau app starts with Luau 744's bytecode** (luau0-src 0.22.1, which compiles to bytecode version 13): mlua-sys took versions up to 11, read the rest as text and refused it (`attempt to load a text chunk`). zgx-mlua 0.12.5 checks bytecode by the versions Luau 0.22 loads, and the `luau0-src = "=0.22.0"` pin goes.
