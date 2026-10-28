@@ -238,6 +238,12 @@ fn a_view_composites_as_an_image_does() {
     rounded.draw();
     assert_eq!(rounded.pixel(21., 11.), [16, 32, 48, 255]);
     assert_eq!(rounded.pixel(50., 30.), [255, 0, 0, 255]);
+    // Its own corners cut it too, with no clip of the app's.
+    let mut cornered =
+        Window::new(1., |view| view.absolute().ml(20.).mt(10.).rounded(16.)).unwrap();
+    cornered.draw();
+    assert_eq!(cornered.pixel(21., 11.), [16, 32, 48, 255]);
+    assert_eq!(cornered.pixel(50., 30.), [255, 0, 0, 255]);
     // Half opaque, it mixes with what lies behind it.
     let mut faded = Window::new(1., |view| view.absolute().ml(20.).mt(10.).opacity(0.5)).unwrap();
     faded.draw();
