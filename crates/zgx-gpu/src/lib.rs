@@ -2938,6 +2938,11 @@ impl GpuContext {
             // glass windows), where a window's own swap chain is opaque.
             descriptor.backend_options.dx12.presentation_system =
                 wgpu::Dx12SwapchainKind::DxgiFromVisual;
+            // Shaders through FXC, as Direct3D 11's ahead-of-time DXBC: wgpu
+            // otherwise takes DXC when dxcompiler.dll is on PATH (a developer
+            // shell's), whose code rounds antialiased edges a level apart.
+            // `WGPU_DX12_COMPILER` still chooses.
+            descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc.with_env();
             #[cfg(d3d11)]
             {
                 descriptor.backend_options.noop.enable = noop;

@@ -46,7 +46,7 @@ Both runs are in [`field-m1-2026-10-27`](field-m1-2026-10-27/) as the runner rec
 
 # Direct3D 11 against Direct3D 12 on Windows (2026-10-27)
 
-[`d3d11-proof-windows-2026-10-27`](d3d11-proof-windows-2026-10-27/): zgx-gpu's experimental Direct3D 11 path (`d3d11` feature, `ZGX_D3D11=1`) against the default, wgpu on Direct3D 12, in the Windows suite and at rest, one binary. On an RTX 4090: private memory about halved (lab 126 → 62 MiB), 15–36% fewer CPU cycles animating and 47% fewer at rest, first text at 227 ms against 280; pacing, DWM and board power level; about 10 µs more GPU a frame, which a bare Direct3D 11 swap chain pays too (`d3d_frame_floor`). Frames match Direct3D 12's within one level per colour channel on antialiased edges (alpha identical); see docs/windows.md. NVIDIA only.
+[`d3d11-proof-windows-2026-10-27`](d3d11-proof-windows-2026-10-27/): zgx-gpu's experimental Direct3D 11 path (`d3d11` feature, `ZGX_D3D11=1`) against the default, wgpu on Direct3D 12, in the Windows suite and at rest, one binary. On an RTX 4090: private memory about halved (lab 126 → 62 MiB), 15–36% fewer CPU cycles animating and 47% fewer at rest, first text at 227 ms against 280; pacing, DWM and board power level; about 10 µs more GPU a frame, which a bare Direct3D 11 swap chain pays too (`d3d_frame_floor`). Frames byte-identical, with Direct3D 12's shaders through FXC as Direct3D 11's are (docs/windows.md). NVIDIA only.
 
 # Windows suite (2026-10-27): DWM's CPU in cycles, on `ffbae9d`
 

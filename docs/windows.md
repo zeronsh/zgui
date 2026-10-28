@@ -180,7 +180,12 @@ and fades, kept frames, and scroll copies. Images, isolated and transformed
 layers, backdrop blur, polylines and shader fills are not drawn yet: a frame
 needing one fails with an error naming it (and panics in a debug build),
 since there is no Direct3D 12 to fall back to. What it draws is Direct3D 12's
-frame byte for byte (`tests/d3d11_parity.rs`).
+frame byte for byte (`tests/d3d11_parity.rs`, at 1×, 1.5× and 2×). Both run
+the same HLSL compiled by FXC: Direct3D 11 ahead of time (`dxbc/`), and zgx
+pins wgpu's Direct3D 12 to FXC too. Left to choose, wgpu takes DXC wherever
+dxcompiler.dll is on PATH (a developer shell with the Windows SDK), and DXC's
+code rounds antialiased edges a level apart from FXC's.
+`WGPU_DX12_COMPILER=dxc` still picks it.
 
 What it trades, measured with the Windows suite on an RTX 4090
 ([results](results/d3d11-proof-windows-2026-10-27/)):
