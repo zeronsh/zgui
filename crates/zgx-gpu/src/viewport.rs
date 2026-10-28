@@ -101,6 +101,28 @@ pub(crate) struct Views {
     /// By view and the box showing it: the image id its texture is cached
     /// under, and its size.
     shown: rustc_hash::FxHashMap<(u64, u64), Shown>,
+    /// Boxes shown on planes of their own (macOS), by view and box.
+    #[cfg(target_os = "macos")]
+    planes: rustc_hash::FxHashMap<(u64, u64), Planed>,
+    /// Planes moved or shown this frame, presented in its transaction.
+    #[cfg(target_os = "macos")]
+    pub(crate) moved: Vec<crate::layer_present::PlaneFrame>,
+    /// Planes to hide in this frame's transaction (their views composited),
+    /// kept for when they show again.
+    #[cfg(target_os = "macos")]
+    pub(crate) hidden: Vec<(u64, u64)>,
+    /// Planes whose boxes are gone, to drop in this frame's transaction.
+    #[cfg(target_os = "macos")]
+    pub(crate) gone: Vec<(u64, u64)>,
+}
+/// A box on a plane: its node, the frame it last drew, its box, and the
+/// drawables' textures as wgpu's, by Metal texture (the pool's few).
+#[cfg(target_os = "macos")]
+struct Planed {
+    node: zgx::scene::NodeId,
+    image: u64,
+    rect: zgx::scene::Rect,
+    targets: Vec<(usize, wgpu::Texture, wgpu::TextureView)>,
 }
 struct Shown {
     image: u64,
@@ -113,6 +135,14 @@ impl Views {
     /// frames draw anew (at a new scale).
     pub(crate) fn forget(&mut self) -> impl Iterator<Item = u64> + '_ {
         self.shown.drain().map(|(_, shown)| shown.image)
+    }
+    /// Whether a box shows on a plane: the window then keeps no frame to
+    /// patch (its box draws nothing there).
+    pub(crate) fn has_planes(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        return !self.planes.is_empty();
+        #[cfg(not(target_os = "macos"))]
+        false
     }
 }
 
@@ -171,37 +201,15 @@ impl GpuRenderer {
                 (bind, bytes, texture, (target, srgb))
             }
         };
-        if let Some(painter) = zgx::gpu_view::painter(frame.view) {
-            let painter = painter.downcast_ref::<RefCell<Painter>>().ok_or_else(|| {
-                GpuError("a GPU view's painter isn't a viewport::Viewport".into())
-            })?;
-            let mut painter = painter.borrow_mut();
-            let painter = &mut *painter;
-            let (device, queue) = self.view_device();
-            if painter.device.as_ref() != Some(device) {
-                if painter.device.is_some() {
-                    painter.viewport.device_changed();
-                }
-                painter.device = Some(device.clone());
-            }
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("GPU view"),
-            });
-            painter.viewport.render(&mut ViewportFrame {
-                device,
-                queue,
-                encoder: &mut encoder,
-                target: &targets.0,
-                target_srgb: targets.1.as_ref(),
-                format: crate::FORMAT,
-                size,
-                scale: self.scale,
-                time: std::time::Instant::now(),
-            });
-            // Ahead of the frame sampling it, which is recorded after this
-            // and submitted (or committed, drawn with Metal directly) later.
-            queue.submit([encoder.finish()]);
-            self.after_view_submit(key);
+        self.paint(key, size, &targets.0, targets.1.as_ref(), crate::FORMAT)?;
+        // Composited: off its plane, if it was on one, in this frame's
+        // transaction (the frame drawing it into the window shows with it).
+        #[cfg(target_os = "macos")]
+        if let Some(views) = self.views.as_mut()
+            && views.planes.remove(&key).is_some()
+        {
+            views.hidden.push(key);
+            zgx::gpu_view::set_planed(key.0, key.1, false);
         }
         self.images.insert(image.id(), (bind, bytes, Some(texture)));
         self.views.as_mut().unwrap().shown.insert(
@@ -212,6 +220,52 @@ impl GpuRenderer {
                 targets,
             },
         );
+        Ok(())
+    }
+    /// Have view `key.0`'s painter draw a frame of `size` into `target`, its
+    /// work submitted before the frame showing it. Nothing if the view is
+    /// gone.
+    fn paint(
+        &self,
+        key: (u64, u64),
+        size: (u32, u32),
+        target: &wgpu::TextureView,
+        target_srgb: Option<&wgpu::TextureView>,
+        format: wgpu::TextureFormat,
+    ) -> Result<(), GpuError> {
+        let Some(painter) = zgx::gpu_view::painter(key.0) else {
+            return Ok(());
+        };
+        let painter = painter
+            .downcast_ref::<RefCell<Painter>>()
+            .ok_or_else(|| GpuError("a GPU view's painter isn't a viewport::Viewport".into()))?;
+        let mut painter = painter.borrow_mut();
+        let painter = &mut *painter;
+        let (device, queue) = self.view_device();
+        if painter.device.as_ref() != Some(device) {
+            if painter.device.is_some() {
+                painter.viewport.device_changed();
+            }
+            painter.device = Some(device.clone());
+        }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("GPU view"),
+        });
+        painter.viewport.render(&mut ViewportFrame {
+            device,
+            queue,
+            encoder: &mut encoder,
+            target,
+            target_srgb,
+            format,
+            size,
+            scale: self.scale,
+            time: std::time::Instant::now(),
+        });
+        // Ahead of the frame sampling it (or its drawable's present), which
+        // is recorded after this and submitted later on the same queue.
+        queue.submit([encoder.finish()]);
+        self.after_view_submit(key);
         Ok(())
     }
     /// The device and queue views draw with: the renderer's own, as it
@@ -257,4 +311,326 @@ impl GpuRenderer {
             .flags
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
     }
+}
+
+/// Planes: a box showing a GPU view whole and opaque gets a layer of its
+/// own, its painter drawing into the layer's drawables, so neither the
+/// renderer nor the window server composites it with the window's frame.
+#[cfg(target_os = "macos")]
+impl GpuRenderer {
+    /// Draw `item`, a GPU view's frame, on a plane of its own if it may be
+    /// (see `planeable`); whether it was, in which case the window draws
+    /// nothing for it.
+    #[inline(never)]
+    pub(crate) fn plane_item(
+        &mut self,
+        scene: &zgx::scene::Scene,
+        item: &zgx::scene::PaintItem,
+        image: &zgx::image::ImageData,
+    ) -> Result<bool, GpuError> {
+        let Some(frame) = image.gpu_frame() else {
+            return Ok(false);
+        };
+        if !self.planeable(scene, item, image, frame) {
+            return Ok(false);
+        }
+        self.draw_plane(item.id, image, frame, item.bounds)
+    }
+    /// Whether a frame may show on a plane: its painter promises it opaque,
+    /// the window presents through layers of its own, and its box shows it
+    /// whole and alone: drawn flat in the window (not inside a cached layer),
+    /// untransformed, unclipped, unrounded, unfaded, nothing painted over it.
+    fn planeable(
+        &self,
+        scene: &zgx::scene::Scene,
+        item: &zgx::scene::PaintItem,
+        image: &zgx::image::ImageData,
+        frame: &zgx::gpu_view::GpuFrame,
+    ) -> bool {
+        frame.opaque
+            && !self.in_layer
+            && self
+                .layer_present
+                .as_ref()
+                .is_some_and(|present| present.layer.is_some())
+            && item.extras.is_none()
+            && item.effects == zgx::scene::Effects::default()
+            && image.transform() == zgx::affine::Affine::IDENTITY
+            && item
+                .clip
+                .is_none_or(|clip| clip.intersection(item.bounds) == Some(item.bounds))
+            && !painted_over(scene, item.id, item.bounds)
+    }
+    /// Draw `image`'s frame into its plane's next drawable, `rect` its box.
+    fn draw_plane(
+        &mut self,
+        node: zgx::scene::NodeId,
+        image: &zgx::image::ImageData,
+        frame: &zgx::gpu_view::GpuFrame,
+        rect: zgx::scene::Rect,
+    ) -> Result<bool, GpuError> {
+        let key = (frame.view, frame.shown_by);
+        let max = self.device.limits().max_texture_dimension_2d;
+        let size = (
+            ((rect.width * self.scale).round() as u32).clamp(1, max),
+            ((rect.height * self.scale).round() as u32).clamp(1, max),
+        );
+        // SAFETY: Only the raw device is read; the guard drops at once.
+        let Some(device) = (unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }).map(|hal| {
+            use objc2::Message;
+            hal.raw_device().retain()
+        }) else {
+            return Ok(false);
+        };
+        let Some(layer) = self
+            .layer_present
+            .as_mut()
+            .and_then(|present| present.layer.as_mut())
+        else {
+            return Ok(false);
+        };
+        let points = (
+            f64::from(rect.x),
+            f64::from(rect.y),
+            f64::from(rect.width),
+            f64::from(rect.height),
+        );
+        let Some(plane) = layer.plane_frame(key, &device, size, points) else {
+            return Ok(false);
+        };
+        // The drawable's texture as wgpu's, made once per texture of the pool.
+        use objc2_metal::MTLTexture;
+        use objc2_quartz_core::CAMetalDrawable;
+        let texture = plane.drawable.texture();
+        let address = &*texture as *const _ as *const u8 as usize;
+        let views = self.views.get_or_insert_with(Default::default);
+        let planed = views.planes.entry(key).or_insert_with(|| Planed {
+            node,
+            image: 0,
+            rect,
+            targets: Vec::new(),
+        });
+        planed.node = node;
+        planed.image = image.id();
+        planed.rect = rect;
+        let target = match planed.targets.iter().position(|(at, ..)| *at == address) {
+            Some(at) => planed.targets[at].2.clone(),
+            None => {
+                let (width, height) = (texture.width() as u32, texture.height() as u32);
+                // SAFETY: Metal made this texture (the layer's drawable, on this
+                // device) with this format and size, one mip level and layer.
+                let raw = unsafe {
+                    wgpu::hal::metal::Device::texture_from_raw(
+                        texture.clone(),
+                        wgpu::TextureFormat::Bgra8UnormSrgb,
+                        objc2_metal::MTLTextureType::Type2D,
+                        1,
+                        1,
+                        wgpu::hal::CopyExtent {
+                            width,
+                            height,
+                            depth: 1,
+                        },
+                    )
+                };
+                // SAFETY: Made from this device's raw device as described; a
+                // drawable is only ever drawn whole (the painter clears it).
+                let wrapped = unsafe {
+                    self.device
+                        .create_texture_from_hal::<wgpu::hal::api::Metal>(
+                            raw,
+                            &wgpu::TextureDescriptor {
+                                label: Some("GPU view plane"),
+                                size: wgpu::Extent3d {
+                                    width,
+                                    height,
+                                    depth_or_array_layers: 1,
+                                },
+                                mip_level_count: 1,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D2,
+                                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                view_formats: &[],
+                            },
+                        )
+                };
+                let view = wrapped.create_view(&Default::default());
+                // A new size or pool: the old textures are gone with it.
+                if planed.targets.len() >= 3 {
+                    planed.targets.remove(0);
+                }
+                planed.targets.push((address, wrapped, view.clone()));
+                view
+            }
+        };
+        zgx::gpu_view::set_planed(key.0, key.1, true);
+        self.paint(
+            key,
+            size,
+            &target,
+            None,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        )?;
+        if plane.moved {
+            // In the frame's transaction, with the window's frame.
+            self.views.as_mut().unwrap().moved.push(plane);
+        } else {
+            self.present_plane(plane);
+        }
+        Ok(true)
+    }
+    /// Present `plane` after the work on the queue (its painter's).
+    fn present_plane(&mut self, plane: crate::layer_present::PlaneFrame) {
+        // SAFETY: The raw queue is only retained; the guard drops at once.
+        let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+            use objc2::Message;
+            hal.as_raw().retain()
+        });
+        if let (Some(queue), Some(layer)) = (
+            queue,
+            self.layer_present
+                .as_mut()
+                .and_then(|present| present.layer.as_mut()),
+        ) {
+            layer.present_plane(plane, &queue);
+        }
+    }
+    /// Draw the new frames of views on planes whose boxes did not change: a
+    /// frame with nothing else to draw (no damage). Whether any was drawn.
+    pub(crate) fn render_planes_now(
+        &mut self,
+        scene: &zgx::scene::Scene,
+    ) -> Result<bool, GpuError> {
+        let Some(views) = self.views.as_ref() else {
+            return Ok(false);
+        };
+        let due: Vec<_> = views
+            .planes
+            .values()
+            .filter_map(|planed| {
+                if !scene.contains(planed.node) {
+                    return None;
+                }
+                match scene.kind(planed.node) {
+                    zgx::scene::NodeKind::Image(image) if image.id() != planed.image => {
+                        Some((planed.node, image.clone(), planed.rect))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        let mut drawn = false;
+        for (node, image, rect) in due {
+            if let Some(frame) = image.gpu_frame() {
+                drawn |= self.draw_plane(node, &image, frame, rect)?;
+            }
+        }
+        Ok(drawn)
+    }
+    /// After a frame's render: the planes whose boxes are gone, to drop in
+    /// its transaction (`apply_planes`).
+    pub(crate) fn settle_planes(&mut self, scene: &zgx::scene::Scene) {
+        let Some(views) = self.views.as_mut() else {
+            return;
+        };
+        let mut gone = Vec::new();
+        views.planes.retain(|key, planed| {
+            let alive = scene.contains(planed.node);
+            if !alive {
+                gone.push(*key);
+            }
+            alive
+        });
+        for key in gone {
+            zgx::gpu_view::set_planed(key.0, key.1, false);
+            views.gone.push(key);
+        }
+    }
+    /// In the frame's transaction: show the planes that moved with their
+    /// frames, hide those composited again, drop those gone.
+    pub(crate) fn apply_planes(&mut self) {
+        // SAFETY: The raw queue is only retained; the guard drops at once.
+        let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+            use objc2::Message;
+            hal.as_raw().retain()
+        });
+        if let (Some(views), Some(layer)) = (
+            self.views.as_deref_mut(),
+            self.layer_present
+                .as_mut()
+                .and_then(|present| present.layer.as_mut()),
+        ) {
+            apply_planes(views, layer, queue.as_deref());
+        }
+    }
+}
+/// See `GpuRenderer::apply_planes`: on `layer`, in the caller's transaction.
+#[cfg(target_os = "macos")]
+pub(crate) fn apply_planes(
+    views: &mut Views,
+    layer: &mut crate::layer_present::Layer,
+    queue: Option<&objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandQueue>>,
+) {
+    if views.moved.is_empty() && views.hidden.is_empty() && views.gone.is_empty() {
+        return;
+    }
+    for key in views.hidden.drain(..) {
+        layer.hide_plane(key);
+    }
+    if !views.gone.is_empty() {
+        let gone = std::mem::take(&mut views.gone);
+        layer.retain_planes(|key| !gone.contains(&key));
+    }
+    for plane in views.moved.drain(..) {
+        if let Some(queue) = queue {
+            layer.present_plane(plane, queue);
+        }
+    }
+}
+
+/// Whether anything paints over `node` within `rect`: an item after it in
+/// paint order whose box meets `rect`.
+#[cfg(target_os = "macos")]
+fn painted_over(
+    scene: &zgx::scene::Scene,
+    node: zgx::scene::NodeId,
+    rect: zgx::scene::Rect,
+) -> bool {
+    let mut after = false;
+    for item in scene.paint_items() {
+        if after {
+            if item
+                .bounds
+                .intersection(rect)
+                .is_some_and(|met| met.width > 0. && met.height > 0.)
+            {
+                return true;
+            }
+        } else if item.id == node {
+            after = true;
+        }
+    }
+    false
+}
+
+/// Elsewhere, no view shows on a plane of its own.
+#[cfg(not(target_os = "macos"))]
+impl GpuRenderer {
+    pub(crate) fn plane_item(
+        &mut self,
+        _scene: &zgx::scene::Scene,
+        _item: &zgx::scene::PaintItem,
+        _image: &zgx::image::ImageData,
+    ) -> Result<bool, GpuError> {
+        Ok(false)
+    }
+    pub(crate) fn render_planes_now(
+        &mut self,
+        _scene: &zgx::scene::Scene,
+    ) -> Result<bool, GpuError> {
+        Ok(false)
+    }
+    pub(crate) fn settle_planes(&mut self, _scene: &zgx::scene::Scene) {}
+    pub(crate) fn apply_planes(&mut self) {}
 }

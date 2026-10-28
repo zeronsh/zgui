@@ -407,6 +407,25 @@ pub(crate) struct Layer {
     /// flip's transaction, whose presented time says when that flip reached
     /// the screen (tiles have no feedback of their own).
     probe: Option<Probe>,
+    /// GPU views shown on layers of their own (`viewport`), by view and box:
+    /// above the frames, under the caret. Empty without such a view.
+    planes: Vec<Plane>,
+}
+/// A GPU view's own layer: its painter draws into the layer's drawables,
+/// the window server composites them as it does any Metal layer.
+struct Plane {
+    key: (u64, u64),
+    layer: Retained<CAMetalLayer>,
+    /// Its box in the host's points from the top left, while shown.
+    rect: Option<(f64, f64, f64, f64)>,
+}
+/// A GPU view plane's drawable to draw a frame into, and how to present it.
+pub(crate) struct PlaneFrame {
+    pub key: (u64, u64),
+    pub drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>,
+    /// Its box moved or showed this frame: presented in the frame's
+    /// transaction, with the layer's new geometry, not by Metal on its own.
+    pub moved: bool,
 }
 /// A caret drawn by Core Animation over the window's frames
 /// (`zgx::caret_blink::NativeCaret`): a box of one colour, shown or hidden as
@@ -870,7 +889,7 @@ fn hide_tiles(plain: &CALayer, shown: Option<&CALayer>) {
     }
 }
 /// Run `change` as one Core Animation transaction, without animation.
-fn transaction(change: impl FnOnce()) {
+pub(crate) fn transaction(change: impl FnOnce()) {
     CATransaction::begin();
     CATransaction::setDisableActions(true);
     change();
@@ -974,7 +993,121 @@ impl Layer {
             caret: None,
             drawables: None,
             probe: None,
+            planes: Vec::new(),
         }
+    }
+    /// The next drawable of GPU view plane `key`, `size` pixels, its box
+    /// `rect` (the host's points from the top left): the layer made on first
+    /// use, placed in the caller's transaction (moved: `PlaneFrame::moved`).
+    /// `None` if Metal gives none.
+    pub fn plane_frame(
+        &mut self,
+        key: (u64, u64),
+        device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
+        size: (u32, u32),
+        rect: (f64, f64, f64, f64),
+    ) -> Option<PlaneFrame> {
+        let host = &self.host;
+        let at = match self.planes.iter().position(|plane| plane.key == key) {
+            Some(at) => at,
+            None => {
+                let layer = CAMetalLayer::new();
+                layer.setDevice(Some(device));
+                // sRGB: the painter shades in linear light, the window server
+                // reads it as the tiles' tagged sRGB.
+                layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm_sRGB);
+                layer.setMaximumDrawableCount(2);
+                layer.setPresentsWithTransaction(false);
+                // SAFETY: CoreGraphics' constant CFString, read only.
+                if let Some(space) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })) {
+                    layer.setColorspace(Some(&space));
+                }
+                fill(&layer, host, true);
+                layer.setAutoresizingMask(CAAutoresizingMask::empty());
+                layer.setHidden(true);
+                // Over the frames (tiles, drawables), under the caret.
+                layer.setZPosition(0.5);
+                host.addSublayer(&layer);
+                crate::present_log::log(|| format!("plane-start {key:?}"));
+                self.planes.push(Plane {
+                    key,
+                    layer,
+                    rect: None,
+                });
+                self.planes.len() - 1
+            }
+        };
+        let plane = &mut self.planes[at];
+        let drawable_size = CGSize::new(size.0 as f64, size.1 as f64);
+        if plane.layer.drawableSize() != drawable_size {
+            plane.layer.setDrawableSize(drawable_size);
+        }
+        let moved = plane.rect != Some(rect);
+        if moved {
+            let (x, y, width, height) = rect;
+            let y = if host.isGeometryFlipped() || host.contentsAreFlipped() {
+                y
+            } else {
+                host.bounds().size.height - y - height
+            };
+            plane.layer.setFrame(objc2_core_foundation::CGRect::new(
+                objc2_core_foundation::CGPoint::new(x, y),
+                CGSize::new(width, height),
+            ));
+            plane.layer.setHidden(false);
+            plane.rect = Some(rect);
+        }
+        let drawable = plane.layer.nextDrawable()?;
+        Some(PlaneFrame {
+            key,
+            drawable,
+            moved,
+        })
+    }
+    /// Present `frame`'s drawable after the work on `queue` (its painter's):
+    /// by Metal when its box is where it was, else in the caller's
+    /// transaction once that work is scheduled, so it shows with the box's
+    /// new geometry and the window's frame, never a frame apart.
+    pub fn present_plane(&self, frame: PlaneFrame, queue: &ProtocolObject<dyn MTLCommandQueue>) {
+        let Some(plane) = self.planes.iter().find(|plane| plane.key == frame.key) else {
+            return;
+        };
+        let Some(buffer) = queue.commandBuffer() else {
+            return;
+        };
+        if plane.layer.presentsWithTransaction() != frame.moved {
+            plane.layer.setPresentsWithTransaction(frame.moved);
+        }
+        if frame.moved {
+            buffer.commit();
+            buffer.waitUntilScheduled();
+            frame.drawable.present();
+        } else {
+            buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(
+                &*frame.drawable,
+            ));
+            buffer.commit();
+        }
+    }
+    /// Hide plane `key` (its view draws into the window again), in the
+    /// caller's transaction.
+    pub fn hide_plane(&mut self, key: (u64, u64)) {
+        if let Some(plane) = self.planes.iter_mut().find(|plane| plane.key == key)
+            && plane.rect.take().is_some()
+        {
+            plane.layer.setHidden(true);
+            crate::present_log::log(|| format!("plane-hide {key:?}"));
+        }
+    }
+    /// Drop the planes `keep` says go, in the caller's transaction.
+    pub fn retain_planes(&mut self, mut keep: impl FnMut((u64, u64)) -> bool) {
+        self.planes.retain(|plane| {
+            let kept = keep(plane.key);
+            if !kept {
+                plane.layer.removeFromSuperlayer();
+            }
+            kept
+        });
     }
     /// Start the tile probe (`Layer::probe`), if not yet.
     pub fn start_probe(
@@ -1387,6 +1520,9 @@ impl Drop for Layer {
             }
             if let Some(probe) = &self.probe {
                 probe.layer.removeFromSuperlayer();
+            }
+            for plane in &self.planes {
+                plane.layer.removeFromSuperlayer();
             }
         });
     }

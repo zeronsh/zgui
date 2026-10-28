@@ -1264,6 +1264,8 @@ struct Host {
     presentation: Presentation,
     native_occluded: bool,
     frame_paced: bool,
+    /// `zgx::gpu_view::plane_frames` as last drawn (`GpuRenderer::render_planes`).
+    plane_frames: u64,
     /// Until when input keeps frames at the display's full rate (`INPUT_FULL_RATE`).
     #[cfg(any(target_os = "macos", windows))]
     input_until: Option<std::time::Instant>,
@@ -1638,6 +1640,7 @@ impl Host {
             presentation: Presentation::default(),
             native_occluded: false,
             frame_paced: false,
+            plane_frames: 0,
             #[cfg(any(target_os = "macos", windows))]
             input_until: None,
             #[cfg(any(target_os = "macos", windows))]
@@ -2097,6 +2100,16 @@ impl Host {
                 }
                 self.force = false;
             }
+        }
+        // GPU views on planes of their own: their new frames, which damage
+        // nothing in the window (each presents itself).
+        let plane_frames = zgx::gpu_view::plane_frames();
+        if plane_frames != self.plane_frames
+            && !(self.frame_paced && !self.present_ready)
+            && let Some(renderer) = &mut self.renderer
+        {
+            self.plane_frames = plane_frames;
+            renderer.render_planes(&scene)?;
         }
         if self.presentation.ready(std::time::Instant::now()) && self.renderer.is_some() {
             if self.frame_paced && !self.present_ready {

@@ -5112,6 +5112,24 @@ impl Scene {
         self.set_kind(id, NodeKind::Image(image));
         self.content_revision = resources;
     }
+    /// Show `image`, a GPU view's next frame, where `id` shows that view's
+    /// last one, the box on a plane of its own (`gpu_view::set_planed`): the
+    /// window's paint is unchanged, so nothing is damaged or invalidated;
+    /// the renderer drawing the plane finds the frame new by its identity
+    /// (`gpu_view::plane_frames` counts them). Panics as `set_image_frame`
+    /// does.
+    pub fn show_plane_frame(&mut self, id: NodeId, image: Arc<crate::image::ImageData>) {
+        let view = image.gpu_frame().expect("a GPU view's frame").view;
+        let node = self.node_mut(id);
+        assert!(
+            matches!(&node.kind, NodeKind::Image(old)
+                if old.gpu_frame().is_some_and(|old| old.view == view)
+                    && (old.width(), old.height()) == (image.width(), image.height())),
+            "show_plane_frame requires a node showing the same view's frame at its size"
+        );
+        node.kind = NodeKind::Image(image);
+        crate::gpu_view::count_plane_frame();
+    }
     /// Append a node of `kind` with `style` as `parent`'s last child.
     pub fn append(&mut self, parent: NodeId, kind: NodeKind, mut style: Style) -> NodeId {
         self.content_revision = self.content_revision.wrapping_add(1);

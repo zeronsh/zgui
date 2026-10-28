@@ -4176,6 +4176,16 @@ impl GpuRenderer {
         }
         stats
     }
+    /// Draw the new frames of GPU views shown on planes of their own
+    /// (`zgx::gpu_view::set_planed`), for a frame with nothing else to draw:
+    /// a host calls it when `zgx::gpu_view::plane_frames` moved and the
+    /// scene has no damage. Whether any was drawn (each presents itself).
+    pub fn render_planes(&mut self, scene: &Scene) -> Result<bool, GpuError> {
+        if self.views.is_none() {
+            return Ok(false);
+        }
+        self.render_planes_now(scene)
+    }
     /// Draw `scene`'s `damage` (logical rectangles) to the target, and report
     /// what it did.
     pub fn render(&mut self, scene: &Scene, damage: &[Rect]) -> Result<GpuStats, GpuError> {
@@ -4188,6 +4198,9 @@ impl GpuRenderer {
             let _span = zgx::profile::span(zgx::profile::Phase::Paint);
             self.render_inner(scene, damage)?
         };
+        if self.views.is_some() {
+            self.settle_planes(scene);
+        }
         if stats.shaped_nodes > 0 {
             // Words shaped by measurement or this frame are reused by the next
             // shaping frames (streaming text repeats nearly all of them, and a
@@ -4440,6 +4453,8 @@ impl GpuRenderer {
         // what the scene marks when it changes.
         let keep = keep
             && self.effect_jobs.is_empty()
+            // A box on a plane draws nothing a patch could follow.
+            && !self.views.as_ref().is_some_and(|views| views.has_planes())
             && items
                 .iter()
                 .all(|item| !item.isolated && !changes_unmarked(item.kind));
@@ -6684,6 +6699,12 @@ impl GpuRenderer {
                         continue;
                     }
                     if !self.images.contains_key(&image.id()) {
+                        // A GPU view's frame on a plane of its own: nothing
+                        // to draw here.
+                        if image.gpu_frame().is_some() && self.plane_item(scene, &item, image)? {
+                            stats.image_uploads += 1;
+                            continue;
+                        }
                         self.upload_image(image)?;
                         stats.image_uploads += 1;
                     }
@@ -9768,8 +9789,12 @@ impl GpuRenderer {
             layer.set_caret(present.caret);
         }
         let Some(index) = present.current.take() else {
-            // Nothing drawn since: the shown frame stands.
+            // Nothing drawn since: the shown frame stands (planes that moved
+            // show in a transaction of their own).
             self.layer_present = Some(present);
+            if self.views.is_some() {
+                layer_present::transaction(|| self.apply_planes());
+            }
             return Ok(PresentationStatus::Presented);
         };
         // A drawable's frame encoded directly presented as it committed.
@@ -9835,17 +9860,35 @@ impl GpuRenderer {
         });
         let layer = present.layer.as_mut().expect("attached above");
         let buffer = &present.buffers[index].0;
-        if buffer.drawable {
-            // SAFETY: The raw queue is only retained; the guard is dropped at once.
-            let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
-                use objc2::Message;
-                hal.as_raw().retain()
-            });
-            layer.present_drawable(queue.as_deref());
-        } else if plain {
-            layer.show_plain(buffer, opaque);
-        } else {
-            layer.show(buffer, opaque, present.full_rate);
+        let show = |layer: &mut layer_present::Layer| {
+            if buffer.drawable {
+                // SAFETY: The raw queue is only retained; the guard is dropped at once.
+                let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+                    use objc2::Message;
+                    hal.as_raw().retain()
+                });
+                layer.present_drawable(queue.as_deref());
+            } else if plain {
+                layer.show_plain(buffer, opaque);
+            } else {
+                layer.show(buffer, opaque, present.full_rate);
+            }
+        };
+        match self.views.as_deref_mut() {
+            // GPU views' planes that moved, showed or hid change with the
+            // window's frame, in one transaction: never a frame apart.
+            Some(views) => {
+                // SAFETY: The raw queue is only retained; the guard is dropped at once.
+                let queue = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }.map(|hal| {
+                    use objc2::Message;
+                    hal.as_raw().retain()
+                });
+                layer_present::transaction(|| {
+                    show(layer);
+                    viewport::apply_planes(views, layer, queue.as_deref());
+                });
+            }
+            None => show(layer),
         }
         layer.keep(
             present

@@ -195,3 +195,29 @@ fn a_shown_view_lives_until_its_box_goes() {
     ui.prepare_frame();
     assert!(zgx::gpu_view::painter(id).is_none(), "gone with its box");
 }
+
+#[test]
+fn a_box_on_a_plane_repaints_nothing_in_the_window() {
+    let view = GpuView::new(());
+    view.set_opaque(true);
+    let (ui, root, _) = mounted(&view);
+    ui.scene.borrow_mut().flush();
+    let first = frame(&ui.scene.borrow(), root).unwrap();
+    assert!(first.gpu_frame().unwrap().opaque);
+    let shown_by = first.gpu_frame().unwrap().shown_by;
+    // A renderer shows it on a plane: its next frame changes the image the
+    // renderer reads, and nothing the window draws.
+    zgx::gpu_view::set_planed(view.id(), shown_by, true);
+    let counted = zgx::gpu_view::plane_frames();
+    view.invalidate();
+    let report = ui.scene.borrow_mut().flush();
+    assert!(report.damage.is_empty(), "{:?}", report.damage);
+    assert_ne!(frame(&ui.scene.borrow(), root).unwrap().id(), first.id());
+    assert_eq!(zgx::gpu_view::plane_frames(), counted + 1);
+    // Back in the window, its frames repaint its box again.
+    zgx::gpu_view::set_planed(view.id(), shown_by, false);
+    view.invalidate();
+    let report = ui.scene.borrow_mut().flush();
+    assert!(!report.damage.is_empty());
+    assert_eq!(zgx::gpu_view::plane_frames(), counted + 1);
+}

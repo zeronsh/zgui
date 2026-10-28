@@ -33,6 +33,16 @@ Each frame is drawn at the box's size in device pixels (`frame.size`, `frame.sca
 
 A frame is an image (`NodeKind::Image`) of its own identity and no pixels (`ImageData::gpu_frame`); its box shows it as any image. The renderer draws a frame the first time it draws that image, which is when its image cache misses: it runs the painter into an encoder of its own, submits it ahead of the frame sampling it on the same queue, and caches the view's texture under the frame's identity in place of the last frame's. A new frame repaints the box alone (`Scene::set_image_frame`) and is patched into a kept window frame as any image's change is. One texture is kept per box showing a view, drawn over frame after frame and made anew only at a new size.
 
+## A layer of its own (macOS)
+
+A view whose painter covers every pixel opaquely says so with `GpuView::set_opaque(true)` (a 3D scene with a background, a video). Where its box then shows it whole and alone, macOS gives the box a `CAMetalLayer` of its own:
+- whole and alone means untransformed, unclipped, unrounded, unfaded, nothing painted over it, and not inside a cached layer;
+- the painter draws straight into the layer's drawables (`frame.format` then `Bgra8UnormSrgb`, with no `target_srgb`), and neither zgx nor the window server composites it into the window's frame;
+- a frame of the view alone presents by itself and leaves the window's frame as it was;
+- a frame where the box moves, shows on its layer, or goes back into the window's frame (a clip, a fade, something drawn over it) commits with the window's frame, so no frame shows the view nowhere.
+
+`scripts/viewport_probe.swift` captures `viewport_workload --mode switch` flipping between the two every quarter second, over magenta, and counts captures where magenta shows.
+
 ## Devices
 
 `frame.device` and `frame.queue` are the ones the view is drawn with. They are the renderer's own where it draws with wgpu (Metal, Direct3D 12, Vulkan, GL). They may be another where it draws otherwise, so a painter makes its resources from the frame it is given and drops them in `device_changed` (a lost device made anew, the view shown in a window on another adapter).
