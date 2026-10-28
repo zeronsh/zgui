@@ -110,9 +110,26 @@ impl TextStore {
         let start = start.min(end);
         let parts = self.parts(editor);
         let e = editor.editor.borrow();
+        // The committed text's units `from..to` exactly: a range starting or
+        // ending between a surrogate pair's halves has the one half it holds,
+        // so pages read one after another (`GetText` cut to its buffer) join
+        // up as the text.
         let committed = |from: usize, to: usize| -> Vec<u16> {
-            let (from, to) = (e.utf16_to_byte(from), e.utf16_to_byte(to));
-            e.slice(from..to).encode_utf16().collect()
+            if from >= to {
+                return Vec::new();
+            }
+            let a = e.utf16_to_byte(from);
+            let mut b = e.utf16_to_byte(to);
+            if e.byte_to_utf16(b) < to {
+                // `to` is inside the pair at `b`: take its character.
+                b += e.slice(b..e.len()).chars().next().map_or(0, char::len_utf8);
+            }
+            let skip = from - e.byte_to_utf16(a);
+            e.slice(a..b)
+                .encode_utf16()
+                .skip(skip)
+                .take(to - from)
+                .collect()
         };
         match &parts.preedit {
             None => committed(start, end),
@@ -249,13 +266,17 @@ impl TextStore {
                 e.selection().range(),
             )
         };
+        let before = self.len();
         if from == selection.start && to == selection.end {
             editor.insert_text(&new);
         } else {
             editor.replace_text(from..to, &new);
         }
         self.seen = Some(seen(&editor));
-        Some(start..start + text.len())
+        // What went in, as the editor took it: a field drops line breaks, a
+        // text area makes "\r\n" one.
+        let inserted = (self.len() + (end - start)).saturating_sub(before);
+        Some(start..start + inserted)
     }
     /// The input method opened a composition over `range` (`OnStartComposition`).
     pub(crate) fn start_composition(&mut self, range: Range<usize>) {
@@ -433,6 +454,46 @@ mod tests {
         assert_eq!(store.text(1, 3), utf16("😀"));
         // The caret is at the end of the text, as focus puts it.
         assert_eq!(store.selection(), (4, 4, false));
+    }
+
+    /// Ranges between a surrogate pair's halves hold the half they cover:
+    /// read one unit at a time, the pages join up as the text.
+    #[test]
+    fn ranges_inside_a_surrogate_pair_hold_its_halves() {
+        let (_ui, mut store, _) = store("a😀b");
+        assert_eq!(store.text(0, 2), [0x61, 0xD83D]);
+        assert_eq!(store.text(2, 3), [0xDE00]);
+        assert_eq!(store.text(2, 4), [0xDE00, 0x62]);
+        let paged: Vec<u16> = (0..4).flat_map(|at| store.text(at, at + 1)).collect();
+        assert_eq!(paged, utf16("a😀b"));
+        // And in the committed text after a composition.
+        store.set_selection(0, 0, false);
+        store.start_composition(0..0);
+        store.replace(0, 0, &utf16("x"));
+        let paged: Vec<u16> = (0..5).flat_map(|at| store.text(at, at + 1)).collect();
+        assert_eq!(paged, utf16("xa😀b"));
+        assert_eq!(store.text(3, 4), [0xDE00]);
+    }
+
+    /// The range a text service's text went in at is what the editor took:
+    /// a field drops its line breaks, a text area makes "\r\n" one.
+    #[test]
+    fn an_insertion_is_as_long_as_what_the_editor_took() {
+        let (_ui, mut store, value) = store("");
+        assert_eq!(store.replace(0, 0, &utf16("a\r\nb")), Some(0..2));
+        assert_eq!((value.get().as_str(), store.len()), ("ab", 2));
+        let mut ui = Ui::new(400., 200.);
+        let value = ui.signal(String::new());
+        let view = ui.mount(text_area("Notes", value.clone()).w(300.).h(80.));
+        ui.prepare_frame();
+        ui.input.focus(&ui.scene, Some(view.node()));
+        let mut store = TextStore::new();
+        store.focus(ui.focused_editor());
+        assert_eq!(store.replace(0, 0, &utf16("a\r\nb")), Some(0..3));
+        assert_eq!((value.get().as_str(), store.len()), ("a\nb", 3));
+        // Over committed text: the range of the replacement as taken.
+        assert_eq!(store.replace(0, 1, &utf16("x\r\ny")), Some(0..3));
+        assert_eq!(value.get(), "x\ny\nb");
     }
 
     #[test]
