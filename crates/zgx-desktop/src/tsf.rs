@@ -642,8 +642,13 @@ impl ITextStoreACP2_Impl for Store_Impl {
 
 impl ITfContextOwnerCompositionSink_Impl for Store_Impl {
     fn OnStartComposition(&self, view: Ref<ITfCompositionView>) -> Result<BOOL> {
-        let start = extent(view.ok()?).map_or(0, |(start, _)| start);
-        self.0.borrow_mut().store.start_composition(start..start);
+        // Over the range it opens on: empty to compose at the caret, over
+        // committed text to reconvert it.
+        let (start, len) = extent(view.ok()?).unwrap_or((0, 0));
+        self.0
+            .borrow_mut()
+            .store
+            .start_composition(start..start + len);
         Ok(true.into())
     }
     fn OnUpdateComposition(

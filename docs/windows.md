@@ -667,6 +667,7 @@ python scripts/windows_tsf_japanese_smoke.py target/debug/examples/native_ime.ex
 python scripts/windows_tsf_japanese_smoke.py target/debug/examples/native_ime.exe --imm32
 python scripts/windows_tsf_chinese_smoke.py target/debug/examples/native_ime.exe
 python scripts/windows_tsf_chinese_smoke.py target/debug/examples/native_ime.exe --imm32
+python scripts/windows_tsf_reconvert_smoke.py target/debug/examples/native_ime.exe --install-korean
 python scripts/windows_uia_find_smoke.py target/debug/examples/selectable_text.exe
 python scripts/windows_platform_smoke.py target/debug/examples
 python scripts/windows_settings_smoke.py target/debug/examples/scrollbars.exe --both
@@ -721,6 +722,9 @@ python scripts/windows_first_frame_probe.py target/release/examples/component_wo
   through zgx's text store, and typing after it reaches the editor. It needs
   no input method beyond English.
 - `windows_uia_find_smoke.py`: UI Automation finds text in a zgx document (`FindText`, AccessKit's zgx patch): a word forward, one without case, one backward, nothing for what it doesn't have, each match with its box.
+- `windows_tsf_reconvert_smoke.py` (`ZGX_TSF=1`): reconversion. 한, typed,
+  committed and selected, goes to hanja in its place by the Korean IME's
+  Hanja key and its first candidate. `--install-korean` as above.
 - `windows_tsf_chinese_smoke.py`: Microsoft Pinyin composes "nihao", the
   digit 1 takes 你好 and commits it, and pinyin composed then cancelled with
   Escape commits nothing. Through the Text Services Framework, or IMM32 with
@@ -784,9 +788,12 @@ Editors take input methods through winit's IMM32 path by default. With
   display attributes (`GUID_PROP_ATTRIBUTE`), read after each of its edits
   (`ITfTextEditSink::OnEndEdit`): each clause underlined apart from the next,
   thick under the one being converted.
+- **Reconversion.** An input method opening its composition over committed
+  text (selected, then Convert or Hanja) composes that text in its place:
+  what it ends as replaces it, and ending it unchanged edits nothing.
 
-Reconversion and input scopes are the next stages; the framework becomes the
-default after them.
+Input scopes are the next stage; the framework becomes the default after it
+and the Japanese and Chinese probes run on their installed languages.
 - `windows_platform_smoke.py`: selected display text copied as text and HTML
   and read by another process, text from another process pasted into an
   editor, the file picker, the save dialog (a name typed into it reaches the

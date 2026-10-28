@@ -45,6 +45,9 @@ pub(crate) struct TextStore {
     /// The composition's text, the store's own: an editor drops its preedit
     /// when it loses focus, and the composition is still committed into it.
     composing: String,
+    /// The committed text a composition opened over (reconversion: the
+    /// person selected it and pressed Convert, or Hanja), while it is open.
+    reconverting: Option<String>,
     /// The editor's `composition_cancel_revision` as the composition began:
     /// once it moves, the editor dropped it.
     cancels: u64,
@@ -57,6 +60,7 @@ impl TextStore {
             editor: None,
             composition: None,
             composing: String::new(),
+            reconverting: None,
             cancels: 0,
             seen: None,
         }
@@ -296,11 +300,38 @@ impl TextStore {
     }
     /// The input method opened a composition over `range` (`OnStartComposition`).
     pub(crate) fn start_composition(&mut self, range: Range<usize>) {
-        if let Some(editor) = &self.editor {
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        self.reconverting = None;
+        let end = range.end.min(self.len());
+        if range.start >= end || editor.editor.borrow().preedit().is_some() {
             self.cancels = editor.editor.borrow().composition_cancel_revision();
             self.composition = Some(range.start..range.start);
             self.composing.clear();
+            return;
         }
+        // Over committed text (reconversion): that text, selected, is the
+        // composition in its place, the document as it was.
+        let (from, to) = {
+            let mut e = editor.editor.borrow_mut();
+            (e.utf16_to_byte(range.start), e.utf16_to_byte(end))
+        };
+        editor.set_selection(from, to);
+        let text = editor.editor.borrow().slice(from..to).into_owned();
+        editor.set_composition(&text, Some((text.len(), text.len())), &[]);
+        // From here on (selecting it dropped no composition of its own).
+        self.cancels = editor.editor.borrow().composition_cancel_revision();
+        if editor.editor.borrow().preedit().is_none() {
+            // A read-only editor takes none.
+            self.composition = Some(range.start..range.start);
+            self.composing.clear();
+            return;
+        }
+        self.composition = Some(range.start..end);
+        self.composing = text.clone();
+        self.reconverting = Some(text);
+        self.seen = Some(seen(&editor));
     }
     /// Whether the editor dropped the open composition (the app set its text
     /// or its selection, or made it read-only): then it is the store's no
@@ -317,6 +348,7 @@ impl TextStore {
         }
         self.composition = None;
         self.composing.clear();
+        self.reconverting = None;
         true
     }
     /// The input method marked its composition's clauses (its display
@@ -354,8 +386,17 @@ impl TextStore {
         let (Some(editor), Some(_)) = (self.editor.clone(), self.composition.take()) else {
             return;
         };
-        match std::mem::take(&mut self.composing) {
-            text if !text.is_empty() => {
+        match (
+            std::mem::take(&mut self.composing),
+            self.reconverting.take(),
+        ) {
+            // Reconverted to what it was: nothing to commit (no undo step).
+            (text, Some(original)) if text == original => editor.cancel_composition(),
+            // Reconverted, even to nothing: in place of what it was.
+            (text, Some(_)) => {
+                editor.commit_composition(&text);
+            }
+            (text, None) if !text.is_empty() => {
                 editor.commit_composition(&text);
             }
             _ => editor.cancel_composition(),
@@ -685,6 +726,41 @@ mod tests {
         assert!(store.editor().unwrap().editor.borrow().preedit().is_some());
         store.end_composition();
         assert_eq!(value.get(), "ab候補cd");
+    }
+
+    /// Reconversion: the input method opens its composition over committed
+    /// text (selected, then Convert or Hanja). That text is the composition
+    /// in its place; what it ends as replaces it, and ending it unchanged
+    /// edits nothing.
+    #[test]
+    fn a_composition_over_committed_text_reconverts_it() {
+        let (_ui, mut store, value) = store("a日本b");
+        let revision = store.editor().unwrap().editor.borrow().revision();
+        store.start_composition(1..3);
+        assert!(store.is_composing());
+        assert_eq!(store.text(0, 99), utf16("a日本b"), "the document as it was");
+        assert_eq!(store.len(), 4);
+        // Unchanged: nothing committed, no undo step.
+        store.end_composition();
+        assert_eq!(value.get(), "a日本b");
+        assert_eq!(store.editor().unwrap().editor.borrow().revision(), revision);
+        // Converted to another: in place of the text it opened over.
+        store.start_composition(1..3);
+        assert_eq!(store.replace(1, 3, &utf16("二本")), Some(1..3));
+        assert_eq!(value.get(), "a日本b", "nothing committed while composing");
+        store.end_composition();
+        assert_eq!(value.get(), "a二本b");
+        // To nothing: the text it opened over goes.
+        store.start_composition(1..3);
+        store.replace(1, 3, &[]);
+        store.end_composition();
+        assert_eq!(value.get(), "ab");
+        // An empty range composes at the caret, as before.
+        store.set_selection(1, 1, false);
+        store.start_composition(1..1);
+        store.replace(1, 1, &utf16("x"));
+        store.end_composition();
+        assert_eq!(value.get(), "axb");
     }
 
     /// Focus moving mid-composition commits it into the editor it began in,
