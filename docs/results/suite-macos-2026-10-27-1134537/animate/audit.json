@@ -1,0 +1,169 @@
+{
+ "accepted": true,
+ "trials": 16,
+ "samples": 2585,
+ "pacing_trials": 12,
+ "reported_fps": {
+  "min": 118.4,
+  "max": 119.7
+ },
+ "powermetrics": false,
+ "scene": "animate",
+ "commit": "1134537cbee0f6d2e1b7f78518e1fa02303a4ffd",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-27T21:06:26.550335+00:00",
+ "finished_utc": "2026-10-27T21:17:02.094032+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": true
+   },
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": false
+   }
+  ],
+  "display_count": 2,
+  "wallpaper_apps": [],
+  "power_mode": "powermode 2",
+  "on_battery": false,
+  "macos": "26.4 (25E246)",
+  "uptime_hours": 64.1,
+  "machine": "Mac17,6",
+  "chip": "Apple M5 Max",
+  "cores": 18,
+  "memory_bytes": 137438953472,
+  "power": "AC Power",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+ },
+ "preflight": null,
+ "binaries": {
+  "zgx": {
+   "sha256": "09da7705b19b5fd40f774fd34b5e15cb2b6de17b802406443bfe10cb944fcef0",
+   "bytes": 15198288
+  },
+  "gpui-fast": {
+   "sha256": "e81f3d8aca0b6747af55d03214981aa18b1bcbd527fcae3aa93051c71b50afdb",
+   "bytes": 6737808
+  },
+  "mygo": {
+   "sha256": "5ececb5909ef3c270ceab369527feb5d7c305e3b7e658982b9de6bf9ae053083",
+   "bytes": 9469730
+  },
+  "rune": {
+   "sha256": "92014344864d8af040b0d05ffba12998d36290336ac631000492704c7a1b6eb5",
+   "bytes": 12448592
+  }
+ },
+ "toolchains": {
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "rust_profile": "dist (release, lto = \"fat\", codegen-units = 1)",
+  "go": "go version go1.27.3 darwin/arm64",
+  "mygo": {
+   "mygo_version": "v0.6.3",
+   "mygo_commit": "15242900157b77228d35ca071f43e94a11bc90a0",
+   "mygo_license": "MIT",
+   "mygo_source": "https://github.com/egoist/mygo",
+   "go": "go1.27.3 darwin/arm64",
+   "flags": "-trimpath -ldflags=-s -w",
+   "cgo": false,
+   "sinf": "workload/sinf.go: macOS libm sinf ported to Go, bit-identical for all 2^32 inputs",
+   "binaries": [
+    "bin/heavy",
+    "bin/lab",
+    "bin/animate",
+    "bin/vlist",
+    "bin/micro",
+    "bin/blink",
+    "bin/field"
+   ],
+   "built_utc": "2026-10-27T18:32:26Z"
+  },
+  "rune": {
+   "rune_rev": "998bef587f09e359d877b35c66e48b8f355e73cb",
+   "rune_branch": "dev",
+   "rune_license": "MIT",
+   "rune_source": "https://github.com/anomalyco/rune",
+   "rune_patch": "PATCH.md: Tx::wheel, Rune's own wheel path (Runtime::wheel_xy) for the app (sha256 17d01a2fb86e35e619947368e307e43a82272956200fc94ae7910b7a7eb05535)",
+   "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+   "profile": "dist (Rune's perf with fat LTO and codegen-units 1)",
+   "binaries": [
+    "bin/heavy",
+    "bin/lab",
+    "bin/animate",
+    "bin/vlist",
+    "bin/micro",
+    "bin/blink",
+    "bin/field"
+   ],
+   "built_utc": "2026-10-27T18:32:25Z"
+  }
+ },
+ "invalid_trials": [],
+ "abnormal_exits": [],
+ "launches": {
+  "zgx": {
+   "trial": 3,
+   "pacing": 3
+  },
+  "gpui-fast": {
+   "trial": 3,
+   "pacing": 3
+  },
+  "mygo": {
+   "trial": 4,
+   "pacing": 3
+  },
+  "rune": {
+   "trial": 3,
+   "pacing": 3
+  }
+ },
+ "readiness_failures": [],
+ "protocol": {
+  "requested_seconds": 18,
+  "warmup_seconds": 5,
+  "sampled_seconds": 10,
+  "sampling_anchor": "window frontmost and uncovered",
+  "readiness_timeout_seconds": 2.5,
+  "lifetime_margin_seconds": 3,
+  "interval_seconds": 0.05,
+  "repeats": 3,
+  "idle_repeats": 2,
+  "idle_window_seconds": [
+   20,
+   30
+  ],
+  "idle_requested_seconds": 34,
+  "quick": false,
+  "pgo": false,
+  "frameworks": [
+   "zgx",
+   "gpui-fast",
+   "mygo",
+   "rune"
+  ],
+  "modes": [
+   "animate"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 3,
+  "pacing_during_trials": false,
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ],
+  "suite": true,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 1,
+  "extended_cells": [
+   "mygo/animate"
+  ]
+ }
+}

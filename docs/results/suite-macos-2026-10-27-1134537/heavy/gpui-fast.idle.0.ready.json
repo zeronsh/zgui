@@ -1,0 +1,16 @@
+{
+ "activation_fallback": false,
+ "pid": 73808,
+ "ready": true,
+ "ready_ms": 466.9259786605835,
+ "window_id": 68678,
+ "windows": {
+  "all": {
+   "0": 10
+  },
+  "on_screen": {
+   "0": 1
+  }
+ },
+ "spawn_to_ready_seconds": 0.4822542080000005
+}

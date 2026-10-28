@@ -20,8 +20,10 @@ const protocol = (field?.protocol ?? {}) as { idle_window_seconds?: number[]; id
       <p>
         The window most apps show most of the time: a text field with the focus, its user reading. Each framework's own field in a
         960 × 720 window, sampled {protocol.idle_window_seconds?.[0]}–{protocol.idle_window_seconds?.[1]} s after launch,{' '}
-        {protocol.idle_repeats} launches each. A window that draws a frame every few seconds keeps the Metal driver's memory for its
-        command queue, about 176 MB, for as long as it does. A window that changes only its layers (a caret Core Animation
+        {protocol.idle_repeats} launches each. On this machine ({field.environment?.chip}, macOS {field.environment?.macos}), a window
+        that draws a frame every few seconds keeps the Metal driver's memory for its command queue, about 176 MB, for as long as it
+        does. That depends on the machine and the macOS version: an M1 Max on macOS 26.0.1 keeps none of it (the{' '}
+        <a href={`${repo}/tree/main/docs/results#the-field-on-an-m1-max`}>M1's field</a>, in docs/results). A window that changes only its layers (a caret Core Animation
         draws) settles at one of two levels, launch to launch, about 25 MB apart: after any Metal work, macOS keeps part of that
         memory in about half the launches while a process keeps changing its layers (reproduced in a plain Swift app: two Metal
         frames, then a layer flipped twice a second). Read zgx's memory with its range. Measured apart from the suite, at{' '}

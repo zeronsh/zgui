@@ -1,0 +1,14 @@
+{
+ "framework": "mygo",
+ "mode": "scroll",
+ "repeat": 0,
+ "display_hz": 120,
+ "frames": 494,
+ "frames_per_second": 61.75,
+ "interval_p50_ms": 16.637,
+ "interval_p95_ms": 17.281,
+ "interval_p99_ms": 18.383,
+ "interval_max_ms": 26.108,
+ "long_intervals": 1,
+ "long_interval_fraction": 0.00203
+}
