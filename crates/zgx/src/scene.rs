@@ -65,6 +65,9 @@ impl std::hash::Hasher for NodeHasher {
 const DAMAGE_RECTS: usize = 64;
 /// The side of a damage grid cell, in viewport units.
 const DAMAGE_CELL: f32 = 8.;
+/// The most words a damage grid takes (512 KiB: a viewport 32,768 points a
+/// side); past it damage joins into one rectangle instead.
+const DAMAGE_GRID_WORDS: usize = 1 << 16;
 /// Damage past `DAMAGE_RECTS` separate places (a busy dashboard changes
 /// hundreds a frame): marking cells costs the same however many there are,
 /// where merging into a list scans it each time. Rectangles again at flush.
@@ -83,23 +86,28 @@ struct DamageGrid {
     full_before: usize,
 }
 impl DamageGrid {
-    fn new(viewport: Rect) -> Self {
+    /// A grid over `viewport`; `None` past `DAMAGE_GRID_WORDS` (a viewport
+    /// of millions of points a side).
+    fn new(viewport: Rect) -> Option<Self> {
         let columns = (viewport.width / DAMAGE_CELL).ceil().max(1.) as usize;
         let rows = (viewport.height / DAMAGE_CELL).ceil().max(1.) as usize;
         let stride = columns.div_ceil(64);
-        let mut cells = vec![0; stride * rows];
+        let words = stride
+            .checked_mul(rows)
+            .filter(|&words| words <= DAMAGE_GRID_WORDS)?;
+        let mut cells = vec![0; words];
         if !columns.is_multiple_of(64) {
             for row in 0..rows {
                 cells[(row + 1) * stride - 1] = u64::MAX << (columns % 64);
             }
         }
-        Self {
+        Some(Self {
             columns,
             rows,
             stride,
             cells,
             full_before: 0,
-        }
+        })
     }
     /// The cells `rect` touches: columns and rows, end exclusive.
     fn span(&self, rect: Rect) -> (usize, usize, usize, usize) {
@@ -6227,11 +6235,24 @@ impl Scene {
         }
         self.damage.push(rect);
         if self.damage.len() > DAMAGE_RECTS {
-            let mut grid = DamageGrid::new(self.viewport);
-            for rect in self.damage.drain(..) {
-                grid.mark(rect);
+            self.damage_on_grid();
+        }
+    }
+    /// Mark the damage on a grid, or join it into one rectangle where the
+    /// viewport is too large for one.
+    #[cold]
+    fn damage_on_grid(&mut self) {
+        match DamageGrid::new(self.viewport) {
+            Some(mut grid) => {
+                for rect in self.damage.drain(..) {
+                    grid.mark(rect);
+                }
+                self.damage_grid = Some(grid);
             }
-            self.damage_grid = Some(grid);
+            None => {
+                let joined = self.damage.drain(..).reduce(Rect::union);
+                self.damage.extend(joined);
+            }
         }
     }
     fn world(&self, id: NodeId) -> (Rect, Effects, Option<Rect>) {
@@ -12160,7 +12181,7 @@ mod damage_grid_tests {
             (seed % 10_000) as f32 / 10_000. * limit
         };
         for round in 0..40 {
-            let mut grid = DamageGrid::new(viewport);
+            let mut grid = DamageGrid::new(viewport).unwrap();
             let mut reference = Reference {
                 columns: grid.columns,
                 rows: grid.rows,
@@ -12185,7 +12206,7 @@ mod damage_grid_tests {
             assert_eq!(grid.full(), marked == reference.cells.len());
             assert_eq!(grid.rects(viewport), reference.rects(viewport));
         }
-        let mut grid = DamageGrid::new(viewport);
+        let mut grid = DamageGrid::new(viewport).unwrap();
         grid.mark(viewport);
         assert!(grid.full());
         assert_eq!(grid.rects(viewport), vec![viewport]);
