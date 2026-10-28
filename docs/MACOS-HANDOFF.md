@@ -61,7 +61,7 @@ before counting app-focus behavior; the same-editor accented attempt is
 inconclusive, not a product failure. Escape with this source commits
 a literal accent. It is not a substitute for Pinyin candidate cancellation.
 
-The remaining native qualification work is concrete:
+The remaining native qualification work is concrete. Items 2–4 have since been probed ([native checks probe](validation.md#macos-cursors-insert-held-drags-file-drops-and-title-bars), 2026-10-28): cursor shapes, Insert, a held drag's Escape, a Finder-style two-file drop (which went to the pointer's last place, now fixed) and the title bar's drag request pass; the window server's move following the real pointer stays unprobed.
 
 1. Resolve the pending explicit permission/access request for a Pinyin input
    source. Do not silently change system input-source settings. Use three fresh

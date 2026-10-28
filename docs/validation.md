@@ -926,6 +926,38 @@ changes. It checks that ⌘F opens the bar, that the one match, in a
 transcript row of 10,000 the list had not mounted, is found and counted,
 that the transcript scrolls to it, and that Escape closes the bar. Passed
 on macOS 26 (M5), 2026-10-26.
+
+## macOS cursors, Insert, held drags, file drops and title bars
+
+`scripts/macos_native_checks_probe.py` runs the native_checks_probe
+example. It answers AppKit's pointer location and pressed buttons itself
+(`+[NSEvent mouseLocation]`, `+pressedMouseButtons`), posts mouse events to
+its own window and sends it keys (`-[NSWindow sendEvent:]`). The user's
+pointer, keyboard and pasteboard hear nothing, and no drag leaves the
+window. It checks:
+- **Cursors:** over boxes asking for the pointer, text, move, not-allowed
+  and column-resize cursors, AppKit's cursor (`+[NSCursor currentCursor]`)
+  is each one's, and the arrow elsewhere.
+- **Insert:** the Help key a PC keyboard's Insert sends a Mac (0x72,
+  `NSHelpFunctionKey`) arrives as `Key::Insert`.
+- **Held drags:** a drag let go over its destination drops there. Held
+  there, Escape ends it, and letting go then drops nothing, the source told
+  it was not taken.
+- **Files:** two files, one name with a space, are handed to the window's
+  dragging destination as Finder hands them (file URLs on a pasteboard of
+  the probe's own), with the pointer last elsewhere. Dropped on a box
+  taking files, they arrive in one batch, in order. Dragged over it and out,
+  or let go beside it, nothing arrives.
+- **Title bar:** a press on a custom title bar's `window_drag` strip asks
+  AppKit to move the window from that press (`-performWindowDragWithEvent:`
+  with the mouse-down, recorded, not run). A press on a button in the strip
+  clicks it and asks for nothing.
+
+The window following the real pointer once the window server moves it is
+not checked: it would need the user's pointer. Passed on macOS 26 (M5),
+2026-10-28. Its first run found file drops going to the pointer's last
+place (fixed in winit's patch 12).
+
 ## macOS zoom (⌘=, ⌘-, ⌘0)
 
 `scripts/macos_zoom_probe.py` runs the zoom_probe example with `--drive`:

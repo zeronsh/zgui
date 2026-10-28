@@ -14,6 +14,10 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 - macOS: frames presented as `CAMetalLayer` drawables (`ZGX_PRESENT_DRAWABLE`, or `=auto` where its trial picks them) show a refresh or two sooner. They are paced by the view's own display link and kept in phase: when frames start waiting most of a refresh for a drawable (the pool full, as most launches of an M1 Max settled), one tick is skipped and they catch up. The pool is two drawables, not three. A frame's start to its showing: 16 ms against 27–32 on an M5 Max, 24 against 27–40 (median 36) on an M1 Max. The window server's CPU on an M1 Max drops from 34.2% to 31.3%, and each window holds 10 MiB less. Tiles, the default, are unchanged.
 - macOS: `ZGX_PRESENT_DRAWABLE=auto` judges by the frames each path skips again, not by energy. A process can't measure the GPU's energy, only its busy time, and what a busy second costs depends on the GPU's clock (0.78 W on an M5 Max, 4.44 on an M1 Max). The energy rule chose drawables where they measure worse. `ZGX_TRIAL_RULE=energy` keeps that rule, uncalibrated. A GPU-heavy, full-rate app on an M1-class Mac may choose drawables itself (`ZGX_PRESENT_DRAWABLE=1`): about 150 mW less GPU and 5.7 points less window-server CPU, for about 4.7 points more app CPU.
 
+### Fixed
+
+- macOS: files dragged in from Finder hover and drop where they are. The drop went to wherever the pointer was last seen before the drag came in, because a drag holding the pointer sends the window no moves. A box taking files only got them if the pointer had last been over it. The window now hears where the files are as they enter, move and drop, and that they left (`vendor/winit/ZGX_PATCH.md`).
+
 ## 0.1.4 (2026-10-27)
 
 A patch: Rust and Luau code builds as before (every API change since 0.1.3 is an addition, and zgx-desktop and zgx-gpu 0.1.3 build against this zgx), unless it writes a `zgx_gpu::GpuStats` field by field (below). A few editor keys and clicks change, each below with what to check.

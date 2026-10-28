@@ -32,7 +32,7 @@ use super::monitor::{self, flip_window_screen_coordinates, get_display_id};
 use super::observer::RunLoop;
 use super::view::WinitView;
 use super::window::WinitWindow;
-use super::{ffi, Fullscreen, MonitorHandle, OsError, WindowId};
+use super::{ffi, Fullscreen, MonitorHandle, OsError, WindowId, DEVICE_ID};
 use crate::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize, Position, Size};
 use crate::error::{ExternalError, NotSupportedError, OsError as RootOsError};
 use crate::event::{InnerSizeWriter, WindowEvent};
@@ -126,6 +126,9 @@ pub(crate) struct State {
     /// zgx patch: the drag over the window carries text from another app
     /// (`platform::text_drop`), not files.
     text_drag: Cell<bool>,
+    /// zgx patch: where a drag carrying files was last over the window
+    /// (`CursorMoved`'s physical pixels), while it is.
+    file_point: Cell<Option<(f64, f64)>>,
 }
 
 declare_class!(
@@ -388,6 +391,8 @@ declare_class!(
             self.ivars().text_drag.set(false);
             let filenames: Retained<NSArray<NSString>> = unsafe { Retained::cast(filenames) };
 
+            // zgx patch: where the files are, first.
+            self.file_moved(sender);
             filenames.into_iter().for_each(|file| {
                 let path = PathBuf::from(file.to_string());
                 self.queue_event(WindowEvent::HoveredFile(path));
@@ -405,6 +410,7 @@ declare_class!(
             if self.ivars().text_drag.get() {
                 self.text_over(sender)
             } else {
+                self.file_moved(sender);
                 DRAG_COPY
             }
         }
@@ -445,6 +451,9 @@ declare_class!(
             };
             let filenames: Retained<NSArray<NSString>> = unsafe { Retained::cast(filenames) };
 
+            // zgx patch: dropped where it was let go.
+            self.file_moved(sender);
+            self.ivars().file_point.set(None);
             filenames.into_iter().for_each(|file| {
                 let path = PathBuf::from(file.to_string());
                 self.queue_event(WindowEvent::DroppedFile(path));
@@ -470,6 +479,10 @@ declare_class!(
                 return;
             }
             self.queue_event(WindowEvent::HoveredFileCancelled);
+            // zgx patch: the files' place went with them.
+            if self.ivars().file_point.take().is_some() {
+                self.queue_event(WindowEvent::CursorLeft { device_id: DEVICE_ID });
+            }
         }
     }
 
@@ -745,6 +758,19 @@ impl WindowDelegate {
         (point.x * scale, point.y * scale)
     }
 
+    /// zgx patch: a drag carrying files is at a new place over the window:
+    /// a `CursorMoved` there, as the pointer's own moves are not sent while
+    /// a drag holds it, so the files hover and drop where they are.
+    fn file_moved(&self, sender: &NSObject) {
+        let point = self.drag_point(sender);
+        if self.ivars().file_point.replace(Some(point)) != Some(point) {
+            self.queue_event(WindowEvent::CursorMoved {
+                device_id: DEVICE_ID,
+                position: PhysicalPosition::new(point.0, point.1),
+            });
+        }
+    }
+
     /// zgx patch: the text drag moved: a copy where the window would take
     /// it, else nothing.
     fn text_over(&self, sender: &NSObject) -> usize {
@@ -823,6 +849,7 @@ impl WindowDelegate {
             saved_style: Cell::new(None),
             is_borderless_game: Cell::new(attrs.platform_specific.borderless_game),
             text_drag: Cell::new(false),
+            file_point: Cell::new(None),
         });
         let delegate: Retained<WindowDelegate> = unsafe { msg_send_id![super(delegate), init] };
 

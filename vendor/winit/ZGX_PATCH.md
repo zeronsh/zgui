@@ -184,3 +184,18 @@ shows no copy badge and every release would look taken.
       `DragEnter`, `DragOver` and `Drop` get is a `POINTL` by value, as COM
       passes it (`definitions.rs` declared a pointer, never read before).
     Wayland's drags reach zgx's own data device, not winit.
+
+## Where dragged files are (macOS)
+
+A drag holds the pointer: while files from Finder are over a window, AppKit
+sends it no mouse moves, only its dragging destination's calls, and winit's
+`HoveredFile` and `DroppedFile` carry no position. An app placing them at the
+pointer's last place dropped them on whatever it was last over before the
+drag came in.
+
+12. `window_delegate.rs`: a drag carrying files sends `CursorMoved`, at the
+    drag's point in the content, as it enters (before `HoveredFile`), as it
+    moves to a new place (`draggingUpdated:`), and as it drops (before
+    `DroppedFile`), and `CursorLeft` as it leaves (after
+    `HoveredFileCancelled`). `scripts/macos_native_checks_probe.py` drops
+    two files on a box with the pointer last elsewhere.
