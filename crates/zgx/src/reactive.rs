@@ -191,14 +191,19 @@ fn newest_first<const IN_PLACE: bool>(ids: &mut Vec<EffectId>, order: &mut Order
     for &id in ids.iter() {
         ascending &= id >= last;
         last = id;
-        let born = id >> SLOT_BITS;
-        low = low.min(born);
-        high = high.max(born);
+        let bound = if IN_PLACE { id } else { id >> SLOT_BITS };
+        low = low.min(bound);
+        high = high.max(bound);
     }
     if ascending {
         ids.reverse();
         return;
     }
+    let (low, high) = if IN_PLACE {
+        (low >> SLOT_BITS, high >> SLOT_BITS)
+    } else {
+        (low, high)
+    };
     let span = high - low;
     if ids.len() < 32 || span / 32 > ids.len() as u64 {
         ids.sort_unstable_by(|a, b| b.cmp(a));
