@@ -4215,7 +4215,7 @@ impl Ui {
                 let clauses = e.preedit_clauses();
                 let start = selection.range().start;
                 let line = |r: Rect, thick: f32| {
-                    let y = r.y + r.height - 1. - thick - scroll.1;
+                    let y = mark_y(r, 1. + thick, thick, scroll.1, inner_height);
                     (y >= 0. && y < inner_height).then_some((r.x - scroll.0, y, r.width, thick))
                 };
                 if !clauses.is_empty() {
@@ -4290,7 +4290,7 @@ impl Ui {
                     layout.selection_within(range.clone(), scroll.1, scroll.1 + inner_height)
                 })
                 .filter_map(|r| {
-                    let y = r.y + r.height - 2. - scroll.1;
+                    let y = mark_y(r, 2., 2., scroll.1, inner_height);
                     (y >= 0. && y < inner_height).then_some((r.x - scroll.0, y, r.width))
                 })
                 .collect();
@@ -5769,6 +5769,20 @@ fn spelling_mark(color: Color) -> NodeKind {
         ..Default::default()
     })
 }
+/// Where a mark `thick` tall goes under text line `r` (`above` from its
+/// bottom) in an editor's viewport, scrolled by `scroll`: a composition's
+/// underline, a misspelling's dots. A line taller than the viewport (large
+/// type in a short field) keeps its mark inside, at the bottom, where the
+/// viewport's clip would cut it off below the line.
+fn mark_y(r: Rect, above: f32, thick: f32, scroll: f32, inner_height: f32) -> f32 {
+    let y = r.y + r.height - above - scroll;
+    if r.height > inner_height && r.y - scroll < inner_height {
+        y.min(inner_height - thick)
+    } else {
+        y
+    }
+}
+
 fn surface(theme: &ThemeScope, color: Color) -> NodeKind {
     NodeKind::Quad(crate::scene::QuadStyle {
         fill: color,

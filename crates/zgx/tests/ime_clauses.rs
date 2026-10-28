@@ -115,3 +115,37 @@ fn each_clause_is_underlined_and_the_target_takes_the_candidates() {
     assert!(editor.editor.borrow().preedit_clauses().is_empty());
     assert!(lines(&ui, view.node()).contains(&2.));
 }
+
+/// Large type in a short field (a line taller than the box inside its
+/// padding): the composition's underline stays inside the field, where its
+/// clip shows it, not below the line where it was cut off.
+#[test]
+fn a_line_taller_than_its_field_keeps_its_underline() {
+    let mut ui = Ui::new(640., 340.);
+    let value = ui.signal(String::new());
+    let view = ui.mount(
+        text_input("Name", value)
+            .size(560., 44.)
+            .p(10.)
+            .text_size(22.),
+    );
+    ui.prepare_frame();
+    ui.input.focus(&ui.scene, Some(view.node()));
+    ui.dispatch(InputEvent::ImePreedit {
+        text: "한".into(),
+        cursor: Some((3, 3)),
+    });
+    ui.prepare_frame();
+    assert_eq!(lines(&ui, view.node()), [1.], "a thin line under it");
+    // Inside the field, below its text's middle.
+    let scene = ui.scene.borrow();
+    let field = scene.bounds(view.node());
+    let mut pending = vec![view.node()];
+    while let Some(id) = pending.pop() {
+        pending.extend(scene.children(id).iter().copied());
+        let b = scene.bounds(id);
+        if matches!(scene.kind(id), NodeKind::Quad(_)) && b.height == 1. {
+            assert!(b.y > field.y + field.height / 2. && b.y + 1. <= field.y + field.height - 10.);
+        }
+    }
+}

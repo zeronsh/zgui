@@ -452,3 +452,29 @@ fn context_menus_look_the_selection_up_where_the_platform_does() {
         asked[1]
     );
 }
+
+/// Large type in a short field (its line taller than the box inside its
+/// padding): a misspelling's marks stay inside the field, where its clip
+/// shows them.
+#[test]
+fn a_line_taller_than_its_field_keeps_its_misspelling_marks() {
+    let mut ui = Ui::new(640., 200.);
+    let speller = Rc::new(Speller::default());
+    let value = ui.signal("fix teh bug".to_owned());
+    let view = ui.mount(provide(
+        zgx::platform::PlatformService(speller.clone()),
+        column().size(640., 200.).child(
+            text_input("Name", value.clone())
+                .id("field")
+                .spellcheck(true)
+                .size(560., 44.)
+                .p(10.)
+                .text_size(22.),
+        ),
+    ));
+    ui.prepare_frame();
+    let field = ui.scene.borrow().bounds(view.find("field").unwrap());
+    let marks = marks(&ui);
+    assert_eq!(marks.len(), 1, "teh is marked");
+    assert!(marks[0].y + marks[0].height <= field.y + field.height - 10. + 0.01);
+}
