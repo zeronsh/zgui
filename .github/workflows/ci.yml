@@ -258,6 +258,8 @@ jobs:
         env:
           ZGX_GATE_TARGET: target/perf-gate
           ZGX_GATE_BIN_CACHE: ${{ runner.temp }}/gate-bin
+          # Cells that grew, explained by function (job log and artifact).
+          ZGX_GATE_FUNCTIONS: ${{ runner.temp }}/gate-functions
           BASE: ${{ steps.base.outputs.sha }}
         run: |
           status=0
@@ -265,6 +267,15 @@ jobs:
           if [ "${{ github.event_name }}" != pull_request ]; then status=0; fi
           cat perf.md >> "$GITHUB_STEP_SUMMARY" || true
           echo "status=$status" >> "$GITHUB_ENV"
+      - name: Functions
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-functions
+          path: ${{ runner.temp }}/gate-functions
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Comment
         if: github.event_name == 'pull_request' && hashFiles('perf.md') != ''
         continue-on-error: true

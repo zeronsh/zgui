@@ -26,6 +26,14 @@ seeds fixed (`same_run.c`, preloaded): run again, a binary counts the
 same instructions, where the clock alone moved mount and app-mail by
 tenths of a percent.
 
+With `ZGX_GATE_FUNCTIONS=DIR` (CI's perf job sets it), each cell that grew
+more than 0.01% (the largest ten, `ZGX_GATE_FUNCTIONS_MAX`) runs once more
+on each side writing what it counted by function, and its difference
+(`cgdiff.py`) goes to the log and DIR, with totals by whose code it is
+(zgx's, Luau's, the C library's, other Rust) under the table: what the
+change did, apart from where the heap or the linker put things. The
+counts are the first runs' still.
+
 With ZGX_GATE_BIN_CACHE set, a side's binaries found there, stamped with
 its commit and compiler, are taken rather than built, and the head's are
 left there after: CI keeps main's by commit, so a pull request builds its
@@ -45,6 +53,11 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORK = pathlib.Path(os.environ.get('ZGX_PERF_DIR', '/tmp/zgx-perf'))
+# Where the cells that grew are explained function by function (`by_function`),
+# if anywhere: CI's perf job sets it and keeps it as an artifact. The most
+# cells explained, the largest first, each two more runs.
+FUNCTIONS = os.environ.get('ZGX_GATE_FUNCTIONS')
+FUNCTIONS_MAX = int(os.environ.get('ZGX_GATE_FUNCTIONS_MAX', '10'))
 
 # name, package, example, environment: sized to a few billion instructions.
 # The windowed scenes' headless twins run with RENDER=0: update, layout and
@@ -249,11 +262,11 @@ def scripts_of(checkout):
     return to
 
 
-def count(binary, env, checkout=None, placement=None):
-    """The run's instructions. A run that fails is the gate's failure, not
-    the change's: under cachegrind a script's time budget (`ZGX_GATE`
-    lifts it in the benches) or a missing GPU would otherwise look like a
-    result."""
+def count(binary, env, checkout=None, placement=None, out='/dev/null'):
+    """The run's instructions (and cachegrind's file of them by function in
+    `out`). A run that fails is the gate's failure, not the change's: under
+    cachegrind a script's time budget (`ZGX_GATE` lifts it in the benches)
+    or a missing GPU would otherwise look like a result."""
     # A side's app scripts are its own: a binary cached from main was built
     # in the checkout a pull request runs in, where it would find the
     # head's (a script using what the base lacks would fail there).
@@ -266,7 +279,7 @@ def count(binary, env, checkout=None, placement=None):
     fixed.update(LD_PRELOAD=str(same_run()), ZGX_SAME_RUN_REPORT='1')
     if placement:
         fixed['GLIBC_TUNABLES'] = placement
-    command = ['valgrind', '--tool=cachegrind', '--cache-sim=no', '--cachegrind-out-file=/dev/null', str(binary)]
+    command = ['valgrind', '--tool=cachegrind', '--cache-sim=no', f'--cachegrind-out-file={out}', str(binary)]
     result = subprocess.run(
         ['setarch', '-R', *command] if shutil.which('setarch') else command,
         env={**fixed, **renamed_env({'ZGX_GATE': '1', 'ZGX_ASSISTIVE': '0', **scripts, **env})},
@@ -295,6 +308,39 @@ def compared(name, package, env, base, head):
             placed = count(base[0], env, base[1], placement)
             deltas.append((count(head[0], env, head[1], placement) - placed) / placed * 100)
     return before, after, statistics.median(deltas), deltas
+
+
+def by_function(rows, scenes, base):
+    """For the cells that grew most, each side run again writing what it
+    counted by function, and the difference (`cgdiff.py`) in the log and in
+    `ZGX_GATE_FUNCTIONS`, with its totals by whose code it is for the
+    table. The counts above are the first runs': these only explain them.
+    Never the gate's failure."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    import cgdiff
+    into = pathlib.Path(FUNCTIONS)
+    into.mkdir(parents=True, exist_ok=True)
+    grew = sorted((row for row in rows if row[3] is not None and row[3] > 0.01), key=lambda row: -row[3])
+    summary = []
+    for name, *_ in grew[:FUNCTIONS_MAX]:
+        _, package, example, env = scenes[name]
+        try:
+            for side, binary, checkout in (('base', WORK / 'gate-bin-base' / example, base),
+                                           ('head', WORK / 'gate-bin-head' / example, ROOT)):
+                count(binary, env, checkout, out=str(into / f'{name}.{side}.cg'))
+            report, groups, total = cgdiff.diff(into / f'{name}.base.cg', into / f'{name}.head.cg')
+        except (Infra, OSError, ValueError) as error:
+            print(f'=== {name}: no functions ({error})', flush=True)
+            continue
+        (into / f'{name}.txt').write_text(report + '\n')
+        print(f'=== {name} by function\n{report}', flush=True)
+        summary.append(f'| {name} | {total:+,} | ' + ' | '.join(f'{groups[g]:+,}' for g in cgdiff.GROUPS) + ' |')
+    if not summary:
+        return []
+    return ['', '<details><summary>Cells that grew, by whose code (instructions, head − base; '
+            'functions in the job log and its artifact)</summary>', '',
+            '| scene | total | ' + ' | '.join(cgdiff.GROUPS) + ' |',
+            '| --- | ---: |' + ' ---: |' * len(cgdiff.GROUPS), *summary, '', '</details>']
 
 
 def layout_of(deltas):
@@ -385,6 +431,8 @@ def main():
                 spread += (f' (median of {", ".join(f"{d:+.3f}%" for d in deltas)} under '
                            f'{len(deltas)} heap placements{layout_of(deltas)})')
             table.append(f'| {name} | {before / 1e6:,.1f} M | {after / 1e6:,.1f} M | {delta:+.2f}%{flag}{spread} |')
+    if FUNCTIONS:
+        table += by_function(rows, {scene[0]: scene for scene in SCENES}, base)
     if args.markdown:
         args.markdown.write_text('\n'.join(table) + '\n')
     if failed:
