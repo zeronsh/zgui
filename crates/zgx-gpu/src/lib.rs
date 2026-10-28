@@ -2436,7 +2436,7 @@ const TRIAL_MARGIN: f64 = 0.05;
 #[cfg(target_os = "macos")]
 const TRIAL_WARMUP: u32 = 30;
 /// What a second of GPU work weighs against the CPU's joules
-/// (`TrialRule::Energy`): about an M-series GPU's active power.
+/// (`TrialRule::Energy`, uncalibrated: see `TrialRule`).
 #[cfg(target_os = "macos")]
 const TRIAL_GPU_WATTS: f64 = 5.;
 /// How much less energy drawables must cost than tiles to win
@@ -2451,19 +2451,29 @@ const TRIAL_ENERGY_MARGIN: f64 = 0.1;
 /// 1% come a refresh late (2026-10-27).
 #[cfg(target_os = "macos")]
 const TRIAL_LOSS_BOUND: f64 = 0.005;
-/// How the full-rate trial judges (`ZGX_TRIAL_RULE`): by energy (the
-/// default), or `frames`, by the share of frames each path skips.
+/// How the full-rate trial judges (`ZGX_TRIAL_RULE`): by the share of
+/// frames each path skips (the default), or `energy`, which is not
+/// calibrated. Energy needs the GPU's power, and a process can read only its
+/// busy time: what a busy second costs depends on the GPU's clock, 0.78 W on
+/// an M5 Max against 4.44 on an M1 Max (2026-10-28, fitted from system GPU
+/// power and busy time, tiles against drawables), so no one weight holds.
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum TrialRule {
     Energy,
     Frames,
 }
+/// The trial's energy terms now, read off this thread, if it judges by
+/// energy (`trial_energy`; a scan of the I/O Registry takes ~28 ms).
+#[cfg(target_os = "macos")]
+fn energy_sample() -> Option<std::thread::JoinHandle<trial_energy::Sample>> {
+    (*TRIAL_RULE == TrialRule::Energy).then(|| std::thread::spawn(trial_energy::Sample::now))
+}
 #[cfg(target_os = "macos")]
 static TRIAL_RULE: std::sync::LazyLock<TrialRule> = std::sync::LazyLock::new(|| {
-    match zgx::env::var_os("ZGX_TRIAL_RULE").is_some_and(|v| v == "frames") {
-        true => TrialRule::Frames,
-        false => TrialRule::Energy,
+    match zgx::env::var_os("ZGX_TRIAL_RULE").is_some_and(|v| v == "energy") {
+        true => TrialRule::Energy,
+        false => TrialRule::Frames,
     }
 });
 /// What the trial measured of each path: shares of frames skipped (tiles'
@@ -9906,9 +9916,7 @@ impl GpuRenderer {
                     let layer = present.layer.as_mut().expect("attached");
                     let tiles = share(layer.probe_feedback(), from);
                     layer.stop_probe();
-                    present
-                        .trial_samples
-                        .push(std::thread::spawn(trial_energy::Sample::now));
+                    present.trial_samples.extend(energy_sample());
                     let from = counts(layer.drawable_feedback());
                     Trial::Drawables {
                         frames: 0,
@@ -9920,9 +9928,7 @@ impl GpuRenderer {
                 }
                 Trial::Tiles { frames, from } => {
                     if frames + 1 == TRIAL_WARMUP {
-                        present
-                            .trial_samples
-                            .push(std::thread::spawn(trial_energy::Sample::now));
+                        present.trial_samples.extend(energy_sample());
                     }
                     Trial::Tiles {
                         frames: frames + 1,
@@ -9948,9 +9954,7 @@ impl GpuRenderer {
                         let (handed, _) = feedback.lost_since(settled);
                         feedback.late_since(settled) as f64 / handed.max(1) as f64
                     });
-                    present
-                        .trial_samples
-                        .push(std::thread::spawn(trial_energy::Sample::now));
+                    present.trial_samples.extend(energy_sample());
                     Trial::Drawables {
                         frames: frames + 1,
                         from,
@@ -10047,9 +10051,7 @@ impl GpuRenderer {
                             feedback.shown_since(from) >= TRIAL_WARMUP as u64
                         }) =>
                         {
-                            present
-                                .trial_samples
-                                .push(std::thread::spawn(trial_energy::Sample::now));
+                            present.trial_samples.extend(energy_sample());
                             Some(counts(feedback))
                         }
                         settled => settled,

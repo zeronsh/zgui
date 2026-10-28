@@ -133,36 +133,35 @@ Frames below the display's rate stay on tiles. Drawables presented at the
 refresh the host's latch picks (`presentDrawable:atTime:`) were tried and are
 not in the shipped path.
 
-**Which path, per machine (`ZGX_PRESENT_DRAWABLE=auto`, opt-in).** Which
-present path costs less differs by machine, and neither GPU family nor
-refresh rate predicts it. So `auto` tries both once per GPU, display, refresh
-rate and OS build, keeps the verdict in the app's defaults
-(`ZGX_PRESENT_RETRIAL=1` tries again), and full-rate frames take it. Each
-path runs 240 frames, of which the first 30 don't count. Each is judged by
-what the process can read of itself without privileges: its CPU energy
-(`task_info`), its GPU time and the window server's (each process's GPU
-clients in the I/O Registry). Here GPU time weighs 5 W a busy second.
-Drawables win only if they cost 10% less and skip at most 1% of frames
-after warm-up. They skip about 0.1% when presenting works, so the bound
-catches a broken path. The window server's CPU is no term (it reads only for
-a setuid tool), so the margin keeps tiles where that is their lead. The
-earlier rule, by frames skipped, is `ZGX_TRIAL_RULE=frames`.
+**Which path, per machine (`ZGX_PRESENT_DRAWABLE=auto`, opt-in).** `auto`
+tries both once per GPU, display, refresh rate and OS build, keeps the
+verdict in the app's defaults (`ZGX_PRESENT_RETRIAL=1` tries again), and
+full-rate frames take it. Each path runs 240 frames. Drawables win only
+where tiles skip clearly more of their flips (5 points of the frames). With
+nothing capturing the screen, tiles skip about 0.16% on an M1 Max, so in
+practice `auto` keeps tiles.
 
-| 2026-10-27 | tiles | drawables | verdict |
-| --- | --- | --- | --- |
-| M1 Max, macOS 26.0.1, 4 trials | 686–731 mW | 513–555 mW | drawables 4/4 |
-| M5 Max, macOS 26.4, 3 trials | 891–894 mW | 816–830 mW | tiles 3/3 |
+It doesn't judge by energy, because a process can't measure it. It can read
+its CPU energy, and its GPU busy time and the window server's, but not the
+GPU's power. What a busy second costs depends on the GPU's clock: fitted
+from system GPU power against busy time, tiles against drawables (2026-10-28),
+it is 0.78 W on an M5 Max and 4.44 W on an M1 Max. With one weight, the M5
+Max's trial chose drawables, which measure worse there. `ZGX_TRIAL_RULE=energy`
+still runs that rule, uncalibrated.
 
-On the M1 Max the window server's GPU is the difference (86–88 against
-49–59 ms a second).
+**When to choose drawables (`ZGX_PRESENT_DRAWABLE=1`).** For a GPU-heavy
+app drawing at the display's full rate on an M1-class Mac. There drawables
+cost the GPU about 150 mW less and the window server 5.7 points less, for
+about 4.7 points more of the app's CPU (animate, M1 Max: GPU 206 against
+358 mW, window server 31.7% against 37.4, app CPU 18.0% against 13.3). On
+an M5 Max, tiles cost less at full rate (the window server's CPU 1.3 points
+and the app's 0.8 lower, for 4–7 mW more GPU). At 60 Hz, drawables trade
+0.5 points of window-server CPU for 0.6 of the app's.
 
-Not final (2026-10-27): on some launches drawables run a refresh deep. The
-pool sits full, each frame waits most of a refresh in `nextDrawable`, and a
-frame shows 8.3 ms later than it could, at more window-server CPU. Which
-launches do is chance, and on an M1 Max with the CVDisplayLink it is most of
-them. A follow-up keeps them in phase. Until then the trial's guard on late
-frames keeps tiles where drawables show late, so don't turn `auto` on
-expecting today's drawables to be the final ones.
+Drawables are paced by the view's own display link and kept in phase
+(skipping a tick when frames start to wait a refresh for a drawable), from
+a pool of two. Their frame shows 16 ms after it starts, against 27–32 before
+(M5 Max).
 
 ## The heavy dashboard's malloc fragmentation (macOS)
 
