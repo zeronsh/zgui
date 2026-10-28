@@ -178,6 +178,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 NodeKind::Rect(_) if rect.width <= 2. && rect.height > 5. => {
                                     println!("CARET {label} {rect:?}")
                                 }
+                                // The composition's underlines: thick under
+                                // the clause being converted.
+                                NodeKind::Rect(_) | NodeKind::Quad(_)
+                                    if rect.width > 2. && rect.height <= 2. =>
+                                {
+                                    println!("UNDERLINE {label} {rect:?}")
+                                }
                                 _ => {}
                             }
                         }

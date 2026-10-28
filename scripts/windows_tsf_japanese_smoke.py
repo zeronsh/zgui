@@ -3,10 +3,11 @@
 
 The Microsoft Japanese IME through Windows' Text Services Framework in zgx's
 editors (`ZGX_TSF=1`): romaji typed compose kana in the editor's preedit,
-Space converts (日本語), Enter commits through the text store. The next
-stages check more here: the clauses a conversion marks (display attributes:
-the target thick, the rest thin), the candidate window placed under the
-target clause, and reconversion (select committed text, press Convert).
+Space converts (日本語), Enter commits through the text store; while
+converted, the clause it marks (its display attribute) shows underlined
+thick, as the target. The next stages check more here: the candidate window
+placed under the target clause, and reconversion (select committed text,
+press Convert).
 
 The Japanese IME needs its language's typing features, an administrator
 install (Settings, Time & language, Language & region, Japanese). Without
@@ -18,6 +19,7 @@ them this prints PENDING and exits 0, so a suite that runs it stays green.
 import argparse
 import os
 import pathlib
+import re
 import subprocess
 import threading
 import time
@@ -58,6 +60,10 @@ def main():
             win.key(key)
         win.key("space")
         time.sleep(0.6)
+        # Two of the example's reports (every 500 ms) while converted.
+        converted = len(lines)
+        time.sleep(1.1)
+        marked = [line for line in lines[converted:] if line.startswith("UNDERLINE first")]
         win.key("enter")
         time.sleep(0.6)
         win.close(window)
@@ -69,7 +75,11 @@ def main():
     final = next((line for line in lines if line.startswith("FINAL")), "")
     if "日本語" not in final:
         raise AssertionError(f"日本語 wasn't converted and committed through the text store: {final}\n{''.join(lines)}")
-    print(f"PASS: Japanese IME through the Text Services Framework: {final.strip()}")
+    heights = [float(m.group(1)) for line in marked if (m := re.search(r"height: ([\d.]+)", line))]
+    if not any(h >= 2 for h in heights):
+        raise AssertionError(f"the converted clause wasn't underlined thick (its display attribute): {marked}")
+    print(f"PASS: Japanese IME through the Text Services Framework: {final.strip()}, "
+          f"the target clause underlined thick")
 
 
 if __name__ == "__main__":

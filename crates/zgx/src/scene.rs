@@ -5038,6 +5038,59 @@ impl Scene {
         let span = self.window_rect(id, Rect::new(x, top, 0., size));
         Some((self.window_point(id, x, y), span.height))
     }
+    /// The box around bytes `range` of text node `id` as it shows them, in
+    /// the window's points (through any transform or zoom): across every
+    /// line the range runs on; for an empty range, its caret's place (no
+    /// width, the line's height). `None` for a node with no text, or one
+    /// masked (a password). Shapes the text: for an input method asking
+    /// where a range is (Windows' `GetTextExt`), not for every frame.
+    pub fn text_range_area(&self, id: NodeId, range: std::ops::Range<usize>) -> Option<Rect> {
+        use unicode_segmentation::UnicodeSegmentation;
+        let text = match self.kind(id) {
+            NodeKind::Text { text, .. } => text.clone(),
+            NodeKind::RichText { text } => text.text_arc(),
+            _ => return None,
+        };
+        let floor = |at: usize| {
+            let mut at = at.min(text.len());
+            while !text.is_char_boundary(at) {
+                at -= 1;
+            }
+            at
+        };
+        let (start, end) = (floor(range.start), floor(range.end.max(range.start)));
+        let lines = self.text_lines(id)?;
+        // A caret's place across its line: past the graphemes before it.
+        let x = |line: &TextLine, at: usize| {
+            let at = at.clamp(line.range.start, line.range.end);
+            let index = text[line.range.start..at].graphemes(true).count();
+            line.carets
+                .get(index)
+                .or(line.carets.last())
+                .copied()
+                .unwrap_or(line.rect.x)
+        };
+        let mut area: Option<Rect> = None;
+        for line in &lines {
+            let on = if start == end {
+                line.range.start <= start && start <= line.range.end
+            } else {
+                // A line it overlaps; an empty line within it.
+                (line.range.start < end && start < line.range.end)
+                    || (line.range.is_empty() && (start..end).contains(&line.range.start))
+            };
+            if !on {
+                continue;
+            }
+            let (a, b) = (x(line, start), x(line, end));
+            let piece = Rect::new(a.min(b), line.rect.y, (a - b).abs(), line.rect.height);
+            area = Some(area.map_or(piece, |area| area.union(piece)));
+            if start == end {
+                break;
+            }
+        }
+        area
+    }
     /// Shape `text` at `size` in `font`, wrapped at `width` if given.
     pub fn shape_text_with_font(
         &self,

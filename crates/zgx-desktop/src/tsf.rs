@@ -22,24 +22,32 @@ use windows::{
     Win32::{
         Foundation::{E_INVALIDARG, E_NOTIMPL, HWND, POINT, RECT},
         Graphics::Gdi::ClientToScreen,
-        System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, FORMATETC, IDataObject},
+        System::{
+            Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, FORMATETC, IDataObject},
+            Variant::VT_I4,
+        },
         UI::{
             TextServices::{
-                CLSID_TF_ThreadMgr, ITextStoreACP2, ITextStoreACP2_Impl, ITextStoreACPSink,
-                ITfCompositionView, ITfContext, ITfContextOwnerCompositionServices,
+                CLSID_TF_CategoryMgr, CLSID_TF_DisplayAttributeMgr, CLSID_TF_ThreadMgr,
+                GUID_PROP_ATTRIBUTE, ITextStoreACP2, ITextStoreACP2_Impl, ITextStoreACPSink,
+                ITfCategoryMgr, ITfCompositionView, ITfContext, ITfContextOwnerCompositionServices,
                 ITfContextOwnerCompositionSink, ITfContextOwnerCompositionSink_Impl,
-                ITfDocumentMgr, ITfRange, ITfRangeACP, ITfThreadMgr, TEXT_STORE_LOCK_FLAGS,
-                TEXT_STORE_TEXT_CHANGE_FLAGS, TF_IAS_QUERYONLY, TS_AE_END, TS_AE_START, TS_ATTRVAL,
-                TS_DEFAULT_SELECTION, TS_E_NOLOCK, TS_E_SYNCHRONOUS, TS_LC_CHANGE, TS_LF_READ,
-                TS_LF_READWRITE, TS_LF_SYNC, TS_RT_PLAIN, TS_RUNINFO, TS_S_ASYNC, TS_SELECTION_ACP,
-                TS_SELECTIONSTYLE, TS_SS_NOHIDDENTEXT, TS_STATUS, TS_TEXTCHANGE,
+                ITfDisplayAttributeInfo, ITfDisplayAttributeMgr, ITfDocumentMgr, ITfEditRecord,
+                ITfRange, ITfRangeACP, ITfSource, ITfTextEditSink, ITfTextEditSink_Impl,
+                ITfThreadMgr, TEXT_STORE_LOCK_FLAGS, TEXT_STORE_TEXT_CHANGE_FLAGS,
+                TF_ATTR_CONVERTED, TF_ATTR_FIXEDCONVERTED, TF_ATTR_TARGET_CONVERTED,
+                TF_ATTR_TARGET_NOTCONVERTED, TF_DISPLAYATTRIBUTE, TF_IAS_QUERYONLY, TS_AE_END,
+                TS_AE_START, TS_ATTRVAL, TS_DEFAULT_SELECTION, TS_E_NOLOCK, TS_E_SYNCHRONOUS,
+                TS_LC_CHANGE, TS_LF_READ, TS_LF_READWRITE, TS_LF_SYNC, TS_RT_PLAIN, TS_RUNINFO,
+                TS_S_ASYNC, TS_SELECTION_ACP, TS_SELECTIONSTYLE, TS_SS_NOHIDDENTEXT, TS_STATUS,
+                TS_TEXTCHANGE,
             },
             WindowsAndMessaging::GetClientRect,
         },
     },
     core::{BOOL, GUID, HRESULT, IUnknown, Interface, PCWSTR, PWSTR, Ref, Result, implement},
 };
-use zgx::{scene::Rect, widgets::EditorHandle};
+use zgx::{scene::Rect, text_edit::ClauseStyle, widgets::EditorHandle};
 
 /// The view cookie: an editor shows its text in one.
 const VIEW: u32 = 1;
@@ -57,6 +65,9 @@ struct Shared {
     /// The document's length when the input method last heard of it.
     told_len: usize,
     layout_changed: bool,
+    /// What reads an input method's display attributes (how it marks its
+    /// composition's clauses), made when one first composes.
+    attributes: Option<(ITfCategoryMgr, ITfDisplayAttributeMgr)>,
 }
 
 /// The Text Services Framework for one window.
@@ -66,6 +77,8 @@ pub(crate) struct Tsf {
     _context: ITfContext,
     shared: Rc<RefCell<Shared>>,
     focused: bool,
+    /// The context's text-edit sink (`OnEndEdit`), advised while it lives.
+    edits: Option<u32>,
 }
 
 impl Tsf {
@@ -91,6 +104,7 @@ impl Tsf {
                 scale,
                 told_len: 0,
                 layout_changed: false,
+                attributes: None,
             }));
             let store: IUnknown = Store(shared.clone()).into();
             let (mut context, mut cookie) = (None, 0);
@@ -99,12 +113,19 @@ impl Tsf {
                 .ok()?;
             let context = context?;
             document.Push(&context).ok()?;
+            // Told after each of an input method's edits, to read how it
+            // marked its composition then.
+            let edits = context
+                .cast::<ITfSource>()
+                .and_then(|source| source.AdviseSink(&ITfTextEditSink::IID, &store))
+                .ok();
             Some(Self {
                 thread,
                 document,
                 _context: context,
                 shared,
                 focused: false,
+                edits,
             })
         }
     }
@@ -207,6 +228,9 @@ impl Drop for Tsf {
     fn drop(&mut self) {
         // SAFETY: deactivating the thread manager this activated.
         unsafe {
+            if let (Some(cookie), Ok(source)) = (self.edits, self._context.cast::<ITfSource>()) {
+                let _ = source.UnadviseSink(cookie);
+            }
             let _ = self.document.Pop(0);
             let _ = self.thread.Deactivate();
         }
@@ -236,7 +260,7 @@ fn grant(shared: &Rc<RefCell<Shared>>, flags: u32) -> HRESULT {
     result
 }
 
-#[implement(ITextStoreACP2, ITfContextOwnerCompositionSink)]
+#[implement(ITextStoreACP2, ITfContextOwnerCompositionSink, ITfTextEditSink)]
 struct Store(Rc<RefCell<Shared>>);
 
 impl Store {
@@ -556,16 +580,19 @@ impl ITextStoreACP2_Impl for Store_Impl {
     fn GetTextExt(
         &self,
         _view: u32,
-        _start: i32,
-        _end: i32,
+        start: i32,
+        end: i32,
         rect: *mut RECT,
         clipped: *mut BOOL,
     ) -> Result<()> {
         let shared = self.read()?;
+        // Where the range shows; the caret's place where its text has no
+        // lines to ask (a password's).
+        let end = if end < 0 { shared.store.len() } else { at(end) };
         let area = shared
             .store
-            .editor()
-            .map(EditorHandle::input_method_area)
+            .area(at(start), end)
+            .or_else(|| shared.store.editor().map(EditorHandle::input_method_area))
             .unwrap_or_default();
         // SAFETY: the caller's out pointers.
         unsafe {
@@ -602,8 +629,8 @@ impl ITfContextOwnerCompositionSink_Impl for Store_Impl {
         _view: Ref<ITfCompositionView>,
         _range: Ref<ITfRange>,
     ) -> Result<()> {
-        // The composition's text came through SetText; its clauses
-        // (display attributes) are read from S1 on.
+        // The composition's text came through SetText; its clauses (display
+        // attributes) are read once the input method's edit ends (`OnEndEdit`).
         Ok(())
     }
     fn OnEndComposition(&self, _view: Ref<ITfCompositionView>) -> Result<()> {
@@ -612,6 +639,110 @@ impl ITfContextOwnerCompositionSink_Impl for Store_Impl {
         shared.told_len = shared.store.len();
         Ok(())
     }
+}
+
+impl ITfTextEditSink_Impl for Store_Impl {
+    fn OnEndEdit(
+        &self,
+        context: Ref<ITfContext>,
+        read: u32,
+        _record: Ref<ITfEditRecord>,
+    ) -> Result<()> {
+        // (No borrow is held across the framework's calls.)
+        let attributes = {
+            let mut shared = self.0.borrow_mut();
+            if !shared.store.is_composing() {
+                return Ok(());
+            }
+            if shared.attributes.is_none() {
+                // SAFETY: COM is initialized on this thread (`Tsf::new`).
+                shared.attributes = unsafe {
+                    CoCreateInstance::<_, ITfCategoryMgr>(
+                        &CLSID_TF_CategoryMgr,
+                        None,
+                        CLSCTX_INPROC_SERVER,
+                    )
+                    .and_then(|category| {
+                        CoCreateInstance::<_, ITfDisplayAttributeMgr>(
+                            &CLSID_TF_DisplayAttributeMgr,
+                            None,
+                            CLSCTX_INPROC_SERVER,
+                        )
+                        .map(|display| (category, display))
+                    })
+                    .ok()
+                };
+            }
+            shared.attributes.clone()
+        };
+        let (Some(context), Some((category, display))) = (context.ok().ok(), attributes) else {
+            return Ok(());
+        };
+        let clauses = clauses(context, read, &category, &display).unwrap_or_default();
+        self.0.borrow_mut().store.mark_clauses(&clauses);
+        Ok(())
+    }
+}
+
+/// How the input method marks the document's text (its display attributes'
+/// ranges), read with edit cookie `read`: each range and the clause it is.
+fn clauses(
+    context: &ITfContext,
+    read: u32,
+    category: &ITfCategoryMgr,
+    display: &ITfDisplayAttributeMgr,
+) -> Result<Vec<(std::ops::Range<usize>, ClauseStyle)>> {
+    let mut clauses = Vec::new();
+    // SAFETY: the context's own property and ranges, read within the edit
+    // session `read` is for; every out pointer is valid for its call.
+    unsafe {
+        let property = context.GetProperty(&GUID_PROP_ATTRIBUTE)?;
+        let mut ranges = None;
+        property.EnumRanges(read, &mut ranges, None::<&ITfRange>)?;
+        let Some(ranges) = ranges else {
+            return Ok(clauses);
+        };
+        loop {
+            let (mut range, mut fetched) = ([None], 0);
+            if ranges.Next(&mut range, &mut fetched).is_err() || fetched == 0 {
+                break;
+            }
+            let Some(range) = range[0].take() else {
+                break;
+            };
+            let value = property.GetValue(read, &range)?;
+            let value = &value.Anonymous.Anonymous;
+            if value.vt != VT_I4 {
+                continue;
+            }
+            let Ok(guid) = category.GetGUID(value.Anonymous.lVal as u32) else {
+                continue;
+            };
+            let mut info: Option<ITfDisplayAttributeInfo> = None;
+            if display
+                .GetDisplayAttributeInfo(&guid, &mut info, std::ptr::null_mut())
+                .is_err()
+            {
+                continue;
+            }
+            let mut attribute = TF_DISPLAYATTRIBUTE::default();
+            let Some(info) = info else { continue };
+            if info.GetAttributeInfo(&mut attribute).is_err() {
+                continue;
+            }
+            let style = match attribute.bAttr {
+                TF_ATTR_TARGET_CONVERTED | TF_ATTR_TARGET_NOTCONVERTED => ClauseStyle::Target,
+                TF_ATTR_CONVERTED | TF_ATTR_FIXEDCONVERTED => ClauseStyle::Converted,
+                // Input, an input error, another mark: typed, not converted.
+                _ => ClauseStyle::Input,
+            };
+            let range: ITfRangeACP = range.cast()?;
+            let (mut start, mut len) = (0, 0);
+            range.GetExtent(&mut start, &mut len)?;
+            clauses.push((at(start)..at(start) + at(len), style));
+        }
+    }
+    Ok(clauses)
 }
 
 /// A composition's range in the document: its start and length.

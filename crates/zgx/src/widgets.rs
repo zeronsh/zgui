@@ -306,6 +306,15 @@ impl EditorHandle {
         self.composition_area()
             .unwrap_or_else(|| self.scene.borrow().transformed_bounds(self.caret))
     }
+    /// Where bytes `range` of the text it shows (its committed text with
+    /// any composition in place of the selection) are, in the window's
+    /// points: the box around them across every line they run on, a
+    /// caret's place for an empty range. `None` where its text has no
+    /// lines to ask (a password's). Shapes the text: for an input method
+    /// asking where a range is (Windows' `GetTextExt`), not every frame.
+    pub fn text_area(&self, range: std::ops::Range<usize>) -> Option<Rect> {
+        self.scene.borrow().text_range_area(self.text, range)
+    }
     /// The selection as UTF-8 byte offsets into the committed text,
     /// `(anchor, focus)`: equal for a caret, `focus` where the caret is.
     pub fn selection(&self) -> (usize, usize) {
