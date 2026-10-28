@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>zgx performance: the latest benchmark</title>
-<meta name="description" content="In every test, zgx uses less CPU and less GPU power than GPUI Fast, MyGo and Rune, and none of its frames run long.">
+<meta name="description" content="In every test, zgx uses less CPU and less GPU power than GPUI Fast, MyGo and Rune, and none of its frames run long. WindowServer spends up to 0.8 points of a core more on its window than on the lowest rival&#x27;s, in 9 of 10 tests.">
 <meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
 <p class="eyebrow">zgx performance · macOS · 2026-10-28</p>
-<h1>In every test, zgx uses less CPU and less GPU power than GPUI Fast, MyGo and Rune, and none of its frames run long.</h1>
+<h1>In every test, zgx uses less CPU and less GPU power than GPUI Fast, MyGo and Rune, and none of its frames run long. WindowServer spends up to 0.8 points of a core more on its window than on the lowest rival&#x27;s, in 9 of 10 tests.</h1>
 <p class="lede">zgx against GPUI Fast (Zed's GPUI with its fast-path optimizations, as apps ship it) MyGo (a Go desktop framework, through its GPU-drawn native UI) and Rune (Rust, wgpu, Taffy and Parley): the same four scenes, built from the same workload code, measured on one Mac in one session. Lower is better throughout.</p>
 <dl class="cards">
 <div class="card"><dt>CPU, heavy dashboard (both)</dt><dd><span class="big">6.7%</span><span class="note">50% less than GPUI Fast, 57% less than MyGo, 69% less than Rune</span></dd></div>

@@ -278,6 +278,17 @@ def headline(by):
         verdict = (f'zgx uses the least CPU in {led[cpu]} of {tests} tests and the least {gpu_name} '
                    f'in {led[gpu]}, against {named}')
     verdict += ', and none of its frames run long.' if long_zgx == 0 else '.'
+    if PLATFORM == 'macos':
+        # Where the window server spends more on zgx's window than on the
+        # lowest rival's: said beside the verdict, not left to its chart.
+        over = [value(s, 'zgx', m, 'windowserver_cpu_percent')
+                - min(value(s, r, m, 'windowserver_cpu_percent') for r in rivals if r in s['frameworks'])
+                for s, m in active]
+        # Under 0.05 points rounds to level on the chart.
+        over = [o for o in over if o >= 0.05]
+        if over:
+            verdict += (f' WindowServer spends up to {fmt(max(over), 1)} points of a core more on its window '
+                        f"than on the lowest rival's, in {len(over)} of {tests} tests.")
     heavy = by['heavy']
     against = lambda key, mode: ', '.join(
         f'{percent_less(value(heavy, "zgx", mode, key), value(heavy, r, mode, key))} than {NAMES[r]}' for r in rivals)

@@ -1,5 +1,5 @@
 {
- "verdict": "In every test, zgx uses less CPU and less GPU power than GPUI Fast, MyGo and Rune, and none of its frames run long.",
+ "verdict": "In every test, zgx uses less CPU and less GPU power than GPUI Fast, MyGo and Rune, and none of its frames run long. WindowServer spends up to 0.8 points of a core more on its window than on the lowest rival's, in 9 of 10 tests.",
  "commit": "d493d20a57a3d4c1ef2f4f7423cbf0b5e9443f7a",
  "platform": "macos",
  "sampling_anchor": "window frontmost and uncovered",
