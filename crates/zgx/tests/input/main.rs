@@ -30,6 +30,8 @@ mod focus_visible;
 mod hover_refresh;
 #[path = "../hover_subtree.rs"]
 mod hover_subtree;
+#[path = "../key_activation_target.rs"]
+mod key_activation_target;
 #[path = "../native_pointer.rs"]
 mod native_pointer;
 #[path = "../pointer_drag_buttons.rs"]
