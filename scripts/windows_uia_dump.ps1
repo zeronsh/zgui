@@ -37,7 +37,10 @@ function Describe($element) {
     }
     if ($Rects) {
         $r = $info.BoundingRectangle
-        $line += " rect=" + [int]$r.X + "," + [int]$r.Y + "," + [int]$r.Width + "," + [int]$r.Height
+        # An element with no bounds (a scrollbar not shown) reports Rect.Empty, whose
+        # coordinates are infinite.
+        if ($r.IsEmpty) { $line += " rect=none" }
+        else { $line += " rect=" + [int]$r.X + "," + [int]$r.Y + "," + [int]$r.Width + "," + [int]$r.Height }
     }
     if ($info.HasKeyboardFocus) { $line += " focused" }
     if (-not $info.IsEnabled) { $line += " disabled" }

@@ -211,15 +211,23 @@ def main():
 
     proc, window = launch(examples, "selectable_text")
     try:
+        # Where "Drag", the first word, and "paragraph", the fourth, show now
+        # (UI Automation's text pattern), not at fixed points: the hold lands
+        # on the first and the drag ends on the fourth, as the example lays
+        # them out.
+        words = win.text_rects(window, "Drag", "paragraph")
+        (l0, t0, r0, b0), (l1, t1, r1, b1) = words["Drag"], words["paragraph"]
+        x0, y0 = (l0 + r0) / 2, (t0 + b0) / 2
+        x1, y1 = (l1 + r1) / 2, (t1 + b1) / 2
         before = win.capture(window)
-        touch(window, [(0, 45, 86, "down")])  # "Drag", the first word
+        touch(window, [(0, x0, y0, "down")])
         for _ in range(16):
             time.sleep(0.05)
-            touch(window, [(0, 45, 86, "move")])
+            touch(window, [(0, x0, y0, "move")])
         for step in range(1, 13):
             time.sleep(0.02)
-            touch(window, [(0, 45 + 12 * step, 86, "move")])
-        touch(window, [(0, 189, 86, "up")])
+            touch(window, [(0, x0 + (x1 - x0) * step / 12, y0 + (y1 - y0) * step / 12, "move")])
+        touch(window, [(0, x1, y1, "up")])
         time.sleep(0.6)
         check(region(before, 200, 110, 420, 190) != region(win.capture(window), 200, 110, 420, 190),
               "a finger held on text, dragged and lifted opens the selection's menu")

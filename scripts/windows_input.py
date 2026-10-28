@@ -8,6 +8,7 @@ per-monitor DPI aware, like the app.
 """
 import ctypes
 import struct
+import subprocess
 import time
 import zlib
 from ctypes import wintypes
@@ -246,6 +247,62 @@ def to_screen(hwnd, x, y):
     point = wintypes.POINT(round(x), round(y))
     user32.ClientToScreen(hwnd, ctypes.byref(point))
     return point.x, point.y
+
+
+def text_rects(hwnd, *words, timeout=10.0):
+    """Where each of `words` shows in `hwnd`'s text, as UI Automation's
+    text pattern places it (the first match in the first text that has
+    them all): {word: (left, top, right, bottom)} in client pixels. A probe
+    finds text where it is laid out now, not at coordinates that go stale
+    as an example's layout changes. Each word's range is moved to by
+    characters from the document's start (AccessKit's text pattern has no
+    FindText). The tree is built when first asked for, so this asks again
+    until `timeout`."""
+    quoted = ", ".join("'" + w.replace("'", "''") + "'" for w in words)
+    script = f"""
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]{int(hwnd)})
+$texts = $root.FindAll([System.Windows.Automation.TreeScope]::Subtree, [System.Windows.Automation.Condition]::TrueCondition)
+$start = [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start
+$end = [System.Windows.Automation.Text.TextPatternRangeEndpoint]::End
+$character = [System.Windows.Automation.Text.TextUnit]::Character
+foreach ($element in $texts) {{
+  $pattern = $null
+  if (-not $element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {{ continue }}
+  $document = $pattern.DocumentRange
+  $all = $document.GetText(-1)
+  $found = @()
+  foreach ($word in @({quoted})) {{
+    $at = $all.IndexOf($word)
+    if ($at -lt 0) {{ $found = $null; break }}
+    $range = $document.Clone()
+    $range.MoveEndpointByRange($end, $range, $start)
+    [void]$range.MoveEndpointByUnit($end, $character, $at + $word.Length)
+    [void]$range.MoveEndpointByUnit($start, $character, $at)
+    $r = $range.GetBoundingRectangles()
+    if ($r.Count -eq 0) {{ $found = $null; break }}
+    $found += "{{0}} {{1}} {{2}} {{3}}" -f $r[0].Left, $r[0].Top, $r[0].Right, $r[0].Bottom
+  }}
+  if ($found) {{ $found -join ";"; break }}
+}}
+"""
+    deadline = time.monotonic() + timeout
+    while True:
+        done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                              capture_output=True, text=True)
+        out = done.stdout.strip()
+        if out:
+            rects = {}
+            for word, rect in zip(words, out.split(";")):
+                left, top, right, bottom = (float(v) for v in rect.split())
+                l, t = to_client(hwnd, left, top)
+                r, b = to_client(hwnd, right, bottom)
+                rects[word] = (l, t, r, b)
+            return rects
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"no text in the window shows {words!r} to UI Automation: {done.stderr.strip()[-800:]}")
+        time.sleep(0.5)
 
 
 def to_client(hwnd, x, y):

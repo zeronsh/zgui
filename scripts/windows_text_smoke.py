@@ -224,6 +224,31 @@ def emoji_panel(binary, offset, insert=False):
     return caret, (x, y, w, h), box, report
 
 
+def steady(window, box, timeout=15.0):
+    """A capture of `window` once what is in `box` (client left, top,
+    right, bottom: the editor, its caret) holds still: three captures
+    0.35 s apart alike there. A caret blinking (Windows' blink, 530 ms
+    each way by default) changes within that span; after the caret timeout
+    (SPI_GETCARETTIMEOUT, 5 s by default) it stops, solid, as Windows' own
+    do. So a caret compared before and after a change shows in both, not
+    one taken mid-blink."""
+    def part(capture):
+        width, _, pixels = capture
+        left, top, right, bottom = (int(v) for v in box)
+        return b"".join(pixels[(y * width + left) * 4:(y * width + right) * 4] for y in range(top, bottom))
+    deadline = time.monotonic() + timeout
+    while True:
+        shots = []
+        for i in range(3):
+            if i:
+                time.sleep(0.35)
+            shots.append(win.capture(window))
+        if part(shots[0]) == part(shots[1]) == part(shots[2]):
+            return shots[2]
+        if time.monotonic() > deadline:
+            raise AssertionError(f"the editor at {box} never held still: its caret kept blinking")
+
+
 def caret_width(binary, width=4):
     """The extra pixels the caret takes when Windows' text cursor thickness
     (`SPI_SETCARETWIDTH`) goes from what it is to `width`, changed while the
@@ -239,13 +264,16 @@ def caret_width(binary, width=4):
         scale = win.dpi(window) / 96
         # The caret at the end of the line, nothing to its right.
         press(window, x + w - 20, y + h / 2)
-        time.sleep(0.3)
-        before = win.capture(window)
+        editor = (x, y, x + w, y + h)
+        # Both captures with the caret solid, past its blink: never one
+        # taken as it blinks off (that one compared a whole caret, not its
+        # added width).
+        before = steady(window, editor)
         # SPI_SETCARETWIDTH; SPIF_UPDATEINIFILE | SPIF_SENDCHANGE, as Settings
         # changes it: running apps hear it only with the profile updated.
         user32.SystemParametersInfoW(0x2007, 0, ctypes.c_void_p(width), 3)
         time.sleep(0.4)
-        box = changed_box(before, win.capture(window), threshold=60, step=1)
+        box = changed_box(before, steady(window, editor), threshold=60, step=1)
         win.close(window)
         proc.wait(timeout=10)
     finally:
