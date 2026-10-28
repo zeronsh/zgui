@@ -43,6 +43,12 @@
 //!   assistive technology is the list's: selection and plain text leave it
 //!   out and copied HTML makes it a `<ul>` or `<ol>`; one that isn't is
 //!   copied, and read, as text.
+//! - `unknown-token`: a `"$…"` token in a style, a `hover` table or a
+//!   computed style that neither zgx nor the app's `ui.theme.tokens`
+//!   declares (`"$app.crad"`: did you mean `$app.card`?), one of the wrong
+//!   kind for its field (`p = "$app.accent"`), or a theme file setting an
+//!   undeclared name. Unlike the rest it reads the app's scripts together
+//!   (`lint_app`): one may declare what another uses.
 
 use crate::check::{CheckError, Diagnostic, Report, Severity, scripts};
 use std::path::{Path, PathBuf};
@@ -108,6 +114,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "list-marker-hidden",
         "a list item's marker text not `aria_hidden`: copied and read as text",
+    ),
+    (
+        "unknown-token",
+        "a \"$…\" token nothing declares, or of the wrong kind for its field",
     ),
 ];
 
@@ -179,21 +189,66 @@ pub fn lint(paths: &[PathBuf]) -> Result<Report, CheckError> {
         if files.is_empty() {
             return Err(CheckError::NoScripts(path.clone()));
         }
+        let mut sources = Vec::new();
         for file in files {
             let source = std::fs::read_to_string(&file).map_err(CheckError::Io)?;
-            report.diagnostics.extend(lint_source(&file, &source));
+            sources.push((file, source));
             report.files += 1;
         }
+        report.diagnostics.extend(lint_app(&sources));
     }
     Ok(report)
 }
 
-/// Lint one script's source; `file` names it in the findings.
+/// Lint an app's scripts together: each on its own, and what one names
+/// against what the others declare (`unknown-token`).
+pub fn lint_app(sources: &[(PathBuf, String)]) -> Vec<Diagnostic> {
+    let read: Vec<_> = sources
+        .iter()
+        .map(|(file, source)| (file, tokenize(source)))
+        .collect();
+    let mut found = Vec::new();
+    for (file, (tokens, comments)) in &read {
+        found.extend(lint_tokens(file, tokens, comments));
+    }
+    let files: Vec<_> = read
+        .iter()
+        .map(|(path, (tokens, _))| crate::token_lint::File { path, tokens })
+        .collect();
+    let mut tokens = crate::token_lint::unknown_tokens(&files);
+    tokens.retain(|d| {
+        read.iter()
+            .find(|(file, _)| **file == d.file)
+            .is_none_or(|(_, (_, comments))| !allowed(comments, d.line, &d.code))
+    });
+    tokens.sort_by_key(|d| (d.line, d.column));
+    found.extend(tokens);
+    found
+}
+
+/// Whether a `-- zgx-lint: allow(rule)` comment on `line`, or the line
+/// above it, accepts a finding of `rule` there.
+fn allowed(comments: &[(u32, String)], line: u32, rule: &str) -> bool {
+    comments.iter().any(|(at, text)| {
+        (*at == line || *at + 1 == line)
+            && text
+                .split_once("zgx-lint:")
+                .and_then(|(_, rest)| rest.trim().strip_prefix("allow("))
+                .and_then(|rest| rest.split_once(')'))
+                .is_some_and(|(names, _)| names.split(',').any(|name| name.trim() == rule))
+    })
+}
+
+/// Lint one script's source on its own; `file` names it in the findings.
 pub fn lint_source(file: &Path, source: &str) -> Vec<Diagnostic> {
     let (tokens, comments) = tokenize(source);
+    lint_tokens(file, &tokens, &comments)
+}
+
+fn lint_tokens(file: &Path, tokens: &[Token], comments: &[(u32, String)]) -> Vec<Diagnostic> {
     let mut linter = Linter {
         file,
-        tokens: &tokens,
+        tokens,
         found: Vec::new(),
     };
     linter.run();
@@ -201,36 +256,26 @@ pub fn lint_source(file: &Path, source: &str) -> Vec<Diagnostic> {
     linter.list_measured();
     linter.canvas_view();
     linter.draw_item_state();
-    let allowed = |line: u32, rule: &str| {
-        comments.iter().any(|(at, text)| {
-            (*at == line || *at + 1 == line)
-                && text
-                    .split_once("zgx-lint:")
-                    .and_then(|(_, rest)| rest.trim().strip_prefix("allow("))
-                    .and_then(|rest| rest.split_once(')'))
-                    .is_some_and(|(names, _)| names.split(',').any(|name| name.trim() == rule))
-        })
-    };
     let mut found = linter.found;
-    found.retain(|d| !allowed(d.line, &d.code));
+    found.retain(|d| !allowed(comments, d.line, &d.code));
     found.sort_by_key(|d| (d.line, d.column));
     found.dedup();
     found
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     Name,
     Number,
     Str,
     Punct,
 }
 #[derive(Clone, Debug)]
-struct Token {
-    kind: Kind,
-    text: String,
-    line: u32,
-    column: u32,
+pub(crate) struct Token {
+    pub(crate) kind: Kind,
+    pub(crate) text: String,
+    pub(crate) line: u32,
+    pub(crate) column: u32,
 }
 impl Token {
     fn is(&self, text: &str) -> bool {
@@ -240,7 +285,7 @@ impl Token {
 
 /// Luau source as tokens, and its comments by line. Strings (long and
 /// interpolated ones too) are single tokens; this lint does not look inside.
-fn tokenize(source: &str) -> (Vec<Token>, Vec<(u32, String)>) {
+pub(crate) fn tokenize(source: &str) -> (Vec<Token>, Vec<(u32, String)>) {
     let chars: Vec<char> = source.chars().collect();
     let (mut tokens, mut comments) = (Vec::new(), Vec::new());
     let (mut i, mut line, mut column) = (0, 1u32, 1u32);

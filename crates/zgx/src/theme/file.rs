@@ -87,6 +87,30 @@ impl TokenInput {
     pub fn parse(text: &str) -> Result<Self, ThemeError> {
         value::parse(text, None).map(TokenInput).map_err(ThemeError)
     }
+    /// What it gives once evaluated, where that shows without a theme: a
+    /// literal's kind, a colour function's (`alpha`, `over`, `mix` of
+    /// colours), a shadow list's. `None` for a reference to another token
+    /// (`refers_to`), whose kind is that token's.
+    pub fn kind(&self) -> Option<TokenKind> {
+        fn kind(expr: &Expr) -> Option<TokenKind> {
+            match expr {
+                Expr::Value(value) => value.kind(),
+                Expr::Ref(_) => None,
+                Expr::Alpha(..) | Expr::Over(..) => Some(TokenKind::Color),
+                Expr::Mix(a, b, _) => kind(a).or(kind(b)).or(Some(TokenKind::Color)),
+                Expr::Shadows(_) => Some(TokenKind::Shadow),
+            }
+        }
+        kind(&self.0)
+    }
+    /// The token it is, if it only names another (`"{surface.raised}"`,
+    /// `"$surface.raised"`).
+    pub fn refers_to(&self) -> Option<TokenId> {
+        match self.0 {
+            Expr::Ref(id) => Some(id),
+            _ => None,
+        }
+    }
     /// Parse with the token's kind known (a bare word is a font, an easing).
     pub(crate) fn parse_for(id: TokenId, text: &str) -> Result<Self, ThemeError> {
         value::parse(text, super::tokens::standard_kind(id))

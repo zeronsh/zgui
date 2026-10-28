@@ -66,6 +66,7 @@ mod term;
 pub mod testing;
 mod theme;
 mod timers;
+mod token_lint;
 mod transform;
 mod value;
 mod variants;
@@ -1695,23 +1696,22 @@ impl ScriptHost {
         files.sort();
         files.dedup();
         let mut found = Vec::new();
-        for file in &files {
-            let Ok(source) = std::fs::read_to_string(file) else {
-                continue;
-            };
-            for d in lint::lint_source(file, &source) {
-                let name = d.file.file_name().unwrap_or(d.file.as_os_str());
-                let line = format!(
-                    "{}:{}:{}: lint[{}]: {}",
-                    name.to_string_lossy(),
-                    d.line,
-                    d.column,
-                    d.code,
-                    d.message
-                );
-                warning(Some(&self.0.warnings), line.clone());
-                found.push(line);
-            }
+        let sources: Vec<(PathBuf, String)> = files
+            .iter()
+            .filter_map(|file| Some((file.clone(), std::fs::read_to_string(file).ok()?)))
+            .collect();
+        for d in lint::lint_app(&sources) {
+            let name = d.file.file_name().unwrap_or(d.file.as_os_str());
+            let line = format!(
+                "{}:{}:{}: lint[{}]: {}",
+                name.to_string_lossy(),
+                d.line,
+                d.column,
+                d.code,
+                d.message
+            );
+            warning(Some(&self.0.warnings), line.clone());
+            found.push(line);
         }
         self.0.lint.set((!found.is_empty()).then(|| {
             format!(
