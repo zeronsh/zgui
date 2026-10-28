@@ -13,6 +13,8 @@ mod io;
 mod large_data;
 #[path = "../module_overrides.rs"]
 mod module_overrides;
+#[path = "../packages.rs"]
+mod packages;
 #[path = "../plugin_filters.rs"]
 mod plugin_filters;
 #[path = "../plugin_hooks.rs"]

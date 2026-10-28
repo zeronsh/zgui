@@ -963,6 +963,9 @@ struct Inner {
     error_watch: RefCell<Option<Box<dyn std::any::Any>>>,
     plugin_dir: Option<PathBuf>,
     plugins: Vec<Script>,
+    /// Module folders outside the script's directory the app may require,
+    /// by name (`package`): `@name/…`.
+    packages: Vec<(String, PathBuf)>,
     limits: Limits,
     stores: RefCell<HashMap<String, Rc<Store>>>,
     shared: Rc<Store>,
@@ -1106,6 +1109,7 @@ impl ScriptHost {
             error_hooks: Rc::default(),
             error_watch: RefCell::default(),
             plugin_dir: None,
+            packages: Vec::new(),
             plugins: Vec::new(),
             limits: Limits::default(),
             stores: RefCell::default(),
@@ -1212,6 +1216,15 @@ impl ScriptHost {
     pub fn plugins(self, dir: impl Into<PathBuf>) -> Self {
         let dir = dir.into();
         self.configure(|inner| inner.plugin_dir = Some(dir))
+    }
+    /// Lets the app `require` modules from `dir`, outside its own directory,
+    /// as `"@name/…"` (`require("@kit/button")`), and lets its `.luaurc`
+    /// aliases point into it: a folder of modules several apps share. They
+    /// are read, never written, and run as the app's own code; plugins do
+    /// not reach them. zgx-run gives zgx.json's `"packages"` here.
+    pub fn package(self, name: impl Into<String>, dir: impl Into<PathBuf>) -> Self {
+        let package = (name.into().to_lowercase(), dir.into());
+        self.configure(|inner| inner.packages.push(package))
     }
     /// Adds a plugin from source held in memory.
     pub fn plugin(self, name: impl Into<String>, code: impl Into<String>) -> Self {
@@ -2209,6 +2222,22 @@ impl ScriptHost {
         })
     }
 
+    /// The app's packages (`package`), their folders canonical: plugins
+    /// reach none.
+    fn packages(&self, plugin: bool) -> Vec<(String, PathBuf)> {
+        if plugin {
+            return Vec::new();
+        }
+        self.0
+            .packages
+            .iter()
+            .map(|(name, dir)| {
+                let dir = normalize(dir);
+                (name.clone(), dir.canonicalize().unwrap_or(dir))
+            })
+            .collect()
+    }
+
     #[allow(clippy::type_complexity)]
     /// `require(path)`, as Luau resolves it: `"./card"` and `"../ui/card"`
     /// from the requiring file (from beside its directory for an
@@ -2240,6 +2269,24 @@ impl ScriptHost {
                     "{}: `{reserved}` is zgx's own alias (`@app/…` names the app's modules, \
                      which plugins may override): rename this one",
                     root.join(".luaurc").display()
+                )));
+            }
+        }
+        let packages = self.packages(plugin);
+        for (name, dir) in &packages {
+            if matches!(name.as_str(), "app" | "app-original" | "self") {
+                return Err(mlua::Error::runtime(format!(
+                    "package `{name}`: `@{name}` is zgx's own alias: name the package otherwise"
+                )));
+            }
+            // A `.luaurc` alias of its name names the same folder.
+            if let Some(alias) = aliases.get(name)
+                && alias.canonicalize().as_ref().unwrap_or(alias) != dir
+            {
+                return Err(mlua::Error::runtime(format!(
+                    "package `{name}` is {}, but .luaurc's alias `{name}` is {}",
+                    dir.display(),
+                    alias.display()
                 )));
             }
         }
@@ -2303,7 +2350,17 @@ impl ScriptHost {
                 let (alias, rest) = rest.split_once('/').unwrap_or((rest, ""));
                 let base = aliases
                     .get(alias)
-                    .ok_or_else(|| fail(format!("no alias `@{alias}` in .luaurc")))?;
+                    .or_else(|| {
+                        packages
+                            .iter()
+                            .find(|(name, _)| name == alias)
+                            .map(|(_, dir)| dir)
+                    })
+                    .ok_or_else(|| {
+                        fail(format!(
+                            "no alias `@{alias}` in .luaurc, nor a package of that name"
+                        ))
+                    })?;
                 base.join(rest)
             } else if name.starts_with("./") || name.starts_with("../") {
                 // An `init.luau` is its directory as a module: its relative
@@ -2337,9 +2394,14 @@ impl ScriptHost {
             let in_plugin = replacements
                 .iter()
                 .find(|r| overridden.as_ref() == Some(*r) || within(&r.dir, &path));
-            if !within(root, &path) && in_plugin.is_none() {
+            if !within(root, &path)
+                && in_plugin.is_none()
+                && !packages.iter().any(|(_, dir)| within(dir, &path))
+            {
                 return Err(fail(
-                    "modules come from the script's directory or below".into(),
+                    "modules come from the script's directory or below, or a package \
+                     (ScriptHost::package, zgx.json's \"packages\")"
+                        .into(),
                 ));
             }
             // A plugin's files are on the disk, whatever the app's are.
@@ -2502,7 +2564,7 @@ impl ScriptHost {
             may(Capability::Files),
         )
         .map_err(fail)?;
-        theme::install(&lua, &ui, script.dir()).map_err(fail)?;
+        theme::install(&lua, &ui, script.dir(), self.packages(plugin)).map_err(fail)?;
         form::install(&lua, &ui).map_err(fail)?;
         opens::install(&lua, &ui, self.0.opens.clone(), plugin).map_err(fail)?;
         ui.set_readonly(true);
