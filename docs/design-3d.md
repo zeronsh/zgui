@@ -309,3 +309,40 @@ ui.scene3d {
 - Picking (`on_click`, `on_hover`).
 - One directional shadow map.
 - Each piece gets size and perf numbers.
+
+## 9. A3: a view presented as its own plane (macOS first)
+
+**Why.** Composited, a full-window view costs +25% app GPU (sampling its texture into the window each frame), and the WindowServer composites zgx's tiles: 9.0% GPU against 1.9% for a bare CAMetalLayer (window 35).
+
+**What.** A view whose box shows it whole and opaque gets a CAMetalLayer of its own. The painter draws into that layer's drawable, and its image draws nothing in the window.
+
+**When it may.** The app promises every pixel opaque (new `GpuView::set_opaque(true)`; zgx-3d sets it when a world has a background). In the frame's placement:
+- the box is untransformed: `size == frame` size;
+- no rectangular clip cuts it;
+- no rounded clip;
+- opacity is 1.
+
+Anything else draws composited, as today.
+
+**Placing it.** It reuses the native-view machinery rather than adding a second:
+- **Registration.** The view registers with `NativeViews` as `NativeContent::Platform`: a layer-hosting `NSView` (zgx-desktop) around the CAMetalLayer, whose `hitTest:` returns nil so input stays zgx's. A desktop-provided service makes it; `mount_gpu_view` asks for it only when the view is opaque and the service exists. Without one, nothing changes.
+- **Geometry** comes from `PlaneSplit` placements and commits in the window's CA transaction.
+- **Overlays.** zgx paint over the view goes on the existing overlay plane above it, which draws only that paint's box. That's cheaper than compositing the whole view under a small HUD, and it's exact. The window cell measures it against the composite.
+- **Input.** `PlaneSplit::route` already sends input over a native node to zgx when the node has listeners. The view's own handlers (orbit) keep working because the platform view never takes hits.
+
+**Drawing it.** On perf's drawable frame source, there's no second clock:
+- the window's `draw_frame` acquires the plane's drawable on the same tick when the view has a new frame;
+- the painter draws into it through the `view_device`/`view_texture` seam, with the drawable as the target;
+- it presents asynchronously while the box is still, and with `presentsWithTransaction` (commit, waitUntilScheduled, present) on frames where the box moves, with the window's own drawable, as perf's PR does for the window.
+
+**The window under it.**
+- **Planed:** the renderer skips the view's image item, and the planed rect is taken out of the frame's damage, because an opaque layer covers it. So a view frame costs the window nothing but the painter.
+- **Switching to the plane:** the frame that first presents the plane also stops drawing the image, in the same transaction.
+- **Switching back** (a transform, a clip, the app turning opacity off): that frame damages the view's box, draws the composited image, and hides the plane in the same transaction. The view's texture is made again at once if it was dropped. No frame shows neither.
+- **Tests:** a headless sequence of plane/composite switches checking the image item is skipped exactly when planed, with damage accounted. A macOS probe captures each switch frame (framepace capture plus pixel reads) looking for a frame with neither.
+
+**Cost when unused.** None. With no GPU view, no plane service is asked for, `PlaneSplit` stays inactive (`active()` is false without natives), and the renderer's skip set is empty. The exact gate checks it. A composited view keeps A1's path unchanged.
+
+**Measure.** A window cell after perf's PR lands: the viewport scene with zgx planed, wgpu, and zgx composited, compared on GPU Mcycles, WindowServer GPU, power, CPU, footprint and pacing.
+
+**Windows next.** The same, with a DComp visual for the plane's swap chain (native_host/dcomp.rs), with the D3D11 lane.
