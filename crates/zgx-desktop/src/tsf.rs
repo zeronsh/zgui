@@ -186,8 +186,14 @@ impl Tsf {
             }
             let told = shared.told_len;
             let changes = shared.store.changes(told);
-            shared.told_len = shared.store.len();
+            if !changes.is_empty() {
+                shared.told_len = shared.store.len();
+            }
             let layout = std::mem::take(&mut shared.layout_changed);
+            // Nothing to tell or grant: most dispatches.
+            if changes.is_empty() && !layout && shared.pending.is_none() {
+                return;
+            }
             (shared.sink.clone(), changes, layout)
         };
         if let Some(sink) = &sink {
@@ -256,7 +262,11 @@ fn grant(shared: &Rc<RefCell<Shared>>, flags: u32) -> HRESULT {
         sink.OnLockGranted(TEXT_STORE_LOCK_FLAGS(flags & TS_LF_READWRITE.0))
             .map_or_else(|e| e.code(), |()| HRESULT(0))
     });
-    shared.borrow_mut().lock = 0;
+    // What the input method edited under the lock it knows of: the
+    // document's length from here.
+    let mut s = shared.borrow_mut();
+    s.lock = 0;
+    s.told_len = s.store.len();
     result
 }
 

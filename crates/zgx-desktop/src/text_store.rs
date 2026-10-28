@@ -312,10 +312,15 @@ impl TextStore {
     /// tell it (`OnTextChange`, `OnSelectionChange`). The whole text, once,
     /// for a text change: Windows takes a wider range than changed.
     pub(crate) fn changes(&mut self, old_len: usize) -> Vec<Change> {
-        let Some(editor) = self.editor.clone() else {
+        let Some(editor) = &self.editor else {
             return Vec::new();
         };
-        let now = seen(&editor);
+        // Nothing changed (every dispatch but those that edit): compared in
+        // place, nothing made.
+        if self.seen.as_ref().is_some_and(|seen| seen.is(editor)) {
+            return Vec::new();
+        }
+        let now = seen(editor);
         let Some(before) = self.seen.replace(now.clone()) else {
             return Vec::new();
         };
@@ -373,6 +378,21 @@ fn shown_byte(editor: &EditorHandle, at: usize) -> usize {
         // After it: the committed text past what it stands in place of.
         let cut = e.byte_to_utf16(selection.end) - before;
         e.utf16_to_byte(at - units + cut) - selection.len() + preedit.text.len()
+    }
+}
+
+impl Seen {
+    /// What `editor` is now.
+    fn is(&self, editor: &EditorHandle) -> bool {
+        let e = editor.editor.borrow();
+        let s = e.selection();
+        self.revision == e.revision()
+            && self.selection == (s.anchor, s.focus)
+            && match (&self.preedit, e.preedit()) {
+                (None, None) => true,
+                (Some((text, cursor)), Some(p)) => *text == p.text && *cursor == p.cursor,
+                _ => false,
+            }
     }
 }
 
