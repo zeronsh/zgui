@@ -16,3 +16,5 @@ mod selectable_text;
 mod system_preferences;
 #[path = "../theme.rs"]
 mod theme;
+#[path = "../zoomed_text_geometry.rs"]
+mod zoomed_text_geometry;

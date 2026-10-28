@@ -2313,13 +2313,10 @@ impl Host {
             self.native_cursor = Some(cursor);
         }
         let editor = crate::native_ime::editable_editor(ui, self.native_focused);
-        // The clause an input method converts, else the caret: where its
-        // candidates show, as under a native field's marked text.
-        let caret = editor.map(|editor| {
-            editor
-                .composition_area()
-                .unwrap_or_else(|| ui.scene.borrow().bounds(editor.caret))
-        });
+        // The clause an input method converts, else the caret, where they
+        // show (zoomed too): where its candidates go, as under a native
+        // field's marked text.
+        let caret = editor.map(|editor| editor.input_method_area());
         if caret != self.ime_geometry {
             // The Text Services Framework asks where (`GetTextExt`) when told.
             #[cfg(windows)]

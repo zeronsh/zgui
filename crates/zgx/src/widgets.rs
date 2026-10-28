@@ -272,7 +272,8 @@ impl EditorHandle {
     }
     /// Where an input method's candidate window goes: under the clause it
     /// is converting (Japanese, Chinese), as a native field puts it, in the
-    /// window's points; `None` while there is none (the caret, then).
+    /// window's points (through any transform or zoom the editor shows
+    /// under); `None` while there is none (the caret, then).
     pub fn composition_area(&self) -> Option<Rect> {
         let clause = self.hint.clause.get()?;
         let layer = self.hint.composition_layer.get()?;
@@ -281,18 +282,21 @@ impl EditorHandle {
             return None;
         }
         let at = scene.bounds(layer);
-        Some(Rect::new(
-            at.x + clause.x,
-            at.y + clause.y,
-            clause.width,
-            clause.height,
+        Some(scene.window_rect(
+            layer,
+            Rect::new(
+                at.x + clause.x,
+                at.y + clause.y,
+                clause.width,
+                clause.height,
+            ),
         ))
     }
     /// Where an input method's candidates go, in the window's points: under
     /// the clause it converts (`composition_area`), else at the caret.
     pub fn input_method_area(&self) -> Rect {
         self.composition_area()
-            .unwrap_or_else(|| self.scene.borrow().bounds(self.caret))
+            .unwrap_or_else(|| self.scene.borrow().transformed_bounds(self.caret))
     }
     /// The selection as UTF-8 byte offsets into the committed text,
     /// `(anchor, focus)`: equal for a caret, `focus` where the caret is.

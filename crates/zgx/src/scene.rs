@@ -4808,12 +4808,54 @@ impl Scene {
     pub(crate) fn text_shaper_revision(&self) -> u64 {
         self.text_shaper_revision
     }
+    /// Point (`x`, `y`) in the space `id` is laid out in (its `bounds`,
+    /// translated) in the window's points: through its own and its
+    /// ancestors' local transforms and zooms, as it shows (`point_in`'s
+    /// inverse). Without transforms in the scene, the point itself.
+    pub fn window_point(&self, id: NodeId, x: f32, y: f32) -> (f32, f32) {
+        if self.transformed == 0 || !self.contains(id) {
+            return (x, y);
+        }
+        match self.placed(id).2 {
+            Some(placement) => placement.matrix.point(x, y),
+            None => (x, y),
+        }
+    }
+    /// `rect`, in the space `id` is laid out in, as it shows in the window:
+    /// the box around its corners mapped as `window_point` maps them.
+    pub fn window_rect(&self, id: NodeId, rect: Rect) -> Rect {
+        if self.transformed == 0 || !self.contains(id) {
+            return rect;
+        }
+        match self.placed(id).2 {
+            Some(placement) => placement.matrix.bounds(rect),
+            None => rect,
+        }
+    }
     /// Text node `id`'s lines as it shows them, for assistive technology
     /// (a screen reader's cursor, a magnifier following the caret): each
     /// visual line's bytes, its box and every grapheme boundary's place
-    /// across it, in the window's points. `None` for a node with no text, or
-    /// one masked (a password). Shapes the text: ask only when a reader does.
+    /// across it, in the window's points (through any transform or zoom it
+    /// shows under). `None` for a node with no text, or one masked (a
+    /// password). Shapes the text: ask only when a reader does.
     pub fn text_lines(&self, id: NodeId) -> Option<Vec<TextLine>> {
+        let mut lines = self.laid_out_lines(id)?;
+        if self.transformed > 0 {
+            for line in &mut lines {
+                // Each caret where it shows across the line's middle; the
+                // line's box around its mapped corners.
+                let middle = line.rect.y + line.rect.height / 2.;
+                for caret in &mut line.carets {
+                    *caret = self.window_point(id, *caret, middle).0;
+                }
+                line.rect = self.window_rect(id, line.rect);
+            }
+        }
+        Some(lines)
+    }
+    /// `text_lines` in the space `id` is laid out in (its bounds,
+    /// translated), before any transform or zoom.
+    fn laid_out_lines(&self, id: NodeId) -> Option<Vec<TextLine>> {
         use crate::text_layout::{TextAffinity, TextPosition};
         use unicode_segmentation::UnicodeSegmentation;
         let bounds = self.bounds(id);
@@ -4929,7 +4971,7 @@ impl Scene {
             }
             _ => return None,
         };
-        let lines = self.text_lines(id)?;
+        let lines = self.laid_out_lines(id)?;
         let line = lines
             .iter()
             .find(|line| line.range.start <= at && at <= line.range.end)?;
@@ -4940,7 +4982,10 @@ impl Scene {
         // The line's box holds the font's ascent and descent centred in its
         // height: the baseline sits about 0.8 of the size below its top.
         let top = line.rect.y + (line.rect.height - size).max(0.) / 2.;
-        Some(((x, top + size * 0.8), size))
+        let (x, y) = (x, top + size * 0.8);
+        // Where it shows, at the size it shows (a zoom grows the type).
+        let span = self.window_rect(id, Rect::new(x, top, 0., size));
+        Some((self.window_point(id, x, y), span.height))
     }
     /// Shape `text` at `size` in `font`, wrapped at `width` if given.
     pub fn shape_text_with_font(

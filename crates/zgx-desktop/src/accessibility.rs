@@ -439,7 +439,8 @@ impl AccessibilityTree {
                 .text_node(id)
                 .or(text.then_some(id))
                 .filter(|node| scene.contains(*node))
-                .map(|node| scene.bounds(node));
+                // Where it shows: a zoom or transform moves its runs too.
+                .map(|node| scene.transformed_bounds(node));
             if self.projection_revisions.get(&id) == Some(&revision)
                 && self.run_boxes.get(&id).copied() == runs_at.filter(|_| !runs.is_empty())
                 && self.blocks.contains(&id) == block
@@ -711,7 +712,7 @@ impl AccessibilityTree {
                                 _ => false,
                             }
                     });
-                let shown_box = shown_in.map(|node| scene.bounds(node));
+                let shown_box = shown_in.map(|node| scene.transformed_bounds(node));
                 let was = self.run_boxes.get(&id).copied();
                 let moved = was != shown_box;
                 let unchanged = self
@@ -1340,6 +1341,45 @@ mod editor_text_tests {
             assert!(node.supports_action(Action::Focus));
             assert!(!node.is_disabled());
         }
+    }
+
+    /// A zoomed field's runs are where it shows them: twice as large,
+    /// through its zoom, as a magnifier following the caret needs.
+    #[test]
+    fn a_zoomed_fields_text_runs_are_where_it_shows_them() {
+        let run = |zoom: f32| {
+            let mut ui = Ui::new(600., 400.);
+            let value = ui.signal("one two".to_owned());
+            let view = ui.mount(
+                column()
+                    .zoom(zoom)
+                    .child(text_area("Notes", value).size(200., 100.)),
+            );
+            ui.prepare_frame();
+            let mut adapter = AccessibilityTree::new();
+            let update = adapter.update(
+                &ui.scene.borrow(),
+                &ui.semantics.borrow(),
+                Some(view.node()),
+                "Test",
+                1.,
+            );
+            update
+                .nodes
+                .into_iter()
+                .find(|(_, node)| node.role() == accesskit::Role::TextRun)
+                .and_then(|(_, node)| node.bounds())
+                .expect("a run")
+        };
+        let (plain, zoomed) = (run(1.), run(2.));
+        assert!(
+            (zoomed.width() - plain.width() * 2.).abs() < 0.5,
+            "{plain:?} {zoomed:?}"
+        );
+        assert!(
+            (zoomed.height() - plain.height() * 2.).abs() < 0.5,
+            "{plain:?} {zoomed:?}"
+        );
     }
 
     #[test]
