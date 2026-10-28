@@ -121,6 +121,43 @@ fn warnings_find_collapsed_overflowing_and_unresolved_boxes() {
 }
 
 #[test]
+fn overflow_faded_at_its_edge_is_deliberate() {
+    // A strip of tabs fading out at its right edge, and the same strip
+    // fading only at the edge nothing runs past; then a column fading at
+    // its bottom.
+    let strip = |id: &'static str, left: f32, right: f32| {
+        row()
+            .id(id)
+            .w(80.)
+            .h(20.)
+            .overflow_hidden()
+            .fade_edges_x(left, right)
+            .child(div().w(160.).h(20.).shrink_0())
+    };
+    let (ui, handle) = mounted(|_| {
+        column()
+            .child(strip("faded", 0., 12.))
+            .child(strip("wrong edge", 12., 0.))
+            .child(
+                column()
+                    .id("faded column")
+                    .w(80.)
+                    .h(40.)
+                    .overflow_hidden()
+                    .fade_edges(0., 12.)
+                    .fade_overflow(true)
+                    .child(div().w(80.).h(120.).shrink_0()),
+            )
+    });
+    let warnings = layout_warnings(&ui);
+    let overflows =
+        |id| kinds(&warnings, handle.find(id).unwrap()).contains(&WarningKind::Overflow);
+    assert!(!overflows("faded"));
+    assert!(overflows("wrong edge"));
+    assert!(!overflows("faded column"));
+}
+
+#[test]
 fn healthy_layouts_have_no_warnings() {
     let (ui, _) = mounted(|ui| {
         column()
