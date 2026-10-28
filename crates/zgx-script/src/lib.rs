@@ -1164,12 +1164,26 @@ impl ScriptHost {
     }
     /// The scripts compiled into the app (`include_bundle!`), starting at
     /// `entry` (`"app.luau"`): what ships. Nothing is read from the disk,
-    /// `require`, `.luaurc` aliases, theme files, images and plugins
-    /// included, and `watch` watches nothing.
+    /// `require`, `.luaurc` aliases, packages, theme files, images and
+    /// plugins included, and `watch` watches nothing.
     pub fn bundled(runtime: &Runtime, bundle: &'static Bundle, entry: &str) -> Self {
         let root = PathBuf::from(bundle.root);
-        let host = Self::with(runtime, Script::File(root.join(entry)))
+        let mut host = Self::with(runtime, Script::File(root.join(entry)))
             .configure(|inner| inner.files = Files::Bundle(bundle));
+        // Its packages, as `build::bundle` stored them.
+        let mut names: Vec<&str> = bundle
+            .files
+            .iter()
+            .filter_map(|file| {
+                let rest = file.path.strip_prefix(bundle::build::PACKAGES)?;
+                Some(rest.strip_prefix('/')?.split_once('/')?.0)
+            })
+            .collect();
+        names.dedup();
+        for name in names {
+            let dir = root.join(bundle::build::PACKAGES).join(name);
+            host = host.package(name, dir);
+        }
         host.0.assets.set_files(Files::Bundle(bundle));
         // Theme files from the bundle; other hosts' still from the disk.
         zgx::theme::Themes::of(runtime).set_reader(Some(Rc::new(move |path: &std::path::Path| {
