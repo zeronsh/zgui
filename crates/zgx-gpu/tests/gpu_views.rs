@@ -263,17 +263,17 @@ fn a_view_composites_as_an_image_does() {
 }
 
 #[test]
-fn a_view_whose_painter_is_gone_draws_nothing_and_fails_nothing() {
+fn a_view_its_app_let_go_of_draws_while_its_box_shows_it() {
     let Some(mut window) = Window::plain(1.) else {
         return;
     };
     let view = std::mem::replace(&mut window.view, GpuView::new(()));
-    let shown = zgx::gpu_view::painter(view.id());
-    assert!(shown.is_some());
-    drop(shown);
-    window.draw();
+    let id = view.id();
     drop(view);
+    window.draw();
     window.width.set(70.);
     window.draw();
-    assert_eq!(window.drawn.borrow().len(), 1);
+    assert_eq!(window.drawn.borrow().len(), 2, "its box keeps it");
+    assert_eq!(window.pixel(85., 30.), [255, 0, 0, 255]);
+    assert!(zgx::gpu_view::painter(id).is_some());
 }
