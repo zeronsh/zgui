@@ -17,8 +17,8 @@
 //!   qualify; the rest measure from shaped lines.
 //!
 //! Sizes are memoised per width, and layout and the renderer break lines from
-//! the same data. A text that grows (streaming) reuses every line it shares
-//! with a recently prepared text.
+//! the same data. A text that changes reuses every line it shares with a
+//! recently prepared text: a stream's that grows, a log's that scrolls.
 use cosmic_text::{
     Align, BufferLine, Ellipsize, FontSystem, Hinting, LayoutRunIter, Metrics, Wrap,
 };
@@ -44,8 +44,13 @@ const UNDRAWN_BUDGET: usize = 64 * 1024;
 /// Estimated bytes per character of shaped lines: a shape glyph and a layout
 /// glyph (96 + 88 bytes), and words and line text.
 const SHAPED_BYTES_PER_CHAR: usize = 190;
-/// Recently prepared entries a new text may reuse lines from.
+/// Recently prepared entries a stream's next state may supersede, and
+/// texts of more than one line a new one may reuse lines from.
 const RECENT: usize = 6;
+/// How far past the last line it reused a new text looks for its next line
+/// among a donor's (`TextCache::pair_lines`): lines a log scrolled away or
+/// an edit deleted.
+const LINE_SEEK: usize = 8;
 /// Widths whose sizes an entry remembers.
 const SIZES: usize = 4;
 /// As `Buffer` lays out.
@@ -230,17 +235,25 @@ impl Compact {
                     .sum::<usize>();
             }
         }
-        let index = slab.room(3 * words + glyphs);
-        let chunk = slab.chunks[index].as_mut().expect("live chunk");
-        let start = chunk.data.len();
-        // Its words, then their advances, filled in place.
-        chunk.data.resize(start + 3 * words + glyphs, 0);
-        let (packed, advances) = chunk.data[start..].split_at_mut(3 * words);
+        let length = 3 * words + glyphs;
+        // A text of no words takes no place in a chunk: at a chunk's end, it
+        // would be left past it when the text before it went (`Slab::drop`).
+        let (index, start, data) = if length == 0 {
+            (EMPTY, 0, &mut [][..])
+        } else {
+            let index = slab.room(length);
+            let chunk = slab.chunks[index].as_mut().expect("live chunk");
+            let start = chunk.data.len();
+            // Its words, then their advances, filled in place.
+            chunk.data.resize(start + length, 0);
+            (index, start, &mut chunk.data[start..])
+        };
+        let (packed, advances) = data.split_at_mut(3 * words);
         let (packed, _) = packed.as_chunks_mut::<3>();
         let mut compact = Self {
             chunk: index as u32,
             start: start as u32,
-            end: (start + 3 * words + glyphs) as u32,
+            end: (start + length) as u32,
             words: words as u32,
             spans: smallvec::SmallVec::with_capacity(spans),
             lines: smallvec::SmallVec::with_capacity(lines.len()),
@@ -290,7 +303,9 @@ impl Compact {
         })();
         if filled.is_none() {
             // As if made and dropped at once: no gap, no text counted.
-            slab.unmake(index, start);
+            if length > 0 {
+                slab.unmake(index, start);
+            }
             return None;
         }
         Some(compact)
@@ -414,12 +429,17 @@ struct Chunk {
     texts: usize,
     dropped: usize,
 }
+/// The chunk of a compact of no words, which is in none.
+const EMPTY: usize = u32::MAX as usize;
 /// A chunk's length: 64 KiB, an allocation of whole pages of its own,
 /// given back whole.
 const CHUNK: usize = 16 * 1024;
 impl Slab {
     /// `compact`'s words and glyph advances.
     fn of(&self, compact: &Compact) -> (&[Packed], &[u32]) {
+        if compact.start == compact.end {
+            return (&[], &[]);
+        }
         let chunk = self.chunks[compact.chunk as usize]
             .as_ref()
             .expect("live chunk");
@@ -477,6 +497,9 @@ impl Slab {
     /// chunk left with no texts is freed, and one mostly gaps has its
     /// texts, found among `entries`, moved to the newest chunk.
     fn drop(&mut self, compact: &Compact, entries: &mut FxHashMap<u64, Entry>) {
+        if compact.start == compact.end {
+            return;
+        }
         let index = compact.chunk as usize;
         let chunk = self.chunks[index].as_mut().expect("live chunk");
         if compact.end as usize == chunk.data.len() {
@@ -754,6 +777,11 @@ impl<'a> Laid<'a> {
 pub struct TextCache {
     entries: FxHashMap<u64, Entry>,
     recent: VecDeque<u64>,
+    /// The recent texts of more than one line: a one-line text could give
+    /// another only a line equal to all of it, which the lookup before
+    /// shaping finds. Kept apart, so values changing every frame do not push
+    /// a log's last state out before it changes.
+    recent_lines: VecDeque<u64>,
     clock: u64,
     shaped_bytes: usize,
     compact_bytes: usize,
@@ -1113,6 +1141,7 @@ impl TextCache {
         let known = cached.is_some();
         self.shaped += 1;
         let (lines, metrics) = self.shape(fonts, source, caret_row);
+        let several = lines.len() > 1;
         if known {
             // Evicted lines, shaped again for drawing; measurements stay.
             let entry = self.entries.get_mut(&hash).expect("cached");
@@ -1156,6 +1185,13 @@ impl TextCache {
         self.recent.push_back(hash);
         if self.recent.len() > RECENT {
             self.recent.pop_front();
+        }
+        if several {
+            self.recent_lines.retain(|recent| *recent != hash);
+            self.recent_lines.push_back(hash);
+            if self.recent_lines.len() > RECENT {
+                self.recent_lines.pop_front();
+            }
         }
         hash
     }
@@ -1225,35 +1261,29 @@ impl TextCache {
         // the lookup before shaping would have found.
         let donor = (lines.len() > 1)
             .then(|| {
-                self.recent
+                self.recent_lines
                     .iter()
                     .filter_map(|recent| Some((*recent, self.entries.get(recent)?)))
                     .filter(|(_, entry)| entry.metrics == metrics)
                     .filter_map(|(hash, entry)| {
-                        let shared = entry
-                            .lines
-                            .as_ref()?
-                            .iter()
-                            .zip(&lines)
-                            .take_while(|(old, new)| {
-                                old.text() == new.text()
-                                    && old.ending() == new.ending()
-                                    && old.attrs_list() == new.attrs_list()
-                                    && old.align() == new.align()
-                            })
-                            .count();
+                        let mut shared = 0;
+                        Self::pair_lines(entry.lines.as_ref()?, &lines, |_, _| shared += 1);
                         (shared > 0).then_some((shared, hash))
                     })
                     .max_by_key(|(shared, _)| *shared)
             })
             .flatten();
-        if let Some((shared, hash)) = donor {
+        if let Some((_, hash)) = donor {
             let entry = self.remove(hash);
             self.retire_compact(entry.compact);
             let old = entry.lines.expect("donor lines");
-            for (line, old) in lines.iter_mut().zip(old).take(shared) {
-                if old.shape_opt().is_some() {
-                    *line = old;
+            let mut pairs = Vec::new();
+            Self::pair_lines(&old, &lines, |old, new| pairs.push((old, new)));
+            // In order on both sides.
+            let mut pairs = pairs.into_iter().peekable();
+            for (index, old) in old.into_iter().enumerate() {
+                if let Some((_, new)) = pairs.next_if(|(paired, _)| *paired == index) {
+                    lines[new] = old;
                 }
             }
         }
@@ -1281,11 +1311,39 @@ impl TextCache {
         }
         (lines, metrics)
     }
+    /// The shaped lines of `old` that `new` has, each with the line of
+    /// `new` that is the same text with the same attributes (so shapes the
+    /// same: a line shapes on its own, its direction its own), in order on
+    /// both sides. Each of `new`'s lines is looked for from just past the
+    /// last one found, at most `LINE_SEEK` lines on: what a stream kept, a
+    /// log scrolled or an edit left of a text a moment ago.
+    fn pair_lines(old: &[BufferLine], new: &[BufferLine], mut pair: impl FnMut(usize, usize)) {
+        let mut from = 0;
+        for (index, line) in new.iter().enumerate() {
+            let found = old
+                .iter()
+                .enumerate()
+                .skip(from)
+                .take(LINE_SEEK)
+                .find(|(_, old)| {
+                    old.shape_opt().is_some()
+                        && old.text() == line.text()
+                        && old.ending() == line.ending()
+                        && old.attrs_list() == line.attrs_list()
+                        && old.align() == line.align()
+                });
+            if let Some((paired, _)) = found {
+                pair(paired, index);
+                from = paired + 1;
+            }
+        }
+    }
     fn remove(&mut self, hash: u64) -> Entry {
         let entry = self.entries.remove(&hash).expect("cached");
         self.shaped_bytes -= entry.shaped_bytes();
         self.compact_bytes -= entry.compact_bytes();
         self.recent.retain(|recent| *recent != hash);
+        self.recent_lines.retain(|recent| *recent != hash);
         entry
     }
     /// Keep a dropped text's lines for new texts, and give back its part
@@ -1361,6 +1419,8 @@ impl TextCache {
                 self.recycle(lines);
             }
             self.recent.retain(|hash| self.entries.contains_key(hash));
+            self.recent_lines
+                .retain(|hash| self.entries.contains_key(hash));
         }
         if self.compact_bytes > COMPACT_BUDGET {
             for hash in self.by_age(keep, |_| true) {
@@ -1373,6 +1433,8 @@ impl TextCache {
                 self.retire(entry);
             }
             self.recent.retain(|hash| self.entries.contains_key(hash));
+            self.recent_lines
+                .retain(|hash| self.entries.contains_key(hash));
         }
     }
     /// Entries matching `filter`, least recently used first, except `keep`.
@@ -1880,6 +1942,161 @@ mod tests {
             .collect();
         assert_eq!(long.len(), 1, "earlier states were superseded");
         assert_eq!(long[0].key.text.len(), end - 7);
+    }
+
+    /// A text that changes takes the shaped lines it shares with what it was,
+    /// wherever they moved (a log scrolled, a line deleted or inserted, right
+    /// to left or mixed lines among them), in order, even after one-line
+    /// values were shaped in between; a line of the same text with other
+    /// attributes or alignment is shaped afresh. Either way every line shapes
+    /// and lays out, at another width too, to the bit as in a fresh cache.
+    #[test]
+    fn a_changed_text_reuses_the_lines_it_shares_wherever_they_moved() {
+        let mut fonts = FontSystem::new();
+        let font = FontStyle::default();
+        // Before, after, and whether each line after is reused.
+        let cases: [(&str, &str, &[bool]); 5] = [
+            (
+                "one\ntwo words\nthree\nfour 4.0 ms\nfive",
+                "two words\nthree\nfour 4.0 ms\nfive\nsix",
+                // "five" ended the text, and a line's ending is its own.
+                &[true, true, true, false, false],
+            ),
+            ("a1\na2 deleted\na3\na4", "a1\na3\na4", &[true, true, true]),
+            (
+                "a1\na2\na3",
+                "a1\ninserted\na2\na3",
+                &[true, false, true, true],
+            ),
+            (
+                "שלום עולם\nabc مرحبا def\nplain",
+                "first\nשלום עולם\nabc مرحبا def\nlast",
+                &[false, true, true, false],
+            ),
+            // Swapped ends: neither ends as it did.
+            (
+                "keep\nl'été 12 ms\nkeep too",
+                "keep too\nl'été 12 ms\nkeep",
+                &[false, true, false],
+            ),
+        ];
+        let values = |cache: &mut TextCache, fonts: &mut FontSystem| {
+            for value in 0..10 {
+                let value: Arc<str> = format!("{value}.5 ms").into();
+                cache.measure_plain(fonts, &value, 14., &font, None);
+            }
+        };
+        let print = |lines: &[BufferLine]| {
+            lines
+                .iter()
+                .map(|line| {
+                    format!(
+                        "{:?} {:?} {:?}",
+                        line.text(),
+                        line.shape_opt(),
+                        line.layout_opt()
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        for (before, after, reused) in cases {
+            let (before, after): (Arc<str>, Arc<str>) = (before.into(), after.into());
+            // Shaped before `entry` shapes the rest: the lines taken.
+            let mut cache = TextCache::default();
+            cache.layout_plain(&mut fonts, &before, 14., &font, Some(320.));
+            values(&mut cache, &mut fonts);
+            let source = Source::Plain {
+                text: &after,
+                font_size: 14.,
+                font: &font,
+            };
+            let (lines, _) = cache.shape(&mut fonts, source, true);
+            let kept: Vec<bool> = lines
+                .iter()
+                .map(|line| line.shape_opt().is_some())
+                .collect();
+            assert_eq!(kept, reused, "{after:?}");
+            for width in [None, Some(60.)] {
+                let mut cache = TextCache::default();
+                cache.layout_plain(&mut fonts, &before, 14., &font, Some(320.));
+                values(&mut cache, &mut fonts);
+                let laid = print(
+                    cache
+                        .layout_plain(&mut fonts, &after, 14., &font, width)
+                        .lines,
+                );
+                let mut fresh = TextCache::default();
+                let fresh = print(
+                    fresh
+                        .layout_plain(&mut fonts, &after, 14., &font, width)
+                        .lines,
+                );
+                assert_eq!(laid, fresh, "{after:?} at {width:?}");
+            }
+        }
+        // The same text with another weight on one word, or aligned
+        // otherwise: those lines are shaped afresh.
+        let text = "first line\nsecond line\nthird line";
+        let first = rich(text, &[(text.len(), font.clone(), 14.)]);
+        let bold = FontStyle {
+            weight: 700,
+            ..FontStyle::default()
+        };
+        let bolder = rich(
+            text,
+            &[
+                (11, font.clone(), 14.),
+                (17, bold, 14.),
+                (text.len(), font.clone(), 14.),
+            ],
+        );
+        let centred = FontStyle {
+            align: zgx::text_layout::TextAlign::Center,
+            ..FontStyle::default()
+        };
+        let aligned = rich(text, &[(text.len(), centred, 14.)]);
+        // (The bold line's next is shaped afresh too: its attribute list
+        // holds its run as a span, which the one-run text's does not.)
+        for (other, reused) in [(&bolder, [true, false, false]), (&aligned, [false; 3])] {
+            let mut cache = TextCache::default();
+            cache.layout(&mut fonts, &first, None);
+            let (lines, _) = cache.shape(&mut fonts, Source::Rich(other), false);
+            let kept: Vec<bool> = lines
+                .iter()
+                .map(|line| line.shape_opt().is_some())
+                .collect();
+            assert_eq!(kept, reused, "{:?}", other.runs().len());
+            let mut cache = TextCache::default();
+            cache.layout(&mut fonts, &first, None);
+            let laid = print(cache.layout(&mut fonts, other, None).lines);
+            let mut fresh = TextCache::default();
+            assert_eq!(laid, print(fresh.layout(&mut fonts, other, None).lines));
+        }
+    }
+
+    /// A text of no words takes no place in the compact lists: one made at
+    /// a chunk's end was left past it when the text before it went, and
+    /// measured out of bounds.
+    #[test]
+    fn a_text_of_no_words_measures_after_the_text_before_it_goes() {
+        let mut fonts = FontSystem::new();
+        let font = FontStyle::default();
+        let mut cache = TextCache::default();
+        let before: Arc<str> = "a\n".into();
+        let empty: Arc<str> = "\n".into();
+        cache.measure_plain(&mut fonts, &before, 14., &font, None);
+        let size = cache.measure_plain(&mut fonts, &empty, 14., &font, None);
+        let hash = Key::plain_hash(&before, 14., &font);
+        if cache.entries.contains_key(&hash) {
+            let entry = cache.remove(hash);
+            cache.retire(entry);
+        }
+        assert_eq!(
+            cache.measure_plain(&mut fonts, &empty, 14., &font, None),
+            size
+        );
+        let fresh = ShapedText::with_font(&mut fonts, empty.clone(), 14., None, &font).size();
+        assert_eq!(size, fresh);
     }
 
     /// Compact measurements go in chunks, and a chunk whose texts are all
