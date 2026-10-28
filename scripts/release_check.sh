@@ -60,8 +60,21 @@ for fork in $forks; do
         --target-dir "$target" ${deps:+--config "$deps"}
 done
 echo "== zgx's vendored Thai dictionary"
-# (Windows' runners name it python.)
-"$(command -v python3 || command -v python)" scripts/extract_thai_dictionary.py --check
+# The first Python that runs: Windows' runners name it python, and a
+# Windows without Python has a python3 that only opens the Store (it is
+# found, and exits 49: "Python was not found").
+python=""
+for candidate in python3 python; do
+    if "$candidate" -c '' >/dev/null 2>&1; then
+        python=$candidate
+        break
+    fi
+done
+if [ -z "$python" ]; then
+    echo "no Python runs (python3 or python): the Thai dictionary check needs one" >&2
+    exit 1
+fi
+"$python" scripts/extract_thai_dictionary.py --check
 cargo package -p zgx --list $dirty | grep -qx data/LICENSE-UNICODE
 echo "== the workspace's published crates"
 cargo publish --workspace --dry-run --locked $dirty "$@"
