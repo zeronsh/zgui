@@ -291,6 +291,22 @@ impl DamageGrid {
         done
     }
 }
+// Signed far edges make all four containment comparisons point the same way.
+#[repr(transparent)]
+#[derive(Clone, Copy, Default)]
+struct DamageEdges([f32; 4]);
+impl From<Rect> for DamageEdges {
+    #[inline]
+    fn from(rect: Rect) -> Self {
+        Self([
+            rect.x,
+            rect.y,
+            -(rect.x + rect.width),
+            -(rect.y + rect.height),
+        ])
+    }
+}
+
 /// An axis-aligned rectangle in logical points, y down.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
@@ -2560,7 +2576,7 @@ pub struct Scene {
     /// The last rectangles added to `damage` (each is held by one of its
     /// rectangles, which only grow): a change damages the same places again
     /// and again (before and after, then where layout moves it).
-    recent_damage: [Rect; 4],
+    recent_damage: [DamageEdges; 4],
     damage_grid: Option<DamageGrid>,
     /// Tests: every layout walk as list mode's (`arrange::<false>`), never
     /// the grid's, to compare the two.
@@ -2778,7 +2794,7 @@ impl Scene {
             root,
             dirty: vec![root],
             damage: Vec::new(),
-            recent_damage: [Rect::default(); 4],
+            recent_damage: [DamageEdges::default(); 4],
             damage_grid: None,
             #[cfg(test)]
             cells_off: false,
@@ -6132,17 +6148,18 @@ impl Scene {
             grid.mark(rect);
             return;
         }
-        let holds = |outer: &Rect| {
-            outer.x <= rect.x
-                && outer.y <= rect.y
-                && outer.x + outer.width >= rect.x + rect.width
-                && outer.y + outer.height >= rect.y + rect.height
+        let edges = DamageEdges::from(rect);
+        let holds = |outer: &DamageEdges| {
+            (outer.0[0] <= edges.0[0])
+                & (outer.0[1] <= edges.0[1])
+                & (outer.0[2] <= edges.0[2])
+                & (outer.0[3] <= edges.0[3])
         };
         if self.recent_damage.iter().any(holds) {
             return;
         }
         self.recent_damage.rotate_right(1);
-        self.recent_damage[0] = rect;
+        self.recent_damage[0] = edges;
         if !GRID_FIRST && let Some(grid) = &mut self.damage_grid {
             grid.mark(rect);
             return;
