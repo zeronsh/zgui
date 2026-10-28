@@ -2126,9 +2126,10 @@ struct LayerPresent {
     #[cfg(target_os = "macos")]
     trial_started: Option<std::time::Instant>,
     /// The energy terms after each half's warm-up and at its end
-    /// (`trial_energy`).
+    /// (`trial_energy`), each read off the main thread: a scan of the I/O
+    /// Registry takes ~28 ms (M5 Max), which there made a frame late.
     #[cfg(target_os = "macos")]
-    trial_samples: Vec<trial_energy::Sample>,
+    trial_samples: Vec<std::thread::JoinHandle<trial_energy::Sample>>,
     /// The machine the verdict is for (GPU, display and refresh, OS build),
     /// and its verdict (`verdicts`): 0 untried, 1 tiles, 2 drawables.
     #[cfg(target_os = "macos")]
@@ -2579,9 +2580,14 @@ enum Trial {
     Drawables {
         frames: u32,
         from: layer_present::Mark,
-        /// Where drawables' feedback stood after their warm-up.
-        settled: layer_present::Mark,
+        /// Where drawables' feedback stood once `TRIAL_WARMUP` of them had
+        /// shown: by presented frames, which come a few frames after those
+        /// handed over (the switch to drawables' clock lands in the first).
+        settled: Option<layer_present::Mark>,
         tiles: f64,
+        /// At `TRIAL_FRAMES`: the shares drawables lost, lost after warm-up
+        /// and showed late, while the last sample is read.
+        ended: Option<(f64, f64, f64)>,
     },
     Done,
 }
@@ -9900,18 +9906,23 @@ impl GpuRenderer {
                     let layer = present.layer.as_mut().expect("attached");
                     let tiles = share(layer.probe_feedback(), from);
                     layer.stop_probe();
-                    present.trial_samples.push(trial_energy::Sample::now());
+                    present
+                        .trial_samples
+                        .push(std::thread::spawn(trial_energy::Sample::now));
                     let from = counts(layer.drawable_feedback());
                     Trial::Drawables {
                         frames: 0,
                         from,
-                        settled: from,
+                        settled: None,
                         tiles,
+                        ended: None,
                     }
                 }
                 Trial::Tiles { frames, from } => {
                     if frames + 1 == TRIAL_WARMUP {
-                        present.trial_samples.push(trial_energy::Sample::now());
+                        present
+                            .trial_samples
+                            .push(std::thread::spawn(trial_energy::Sample::now));
                     }
                     Trial::Tiles {
                         frames: frames + 1,
@@ -9923,19 +9934,47 @@ impl GpuRenderer {
                     from,
                     settled,
                     tiles,
+                    ended: None,
                 } if frames + 1 >= TRIAL_FRAMES => {
                     let feedback = present
                         .layer
                         .as_ref()
                         .and_then(|layer| layer.drawable_feedback());
                     let drawables = share(feedback.clone(), from);
+                    // Never settled (fewer shown than the warm-up): all of them.
+                    let settled = settled.unwrap_or(from);
                     let drawables_settled = share(feedback.clone(), settled);
                     let drawables_late = feedback.map_or(0., |feedback| {
                         let (handed, _) = feedback.lost_since(settled);
                         feedback.late_since(settled) as f64 / handed.max(1) as f64
                     });
-                    present.trial_samples.push(trial_energy::Sample::now());
-                    let costs = match &present.trial_samples[..] {
+                    present
+                        .trial_samples
+                        .push(std::thread::spawn(trial_energy::Sample::now));
+                    Trial::Drawables {
+                        frames: frames + 1,
+                        from,
+                        settled: Some(settled),
+                        tiles,
+                        ended: Some((drawables, drawables_settled, drawables_late)),
+                    }
+                }
+                // Once the last sample is read (off this thread), the verdict.
+                Trial::Drawables {
+                    tiles,
+                    ended: Some((drawables, drawables_settled, drawables_late)),
+                    ..
+                } if present
+                    .trial_samples
+                    .iter()
+                    .all(|sample| sample.is_finished()) =>
+                {
+                    let samples: Vec<trial_energy::Sample> = present
+                        .trial_samples
+                        .drain(..)
+                        .filter_map(|sample| sample.join().ok())
+                        .collect();
+                    let costs = match &samples[..] {
                         [tiles_from, tiles_to, drawables_from, drawables_to] => {
                             Some((tiles_from.to(tiles_to), drawables_from.to(drawables_to)))
                         }
@@ -9990,28 +10029,37 @@ impl GpuRenderer {
                     Trial::Done
                 }
                 Trial::Drawables {
+                    ended: Some(..), ..
+                } => present.trial,
+                Trial::Drawables {
                     frames,
                     from,
                     settled,
                     tiles,
+                    ended: None,
                 } => {
-                    let settled = match frames + 1 == TRIAL_WARMUP {
-                        true => {
-                            present.trial_samples.push(trial_energy::Sample::now());
-                            counts(
-                                present
-                                    .layer
-                                    .as_ref()
-                                    .and_then(|layer| layer.drawable_feedback()),
-                            )
+                    let feedback = present
+                        .layer
+                        .as_ref()
+                        .and_then(|layer| layer.drawable_feedback());
+                    let settled = match settled {
+                        None if feedback.as_ref().is_some_and(|feedback| {
+                            feedback.shown_since(from) >= TRIAL_WARMUP as u64
+                        }) =>
+                        {
+                            present
+                                .trial_samples
+                                .push(std::thread::spawn(trial_energy::Sample::now));
+                            Some(counts(feedback))
                         }
-                        false => settled,
+                        settled => settled,
                     };
                     Trial::Drawables {
                         frames: frames + 1,
                         from,
                         settled,
                         tiles,
+                        ended: None,
                     }
                 }
                 Trial::Done => Trial::Done,

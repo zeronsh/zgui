@@ -506,6 +506,9 @@ struct FeedbackState {
     gaps: std::collections::VecDeque<f64>,
     /// The latest frames' start (the host's) to their showing (ms).
     latency: std::collections::VecDeque<f64>,
+    /// A tick skipped on purpose (`Layer::take_rephase`): the gap it leaves
+    /// is not a frame shown late.
+    forgive: bool,
     /// Shown frames that came over 1.5 refreshes after the one before: a
     /// refresh missed (the refresh, the shortest of the 8 gaps before).
     late: u64,
@@ -518,6 +521,10 @@ pub(crate) struct Mark {
     late: u64,
 }
 impl Feedback {
+    /// The next frame comes a tick later on purpose (a rephase).
+    fn forgive_next(&self) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).forgive = true;
+    }
     /// A frame begun at `started` (host seconds) shown at `presented`.
     fn record_latency(&self, started: f64, presented: f64) {
         if presented <= 0. || started <= 0. || presented < started {
@@ -551,9 +558,10 @@ impl Feedback {
         state.presented += 1;
         if state.last > 0. && presented > state.last {
             let gap = (presented - state.last) * 1e3;
+            let forgiven = std::mem::take(&mut state.forgive);
             let recent = state.gaps.iter().rev().take(8);
             let refresh = recent.clone().copied().fold(f64::INFINITY, f64::min);
-            if recent.count() >= 3 && gap > refresh * 1.5 {
+            if recent.count() >= 3 && gap > refresh * 1.5 && !forgiven {
                 state.late += 1;
             }
             state.gaps.push_back(gap);
@@ -571,6 +579,11 @@ impl Feedback {
             skipped: state.skipped,
             late: state.late,
         }
+    }
+    /// Frames shown since `from`.
+    pub(crate) fn shown_since(&self, from: Mark) -> u64 {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.presented - from.presented
     }
     /// Shown frames since `from` that came late (`FeedbackState::late`).
     pub(crate) fn late_since(&self, from: Mark) -> u64 {
@@ -1074,7 +1087,10 @@ impl Layer {
     /// Frames wait for drawables a refresh behind (`phase_watch`): the last
     /// wait, once, for the host to skip a tick.
     pub fn take_rephase(&mut self) -> Option<std::time::Duration> {
-        self.drawables.as_mut()?.rephase.take()
+        let drawables = self.drawables.as_mut()?;
+        let waited = drawables.rephase.take()?;
+        drawables.feedback.forgive_next();
+        Some(waited)
     }
     /// The pending drawable, for the frame's own command buffer to present
     /// (`metal_frame::Frame::commit_presenting`).
