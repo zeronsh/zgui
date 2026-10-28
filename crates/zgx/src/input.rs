@@ -1284,9 +1284,12 @@ impl InputDispatcher {
     pub(crate) fn clear_hover(&self, scene: &Rc<RefCell<Scene>>) {
         self.set_hover(scene, None);
     }
-    fn set_hover(&self, scene: &Rc<RefCell<Scene>>, hit: Option<NodeId>) {
+    /// Move hover to `hit` and its ancestors, telling those left and
+    /// entered; whether any listener heard (and might have changed the
+    /// scene).
+    fn set_hover(&self, scene: &Rc<RefCell<Scene>>, hit: Option<NodeId>) -> bool {
         if self.state.borrow().hover.first().copied() == hit {
-            return;
+            return false;
         }
         let mut next = Vec::new();
         {
@@ -1313,34 +1316,38 @@ impl InputDispatcher {
             let entering: Vec<NodeId> = next[..next.len() - common].to_vec();
             state.hover = next;
             drop(state);
+            let mut heard = false;
             for &id in &old[..old.len() - common] {
-                self.hover_event(scene, id, InputEvent::PointerLeave);
+                heard |= self.hover_event(scene, id, InputEvent::PointerLeave);
             }
-            entering
+            (entering, heard)
         };
+        let (entering, mut heard) = entering;
         // A leave handler that moved hover again (it dispatched) owns it now.
         if self.state.borrow().hover.first().copied() != hit {
-            return;
+            return heard;
         }
         for &id in entering.iter().rev() {
-            self.hover_event(scene, id, InputEvent::PointerEnter);
+            heard |= self.hover_event(scene, id, InputEvent::PointerEnter);
         }
+        heard
     }
-    /// Deliver an enter or leave to `node`'s own listeners only.
-    fn hover_event(&self, scene: &Rc<RefCell<Scene>>, node: NodeId, event: InputEvent) {
+    /// Deliver an enter or leave to `node`'s own listeners only; whether
+    /// it has any.
+    fn hover_event(&self, scene: &Rc<RefCell<Scene>>, node: NodeId, event: InputEvent) -> bool {
         if !scene.borrow().contains(node) {
-            return;
+            return false;
         }
         let callbacks: Vec<_> = {
             let state = self.state.borrow();
             let Some(entries) = state.entries.get(&node) else {
-                return;
+                return false;
             };
             // A disabled node is entered no more; leaving still cleans up.
             if matches!(event, InputEvent::PointerEnter)
                 && state.options.get(&node).is_some_and(|o| o.disabled)
             {
-                return;
+                return false;
             }
             entries
                 .iter()
@@ -1365,6 +1372,7 @@ impl InputDispatcher {
                 break;
             }
         }
+        true
     }
     /// Whether `node` can take input now: shown, not disabled itself or by
     /// an ancestor, not transparent, and inside the active modal scope.
@@ -2188,7 +2196,7 @@ impl InputDispatcher {
                 }
             }
         }
-        let capture = self
+        let mut capture = self
             .captured()
             .filter(|id| self.enabled(&scene.borrow(), *id));
         if capture.is_none() {
@@ -2221,7 +2229,7 @@ impl InputDispatcher {
                 };
             }
         }
-        let hit = match &event {
+        let mut hit = match &event {
             InputEvent::PointerDown { x, y, .. }
             | InputEvent::PointerUp { x, y, .. }
             | InputEvent::PointerMove { x, y }
@@ -2245,13 +2253,21 @@ impl InputDispatcher {
                 state.clicks.0 = None;
             }
         }
+        // Listeners told of hover may have removed what the move goes to:
+        // the node under it, or the one capturing it (whose capture ends).
         if matches!(
             event,
             InputEvent::PointerMove { .. } | InputEvent::PointerLeave
-        ) {
-            self.set_hover(scene, hit);
+        ) && self.set_hover(scene, hit)
+        {
+            let scene = scene.borrow();
+            hit = hit.filter(|id| scene.contains(*id));
+            if capture.is_some_and(|id| !scene.contains(id)) {
+                capture = None;
+                self.set_capture(None, &event);
+            }
         }
-        let target = match &event {
+        let mut target = match &event {
             InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }
             | InputEvent::PointerMove { .. } => capture.or(hit),
@@ -2282,6 +2298,8 @@ impl InputDispatcher {
                 && let Some(old) = old.filter(|id| scene.borrow().contains(*id))
             {
                 self.dispatch_to(scene, old, InputEvent::FileHoverCancelled);
+                // Its listeners may have removed where the files are now.
+                target = target.filter(|id| scene.borrow().contains(*id));
             }
             self.state.borrow_mut().file_hovered = target;
         } else if matches!(

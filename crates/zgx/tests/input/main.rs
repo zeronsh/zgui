@@ -28,6 +28,8 @@ mod focus_removal;
 mod focus_visible;
 #[path = "../hover_refresh.rs"]
 mod hover_refresh;
+#[path = "../hover_removal.rs"]
+mod hover_removal;
 #[path = "../hover_subtree.rs"]
 mod hover_subtree;
 #[path = "../native_pointer.rs"]
