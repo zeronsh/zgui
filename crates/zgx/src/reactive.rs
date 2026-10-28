@@ -893,7 +893,6 @@ impl<T: 'static> Signal<T> {
         WeakSignal(Rc::downgrade(&self.inner))
     }
     /// Call `f` with the value, subscribing the running effect.
-    #[inline(always)]
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         self.track();
         f(&self.inner.value.borrow())
