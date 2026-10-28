@@ -27,7 +27,7 @@ zerotrie = { version = "0.2.5", default-features = false, optional = true }
 zerovec = { version = "0.11.7", default-features = false, optional = true }
 # Find in page folds accents and composed forms (`find`).
 unicode-normalization = "0.1.24"
-taffy = { package = "zgx-taffy", version = "=0.9.0", path = "../../vendor/taffy", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
+taffy = { package = "zgx-taffy", version = "=0.9.1", path = "../../vendor/taffy", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 stacker = "0.1.25"
 smallvec = "1.16"
 rustc-hash = "2.1"

@@ -2,9 +2,9 @@
 
 zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps, newest first.
 
-## Unreleased
+## 0.1.5 (2026-10-28)
 
-Two behaviours change, each below with what to check: a radio's, check box's, switch's or link's accessible name, and the button Enter or Space activates.
+A patch: Rust and Luau code builds as before (every API change since 0.1.4 is an addition, and zgx-desktop and zgx-gpu 0.1.4 build against this zgx), and `zgx-3d` is a new crate. Two behaviours change, each below with what to check: a radio's, check box's, switch's or link's accessible name, and the button Enter or Space activates.
 
 ### Changed: what to check in an existing app
 
@@ -34,8 +34,15 @@ Two behaviours change, each below with what to check: a radio's, check box's, sw
 - macOS: `ZGX_PRESENT_DRAWABLE=auto` judges by the frames each path skips again, not by energy. A process can't measure the GPU's energy, only its busy time, and what a busy second costs depends on the GPU's clock (0.78 W on an M5 Max, 4.44 on an M1 Max). The energy rule chose drawables where they measure worse. `ZGX_TRIAL_RULE=energy` keeps that rule, uncalibrated. A GPU-heavy, full-rate app on an M1-class Mac may choose drawables itself (`ZGX_PRESENT_DRAWABLE=1`): about 150 mW less GPU and 5.7 points less window-server CPU, for about 4.7 points more app CPU.
 - `zgx inspect`'s layout warnings leave overflow past an edge that fades (`fade_edges`, `fade_edges_x`) alone: a strip of tabs fading at its end runs past it on purpose. Overflow past an edge without a fade still warns.
 
+### Performance
+
+- **CPU, against 0.1.4**, by exact instruction counts (Linux arm64, with a screen reader on for both, as 0.1.4's benchmarks ran): anime −2.57%, heavy −0.68 to −0.69% (scrolling −0.36%), micro-vscroll-variable −0.53%, mount −0.51%, animate −0.30%, widgets −0.25%, and the apps and lists level or lower.
+  - **style +0.10%:** two approved trades. The `Signal::with` inlining (+0.05%; heavy −0.69%, anime −2.57%), and #835, which takes back 0.1.4's arm64-only #784 to win on x86 (style −0.49%, heavy −0.30%, animate −0.50% there). The other changes since 0.1.4 make style 0.4% faster.
+  - **app-code and app-code-search +1.3%:** they now free the 5,000-line document that 0.1.4 leaked when its editor closed. That's a one-time cost of about 1.2 M instructions, the same however long the editor was used; typing and scrolling cost what they did.
+
 ### Fixed
 
+- **A script's values can't panic or abort the app from Rust**: durations no `Duration` holds (`ui.after(1e300, f)`, a toast or tooltip delay of `math.huge`), a deadline past the clock, `anime.utils.clamp` with NaN bounds, `roundPad` and `padStart`/`padEnd` asked for absurd sizes, and anime timings that are no number. A NaN or infinite duration is a script error naming the line, a longer one waits a year (`zgx::timer::MAX_SLEEP`), and anime clamps as anime.js does (found by fuzzing).
 - Windows (`ZGX_TSF=1`): the app setting an editor's text or selection while an input method composes in it ends the composition there, as the editor's preedit already ended. The text store kept the composition: ending it committed the cancelled text ("REPLACED候補"), and the input method's next write at the selection panicked.
 - `ScriptHost::on_error` hears an error raised again with the same message; it heard only the first.
 - A script's error banner shows over an open modal or popover and dismisses with its ×. Under a modal, the click went to the modal's backdrop, which closed the modal and left the error.

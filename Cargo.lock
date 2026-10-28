@@ -4788,7 +4788,7 @@ dependencies = [
 
 [[package]]
 name = "zgx"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "foldhash 0.2.0",
  "icu_collections",
@@ -4809,7 +4809,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-3d"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bytemuck",
  "zgx",
@@ -4819,7 +4819,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-components"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "zgx",
  "zgx-desktop",
@@ -4849,7 +4849,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-demo"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "softbuffer",
  "winit",
@@ -4861,7 +4861,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-desktop"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "accesskit",
  "accesskit_atspi_common",
@@ -4918,11 +4918,11 @@ dependencies = [
 
 [[package]]
 name = "zgx-ghostty-sys"
-version = "0.1.4"
+version = "0.1.5"
 
 [[package]]
 name = "zgx-gpu"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "block2 0.6.2",
  "bytemuck",
@@ -4978,7 +4978,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-run"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "png 0.18.1",
  "serde_json",
@@ -4990,7 +4990,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-script"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "libc",
  "memchr",
@@ -5010,7 +5010,7 @@ dependencies = [
 
 [[package]]
 name = "zgx-taffy"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "arrayvec",
  "grid",

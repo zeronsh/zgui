@@ -11,8 +11,8 @@ keywords = ["gui", "3d", "wgpu", "pbr", "zgx"]
 categories = ["gui", "rendering"]
 
 [dependencies]
-zgx = { path = "../zgx", version = "0.1.4", default-features = false }
-zgx-gpu = { path = "../zgx-gpu", version = "0.1.4", default-features = false }
+zgx = { path = "../zgx", version = "0.1.5", default-features = false }
+zgx-gpu = { path = "../zgx-gpu", version = "0.1.5", default-features = false }
 bytemuck = { version = "1.25", features = ["derive"] }
 
 [dev-dependencies]

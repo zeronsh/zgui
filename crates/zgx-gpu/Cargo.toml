@@ -35,7 +35,7 @@ d3d11 = ["wgpu/noop", "windows/Win32_Graphics_Direct3D", "windows/Win32_Graphics
 
 [dependencies]
 smallvec = "1.16"
-zgx = { path = "../zgx", version = "0.1.4", default-features = false }
+zgx = { path = "../zgx", version = "0.1.5", default-features = false }
 # wgpu's defaults less WebGPU (the browser's), and Vulkan and GL, which only
 # Linux and its kind always build (below).
 wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "wgsl"] }
