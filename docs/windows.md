@@ -661,6 +661,7 @@ python scripts/windows_desktop_smoke.py target/debug/examples/gallery.exe
 python scripts/windows_dpi_smoke.py target/debug/examples/dpi_transition.exe
 python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean
 python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean --tsf
+python scripts/windows_ime_smoke.py target/debug/examples/native_ime.exe --install-korean --tsf --replace-while-composing
 python scripts/windows_tsf_smoke.py target/debug/examples/native_ime.exe
 python scripts/windows_tsf_japanese_smoke.py target/debug/examples/native_ime.exe
 python scripts/windows_uia_find_smoke.py target/debug/examples/selectable_text.exe
@@ -709,7 +710,10 @@ python scripts/windows_first_frame_probe.py target/release/examples/component_wo
   language's typing features (an administrator install) before they compose.
   `native_ime --open-ime` opens the IME itself: input methods ignore a
   synthesized on/off key. `--tsf` runs it through the Text Services Framework
-  (`ZGX_TSF=1`, below), checking the editors' text.
+  (`ZGX_TSF=1`, below), checking the editors' text. `--replace-while-composing`
+  has the app set the field's text mid-composition (`native_ime
+  --replace-while-composing`): the composition ends there and none of it is
+  committed, through either path.
 - `windows_tsf_smoke.py` (`ZGX_TSF=1`): the emoji panel (Win+., Enter) inserts
   through zgx's text store, and typing after it reaches the editor. It needs
   no input method beyond English.

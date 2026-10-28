@@ -1,6 +1,9 @@
 //! Native input-method probe; the application never synthesizes IME events.
 //! `--password`: the first editor is a password field, which no input
 //! method composes into (`scripts/native_ime_smoke.py --password`).
+//! `--replace-while-composing`: the app sets the first editor's text to
+//! "REPLACED" while an input method composes in it, which ends the
+//! composition (`scripts/windows_ime_smoke.py --replace-while-composing`).
 use std::time::Duration;
 use zgx::{
     compose::prelude::*,
@@ -80,6 +83,7 @@ fn open_input_method() {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let observe = std::env::args().any(|arg| arg == "--native-observe");
     let password = std::env::args().any(|arg| arg == "--password");
+    let replace = std::env::args().any(|arg| arg == "--replace-while-composing");
     #[cfg(windows)]
     let open_ime = std::env::args().any(|arg| arg == "--open-ime");
     Application::new()
@@ -143,6 +147,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             });
             let window = cx.window.clone();
+            let first_editor = cx.ui.editor(first_node);
+            let mut replaced = false;
+            // The preedit at the last report: replaced once it holds still a
+            // whole report, not between the keys composing it.
+            let mut held: Option<String> = None;
             cx.tasks.spawn(async move {
                 let ticks = zgx::env::var("ZGX_SECONDS")
                     .ok()
@@ -158,6 +167,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     #[cfg(windows)]
                     if open_ime && !COMPOSED.load(std::sync::atomic::Ordering::Relaxed) {
                         open_input_method();
+                    }
+                    // The app's own edit while the input method composes.
+                    if replace && !replaced {
+                        let preedit = first_editor.as_ref().and_then(|editor| {
+                            editor.editor.borrow().preedit().map(|p| p.text.clone())
+                        });
+                        if preedit.is_some() && preedit == held {
+                            replaced = true;
+                            first.set("REPLACED".to_owned());
+                            println!(
+                                "REPLACED while composing {:?}",
+                                preedit.as_deref().unwrap_or_default()
+                            );
+                        }
+                        held = preedit;
                     }
                     println!(
                         "MODEL {tick} first={:?} second={:?} focus={:?}",

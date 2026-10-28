@@ -57,11 +57,31 @@ def restore(saved):
     powershell("; ".join(script))
 
 
+def finish_replaced(proc, lines):
+    """What the app's edit mid-composition left: its text, none of the
+    composition, and the app alive to the end."""
+    output = "".join(lines)
+    if proc.returncode != 0:
+        raise AssertionError(f"the app ended with {proc.returncode}:\n{output}")
+    final = next((line for line in lines if line.startswith("FINAL")), "")
+    first = final.split("first=", 1)[1].split(" second=", 1)[0].strip('"') if "first=" in final else ""
+    replaced = next(line for line in lines if line.startswith("REPLACED while composing"))
+    if '"안"' not in replaced:
+        raise AssertionError(f"the app replaced the text before 안 was composed: {replaced}\n{output}")
+    # The space after the cancellation types a space: nothing of 안.
+    if first != "REPLACED ":
+        raise AssertionError(f"the cancelled composition came back: {final}\n{output}")
+    print(f"PASS: the app's edit ended the composition, none of it committed: {final.strip()}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
     parser.add_argument("--install-korean", action="store_true")
     parser.add_argument("--tsf", action="store_true", help="through the Text Services Framework")
+    parser.add_argument("--replace-while-composing", action="store_true",
+                        help="the app sets the field's text mid-composition: the composition ends, "
+                             "none of it committed")
     args = parser.parse_args()
     saved = input_methods()
     if KOREAN_TIP.split(":")[1] not in saved:
@@ -74,7 +94,10 @@ def main():
     env = dict(os.environ, ZGX_SECONDS="30")
     if args.tsf:
         env["ZGX_TSF"] = "1"
-    proc = subprocess.Popen([str(args.binary.resolve()), "--open-ime"], env=env, stdout=subprocess.PIPE,
+    command = [str(args.binary.resolve()), "--open-ime"]
+    if args.replace_while_composing:
+        command.append("--replace-while-composing")
+    proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8")
     lines = []
     threading.Thread(target=lambda: lines.extend(proc.stdout), daemon=True).start()
@@ -106,6 +129,23 @@ def main():
             if time.monotonic() > deadline:
                 raise RuntimeError("the input method did not open")
             time.sleep(0.1)
+        if args.replace_while_composing:
+            # 안, held composing until the app replaces the text (its 500 ms
+            # report), then a key the input method takes again.
+            win.require_foreground(window)
+            for key in "dks":
+                win.key(key)
+            deadline = time.monotonic() + 6
+            while not any(line.startswith("REPLACED while composing") for line in lines):
+                if time.monotonic() > deadline:
+                    raise RuntimeError("the app never saw the composition to replace")
+                time.sleep(0.1)
+            time.sleep(0.6)
+            win.key("space")
+            time.sleep(0.4)
+            win.close(window)
+            proc.wait(timeout=15)
+            return finish_replaced(proc, lines)
         # 한글: two syllables composed from six keys, committed by a space.
         win.require_foreground(window)
         for key in "gksrmf":
