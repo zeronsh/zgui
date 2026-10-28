@@ -180,3 +180,42 @@ fn fractional_scrolling_moves_content_by_whole_device_pixels() {
     ui.prepare_frame();
     assert_eq!(top - ui.scene.borrow().bounds(row).y, moved.round());
 }
+
+/// How far a row moved in a scroll view shown at `start`, scrolled to `raw`,
+/// then shown at `end`.
+fn shown_after_scale_change(start: f32, end: f32, raw: f32) -> f32 {
+    let mut ui = Ui::new(500., 300.);
+    ui.scene.borrow_mut().set_pixel_scale(start);
+    let offset = ui.signal(0.);
+    let view = ui.mount(
+        scroll(offset.clone())
+            .w(200.)
+            .h(100.)
+            .child(div().id("row").h(500.)),
+    );
+    ui.prepare_frame();
+    let row = view.find("row").unwrap();
+    let top = ui.scene.borrow().bounds(row).y;
+    offset.set(raw);
+    ui.prepare_frame();
+    ui.scene.borrow_mut().set_pixel_scale(end);
+    ui.prepare_frame();
+    assert_eq!(offset.get(), raw);
+    top - ui.scene.borrow().bounds(row).y
+}
+
+#[test]
+fn dpi_change_uses_the_exact_retained_scroll_offset() {
+    let live = shown_after_scale_change(1., 2., 0.4);
+    let fresh = shown_after_scale_change(2., 2., 0.4);
+    assert_eq!(fresh, 0.5);
+    assert_eq!(live, fresh);
+}
+
+#[test]
+fn fractional_dpi_change_uses_the_exact_retained_scroll_offset() {
+    let live = shown_after_scale_change(2., 1.5, 0.3);
+    let fresh = shown_after_scale_change(1.5, 1.5, 0.3);
+    assert_eq!(fresh, 0.);
+    assert_eq!(live, fresh);
+}

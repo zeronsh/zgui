@@ -4636,9 +4636,12 @@ impl ListStretch {
         let placed = Rc::new(Cell::new(0_f32));
         {
             let (placed, shown, scene) = (placed.clone(), shown.clone(), ui.scene.clone());
+            let pixel_scale = ui.pixel_scale();
             let mut first = true;
             ui.bind(root, move || {
                 let stretch = shown.get();
+                // Placed again from where it was asked to be at a new scale.
+                let _ = pixel_scale.get();
                 // The list places its content as it mounts (`place`).
                 if std::mem::take(&mut first) {
                     return;
@@ -4831,7 +4834,10 @@ fn mount_scroll(
     // end. Only growth moves a pinned view; a new offset (a wheel, a script)
     // is taken as it is and decides whether the view stays pinned.
     let (applied, pinned) = (std::cell::Cell::new(0_f32), std::cell::Cell::new(true));
+    let pixel_scale = ui.pixel_scale();
     ui.bind(root, move || {
+        // Placed again from where it was asked to be at a new scale.
+        let _ = pixel_scale.get();
         let (width, height) = size.get();
         let limit = (main_size(extent.get()) - main_size((width, height))).max(0.);
         let requested = offset.get();
