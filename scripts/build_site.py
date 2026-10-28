@@ -124,6 +124,8 @@ def load(directory):
         return load_windows(directory, audit, summary, trials, paced, extended, desktop_rows)
     # The whole GPU's power with no app running: each repeat's desktop baseline.
     desktop_gpu = statistics.median(float(t['gpu_system_watts']) for t in trials if t['framework'] == 'desktop')
+    desktop_server = {t['repeat']: float(t['windowserver_cpu_percent']) for t in desktop_rows}
+    assert all(t['repeat'] in desktop_server for t in trials if t['mode'] == 'idle'), f'{directory}: an idle round without its desktop'
     cells = []
     for framework in frameworks:
         for mode in modes:
@@ -140,6 +142,14 @@ def load(directory):
                     cell[key] = spread(values)
             # What the app adds to the GPU's power, in mW.
             cell['gpu_power_mw'] = spread([(float(t['gpu_system_watts']) - desktop_gpu) * 1000 for t in rows])
+            if mode == 'idle' and audit['scene'] != 'field':
+                # Idle WindowServer less its own round's desktop alone (the
+                # field shows its carets' whole cost, as measured): the
+                # window server reads one of a few levels launch to launch,
+                # for every app and the desktop alike (M1 Max, 2026-10-28:
+                # no launch of 32 over its round's desktop by 0.2 points).
+                cell['windowserver_over_desktop'] = spread(
+                    [float(t['windowserver_cpu_percent']) - desktop_server[t['repeat']] for t in rows])
             if mode != 'idle':
                 captures = [p for p in paced if (p['framework'], p['mode']) == (framework, mode)]
                 assert len(captures) == protocol['pacing_repeats'], (directory, framework, mode)
@@ -161,8 +171,13 @@ def load(directory):
             cells.append(cell)
     # WindowServer with no app running, each repeat's desktop baseline.
     desktop = [float(t['windowserver_cpu_percent']) for t in trials if t['framework'] == 'desktop']
+    over = [c['windowserver_over_desktop']['median'] for c in cells if 'windowserver_over_desktop' in c]
     return {
         'desktop_server': statistics.median(desktop), 'desktop_gpu_mw': desktop_gpu * 1000,
+        # Idle WindowServer is noise while no app's median over its round's
+        # desktop exceeds what the desktop alone spreads over the rounds.
+        **({'idle_server': {'desktop': spread(desktop),
+                            'noise': all(abs(o) <= max(desktop) - min(desktop) for o in over)}} if over else {}),
         'scene': audit['scene'], 'run': directory.relative_to(ROOT).as_posix(), 'commit': audit['commit'],
         'started_utc': audit['started_utc'], 'frameworks': frameworks, 'modes': modes, 'cells': cells,
         'trials': audit['trials'], 'pacing_trials': audit['pacing_trials'], 'protocol': protocol,
@@ -288,6 +303,14 @@ def metrics():
     return METRICS
 
 
+def idle_server_label(scene):
+    """The idle row of WindowServer's chart: over the desktop alone, and whether that is noise."""
+    idle = scene['idle_server']
+    return (f"{MODES['idle']}, less the desktop"
+            + (f": within noise (no app above the desktop alone's own spread, "
+               f"{fmt(idle['desktop']['min'], 2)}–{fmt(idle['desktop']['max'], 2)})" if idle['noise'] else ''))
+
+
 def chart(scene, metric):
     title, unit, digits, scale, key, applies = metrics()[metric]
     if metric == 'server':
@@ -299,9 +322,12 @@ def chart(scene, metric):
     if metric == 'board':
         unit += f' ({fmt(scene["desktop_board_w"], 1)} W)'
     modes = [m for m in scene['modes'] if applies == 'all' or m != 'idle']
-    rows = [(m, f, c[key]) for m in modes for f in scene['frameworks']
-            for c in [cell(scene, f, m)] if key in c]
-    top = max(s['median'] * scale for _, _, s in rows) or 1
+    # Idle WindowServer: what each app adds over its round's desktop alone.
+    over = metric == 'server' and 'idle_server' in scene
+    source = lambda m: 'windowserver_over_desktop' if over and m == 'idle' else key
+    rows = [(m, f, c[source(m)]) for m in modes for f in scene['frameworks']
+            for c in [cell(scene, f, m)] if source(m) in c]
+    top = max(max(s['median'], 0) * scale for _, _, s in rows) or 1
     out = [f'<figure class="chart"><table><caption><span class="title">{title}</span> '
            f'<span class="unit">{unit}</span> <span class="better">lower is better</span></caption>',
            '<colgroup><col class="c-mode"><col class="c-fw"><col></colgroup>'
@@ -312,10 +338,11 @@ def chart(scene, metric):
         out.append('<tbody>')
         for i, (framework, s) in enumerate(group):
             median, low, high = (s[k] * scale for k in ('median', 'min', 'max'))
-            width = 100 * median / top
+            width = 100 * max(median, 0) / top
             # Idle CPU is a fraction of a percent: two places show it.
             places = 2 if (metric, mode) == ('cpu', 'idle') else digits
-            head = f'<th scope="rowgroup" rowspan="{len(group)}" class="mode">{MODES[mode]}</th>' if i == 0 else ''
+            label = idle_server_label(scene) if over and mode == 'idle' else MODES[mode]
+            head = f'<th scope="rowgroup" rowspan="{len(group)}" class="mode">{label}</th>' if i == 0 else ''
             low, high = fmt(low, places), fmt(high, places)
             spread_text = '' if low == high else f' <span class="range">({low}–{high})</span>'
             out.append(f'<tr class="fw-{framework}">{head}<th scope="row">{NAMES[framework]}</th>'
@@ -860,8 +887,9 @@ def main():
         'sampling_anchor': by['heavy']['protocol'].get('sampling_anchor', 'launch'),
         'frameworks': NAMES,
         'metrics': {m: {'title': t, 'unit': u, 'source': k} for m, (t, u, _, _, k, _) in metrics().items()},
-        'scenes': [{k: by[n][k] for k in ('scene', 'run', 'started_utc', 'frameworks', 'modes', 'trials',
-                                          'pacing_trials', 'protocol', 'environment', 'toolchains', 'cells')}
+        'scenes': [{**{k: by[n][k] for k in ('scene', 'run', 'started_utc', 'frameworks', 'modes', 'trials',
+                                             'pacing_trials', 'protocol', 'environment', 'toolchains', 'cells')},
+                    **({'idle_server': by[n]['idle_server']} if 'idle_server' in by[n] else {})}
                    for n in ORDER],
         # Per metric, zgx's median over the lowest rival's in its worst test.
         **({'worst_ratios': worst_ratios(by)} if PLATFORM == 'windows' else {}),

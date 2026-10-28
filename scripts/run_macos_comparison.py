@@ -92,9 +92,13 @@ PACING_SECONDS, PACING_REPEATS = 8, 8
 # shaping, caches, memory still growing) read 5-10% more CPU for every
 # framework (2026-10-25).
 # Three pacing captures a cell: of two, one bad capture moved a median
-# (lab scroll, 2026-10-25: 30.0 and 17.8 ms; ten more read 18.0). Idle twice:
-# it reads hundredths of a percent, its range shown.
-SUITE = {'REQUESTED': 15, 'WARMUP': 5, 'SAMPLED': 10, 'IDLE_REPEATS': 2, 'PACING_REPEATS': 3}
+# (lab scroll, 2026-10-25: 30.0 and 17.8 ms; ten more read 18.0). Idle six
+# times, each round with its desktop alone: idle CPU reads hundredths of a
+# percent, and WindowServer one of a few levels launch to launch for every
+# app and the desktop alike (0.2 to 1.1% on an M5 Max), so two launches
+# could not rank it. On an M1 Max, 8 rounds, no launch read 0.2 points over
+# its round's desktop (2026-10-28); the site shows idle less the desktop.
+SUITE = {'REQUESTED': 15, 'WARMUP': 5, 'SAMPLED': 10, 'IDLE_REPEATS': 6, 'PACING_REPEATS': 3}
 # A cell whose CPU or GPU power spreads more than this share of its median
 # over its trials gets EXTRA more (the suite).
 SPREAD, EXTRA = 0.10, 1

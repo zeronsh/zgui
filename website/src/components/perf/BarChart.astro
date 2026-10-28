@@ -45,7 +45,7 @@ const c = platform === 'windows' ? win.chart(win.scene(scene), metric) : chart(r
                   <span class="perf-track" aria-hidden="true" title={low !== high ? `${b.name}: ${fmt(b.median, b.places)}, trials ${low}–${high}` : undefined}>
                     <span class="perf-bar" style={`width:${Math.max(0.6, (100 * b.median) / c.top).toFixed(1)}%`} />
                     {low !== high && (
-                      <span class="perf-whisker" style={`left:${((100 * b.min) / c.top).toFixed(1)}%;width:${Math.min(100 - (100 * b.min) / c.top, (100 * (b.max - b.min)) / c.top).toFixed(1)}%`} />
+                      <span class="perf-whisker" style={`left:${((100 * Math.max(b.min, 0)) / c.top).toFixed(1)}%;width:${Math.min(100 - (100 * Math.max(b.min, 0)) / c.top, (100 * (b.max - Math.max(b.min, 0))) / c.top).toFixed(1)}%`} />
                     )}
                   </span>
                   <span class="perf-value">{fmt(b.median, b.places)}</span>

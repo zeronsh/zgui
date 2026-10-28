@@ -94,18 +94,27 @@ export type Group = { mode: string; label: string; bars: Bar[] };
 export function chart(s: Scene, metric: string) {
   const m = text.metrics[metric as keyof typeof text.metrics];
   const modes = s.modes.filter((mode) => m.applies === 'all' || mode !== 'idle');
+  // Idle WindowServer: what each app adds over its round's desktop alone
+  // (the builder's `idle_server_label`).
+  const idle = metric === 'server' ? (s as { idle_server?: { noise: boolean; desktop: Stat } }).idle_server : undefined;
+  const over = (mode: string) => idle !== undefined && mode === 'idle';
   const groups: Group[] = modes.map((mode) => ({
     mode,
-    label: text.modes[mode as keyof typeof text.modes],
+    label: over(mode)
+      ? `${text.modes.idle}, less the desktop` +
+        (idle!.noise
+          ? `: within noise (no app above the desktop alone's own spread, ${fmt(idle!.desktop.min, 2)}–${fmt(idle!.desktop.max, 2)})`
+          : '')
+      : text.modes[mode as keyof typeof text.modes],
     bars: s.frameworks.flatMap((f) => {
-      const stat = cell(s, f, mode)?.[m.source] as Stat | undefined;
+      const stat = cell(s, f, mode)?.[over(mode) ? 'windowserver_over_desktop' : m.source] as Stat | undefined;
       if (!stat) return [];
       // Idle CPU is a fraction of a percent: two places show it.
       const places = metric === 'cpu' && mode === 'idle' ? 2 : m.digits;
       return [{ framework: f, name: names[f], median: stat.median * m.scale, min: stat.min * m.scale, max: stat.max * m.scale, places }];
     }),
   }));
-  const top = Math.max(...groups.flatMap((g) => g.bars.map((b) => b.median))) || 1;
+  const top = Math.max(...groups.flatMap((g) => g.bars.map((b) => Math.max(b.median, 0)))) || 1;
   return { title: m.title, unit: m.unit, groups, top };
 }
 
