@@ -1097,6 +1097,10 @@ pub(crate) struct UiStorage {
     caret_blink: Rc<crate::caret_blink::Blink>,
     /// Assistive technology reads the semantics (`Ui::set_assistive_technology`).
     assistive: Signal<bool>,
+    /// The scene's pixel scale as frames last found it (`Ui::pixel_scale`),
+    /// and the same in a cell: what a frame compares, borrowing nothing.
+    pixel_scale: Signal<f32>,
+    pixel_scale_seen: Cell<f32>,
     /// Text nodes whose labels (and the buttons they name) wait for
     /// assistive technology: changed while none read the semantics.
     pending_labels: RefCell<crate::scene::NodeMap<()>>,
@@ -1271,6 +1275,8 @@ impl Ui {
             caret_width: Rc::new(Cell::new(1.)),
             caret_blink: Rc::default(),
             assistive: runtime.signal(listening),
+            pixel_scale: runtime.signal(0.),
+            pixel_scale_seen: Cell::new(0.),
             pending_labels: RefCell::default(),
             pending_prune: Cell::new(1024),
             listening: Cell::new(listening),
@@ -2268,6 +2274,13 @@ impl Ui {
     pub(crate) fn assistive(&self) -> Signal<bool> {
         self.storage.assistive.clone()
     }
+    /// The scene's pixel scale as this frame found it: what places scroll
+    /// content on whole device pixels reads it, to place it again from the
+    /// offset it was asked for when the scale changes (the scene alone
+    /// keeps only where it put it).
+    pub(crate) fn pixel_scale(&self) -> Signal<f32> {
+        self.storage.pixel_scale.clone()
+    }
     /// Whether input is being dispatched, so a scroll now is the user's.
     pub(crate) fn is_dispatching(&self) -> bool {
         self.storage.dispatching.get()
@@ -2603,6 +2616,13 @@ impl Ui {
     pub fn try_prepare_frame(&self) -> Result<(), LayoutFeedbackError> {
         if self.storage.preparing_frame.get() {
             return Ok(());
+        }
+        // A new pixel scale (the window moved to another display) places
+        // scroll content afresh from the offsets it was scrolled to.
+        let scale = self.scene.borrow().pixel_scale();
+        if self.storage.pixel_scale_seen.get() != scale {
+            self.storage.pixel_scale_seen.set(scale);
+            self.storage.pixel_scale.set(scale);
         }
         self.prepare_frame_once()?;
         // Find in page's marks where text mounted or moved, and what its
