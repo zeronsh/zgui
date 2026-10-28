@@ -1601,7 +1601,8 @@ pub fn gpu_view(label: impl Into<String>, view: &crate::gpu_view::GpuView) -> Vi
     component(move |cx| {
         let runner = cx.try_service::<TaskRunner>();
         let frames = cx.try_service::<crate::frame::FrameClock>();
-        div().on_mount(move |handle| {
+        // Clipping its frame: its own corners cut it, as `rounded` says.
+        div().overflow_hidden().on_mount(move |handle| {
             if let Some(mut ui) = handle.ui.upgrade() {
                 ui.scene.borrow_mut().set_replaced(handle.node, true);
                 ui.semantics
