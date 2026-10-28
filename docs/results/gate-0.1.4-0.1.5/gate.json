@@ -1,0 +1,160 @@
+{
+ "from": {
+  "version": "0.1.4",
+  "commit": "c1ae154a"
+ },
+ "to": {
+  "version": "0.1.5",
+  "commit": "32657f6f",
+  "released": "d493d20a"
+ },
+ "unit": "million instructions",
+ "how": "scripts/perf/gate.py: exact instruction counts under cachegrind, Linux arm64, a screen reader on for both sides (ZGX_ASSISTIVE=1, as 0.1.4's gate ran); Luau scenes the median of 3 heap placements",
+ "scenes_fields": [
+  "from",
+  "to",
+  "change: the gate's own, from unrounded counts"
+ ],
+ "notes": {
+  "style": "+0.10%: two approved trades, #835 (taking back #784, faster on x86) and #807; the other changes since 0.1.4 make it 0.4% faster",
+  "app-code": "+1.31%: it now frees the 5,000-line document 0.1.4 leaked when its editor closed (#843), a one-time ~1.2 M",
+  "app-code-search": "+1.38%: as app-code (#843)"
+ },
+ "scenes": {
+  "heavy-both": [
+   1023.5,
+   1016.6,
+   -0.0068
+  ],
+  "heavy-stream": [
+   972.5,
+   965.7,
+   -0.0069
+  ],
+  "heavy-scroll": [
+   76.0,
+   75.7,
+   -0.0036
+  ],
+  "heavy-stream-at": [
+   972.5,
+   965.7,
+   -0.0069
+  ],
+  "lab-stream": [
+   431.9,
+   431.9,
+   -0.0
+  ],
+  "lab-scroll": [
+   66.2,
+   66.1,
+   -0.0017
+  ],
+  "animate": [
+   277.1,
+   276.2,
+   -0.003
+  ],
+  "micro-state": [
+   56.6,
+   56.4,
+   -0.0031
+  ],
+  "micro-vscroll-fixed": [
+   46.0,
+   45.9,
+   -0.0025
+  ],
+  "micro-vscroll-variable": [
+   82.5,
+   82.0,
+   -0.0053
+  ],
+  "micro-state-luau": [
+   79.9,
+   79.7,
+   -0.0021
+  ],
+  "micro-vscroll-fixed-luau": [
+   63.0,
+   62.9,
+   -0.0007
+  ],
+  "micro-vscroll-variable-luau": [
+   127.1,
+   126.8,
+   -0.0028
+  ],
+  "mount": [
+   303.8,
+   302.3,
+   -0.0051
+  ],
+  "script-update": [
+   1422.3,
+   1421.2,
+   -0.0008
+  ],
+  "anime": [
+   3027.8,
+   2949.8,
+   -0.0257
+  ],
+  "script-layout": [
+   2823.7,
+   2820.1,
+   -0.0012
+  ],
+  "list-state": [
+   824.6,
+   824.4,
+   -0.0002
+  ],
+  "style": [
+   1245.4,
+   1246.7,
+   0.001
+  ],
+  "widgets": [
+   138.2,
+   137.9,
+   -0.0025
+  ],
+  "app-mail": [
+   286.6,
+   286.6,
+   0.0
+  ],
+  "app-chat": [
+   47.8,
+   47.8,
+   -0.0006
+  ],
+  "app-dashboard": [
+   170.3,
+   170.2,
+   -0.0004
+  ],
+  "app-dashboard-sort": [
+   113.5,
+   113.4,
+   -0.0006
+  ],
+  "app-sketch": [
+   45.8,
+   45.8,
+   -0.0009
+  ],
+  "app-code": [
+   93.1,
+   94.3,
+   0.0131
+  ],
+  "app-code-search": [
+   82.2,
+   83.3,
+   0.0138
+  ]
+ }
+}

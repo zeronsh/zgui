@@ -1,0 +1,14 @@
+{
+ "framework": "zgx-luau",
+ "mode": "scroll",
+ "repeat": 2,
+ "display_hz": 120,
+ "frames": 489,
+ "frames_per_second": 61.125,
+ "interval_p50_ms": 16.616,
+ "interval_p95_ms": 17.436,
+ "interval_p99_ms": 18.382,
+ "interval_max_ms": 18.959,
+ "long_intervals": 0,
+ "long_interval_fraction": 0.0
+}

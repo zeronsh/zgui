@@ -1,0 +1,193 @@
+{
+ "accepted": true,
+ "trials": 51,
+ "samples": 8175,
+ "pacing_trials": 45,
+ "active_ticks_per_requested_second": {
+  "min": 59.72222222222222,
+  "max": 59.94444444444444
+ },
+ "powermetrics": false,
+ "scene": "vlist",
+ "commit": "d493d20a57a3d4c1ef2f4f7423cbf0b5e9443f7a",
+ "source_dirty": false,
+ "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "started_utc": "2026-10-28T20:12:18.112129+00:00",
+ "finished_utc": "2026-10-28T20:53:05.466303+00:00",
+ "environment": {
+  "displays": [
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": true
+   },
+   {
+    "name": "Studio Display XDR",
+    "resolution": "3200 x 1800 @ 120.00Hz",
+    "pixels": "6400 x 3600",
+    "main": false
+   }
+  ],
+  "display_count": 2,
+  "wallpaper_apps": [],
+  "power_mode": "powermode 2",
+  "on_battery": false,
+  "macos": "26.4 (25E246)",
+  "uptime_hours": 87.7,
+  "machine": "Mac17,6",
+  "chip": "Apple M5 Max",
+  "cores": 18,
+  "memory_bytes": 137438953472,
+  "power": "AC Power",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+ },
+ "preflight": null,
+ "binaries": {
+  "zgx": {
+   "sha256": "8313cdc09c5a7f6d12a3879e81ed050e77aaac1e57046771a5a3ceec93a0ee6f",
+   "bytes": 15474464
+  },
+  "zgx-luau": {
+   "sha256": "acda17d0a20380d7827e2a17411252202821bd5a502d5fc00a69526d9378776d",
+   "bytes": 23930960
+  },
+  "gpui-fast": {
+   "sha256": "6ff0c619788595f9e3e700e2218c2a7eecb2c4e0296aa5a398690ab7ccede2e7",
+   "bytes": 7013712
+  },
+  "mygo": {
+   "sha256": "89dbdf16650a02c31a51038e30dca8b18fd295b5f6344eb23bbd14d6dc57ac1f",
+   "bytes": 9503346
+  },
+  "rune": {
+   "sha256": "d0ccd149ee56208cf761fed48dd2525fd3ccd9a7a0cafcf49589d17c434b89ac",
+   "bytes": 12466480
+  }
+ },
+ "toolchains": {
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "rust_profile": "dist (release, lto = \"fat\", codegen-units = 1)",
+  "go": "go version go1.27.3 darwin/arm64",
+  "mygo": {
+   "mygo_version": "v0.6.3",
+   "mygo_commit": "15242900157b77228d35ca071f43e94a11bc90a0",
+   "mygo_license": "MIT",
+   "mygo_source": "https://github.com/egoist/mygo",
+   "go": "go1.27.3 darwin/arm64",
+   "flags": "-trimpath -ldflags=-s -w",
+   "cgo": false,
+   "sinf": "workload/sinf.go: macOS libm sinf ported to Go, bit-identical for all 2^32 inputs",
+   "binaries": [
+    "bin/heavy",
+    "bin/lab",
+    "bin/animate",
+    "bin/vlist",
+    "bin/micro",
+    "bin/blink",
+    "bin/field"
+   ],
+   "built_utc": "2026-10-28T18:22:14Z"
+  },
+  "rune": {
+   "rune_rev": "998bef587f09e359d877b35c66e48b8f355e73cb",
+   "rune_branch": "dev",
+   "rune_license": "MIT",
+   "rune_source": "https://github.com/anomalyco/rune",
+   "rune_patch": "PATCH.md: Tx::wheel, Rune's own wheel path (Runtime::wheel_xy) for the app (sha256 17d01a2fb86e35e619947368e307e43a82272956200fc94ae7910b7a7eb05535)",
+   "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+   "profile": "dist (Rune's perf with fat LTO and codegen-units 1)",
+   "binaries": [
+    "bin/heavy",
+    "bin/lab",
+    "bin/animate",
+    "bin/vlist",
+    "bin/micro",
+    "bin/blink",
+    "bin/field"
+   ],
+   "built_utc": "2026-10-28T18:22:13Z"
+  }
+ },
+ "invalid_trials": [],
+ "abnormal_exits": [],
+ "launches": {
+  "zgx": {
+   "trial": 9,
+   "blank": 2,
+   "pacing": 9
+  },
+  "zgx-luau": {
+   "trial": 10,
+   "blank": 2,
+   "pacing": 9
+  },
+  "gpui-fast": {
+   "trial": 9,
+   "blank": 2,
+   "pacing": 9
+  },
+  "mygo": {
+   "trial": 10,
+   "blank": 2,
+   "pacing": 9
+  },
+  "rune": {
+   "trial": 10,
+   "blank": 2,
+   "pacing": 9
+  }
+ },
+ "readiness_failures": [],
+ "protocol": {
+  "requested_seconds": 18,
+  "warmup_seconds": 5,
+  "sampled_seconds": 10,
+  "sampling_anchor": "window frontmost and uncovered",
+  "readiness_timeout_seconds": 2.5,
+  "lifetime_margin_seconds": 3,
+  "interval_seconds": 0.05,
+  "repeats": 3,
+  "idle_repeats": 6,
+  "idle_window_seconds": [
+   20,
+   30
+  ],
+  "idle_requested_seconds": 34,
+  "quick": false,
+  "pgo": false,
+  "frameworks": [
+   "zgx",
+   "zgx-luau",
+   "gpui-fast",
+   "mygo",
+   "rune"
+  ],
+  "modes": [
+   "scroll",
+   "fling",
+   "jump"
+  ],
+  "pacing_seconds": 8,
+  "pacing_repeats": 3,
+  "pacing_during_trials": false,
+  "acceptance_updates_per_second": [
+   58,
+   61
+  ],
+  "suite": true,
+  "spread_for_extra_trials": 0.1,
+  "extra_trials": 1,
+  "extended_cells": [
+   "zgx-luau/scroll",
+   "mygo/scroll",
+   "rune/fling"
+  ],
+  "blank_seconds": 8,
+  "blank_rate": 10,
+  "blank_modes": [
+   "scroll",
+   "jump"
+  ]
+ }
+}

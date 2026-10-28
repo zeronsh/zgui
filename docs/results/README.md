@@ -1,3 +1,31 @@
+# macOS suite (2026-10-28): 0.1.5, every scene on `d493d20`
+
+[`suite-macos-2026-10-28-d493d20`](suite-macos-2026-10-28-d493d20/): heavy, lab, animate and vlist on the v0.1.5 tag, measured right after it was published (quiet window 36), on an M5 Max (Mac17,6) with macOS 26.4 (25E246) and a 120 Hz Studio Display XDR. The protocol is the suite's, now with heavy idle in six rounds, each beside its desktop alone (#817). Every scene was accepted, and no app exited abnormally. The rivals were built again from suite sources unchanged since `1134537`. `python scripts/build_site.py docs/results/suite-macos-2026-10-28-d493d20 --startup docs/results/startup-macos-2026-10-26-03a9d89/startup.json --gate docs/results/gate-0.1.4-0.1.5/gate.json --previous docs/results/suite-macos-2026-10-27-1134537 --field docs/results/field-macos-2026-10-27-238ef98 --rebuilt "…"` publishes it to `site/`.
+
+Medians, zgx / GPUI Fast / MyGo / Rune (vlist: zgx / zgx in Luau / GPUI Fast / MyGo / Rune):
+
+| Scene, mode | CPU (% of a core) | WindowServer CPU (%) | GPU power (mW) | Memory (MB) | Frame time p99 (ms) |
+| --- | --- | --- | --- | --- | --- |
+| heavy idle | 0.00 / 0.40 / 0.00 / 0.00 | 0.00 / 0.00 / 0.00 / 0.00 (over the desktop) | 0 / 0 / 0 / 0 | 53 / 74 / 66 / 75 | - |
+| heavy stream | 5.6 / 12.4 / 14.9 / 17.8 | 10.2 / 10.1 / 11.0 / 10.0 | 121 / 165 / 226 / 491 | 264 / 267 / 307 / 477 | 17.9 / 25.4 / 25.5 / 25.8 |
+| heavy scroll | 2.7 / 7.2 / 11.4 / 18.1 | 10.4 / 10.2 / 10.9 / 9.9 | 84 / 167 / 116 / 494 | 260 / 266 / 298 / 630 | 18.2 / 24.9 / 23.9 / 33.6 |
+| heavy both | 6.7 / 13.3 / 15.6 / 21.3 | 10.7 / 9.9 / 11.0 / 10.2 | 146 / 168 / 229 / 491 | 265 / 277 / 308 / 630 | 17.8 / 25.4 / 25.3 / 25.4 |
+| lab stream | 2.6 / 4.9 / 7.7 / 6.4 | 9.9 / 9.8 / 10.8 / 10.7 | 59 / 108 / 65 / 311 | 243 / 248 / 272 / 432 | 18.1 / 18.7 / 19.8 / 34.2 |
+| lab scroll | 2.4 / 4.0 / 6.1 / 5.8 | 10.4 / 9.7 / 10.6 / 9.8 | 63 / 105 / 98 / 306 | 241 / 246 / 263 / 430 | 18.2 / 18.2 / 18.5 / 34.6 |
+| lab both | 3.0 / 5.4 / 7.7 / 7.1 | 10.0 / 9.7 / 10.5 / 10.2 | 67 / 109 / 106 / 318 | 243 / 248 / 272 / 433 | 18.5 / 23.3 / 19.1 / 33.6 |
+| animate animate | 3.7 / 5.9 / 7.3 / 7.0 | 18.0 / 20.0 / 22.1 / 20.8 | 113 / 136 / 113 / 291 | 241 / 256 / 263 / 426 | 14.3 / 17.6 / 17.4 / 17.5 |
+| vlist scroll | 2.6 / 2.5 / 4.7 / 8.9 / 7.2 | 10.2 / 10.1 / 9.4 / 11.4 / 10.4 | 61 / 61 / 89 / 94 / 247 | 244 / 246 / 284 / 264 / 449 | 18.3 / 18.6 / 18.0 / 25.3 / 33.9 |
+| vlist fling | 2.7 / 2.9 / 5.0 / 9.6 / 8.1 | 10.1 / 10.1 / 9.4 / 11.3 / 9.7 | 61 / 61 / 90 / 95 / 246 | 245 / 247 / 287 / 265 / 450 | 18.3 / 18.3 / 23.8 / 18.2 / 34.9 |
+| vlist jump | 2.6 / 2.8 / 5.2 / 10.1 / 9.7 | 10.0 / 10.1 / 9.5 / 11.1 / 9.5 | 61 / 61 / 90 / 95 / 246 | 245 / 248 / 285 / 268 / 455 | 19.2 / 18.8 / 25.1 / 25.3 / 33.6 |
+
+In every test zgx uses the least CPU and the least GPU power, and none of its frames run long. It also has the least memory in every cell. Against `1134537`, animate's GPU power came level with MyGo's and then below it (both round to 113 mW), and vlist jump's long frames are gone. Idle WindowServer is within noise: no app's median sits above its round's desktop alone, which itself read 0.21–0.32%.
+
+Where zgx isn't the lowest: WindowServer CPU in the 60 Hz scenes, by 0.1–0.8 points against GPUI Fast or Rune (heavy both 10.7 against GPUI Fast's 9.9). Animate's WindowServer CPU is the lowest of all.
+
+[`gate-0.1.4-0.1.5`](gate-0.1.4-0.1.5/) holds the release gate's exact counts, v0.1.4 (`c1ae154a`) against 0.1.5's head (`32657f6f`; the release commit bumps only versions). They were taken with a screen reader on for both sides, as 0.1.4's ran (`gate.md`, sol's run). Two scenes run more:
+- **style, +0.10%:** two approved trades, #835 and #807; the other changes since 0.1.4 make it 0.4% faster.
+- **app-code, +1.31%, and app-code-search, +1.38%:** these now free the document 0.1.4 leaked when its editor closed (#843), a one-time cost of about 1.2 M instructions.
+
 # macOS suite (2026-10-27): every scene on `1134537`, GPUI Fast with zgx's menu bar
 
 [`suite-macos-2026-10-27-1134537`](suite-macos-2026-10-27-1134537/): heavy, lab, animate and vlist on `1134537`, on an M5 Max (Mac17,6) with macOS 26.4 (25E246) and a 120 Hz Studio Display XDR. The protocol is the one the site's earlier runs used: 15 s trials sampled 5–15 s after the window is frontmost and uncovered, in rotating order, with pacing captured apart. Every scene was accepted, and no app exited abnormally. Every rival was built again. GPUI Fast now builds the same menu bar as zgx (#767: Services, Hide and Quit, and the Window menu). macOS gives every app's menu bar its own contexts in WindowServer, and each Core Animation commit reaches all of them, so the earlier runs' WindowServer figures favoured GPUI Fast. MyGo and Rune gained the blink and field apps, and their suite apps' sources are unchanged. `python scripts/build_site.py docs/results/suite-macos-2026-10-27-1134537 --startup docs/results/startup-macos-2026-10-26-03a9d89/startup.json --gate docs/results/gate-0.1.2-0.1.3/gate.json --previous docs/results/suite-macos-2026-10-27-d919995 --field docs/results/field-macos-2026-10-27-238ef98 --rebuilt "…"` publishes it to `site/`.

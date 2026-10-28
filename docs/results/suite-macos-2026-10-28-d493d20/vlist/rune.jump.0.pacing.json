@@ -1,0 +1,14 @@
+{
+ "framework": "rune",
+ "mode": "jump",
+ "repeat": 0,
+ "display_hz": 120,
+ "frames": 490,
+ "frames_per_second": 61.25,
+ "interval_p50_ms": 16.623,
+ "interval_p95_ms": 25.416,
+ "interval_p99_ms": 33.518,
+ "interval_max_ms": 41.122,
+ "long_intervals": 36,
+ "long_interval_fraction": 0.07362
+}
