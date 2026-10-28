@@ -476,3 +476,59 @@ fn percent_children_keep_their_layout_after_a_flex_basis_probe() {
     ui.try_prepare_frame().unwrap();
     near(bounds(&ui, &view, "header").width, 1280.);
 }
+
+/// Any span or start the options accept lays out: one past what grid lines
+/// can number (a span of 32768, or a start of 32767 spanning two) panicked
+/// in taffy's line arithmetic. Lines go as far as Firefox's (±10,000).
+#[test]
+fn an_accepted_grid_span_does_not_panic_in_layout() {
+    use std::sync::Arc;
+    use zgx::{
+        layout::{Display, LayoutOptions},
+        scene::{Color, Layout, NodeKind, Scene, Style},
+    };
+    let placements = [
+        (None, Some(32768)),
+        (Some(32767), Some(2)),
+        (Some(i16::MIN), Some(u16::MAX)),
+        (Some(i16::MAX), None),
+    ];
+    for (column_start, column_span) in placements {
+        let mut scene = Scene::new(320., 240.);
+        let grid = scene.append(
+            scene.root(),
+            NodeKind::Container(Layout::Row),
+            Style {
+                width: Some(200.),
+                height: Some(100.),
+                layout_options: Some(Arc::new(LayoutOptions {
+                    display: Some(Display::Grid),
+                    columns: Some(2),
+                    rows: Some(1),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+        );
+        let cell = scene.append(
+            grid,
+            NodeKind::Rect(Color(1, 2, 3, 255)),
+            Style {
+                width: Some(10.),
+                height: Some(10.),
+                layout_options: Some(Arc::new(LayoutOptions {
+                    column_start,
+                    column_span,
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+        );
+        scene.flush();
+        let bounds = scene.bounds(cell);
+        assert!(
+            bounds.x.is_finite() && bounds.width == 10.,
+            "{column_start:?} {column_span:?}: {bounds:?}"
+        );
+    }
+}

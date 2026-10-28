@@ -18,6 +18,7 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 
 ### Fixed
 
+- A grid item's span or start too large for grid lines (a `column_span` of 32768, or a start of 32767 spanning 2) no longer panics in layout. Lines reach ±10,000, as in Firefox.
 - macOS: files dragged in from Finder hover and drop where they are. The drop went to wherever the pointer was last seen before the drag came in, because a drag holding the pointer sends the window no moves. A box taking files only got them if the pointer had last been over it. The window now hears where the files are as they enter, move and drop, and that they left (`vendor/winit/ZGX_PATCH.md`).
 - A zoomed box changed after its first layout lays out as one built that way from the start. Resized, it moves the boxes after it, which kept their old places before. A `snap` turned on or off applies. Made `contents` (or zoomed once it is), it takes its children's size in its own points, which it scaled by its zoom a second time before. Its parent changed (an alignment, say), it keeps its size, which was divided by its zoom again. Zoomed as a `contents` node's last child, it gives that node the room it now takes.
 

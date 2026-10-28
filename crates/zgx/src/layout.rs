@@ -207,6 +207,8 @@ pub struct LayoutOptions {
     /// The largest height (CSS `max-height`); unset, the style's.
     pub max_height: Option<Length>,
 }
+/// The grid lines a placement reaches at most, either way (`normalized`).
+const GRID_LINES: i16 = 10_000;
 impl LayoutOptions {
     /// Canonicalize nonfinite values at style ingress, preserving equal-write suppression.
     pub fn normalized(mut self) -> Self {
@@ -259,6 +261,20 @@ impl LayoutOptions {
         }
         if let Some(count) = &mut self.rows {
             *count = (*count).max(1);
+        }
+        // Grid lines a placement reaches, either way, as Firefox's: taffy
+        // numbers lines in `i16`, and a start and span past them overflowed.
+        for start in [&mut self.column_start, &mut self.row_start]
+            .into_iter()
+            .flatten()
+        {
+            *start = (*start).clamp(-GRID_LINES, GRID_LINES);
+        }
+        for span in [&mut self.column_span, &mut self.row_span]
+            .into_iter()
+            .flatten()
+        {
+            *span = (*span).min(GRID_LINES as u16);
         }
         self
     }
