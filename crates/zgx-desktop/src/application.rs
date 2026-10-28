@@ -1266,6 +1266,9 @@ struct Host {
     frame_paced: bool,
     /// `zgx::gpu_view::plane_frames` as last drawn (`GpuRenderer::render_planes`).
     plane_frames: u64,
+    /// When planes' frames were last drawn: once a refresh at most.
+    #[cfg(target_os = "macos")]
+    planes_drawn_at: Option<std::time::Instant>,
     /// Until when input keeps frames at the display's full rate (`INPUT_FULL_RATE`).
     #[cfg(any(target_os = "macos", windows))]
     input_until: Option<std::time::Instant>,
@@ -1641,6 +1644,8 @@ impl Host {
             native_occluded: false,
             frame_paced: false,
             plane_frames: 0,
+            #[cfg(target_os = "macos")]
+            planes_drawn_at: None,
             #[cfg(any(target_os = "macos", windows))]
             input_until: None,
             #[cfg(any(target_os = "macos", windows))]
@@ -2102,13 +2107,31 @@ impl Host {
             }
         }
         // GPU views on planes of their own: their new frames, which damage
-        // nothing in the window (each presents itself).
+        // nothing in the window (each presents itself). One a refresh at
+        // most: a frame input asks for while the display link runs waits for
+        // its next refresh (a plane's next drawable would else wait on the
+        // main thread), however many come before it.
+        #[cfg(target_os = "macos")]
+        let planes_due = !self
+            .display_link
+            .as_ref()
+            .is_some_and(|link| link.running())
+            || self
+                .planes_drawn_at
+                .is_none_or(|at| at.elapsed() >= self.frame_interval / 2);
+        #[cfg(not(target_os = "macos"))]
+        let planes_due = true;
         let plane_frames = zgx::gpu_view::plane_frames();
         if plane_frames != self.plane_frames
+            && planes_due
             && !(self.frame_paced && !self.present_ready)
             && let Some(renderer) = &mut self.renderer
         {
             self.plane_frames = plane_frames;
+            #[cfg(target_os = "macos")]
+            {
+                self.planes_drawn_at = Some(std::time::Instant::now());
+            }
             renderer.render_planes(&scene)?;
         }
         if self.presentation.ready(std::time::Instant::now()) && self.renderer.is_some() {

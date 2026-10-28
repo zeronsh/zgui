@@ -410,6 +410,10 @@ pub(crate) struct Layer {
     /// GPU views shown on layers of their own (`viewport`), by view and box:
     /// above the frames, under the caret. Empty without such a view.
     planes: Vec<Plane>,
+    /// Their drawables' waits, as the window's (`Drawables::watch`): a
+    /// refresh behind, the host skips a tick (`take_rephase`).
+    plane_watch: crate::phase_watch::PhaseWatch,
+    plane_rephase: Option<std::time::Duration>,
 }
 /// A GPU view's own layer: its painter draws into the layer's drawables,
 /// the window server composites them as it does any Metal layer.
@@ -423,9 +427,17 @@ struct Plane {
 pub(crate) struct PlaneFrame {
     pub key: (u64, u64),
     pub drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>,
+    /// Its box (the host's points from the top left).
+    rect: (f64, f64, f64, f64),
     /// Its box moved or showed this frame: presented in the frame's
     /// transaction, with the layer's new geometry, not by Metal on its own.
     pub moved: bool,
+}
+impl PlaneFrame {
+    /// Its box (the host's points from the top left).
+    pub fn rect(&self) -> (f64, f64, f64, f64) {
+        self.rect
+    }
 }
 /// A caret drawn by Core Animation over the window's frames
 /// (`zgx::caret_blink::NativeCaret`): a box of one colour, shown or hidden as
@@ -994,6 +1006,8 @@ impl Layer {
             drawables: None,
             probe: None,
             planes: Vec::new(),
+            plane_watch: Default::default(),
+            plane_rephase: None,
         }
     }
     /// The next drawable of GPU view plane `key`, `size` pixels, its box
@@ -1042,9 +1056,67 @@ impl Layer {
         if plane.layer.drawableSize() != drawable_size {
             plane.layer.setDrawableSize(drawable_size);
         }
+        // Moved or shown: its geometry changes in the frame's transaction
+        // (`show_plane`), with the frame.
         let moved = plane.rect != Some(rect);
-        if moved {
-            let (x, y, width, height) = rect;
+        let asked = std::time::Instant::now();
+        let drawable = plane.layer.nextDrawable()?;
+        let waited = asked.elapsed();
+        if self.plane_watch.observe(waited) {
+            self.plane_rephase = Some(waited);
+        }
+        if waited > std::time::Duration::from_millis(1) {
+            crate::present_log::log(|| {
+                format!("plane-wait {key:?} {:.2} ms", waited.as_secs_f64() * 1e3)
+            });
+        }
+        Some(PlaneFrame {
+            key,
+            drawable,
+            rect,
+            moved,
+        })
+    }
+    /// Present `frame` after the work on `queue` (its painter's) by Metal,
+    /// on its own: a frame of the view alone, its box where it was.
+    pub fn present_plane_now(
+        &self,
+        frame: PlaneFrame,
+        queue: &ProtocolObject<dyn MTLCommandQueue>,
+    ) {
+        let Some(plane) = self.planes.iter().find(|plane| plane.key == frame.key) else {
+            return;
+        };
+        let Some(buffer) = queue.commandBuffer() else {
+            return;
+        };
+        if plane.layer.presentsWithTransaction() {
+            plane.layer.setPresentsWithTransaction(false);
+        }
+        buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(
+            &*frame.drawable,
+        ));
+        buffer.commit();
+    }
+    /// Before the frame's transaction: the work on `queue` (the painters' of
+    /// planes moving with it, and the frame's own) committed and scheduled,
+    /// so presents in the transaction wait for nothing there (the window's
+    /// commit keeps its time).
+    pub fn schedule_plane(queue: &ProtocolObject<dyn MTLCommandQueue>) {
+        if let Some(buffer) = queue.commandBuffer() {
+            buffer.commit();
+            buffer.waitUntilScheduled();
+        }
+    }
+    /// In the frame's transaction: `frame`'s box placed and shown, and its
+    /// drawable presented with it (`schedule_plane` first).
+    pub fn show_plane(&mut self, frame: PlaneFrame) {
+        let host = &self.host;
+        let Some(plane) = self.planes.iter_mut().find(|plane| plane.key == frame.key) else {
+            return;
+        };
+        if plane.rect != Some(frame.rect) {
+            let (x, y, width, height) = frame.rect;
             let y = if host.isGeometryFlipped() || host.contentsAreFlipped() {
                 y
             } else {
@@ -1054,40 +1126,15 @@ impl Layer {
                 objc2_core_foundation::CGPoint::new(x, y),
                 CGSize::new(width, height),
             ));
+            plane.rect = Some(frame.rect);
+        }
+        if plane.layer.isHidden() {
             plane.layer.setHidden(false);
-            plane.rect = Some(rect);
         }
-        let drawable = plane.layer.nextDrawable()?;
-        Some(PlaneFrame {
-            key,
-            drawable,
-            moved,
-        })
-    }
-    /// Present `frame`'s drawable after the work on `queue` (its painter's):
-    /// by Metal when its box is where it was, else in the caller's
-    /// transaction once that work is scheduled, so it shows with the box's
-    /// new geometry and the window's frame, never a frame apart.
-    pub fn present_plane(&self, frame: PlaneFrame, queue: &ProtocolObject<dyn MTLCommandQueue>) {
-        let Some(plane) = self.planes.iter().find(|plane| plane.key == frame.key) else {
-            return;
-        };
-        let Some(buffer) = queue.commandBuffer() else {
-            return;
-        };
-        if plane.layer.presentsWithTransaction() != frame.moved {
-            plane.layer.setPresentsWithTransaction(frame.moved);
+        if !plane.layer.presentsWithTransaction() {
+            plane.layer.setPresentsWithTransaction(true);
         }
-        if frame.moved {
-            buffer.commit();
-            buffer.waitUntilScheduled();
-            frame.drawable.present();
-        } else {
-            buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(
-                &*frame.drawable,
-            ));
-            buffer.commit();
-        }
+        frame.drawable.present();
     }
     /// Hide plane `key` (its view draws into the window again), in the
     /// caller's transaction.
@@ -1096,6 +1143,11 @@ impl Layer {
             && plane.rect.take().is_some()
         {
             plane.layer.setHidden(true);
+            // Its last frame goes too: shown again, it shows nothing (the
+            // window's newer frame under it) until its next drawable does,
+            // never that old frame.
+            // SAFETY: `contents` is an id property; nil clears it.
+            unsafe { plane.layer.setContents(None) };
             crate::present_log::log(|| format!("plane-hide {key:?}"));
         }
     }
@@ -1220,6 +1272,10 @@ impl Layer {
     /// Frames wait for drawables a refresh behind (`phase_watch`): the last
     /// wait, once, for the host to skip a tick.
     pub fn take_rephase(&mut self) -> Option<std::time::Duration> {
+        // A GPU view's plane a refresh behind: as the window's drawables.
+        if let Some(waited) = self.plane_rephase.take() {
+            return Some(waited);
+        }
         let drawables = self.drawables.as_mut()?;
         let waited = drawables.rephase.take()?;
         drawables.feedback.forgive_next();
@@ -1228,20 +1284,39 @@ impl Layer {
     /// The pending drawable, for the frame's own command buffer to present
     /// (`metal_frame::Frame::commit_presenting`).
     pub fn take_drawable(&mut self) -> Option<Retained<ProtocolObject<dyn CAMetalDrawable>>> {
-        self.drawables.as_mut()?.pending.take()
+        let drawables = self.drawables.as_mut()?;
+        // By Metal: not with a transaction (one a plane's move left set).
+        if drawables.layer.presentsWithTransaction() {
+            drawables.layer.setPresentsWithTransaction(false);
+        }
+        drawables.pending.take()
     }
     /// Present the frame drawn into the pending drawable, if its command
-    /// buffer did not (a frame wgpu encoded), after the work already on
-    /// `queue`; the drawable layer shows over the hidden tiles.
-    pub fn present_drawable(&mut self, queue: Option<&ProtocolObject<dyn MTLCommandQueue>>) {
+    /// buffer did not (a frame wgpu encoded, or one a GPU view's plane moves
+    /// with), after the work already on `queue`; the drawable layer shows
+    /// over the hidden tiles. `transactional`: in the caller's transaction,
+    /// once that work is scheduled (a plane moving with it), not by Metal on
+    /// its own: the main thread waits for the commit on such a frame.
+    pub fn present_drawable(
+        &mut self,
+        queue: Option<&ProtocolObject<dyn MTLCommandQueue>>,
+        transactional: bool,
+    ) {
         let Some(drawables) = &mut self.drawables else {
             return;
         };
-        if let Some(drawable) = drawables.pending.take()
-            && let Some(buffer) = queue.and_then(|queue| queue.commandBuffer())
-        {
-            buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(&*drawable));
-            buffer.commit();
+        if drawables.layer.presentsWithTransaction() != transactional {
+            drawables.layer.setPresentsWithTransaction(transactional);
+        }
+        if let Some(drawable) = drawables.pending.take() {
+            if transactional {
+                // Its work scheduled before the transaction (`schedule_plane`
+                // on the same queue): shown with it, no wait in it.
+                drawable.present();
+            } else if let Some(buffer) = queue.and_then(|queue| queue.commandBuffer()) {
+                buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(&*drawable));
+                buffer.commit();
+            }
         }
         if !drawables.shown {
             drawables.shown = true;

@@ -122,6 +122,12 @@ struct Planed {
     node: zgx::scene::NodeId,
     image: u64,
     rect: zgx::scene::Rect,
+    /// Its layer shows (not only primed: see `plane_item`).
+    shown: bool,
+    /// While its layer is hidden, about to show: a drawable drawn and held,
+    /// presented as it shows (a hidden layer's presented drawables don't
+    /// come back to its pool).
+    primed: Option<crate::layer_present::PlaneFrame>,
     targets: Vec<(usize, wgpu::Texture, wgpu::TextureView)>,
 }
 struct Shown {
@@ -135,6 +141,14 @@ impl Views {
     /// frames draw anew (at a new scale).
     pub(crate) fn forget(&mut self) -> impl Iterator<Item = u64> + '_ {
         self.shown.drain().map(|(_, shown)| shown.image)
+    }
+    /// Whether a plane moves, shows, hides or goes with this frame: the
+    /// window's own drawable then presents in its transaction too.
+    pub(crate) fn planes_moved(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        return !self.moved.is_empty() || !self.hidden.is_empty() || !self.gone.is_empty();
+        #[cfg(not(target_os = "macos"))]
+        false
     }
     /// Whether a box shows on a plane: the window then keeps no frame to
     /// patch (its box draws nothing there).
@@ -334,7 +348,22 @@ impl GpuRenderer {
         if !self.planeable(scene, item, image, frame) {
             return Ok(false);
         }
-        self.draw_plane(item.id, image, frame, item.bounds)
+        let key = (frame.view, frame.shown_by);
+        let shown = self
+            .views
+            .as_ref()
+            .is_some_and(|views| views.planes.get(&key).is_some_and(|planed| planed.shown));
+        if shown {
+            return self.draw_plane(item.id, image, frame, item.bounds, true);
+        }
+        // Taking its layer: this frame still draws it into the window, and
+        // the layer, hidden, gets a newer frame after it; the next shows the
+        // layer. A hidden layer still holds the frame it showed last, from
+        // before it hid: shown in the same frame as its new one, it could
+        // show that old one first, a frame going back.
+        self.render_view(image, frame)?;
+        self.draw_plane(item.id, image, frame, item.bounds, false)?;
+        Ok(false)
     }
     /// Whether a frame may show on a plane: its painter promises it opaque,
     /// the window presents through layers of its own, and its box shows it
@@ -362,14 +391,35 @@ impl GpuRenderer {
             && !painted_over(scene, item.id, item.bounds)
     }
     /// Draw `image`'s frame into its plane's next drawable, `rect` its box.
+    /// `show`: its layer shows with this frame (else it stays hidden, the
+    /// frame drawn for when it does).
     fn draw_plane(
         &mut self,
         node: zgx::scene::NodeId,
         image: &zgx::image::ImageData,
         frame: &zgx::gpu_view::GpuFrame,
         rect: zgx::scene::Rect,
+        show: bool,
     ) -> Result<bool, GpuError> {
         let key = (frame.view, frame.shown_by);
+        // Showing a primed layer: its held drawable presents as it shows, in
+        // the frame's transaction, if its box is still where it was (moved
+        // since, it is drawn again below, the held one going back unshown).
+        if show
+            && let Some(planed) = self
+                .views
+                .as_mut()
+                .and_then(|views| views.planes.get_mut(&key))
+            && let Some(mut primed) = planed.primed.take()
+            && primed.rect() == planed_points(rect)
+        {
+            primed.moved = true;
+            planed.shown = true;
+            planed.node = node;
+            planed.image = image.id();
+            self.views.as_mut().unwrap().moved.push(primed);
+            return Ok(true);
+        }
         let max = self.device.limits().max_texture_dimension_2d;
         let size = (
             ((rect.width * self.scale).round() as u32).clamp(1, max),
@@ -389,13 +439,8 @@ impl GpuRenderer {
         else {
             return Ok(false);
         };
-        let points = (
-            f64::from(rect.x),
-            f64::from(rect.y),
-            f64::from(rect.width),
-            f64::from(rect.height),
-        );
-        let Some(plane) = layer.plane_frame(key, &device, size, points) else {
+        let points = planed_points(rect);
+        let Some(mut plane) = layer.plane_frame(key, &device, size, points) else {
             return Ok(false);
         };
         // The drawable's texture as wgpu's, made once per texture of the pool.
@@ -408,8 +453,13 @@ impl GpuRenderer {
             node,
             image: 0,
             rect,
+            shown: false,
+            primed: None,
             targets: Vec::new(),
         });
+        // Shown now (after a primed frame): with the window's frame.
+        plane.moved = show && (plane.moved || !planed.shown);
+        planed.shown |= show;
         planed.node = node;
         planed.image = image.id();
         planed.rect = rect;
@@ -472,13 +522,22 @@ impl GpuRenderer {
             None,
             wgpu::TextureFormat::Bgra8UnormSrgb,
         )?;
-        if plane.moved {
+        if !show {
+            // Primed: held for when its layer shows.
+            if let Some(planed) = self
+                .views
+                .as_mut()
+                .and_then(|views| views.planes.get_mut(&key))
+            {
+                planed.primed = Some(plane);
+            }
+        } else if plane.moved {
             // In the frame's transaction, with the window's frame.
             self.views.as_mut().unwrap().moved.push(plane);
         } else {
             self.present_plane(plane);
         }
-        Ok(true)
+        Ok(show)
     }
     /// Present `plane` after the work on the queue (its painter's).
     fn present_plane(&mut self, plane: crate::layer_present::PlaneFrame) {
@@ -493,7 +552,7 @@ impl GpuRenderer {
                 .as_mut()
                 .and_then(|present| present.layer.as_mut()),
         ) {
-            layer.present_plane(plane, &queue);
+            layer.present_plane_now(plane, &queue);
         }
     }
     /// Draw the new frames of views on planes whose boxes did not change: a
@@ -523,8 +582,21 @@ impl GpuRenderer {
         let mut drawn = false;
         for (node, image, rect) in due {
             if let Some(frame) = image.gpu_frame() {
-                drawn |= self.draw_plane(node, &image, frame, rect)?;
+                drawn |= self.draw_plane(node, &image, frame, rect, true)?;
             }
+        }
+        // A plane showing with no frame of the window's to show with (none
+        // drawn since its last): in a transaction of its own, now.
+        if self
+            .views
+            .as_ref()
+            .is_some_and(|views| views.planes_moved())
+            && self
+                .layer_present
+                .as_ref()
+                .is_none_or(|present| present.current.is_none())
+        {
+            self.apply_planes();
         }
         Ok(drawn)
     }
@@ -561,7 +633,8 @@ impl GpuRenderer {
                 .as_mut()
                 .and_then(|present| present.layer.as_mut()),
         ) {
-            apply_planes(views, layer, queue.as_deref());
+            schedule_planes(views, queue.as_deref());
+            crate::layer_present::transaction(|| apply_planes(views, layer, queue.as_deref()));
         }
     }
 }
@@ -582,15 +655,42 @@ pub(crate) fn apply_planes(
         let gone = std::mem::take(&mut views.gone);
         layer.retain_planes(|key| !gone.contains(&key));
     }
+    let _ = queue;
     for plane in views.moved.drain(..) {
-        if let Some(queue) = queue {
-            layer.present_plane(plane, queue);
-        }
+        layer.show_plane(plane);
+    }
+}
+/// Before the frame's transaction: the work of planes moving with it (and
+/// the frame's own, on the same queue) committed and scheduled, so their
+/// presents in the transaction wait for nothing.
+#[cfg(target_os = "macos")]
+pub(crate) fn schedule_planes(
+    views: &Views,
+    queue: Option<&objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandQueue>>,
+) {
+    if !views.moved.is_empty()
+        && let Some(queue) = queue
+    {
+        crate::layer_present::Layer::schedule_plane(queue);
     }
 }
 
+/// `rect` as a plane's box: the host's points from the top left.
+#[cfg(target_os = "macos")]
+fn planed_points(rect: zgx::scene::Rect) -> (f64, f64, f64, f64) {
+    (
+        f64::from(rect.x),
+        f64::from(rect.y),
+        f64::from(rect.width),
+        f64::from(rect.height),
+    )
+}
+
 /// Whether anything paints over `node` within `rect`: an item after it in
-/// paint order whose box meets `rect`.
+/// paint order whose box meets `rect`. Walks only the subtrees that paint
+/// within `rect` (as damage is walked), so its cost follows what lies near
+/// the view, not the window's size; and only on frames that draw the view's
+/// item, never on a frame of the view alone.
 #[cfg(target_os = "macos")]
 fn painted_over(
     scene: &zgx::scene::Scene,
@@ -598,7 +698,7 @@ fn painted_over(
     rect: zgx::scene::Rect,
 ) -> bool {
     let mut after = false;
-    for item in scene.paint_items() {
+    for item in scene.layer_items_within(None, Some(&[rect])) {
         if after {
             if item
                 .bounds

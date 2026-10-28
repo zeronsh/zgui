@@ -22,6 +22,8 @@ pub struct Cubes {
 struct Gpu {
     format: wgpu::TextureFormat,
     pipeline: wgpu::RenderPipeline,
+    /// The frame count's blocks (`MARKER`), over the cubes.
+    marker: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
     uniforms: wgpu::Buffer,
     bind: wgpu::BindGroup,
@@ -82,7 +84,19 @@ impl Viewport for Cubes {
             .saturating_duration_since(self.start)
             .as_secs_f32();
         let aspect = size.0 as f32 / size.1.max(1) as f32;
-        let uniforms = [time, aspect, 0., 0.];
+        // The frame count, for scripts/viewport_probe.swift to read back in
+        // its captures (`MARKER`), and the target's size and scale.
+        let count = self.drawn.get() as f32;
+        let uniforms = [
+            time,
+            aspect,
+            count,
+            frame.scale,
+            size.0 as f32,
+            size.1 as f32,
+            0.,
+            0.,
+        ];
         frame.queue.write_buffer(&gpu.uniforms, 0, bytes(&uniforms));
         let (_, colour, depth) = gpu.targets.as_ref().unwrap();
         let mut pass = frame
@@ -117,6 +131,8 @@ impl Viewport for Cubes {
         pass.set_bind_group(0, &gpu.bind, &[]);
         pass.set_vertex_buffer(0, gpu.vertices.slice(..));
         pass.draw(0..36, 0..CUBES);
+        pass.set_pipeline(&gpu.marker);
+        pass.draw(0..48, 0..1);
     }
     fn device_changed(&mut self) {
         self.gpu = None;
@@ -137,7 +153,7 @@ impl Gpu {
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cubes uniforms"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -145,7 +161,7 @@ impl Gpu {
             label: Some("cubes"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -162,15 +178,44 @@ impl Gpu {
                 resource: uniforms.as_entire_binding(),
             }],
         });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("cubes"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let marker = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("cubes marker"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("marker_vertex"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("marker_fragment"),
+                compilation_options: Default::default(),
+                targets: &[Some(format.into())],
+            }),
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: SAMPLES,
+                ..Default::default()
+            },
+            multiview_mask: None,
+            cache: None,
+        });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("cubes"),
-            layout: Some(
-                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("cubes"),
-                    bind_group_layouts: &[Some(&layout)],
-                    immediate_size: 0,
-                }),
-            ),
+            layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vertex"),
@@ -208,6 +253,7 @@ impl Gpu {
         Self {
             format,
             pipeline,
+            marker,
             vertices,
             uniforms,
             bind,
@@ -219,7 +265,7 @@ impl Gpu {
 /// Each instance a cube of the grid, turning about its own axis by time;
 /// the camera looks down the field from above its near edge.
 const SHADER: &str = r#"
-struct U { time: f32, aspect: f32 }
+struct U { time: f32, aspect: f32, count: f32, scale: f32, width: f32, height: f32 }
 @group(0) @binding(0) var<uniform> u: U;
 struct Out { @builtin(position) p: vec4<f32>, @location(0) n: vec3<f32>, @location(1) c: vec3<f32> }
 fn turn(a: f32, b: f32) -> mat3x3<f32> {
@@ -246,6 +292,21 @@ fn turn(a: f32, b: f32) -> mat3x3<f32> {
     let clip = vec4(eye.x * f / u.aspect, eye.y * f, (far / (near - far)) * eye.z + near * far / (near - far), -eye.z);
     let hue = vec3(0.35 + 0.5 * fract(f32(i) * 0.618), 0.55, 0.9 - 0.4 * fract(f32(i) * 0.37));
     return Out(clip, r * n, hue);
+}
+// The frame count's low 8 bits as 8 blocks, 12 points square and 12 apart,
+// along the bottom left 2 points in: white a 1, black a 0, bit 0 leftmost.
+struct Mark { @builtin(position) p: vec4<f32>, @location(0) @interpolate(flat) on: f32 }
+@vertex fn marker_vertex(@builtin(vertex_index) v: u32) -> Mark {
+    let block = v / 6u;
+    let corner = array(vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0))[v % 6u];
+    let points = vec2(2.0 + f32(block) * 12.0, 2.0) + corner * 10.0;
+    let px = vec2(points.x * u.scale, u.height - points.y * u.scale);
+    let ndc = vec2(px.x / u.width * 2.0 - 1.0, 1.0 - px.y / u.height * 2.0);
+    let bit = (u32(u.count) >> block) & 1u;
+    return Mark(vec4(ndc, 0.0, 1.0), f32(bit));
+}
+@fragment fn marker_fragment(in: Mark) -> @location(0) vec4<f32> {
+    return vec4(vec3(in.on), 1.0);
 }
 @fragment fn fragment(in: Out) -> @location(0) vec4<f32> {
     let light = normalize(vec3(-0.4, 0.8, 0.5));

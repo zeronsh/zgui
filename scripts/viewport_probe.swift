@@ -46,6 +46,24 @@ func magenta(_ image: CGImage) -> Int {
     return found
 }
 
+/// The frame count the viewport scene's painter draws (support/cubes.rs):
+/// 8 blocks along the window's bottom left, white a 1, from bit 0.
+func count(_ image: CGImage) -> Int? {
+    guard let data = image.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { return nil }
+    let perRow = image.bytesPerRow, perPixel = image.bitsPerPixel / 8
+    let bgra = image.bitmapInfo.contains(.byteOrder32Little)
+    var value = 0
+    for bit in 0..<8 {
+        let x = 2 + bit * 12 + 5, y = image.height - 7
+        guard x < image.width, y >= 0 else { return nil }
+        let p = bytes + y * perRow + x * perPixel
+        let (r, g, b) = bgra ? (p[2], p[1], p[0]) : (p[0], p[1], p[2])
+        let level = (Int(r) + Int(g) + Int(b)) / 3
+        if level > 200 { value |= 1 << bit } else if level > 55 { return nil }
+    }
+    return value
+}
+
 Task {
     try await Task.sleep(nanoseconds: UInt64(warmup * 1e9))
     let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -59,7 +77,9 @@ Task {
     config.height = Int(window.frame.height)
     config.showsCursor = false
     config.colorSpaceName = CGColorSpace.sRGB
-    var captures = 0, uncovered = 0, most = 0, written = false
+    var captures = 0, uncovered = 0, most = 0, written = false, trace = "", wroteUncovered = false
+    var last: Int? = nil, backwards = 0, unread = 0, steps = ""
+    var phase = "" 
     let end = Date().addingTimeInterval(seconds)
     while Date() < end {
         let started = Date()
@@ -72,11 +92,29 @@ Task {
             let shown = magenta(image)
             most = max(most, shown)
             if shown > 0 { uncovered += 1 }
+            trace += shown > 0 ? "x" : "."
+            // Frames never show out of order: each capture's count is the
+            // last one's or later (mod 256, a few frames a capture).
+            if let n = count(image) {
+                if let l = last, (n - l + 256) % 256 > 128 {
+                    backwards += 1
+                    steps += "\(l)>\(n)@\(captures) "
+                }
+                last = n
+            } else {
+                unread += 1
+            }
+            // The first capture showing magenta, beside the PNG.
+            if shown > 0 && !wroteUncovered,
+               let out = CGImageDestinationCreateWithURL(png.deletingPathExtension().appendingPathExtension("uncovered.png") as CFURL, UTType.png.identifier as CFString, 1, nil) {
+                CGImageDestinationAddImage(out, image, nil)
+                wroteUncovered = CGImageDestinationFinalize(out)
+            }
         }
         let wait = 1 / rate - Date().timeIntervalSince(started)
         if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1e9)) }
     }
-    print(String(format: "{\"captures\":%d,\"uncovered_captures\":%d,\"most_magenta_samples\":%d}", captures, uncovered, most))
+    print(String(format: "{\"captures\":%d,\"uncovered_captures\":%d,\"most_magenta_samples\":%d,\"backwards\":%d,\"unread\":%d,\"steps\":\"%@\",\"trace\":\"%@\"}", captures, uncovered, most, backwards, unread, steps, trace))
     exit(0)
 }
 RunLoop.main.run()

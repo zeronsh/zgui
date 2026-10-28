@@ -6705,7 +6705,10 @@ impl GpuRenderer {
                             stats.image_uploads += 1;
                             continue;
                         }
-                        self.upload_image(image)?;
+                        // (A view taking its layer drew itself already.)
+                        if !self.images.contains_key(&image.id()) {
+                            self.upload_image(image)?;
+                        }
                         stats.image_uploads += 1;
                     }
                     let transform = image.paint_transform(bounds);
@@ -8022,14 +8025,21 @@ impl GpuRenderer {
                 from = end;
             }
             let _span = zgx::profile::span(zgx::profile::Phase::Submit);
-            // Into a drawable: presented by this command buffer, once done.
+            // Into a drawable: presented by this command buffer, once done;
+            // not when a GPU view's plane moves with this frame, both then
+            // presenting in its transaction (`present_layer`).
+            let planes_moved = self
+                .views
+                .as_ref()
+                .is_some_and(|views| views.planes_moved());
             let drawable = self
                 .layer_present
                 .as_mut()
                 .filter(|present| {
-                    present
-                        .current
-                        .is_some_and(|index| present.buffers[index].0.drawable)
+                    !planes_moved
+                        && present
+                            .current
+                            .is_some_and(|index| present.buffers[index].0.drawable)
                 })
                 .and_then(|present| present.layer.as_mut())
                 .and_then(|layer| layer.take_drawable());
@@ -9793,7 +9803,7 @@ impl GpuRenderer {
             // show in a transaction of their own).
             self.layer_present = Some(present);
             if self.views.is_some() {
-                layer_present::transaction(|| self.apply_planes());
+                self.apply_planes();
             }
             return Ok(PresentationStatus::Presented);
         };
@@ -9860,6 +9870,12 @@ impl GpuRenderer {
         });
         let layer = present.layer.as_mut().expect("attached above");
         let buffer = &present.buffers[index].0;
+        // A GPU view's plane moving with this frame: the frame's drawable
+        // presents in the transaction too, so the two show together.
+        let planes_moved = self
+            .views
+            .as_ref()
+            .is_some_and(|views| views.planes_moved());
         let show = |layer: &mut layer_present::Layer| {
             if buffer.drawable {
                 // SAFETY: The raw queue is only retained; the guard is dropped at once.
@@ -9867,7 +9883,7 @@ impl GpuRenderer {
                     use objc2::Message;
                     hal.as_raw().retain()
                 });
-                layer.present_drawable(queue.as_deref());
+                layer.present_drawable(queue.as_deref(), planes_moved);
             } else if plain {
                 layer.show_plain(buffer, opaque);
             } else {
@@ -9883,6 +9899,9 @@ impl GpuRenderer {
                     use objc2::Message;
                     hal.as_raw().retain()
                 });
+                // Their work (and a drawable frame's) committed and scheduled
+                // first: the transaction itself waits for nothing.
+                viewport::schedule_planes(views, queue.as_deref());
                 layer_present::transaction(|| {
                     show(layer);
                     viewport::apply_planes(views, layer, queue.as_deref());
