@@ -252,8 +252,13 @@ impl DamageGrid {
         let (mut open, mut next) = (Vec::<(usize, usize, usize)>::new(), Vec::new());
         for row in 0..=self.rows {
             let columns = if row < self.rows { self.columns } else { 0 };
-            // Runs are found left to right and never overlap, so both lists
-            // are in order: each is looked up in the other in one pass.
+            let mut close = |&(left, right, top): &(usize, usize, usize)| {
+                let cell = |index: usize| index as f32 * DAMAGE_CELL;
+                let rect = Rect::new(cell(left), cell(top), cell(right - left), cell(row - top));
+                done.extend(rect.intersection(viewport));
+            };
+            // Both lists are ordered. Close each old run as soon as no
+            // following run can extend it, keeping the old emission order.
             let (mut column, mut at) = (0, 0);
             while column < columns {
                 let start = self.seek(row, column, columns, true);
@@ -262,28 +267,20 @@ impl DamageGrid {
                 }
                 column = self.seek(row, start, columns, false);
                 while at < open.len() && open[at].0 < start {
+                    close(&open[at]);
                     at += 1;
                 }
                 let top = match open.get(at) {
-                    Some(&(left, right, top)) if (left, right) == (start, column) => top,
+                    Some(&(left, right, top)) if (left, right) == (start, column) => {
+                        at += 1;
+                        top
+                    }
                     _ => row,
                 };
                 next.push((start, column, top));
             }
-            let mut at = 0;
-            for &(left, right, top) in &open {
-                while at < next.len() && next[at].0 < left {
-                    at += 1;
-                }
-                if next
-                    .get(at)
-                    .is_none_or(|run| (run.0, run.1) != (left, right))
-                {
-                    let cell = |index: usize| index as f32 * DAMAGE_CELL;
-                    let rect =
-                        Rect::new(cell(left), cell(top), cell(right - left), cell(row - top));
-                    done.extend(rect.intersection(viewport));
-                }
+            for run in &open[at..] {
+                close(run);
             }
             std::mem::swap(&mut open, &mut next);
             next.clear();
