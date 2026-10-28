@@ -455,6 +455,26 @@ ui.contribute { target = "#save", before = ui.button { label = "Preview" } }
 
 A plugin targeting an `id` that is not a declared `hook` reaches the app's internals: the app's next version may move or drop it ([design](../design/plugin-hooks.md)).
 
+
+### Module overrides
+
+`ui.override { module = "@app/<path>", with = "<plugin path>" }`, from a plugin, replaces one of the app's modules: wherever the app requires `@app/<path>`, it gets the plugin's module instead.
+
+- `module` is one of the app's `@app/…` modules (`@app` is the app's directory; a relative require is never replaced). `with` is one of the plugin's own files, a directory as its `init.luau`.
+- It needs `Capability::Override(module)` or `Capability::Override("*")`, **a trust grant**: the replacement runs in the app's VM as the app's own code, with all its access. Of several plugins, the last one's wins.
+- The replacement may `require("@app-original/<path>")` for the module it replaces (to wrap it); nothing else may. Its own relative requires reach its plugin's directory.
+- A plugin requires none of the app's modules; a `.luaurc` defining an `app` or `app-original` alias is an error.
+
+```lua
+-- file: plugins/badges/init.luau (granted Capability::Override("@app/components/card"))
+ui.override { module = "@app/components/card", with = "./card" }
+
+-- file: plugins/badges/card.luau
+local card = require("@app-original/components/card")
+return function(props)
+    return ui.row { card(props), ui.text { "New" } }
+end
+```
 ## Gotchas
 
 - State values are read-only snapshots: `tasks:get()[1].done = true` fails with "attempt to modify a readonly table" and a hint naming `set_key`, `patch`, `update`, `insert` and `set`.

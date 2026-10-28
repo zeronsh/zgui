@@ -789,9 +789,15 @@ pub enum Capability {
     /// action or shared state a plugin reaches only if granted it.
     Named(String),
     /// Replacing an element of the app's (`ui.contribute { target,
-    /// replace }`): the target as the plugin writes it, or `"*"` for any.
-    /// Adding before or after one is open, as a slot is, unless the host
+    /// replace }`), or one of its `@app/…` modules (`ui.override`): the
+    /// target or module as the plugin writes it, or `"*"` for any. Adding
+    /// before or after an element is open, as a slot is, unless the host
     /// asks a capability for that target (`expose_hook`).
+    ///
+    /// **A trust grant, not a permission over the interface:** a module
+    /// replacement runs in the app's VM as the app's own code, with all its
+    /// access. `Override("@app/…")` trusts the plugin with that module;
+    /// `Override("*")` trusts it with the app.
     Override(String),
 }
 
@@ -976,6 +982,10 @@ struct Inner {
     stamps: RefCell<Vec<(PathBuf, Option<SystemTime>)>>,
     /// Files scripts `require`d in the last load: watched with the scripts.
     required: RefCell<Vec<PathBuf>>,
+    /// The app's modules plugins replace (`ui.override`), by module name
+    /// (`components/card` for `@app/components/card`): gathered as the
+    /// plugins load, before the app, and read by the app's `require`.
+    overrides: RefCell<HashMap<String, node::ModuleOverride>>,
     /// Terminal sessions (`ui.term`): they outlive reloads.
     terms: Rc<term::Terms>,
     /// Web pages by id (`ui.web(id)`): they outlive reloads too.
@@ -1121,6 +1131,7 @@ impl ScriptHost {
             error: runtime.signal(None),
             stamps: RefCell::default(),
             required: RefCell::default(),
+            overrides: RefCell::default(),
             terms: Rc::default(),
             webs: Rc::default(),
             commands: Rc::new(command::Commands::new(runtime)),
@@ -2122,6 +2133,7 @@ impl ScriptHost {
 
     fn load(&self) -> Result<Loaded, String> {
         self.0.required.borrow_mut().clear();
+        self.0.overrides.borrow_mut().clear();
         let mut vms = Vec::new();
         let mut slots = node::Slots::new();
         let mut hooks = lower::Hooks::default();
@@ -2205,7 +2217,13 @@ impl ScriptHost {
     /// directory, a directory as its `init.luau`; a bare `"card"` from the
     /// script's directory. Modules stay inside the script's directory, run
     /// once and return what they return; a change to one reloads the scripts.
-    fn install_require(&self, lua: &Lua, dir: Option<PathBuf>, files: Files) -> mlua::Result<()> {
+    fn install_require(
+        &self,
+        lua: &Lua,
+        dir: Option<PathBuf>,
+        files: Files,
+        plugin: bool,
+    ) -> mlua::Result<()> {
         let host = Rc::downgrade(&self.0);
         let modules: Rc<RefCell<HashMap<PathBuf, Option<mlua::Value>>>> = Rc::default();
         let root = dir.map(|d| d.canonicalize().unwrap_or(d));
@@ -2213,6 +2231,18 @@ impl ScriptHost {
             .as_deref()
             .map(|root| read_aliases(root, files))
             .unwrap_or_default();
+        // `@app` and `@app-original` are zgx's own aliases.
+        for reserved in ["app", "app-original"] {
+            if aliases.contains_key(reserved)
+                && let Some(root) = &root
+            {
+                return Err(mlua::Error::runtime(format!(
+                    "{}: `{reserved}` is zgx's own alias (`@app/…` names the app's modules, \
+                     which plugins may override): rename this one",
+                    root.join(".luaurc").display()
+                )));
+            }
+        }
         let require = lua.create_function(move |lua, name: String| {
             let Some(root) = &root else {
                 return Err(mlua::Error::runtime(
@@ -2230,7 +2260,44 @@ impl ScriptHost {
                 .and_then(std::path::Path::parent)
                 .unwrap_or(root)
                 .to_path_buf();
-            let joined = if let Some(rest) = name.strip_prefix("@self") {
+            // `@app/…`: the app's module, or the module a plugin replaced it
+            // with (`ui.override`); `@app-original/…`: the app's own, for
+            // that replacement alone. Plugins reach neither.
+            let mut overridden = None;
+            let joined = if let Some(rest) = name
+                .strip_prefix("@app/")
+                .or_else(|| name.strip_prefix("@app-original/"))
+            {
+                if plugin {
+                    return Err(fail(
+                        "`@app/…` names the app's modules, which a plugin replaces with \
+                         ui.override, not requires"
+                            .into(),
+                    ));
+                }
+                let module = node::module_name(rest);
+                let replacement = host
+                    .upgrade()
+                    .and_then(|host| host.overrides.borrow().get(&module).cloned());
+                if name.starts_with("@app-original/") {
+                    // Only the module that replaced this one reaches it.
+                    let from_replacement = replacement
+                        .as_ref()
+                        .is_some_and(|r| caller.as_deref() == Some(r.with.as_path()));
+                    if !from_replacement {
+                        return Err(fail(
+                            "`@app-original/…` is for the module that overrides it alone".into(),
+                        ));
+                    }
+                    root.join(rest)
+                } else if let Some(replacement) = replacement {
+                    let with = replacement.with.clone();
+                    overridden = Some(replacement);
+                    with
+                } else {
+                    root.join(rest)
+                }
+            } else if let Some(rest) = name.strip_prefix("@self") {
                 here.join(rest.trim_start_matches('/'))
             } else if let Some(rest) = name.strip_prefix('@') {
                 let (alias, rest) = rest.split_once('/').unwrap_or((rest, ""));
@@ -2261,11 +2328,26 @@ impl ScriptHost {
             } else if path.extension().is_none() {
                 path.set_extension("luau");
             }
-            if !within(root, &path) {
+            // A replacement and what it requires come from its plugin's
+            // directory; the app's from its own.
+            let replacements: Vec<node::ModuleOverride> = host
+                .upgrade()
+                .map(|host| host.overrides.borrow().values().cloned().collect())
+                .unwrap_or_default();
+            let in_plugin = replacements
+                .iter()
+                .find(|r| overridden.as_ref() == Some(*r) || within(&r.dir, &path));
+            if !within(root, &path) && in_plugin.is_none() {
                 return Err(fail(
                     "modules come from the script's directory or below".into(),
                 ));
             }
+            // A plugin's files are on the disk, whatever the app's are.
+            let files = if in_plugin.is_some() && !within(root, &path) {
+                Files::Disk
+            } else {
+                files
+            };
             match modules.borrow().get(&path) {
                 Some(Some(value)) => return Ok(value.clone()),
                 Some(None) => return Err(fail("a require cycle".into())),
@@ -2379,6 +2461,7 @@ impl ScriptHost {
             shared: self.0.shared.clone(),
             contributions: RefCell::default(),
             hooks: RefCell::default(),
+            overrides: RefCell::default(),
             engine: self.0.engine.clone(),
             runtime: self.0.runtime.clone(),
             scope: RefCell::default(),
@@ -2424,7 +2507,7 @@ impl ScriptHost {
         opens::install(&lua, &ui, self.0.opens.clone(), plugin).map_err(fail)?;
         ui.set_readonly(true);
         anime::api::install(&lua).map_err(fail)?;
-        self.install_require(&lua, script.dir(), files)
+        self.install_require(&lua, script.dir(), files, plugin)
             .map_err(fail)?;
         lua.sandbox(true).map_err(fail)?;
         // Building runs untracked: reading state while describing the tree
@@ -2454,10 +2537,23 @@ impl ScriptHost {
                 ));
             }
         };
-        let (contributions, hooks) = lua
+        let (contributions, hooks, overrides) = lua
             .app_data_ref::<node::Env>()
-            .map(|env| (env.contributions.take(), env.hooks.take()))
+            .map(|env| {
+                (
+                    env.contributions.take(),
+                    env.hooks.take(),
+                    env.overrides.take(),
+                )
+            })
             .unwrap_or_default();
+        // A plugin's module overrides, for the app's `require` (the last
+        // plugin's wins, as its `replace` does).
+        let mut gathered = self.0.overrides.borrow_mut();
+        for (module, with) in overrides {
+            gathered.insert(module, with);
+        }
+        drop(gathered);
         Ok((vm, root, contributions, hooks))
     }
 }

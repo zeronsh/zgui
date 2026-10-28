@@ -15253,6 +15253,14 @@ export type SlotProps = {
 -- A plugin's node at an element of the app's, by `target` (`"#save"`,
 -- `"hook:toolbar.save"`, `'role:button "Save"'`): before it, after it, or in
 -- its place (replacing takes `Capability::Override`).
+-- `ui.override`'s table.
+export type ModuleOverride = {
+	-- The app's module: "@app/components/card".
+	module: string,
+	-- The plugin's replacement, relative to the plugin: "./card".
+	with: string,
+}
+
 export type HookContribution = {
 	target: string,
 	before: Node?,
@@ -16092,6 +16100,11 @@ declare ui: {
 	-- an instance per slot: a panel per pane).
 	slot: (name: string, props: SlotProps?) -> Node,
 	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
+	-- From a plugin: one of the app's `@app/…` modules replaced by the
+	-- plugin's (`with`, one of its own files), which runs as the app's own
+	-- code. Needs `Capability::Override(module)` or `("*")`: a trust grant.
+	-- The replacement reaches the original as `@app-original/…`.
+	override: (ModuleOverride) -> (),
 	-- The script's (or module's) state for `key`, kept across reloads.
 	state: <T>(key: string, initial: T) -> State<T>,
 	-- State shared with Rust and every script.
