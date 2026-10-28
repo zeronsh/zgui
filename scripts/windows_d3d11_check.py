@@ -19,11 +19,16 @@ repository root, the machine left alone (about 1 h 30); everything lands in
 5. The Windows suite, zgx against zgx-d3d11, every scene and startup
    (`suite/`; `--threaded` adds the driver's threading on).
 
+It fails closed: a parity difference, a suite that exits with an error or a
+scene without its summary is listed at the top of `summary.md`, and the run
+exits 1.
+
 Needs Rust (the repository's toolchain) and Python 3.10's standard library
 only. The windows it opens take the front; nothing else should run."""
 import argparse
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -59,11 +64,17 @@ def machine():
              "Select-Object Name, DriverVersion, AdapterCompatibility | ConvertTo-Json")
     found = subprocess.run(["powershell", "-NoProfile", "-Command", query], capture_output=True, text=True)
     gpus = json.loads(found.stdout or "[]")
-    return {"gpus": gpus if isinstance(gpus, list) else [gpus], **suite.environment()}
+    # Which compiler Direct3D 12's shaders get (zgx pins FXC; this variable
+    # overrides it), and whether DXC would be found on PATH.
+    shaders = {"WGPU_DX12_COMPILER": os.environ.get("WGPU_DX12_COMPILER"),
+               "dxcompiler_on_path": shutil.which("dxcompiler.dll")}
+    return {"gpus": gpus if isinstance(gpus, list) else [gpus], "shaders": shaders,
+            **suite.environment()}
 
 
 def parity(out):
-    """`render_parity` both ways, and its comparison (True: identical)."""
+    """`render_parity` both ways, and its comparison per scale: (identical,
+    the comparison's first lines)."""
     exe = RELEASE / "render_parity.exe"
     results = {}
     for scale in ["1", "1.5", "2"]:
@@ -75,8 +86,9 @@ def parity(out):
         compared = subprocess.run([str(exe), "compare", str(sides["d3d12"]), str(sides["d3d11"])],
                                   env=env, capture_output=True, text=True)
         (out / f"compare-{scale}.txt").write_text(compared.stdout, newline="\n")
-        results[scale] = compared.returncode == 0
-        print(f"parity at {scale}x: {'byte-identical' if results[scale] else 'DIFFERS'}", flush=True)
+        results[scale] = (compared.returncode == 0,
+                          (compared.stdout + compared.stderr).strip().splitlines()[:3])
+        print(f"parity at {scale}x: {'byte-identical' if results[scale][0] else 'DIFFERS'}", flush=True)
     return results
 
 
@@ -103,12 +115,18 @@ def floor(rounds):
     return {key: {"median_ms_per_s": statistics.median(v), "runs": v} for key, v in found.items()}
 
 
-def summary(out, frameworks, floors, identical, info):
+def summary(out, frameworks, floors, identical, info, failures):
     lines = [f"# Direct3D 11 against Direct3D 12 on {', '.join(g.get('Name', '?') for g in info['gpus'])}", ""]
+    if failures:
+        lines += ["**FAILED:**", ""] + [f"- {failure}" for failure in failures] + [""]
+    else:
+        lines += ["Passed: pixels identical at every scale, and every scene measured.", ""]
     lines += [f"- {g.get('Name')}: driver {g.get('DriverVersion')}" for g in info["gpus"]]
-    lines += [f"- {info['chip']}, Windows {info['windows']}, {info['display_count']} display(s)", ""]
+    lines += [f"- {info['chip']}, Windows {info['windows']}, {info['display_count']} display(s)"]
+    lines += [f"- Direct3D 12 shaders: WGPU_DX12_COMPILER={info['shaders']['WGPU_DX12_COMPILER'] or 'unset'}, "
+              f"dxcompiler.dll on PATH: {info['shaders']['dxcompiler_on_path'] or 'no'}", ""]
     lines += ["Pixels (`render_parity`, the four scenes): "
-              + ", ".join(f"{s}x {'identical' if ok else 'DIFFER'}" for s, ok in identical.items()), ""]
+              + ", ".join(f"{s}x {'identical' if ok else 'DIFFER'}" for s, (ok, _) in identical.items()), ""]
     lines += ["## The APIs' own GPU floor (`d3d_frame_floor`, nothing drawn)", "",
               "| Swap effect | Direct3D 12 (ms/s) | Direct3D 11 (ms/s) |", "| --- | --- | --- |"]
     for effect in ["sequential", "discard"]:
@@ -161,12 +179,21 @@ def main():
         floors = floor(args.rounds)
     (out / "floor.json").write_text(json.dumps(floors, indent=1) + "\n", newline="\n")
     frameworks = ["zgx", "zgx-d3d11"] + (["zgx-d3d11-threaded"] if args.threaded else [])
-    subprocess.run([sys.executable, str(ROOT / "scripts" / "run_windows_suite.py"), "--zgx", str(DIST),
-                    "--frameworks", ",".join(frameworks), "--framepace", str(RELEASE / "framepace.exe"),
-                    "--preflight-threshold", str(args.preflight_threshold), "--out", str(out / "suite")],
-                   cwd=ROOT, check=False)
-    summary(out, frameworks, floors, identical, info)
+    ran = subprocess.run([sys.executable, str(ROOT / "scripts" / "run_windows_suite.py"), "--zgx", str(DIST),
+                          "--frameworks", ",".join(frameworks), "--framepace", str(RELEASE / "framepace.exe"),
+                          "--preflight-threshold", str(args.preflight_threshold), "--out", str(out / "suite")],
+                         cwd=ROOT, check=False)
+    failures = [f"pixels differ at {scale}x: {' / '.join(lines) or 'no detail'}"
+                for scale, (ok, lines) in identical.items() if not ok]
+    if ran.returncode != 0:
+        failures.append(f"the suite exited with {ran.returncode} (`suite/`)")
+    failures += [f"no summary for {scene} (`suite/{scene}/summary.json`)"
+                 for scene in ["heavy", "lab", "animate", "vlist"]
+                 if not (out / "suite" / scene / "summary.json").exists()]
+    summary(out, frameworks, floors, identical, info, failures)
     print((out / "summary.md").read_text(encoding="utf-8"))
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
