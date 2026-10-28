@@ -794,3 +794,63 @@ fn virtual_keyboard_navigation_exports_offscreen_row_position_with_bounded_work(
     );
     consumer.update_and_process_changes(update, &mut Changes::default());
 }
+/// The name assistive technology is given for `ui`'s first node.
+fn projected_name(ui: &Ui) -> String {
+    let update = AccessibilityTree::new().update(
+        &ui.scene.borrow(),
+        &ui.semantics.borrow(),
+        None,
+        "test",
+        1.,
+    );
+    let tree = Tree::new(update, true);
+    tree.state()
+        .root()
+        .children()
+        .next()
+        .unwrap()
+        .label()
+        .unwrap()
+}
+#[test]
+fn overridden_button_role_tracks_child_text() {
+    use zgx::compose::prelude::*;
+    let mut ui = Ui::new(100., 100.);
+    ui.set_assistive_technology(true);
+    let label = ui.signal(String::from("before"));
+    let read = label.clone();
+    ui.mount(
+        button()
+            .role(Role::RadioButton)
+            .child(text_signal(move || read.get())),
+    );
+    ui.prepare_frame();
+    label.set(String::from("after"));
+    ui.prepare_frame();
+    let actual = projected_name(&ui);
+    let mut fresh = Ui::new(100., 100.);
+    fresh.set_assistive_technology(true);
+    fresh.mount(button().role(Role::RadioButton).child(text("after")));
+    fresh.prepare_frame();
+    assert_eq!(actual, projected_name(&fresh));
+    assert_eq!(actual, "after");
+}
+#[test]
+fn overridden_button_role_names_itself_once_a_reader_listens() {
+    use zgx::compose::prelude::*;
+    // Labels wait for a reader (lazy): the radio's too.
+    let mut ui = Ui::new(100., 100.);
+    let label = ui.signal(String::from("before"));
+    let read = label.clone();
+    ui.mount(
+        button()
+            .role(Role::RadioButton)
+            .child(text_signal(move || read.get())),
+    );
+    ui.prepare_frame();
+    label.set(String::from("after"));
+    ui.prepare_frame();
+    ui.set_assistive_technology(true);
+    ui.prepare_frame();
+    assert_eq!(projected_name(&ui), "after");
+}

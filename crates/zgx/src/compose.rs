@@ -5729,14 +5729,24 @@ pub(crate) fn label_from_text(ui: &Ui, id: NodeId) {
     ui.semantics.borrow_mut().set_label(id, &text);
     update_button_labels(ui, id);
 }
-/// Whether `id`'s content names it, as ARIA names a button, heading, tab or
-/// option from its text.
+/// Whether `id`'s content names it, as ARIA names a button, heading, tab,
+/// option, radio, check box, switch or link from its text (a button given
+/// one of those roles is still named by what it holds). Menu items are
+/// named by their menus, past their arrows and shortcuts.
 fn named_by_content(semantics: &crate::semantics::Semantics, id: NodeId) -> bool {
     semantics.get(id).is_some_and(|n| {
         !n.named
             && matches!(
                 n.role,
-                Role::Button | Role::Heading | Role::ListItem | Role::ListBoxOption | Role::Tab
+                Role::Button
+                    | Role::Heading
+                    | Role::ListItem
+                    | Role::ListBoxOption
+                    | Role::Tab
+                    | Role::RadioButton
+                    | Role::CheckBox
+                    | Role::Switch
+                    | Role::Link
             )
     })
 }
