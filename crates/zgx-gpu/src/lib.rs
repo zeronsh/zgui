@@ -3433,6 +3433,8 @@ pub struct GpuRenderer {
     fill_shaders: FxHashMap<u64, Arc<zgx::decoration::FillShader>>,
     /// Layer shaders' pipelines by shader id (`None`: it failed to compile).
     filter_pipelines: FxHashMap<u64, Option<wgpu::RenderPipeline>>,
+    /// Their shaders, to tell when no scene holds one any more (`trim`).
+    filter_shaders: FxHashMap<u64, Arc<zgx::decoration::FillShader>>,
     /// Blended layers' pipelines (blend.wgsl): `BLEND_PLAIN`'s, and each
     /// layer shader's by its id (`None`: it failed to compile).
     blend_pipelines: FxHashMap<u64, Option<wgpu::RenderPipeline>>,
@@ -3922,6 +3924,7 @@ impl GpuRenderer {
             backdrops: FxHashMap::default(),
             image_effect_pipeline: Default::default(),
             fill_shaders: FxHashMap::default(),
+            filter_shaders: FxHashMap::default(),
             plane: None,
         })
     }
@@ -4929,7 +4932,7 @@ impl GpuRenderer {
         self.fill_pipelines[&shader.id()].is_some()
     }
     /// Compile layer shader `shader`'s pipeline if new; whether it can draw.
-    fn prepare_filter(&mut self, shader: &zgx::decoration::FillShader) -> bool {
+    fn prepare_filter(&mut self, shader: &Arc<zgx::decoration::FillShader>) -> bool {
         if let Some(compiled) = self.filter_pipelines.get(&shader.id()) {
             return compiled.is_some();
         }
@@ -4948,6 +4951,7 @@ impl GpuRenderer {
                 "zgx_filter",
             )
         });
+        self.filter_shaders.insert(shader.id(), shader.clone());
         self.filter_pipelines.insert(shader.id(), pipeline);
         self.filter_pipelines[&shader.id()].is_some()
     }
@@ -5008,10 +5012,20 @@ impl GpuRenderer {
         self.blend_pipelines[&key].is_some()
     }
     /// The backdrop for the current target (`target`'s size): made once
-    /// per size, its bind group with it.
+    /// per size, its bind group with it. Making one for a new size drops
+    /// those no target has any more (the window's former sizes, a layer's),
+    /// so a window resized again and again keeps none of its old ones.
     fn backdrop(&mut self) -> &(wgpu::Texture, wgpu::BindGroup) {
         let size = (self.target.width(), self.target.height());
         if !self.backdrops.contains_key(&size) {
+            let window = (self.width, self.height);
+            let layers = &self.layers;
+            self.backdrops.retain(|&held, _| {
+                held == window
+                    || layers
+                        .values()
+                        .any(|layer| (layer.texture.width(), layer.texture.height()) == held)
+            });
             let texture = texture(&self.device, size.0, size.1, "blend backdrop");
             let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("blend backdrop"),
@@ -10437,6 +10451,9 @@ impl GpuRenderer {
         self.frame_peaks = (0, 0);
         // Effect slots draw again from their layers when next damaged.
         self.effects = None;
+        // Blended layers' backdrops: made again for the next blend.
+        self.backdrops = FxHashMap::default();
+        self.drop_unheld_shaders();
         self.images.remove(&effects::EFFECT_ATLAS);
         self.spare = None;
         self.layers.retain(|_, cache| !cache.parked);
@@ -10469,6 +10486,38 @@ impl GpuRenderer {
             self.narrow_drawables();
             self.release_drawables();
             self.idle = true;
+        }
+    }
+    /// Drop the fill and layer shaders no one holds but this renderer (a
+    /// removed node's, a reloaded script's: ids are never reused), with
+    /// their pipelines, unless the kept frame still draws them.
+    fn drop_unheld_shaders(&mut self) {
+        if self.fill_shaders.is_empty() && self.filter_shaders.is_empty() {
+            return;
+        }
+        let drawn: rustc_hash::FxHashSet<u64> = self
+            .kept
+            .iter()
+            .flat_map(|kept| &kept.draws)
+            .filter_map(|draw| match draw.shading {
+                Shading::Fill(id) | Shading::Filter(id) | Shading::FilterBlend(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        let held = |id: &u64, shader: &mut Arc<zgx::decoration::FillShader>| {
+            Arc::strong_count(shader) > 1 || drawn.contains(id)
+        };
+        self.fill_shaders.retain(held);
+        self.filter_shaders.retain(held);
+        let (fills, filters) = (&self.fill_shaders, &self.filter_shaders);
+        self.fill_pipelines.retain(|id, _| fills.contains_key(id));
+        self.filter_pipelines
+            .retain(|id, _| filters.contains_key(id));
+        self.blend_pipelines
+            .retain(|id, _| *id == BLEND_PLAIN || filters.contains_key(id));
+        #[cfg(target_os = "macos")]
+        if let Some(Some(frame)) = self.metal_frame.get() {
+            frame.retain_fills(|id| fills.contains_key(&id));
         }
     }
     /// Input arrived: if the window idled (`trim`) and has drawn nothing
@@ -13641,5 +13690,167 @@ mod kept_text_growth_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod blend_backdrop_tests {
+    use super::*;
+    use zgx::scene::{BlendMode, Layout, Style};
+
+    #[test]
+    fn a_resized_window_keeps_no_backdrop_for_its_former_sizes() {
+        let mut gpu = GpuRenderer::new(96, 80).unwrap();
+        let mut scene = Scene::new(96., 80.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(40, 90, 200, 255)),
+            Style {
+                width: Some(96.),
+                height: Some(80.),
+                ..Style::default()
+            },
+        );
+        let layer = scene.append(
+            scene.root(),
+            NodeKind::Rect(Color(230, 102, 26, 255)),
+            Style {
+                width: Some(40.),
+                height: Some(40.),
+                ..Style::default()
+            },
+        );
+        scene.set_blend(layer, BlendMode::Multiply);
+        for delta in 0..32u32 {
+            let (width, height) = (96 + delta, 80 + delta);
+            gpu.resize(width, height);
+            scene.resize(width as f32, height as f32);
+            let report = scene.flush();
+            gpu.render(&scene, &report.damage).unwrap();
+            let pixels = gpu.readback().unwrap();
+            assert!(
+                gpu.backdrops.len() <= 1 + gpu.layers.len(),
+                "{} backdrops held at {width}×{height}",
+                gpu.backdrops.len()
+            );
+            // Still blended as a renderer new at this size blends.
+            let mut fresh = GpuRenderer::new_with_context(width, height, &gpu.context()).unwrap();
+            fresh
+                .render(&scene, &[Rect::new(0., 0., width as f32, height as f32)])
+                .unwrap();
+            assert!(pixels == fresh.readback().unwrap(), "{width}×{height}");
+        }
+        gpu.resize(96, 80);
+        scene.resize(96., 80.);
+        scene.remove(layer);
+        let report = scene.flush();
+        gpu.render(&scene, &report.damage).unwrap();
+        gpu.readback().unwrap();
+        gpu.trim();
+        assert!(
+            gpu.backdrops.is_empty(),
+            "{} backdrops after trim",
+            gpu.backdrops.len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod shader_retention_tests {
+    use super::*;
+    use zgx::decoration::{Background, Decoration, FillShader};
+    use zgx::scene::{BlendMode, Layout, QuadStyle, Style};
+
+    fn sized(side: f32) -> Style {
+        Style {
+            width: Some(side),
+            height: Some(side),
+            ..Style::default()
+        }
+    }
+    fn frame(gpu: &mut GpuRenderer, scene: &mut Scene) {
+        let report = scene.flush();
+        gpu.render(scene, &report.damage).unwrap();
+        gpu.readback().unwrap();
+    }
+
+    #[test]
+    fn removed_shaders_go_at_trim_and_held_ones_stay() {
+        let mut gpu = GpuRenderer::new(64, 64).unwrap();
+        let mut scene = Scene::new(64., 64.);
+        scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+        let fill = |i: u32| {
+            FillShader::new(
+                format!(
+                    "fn fill(input: FillInput) -> vec4<f32> {{ return vec4<f32>(0.{i}, 0.3, 0.5, 1.0); }}"
+                ),
+                None,
+            )
+        };
+        let filled = |shader: &Arc<FillShader>| {
+            NodeKind::Quad(QuadStyle {
+                decoration: Some(Arc::new(Decoration {
+                    background: Some(Background::Shader(shader.clone())),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })
+        };
+        // One shader the scene keeps all along.
+        let held = fill(9);
+        scene.append(scene.root(), filled(&held), sized(10.));
+        let mut gone = Vec::new();
+        for i in 0..4 {
+            // A shader fill, and a layer shader blended over the backdrop.
+            let shader = fill(i);
+            gone.push(Arc::downgrade(&shader));
+            let node = scene.append(scene.root(), filled(&shader), sized(40.));
+            let layer = scene.append(
+                scene.root(),
+                NodeKind::Container(Layout::Overlay),
+                sized(30.),
+            );
+            scene.append(layer, NodeKind::Rect(Color(200, 120, 40, 255)), sized(30.));
+            let invert = FillShader::new(
+                "fn layer(input: LayerInput) -> vec4<f32> { return vec4(1.0 - input.color.rgb, input.color.a); }",
+                None,
+            );
+            gone.push(Arc::downgrade(&invert));
+            scene.set_layer_shader(layer, Some(invert));
+            scene.set_blend(layer, BlendMode::Multiply);
+            frame(&mut gpu, &mut scene);
+            scene.remove(node);
+            scene.remove(layer);
+            frame(&mut gpu, &mut scene);
+            gpu.trim();
+        }
+        // The scene lets go of removed nodes over the frames after (lazy
+        // death): one more, then the renderer lets go at its trim.
+        frame(&mut gpu, &mut scene);
+        gpu.trim();
+        let alive = gone
+            .iter()
+            .filter(|shader| shader.upgrade().is_some())
+            .count();
+        assert_eq!(alive, 0, "removed shaders kept alive");
+        assert_eq!(
+            gpu.fill_pipelines.len(),
+            1,
+            "the held fill's pipeline alone"
+        );
+        assert!(gpu.fill_shaders.contains_key(&held.id()));
+        assert!(gpu.filter_pipelines.is_empty() && gpu.filter_shaders.is_empty());
+        assert!(gpu.blend_pipelines.keys().all(|&id| id == BLEND_PLAIN));
+        // The held shader still draws after the trim, as a fresh renderer
+        // draws it.
+        frame(&mut gpu, &mut scene);
+        let mut fresh = GpuRenderer::new_with_context(64, 64, &gpu.context()).unwrap();
+        fresh
+            .render(&scene, &[Rect::new(0., 0., 64., 64.)])
+            .unwrap();
+        gpu.render_uncounted(&scene, &[Rect::new(0., 0., 64., 64.)])
+            .unwrap();
+        assert!(gpu.readback().unwrap() == fresh.readback().unwrap());
     }
 }

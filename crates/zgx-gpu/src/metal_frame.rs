@@ -236,6 +236,11 @@ impl MetalFrame {
         ready
     }
 
+    /// Keep only the fills `keep` names (`GpuRenderer::trim`).
+    pub(crate) fn retain_fills(&self, keep: impl Fn(u64) -> bool) {
+        self.fills.borrow_mut().retain(|id, _| keep(*id));
+    }
+
     /// Whether images can be drawn with effects here: their pipeline,
     /// compiled now from the same module as wgpu's
     /// (`crate::image_effect_source`) if new.
