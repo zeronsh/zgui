@@ -25,6 +25,7 @@ impl Drop for Owner {
             return;
         };
         unwind(&ui, self.overlay);
+        ui.remove_portal(self.overlay);
         ui.remove(self.overlay);
     }
 }
@@ -37,6 +38,7 @@ pub(crate) fn create(ui: &mut Ui, owner: NodeId, parent: NodeId) -> Portal {
             ..Default::default()
         },
     );
+    ui.add_portal(owner, overlay);
     ui.retain(
         owner,
         Owner {

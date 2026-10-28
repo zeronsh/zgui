@@ -157,3 +157,39 @@ fn modal_inherits_logical_ancestor_disability() {
 fn popover_inherits_logical_ancestor_disability() {
     logical_disabled_portal(true);
 }
+
+#[test]
+fn portals_name_their_owners_until_they_unmount() {
+    let mut ui = Ui::new(400., 300.);
+    let shown = ui.signal(true);
+    let read = shown.clone();
+    let (outer, inner) = (ui.signal(true), ui.signal(true));
+    let view = ui.mount(switch(
+        move || read.get(),
+        move |shown, _| match shown {
+            true => modal("Outer", outer.clone())
+                .id("outer")
+                .child(modal("Inner", inner.clone()).id("inner").child(text("in"))),
+            false => div(),
+        },
+    ));
+    ui.prepare_frame();
+    for _ in 0..2 {
+        let portals = ui.portals();
+        assert_eq!(portals.len(), 2);
+        let scene = ui.scene.borrow();
+        // Each overlay sits outside its owner: the outer under the root,
+        // the inner in the outer's overlay.
+        assert_eq!(scene.parent(portals[0].1), Some(ui.root()));
+        assert_eq!(scene.parent(portals[1].1), Some(portals[0].1));
+        assert!(!scene.is_within(portals[0].1, portals[0].0));
+        drop(scene);
+        shown.set(false);
+        ui.prepare_frame();
+        assert!(ui.portals().is_empty(), "gone with their owners");
+        shown.set(true);
+        ui.prepare_frame();
+    }
+    view.unmount();
+    assert!(ui.portals().is_empty());
+}

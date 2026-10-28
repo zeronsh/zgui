@@ -87,3 +87,50 @@ fn actions_and_the_tree_read_as_agents_see_them() {
     assert!(!h.tree().contains(r#"="Ada""#), "cleared");
     assert_eq!(h.error(), None);
 }
+
+#[test]
+fn targets_and_the_tree_reach_into_a_modal_and_a_popover_in_it() {
+    let mut h = Harness::inline(
+        r##"return ui.column { id = "scope",
+            ui.modal { id = "sheet", label = "Notes", open = ui.state("open", true),
+                ui.popover { label = "Actions", open = ui.state("actions", true),
+                    anchor = ui.button { "Actions" },
+                    ui.button { id = "save", "Save notes" } } } }"##,
+    );
+    h.frames(2);
+    let save = h.handle.find("save").unwrap();
+    assert_eq!(h.target(r#""Save notes""#).unwrap(), save);
+    assert_eq!(h.target(r#"role:button "Save notes""#).unwrap(), save);
+    assert_eq!(
+        h.target(r#"#scope >> #sheet >> role:button "Save notes""#)
+            .unwrap(),
+        save
+    );
+    // Once each, the popover's under the modal's, though the scene puts
+    // its overlay inside the modal's own.
+    let (lines, _) = zgx_script::driver::tree(&h.ui, &h.handle, None, &Default::default());
+    let all = zgx_script::driver::tree_text(&lines, 0);
+    let depth = |role: &str, text: &str| {
+        let found: Vec<_> = lines
+            .iter()
+            .filter(|line| line.role == Some(role) && line.text.as_deref() == Some(text))
+            .collect();
+        assert_eq!(found.len(), 1, "{role} {text}: {all}");
+        found[0].depth
+    };
+    let (sheet, panel) = (depth("dialog", "Notes"), depth("dialog", "Actions"));
+    assert!(sheet < panel && panel < depth("button", "Save notes"));
+}
+
+#[test]
+fn a_target_does_not_reach_another_views_modal() {
+    use zgx::compose::prelude::*;
+    use zgx_script::driver::find;
+    let mut ui = zgx::widgets::Ui::new(400., 300.);
+    let first = ui.mount(modal("First", ui.signal(true)).child(button().child(text("Mine"))));
+    let other = ui.mount(modal("Other", ui.signal(true)).child(button().child(text("Theirs"))));
+    ui.prepare_frame();
+    assert!(find(&ui, &first, r#""Mine""#).is_ok());
+    assert!(find(&ui, &first, r#""Theirs""#).is_err());
+    assert!(find(&ui, &other, r#""Theirs""#).is_ok());
+}

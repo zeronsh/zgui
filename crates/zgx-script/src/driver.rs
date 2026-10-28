@@ -18,8 +18,10 @@
 //! A target matching more than one node is an error naming them: an
 //! action never picks one silently. Nodes hidden from layout (`hidden`, or
 //! inside something hidden) match too, but where exactly one match shows,
-//! the target names it: a person can reach only that one.
-use std::fmt::Write as _;
+//! the target names it: a person can reach only that one. A modal's,
+//! popover's or menu's panel is under the node that owns it, wherever the
+//! scene puts it.
+use std::{collections::HashMap, fmt::Write as _};
 use zgx::{
     compose::ViewHandle,
     input::{InputEvent, Key, Modifiers, PointerButton},
@@ -203,15 +205,56 @@ pub fn rows(scene: &Scene, list: NodeId) -> Vec<NodeId> {
     rows
 }
 
-/// Every node under `from` in document order, itself first.
-fn under(scene: &Scene, from: NodeId) -> Vec<NodeId> {
-    let mut out = Vec::new();
-    let mut stack = vec![from];
-    while let Some(n) = stack.pop() {
-        out.push(n);
-        stack.extend(scene.children(n).iter().rev());
+/// The tree as the view was written: a portal's overlay (a modal's,
+/// popover's or menu's panel, `Ui::portals`) under the node that owns it,
+/// after its children, rather than where the scene puts it.
+struct Logical<'a> {
+    scene: &'a Scene,
+    /// Overlays by their owners.
+    owned: HashMap<NodeId, Vec<NodeId>>,
+    /// Owners by their overlays.
+    owners: HashMap<NodeId, NodeId>,
+}
+impl<'a> Logical<'a> {
+    fn new(ui: &Ui, scene: &'a Scene) -> Self {
+        let mut owned: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        let mut owners = HashMap::new();
+        for (owner, overlay) in ui.portals() {
+            if scene.contains(owner) && scene.contains(overlay) {
+                owned.entry(owner).or_default().push(overlay);
+                owners.insert(overlay, owner);
+            }
+        }
+        Self {
+            scene,
+            owned,
+            owners,
+        }
     }
-    out
+    fn children(&self, node: NodeId) -> impl DoubleEndedIterator<Item = NodeId> + '_ {
+        self.scene
+            .children(node)
+            .iter()
+            .copied()
+            .filter(|child| !self.owners.contains_key(child))
+            .chain(self.owned.get(&node).into_iter().flatten().copied())
+    }
+    fn parent(&self, node: NodeId) -> Option<NodeId> {
+        self.owners
+            .get(&node)
+            .copied()
+            .or_else(|| self.scene.parent(node))
+    }
+    /// Every node under `from` in document order, itself first.
+    fn under(&self, from: NodeId) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut stack = vec![from];
+        while let Some(n) = stack.pop() {
+            out.push(n);
+            stack.extend(self.children(n).rev());
+        }
+        out
+    }
 }
 
 fn describe(ui: &Ui, node: NodeId) -> String {
@@ -238,12 +281,13 @@ fn describe(ui: &Ui, node: NodeId) -> String {
 pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<NodeId>, String> {
     let scene = ui.scene.borrow();
     let semantics = ui.semantics.borrow();
+    let logical = Logical::new(ui, &scene);
     let mut scopes = vec![handle.node()];
     for (i, part) in target.0.iter().enumerate() {
         let mut found: Vec<NodeId> = Vec::new();
         for scope in &scopes {
             // The first part looks in the whole view, the rest inside.
-            let candidates = under(&scene, *scope);
+            let candidates = logical.under(*scope);
             let candidates = if i == 0 {
                 candidates
             } else {
@@ -282,7 +326,10 @@ pub fn find_all(ui: &Ui, handle: &ViewHandle, target: &Target) -> Result<Vec<Nod
         // one thing: the outermost stands for both.
         if part.text.is_some() {
             let all = found.clone();
-            found.retain(|n| !scene.ancestors(*n).any(|a| all.contains(&a)));
+            found.retain(|n| {
+                std::iter::successors(logical.parent(*n), |a| logical.parent(*a))
+                    .all(|a| !all.contains(&a))
+            });
         }
         if let Some(row) = part.row {
             let mut rowed = Vec::new();
@@ -532,6 +579,7 @@ pub fn tree(
     let scene = ui.scene.borrow();
     let semantics = ui.semantics.borrow();
     let focused = ui.input.focused();
+    let logical = Logical::new(ui, &scene);
     let root = from.unwrap_or_else(|| handle.node());
     let ids: std::collections::HashMap<NodeId, String> = handle.ids().into_iter().collect();
     let mut lines = Vec::new();
@@ -569,11 +617,11 @@ pub fn tree(
             }
         }
         if options.depth.is_none_or(|max| next <= max) {
-            for child in scene.children(node).iter().rev() {
-                stack.push((*child, next));
+            for child in logical.children(node).rev() {
+                stack.push((child, next));
             }
         } else {
-            hidden += under(&scene, node).len() - 1;
+            hidden += logical.under(node).len() - 1;
         }
     }
     (fold(lines), hidden)

@@ -1011,6 +1011,8 @@ pub(crate) struct UiStorage {
     /// Open signals of anchored popups, by their popup roots
     /// (`Ui::dismiss_popups`).
     popups: RefCell<Vec<(NodeId, Signal<bool>)>>,
+    /// Portals' owners and overlays, in the order they mounted (`Ui::portals`).
+    portals: RefCell<Vec<(NodeId, NodeId)>>,
     /// The host's hook for a popup about to open (`Ui::on_popup_soon`), and
     /// whether it was called and not yet heard (`popup_soon_heard`).
     popup_soon: RefCell<Option<Rc<dyn Fn()>>>,
@@ -1284,6 +1286,7 @@ impl Ui {
             popup_limits: runtime.signal(Vec::new()),
             popup_flips: runtime.signal(Vec::new()),
             popups: RefCell::new(Vec::new()),
+            portals: RefCell::new(Vec::new()),
             popup_soon: RefCell::new(None),
             popup_soon_sent: Cell::new(false),
             snapshotter: RefCell::new(None),
@@ -2570,6 +2573,23 @@ impl Ui {
         let mut popups = self.storage.popups.borrow_mut();
         popups.retain(|(node, _)| scene.contains(*node));
         popups.push((root, open));
+    }
+    pub(crate) fn add_portal(&self, owner: NodeId, overlay: NodeId) {
+        self.storage.portals.borrow_mut().push((owner, overlay));
+    }
+    pub(crate) fn remove_portal(&self, overlay: NodeId) {
+        self.storage
+            .portals
+            .borrow_mut()
+            .retain(|(_, other)| *other != overlay);
+    }
+    /// Each portal's owner and overlay, in the order they mounted: a
+    /// modal's, popover's or menu's panel shows in an overlay under the
+    /// document root (or an outer portal's), outside the subtree of the
+    /// node that owns it. Tools reading a view as it was written (an
+    /// agent's targets, its tree) find the panel under its owner here.
+    pub fn portals(&self) -> Vec<(NodeId, NodeId)> {
+        self.storage.portals.borrow().clone()
     }
     /// Close every open popup shown past the window, as AppKit closes menus
     /// and transient popovers when the app or its window loses focus.
