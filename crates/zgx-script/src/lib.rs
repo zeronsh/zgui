@@ -59,6 +59,8 @@ mod motion;
 mod node;
 mod opens;
 mod persist;
+#[cfg(feature = "scene3d")]
+mod scene3d;
 mod sorted;
 mod term;
 pub mod testing;

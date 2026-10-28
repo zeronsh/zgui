@@ -19,6 +19,8 @@ mod layout_motion;
 mod regions;
 #[path = "../rtl.rs"]
 mod rtl;
+#[path = "../scene3d.rs"]
+mod scene3d;
 #[path = "../selection.rs"]
 mod selection;
 #[path = "../stack.rs"]

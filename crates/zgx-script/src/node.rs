@@ -558,6 +558,7 @@ impl Node {
                     ..
                 }
         ) || self.kind.library_needs_context()
+            || self.kind.is_scene3d()
             || self.props.iter().any(|(_, s)| matches!(s, Source::Anim(_)))
             // An icon's tint may be a theme token: it reads the scope.
             || matches!(self.kind, Kind::Svg { .. })
@@ -580,6 +581,8 @@ impl Node {
             Kind::Image { .. } => "image",
             Kind::Svg { .. } => "svg",
             Kind::Canvas(..) => "canvas",
+            #[cfg(feature = "scene3d")]
+            Kind::Scene3d(_) => "scene3d",
             Kind::WebView(_) => "webview",
             Kind::Terminal(_) => "terminal",
             Kind::Checkbox { .. } => "checkbox",
@@ -783,6 +786,9 @@ pub(crate) enum Kind {
     /// reads changes; with its `view` and `grid`, if any.
     /// `draw` may be absent when `each` draws it.
     Canvas(Option<Function>, Option<Box<CanvasOptions>>),
+    /// `ui.scene3d { … }`: a 3D scene (zgx-3d) in a GPU view.
+    #[cfg(feature = "scene3d")]
+    Scene3d(Rc<crate::scene3d::Scene3dSpec>),
     /// `ui.webview { ... }`: a native web view laid out like a div.
     WebView(Box<WebSpec>),
     /// `ui.terminal { term = ui.term(id) }`: a terminal session, shown
@@ -987,6 +993,14 @@ impl Kind {
         #[cfg(feature = "components")]
         if let Kind::Library(library) = self {
             return library.takes_children();
+        }
+        false
+    }
+    /// A 3D scene (its effects and bindings live in a component context).
+    fn is_scene3d(&self) -> bool {
+        #[cfg(feature = "scene3d")]
+        if let Kind::Scene3d(_) = self {
+            return true;
         }
         false
     }
@@ -3371,6 +3385,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     crate::canvas::install(lua, &ui)?;
+    #[cfg(feature = "scene3d")]
+    crate::scene3d::install(lua, &ui)?;
     crate::data::install(lua, &ui)?;
 
     let widget = |build: fn(String, Signal<Value>, &Table) -> mlua::Result<Kind>| {

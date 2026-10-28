@@ -1703,6 +1703,81 @@ export type SvgProps = Merge<Props, {
 	code: string?,
 	label: string?,
 }>
+-- A 3D object of `ui.scene3d` (`ui.mesh`, `ui.light`, `ui.group`).
+declare extern type Object3D with
+end
+-- A 3D vector: three numbers (each a literal, a state, a function or a
+-- binding), or a state or function of `{ x, y, z }`.
+export type Vec3 = { read [number]: Reactive<number> } | Readable<{ number }> | (() -> { number })
+-- Where an object is in its parent's frame. `rotation` in degrees about X,
+-- Y and Z; `scale` one number for all three axes, or three.
+export type Object3DProps = {
+	position: Vec3?,
+	rotation: Vec3?,
+	scale: (Reactive<number> | Vec3)?,
+}
+-- How a surface takes light (metallic-roughness): `color` and `emissive`
+-- colours (hex, names, `$tokens`), `metallic` and `roughness` 0 to 1,
+-- `opacity` 0 to 1, `unlit` shows its colour as it is.
+export type Material3D = {
+	color: Reactive<Color>?,
+	metallic: Reactive<number>?,
+	roughness: Reactive<number>?,
+	emissive: Reactive<Color>?,
+	opacity: Reactive<number>?,
+	unlit: boolean?,
+}
+export type MeshProps = Object3DProps & {
+	-- Its shape (default "box"), sized by `size` (box: {x, y, z}; plane:
+	-- {x, _, z}), `radius`, `height`, `tube` (torus) and `segments`.
+	geometry: ("box" | "sphere" | "plane" | "cylinder" | "cone" | "torus")?,
+	size: (number | { read [number]: number })?,
+	radius: number?,
+	height: number?,
+	tube: number?,
+	segments: number?,
+	material: Material3D?,
+}
+export type LightProps = Object3DProps & {
+	-- "directional" (sunlight going `direction`), "point" (at `position`,
+	-- reaching `range`) or "hemisphere" (`color` from above, `ground` from
+	-- below).
+	kind: ("directional" | "point" | "hemisphere")?,
+	color: Reactive<Color>?,
+	ground: Reactive<Color>?,
+	intensity: Reactive<number>?,
+	direction: Vec3?,
+	range: number?,
+}
+export type GroupProps = {
+	position: Vec3?,
+	rotation: Vec3?,
+	scale: (Reactive<number> | Vec3)?,
+	[number]: Object3D,
+}
+export type Camera3D = {
+	-- Field of view top to bottom, in degrees (default 45).
+	fov: Reactive<number>?,
+	position: Vec3?,
+	target: Vec3?,
+}
+export type Orbit3D = {
+	-- Degrees a second it turns on its own.
+	auto_rotate: Reactive<number>?,
+	-- Whether scrolling and pinching move it in and out (default true).
+	zoom: boolean?,
+}
+export type Scene3DProps = Merge<Props, {
+	-- Its accessible name.
+	label: string?,
+	camera: Camera3D?,
+	-- Dragging turns the camera about its target, scrolling and pinching
+	-- move it in and out.
+	orbit: (boolean | Orbit3D)?,
+	-- Behind the scene; nil: transparent (the box's own `bg` shows).
+	background: Reactive<Color>?,
+	[number]: Object3D,
+}>
 export type CanvasProps = Merge<Props, {
 	-- Runs again when the size or the state it reads changes. Required
 	-- unless `each` and `draw_item` draw it.
@@ -2312,6 +2387,12 @@ declare ui: {
 	image: (props: ImageProps) -> Node,
 	svg: (props: SvgProps) -> Node,
 	canvas: (props: CanvasProps) -> Node,
+	-- A 3D scene: meshes, lights and a camera, drawn only when what they
+	-- read changes (zgx-3d).
+	scene3d: (props: Scene3DProps) -> Node,
+	mesh: (props: MeshProps) -> Object3D,
+	light: (props: LightProps) -> Object3D,
+	group: (props: GroupProps) -> Object3D,
 	webview: (props: WebViewProps) -> Node,
 	-- `ui.web(opts)`: a page for this run. `ui.web(id, opts)`: the host's
 	-- page for `id`, made with `opts` the first time, kept across reloads.

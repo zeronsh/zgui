@@ -5000,6 +5000,7 @@ dependencies = [
  "smallvec",
  "windows",
  "zgx",
+ "zgx-3d",
  "zgx-components",
  "zgx-desktop",
  "zgx-gpu",

@@ -14,13 +14,16 @@ description = "Luau scripts that describe zgx component trees, with hot reload."
 
 [features]
 # Image formats (see zgx-gpu): all by default.
-default = ["components", "svg", "png", "jpeg", "gif", "cjk-thai-words"]
+default = ["components", "scene3d", "svg", "png", "jpeg", "gif", "cjk-thai-words"]
 # Words in Chinese, Japanese and Thai by dictionary (zgx's `cjk-thai-words`).
 cjk-thai-words = ["zgx/cjk-thai-words"]
 # The component library's `ui.*` (zgx-components): the data grid, tree,
 # dates and times, combobox, select, tabs, toasts, command palette and
 # controls.
 components = ["dep:zgx-components"]
+# `ui.scene3d` and its objects (`ui.mesh`, `ui.light`, `ui.group`): 3D
+# scenes drawn with zgx-3d.
+scene3d = ["dep:zgx-3d"]
 svg = ["zgx-gpu/svg"]
 png = ["zgx-gpu/png"]
 jpeg = ["zgx-gpu/jpeg"]
@@ -36,6 +39,7 @@ inspect = ["zgx/trace", "dep:png"]
 [dependencies]
 zgx = { path = "../zgx", version = "0.1.4", default-features = false }
 zgx-components = { path = "../zgx-components", version = "0.1.4", optional = true }
+zgx-3d = { path = "../zgx-3d", version = "0.1.4", optional = true }
 # Image decoding for `ui.image` (PNG, JPEG).
 zgx-gpu = { path = "../zgx-gpu", version = "0.1.4", default-features = false }
 mlua = { package = "zgx-mlua", version = "0.12.5", path = "../../vendor/mlua", features = ["luau"] }

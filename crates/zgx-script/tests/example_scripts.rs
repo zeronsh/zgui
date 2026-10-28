@@ -48,3 +48,8 @@ fn anime_showcase_runs() {
 fn stream_runs() {
     runs("stream/app.luau", None);
 }
+
+#[test]
+fn scene3d() {
+    runs("scene3d/app.luau", None);
+}

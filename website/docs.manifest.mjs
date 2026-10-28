@@ -115,6 +115,7 @@ export const sets = [
       { slug: 'reference/scrolling', src: 'docs/reference/scrolling.md', title: 'Scrolling and lists' },
       { slug: 'reference/overlays', src: 'docs/reference/overlays.md', title: 'Overlays and menus' },
       { slug: 'reference/media', src: 'docs/reference/media.md', title: 'Images and canvas' },
+      { slug: 'reference/3d', src: 'docs/reference/3d.md', title: '3D scenes' },
       { slug: 'reference/native', src: 'docs/reference/native.md', title: 'Web views and terminals' },
       { slug: 'reference/anime', src: 'docs/reference/anime.md', title: 'anime and bindings' },
     ],
