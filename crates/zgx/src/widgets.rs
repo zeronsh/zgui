@@ -590,14 +590,12 @@ impl EditorHandle {
             return false;
         }
         self.preferred_x.set(None);
+        let composing = self.editor.borrow().preedit().is_some();
         let changed = self
             .editor
             .borrow_mut()
             .insert(&normalize_text(text, self.multiline));
-        if changed {
-            self.hint.value.write(&self.editor);
-            self.refresh();
-        }
+        self.edited(changed, composing);
         changed
     }
     /// Replace the committed text in `range` (UTF-8 byte offsets) with
@@ -613,14 +611,19 @@ impl EditorHandle {
             .editor
             .borrow_mut()
             .replace_range(range, &normalize_text(text, self.multiline));
+        self.edited(changed, composing);
+        changed
+    }
+    /// After an edit (`composing`: a composition showed before it): the
+    /// model told and the editor drawn again if its text changed, or drawn
+    /// again alone if only its composition ended (the same text put in).
+    fn edited(&self, changed: bool, composing: bool) {
         if changed {
             self.hint.value.write(&self.editor);
             self.refresh();
         } else if composing && self.editor.borrow().preedit().is_none() {
-            // The same text, but its composition ended: drawn without it.
             self.refresh();
         }
-        changed
     }
     /// Show `text` as the input method's composition at the selection, as
     /// `TextEditor::set_preedit_clauses` does (empty clears it). A read-only

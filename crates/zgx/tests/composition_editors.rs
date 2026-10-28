@@ -469,29 +469,43 @@ fn shown_text(ui: &Ui) -> Vec<String> {
         .collect()
 }
 
+/// Editing in the same text (`replace_text` or `insert_text`) while
+/// composing ends the composition without changing what is committed: the
+/// next frame draws the text without it.
 #[test]
-fn replacing_text_with_the_same_ends_the_drawn_composition() {
-    let mut ui = Ui::new(400., 200.);
-    let model = ui.signal(String::from("abc"));
-    let view = ui.mount(zgx::compose::text_area("test", model).size(300., 120.));
-    ui.prepare_frame();
-    ui.input.focus(&ui.scene, Some(view.node()));
-    let editor = ui.focused_editor().unwrap();
-    editor.set_selection(1, 2);
-    editor.set_composition("候補", Some((0, 6)), &[]);
-    ui.prepare_frame();
-    // Nothing committed changes, but the composition ends.
-    assert!(!editor.replace_text(0..3, "abc"));
-    ui.prepare_frame();
-    assert!(editor.editor.borrow().preedit().is_none());
-    let drawn = shown_text(&ui);
-    editor.refresh();
-    ui.prepare_frame();
-    assert_eq!(
-        drawn,
-        shown_text(&ui),
-        "the frame still drew the composition"
-    );
+fn putting_in_the_same_text_ends_the_drawn_composition() {
+    for insert in [false, true] {
+        let mut ui = Ui::new(400., 200.);
+        let model = ui.signal(String::from("abc"));
+        let view = ui.mount(zgx::compose::text_area("test", model).size(300., 120.));
+        ui.prepare_frame();
+        ui.input.focus(&ui.scene, Some(view.node()));
+        let editor = ui.focused_editor().unwrap();
+        editor.set_selection(1, 2);
+        editor.set_composition("候補", Some((0, 6)), &[]);
+        ui.prepare_frame();
+        let changed = if insert {
+            editor.insert_text("b")
+        } else {
+            editor.replace_text(0..3, "abc")
+        };
+        assert!(!changed);
+        ui.prepare_frame();
+        assert!(editor.editor.borrow().preedit().is_none());
+        let drawn = shown_text(&ui);
+        editor.refresh();
+        ui.prepare_frame();
+        let how = if insert {
+            "insert_text"
+        } else {
+            "replace_text"
+        };
+        assert_eq!(
+            drawn,
+            shown_text(&ui),
+            "{how}: the frame still drew the composition"
+        );
+    }
 }
 
 #[test]
