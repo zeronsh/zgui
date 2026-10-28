@@ -539,11 +539,15 @@ fn json(value: Option<&AnyObject>) -> String {
         if valid {
             let data: *mut AnyObject = msg_send![class, dataWithJSONObject: value, options: 0usize, error: std::ptr::null_mut::<*mut NSError>()];
             if let Some(data) = data.as_ref() {
-                let bytes: *const u8 = msg_send![data, bytes];
+                // `bytes` is `const void *`: objc2 checks the declared type.
+                let bytes: *const std::ffi::c_void = msg_send![data, bytes];
                 let length: usize = msg_send![data, length];
                 if !bytes.is_null() {
-                    return String::from_utf8_lossy(std::slice::from_raw_parts(bytes, length))
-                        .into_owned();
+                    return String::from_utf8_lossy(std::slice::from_raw_parts(
+                        bytes.cast::<u8>(),
+                        length,
+                    ))
+                    .into_owned();
                 }
             }
         }
@@ -988,4 +992,34 @@ pub(crate) fn backend(web: &WebView, mtm: MainThreadMarker) -> Rc<dyn WebViewBac
     let backend: Rc<dyn WebViewBackend> = Rc::new(MacWebView::new(web, mtm));
     web.attach(backend.clone());
     backend
+}
+
+#[cfg(test)]
+mod tests {
+    use super::json;
+    use objc2::{msg_send, rc::Retained, runtime::AnyObject};
+    use objc2_foundation::{NSData, NSError};
+
+    /// What a page posts as an object (`postMessage({ … })`): a dictionary,
+    /// back as its JSON. A debug build checks each message's declared types.
+    #[test]
+    fn a_posted_object_arrives_as_its_json() {
+        let text = br#"{"key":"u","meta":true,"list":[1,"two",null]}"#;
+        let data = NSData::with_bytes(text);
+        // SAFETY: NSJSONSerialization's class method with its declared types
+        // (NSData, NSUInteger options, a null error out-pointer); it returns
+        // an autoreleased object or nil, retained here.
+        let object: Option<Retained<AnyObject>> = unsafe {
+            msg_send![
+                objc2::class!(NSJSONSerialization),
+                JSONObjectWithData: &*data,
+                options: 0usize,
+                error: std::ptr::null_mut::<*mut NSError>()
+            ]
+        };
+        let object = object.expect("valid JSON");
+        let back: serde_json::Value = serde_json::from_str(&json(Some(&object))).unwrap();
+        let expected: serde_json::Value = serde_json::from_slice(text).unwrap();
+        assert_eq!(back, expected);
+    }
 }
