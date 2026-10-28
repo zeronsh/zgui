@@ -831,6 +831,17 @@ impl InputDispatcher {
     ) -> crate::actions::KeymapBinding {
         crate::actions::Registry::bind(&self.actions, node, map)
     }
+    /// Whether a key binding where focus is, or above it, takes `key` with
+    /// `modifiers` (alone or as a sequence's first stroke). A host asks
+    /// before taking a key from a native view that would otherwise use it
+    /// (a terminal's): one zgx binds is the app's shortcut. Reads only.
+    pub fn binds_key(&self, scene: &Scene, key: &Key, modifiers: Modifiers) -> bool {
+        let path = self.action_path(scene);
+        let stroke = crate::actions::Keystroke::new(key.clone(), modifiers);
+        self.actions
+            .try_borrow()
+            .is_ok_and(|actions| actions.binds(&path, &stroke))
+    }
     /// Route a typed action from focus through its enabled ancestors.
     pub fn dispatch_action(
         &self,

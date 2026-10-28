@@ -378,3 +378,52 @@ fn replay_respects_custom_key_prevention_and_explicit_disabled_binding() {
     native_text(&mut ui, "q");
     assert_eq!(value.get(), "");
 }
+/// What a host asks of a key a native view would otherwise keep: whether a
+/// binding where focus is, or above it, takes it, as dispatch would.
+#[test]
+fn binds_key_answers_as_dispatch_would_without_dispatching() {
+    use zgx::actions::NoAction;
+    let mut ui = Ui::new(400., 200.);
+    let command = Modifiers {
+        meta: true,
+        ..Default::default()
+    };
+    let at = |key: &str| Keystroke::new(character(key), command);
+    let mounted = ui.mount(
+        column()
+            .keymap(
+                Keymap::new()
+                    .bind(KeyBinding::new([at("l")], Action::new(Save("app"))).unwrap())
+                    .bind(KeyBinding::new([at("k"), at("p")], Action::new(Save("chord"))).unwrap())
+                    .bind(
+                        KeyBinding::new([at("e")], Action::new(Save("editing")))
+                            .unwrap()
+                            .when("editor"),
+                    ),
+            )
+            .child(div().id("pane").focusable(true).keymap(
+                Keymap::new().bind(KeyBinding::new([at("l")], Action::new(NoAction)).unwrap()),
+            ))
+            .child(div().id("other").focusable(true)),
+    );
+    ui.prepare_frame();
+    let binds = |ui: &Ui, key: &str| {
+        ui.input
+            .binds_key(&ui.scene.borrow(), &character(key), command)
+    };
+    ui.input.focus(&ui.scene, mounted.find("other"));
+    assert!(binds(&ui, "l"), "the app's binding above focus");
+    assert!(binds(&ui, "k"), "a sequence's first stroke");
+    assert!(!binds(&ui, "e"), "a binding whose context does not hold");
+    assert!(!binds(&ui, "j"), "nothing bound");
+    assert!(
+        !ui.input
+            .binds_key(&ui.scene.borrow(), &character("l"), Modifiers::default()),
+        "other modifiers"
+    );
+    ui.input.focus(&ui.scene, mounted.find("pane"));
+    assert!(!binds(&ui, "l"), "unbound nearer focus");
+    assert!(binds(&ui, "k"));
+    // Asking changes nothing: the chord still starts afresh.
+    assert!(!ui.input.has_pending_keys());
+}

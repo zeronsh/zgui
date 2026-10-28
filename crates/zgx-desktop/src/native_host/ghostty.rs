@@ -1134,6 +1134,21 @@ define_class!(
         // Keyboard.
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
+            // A shortcut no menu took (AppKit offers them first) that is a
+            // key binding of the app's: the app's, before the program's, up
+            // the responder chain to zgx's view, which hears it as one.
+            if event
+                .modifierFlags()
+                .intersects(NSEventModifierFlags::Command | NSEventModifierFlags::Control)
+                && super::macos::app_binds_key(self, event)
+            {
+                // SAFETY: AppKit's own responder chain, on the main thread;
+                // the next responder is a live view or the window.
+                if let Some(next) = unsafe { self.nextResponder() } {
+                    next.keyDown(event);
+                }
+                return;
+            }
             self.handle_key_down(event);
         }
         #[unsafe(method(keyUp:))]

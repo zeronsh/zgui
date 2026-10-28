@@ -213,3 +213,26 @@ and gives up no input context focus (`EventProcessor::hidden` in
 input method: its connection closes with the event loop, and the server frees
 them then (`ime/mod.rs`). zgx's `ime-server-stopped` probe stops ibus-x11 as
 the app closes its focused window; the app exits.
+
+## A native view's unhandled keys reach the app (macOS)
+
+A web page that leaves a key alone hands it back: WebKit runs the key's
+command up the responder chain (`doCommandBySelector:`) and, if it reaches
+the end unperformed, re-sends the key to the app (`-[NSApplication
+sendEvent:]`), which offers it to the menus and then sends it to the first
+responder, whose responder chain passes it up. A page inside winit's view
+never got its keys back: the view's `doCommandBySelector:`, an input
+method's callback for its own keys, took every command coming up the chain
+and performed nothing, so WebKit found each key handled.
+
+13. `view.rs`: `doCommandBySelector:` and `keyDown:` coming up the chain
+    from a view inside winit's (`is_first_responder` false) are not the
+    view's own keys. The command goes on up the chain (NSResponder's), and
+    the key is a `KeyboardInput` with no text and no input method, for the
+    app's shortcuts.
+14. `platform::macos::key_event_of`: the `KeyEvent` a key `NSEvent` is, as
+    the view reports it, for an app asking whether a key a native view
+    keeps (a terminal's) is one of its shortcuts.
+
+`scripts/macos_key_routing_probe.py` (zgx) presses a menu key, a key the
+page takes and a binding in no menu with a page and a terminal focused.

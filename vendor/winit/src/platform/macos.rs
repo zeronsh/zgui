@@ -551,3 +551,16 @@ pub trait SelectionServices {
 pub fn set_selection_services(services: Option<std::rc::Rc<dyn SelectionServices>>) {
     crate::platform_impl::set_selection_services(services);
 }
+
+/// zgx patch: the key a key-down `NSEvent` is, as a window's view reports it
+/// (`WindowEvent::KeyboardInput`): for an app asking whether a key a native
+/// view has (a terminal's) is one of its shortcuts. Main thread only.
+///
+/// # Safety
+///
+/// `ns_event` is a live `NSEvent` of a key kind (key down or up).
+pub unsafe fn key_event_of(ns_event: *const c_void) -> crate::event::KeyEvent {
+    // SAFETY: the caller's live key event.
+    let event = unsafe { &*ns_event.cast::<objc2_app_kit::NSEvent>() };
+    crate::platform_impl::create_key_event(event, true, false)
+}

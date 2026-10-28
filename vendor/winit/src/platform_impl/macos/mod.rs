@@ -17,7 +17,9 @@ mod window_delegate;
 
 use std::fmt;
 
-pub(crate) use self::event::{physicalkey_to_scancode, scancode_to_physicalkey, KeyEventExtra};
+pub(crate) use self::event::{
+    create_key_event, physicalkey_to_scancode, scancode_to_physicalkey, KeyEventExtra,
+};
 pub(crate) use self::event_loop::{
     ActiveEventLoop, EventLoop, EventLoopProxy, OwnedDisplayHandle,
     PlatformSpecificEventLoopAttributes,

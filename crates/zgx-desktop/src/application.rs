@@ -6191,6 +6191,16 @@ fn inspector_shortcut(m: Modifiers) -> bool {
         m.control && m.alt && m.shift && !m.meta
     }
 }
+/// The key `event` is to zgx's key bindings, with `modifiers` held, as the
+/// window's own key presses are: for a key a native view would otherwise
+/// keep (a terminal's), asked whether it is one of the app's shortcuts.
+#[cfg(all(target_os = "macos", feature = "ghostty"))]
+pub(crate) fn shortcut_of(
+    event: &winit::event::KeyEvent,
+    modifiers: zgx::input::Modifiers,
+) -> Option<Key> {
+    map_key(&event.logical_key).map(|key| shortcut_key(key, event.physical_key, modifiers))
+}
 /// A shortcut's key on a layout of other letters (Russian, Greek, Hebrew,
 /// Arabic…): with Ctrl or Cmd held (and not Alt, which with Ctrl is
 /// Windows' AltGr, typing text), a character outside ASCII is the physical

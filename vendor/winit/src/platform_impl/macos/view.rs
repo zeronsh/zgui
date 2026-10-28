@@ -433,8 +433,16 @@ declare_class!(
         // Basically, we're sent this message whenever a keyboard event that doesn't generate a "human
         // readable" character happens, i.e. newlines, tabs, and Ctrl+C.
         #[method(doCommandBySelector:)]
-        fn do_command_by_selector(&self, _command: Sel) {
+        fn do_command_by_selector(&self, command: Sel) {
             trace_scope!("doCommandBySelector:");
+            // zgx patch: a command a view inside this one did not perform (a
+            // web page's key that its page did not use) goes on up the
+            // responder chain, as NSResponder's does: WebKit finds the key
+            // unhandled where the chain ends, and hands it to the menus.
+            if !self.is_first_responder() {
+                let _: () = unsafe { objc2::msg_send![super(self), doCommandBySelector: command] };
+                return;
+            }
             // We shouldn't forward any character from just committed text, since we'll end up sending
             // it twice with some IMEs like Korean one. We'll also always send `Enter` in that case,
             // which is not desired given it was used to confirm IME input.
@@ -516,6 +524,22 @@ declare_class!(
         #[method(keyDown:)]
         fn key_down(&self, event: &NSEvent) {
             trace_scope!("keyDown:");
+            // zgx patch: a key a view inside this one passed up the responder
+            // chain unhandled (a page's, as WebKit re-sends it) is the app's
+            // to use as a shortcut: no input method, no text.
+            if !self.is_first_responder() {
+                let event = replace_event(event, self.option_as_alt());
+                self.update_modifiers(&event, false);
+                let mut key_event = create_key_event(&event, true, unsafe { event.isARepeat() });
+                key_event.text = None;
+                key_event.platform_specific.text_with_all_modifiers = None;
+                self.queue_event(WindowEvent::KeyboardInput {
+                    device_id: DEVICE_ID,
+                    event: key_event,
+                    is_synthetic: false,
+                });
+                return;
+            }
             {
                 let mut prev_input_source = self.ivars().input_source.borrow_mut();
                 let current_input_source = self.current_input_source();
@@ -912,6 +936,12 @@ impl WinitView {
 
     fn queue_event(&self, event: WindowEvent) {
         self.ivars().app_delegate.maybe_queue_window_event(self.window().id(), event);
+    }
+
+    /// zgx patch: whether this view, rather than a view inside it, has the
+    /// window's keyboard focus.
+    fn is_first_responder(&self) -> bool {
+        self.window().firstResponder().is_some_and(|responder| *responder == ***self)
     }
 
     fn scale_factor(&self) -> f64 {

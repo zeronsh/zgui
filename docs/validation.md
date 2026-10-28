@@ -935,6 +935,20 @@ transcript row of 10,000 the list had not mounted, is found and counted,
 that the transcript scrolls to it, and that Escape closes the bar. Passed
 on macOS 26 (M5), 2026-10-26.
 
+## macOS shortcuts while a page or a terminal has the keyboard
+
+`scripts/macos_key_routing_probe.py` runs the key_routing_probe example
+(`--ghostty`: with a terminal too) and posts keys to its own queue
+(`-[NSApplication postEvent:atStart:]`, as the keyboard's arrive; the
+keyboard and other apps hear nothing): a menu item's key nothing else uses
+(⌘U), a menu item's key the page takes and Ghostty binds (⌘K), and a zgx key
+binding in no menu (⌘⇧L). With zgx's own box focused all three fire. With
+the page focused it hears all three, and ⌘U and ⌘⇧L, which it leaves alone,
+still reach the app while ⌘K stays the page's; with the terminal focused ⌘U
+and ⌘⇧L reach the app and ⌘K stays Ghostty's. AppKit's own menu keys act
+with each focused: ⌘H hides the app, ⌘M minimizes the window and ⌘Q quits.
+Passed on macOS 26 (M5), 2026-10-28.
+
 ## macOS cursors, Insert, held drags, file drops and title bars
 
 `scripts/macos_native_checks_probe.py` runs the native_checks_probe

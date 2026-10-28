@@ -264,6 +264,39 @@ impl Registry {
             _ => false,
         }
     }
+    /// Whether a binding on `path` (focus first) starts with `stroke`, as
+    /// `resolve` would find it from no pending sequence. Reads only.
+    pub(crate) fn binds(&self, path: &[NodeId], stroke: &Keystroke) -> bool {
+        let contexts: Vec<KeyContext> = path
+            .iter()
+            .rev()
+            .filter_map(|node| self.maps.get(node))
+            .map(|maps| {
+                let mut context = KeyContext::new();
+                for (_, map) in maps {
+                    context.extend(&map.context);
+                    for flag in &map.contexts {
+                        context = context.flag(flag);
+                    }
+                }
+                context
+            })
+            .collect();
+        // In `resolve`'s order: the first that applies decides, and a
+        // `NoAction` there unbinds the key.
+        path.iter()
+            .filter_map(|node| self.maps.get(node))
+            .flat_map(|maps| maps.iter().rev())
+            .flat_map(|(_, map)| map.bindings.iter().rev())
+            .find(|binding| {
+                binding.sequence.first() == Some(stroke)
+                    && binding
+                        .context
+                        .as_ref()
+                        .is_none_or(|context| context.matches(&contexts))
+            })
+            .is_some_and(|binding| binding.action.downcast_ref::<NoAction>().is_none())
+    }
     pub(crate) fn resolve(
         &mut self,
         path: Vec<NodeId>,

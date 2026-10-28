@@ -107,6 +107,40 @@ pub(crate) fn forward_secondary_click(view: &NSView, event: &objc2_app_kit::NSEv
     });
 }
 
+/// Whether `event`, a key `view` (a native view, a terminal) would keep, is
+/// one of the app's shortcuts: a key binding zgx has where focus is, or
+/// above it. A key the app's menus take never gets here (AppKit offers them
+/// first).
+#[cfg(feature = "ghostty")]
+pub(crate) fn app_binds_key(view: &NSView, event: &objc2_app_kit::NSEvent) -> bool {
+    use objc2_app_kit::NSEventModifierFlags as Flags;
+    let Some(router) = view
+        .window()
+        .and_then(|window| window.contentView())
+        .and_then(|content| router_of(&content))
+    else {
+        return false;
+    };
+    let Some(scene) = router.scene.upgrade() else {
+        return false;
+    };
+    let flags = event.modifierFlags();
+    let modifiers = zgx::input::Modifiers {
+        shift: flags.contains(Flags::Shift),
+        control: flags.contains(Flags::Control),
+        alt: flags.contains(Flags::Option),
+        meta: flags.contains(Flags::Command),
+    };
+    // SAFETY: AppKit's live key event, on the main thread.
+    let key = unsafe { winit::platform::macos::key_event_of(std::ptr::from_ref(event).cast()) };
+    let Some(key) = crate::application::shortcut_of(&key, modifiers) else {
+        return false;
+    };
+    scene
+        .try_borrow()
+        .is_ok_and(|scene| router.input.binds_key(&scene, &key, modifiers))
+}
+
 /// The router of `content`'s window, if it has native views.
 fn router_of(content: &NSView) -> Option<Rc<Router>> {
     let key = content as *const NSView as usize;
