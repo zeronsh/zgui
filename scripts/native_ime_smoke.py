@@ -8,7 +8,12 @@ field takes no input method.
 `--server-gone`: the input method's server (ibus-x11) goes while a focus
 for the app is queued behind it (the app stopped meanwhile), as when IBus
 went as a window closed (#564); the app takes the focus without waiting on
-the server, stays responsive, and closes on Alt+F4."""
+the server, stays responsive, and closes on Alt+F4.
+
+`--server-stopped`: the input method's server is there but answers nothing
+(ibus-x11 stopped) as the app closes its focused window. Closing must not
+wait on it: the app exits (#564, a closing window blocked in a synchronous
+XIM round trip, its server alive)."""
 import argparse
 import json
 import os
@@ -92,12 +97,38 @@ def server_gone(env, app, window, xdo, key, type_text, output):
     print('PASS: the input method gone with a focus queued, the app took it, answered and closed')
 
 
+def server_stopped(env, app, window, xdo, key, type_text, output):
+    """ibus-x11 stopped, alive but answering nothing, as the app's focused
+    window closes: the app must exit, its close waiting on no round trip to
+    the input method."""
+    from platform_smoke import display_processes
+    type_text('nihao'); key('space')
+    deadline = time.monotonic() + 10
+    while 'COMMIT first "你好"' not in (output/'application.log').read_text():
+        if time.monotonic() > deadline: raise AssertionError('the composition did not commit')
+        time.sleep(.05)
+    servers = display_processes(env, 'ibus-x11')
+    if not servers: raise AssertionError("no ibus-x11 on the probe's display")
+    xdo('windowactivate', '--sync', window); time.sleep(.5)
+    for pid in servers: os.kill(pid, signal.SIGSTOP)
+    try:
+        # The app closes its focused window itself (ZGX_SECONDS): hidden,
+        # it loses the focus, and its input context goes, the server
+        # answering nothing.
+        wait_for_exit(app, env, output, 20)
+    finally:
+        for pid in servers: os.kill(pid, signal.SIGCONT)
+    (output/'result.json').write_text(json.dumps({'result': 'pass', 'stopped': servers}, indent=2)+'\n')
+    print('PASS: the input method answering nothing, the app\'s window closed and it exited')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=pathlib.Path)
     parser.add_argument('--output', type=pathlib.Path, required=True)
     parser.add_argument('--server-gone', action='store_true', help="ibus-x11 goes with a focus queued (#564)")
     parser.add_argument('--password', action='store_true', help="a password field takes no input method")
+    parser.add_argument('--server-stopped', action='store_true', help="ibus-x11 answers nothing as the window closes (#564)")
     args = parser.parse_args()
     for executable in ('Xvfb', 'openbox', 'dbus-daemon', 'gsettings', 'ibus-daemon', 'ibus', 'xdotool', 'xwininfo'):
         if shutil.which(executable) is None:
@@ -157,8 +188,12 @@ def main():
             def xdo(*arguments):
                 return subprocess.check_output(['xdotool', *map(str,arguments)], env=env, text=True).strip()
             with (args.output / 'application.log').open('w') as output:
+                # --server-stopped: the app closes its own window (after 12 s),
+                # as it would quitting: no key and no window manager grab in
+                # flight to the stopped input method.
+                app_env = dict(env, ZGX_SECONDS='12') if args.server_stopped else env
                 app = subprocess.Popen([str(args.binary.resolve())] + (['--password'] if args.password else []),
-                                       env=env, stdout=output, stderr=output)
+                                       env=app_env, stdout=output, stderr=output)
                 deadline=time.monotonic()+20
                 while True:
                     found=subprocess.run(['xdotool','search','--onlyvisible','--pid',str(app.pid)],env=env,capture_output=True,text=True)
@@ -258,6 +293,9 @@ def main():
                     return
                 if args.password:
                     password(env, app, window, xdo, key, type_text, args.output)
+                    return
+                if args.server_stopped:
+                    server_stopped(env, app, window, xdo, key, type_text, args.output)
                     return
                 type_text('nihao');capture(1,'first')
                 key('space');capture(2)

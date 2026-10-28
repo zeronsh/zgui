@@ -199,3 +199,17 @@ drag came in.
     `DroppedFile`), and `CursorLeft` as it leaves (after
     `HoveredFileCancelled`). `scripts/macos_native_checks_probe.py` drops
     two files on a box with the pointer last elsewhere.
+
+## X11: a closing window, or an ending app, waits on no input method
+
+An input method's server that is alive but answers nothing (ibus-x11 hung,
+or stopped) held an app's close forever. A window being hidden for its close
+lost the focus, or took a FocusIn queued before, and `XSetICFocus` and
+`XUnsetICFocus` reach `XGetICValues`, a round trip. Then the event loop's end
+destroyed every context (`XDestroyIC` waits for its reply) and closed the
+input method (zgx#564). A hidden window (`Visibility::No`, or gone) now takes
+and gives up no input context focus (`EventProcessor::hidden` in
+`event_processor.rs`). `Ime`'s drop no longer destroys contexts or closes the
+input method: its connection closes with the event loop, and the server frees
+them then (`ime/mod.rs`). zgx's `ime-server-stopped` probe stops ibus-x11 as
+the app closes its focused window; the app exits.

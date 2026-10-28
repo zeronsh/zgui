@@ -364,6 +364,15 @@ impl EventProcessor {
         }
     }
 
+    /// zgx patch: whether `window` is one of ours that is hidden
+    /// (`set_visible(false)`, as a window closing is), or gone.
+    fn hidden(&self, window: xproto::Window) -> bool {
+        self.with_window(window, |w| {
+            w.shared_state_lock().visibility == super::window::Visibility::No
+        })
+        .unwrap_or(true)
+    }
+
     pub fn with_window<F, Ret>(&self, window_id: xproto::Window, callback: F) -> Option<Ret>
     where
         F: Fn(&Arc<UnownedWindow>) -> Ret,
@@ -1387,8 +1396,13 @@ impl EventProcessor {
         // Set the timestamp.
         wt.xconn.set_timestamp(xev.time as xproto::Timestamp);
 
+        // zgx patch: a hidden window (one closing) takes no input context
+        // focus: libX11 makes it a round trip to the input method
+        // (XGetICValues), which a closing window must not wait on (zgx#564).
         if let Some(ime) = wt.ime.as_ref() {
-            ime.borrow_mut().focus(xev.event).expect("Failed to focus input context");
+            if !self.hidden(window) {
+                ime.borrow_mut().focus(xev.event).expect("Failed to focus input context");
+            }
         }
 
         if self.active_window == Some(window) {
@@ -1450,8 +1464,11 @@ impl EventProcessor {
             return;
         }
 
+        // zgx patch: nor does a hidden one give it up (as above).
         if let Some(ime) = wt.ime.as_ref() {
-            ime.borrow_mut().unfocus(xev.event).expect("Failed to unfocus input context");
+            if !self.hidden(window) {
+                ime.borrow_mut().unfocus(xev.event).expect("Failed to unfocus input context");
+            }
         }
 
         if self.active_window.take() == Some(window) {

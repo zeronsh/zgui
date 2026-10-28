@@ -263,9 +263,10 @@ impl Ime {
 
 impl Drop for Ime {
     fn drop(&mut self) {
-        unsafe {
-            let _ = self.inner.destroy_all_contexts_if_necessary();
-            let _ = self.inner.close_im_if_necessary();
-        }
+        // zgx patch: the event loop is ending and its connection goes with
+        // it, the input method's server freeing what it held for us then.
+        // Destroying each context and closing the input method first are
+        // round trips to that server (XDestroyIC waits for its reply), on
+        // which the app's exit would wait if it answers nothing (zgx#564).
     }
 }
