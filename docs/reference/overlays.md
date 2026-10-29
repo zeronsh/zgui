@@ -53,7 +53,9 @@ Panels start with 16 points of padding, the theme's surface color and rounded co
 
 ## Behavior
 
-- Escape closes the top panel; a click outside one closes it (and does nothing else); a click on blank panel space does not.
+- Escape closes the top panel; a click on blank panel space does not. A click outside a modal or a menu closes it and does nothing else.
+- A click outside a popover closes it and still does what it does there, as on the web and in AppKit: a button acts and a field takes focus; on blank space, focus goes back to its anchor, as Escape gives it. A click on its own anchor runs the anchor's `on_click` once (a toggle closes it, rather than it closing and opening again).
+- A popover built in another popover's panel (a row opening a nested menu) closes on a click anywhere outside it, the parent's panel included, and the parent stays open; a click outside both closes both.
 - A modal or popover traps keyboard focus while open, starting on its first enabled control, and gives focus back when it closes.
 - A menu takes focus to its first enabled item. Up and Down move (wrapping), Home and End jump, typing a letter finds an item by its label, Tab closes the menu and moves on.
 - Choosing an item closes its menu, and the menus it opened from, before its `on_click` runs, so the handler can open another dialog.

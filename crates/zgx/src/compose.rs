@@ -3090,6 +3090,19 @@ fn mount_portal_panel(
         autofocus.unwrap_or(true),
         is_layer,
     );
+    // A popover closes on a press outside it (in the window, in a parent
+    // popover's panel), and the press goes on to what it lands on.
+    if let Some(anchor) = anchor.filter(|_| dismiss_backdrop && !is_menu && !is_layer) {
+        crate::compose_popover::mount_dismissing(
+            ui,
+            owner,
+            anchor,
+            panel,
+            portal.overlay,
+            open_signal.clone(),
+            portal.visible.clone(),
+        );
+    }
     // A layer (a toast, a tooltip) traps nothing, so it isn't modal; a
     // popover traps focus as a dialog does, so it is.
     ui.semantics.borrow_mut().update(panel, |node| {
@@ -6247,6 +6260,15 @@ mod button_label_tests {
             ui.semantics.borrow().get(button).unwrap().label,
             "Save deep"
         );
+    }
+}
+#[cfg(test)]
+mod environment_tests {
+    #[test]
+    fn an_environment_stays_small() {
+        // Cloned for every component and region mounted: growing it costs
+        // every mount (a flag beside its portal took 8 bytes).
+        assert_eq!(std::mem::size_of::<super::Environment>(), 112);
     }
 }
 #[cfg(test)]

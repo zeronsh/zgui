@@ -640,6 +640,12 @@ struct State {
     /// Non-modal layers (toasts): what they hold stays live under any modal
     /// scope (`set_layer`).
     layers: Vec<NodeId>,
+    /// Scope roots and their triggers, which stay live to the pointer while
+    /// the scope is active (`set_scope_trigger`).
+    triggers: Vec<(NodeId, NodeId)>,
+    /// The press being dispatched dismissed a popover on blank space
+    /// (`keep_focus_for_press`): it leaves focus where dismissing put it.
+    keep_focus: bool,
     clicks: ClickTracker,
     /// The system's drag threshold, once the host gives it.
     drag_threshold: Option<f32>,
@@ -1292,6 +1298,24 @@ impl InputDispatcher {
         let hit = self.hit_target(&scene.borrow(), x, y);
         self.set_hover(scene, hit);
     }
+    /// What a press at `x, y` lands on, as dispatch finds it.
+    pub(crate) fn pointer_target(&self, scene: &Scene, x: f32, y: f32) -> Option<NodeId> {
+        self.hit_target(scene, x, y)
+    }
+    /// What a primary press at `x, y` would focus, as dispatch finds it:
+    /// the nearest focusable, enabled node at or above what it lands on.
+    pub(crate) fn press_focus(&self, scene: &Scene, x: f32, y: f32) -> Option<NodeId> {
+        let mut node = self
+            .hit_target(scene, x, y)
+            .filter(|id| self.enabled(scene, *id));
+        while let Some(id) = node {
+            if self.options(id).is_some_and(|o| o.focusable) {
+                return Some(id);
+            }
+            node = scene.parent(id);
+        }
+        None
+    }
     /// Move hover to `hit` and its ancestors, as the DOM's `mouseenter` and
     /// `mouseleave` do: a node hears `PointerLeave` once the pointer is
     /// outside it and all its descendants, and `PointerEnter` once it comes
@@ -1440,6 +1464,21 @@ impl InputDispatcher {
         if layer {
             s.layers.push(root);
         }
+    }
+    /// Keep `trigger` live while `root`'s scope is active, though outside it
+    /// (a popover's trigger row in its parent's panel, which toggles it), or
+    /// with `None`, no longer.
+    pub(crate) fn set_scope_trigger(&self, root: NodeId, trigger: Option<NodeId>) {
+        let mut s = self.state.borrow_mut();
+        s.triggers.retain(|(scope, _)| *scope != root);
+        if let Some(trigger) = trigger {
+            s.triggers.push((root, trigger));
+        }
+    }
+    /// The primary press about to be dispatched leaves focus as it is: a
+    /// popover it dismissed on blank space gave focus back to its trigger.
+    pub(crate) fn keep_focus_for_press(&self) {
+        self.state.borrow_mut().keep_focus = true;
     }
     /// The active modal root, if any. Focus and pointer routing stay inside
     /// it.
@@ -1590,15 +1629,21 @@ impl InputDispatcher {
             }
             found
         };
-        // Inside the active scope, or, through porous scopes (submenus), any
-        // scope below it.
+        // Inside the active scope (or its trigger, `set_scope_trigger`), or,
+        // through porous scopes (submenus), any scope below it.
         let mut live = s.scopes.iter().rev().peekable();
         if !in_layer && live.peek().is_some() {
             let mut inside = false;
+            // Most scopes have no trigger (`set_scope_trigger`).
+            let triggers = !s.triggers.is_empty();
             for scope in live {
+                let trigger = triggers
+                    .then(|| s.triggers.iter().find(|(root, _)| *root == scope.root))
+                    .flatten()
+                    .map(|(_, trigger)| *trigger);
                 let mut ancestor = Some(node);
                 while let Some(id) = ancestor {
-                    if id == scope.root {
+                    if id == scope.root || Some(id) == trigger {
                         inside = true;
                         break;
                     }
@@ -2371,6 +2416,9 @@ impl InputDispatcher {
         } else {
             0
         };
+        // This press's, whatever becomes of it (`keep_focus_for_press`).
+        let keep_focus = matches!(event, InputEvent::PointerDown { .. })
+            && std::mem::take(&mut self.state.borrow_mut().keep_focus);
         let mut prevented = false;
         if let Some(id) = target {
             let ctx = self.route_pointer(
@@ -2433,7 +2481,7 @@ impl InputDispatcher {
                         }
                         node = scene.borrow().parent(id);
                     }
-                    if target.is_some() || self.focus_scope().is_none() {
+                    if !keep_focus && (target.is_some() || self.focus_scope().is_none()) {
                         self.focus(scene, focus);
                     }
                 }
