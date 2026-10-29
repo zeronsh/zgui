@@ -427,6 +427,59 @@ fn binds_key_answers_as_dispatch_would_without_dispatching() {
     // Asking changes nothing: the chord still starts afresh.
     assert!(!ui.input.has_pending_keys());
 }
+/// A reserved binding is the app's before a native view's: a host asks
+/// whether the binding that takes a key is reserved.
+#[test]
+fn reserves_key_answers_for_the_binding_that_takes_the_key() {
+    use zgx::actions::NoAction;
+    let mut ui = Ui::new(400., 200.);
+    let command = Modifiers {
+        meta: true,
+        ..Default::default()
+    };
+    let at = |key: &str| Keystroke::new(character(key), command);
+    let mounted = ui.mount(
+        column()
+            .keymap(
+                Keymap::new()
+                    .bind(
+                        KeyBinding::new([at("t")], Action::new(Save("tab")))
+                            .unwrap()
+                            .reserved(),
+                    )
+                    .bind(
+                        KeyBinding::new([at("w")], Action::new(Save("close")))
+                            .unwrap()
+                            .reserved(),
+                    )
+                    .bind(KeyBinding::new([at("u")], Action::new(Save("plain"))).unwrap()),
+            )
+            .child(
+                div().id("pane").focusable(true).keymap(
+                    Keymap::new()
+                        .bind(KeyBinding::new([at("w")], Action::new(NoAction)).unwrap())
+                        .bind(KeyBinding::new([at("t")], Action::new(Save("pane tab"))).unwrap()),
+                ),
+            )
+            .child(div().id("other").focusable(true)),
+    );
+    ui.prepare_frame();
+    let reserves = |ui: &Ui, key: &str| {
+        ui.input
+            .reserves_key(&ui.scene.borrow(), &character(key), command)
+    };
+    ui.input.focus(&ui.scene, mounted.find("other"));
+    assert!(reserves(&ui, "t") && reserves(&ui, "w"));
+    assert!(!reserves(&ui, "u"), "bound, not reserved");
+    assert!(!reserves(&ui, "j"), "unbound");
+    assert!(
+        ui.input
+            .binds_key(&ui.scene.borrow(), &character("u"), command)
+    );
+    ui.input.focus(&ui.scene, mounted.find("pane"));
+    assert!(!reserves(&ui, "t"), "a nearer unreserved binding takes it");
+    assert!(!reserves(&ui, "w"), "unbound nearer focus");
+}
 #[test]
 fn a_binding_by_physical_key_tells_the_keypad_from_the_digit_row() {
     let mut ui = Ui::new(400., 200.);

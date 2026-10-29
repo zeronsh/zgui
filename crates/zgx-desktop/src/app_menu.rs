@@ -408,9 +408,33 @@ fn entries(
         .collect()
 }
 
-pub(crate) fn keymap(menus: &[AppMenu]) -> zgx::actions::Keymap {
-    use zgx::actions::{Action, KeyBinding, Keymap};
-    fn collect(menus: &[AppMenu], mut map: Keymap) -> Keymap {
+/// The menus' shortcuts as key bindings; those on a `reserved` keystroke
+/// (`Application::reserved_shortcuts`) reserved, a letter in either case.
+pub(crate) fn keymap(
+    menus: &[AppMenu],
+    reserved: &[zgx::actions::Keystroke],
+) -> zgx::actions::Keymap {
+    use zgx::actions::{Action, KeyBinding, Keymap, Keystroke};
+    let reserved_stroke = |stroke: &Keystroke| {
+        let lower = |key: &zgx::input::Key| match key {
+            zgx::input::Key::Character(c) => zgx::input::Key::Character(c.to_ascii_lowercase()),
+            key => key.clone(),
+        };
+        reserved
+            .iter()
+            .any(|r| r.modifiers == stroke.modifiers && lower(&r.key) == lower(&stroke.key))
+    };
+    let bind = |stroke: Keystroke, action: &MenuAction| {
+        let reserve = reserved_stroke(&stroke);
+        let binding =
+            KeyBinding::new([stroke], Action::new(action.clone())).expect("single menu shortcut");
+        if reserve { binding.reserved() } else { binding }
+    };
+    fn collect(
+        menus: &[AppMenu],
+        mut map: Keymap,
+        bind: &dyn Fn(Keystroke, &MenuAction) -> KeyBinding,
+    ) -> Keymap {
         for menu in menus {
             for entry in &menu.entries {
                 match entry {
@@ -424,29 +448,25 @@ pub(crate) fn keymap(menus: &[AppMenu]) -> zgx::actions::Keymap {
                         if let zgx::input::Key::Character(s) = &mut stroke.key {
                             *s = s.to_ascii_lowercase();
                         }
-                        map = map.bind(
-                            KeyBinding::new([stroke.clone()], Action::new(action.clone()))
-                                .expect("single menu shortcut"),
-                        );
+                        map = map.bind(bind(stroke.clone(), action));
                         if let zgx::input::Key::Character(s) = &mut stroke.key {
                             let upper = s.to_ascii_uppercase();
                             if upper != *s {
                                 *s = upper;
-                                map = map.bind(
-                                    KeyBinding::new([stroke], Action::new(action.clone()))
-                                        .expect("single menu shortcut"),
-                                );
+                                map = map.bind(bind(stroke, action));
                             }
                         }
                     }
-                    AppMenuEntry::Submenu(menu) => map = collect(std::slice::from_ref(menu), map),
+                    AppMenuEntry::Submenu(menu) => {
+                        map = collect(std::slice::from_ref(menu), map, bind)
+                    }
                     _ => {}
                 }
             }
         }
         map
     }
-    collect(menus, Keymap::new())
+    collect(menus, Keymap::new(), &bind)
 }
 pub(crate) fn update_entry(
     menus: &mut [AppMenu],
@@ -869,7 +889,7 @@ pub(crate) fn offer_current_key() -> bool {
         .is_some_and(|event| offer_key(&event))
 }
 #[cfg(target_os = "macos")]
-fn offer_key(event: &objc2_app_kit::NSEvent) -> bool {
+pub(crate) fn offer_key(event: &objc2_app_kit::NSEvent) -> bool {
     let Some(mtm) = objc2::MainThreadMarker::new() else {
         return false;
     };
@@ -1333,7 +1353,7 @@ mod dynamic_tests {
             [AppMenuEntry::item("Find…", "find")
                 .accelerator(MenuAccelerator::primary(Key::Character("f".into())))],
         )];
-        let _binding = ui.input.bind_keys(root, keymap(&model));
+        let _binding = ui.input.bind_keys(root, keymap(&model, &[]));
         let view = ui.mount(compose::column().child(compose::text("apple")));
         ui.prepare_frame();
         let command = Modifiers {
@@ -1408,7 +1428,7 @@ mod dynamic_tests {
             [AppMenuEntry::item("Save", "save")
                 .accelerator(MenuAccelerator::primary(Key::Character("s".into())))],
         )];
-        let binding = ui.input.bind_keys(root, keymap(&model));
+        let binding = ui.input.bind_keys(root, keymap(&model, &[]));
         let override_count = Rc::new(std::cell::Cell::new(0));
         let count = override_count.clone();
         let view = ui.mount(compose::button().child("Focused").on_action::<MenuAction>(
@@ -1442,7 +1462,7 @@ mod dynamic_tests {
                 .enabled(false)
                 .accelerator(MenuAccelerator::primary(Key::Character("s".into())))],
         )];
-        let _binding = ui.input.bind_keys(root, keymap(&replacement));
+        let _binding = ui.input.bind_keys(root, keymap(&replacement, &[]));
         ui.dispatch(press());
         assert_eq!(*output.borrow(), ["save"]);
         // Direct application actions still route through the same typed channel.

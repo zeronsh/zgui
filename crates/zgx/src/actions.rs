@@ -66,6 +66,32 @@ impl Keystroke {
     }
 }
 
+/// Whether `stroke` is an editing or system key every page and terminal
+/// uses: cut, copy, paste, undo, redo and select all with the platform's
+/// shortcut modifier, and on macOS ⌘Q, ⌘H and ⌘M too.
+pub(crate) fn system_key(stroke: &Keystroke) -> bool {
+    let Key::Character(c) = &stroke.key else {
+        return false;
+    };
+    let Modifiers {
+        control, alt, meta, ..
+    } = stroke.modifiers;
+    let mac = cfg!(target_os = "macos");
+    if alt
+        || (if mac {
+            !meta || control
+        } else {
+            !control || meta
+        })
+    {
+        return false;
+    }
+    let editing = matches!(
+        c.to_ascii_lowercase().as_str(),
+        "c" | "v" | "x" | "z" | "a" | "y"
+    );
+    editing || (mac && matches!(c.to_ascii_lowercase().as_str(), "q" | "h" | "m"))
+}
 /// A sequence of one to four keystrokes bound to an action, optionally only
 /// where a context predicate holds.
 #[derive(Clone, Debug)]
@@ -75,6 +101,7 @@ pub struct KeyBinding {
     context: Option<ContextPredicate>,
     /// A physical key it binds instead of `sequence`'s key (`KeyBinding::code`).
     code: Option<Rc<str>>,
+    reserved: bool,
 }
 impl KeyBinding {
     /// Bind one through four strokes. Invalid lengths are rejected without registration.
@@ -91,6 +118,7 @@ impl KeyBinding {
             action: action.into(),
             context: None,
             code: None,
+            reserved: false,
         })
     }
     /// Bind the physical key `code` (as the DOM's `KeyboardEvent.code`
@@ -105,6 +133,7 @@ impl KeyBinding {
             action: action.into(),
             context: None,
             code: Some(code),
+            reserved: false,
         }
     }
     /// Whether it starts with `strokes`, the last pressed as the physical
@@ -118,6 +147,29 @@ impl KeyBinding {
                     && strokes[0].modifiers == self.sequence[0].modifiers
             }
         }
+    }
+    /// The app's whatever has the keyboard: a native view with focus (a web
+    /// page, a terminal) never has it first, as a browser keeps ⌘T and ⌘W
+    /// from its pages. Without it, a native view gets each key first and the
+    /// app the ones it leaves alone. Reserving an editing or system key (copy,
+    /// paste, undo, quit…) takes it from every page and terminal: a debug
+    /// build says so, once.
+    pub fn reserved(mut self) -> Self {
+        if cfg!(debug_assertions)
+            && let Some(stroke) = self.sequence.first().filter(|stroke| system_key(stroke))
+        {
+            static WARNED: std::sync::OnceLock<std::sync::Mutex<Vec<Keystroke>>> =
+                std::sync::OnceLock::new();
+            let mut warned = WARNED.get_or_init(Default::default).lock().unwrap();
+            if !warned.contains(stroke) {
+                warned.push(stroke.clone());
+                eprintln!(
+                    "zgx: reserved {stroke:?}, an editing or system key: pages and terminals no longer get it"
+                );
+            }
+        }
+        self.reserved = true;
+        self
     }
     /// Apply only where a context in the stack has `context` (see
     /// [`ContextPredicate::Flag`]).
@@ -293,9 +345,16 @@ impl Registry {
             _ => false,
         }
     }
-    /// Whether a binding on `path` (focus first) starts with `stroke`, as
-    /// `resolve` would find it from no pending sequence. Reads only.
-    pub(crate) fn binds(&self, path: &[NodeId], stroke: &Keystroke, code: Option<&str>) -> bool {
+    /// The binding on `path` (focus first) that decides `stroke`, the
+    /// physical key `code`, as `resolve` would find it from no pending
+    /// sequence: the first that applies, a `NoAction` among them included.
+    /// Reads only.
+    fn deciding(
+        &self,
+        path: &[NodeId],
+        stroke: &Keystroke,
+        code: Option<&str>,
+    ) -> Option<&KeyBinding> {
         let contexts: Vec<KeyContext> = path
             .iter()
             .rev()
@@ -311,8 +370,6 @@ impl Registry {
                 context
             })
             .collect();
-        // In `resolve`'s order: the first that applies decides, and a
-        // `NoAction` there unbinds the key.
         path.iter()
             .filter_map(|node| self.maps.get(node))
             .flat_map(|maps| maps.iter().rev())
@@ -324,7 +381,19 @@ impl Registry {
                         .as_ref()
                         .is_none_or(|context| context.matches(&contexts))
             })
+    }
+    /// Whether a binding on `path` takes `stroke` (alone or as a sequence's
+    /// first): a `NoAction` that decides it unbinds it.
+    pub(crate) fn binds(&self, path: &[NodeId], stroke: &Keystroke, code: Option<&str>) -> bool {
+        self.deciding(path, stroke, code)
             .is_some_and(|binding| binding.action.downcast_ref::<NoAction>().is_none())
+    }
+    /// Whether the binding that takes `stroke` on `path` is reserved
+    /// ([`KeyBinding::reserved`]).
+    pub(crate) fn reserves(&self, path: &[NodeId], stroke: &Keystroke, code: Option<&str>) -> bool {
+        self.deciding(path, stroke, code).is_some_and(|binding| {
+            binding.reserved && binding.action.downcast_ref::<NoAction>().is_none()
+        })
     }
     pub(crate) fn resolve(
         &mut self,
@@ -417,6 +486,26 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn editing_and_system_keys_are_named() {
+        let primary = Modifiers {
+            meta: cfg!(target_os = "macos"),
+            control: !cfg!(target_os = "macos"),
+            ..Default::default()
+        };
+        let at = |key: &str, modifiers| Keystroke::new(Key::Character(key.into()), modifiers);
+        for key in ["c", "V", "x", "z", "a"] {
+            assert!(system_key(&at(key, primary)), "{key}");
+        }
+        assert!(!system_key(&at("t", primary)));
+        assert!(!system_key(&at("c", Modifiers::default())));
+        let alt = Modifiers {
+            alt: true,
+            ..primary
+        };
+        assert!(!system_key(&at("c", alt)));
+        assert_eq!(system_key(&at("q", primary)), cfg!(target_os = "macos"));
+    }
     use super::*;
     fn stroke(number: u8) -> Keystroke {
         Keystroke::new(Key::Function(number), Modifiers::default())

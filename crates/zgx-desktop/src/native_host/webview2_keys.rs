@@ -53,6 +53,32 @@ impl Pressed {
     }
 }
 
+/// The virtual keys whose presses the app took from the page (reserved
+/// shortcuts): their releases are the app's too, whatever has changed
+/// since (the reservation, the focus), so the page never sees half a key.
+/// A held key's repeats are one press; other keys' releases, modifiers'
+/// among them, stay the page's.
+#[derive(Default)]
+pub(super) struct Swallowed(Vec<u32>);
+impl Swallowed {
+    /// The app took the press of `vk`.
+    pub(super) fn press(&mut self, vk: u32) {
+        if !self.0.contains(&vk) {
+            self.0.push(vk);
+        }
+    }
+    /// `vk` was released: whether its press was the app's (once).
+    pub(super) fn release(&mut self, vk: u32) -> bool {
+        match self.0.iter().position(|key| *key == vk) {
+            Some(index) => {
+                self.0.swap_remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
 /// A key the page's script forwarded: zgx's key, the virtual key it is
 /// on, and the modifiers held.
 #[derive(Debug, PartialEq)]
@@ -149,6 +175,47 @@ fn vk_of(code: &str) -> Option<u32> {
         "Backslash" => 0xDC,
         "BracketRight" => 0xDD,
         "Quote" => 0xDE,
+        _ => return None,
+    })
+}
+
+/// zgx's key for virtual key `vk` (a key WebView2 saw pressed), with its
+/// US-layout character for a letter, digit or punctuation key: for the
+/// shortcuts the app keeps, asked before the page has the key. A letter is
+/// lowercase (shortcuts bind both cases).
+pub(super) fn key_of_vk(vk: u32) -> Option<Key> {
+    Some(match vk {
+        0x41..=0x5A | 0x30..=0x39 => {
+            Key::Character(char::from_u32(vk)?.to_ascii_lowercase().to_string())
+        }
+        0x70..=0x87 => Key::Function((vk - 0x70 + 1) as u8),
+        0x08 => Key::Backspace,
+        0x09 => Key::Tab,
+        0x0D => Key::Enter,
+        0x1B => Key::Escape,
+        0x20 => Key::Space,
+        0x21 => Key::PageUp,
+        0x22 => Key::PageDown,
+        0x23 => Key::End,
+        0x24 => Key::Home,
+        0x25 => Key::ArrowLeft,
+        0x26 => Key::ArrowUp,
+        0x27 => Key::ArrowRight,
+        0x28 => Key::ArrowDown,
+        0x2D => Key::Insert,
+        0x2E => Key::Delete,
+        0x5D => Key::ContextMenu,
+        0xBA => Key::Character(";".into()),
+        0xBB => Key::Character("=".into()),
+        0xBC => Key::Character(",".into()),
+        0xBD => Key::Character("-".into()),
+        0xBE => Key::Character(".".into()),
+        0xBF => Key::Character("/".into()),
+        0xC0 => Key::Character("`".into()),
+        0xDB => Key::Character("[".into()),
+        0xDC => Key::Character("\\".into()),
+        0xDD => Key::Character("]".into()),
+        0xDE => Key::Character("'".into()),
         _ => return None,
     })
 }
@@ -269,6 +336,39 @@ mod tests {
             !pressed.take(0x55, ctrl(), now + Duration::from_millis(1500)),
             "too late"
         );
+    }
+
+    /// The release of a key the app took is the app's, once, even after the
+    /// reservation went; another key's release, or a modifier's, is not.
+    #[test]
+    fn a_taken_press_takes_its_release_once() {
+        let mut swallowed = Swallowed::default();
+        assert!(!swallowed.release(0x4A), "nothing taken");
+        swallowed.press(0x4A);
+        swallowed.press(0x4A); // Held: a repeat.
+        swallowed.press(0x74);
+        assert!(!swallowed.release(0x11), "Ctrl's release is the page's");
+        assert!(!swallowed.release(0x55), "another key's");
+        assert!(swallowed.release(0x4A));
+        assert!(!swallowed.release(0x4A), "once, repeats included");
+        assert!(swallowed.release(0x74));
+    }
+
+    #[test]
+    fn a_virtual_key_is_the_key_its_code_is() {
+        for (vk, key) in [
+            (0x55, Key::Character("u".into())),
+            (0x31, Key::Character("1".into())),
+            (0x74, Key::Function(5)),
+            (0x25, Key::ArrowLeft),
+            (0xBB, Key::Character("=".into())),
+        ] {
+            assert_eq!(key_of_vk(vk), Some(key), "{vk:#x}");
+        }
+        assert_eq!(key_of_vk(0x10), None, "Shift alone");
+        // The page's half agrees: the same key from its code's virtual key.
+        let forwarded = parse(&message("u", "KeyU", true, false)).unwrap();
+        assert_eq!(key_of_vk(forwarded.vk), Some(forwarded.key));
     }
 
     #[test]

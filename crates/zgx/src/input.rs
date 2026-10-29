@@ -849,6 +849,17 @@ impl InputDispatcher {
             .try_borrow()
             .is_ok_and(|actions| actions.binds(&path, &stroke, code.as_deref()))
     }
+    /// Whether the key binding that takes `key` with `modifiers` where focus
+    /// is (`binds_key`) is reserved (`KeyBinding::reserved`): the app's
+    /// before a native view (a page, a terminal) has it. Reads only.
+    pub fn reserves_key(&self, scene: &Scene, key: &Key, modifiers: Modifiers) -> bool {
+        let path = self.action_path(scene);
+        let stroke = crate::actions::Keystroke::new(key.clone(), modifiers);
+        let code = self.state.borrow().key_code.clone();
+        self.actions
+            .try_borrow()
+            .is_ok_and(|actions| actions.reserves(&path, &stroke, code.as_deref()))
+    }
     /// Route a typed action from focus through its enabled ancestors.
     pub fn dispatch_action(
         &self,

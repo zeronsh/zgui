@@ -113,6 +113,32 @@ pub(crate) fn forward_secondary_click(view: &NSView, event: &objc2_app_kit::NSEv
 /// first).
 #[cfg(feature = "ghostty")]
 pub(crate) fn app_binds_key(view: &NSView, event: &objc2_app_kit::NSEvent) -> bool {
+    app_key(view, event, |input, scene, key, modifiers| {
+        input.binds_key(scene, key, modifiers)
+    })
+}
+
+/// Whether `event`, a key `view` (a page, a terminal) would get first, is a
+/// shortcut the app keeps whatever has the keyboard
+/// (`KeyBinding::reserved`, `Application::reserved_shortcuts`).
+pub(crate) fn app_reserves_key(view: &NSView, event: &objc2_app_kit::NSEvent) -> bool {
+    app_key(view, event, |input, scene, key, modifiers| {
+        input.reserves_key(scene, key, modifiers)
+    })
+}
+
+/// `ask` of the key `event` is, as zgx names the window's own key presses,
+/// with the input and scene of `view`'s window.
+fn app_key(
+    view: &NSView,
+    event: &objc2_app_kit::NSEvent,
+    ask: impl FnOnce(
+        &zgx::input::InputDispatcher,
+        &Scene,
+        &zgx::input::Key,
+        zgx::input::Modifiers,
+    ) -> bool,
+) -> bool {
     use objc2_app_kit::NSEventModifierFlags as Flags;
     let Some(router) = view
         .window()
@@ -138,7 +164,29 @@ pub(crate) fn app_binds_key(view: &NSView, event: &objc2_app_kit::NSEvent) -> bo
     };
     scene
         .try_borrow()
-        .is_ok_and(|scene| router.input.binds_key(&scene, &key, modifiers))
+        .is_ok_and(|scene| ask(&router.input, &scene, &key, modifiers))
+}
+
+/// A shortcut the app keeps (`app_reserves_key`), the app's first: its
+/// menus, and failing them zgx's view, up `view`'s responder chain, which
+/// hears it as a shortcut. Whether it was the app's.
+pub(crate) fn take_reserved_key(view: &NSView, event: &objc2_app_kit::NSEvent) -> bool {
+    // AppKit offers key equivalents to every view; only a focused one's
+    // keys are its to give up.
+    if event.r#type() != objc2_app_kit::NSEventType::KeyDown
+        || !has_focus(view)
+        || !app_reserves_key(view, event)
+    {
+        return false;
+    }
+    if !crate::app_menu::offer_key(event) {
+        // SAFETY: AppKit's own responder chain, on the main thread; the
+        // next responder is a live view or the window.
+        if let Some(next) = unsafe { view.nextResponder() } {
+            next.keyDown(event);
+        }
+    }
+    true
 }
 
 /// The router of `content`'s window, if it has native views.
@@ -282,7 +330,7 @@ pub(crate) fn zgx_cursor_at(
 }
 
 /// Whether `view` or a view in it has its window's keyboard focus.
-fn has_focus(view: &NSView) -> bool {
+pub(super) fn has_focus(view: &NSView) -> bool {
     view.window()
         .and_then(|window| window.firstResponder())
         .and_then(|responder| responder.downcast::<NSView>().ok())

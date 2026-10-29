@@ -56,6 +56,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // already enabled: it is never enabled here), a ⌘ key in the middle of
     // it, then Return; the previous input source is selected again after.
     let ime = after("--ime").is_some();
+    // `--reserved`: ⌘K (a menu item's key) and ⌘⇧L (the binding) are the
+    // app's whatever has the keyboard; ⌘U is not.
+    let reserved = args.iter().any(|arg| arg == "--reserved");
     let part = after("--focus").unwrap_or_else(|| "web".into());
     let primary = |key: &str| MenuAccelerator::primary(Key::Character(key.into()));
     Application::new()
@@ -66,6 +69,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AppMenuEntry::item("Key the view uses", "used").accelerator(primary("k")),
             ],
         )])?
+        .reserved_shortcuts(if reserved {
+            vec![primary("k")]
+        } else {
+            Vec::new()
+        })
         .window(WindowOptions {
             title: "Key routing".into(),
             width: 700.,
@@ -128,6 +136,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Action::new(MenuAction("binding".into())),
             )
             .unwrap();
+            let binding = if reserved {
+                binding.reserved()
+            } else {
+                binding
+            };
             let keymap = cx.ui.input.bind_keys(root, Keymap::new().bind(binding));
             let own = view.find("own").unwrap();
             let ui = cx.ui.downgrade();

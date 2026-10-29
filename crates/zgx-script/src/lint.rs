@@ -28,6 +28,9 @@
 //! - `list-measured`: a `ui.list` of fixed heights whose rows wrap text: a
 //!   row's lines depend on its text and the width, which a script can't
 //!   measure; `measured = true` gives each row its content's height.
+//! - `reserved-system-key`: a `ui.command` with `reserved = true` on an
+//!   editing or system key (`cmd+c`, `cmd+v`, `cmd+z`, `cmd+q`…): reserved,
+//!   it is the app's even in a web page or terminal, which then can't use it.
 //! - `canvas-view`: a `ui.canvas` without `view` whose `draw` reads a zoom:
 //!   panning and zooming by drawing again runs the script for every mark;
 //!   `view` places what it drew instead.
@@ -100,6 +103,10 @@ pub const RULES: &[(&str, &str)] = &[
     (
         "list-measured",
         "a ui.list of fixed heights whose rows wrap text",
+    ),
+    (
+        "reserved-system-key",
+        "a reserved command on an editing or system key, taken from every page and terminal",
     ),
     (
         "canvas-view",
@@ -528,6 +535,7 @@ fn lint_tokens(file: &Path, tokens: &[Token], comments: &[(u32, String)]) -> Vec
     linter.run();
     linter.list_key();
     linter.list_measured();
+    linter.reserved_system_key();
     linter.canvas_view();
     linter.draw_item_state();
     let mut found = linter.found;
@@ -1006,6 +1014,67 @@ impl Linter<'_> {
                      measure. `measured = true` gives each row its content's height \
                      (`height` the estimate until a row is measured)."
                         .into(),
+                );
+            }
+        }
+    }
+
+    /// A `ui.command` with `reserved = true` on an editing or system key
+    /// (`cmd+c`, `cmd+v`, `cmd+z`, `cmd+q`…): reserved, it is the app's
+    /// even in a page or terminal, which then can neither copy nor paste.
+    fn reserved_system_key(&mut self) {
+        let field = |linter: &Self, open: usize, close: usize, name: &str| {
+            (open + 1..close).find(|&j| {
+                linter.is(j, name)
+                    && linter.is(j + 1, "=")
+                    && (linter.is(j - 1, ",") || linter.is(j - 1, "{"))
+            })
+        };
+        for at in 0..self.tokens.len() {
+            if !(self.is(at, "command")
+                && self.is(at.wrapping_sub(1), ".")
+                && self.is(at.wrapping_sub(2), "ui"))
+            {
+                continue;
+            }
+            let open = if self.is(at + 1, "{") {
+                at + 1
+            } else if self.is(at + 1, "(") && self.is(at + 2, "{") {
+                at + 2
+            } else {
+                continue;
+            };
+            let close = self.closing(open);
+            if !field(self, open, close, "reserved").is_some_and(|j| self.is(j + 2, "true")) {
+                continue;
+            }
+            let Some(key) = field(self, open, close, "key")
+                .and_then(|j| self.tokens.get(j + 2))
+                .filter(|t| t.kind == Kind::Str)
+                .map(|t| t.text.trim_matches(['"', '\'']).to_ascii_lowercase())
+            else {
+                continue;
+            };
+            let mut parts: Vec<&str> = key.split('+').map(str::trim).collect();
+            let letter = parts.pop().unwrap_or_default();
+            let primary = parts
+                .iter()
+                .any(|p| matches!(*p, "cmd" | "ctrl" | "control"));
+            // Shift only with Z: ⌘⇧Z is redo.
+            let other = parts
+                .iter()
+                .any(|p| matches!(*p, "alt" | "option") || (*p == "shift" && letter != "z"));
+            let editing = matches!(letter, "c" | "v" | "x" | "z" | "a" | "y");
+            let system = parts.contains(&"cmd") && matches!(letter, "q" | "h" | "m");
+            if primary && !other && (editing || system) {
+                self.report(
+                    at,
+                    "reserved-system-key",
+                    format!(
+                        "`{key}` reserved is the app's even in a web page or a terminal, which \
+                         then cannot use it (copy, paste, undo, quit…). Leave it unreserved: \
+                         a page or terminal leaves alone what it does not use."
+                    ),
                 );
             }
         }
@@ -1707,6 +1776,26 @@ local plain = ui.list { count = 10, row = function(i) return ui.text "x" end }
         assert_eq!(
             rules(source),
             vec![(6, "list-measured".into()), (7, "list-measured".into())]
+        );
+    }
+
+    #[test]
+    fn a_reserved_editing_or_system_key_is_reported() {
+        let source = r##"
+ui.command { id = "copy", key = "cmd+c", reserved = true, run = function() end }
+ui.command { id = "quit", key = "Cmd+Q", reserved = true, run = function() end }
+ui.command { id = "tab", key = "cmd+t", reserved = true, run = function() end }
+ui.command { id = "paste", key = "cmd+v", run = function() end }
+ui.command { id = "redo", key = "cmd+shift+z", reserved = true, run = function() end }
+ui.command { id = "undo", key = "ctrl+z", reserved = false, run = function() end }
+"##;
+        assert_eq!(
+            rules(source),
+            vec![
+                (2, "reserved-system-key".into()),
+                (3, "reserved-system-key".into()),
+                (6, "reserved-system-key".into())
+            ]
         );
     }
 

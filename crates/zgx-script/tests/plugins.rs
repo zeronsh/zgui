@@ -566,3 +566,34 @@ ui.contribute("bar", ui.text { `{ok} {tostring(err):find("the app's") ~= nil} {#
     // It may read the launch's arguments (they are no file it can open).
     assert_eq!(h.text("got"), "false true 1");
 }
+
+#[test]
+fn a_plugin_cannot_reserve_a_shortcut() {
+    let entry = plugin(
+        "reserver",
+        r#"ui.command { id = "quit", title = "Quit", menu = "File", key = "cmd+k", reserved = true, run = function() end }"#,
+    );
+    let h = Harness::new(|runtime| {
+        let host = ScriptHost::inline(
+            runtime,
+            "app",
+            r#"ui.command { id = "tab", title = "Tab", menu = "Shell", key = "cmd+t", reserved = true, run = function() end }
+return ui.column {}"#,
+        );
+        host.set_plugins(vec![Plugin {
+            name: "reserver".into(),
+            entry,
+            grants: vec![],
+        }]);
+        host
+    });
+    assert_eq!(h.host.reserved_keys().get(), ["cmd+t"], "the app's alone");
+    assert!(
+        h.host
+            .commands()
+            .get()
+            .iter()
+            .all(|c| c.id != "reserver/quit"),
+        "the plugin's command fails"
+    );
+}

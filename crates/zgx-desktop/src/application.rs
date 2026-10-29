@@ -496,6 +496,9 @@ pub struct WindowFactory {
     /// The app's fonts (`Application::font`, `WindowFactory::replace_font`).
     fonts: Rc<RefCell<Vec<zgx_gpu::text::FontData>>>,
     menus: Rc<RefCell<Vec<crate::AppMenu>>>,
+    /// The keystrokes the app keeps whatever has the keyboard
+    /// (`set_reserved_shortcuts`).
+    reserved: Rc<RefCell<Vec<zgx::actions::Keystroke>>>,
     pending: Rc<RefCell<VecDeque<WindowRequest>>>,
     next: Rc<Cell<u64>>,
     alive: Rc<Cell<bool>>,
@@ -539,6 +542,23 @@ impl WindowFactory {
             return Err(crate::AppMenuError("application is closed".into()));
         }
         *self.menus.borrow_mut() = menus;
+        self.proxy
+            .send_event(Event::MenusChanged)
+            .map_err(|_| crate::AppMenuError("application event loop is closed".into()))
+    }
+    /// Keep `shortcuts` the app's whatever has the keyboard, for existing
+    /// and future windows: the menu items and key bindings on them come
+    /// before a focused web page or terminal (as a browser keeps ⌘T from
+    /// its pages), where other shortcuts reach the app only if the page or
+    /// terminal leaves them alone. Each call replaces the last.
+    pub fn set_reserved_shortcuts(
+        &self,
+        shortcuts: Vec<crate::MenuAccelerator>,
+    ) -> Result<(), crate::AppMenuError> {
+        if !self.alive.get() {
+            return Err(crate::AppMenuError("application is closed".into()));
+        }
+        *self.reserved.borrow_mut() = shortcuts.into_iter().map(|key| key.0).collect();
         self.proxy
             .send_event(Event::MenusChanged)
             .map_err(|_| crate::AppMenuError("application event loop is closed".into()))
@@ -741,6 +761,7 @@ pub struct Application {
     fonts: Vec<zgx_gpu::text::FontData>,
     options: WindowOptions,
     menus: Vec<crate::AppMenu>,
+    reserved: Vec<zgx::actions::Keystroke>,
     application_id: Option<String>,
     // Read on Linux only.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -762,6 +783,7 @@ impl Application {
             fonts: Vec::new(),
             options: WindowOptions::default(),
             menus: Vec::new(),
+            reserved: Vec::new(),
             application_id: None,
             desktop_id: None,
             application_event: None,
@@ -783,6 +805,12 @@ impl Application {
         crate::app_menu::validate(&menus)?;
         self.menus = menus;
         Ok(self)
+    }
+    /// The keystrokes the app keeps whatever has the keyboard (see
+    /// `WindowFactory::set_reserved_shortcuts`).
+    pub fn reserved_shortcuts(mut self, shortcuts: Vec<crate::MenuAccelerator>) -> Self {
+        self.reserved = shortcuts.into_iter().map(|key| key.0).collect();
+        self
     }
     /// Register native URL/reopen delivery. Linux exports org.freedesktop.Application;
     /// macOS owns GetURL, OpenDocuments, and Reopen AppleEvent routes for the
@@ -890,6 +918,7 @@ impl Application {
             #[cfg(target_os = "linux")]
             activation: Rc::default(),
             menus: Rc::new(RefCell::new(self.menus)),
+            reserved: Rc::new(RefCell::new(self.reserved)),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
             alive: Rc::new(Cell::new(true)),
@@ -1538,9 +1567,10 @@ impl Host {
         let clipboard = windows.clipboard.clone();
         let root = ui.scene.borrow().root();
         let menu_model = ui.signal(windows.menus());
-        let menu_binding = ui
-            .input
-            .bind_keys(root, crate::app_menu::keymap(&windows.menus()));
+        let menu_binding = ui.input.bind_keys(
+            root,
+            crate::app_menu::keymap(&windows.menus(), &windows.reserved.borrow()),
+        );
         let fallback = proxy.clone();
         let menus = windows.menus.clone();
         let closed = handle.closed.clone();
@@ -5923,6 +5953,7 @@ impl WindowManager {
             }
             Event::MenusChanged => {
                 let menus = self.factory.menus();
+                let reserved = self.factory.reserved.borrow().clone();
                 // A menu bar still to be made is made from them then.
                 #[cfg(target_os = "macos")]
                 if self.menu_bar_due.is_none() {
@@ -5945,7 +5976,7 @@ impl WindowManager {
                         .context
                         .ui
                         .input
-                        .bind_keys(root, crate::app_menu::keymap(&menus));
+                        .bind_keys(root, crate::app_menu::keymap(&menus, &reserved));
                 }
             }
             #[cfg(target_os = "macos")]
@@ -6433,7 +6464,7 @@ fn inspector_shortcut(m: Modifiers) -> bool {
 /// The key `event` is to zgx's key bindings, with `modifiers` held, as the
 /// window's own key presses are: for a key a native view would otherwise
 /// keep (a terminal's), asked whether it is one of the app's shortcuts.
-#[cfg(all(target_os = "macos", feature = "ghostty"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn shortcut_of(
     event: &winit::event::KeyEvent,
     modifiers: zgx::input::Modifiers,
@@ -7413,6 +7444,7 @@ mod tests {
             #[cfg(target_os = "linux")]
             activation: Rc::default(),
             menus: Rc::new(RefCell::new(Vec::new())),
+            reserved: Rc::default(),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
             alive: Rc::new(Cell::new(true)),
@@ -7564,6 +7596,7 @@ mod tests {
             #[cfg(target_os = "linux")]
             activation: Rc::default(),
             menus: Rc::new(RefCell::new(Vec::new())),
+            reserved: Rc::default(),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
             alive: Rc::new(Cell::new(true)),
@@ -7653,6 +7686,7 @@ mod tests {
             application_id: None,
             activation: Rc::default(),
             menus: Rc::new(RefCell::new(Vec::new())),
+            reserved: Rc::default(),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
             alive: Rc::new(Cell::new(true)),
@@ -7724,6 +7758,7 @@ mod tests {
             application_id: None,
             activation: Rc::default(),
             menus: Rc::new(RefCell::new(Vec::new())),
+            reserved: Rc::default(),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
             alive: Rc::new(Cell::new(true)),
@@ -7789,6 +7824,7 @@ mod tests {
             application_id: None,
             activation: Rc::default(),
             menus: Rc::new(RefCell::new(Vec::new())),
+            reserved: Rc::default(),
             pending: Rc::new(RefCell::new(VecDeque::new())),
             next: Rc::new(Cell::new(1)),
             alive: Rc::new(Cell::new(true)),

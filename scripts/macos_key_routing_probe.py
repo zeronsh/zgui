@@ -18,6 +18,11 @@ not the system: the user's keyboard and other apps hear nothing. It is
 launched as a direct child, from /tmp, with a clean environment. If a
 system dialog appears, stop and report it; never click it. macOS only.
 
+`--reserved` reserves ⌘K and ⌘⇧L (`Application::reserved_shortcuts`,
+`KeyBinding::reserved`): the app has them with the page or terminal
+focused, though the page takes ⌘K and Ghostty binds it, and the page never
+hears them; ⌘U, not reserved, is the page's first and then the app's.
+
 `--ime ja` instead types a composition into a field of the page with an
 enabled Japanese input method (it is selected for the run and the previous
 input source selected again after; none is ever enabled here, and with none
@@ -42,6 +47,7 @@ def main():
     parser.add_argument('--target-dir', default=os.environ.get('CARGO_TARGET_DIR', str(ROOT / 'target')))
     parser.add_argument('--ghostty', action='store_true', help='also a Ghostty terminal (the ghostty feature)')
     parser.add_argument('--ime', choices=['ja'], help='a composition in the page, with an enabled input method')
+    parser.add_argument('--reserved', action='store_true', help='⌘K and ⌘⇧L reserved: the app\'s first')
     args = parser.parse_args()
     if platform.system() != 'Darwin':
         print('macOS only')
@@ -58,6 +64,8 @@ def main():
         clean['PATH'] = '/usr/bin:/bin'
         if args.ime:
             return ime(binary, clean)
+        if args.reserved:
+            return reserved(binary, clean, args.ghostty)
         out = subprocess.run([str(binary)], cwd='/tmp', env=clean, capture_output=True, text=True,
                              timeout=60).stdout
         parts = ['zgx', 'web'] + (['terminal'] if args.ghostty else [])
@@ -67,6 +75,9 @@ def main():
                 run = subprocess.run([str(binary), '--standard', key, '--focus', part], cwd='/tmp',
                                      env=clean, capture_output=True, text=True, timeout=60)
                 standard[key, part] = (run.returncode, run.stdout)
+    if 'FIRST None' in out or 'NO_KEY_WINDOW' in out:
+        print("the probe's window never became key (another window in front?): run it again")
+        return 2
     actions = set(re.findall(r'^ACTION (\S+) focus=(\S+)$', out, re.M))
     pages = set(re.findall(r'^PAGE (.+) focus=web$', out, re.M))
     checks = {
@@ -93,6 +104,33 @@ def main():
             ok = code == 0 and ('HIDDEN true' if key == 'h' else 'MINIMIZED true') in text
         checks[f'{part}: ⌘{key.upper()} {name}'] = ok
     print('\n'.join(line for line in out.splitlines() if re.match(r'(ACTION|PAGE|FIRST|NO_KEY) ', line)))
+    for name, ok in checks.items():
+        print(('ok  ' if ok else 'FAIL') + ' ' + name)
+    return 0 if all(checks.values()) else 1
+
+
+def reserved(binary, clean, ghostty):
+    """⌘K and ⌘⇧L reserved: the app's before the page or terminal hears
+    them; ⌘U, not reserved, still the page's first and then the app's."""
+    out = subprocess.run([str(binary), '--reserved'], cwd='/tmp', env=clean, capture_output=True,
+                         text=True, timeout=60).stdout
+    actions = set(re.findall(r'^ACTION (\S+) focus=(\S+)$', out, re.M))
+    pages = set(re.findall(r'^PAGE (.+) focus=web$', out, re.M))
+    checks = {
+        'page: a reserved menu key is the app\'s, though the page takes it': ('used', 'web') in actions,
+        'page: a reserved binding is the app\'s': ('binding', 'web') in actions,
+        'page: never hears the reserved keys': not ({'k meta', 'L meta shift'} & pages),
+        'page: an unreserved key is the page\'s first': 'u meta' in pages,
+        'page: and falls through to the app': ('unused', 'web') in actions,
+        'done': 'KEY_ROUTING_DONE' in out,
+    }
+    if ghostty:
+        checks.update({
+            "terminal: a reserved key beats Ghostty's binding": ('used', 'terminal') in actions,
+            'terminal: a reserved binding is the app\'s': ('binding', 'terminal') in actions,
+            'terminal: an unreserved key falls through': ('unused', 'terminal') in actions,
+        })
+    print('\n'.join(line for line in out.splitlines() if re.match(r'(ACTION|PAGE|FIRST) ', line)))
     for name, ok in checks.items():
         print(('ok  ' if ok else 'FAIL') + ' ' + name)
     return 0 if all(checks.values()) else 1

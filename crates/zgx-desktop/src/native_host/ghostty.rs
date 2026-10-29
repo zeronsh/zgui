@@ -1885,6 +1885,10 @@ impl TerminalView {
         if surface.is_null() {
             return false;
         }
+        // A shortcut the app keeps: the app's, before Ghostty's own binding.
+        if super::macos::take_reserved_key(self, event) {
+            return true;
+        }
         // A Ghostty binding (copy, paste, font size, ...): Ghostty's.
         let mut key = key_event(event, g::GHOSTTY_ACTION_PRESS, None);
         let chars = event

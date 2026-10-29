@@ -432,6 +432,9 @@ pub(crate) struct Page {
     /// Keys WebView2 saw pressed in it, for the page's word that it left
     /// them alone (`webview2_keys`).
     pressed: RefCell<super::webview2_keys::Pressed>,
+    /// The keys whose presses the app took from it (reserved): their
+    /// releases are the app's too.
+    swallowed: RefCell<super::webview2_keys::Swallowed>,
 }
 
 /// The `WebViewBackend` of a page (its `as_any` finds the page).
@@ -507,6 +510,7 @@ pub(crate) fn backend(web: &WebView, parent: HWND, scale: f32) -> Option<Rc<Page
         schemes: RefCell::new(Vec::new()),
         commit: RefCell::new(None),
         pressed: RefCell::default(),
+        swallowed: RefCell::default(),
     });
     web.attach(Rc::new(Backend(page.clone())));
     let mut schemes: Vec<String> = Vec::new();
@@ -974,11 +978,32 @@ impl Page {
                         || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
                     {
                         let held = held_modifiers();
+                        let reserved = Cell::new(false);
                         page(&|page| {
-                            page.pressed
-                                .borrow_mut()
-                                .record(vk, held, std::time::Instant::now())
+                            if page.take_reserved(vk, held) {
+                                page.swallowed.borrow_mut().press(vk);
+                                reserved.set(true);
+                            } else {
+                                page.pressed.borrow_mut().record(
+                                    vk,
+                                    held,
+                                    std::time::Instant::now(),
+                                )
+                            }
                         });
+                        // The app's: neither the page nor Edge has it.
+                        if reserved.get() {
+                            let _ = args.SetHandled(true);
+                        }
+                    } else if kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP
+                        || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP
+                    {
+                        // The release of a press the app took is the app's.
+                        let taken = Cell::new(false);
+                        page(&|page| taken.set(page.swallowed.borrow_mut().release(vk)));
+                        if taken.get() {
+                            let _ = args.SetHandled(true);
+                        }
                     }
                     Ok(())
                 })),
@@ -1056,6 +1081,47 @@ impl Page {
                 .input
                 .dispatch(&scene, InputEvent::KeyUp { key, modifiers });
         });
+    }
+    /// Virtual key `vk` with `modifiers`, pressed in the page: if it is a
+    /// shortcut the app keeps (`KeyBinding::reserved`), the app has it now,
+    /// before the page or Edge. Whether it did.
+    fn take_reserved(&self, vk: u32, modifiers: zgx::input::Modifiers) -> bool {
+        let Some(key) = super::webview2_keys::key_of_vk(vk) else {
+            return false;
+        };
+        let Some(router) = super::dcomp::router_of(self.parent.get()) else {
+            return false;
+        };
+        let Some(scene) = router.scene.upgrade() else {
+            return false;
+        };
+        // A letter bound in either case.
+        let upper = match &key {
+            zgx::input::Key::Character(c) => zgx::input::Key::Character(c.to_ascii_uppercase()),
+            key => key.clone(),
+        };
+        let Some(key) = [key, upper].into_iter().find(|key| {
+            scene
+                .try_borrow()
+                .is_ok_and(|scene| router.input.reserves_key(&scene, key, modifiers))
+        }) else {
+            return false;
+        };
+        zgx::native_view::post(move || {
+            use zgx::input::InputEvent;
+            router.input.dispatch(
+                &scene,
+                InputEvent::KeyDown {
+                    key: key.clone(),
+                    modifiers,
+                    repeat: false,
+                },
+            );
+            router
+                .input
+                .dispatch(&scene, InputEvent::KeyUp { key, modifiers });
+        });
+        true
     }
     fn focus_changed(&self, focused: bool) {
         self.focused.set(focused);

@@ -99,6 +99,17 @@ binding and replacement unregisters previous shortcuts. macOS displays and
 handles the same shortcuts in the native menu. Standard native OS-role items
 (About/Services/Hide) remain separate from this application-command model.
 
+With a web page or a terminal focused, it has each key first, as a page in a
+browser does: a shortcut it leaves alone (one the page does not
+`preventDefault`, one Ghostty does not bind) reaches the menus and zgx's key
+bindings. `Application::reserved_shortcuts` (or
+`WindowFactory::set_reserved_shortcuts`, later) names keystrokes the app keeps
+whatever has the keyboard: the menu items on them come before the page or
+terminal, which never sees the key, as a browser keeps ⌘T and ⌘W from its
+pages. `KeyBinding::reserved()` does the same for a key binding in no menu.
+Reserving an editing or system key (⌘C, ⌘V, ⌘Z, ⌘Q…) takes it from every page
+and terminal; a debug build says so once.
+
 Run `cargo run -p zgx-desktop --example platform_services` for an interactive
 example. `scripts/native_services_smoke.py` exercises a real GTK file portal in
 an isolated Sway session; it does not inject dialog results into application code.

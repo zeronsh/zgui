@@ -466,18 +466,27 @@ fn inspect(
 
 /// `host`'s commands (`ui.command`) as the application's menu bar, kept
 /// current as a reload changes them, each item running its command: their
-/// shortcuts work wherever focus is, as `run` gives them. For a Rust host
-/// that makes its own window; keep the effect it returns while the window
-/// lives.
+/// shortcuts work wherever focus is, as `run` gives them, and those the
+/// scripts reserve (`reserved = true`) come before a focused page or
+/// terminal. For a Rust host that makes its own window; keep the effect it
+/// returns while the window lives.
 pub fn serve_commands(
     host: &ScriptHost,
     cx: &mut zgx_desktop::WindowContext,
 ) -> zgx::reactive::Effect {
-    let commands = host.commands();
+    let (commands, reserved) = (host.commands(), host.reserved_keys());
     let windows = cx.windows.clone();
     let follow = cx.ui.runtime.effect(move || {
         if let Err(error) = windows.set_menus(menus(&commands.get())) {
             eprintln!("zgx run: menus: {error}");
+        }
+        let keys = reserved
+            .get()
+            .iter()
+            .filter_map(|key| accelerator(key))
+            .collect();
+        if let Err(error) = windows.set_reserved_shortcuts(keys) {
+            eprintln!("zgx run: reserved shortcuts: {error}");
         }
     });
     let run = host.clone();

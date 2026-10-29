@@ -927,3 +927,21 @@ fn an_images_shader_params_reach_its_node_and_animate_its_reveal() {
     );
     assert_eq!(params[0][1], 0.25, "the band kept");
 }
+
+#[test]
+fn reserved_commands_publish_their_shortcuts() {
+    let h = Harness::inline(
+        r##"ui.command { id = "tab", title = "New Tab", menu = "Shell", key = "cmd+t", reserved = true, run = function() end }
+        ui.command { id = "find", title = "Find", menu = "Edit", key = "cmd+f", run = function() end }
+        ui.command { id = "close", title = "Close", menu = "Shell", key = "cmd+w", reserved = true, run = function() end }
+        ui.command { id = "keyless", title = "No key", menu = "Shell", reserved = true, run = function() end }
+        return ui.column {}"##,
+    );
+    assert_eq!(h.host.error().get(), None);
+    assert_eq!(h.host.reserved_keys().get(), ["cmd+t", "cmd+w"]);
+    assert_eq!(
+        h.host.commands().get().len(),
+        4,
+        "reserved commands are menu items too"
+    );
+}

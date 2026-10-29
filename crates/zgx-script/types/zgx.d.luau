@@ -1110,6 +1110,10 @@ export type CommandOptions = {
 	menu: string?,
 	-- Modifiers and a key joined by "+": "cmd+shift+d", "cmd+alt+arrowleft".
 	key: string?,
+	-- The app's whatever has the keyboard: its key comes to the app before
+	-- a focused web page or terminal, which otherwise get each key first
+	-- (as a browser keeps ⌘T from its pages). Not a plugin's to set.
+	reserved: boolean?,
 	run: (() -> ...unknown)?,
 	-- A separator line in `menu` instead of a command.
 	separator: boolean?,

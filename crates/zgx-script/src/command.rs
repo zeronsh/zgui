@@ -39,20 +39,28 @@ type Runner = (Function, Weak<Vm>);
 type Pending = (Command, Option<Runner>, Option<Rc<str>>);
 pub(crate) struct Commands {
     pending: RefCell<Vec<Pending>>,
+    /// The ids of the commands declared `reserved` in the load under way.
+    pending_reserved: RefCell<Vec<String>>,
     runners: RefCell<HashMap<String, Runner>>,
     pub list: Signal<Vec<Command>>,
+    /// The shortcuts of the commands declared `reserved`: the app's whatever
+    /// has the keyboard (`ScriptHost::reserved_keys`).
+    pub reserved: Signal<Vec<String>>,
 }
 impl Commands {
     pub fn new(runtime: &Runtime) -> Self {
         Self {
             pending: RefCell::default(),
+            pending_reserved: RefCell::default(),
             runners: RefCell::default(),
             list: runtime.signal(Vec::new()),
+            reserved: runtime.signal(Vec::new()),
         }
     }
     /// A load begins: what it declares replaces what is published.
     pub fn begin(&self) {
         self.pending.borrow_mut().clear();
+        self.pending_reserved.borrow_mut().clear();
     }
     /// The load succeeded: publish what it declared.
     pub fn publish(&self) {
@@ -78,8 +86,17 @@ impl Commands {
             list.push(command);
         }
         *self.runners.borrow_mut() = runners;
+        let ids = std::mem::take(&mut *self.pending_reserved.borrow_mut());
+        let reserved: Vec<String> = list
+            .iter()
+            .filter(|command| ids.contains(&command.id))
+            .filter_map(|command| command.key.clone())
+            .collect();
         if self.list.with_untracked(|old| *old != list) {
             self.list.set(list);
+        }
+        if self.reserved.with_untracked(|old| *old != reserved) {
+            self.reserved.set(reserved);
         }
     }
     /// Run the command `id`; whether one ran.
@@ -115,6 +132,8 @@ pub(crate) fn install(lua: &Lua, ui: &Table, commands: Rc<Commands>) -> mlua::Re
         "shortcut_text",
         lua.create_function(|_, keys: String| Ok(crate::lower::shortcut_label(&keys)))?,
     )?;
+    // Made once: a `&str` key is a new string pushed each declaration.
+    let reserved_key = lua.create_string("reserved")?;
     ui.set(
         "command",
         lua.create_function(move |lua, table: Table| {
@@ -154,12 +173,23 @@ pub(crate) fn install(lua: &Lua, ui: &Table, commands: Rc<Commands>) -> mlua::Re
                 .get::<Option<Function>>("run")?
                 .ok_or_else(|| mlua::Error::runtime(format!("ui.command `{id}` needs `run`")))?;
             let key = table.get::<Option<String>>("key")?;
+            // The app's alone to keep: a plugin's would take a key from
+            // every page and terminal.
+            let reserved = table.get::<Option<bool>>(&reserved_key)?.unwrap_or(false);
+            if reserved && plugin.is_some() {
+                return Err(mlua::Error::runtime(format!(
+                    "ui.command `{id}`: a plugin's command cannot be reserved"
+                )));
+            }
             let vm = env.vm.clone();
             let mut pending = commands.pending.borrow_mut();
             if pending.iter().any(|(c, _, _)| c.id == id) {
                 return Err(mlua::Error::runtime(format!(
                     "ui.command `{id}` is declared twice"
                 )));
+            }
+            if reserved {
+                commands.pending_reserved.borrow_mut().push(id.clone());
             }
             pending.push((
                 Command {

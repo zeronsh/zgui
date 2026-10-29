@@ -88,6 +88,37 @@ const CHANNEL: &str = "zgx";
 /// Defines `window.zgx.postMessage(value)`, sending `value` as JSON.
 const CHANNEL_SCRIPT: &str = "(() => { const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.zgx; if (!handler || window.zgx) return; Object.defineProperty(window, 'zgx', { value: Object.freeze({ postMessage(value) { handler.postMessage(JSON.stringify(value === undefined ? null : value)); } }) }); Object.defineProperty(window, 'zgui', { value: window.zgx }); })();"; // rename-to-zgx: keep
 
+// SAFETY: a WKWebView subclass, main-thread only as views are, adding no
+// state; `performKeyEquivalent:` and `keyDown:` have NSResponder's
+// signatures and call WKWebView's own for every key they do not take.
+define_class!(
+    /// The page view: WKWebView as it is, configured as the app asks, but
+    /// for the shortcuts the app keeps whatever has the keyboard
+    /// (`KeyBinding::reserved`), which it hands the app before WebKit has
+    /// them. Every other key is WebKit's, then the app's if the page leaves
+    /// it alone.
+    #[unsafe(super(WKWebView, NSView, objc2_app_kit::NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "ZgxWebView"]
+    #[ivars = ()]
+    pub(crate) struct ZgxWebView;
+    impl ZgxWebView {
+        #[unsafe(method(performKeyEquivalent:))]
+        fn perform_key_equivalent(&self, event: &objc2_app_kit::NSEvent) -> bool {
+            // SAFETY: WKWebView's own, with the same event.
+            super::macos::take_reserved_key(self, event)
+                || unsafe { msg_send![super(self), performKeyEquivalent: event] }
+        }
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &objc2_app_kit::NSEvent) {
+            if !super::macos::take_reserved_key(self, event) {
+                // SAFETY: WKWebView's own, with the same event.
+                let _: () = unsafe { msg_send![super(self), keyDown: event] };
+            }
+        }
+    }
+);
+
 pub(crate) struct ObserverState {
     web: WeakWebView,
     view: RefCell<Weak<WKWebView>>,
@@ -722,7 +753,14 @@ impl MacWebView {
                 );
                 content.addUserScript(&script);
             }
-            WKWebView::initWithFrame_configuration(mtm.alloc(), NSRect::ZERO, &configuration)
+            // SAFETY: WKWebView's designated initializer, on a fresh
+            // allocation of zgx's subclass, which adds no state.
+            let view: Retained<ZgxWebView> = msg_send![
+                super(mtm.alloc::<ZgxWebView>().set_ivars(())),
+                initWithFrame: NSRect::ZERO,
+                configuration: &*configuration
+            ];
+            Retained::into_super(view)
         };
         *observer.ivars().view.borrow_mut() = Weak::from_retained(&view);
         // SAFETY: the delegates and KVO registrations hold `observer`

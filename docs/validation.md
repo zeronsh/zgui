@@ -1035,7 +1035,12 @@ the page focused it hears all three, and ⌘U and ⌘⇧L, which it leaves alone
 still reach the app while ⌘K stays the page's; with the terminal focused ⌘U
 and ⌘⇧L reach the app and ⌘K stays Ghostty's. AppKit's own menu keys act
 with each focused: ⌘H hides the app, ⌘M minimizes the window and ⌘Q quits.
-Passed on macOS 26 (M5), 2026-10-28.
+With `--reserved`, ⌘K (a menu item's key, `Application::reserved_shortcuts`)
+and ⌘⇧L (`KeyBinding::reserved`) are the app's with the page or the terminal
+focused, though the page takes ⌘K and Ghostty binds it, and the page never
+hears them, while ⌘U, not reserved, is still the page's first and then the
+app's. Passed on macOS 26 (M5), 2026-10-28.
+
 ## macOS glass and appearance set while a window shows
 
 `glass_counter --appearance-fixture` replaces the window's glass with

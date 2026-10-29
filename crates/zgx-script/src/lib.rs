@@ -1540,6 +1540,13 @@ impl ScriptHost {
     pub fn commands(&self) -> Signal<Vec<Command>> {
         self.0.commands.list.clone()
     }
+    /// The shortcuts of the commands scripts declare `reserved` (`ui.command
+    /// { key = "cmd+t", reserved = true }`), as of the last successful load:
+    /// the app's whatever has the keyboard, before a focused web page or
+    /// terminal (`WindowFactory::set_reserved_shortcuts`).
+    pub fn reserved_keys(&self) -> Signal<Vec<String>> {
+        self.0.commands.reserved.clone()
+    }
     /// The windows the scripts declare (`ui.window`), as of the last good
     /// load: open each while its `open` state is true, showing
     /// `window_view(id)`, and set the state false when it is closed.
