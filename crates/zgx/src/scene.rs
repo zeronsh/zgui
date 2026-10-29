@@ -2618,6 +2618,9 @@ pub struct Scene {
     /// Nodes the platform paints (native views): their box is their ink.
     platform_nodes: Vec<NodeId>,
     isolation_count: usize,
+    /// A paint walk since the last `take_painted_fades` passed a node that
+    /// fades its edges (set where the walk works its mask out anyway).
+    painted_fades: std::cell::Cell<bool>,
     /// Nodes with a local transform: none keeps every geometry query on
     /// the translation-only paths.
     transformed: usize,
@@ -2838,6 +2841,7 @@ impl Scene {
             repaints_read: std::cell::Cell::new(false),
             repaints_unread: REPAINTS_UNREAD,
             isolation_count: 0,
+            painted_fades: std::cell::Cell::new(false),
             transformed: 0,
             filtered: std::cell::Cell::new(0),
             promoted_count: 0,
@@ -8808,6 +8812,14 @@ impl Scene {
         self.repaints_read.set(true);
         (self.repaints_from..=self.repaint_flushes, &self.repaints)
     }
+    /// Whether a paint walk since the last call passed a node fading its
+    /// edges (`Style::fade_edges`): what it painted then carries a fade
+    /// mask of that node's own. For a renderer, which fades only what
+    /// such walks yield; clears it.
+    #[doc(hidden)]
+    pub fn take_painted_fades(&self) -> bool {
+        self.painted_fades.replace(false)
+    }
     /// Whether any container fades edges its content overflows (those
     /// fades follow scrolling without repainting the container).
     pub fn has_overflow_fades(&self) -> bool {
@@ -9386,6 +9398,9 @@ impl Scene {
                 let parent_color = inherited.and_then(|c| c.color);
                 let color = compose_color(parent_color, own_color);
                 let child_mask = fade_mask(mask, clip, &node.style, self.overflow_of(id, node));
+                if child_mask != mask {
+                    self.painted_fades.set(true);
+                }
                 let mut child_rounded = rounded_clip(rounded, node, bounds);
                 // Its clip inset: on its item and descendants here, on the
                 // composite of an untransformed layer (after its effect), and

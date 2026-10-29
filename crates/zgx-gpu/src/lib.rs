@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 use zgx::scene::{Color, NodeId, NodeKind, Rect, Scene};
 
+mod bands;
 #[cfg(all(windows, feature = "composition"))]
 mod composition;
 #[cfg(d3d11)]
@@ -3348,6 +3349,20 @@ pub struct GpuRenderer {
     text_cache: Rc<RefCell<prepared::TextCache>>,
     swash: SwashCache,
     layers: FxHashMap<NodeId, LayerCache>,
+    /// The items `render_flat` draws next came from a walk that passed a
+    /// fade (`Scene::take_painted_fades`): their fade bands draw as one
+    /// (bands.rs).
+    banding: bool,
+    /// Fades drawn item by item (`set_fade_bands`).
+    bands_off: bool,
+    /// Fade bands were drawn as one since a frame last found none to draw:
+    /// no frame is kept to patch, which would fade them item by item
+    /// (bands.rs).
+    bands_seen: bool,
+    /// The ids keying the last frame's band textures in `layers`, and
+    /// band textures to draw again (bands.rs).
+    band_keys: Vec<(NodeId, wgpu::TextureView)>,
+    band_pool: Vec<(wgpu::Texture, wgpu::BindGroup, wgpu::TextureView)>,
     /// Counts rendered frames, to age parked layers (`LAYER_PARK_FRAMES`).
     layer_frame: u64,
     /// A layer prepared last (`prepare_layer`), or one nested in it, drew
@@ -3984,6 +3999,11 @@ impl GpuRenderer {
             text_cache: context.text_cache(),
             swash: SwashCache::new(),
             layers: FxHashMap::default(),
+            banding: false,
+            bands_off: false,
+            bands_seen: false,
+            band_keys: Vec::new(),
+            band_pool: Vec::new(),
             layer_frame: 0,
             layer_shifted: false,
             layer_origin: (0., 0.),
@@ -4369,6 +4389,9 @@ impl GpuRenderer {
         // A frame deferred but never presented draws into the retained target
         // before this one prunes images or layers it may reference.
         self.flush_pending();
+        if !self.band_keys.is_empty() {
+            self.reclaim_bands();
+        }
         if self.scene_identity != Some(scene.identity()) {
             self.scene_identity = Some(scene.identity());
             self.layers.clear();
@@ -4494,6 +4517,7 @@ impl GpuRenderer {
             && !self.atlas_filling()
             && !scene.has_backdrop_blur()
             && !scene.has_overflow_fades()
+            && !self.bands_seen
             && (self.fresh
                 || was_patched
                 || patchable >= KEEP_AGAIN
@@ -4508,6 +4532,7 @@ impl GpuRenderer {
             self.kept = None;
         }
         let mut inherited = Vec::new();
+        scene.take_painted_fades();
         let (items, merged) = match &merged {
             _ if keep => (
                 scene.layer_items_recorded(&mut inherited),
@@ -4519,6 +4544,19 @@ impl GpuRenderer {
             ),
             None => (scene.layer_items(start), merged),
         };
+        // Fades its walk passed draw their bands as one; a frame kept to
+        // patch would draw them item by item.
+        // A frame kept to patch fades item by item: kept only where that is
+        // exact (no band of a fade it walked holds items that stack).
+        let painted = scene.take_painted_fades();
+        let banding = painted && self.band_capable();
+        if !painted && merged.is_none() {
+            self.bands_seen = false;
+        }
+        let stacked = banding && keep && self.needs_bands(scene, &items, &[viewport], viewport);
+        if stacked {
+            self.bands_seen = true;
+        }
         // Around native views, only this plane's paint (planes.rs).
         let items = self.plane_items(items);
         let mut layer_stats = GpuStats::default();
@@ -4568,10 +4606,12 @@ impl GpuRenderer {
         // Kept only if every item draws flat (no layer, no effect) from
         // what the scene marks when it changes.
         let keep = keep
+            && !stacked
             && self.effect_jobs.is_empty()
             && items
                 .iter()
                 .all(|item| !item.isolated && !changes_unmarked(item.kind));
+        self.banding = banding;
         let mut stats = match keep {
             true => self.render_keeping(scene, items, inherited, damage, merged, viewport)?,
             false => self.render_flat::<FRAME>(scene, items, damage, merged, false)?,
@@ -4800,6 +4840,7 @@ impl GpuRenderer {
                 })
             });
         let mut items = scene.layer_items(Some(id));
+        let banding = self.band_capable() && scene.take_painted_fades();
         self.plane_filter(&mut items);
         // A layer nested in it drawn from another corner differs anywhere
         // in it, and so does it.
@@ -4824,6 +4865,7 @@ impl GpuRenderer {
         self.prepare_effects(scene, &items)?;
         if let Some(damage) = partial {
             let cache = self.layers.remove(&id).expect("kept above");
+            self.banding = banding;
             let (texture, result) =
                 self.paint_layer(scene, items, bounds, cache.texture, scale, &damage, false);
             self.layers.insert(
@@ -4901,6 +4943,7 @@ impl GpuRenderer {
             height as f32 / texture.height() as f32,
         ];
         let whole = [Rect::new(0., 0., bounds.width, bounds.height)];
+        self.banding = banding;
         let (texture, result) =
             self.paint_layer(scene, items, bounds, texture, scale, &whole, true);
         let result = result?;
@@ -4989,6 +5032,16 @@ impl GpuRenderer {
         Some(Shown { damage, map, clip })
     }
     fn select_viewport(&mut self, width: f32, height: f32) {
+        let key = self.viewport_entry(width, height);
+        self.viewport_bind = self.viewports.get(&key).map(|(_, bind)| bind.clone());
+        #[cfg(any(target_os = "macos", d3d11))]
+        {
+            self.viewport_values = [width, height, self.scale, 0.];
+        }
+    }
+    /// The `viewports` key of a target `width` × `height` points, its
+    /// uniform made if new.
+    fn viewport_entry(&mut self, width: f32, height: f32) -> (u32, u32, u32) {
         let key = (width.to_bits(), height.to_bits(), self.scale.to_bits());
         if !self.viewports.contains_key(&key) {
             // Layer sizes come and go; keep the map small.
@@ -5006,11 +5059,7 @@ impl GpuRenderer {
             let bind = self.viewport_group(&buffer, self.no_regions.as_entire_binding());
             self.viewports.insert(key, (buffer, bind));
         }
-        self.viewport_bind = self.viewports.get(&key).map(|(_, bind)| bind.clone());
-        #[cfg(any(target_os = "macos", d3d11))]
-        {
-            self.viewport_values = [width, height, self.scale, 0.];
-        }
+        key
     }
     /// The pipeline drawing `shading` if a shader fill's or the image
     /// effects', once compiled.
@@ -6164,6 +6213,20 @@ impl GpuRenderer {
         if MODE != PATCH {
             self.frame = self.frame.wrapping_add(1);
         }
+        // Fade bands drawn as one (bands.rs): their items drawn first, in
+        // passes of this frame's own.
+        let banding = std::mem::take(&mut self.banding) && MODE == FRAME && !record && !made;
+        let (items, mut bands) = match banding {
+            true => self.band(scene, items, &damage, viewport),
+            false => (items, Vec::new()),
+        };
+        // Kept frames wait while bands are drawn (`bands_seen`).
+        if banding && !self.in_layer {
+            self.bands_seen = !bands.is_empty();
+            if self.bands_seen {
+                self.kept = None;
+            }
+        }
         // (A kept frame's glyphs stay where they are: patching it gave way
         // before the atlas filled, `render_kept`.)
         if MODE != PATCH && !made && self.atlas_filling() {
@@ -6219,337 +6282,456 @@ impl GpuRenderer {
         ranges.clear();
         // The open range's text, if one: its spare room, if it changes.
         let mut text = None;
-        let mut items = items.into_iter();
-        let items = LeftItems(&mut items);
-        for item in items.0.by_ref() {
-            if MODE == PATCH {
-                close_range(
-                    &mut quads,
-                    &draws,
-                    &mut ranges,
-                    record && self.changes(text),
-                );
-                ranges.push((quads.len() as u32, 0, 0, draws.len() as u32, u32::MAX));
-                text = matches!(item.kind, NodeKind::Text { .. }).then_some(item.id);
-            }
-            // Retained hidden subtrees must not allocate textures, shape text,
-            // or trigger filters until their effective opacity is visible.
-            if item.effects.opacity <= 0. {
-                continue;
-            }
-            let node_clip = if !item.isolated
-                && matches!(item.kind, NodeKind::Text { .. } | NodeKind::RichText { .. })
-            {
-                item.clip
-                    .unwrap_or(viewport)
-                    .intersection(item.bounds)
-                    .unwrap_or_default()
-            } else {
-                item.clip.unwrap_or(viewport)
+        // Each band phase's items (bands.rs) in its texture's points, then
+        // the frame's: one loop, the draws told apart where each phase ends.
+        let (frame_items, frame_viewport, origin) = (items, viewport, self.layer_origin);
+        let mut frame_items = Some(frame_items);
+        let mut phase = 0;
+        let mut ends = Vec::new();
+        loop {
+            let (items, damage, viewport) = match bands.get_mut(phase) {
+                Some(band) => {
+                    self.layer_origin = band.origin;
+                    (
+                        std::mem::take(&mut band.items),
+                        std::borrow::Cow::Owned(band.damage.clone()),
+                        band.viewport,
+                    )
+                }
+                None => {
+                    self.layer_origin = origin;
+                    let items = frame_items.take().expect("the frame's items");
+                    (
+                        items,
+                        std::borrow::Cow::Borrowed(&damage[..]),
+                        frame_viewport,
+                    )
+                }
             };
-            let Some(clip) = node_clip.intersection(viewport) else {
-                continue;
-            };
-
-            // A transformed layer's matrix, from this target's origin.
-            let matrix = item.projective().map(|matrix| {
-                use zgx::affine::{Affine, Projective};
-                let (x, y) = self.layer_origin;
-                Projective::from(Affine::translation(x, y))
-                    .then(matrix)
-                    .then(Projective::from(Affine::translation(-x, -y)))
-            });
-            // A layer composited through its layer shader, once that compiles.
-            let filter = item
-                .isolated
-                .then(|| scene.layer_shader(item.id))
-                .flatten()
-                .and_then(|layer| Some((layer.shader.clone()?, layer.uniforms)))
-                .filter(|(shader, _)| self.prepare_filter(shader));
-            // And blended with its backdrop, once that compiles.
-            let blend = item
-                .isolated
-                .then(|| scene.blend(item.id))
-                .filter(|mode| *mode != zgx::scene::BlendMode::Normal)
-                .filter(|_| self.prepare_blend(filter.as_ref().map(|(shader, _)| &**shader)));
-            // Blurred or masked: composited from its effect slot.
-            let effect = (item.isolated
-                && (item.effects.filter_blur > 0. || scene.mask(item.id).is_some()))
-            .then(|| self.effect_slot(item.id))
-            .flatten();
-            if !damage.iter().any(|d| {
-                d.intersects(clip)
-                    && d.intersects(if item.isolated {
-                        let b = self.layers[&item.id].bounds;
-                        let b = Rect::new(
-                            b.x - self.layer_origin.0,
-                            b.y - self.layer_origin.1,
-                            b.width,
-                            b.height,
-                        );
-                        let b = effect.map_or(b, |slot| b.expand(slot.spread));
-                        matrix.map_or(b, |matrix| matrix.bounds(b))
-                    } else if let NodeKind::Quad(style) | NodeKind::Panel { quad: style, .. } =
-                        item.kind
-                    {
-                        style.paint_bounds(item.bounds)
-                    } else if let NodeKind::Svg(svg) = item.kind {
-                        svg.paint_bounds(item.bounds)
-                    } else if let NodeKind::Image(image) = item.kind {
-                        image.paint_bounds(item.bounds)
-                    } else {
-                        item.bounds
-                    })
-            }) {
-                continue;
-            }
-            let start = quads.len() as u32;
-            // A shader fill's draw uses its pipeline.
-            let mut fill_shading = None;
-            if item.isolated {
-                let layer = self.layers.get(&item.id).expect("prepared layer");
-                let bounds = Rect::new(
-                    layer.bounds.x - self.layer_origin.0,
-                    layer.bounds.y - self.layer_origin.1,
-                    layer.bounds.width,
-                    layer.bounds.height,
-                );
-                let (bounds, uv) = match (effect, &self.effects) {
-                    (Some(slot), Some(atlas)) => slot.composite(bounds, atlas.size()),
-                    _ => (bounds, [0., 0., layer.uv[0], layer.uv[1]]),
+            let damage = &damage[..];
+            let mut items = items.into_iter();
+            let items = LeftItems(&mut items);
+            for item in items.0.by_ref() {
+                if MODE == PATCH {
+                    close_range(
+                        &mut quads,
+                        &draws,
+                        &mut ranges,
+                        record && self.changes(text),
+                    );
+                    ranges.push((quads.len() as u32, 0, 0, draws.len() as u32, u32::MAX));
+                    text = matches!(item.kind, NodeKind::Text { .. }).then_some(item.id);
+                }
+                // Retained hidden subtrees must not allocate textures, shape text,
+                // or trigger filters until their effective opacity is visible.
+                if item.effects.opacity <= 0. {
+                    continue;
+                }
+                let node_clip = if !item.isolated
+                    && matches!(item.kind, NodeKind::Text { .. } | NodeKind::RichText { .. })
+                {
+                    item.clip
+                        .unwrap_or(viewport)
+                        .intersection(item.bounds)
+                        .unwrap_or_default()
+                } else {
+                    item.clip.unwrap_or(viewport)
                 };
-                // Transformed: the quad's corners move in the vertex shader,
-                // as an affine image's; edge fades stay in its own frame. In
-                // perspective (`options.z` 2), divided by `w` there too.
-                let mut m = matrix.unwrap_or_default();
-                let projective = matrix.is_some_and(|m| m.affine().is_none());
-                // Zoomed: its corner on a pixel of this target, so its texels
-                // land on pixels (`prepare_layer`).
-                if layer.exact && !projective {
-                    let (x, y) = m.point(item.bounds.x, item.bounds.y);
-                    m.tx += (x * self.scale).round() / self.scale - x;
-                    m.ty += (y * self.scale).round() / self.scale - y;
-                }
-                quads.push(Quad {
-                    rect: [bounds.x, bounds.y, bounds.width, bounds.height],
-                    uv,
-                    color: [1., 1., 1., item.effects.opacity],
-                    fade: [
-                        item.bounds.x,
-                        item.bounds.y,
-                        item.bounds.width,
-                        item.bounds.height,
-                    ],
-                    options: [
-                        item.effects.edge_fade,
-                        2.,
-                        match (matrix.is_some(), projective) {
-                            (_, true) => 2.,
-                            (true, false) => 1.,
-                            (false, false) => 0.,
-                        },
-                        0.,
-                    ],
-                    shape: match matrix {
-                        Some(_) => [m.a, m.c, m.b, m.d],
-                        None => [0.; 4],
-                    },
-                    border: match (matrix, projective) {
-                        (Some(_), true) => [m.tx, m.ty, m.px, m.py],
-                        (Some(_), false) => [m.tx, m.ty, 0., 0.],
-                        (None, _) => [0.; 4],
-                    },
-                    mask: [
-                        region_index(&mut clips, Region::of(&item)),
-                        filter.as_ref().map_or(0., |(_, uniforms)| {
-                            region_index(&mut clips, Some(Region::uniforms(*uniforms)))
-                        }),
-                        blend.map_or(0., |mode| mode as u8 as f32),
-                        0.,
-                    ],
+                let Some(clip) = node_clip.intersection(viewport) else {
+                    continue;
+                };
+
+                // A transformed layer's matrix, from this target's origin.
+                let matrix = item.projective().map(|matrix| {
+                    use zgx::affine::{Affine, Projective};
+                    let (x, y) = self.layer_origin;
+                    Projective::from(Affine::translation(x, y))
+                        .then(matrix)
+                        .then(Projective::from(Affine::translation(-x, -y)))
                 });
-                draws.push(Draw {
-                    shading: match (&filter, blend) {
-                        (Some((shader, _)), Some(_)) => Shading::FilterBlend(shader.id()),
-                        (None, Some(_)) => Shading::Blend,
-                        (Some((shader, _)), None) => Shading::Filter(shader.id()),
-                        (None, None) => Shading::Full,
-                    },
-                    start,
-                    end: quads.len() as u32,
-                    clip,
-                    bounds: quad_bounds(&quads[start as usize..]),
-                    // Effect layers sample the effect atlas, and batch.
-                    source: match effect {
-                        Some(_) => TextureSource::Image(effects::EFFECT_ATLAS),
-                        None => TextureSource::Layer(item.id),
-                    },
-                    blur: (item.effects.blur_radius > 0.).then(|| {
-                        Box::new((
-                            item.bounds,
-                            item.effects,
-                            blur_corners(item.kind, item.bounds),
-                        ))
-                    }),
-                });
-                continue;
-            }
-            let bounds = item.bounds;
-            let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
-            let mut canvas_image = None;
-            // A canvas drawn as quads clips them to its box, as its raster is.
-            let mut canvas_clip = None;
-            // And its polyline strokes, if any, drawn apart (`push_draw`).
-            let mut polylines = false;
-            // And a text whose quads are its glyphs alone (no selection, no
-            // decorations): drawn with one shading (`push_draw`).
-            let mut glyphs_alone = false;
-            match item.kind {
-                NodeKind::Canvas(canvas) => {
-                    if bounds.width <= 0. || bounds.height <= 0. {
-                        continue;
-                    }
-                    // A grid under its drawing (a board's dots), clipped to
-                    // its box: marks placed by the grid's view, none drawn.
-                    if scene.has_grid_fills()
-                        && let Some(grid) = scene.grid_fill(item.id)
-                    {
-                        grid_quads(grid, bounds, item.effects.opacity, &mut quads);
-                        canvas_clip = Some(bounds);
-                    }
-                    let view = scene.canvas_view(item.id);
-                    // Its own opacity and edge fade apply to it as a whole:
-                    // drawn in quads, each would take them alone.
-                    if item.effects.opacity >= 1.
-                        && item.effects.edge_fade <= 0.
-                        && let Some(drawn) =
-                            canvas_quads(canvas, (bounds.x, bounds.y), view, &mut points)
-                    {
-                        if let Some(old) = self.node_images.remove(&item.id) {
-                            self.images.remove(&old);
-                        }
-                        self.canvases.forget(item.id);
-                        for quad in drawn {
-                            match quad {
-                                CanvasQuad::Fill(quad) => {
-                                    push_panel(&mut quads, quad, self.scale, self.split_shading)
-                                }
-                                CanvasQuad::Ring(quad) => quads.push(quad),
-                                CanvasQuad::Polyline(quad) => {
-                                    polylines = true;
-                                    quads.push(quad)
-                                }
-                            }
-                        }
-                        canvas_clip = Some(bounds);
-                        stats.canvas_quads += quads.len() - start as usize;
-                    } else {
-                        let before = self.canvases.rasterizations();
-                        let (width, height, scale) = (bounds.width, bounds.height, self.scale);
-                        let id = self.canvas_texture(item.id, &mut stats, |cache| {
-                            cache.get_viewed(item.id, canvas, view, width, height, scale)
-                        })?;
-                        stats.canvas_rasterizations +=
-                            (self.canvases.rasterizations() - before) as usize;
-                        canvas_image = Some(id);
-                        quads.push(Quad {
-                            rect: fade,
-                            uv: [0., 0., 1., 1.],
-                            color: [1., 1., 1., item.effects.opacity],
-                            fade,
-                            options: [item.effects.edge_fade, 2., 0., 0.],
-                            shape: [0.; 4],
-                            border: [0.; 4],
-                            mask: NO_MASK,
-                        });
-                    }
-                }
-                NodeKind::Rect(color) => quads.push(rect_quad(*color, fade, item.effects)),
-                NodeKind::Quad(style) | NodeKind::Panel { quad: style, .. } => {
-                    if style.shadows().len() > 32 {
-                        return Err(GpuError("panel exceeds 32 shadows".into()));
-                    }
-                    // A solid border (any widths per side, any radii) is a
-                    // ring the quad shader draws; dashed ones rasterize with
-                    // the fill.
-                    let ring = style.has_border()
-                        && style.decoration.as_ref().is_none_or(|detail| {
-                            detail.border_style == zgx::decoration::BorderStyle::Solid
-                        });
-                    let (opacity, edge_fade) = (item.effects.opacity, item.effects.edge_fade);
-                    if item.border_pass {
-                        // Its border alone, over what it holds, and its outline.
-                        if ring && style.border_over {
-                            quads.push(ring_quad(style, bounds, opacity, edge_fade));
-                        }
-                        if let Some(outline) = style.outline.filter(|o| o.visible()) {
-                            quads.push(outline_quad(&outline, style, bounds, opacity, edge_fade));
-                        }
-                    } else {
-                        for shadow in style.shadows() {
-                            let core = bounds.expand(shadow.spread.max(0.));
-                            let core = Rect::new(
-                                core.x + shadow.offset.x,
-                                core.y + shadow.offset.y,
-                                core.width,
-                                core.height,
+                // A layer composited through its layer shader, once that compiles.
+                let filter = item
+                    .isolated
+                    .then(|| scene.layer_shader(item.id))
+                    .flatten()
+                    .and_then(|layer| Some((layer.shader.clone()?, layer.uniforms)))
+                    .filter(|(shader, _)| self.prepare_filter(shader));
+                // And blended with its backdrop, once that compiles.
+                let blend = item
+                    .isolated
+                    .then(|| scene.blend(item.id))
+                    .filter(|mode| *mode != zgx::scene::BlendMode::Normal)
+                    .filter(|_| self.prepare_blend(filter.as_ref().map(|(shader, _)| &**shader)));
+                // Blurred or masked: composited from its effect slot.
+                let effect = (item.isolated
+                    && (item.effects.filter_blur > 0. || scene.mask(item.id).is_some()))
+                .then(|| self.effect_slot(item.id))
+                .flatten();
+                if !damage.iter().any(|d| {
+                    d.intersects(clip)
+                        && d.intersects(if item.isolated {
+                            let b = self.layers[&item.id].bounds;
+                            let b = Rect::new(
+                                b.x - self.layer_origin.0,
+                                b.y - self.layer_origin.1,
+                                b.width,
+                                b.height,
                             );
-                            // Three sigmas out (`blur_radius` is the sigma).
-                            let outer = core.expand(shadow.blur_radius.max(0.) * 3.);
-                            quads.push(Quad {
-                                rect: [outer.x, outer.y, outer.width, outer.height],
-                                uv: [0.; 4],
-                                color: rgba(shadow.color, item.effects.opacity),
-                                fade: [core.x, core.y, core.width, core.height],
-                                options: [0., 0., 0., 1.],
-                                shape: [
-                                    style.radius + shadow.spread.max(0.),
-                                    0.,
-                                    shadow.blur_radius.max(0.001),
-                                    0.,
-                                ],
-                                border: decoration::shadow_corners(
-                                    style,
-                                    core.width,
-                                    core.height,
-                                    shadow.spread.max(0.),
-                                ),
-                                mask: NO_MASK,
-                            });
+                            let b = effect.map_or(b, |slot| b.expand(slot.spread));
+                            matrix.map_or(b, |matrix| matrix.bounds(b))
+                        } else if let NodeKind::Quad(style) | NodeKind::Panel { quad: style, .. } =
+                            item.kind
+                        {
+                            style.paint_bounds(item.bounds)
+                        } else if let NodeKind::Svg(svg) = item.kind {
+                            svg.paint_bounds(item.bounds)
+                        } else if let NodeKind::Image(image) = item.kind {
+                            image.paint_bounds(item.bounds)
+                        } else {
+                            item.bounds
+                        })
+                }) {
+                    continue;
+                }
+                let start = quads.len() as u32;
+                // A shader fill's draw uses its pipeline.
+                let mut fill_shading = None;
+                if item.isolated {
+                    let layer = self.layers.get(&item.id).expect("prepared layer");
+                    let bounds = Rect::new(
+                        layer.bounds.x - self.layer_origin.0,
+                        layer.bounds.y - self.layer_origin.1,
+                        layer.bounds.width,
+                        layer.bounds.height,
+                    );
+                    let (bounds, uv) = match (effect, &self.effects) {
+                        (Some(slot), Some(atlas)) => slot.composite(bounds, atlas.size()),
+                        _ => (bounds, [0., 0., layer.uv[0], layer.uv[1]]),
+                    };
+                    // Transformed: the quad's corners move in the vertex shader,
+                    // as an affine image's; edge fades stay in its own frame. In
+                    // perspective (`options.z` 2), divided by `w` there too.
+                    let mut m = matrix.unwrap_or_default();
+                    let projective = matrix.is_some_and(|m| m.affine().is_none());
+                    // Zoomed: its corner on a pixel of this target, so its texels
+                    // land on pixels (`prepare_layer`).
+                    if layer.exact && !projective {
+                        let (x, y) = m.point(item.bounds.x, item.bounds.y);
+                        m.tx += (x * self.scale).round() / self.scale - x;
+                        m.ty += (y * self.scale).round() / self.scale - y;
+                    }
+                    quads.push(Quad {
+                        rect: [bounds.x, bounds.y, bounds.width, bounds.height],
+                        uv,
+                        color: [1., 1., 1., item.effects.opacity],
+                        fade: [
+                            item.bounds.x,
+                            item.bounds.y,
+                            item.bounds.width,
+                            item.bounds.height,
+                        ],
+                        options: [
+                            item.effects.edge_fade,
+                            2.,
+                            match (matrix.is_some(), projective) {
+                                (_, true) => 2.,
+                                (true, false) => 1.,
+                                (false, false) => 0.,
+                            },
+                            0.,
+                        ],
+                        shape: match matrix {
+                            Some(_) => [m.a, m.c, m.b, m.d],
+                            None => [0.; 4],
+                        },
+                        border: match (matrix, projective) {
+                            (Some(_), true) => [m.tx, m.ty, m.px, m.py],
+                            (Some(_), false) => [m.tx, m.ty, 0., 0.],
+                            (None, _) => [0.; 4],
+                        },
+                        mask: [
+                            region_index(&mut clips, Region::of(&item)),
+                            filter.as_ref().map_or(0., |(_, uniforms)| {
+                                region_index(&mut clips, Some(Region::uniforms(*uniforms)))
+                            }),
+                            blend.map_or(0., |mode| mode as u8 as f32),
+                            0.,
+                        ],
+                    });
+                    draws.push(Draw {
+                        shading: match (&filter, blend) {
+                            (Some((shader, _)), Some(_)) => Shading::FilterBlend(shader.id()),
+                            (None, Some(_)) => Shading::Blend,
+                            (Some((shader, _)), None) => Shading::Filter(shader.id()),
+                            (None, None) => Shading::Full,
+                        },
+                        start,
+                        end: quads.len() as u32,
+                        clip,
+                        bounds: quad_bounds(&quads[start as usize..]),
+                        // Effect layers sample the effect atlas, and batch.
+                        source: match effect {
+                            Some(_) => TextureSource::Image(effects::EFFECT_ATLAS),
+                            None => TextureSource::Layer(item.id),
+                        },
+                        blur: (item.effects.blur_radius > 0.).then(|| {
+                            Box::new((
+                                item.bounds,
+                                item.effects,
+                                blur_corners(item.kind, item.bounds),
+                            ))
+                        }),
+                    });
+                    continue;
+                }
+                let bounds = item.bounds;
+                let fade = [bounds.x, bounds.y, bounds.width, bounds.height];
+                let mut canvas_image = None;
+                // A canvas drawn as quads clips them to its box, as its raster is.
+                let mut canvas_clip = None;
+                // And its polyline strokes, if any, drawn apart (`push_draw`).
+                let mut polylines = false;
+                // And a text whose quads are its glyphs alone (no selection, no
+                // decorations): drawn with one shading (`push_draw`).
+                let mut glyphs_alone = false;
+                match item.kind {
+                    NodeKind::Canvas(canvas) => {
+                        if bounds.width <= 0. || bounds.height <= 0. {
+                            continue;
                         }
-                        // Drawn by its border pass instead (`border_over`).
-                        let later = style.border_over && ring;
-                        // Per-corner radii over a flat fill need no raster: the
-                        // quad shader draws per-corner rounded rects, and their
-                        // solid borders as rings. Gradients, patterns and
-                        // dashes still rasterize.
-                        let flat_fill = style.decoration.as_deref().and_then(|detail| {
-                            let fill = match &detail.background {
-                                // An image or shader paints over the fill colour.
-                                None
-                                | Some(
-                                    zgx::decoration::Background::Image { .. }
-                                    | zgx::decoration::Background::Shader(_),
-                                ) => style.fill,
-                                Some(zgx::decoration::Background::Brush(
-                                    zgx::canvas::Brush::Solid(color),
-                                )) => *color,
-                                Some(_) => return None,
-                            };
-                            (!style.has_border() || ring).then_some(fill)
-                        });
-                        if let Some(fill) = flat_fill {
+                        // A grid under its drawing (a board's dots), clipped to
+                        // its box: marks placed by the grid's view, none drawn.
+                        if scene.has_grid_fills()
+                            && let Some(grid) = scene.grid_fill(item.id)
+                        {
+                            grid_quads(grid, bounds, item.effects.opacity, &mut quads);
+                            canvas_clip = Some(bounds);
+                        }
+                        let view = scene.canvas_view(item.id);
+                        // Its own opacity and edge fade apply to it as a whole:
+                        // drawn in quads, each would take them alone.
+                        if item.effects.opacity >= 1.
+                            && item.effects.edge_fade <= 0.
+                            && let Some(drawn) =
+                                canvas_quads(canvas, (bounds.x, bounds.y), view, &mut points)
+                        {
                             if let Some(old) = self.node_images.remove(&item.id) {
                                 self.images.remove(&old);
                             }
-                            push_panel(
-                                &mut quads,
-                                Quad {
-                                    rect: fade,
+                            self.canvases.forget(item.id);
+                            for quad in drawn {
+                                match quad {
+                                    CanvasQuad::Fill(quad) => {
+                                        push_panel(&mut quads, quad, self.scale, self.split_shading)
+                                    }
+                                    CanvasQuad::Ring(quad) => quads.push(quad),
+                                    CanvasQuad::Polyline(quad) => {
+                                        polylines = true;
+                                        quads.push(quad)
+                                    }
+                                }
+                            }
+                            canvas_clip = Some(bounds);
+                            stats.canvas_quads += quads.len() - start as usize;
+                        } else {
+                            let before = self.canvases.rasterizations();
+                            let (width, height, scale) = (bounds.width, bounds.height, self.scale);
+                            let id = self.canvas_texture(item.id, &mut stats, |cache| {
+                                cache.get_viewed(item.id, canvas, view, width, height, scale)
+                            })?;
+                            stats.canvas_rasterizations +=
+                                (self.canvases.rasterizations() - before) as usize;
+                            canvas_image = Some(id);
+                            quads.push(Quad {
+                                rect: fade,
+                                uv: [0., 0., 1., 1.],
+                                color: [1., 1., 1., item.effects.opacity],
+                                fade,
+                                options: [item.effects.edge_fade, 2., 0., 0.],
+                                shape: [0.; 4],
+                                border: [0.; 4],
+                                mask: NO_MASK,
+                            });
+                        }
+                    }
+                    NodeKind::Rect(color) => quads.push(rect_quad(*color, fade, item.effects)),
+                    NodeKind::Quad(style) | NodeKind::Panel { quad: style, .. } => {
+                        if style.shadows().len() > 32 {
+                            return Err(GpuError("panel exceeds 32 shadows".into()));
+                        }
+                        // A solid border (any widths per side, any radii) is a
+                        // ring the quad shader draws; dashed ones rasterize with
+                        // the fill.
+                        let ring = style.has_border()
+                            && style.decoration.as_ref().is_none_or(|detail| {
+                                detail.border_style == zgx::decoration::BorderStyle::Solid
+                            });
+                        let (opacity, edge_fade) = (item.effects.opacity, item.effects.edge_fade);
+                        if item.border_pass {
+                            // Its border alone, over what it holds, and its outline.
+                            if ring && style.border_over {
+                                quads.push(ring_quad(style, bounds, opacity, edge_fade));
+                            }
+                            if let Some(outline) = style.outline.filter(|o| o.visible()) {
+                                quads.push(outline_quad(
+                                    &outline, style, bounds, opacity, edge_fade,
+                                ));
+                            }
+                        } else {
+                            for shadow in style.shadows() {
+                                let core = bounds.expand(shadow.spread.max(0.));
+                                let core = Rect::new(
+                                    core.x + shadow.offset.x,
+                                    core.y + shadow.offset.y,
+                                    core.width,
+                                    core.height,
+                                );
+                                // Three sigmas out (`blur_radius` is the sigma).
+                                let outer = core.expand(shadow.blur_radius.max(0.) * 3.);
+                                quads.push(Quad {
+                                    rect: [outer.x, outer.y, outer.width, outer.height],
                                     uv: [0.; 4],
-                                    color: rgba(fill, opacity),
+                                    color: rgba(shadow.color, item.effects.opacity),
+                                    fade: [core.x, core.y, core.width, core.height],
+                                    options: [0., 0., 0., 1.],
+                                    shape: [
+                                        style.radius + shadow.spread.max(0.),
+                                        0.,
+                                        shadow.blur_radius.max(0.001),
+                                        0.,
+                                    ],
+                                    border: decoration::shadow_corners(
+                                        style,
+                                        core.width,
+                                        core.height,
+                                        shadow.spread.max(0.),
+                                    ),
+                                    mask: NO_MASK,
+                                });
+                            }
+                            // Drawn by its border pass instead (`border_over`).
+                            let later = style.border_over && ring;
+                            // Per-corner radii over a flat fill need no raster: the
+                            // quad shader draws per-corner rounded rects, and their
+                            // solid borders as rings. Gradients, patterns and
+                            // dashes still rasterize.
+                            let flat_fill = style.decoration.as_deref().and_then(|detail| {
+                                let fill = match &detail.background {
+                                    // An image or shader paints over the fill colour.
+                                    None
+                                    | Some(
+                                        zgx::decoration::Background::Image { .. }
+                                        | zgx::decoration::Background::Shader(_),
+                                    ) => style.fill,
+                                    Some(zgx::decoration::Background::Brush(
+                                        zgx::canvas::Brush::Solid(color),
+                                    )) => *color,
+                                    Some(_) => return None,
+                                };
+                                (!style.has_border() || ring).then_some(fill)
+                            });
+                            if let Some(fill) = flat_fill {
+                                if let Some(old) = self.node_images.remove(&item.id) {
+                                    self.images.remove(&old);
+                                }
+                                push_panel(
+                                    &mut quads,
+                                    Quad {
+                                        rect: fade,
+                                        uv: [0.; 4],
+                                        color: rgba(fill, opacity),
+                                        fade,
+                                        options: [edge_fade, 0., 0., 1.],
+                                        shape: [0., 0., 0., 1.],
+                                        border: decoration::shadow_corners(
+                                            style,
+                                            bounds.width,
+                                            bounds.height,
+                                            0.,
+                                        ),
+                                        mask: NO_MASK,
+                                    },
+                                    self.scale,
+                                    self.split_shading,
+                                );
+                                if let Some(zgx::decoration::Background::Image { image, fit }) =
+                                    style
+                                        .decoration
+                                        .as_deref()
+                                        .and_then(|d| d.background.as_ref())
+                                    && let Some(quad) = background_quad(
+                                        image, *fit, style, bounds, opacity, edge_fade,
+                                    )
+                                {
+                                    if !self.images.contains_key(&image.id()) {
+                                        self.upload_image(image)?;
+                                        stats.image_uploads += 1;
+                                    }
+                                    quads.push(quad);
+                                    canvas_image = Some(image.id());
+                                }
+                                if let Some(zgx::decoration::Background::Shader(shader)) = style
+                                    .decoration
+                                    .as_deref()
+                                    .and_then(|d| d.background.as_ref())
+                                    && self.prepare_fill(shader)
+                                {
+                                    let uniforms = Region::uniforms(scene.shader_uniforms(item.id));
+                                    let record = region_index(&mut clips, Some(uniforms));
+                                    quads.push(Quad {
+                                        rect: fade,
+                                        uv: [0.; 4],
+                                        color: [1., 1., 1., opacity],
+                                        fade,
+                                        options: [edge_fade, 0., 0., 1.],
+                                        shape: [0., 0., 0., 1.],
+                                        border: decoration::shadow_corners(
+                                            style,
+                                            bounds.width,
+                                            bounds.height,
+                                            0.,
+                                        ),
+                                        mask: [0., record, 0., 0.],
+                                    });
+                                    fill_shading = Some(Shading::Fill(shader.id()));
+                                }
+                                // (A shader fill shades this item's quads: no insets over it.)
+                                if fill_shading.is_none() {
+                                    quads.extend(inset_quads(style, bounds, opacity, edge_fade));
+                                }
+                                if ring && !later {
+                                    quads.push(ring_quad(style, bounds, opacity, edge_fade));
+                                }
+                            } else if let Some((key, uv)) = (!style.has_border() || ring)
+                                .then(|| axis_gradient(style, bounds))
+                                .flatten()
+                            {
+                                // A gradient along one axis: a ramp texture
+                                // stretched over the box (its corners cut by the
+                                // quad shader), not a raster of the whole box.
+                                if let Some(old) = self.node_images.remove(&item.id) {
+                                    self.images.remove(&old);
+                                }
+                                let ramp = match get_in::<MODE, _, _>(&mut self.ramps, &key) {
+                                    Some(ramp) => ramp.clone(),
+                                    None => {
+                                        let ramp = Arc::new(ramp_image(&key)?);
+                                        self.ramps.insert(key.clone(), ramp.clone());
+                                        ramp
+                                    }
+                                };
+                                if !self.images.contains_key(&ramp.id()) {
+                                    self.upload_image(&ramp)?;
+                                    stats.image_uploads += 1;
+                                }
+                                insert_in::<MODE, _, _>(&mut self.node_ramps, item.id, key);
+                                canvas_image = Some(ramp.id());
+                                quads.push(Quad {
+                                    rect: fade,
+                                    uv,
+                                    color: [1., 1., 1., opacity],
                                     fade,
-                                    options: [edge_fade, 0., 0., 1.],
+                                    options: [edge_fade, 2., 0., 1.],
                                     shape: [0., 0., 0., 1.],
                                     border: decoration::shadow_corners(
                                         style,
@@ -6558,158 +6740,74 @@ impl GpuRenderer {
                                         0.,
                                     ),
                                     mask: NO_MASK,
-                                },
-                                self.scale,
-                                self.split_shading,
-                            );
-                            if let Some(zgx::decoration::Background::Image { image, fit }) = style
-                                .decoration
-                                .as_deref()
-                                .and_then(|d| d.background.as_ref())
-                                && let Some(quad) =
-                                    background_quad(image, *fit, style, bounds, opacity, edge_fade)
-                            {
-                                if !self.images.contains_key(&image.id()) {
-                                    self.upload_image(image)?;
-                                    stats.image_uploads += 1;
+                                });
+                                quads.extend(inset_quads(style, bounds, opacity, edge_fade));
+                                if ring && !later {
+                                    quads.push(ring_quad(style, bounds, opacity, edge_fade));
                                 }
-                                quads.push(quad);
-                                canvas_image = Some(image.id());
-                            }
-                            if let Some(zgx::decoration::Background::Shader(shader)) = style
-                                .decoration
-                                .as_deref()
-                                .and_then(|d| d.background.as_ref())
-                                && self.prepare_fill(shader)
+                            } else if style.decoration.is_some()
+                                && bounds.width > 0.
+                                && bounds.height > 0.
                             {
-                                let uniforms = Region::uniforms(scene.shader_uniforms(item.id));
-                                let record = region_index(&mut clips, Some(uniforms));
+                                // Its border left to the border pass, when it has one.
+                                let drawn = match later {
+                                    true => std::borrow::Cow::Owned(zgx::scene::QuadStyle {
+                                        border_width: 0.,
+                                        decoration: style.decoration.as_deref().map(|detail| {
+                                            Arc::new(zgx::decoration::Decoration {
+                                                border_widths: None,
+                                                ..detail.clone()
+                                            })
+                                        }),
+                                        ..style.clone()
+                                    }),
+                                    false => std::borrow::Cow::Borrowed(style),
+                                };
+                                let before = self.canvases.rasterizations();
+                                let (width, height, scale) =
+                                    (bounds.width, bounds.height, self.scale);
+                                let id = self.canvas_texture(item.id, &mut stats, |cache| {
+                                    cache.get_decoration(item.id, &drawn, width, height, scale)
+                                })?;
+                                stats.canvas_rasterizations +=
+                                    (self.canvases.rasterizations() - before) as usize;
+                                canvas_image = Some(id);
                                 quads.push(Quad {
                                     rect: fade,
-                                    uv: [0.; 4],
+                                    uv: [0., 0., 1., 1.],
                                     color: [1., 1., 1., opacity],
                                     fade,
-                                    options: [edge_fade, 0., 0., 1.],
-                                    shape: [0., 0., 0., 1.],
-                                    border: decoration::shadow_corners(
-                                        style,
-                                        bounds.width,
-                                        bounds.height,
-                                        0.,
-                                    ),
-                                    mask: [0., record, 0., 0.],
+                                    options: [edge_fade, 2., 0., 0.],
+                                    shape: [0.; 4],
+                                    border: [0.; 4],
+                                    mask: NO_MASK,
                                 });
-                                fill_shading = Some(Shading::Fill(shader.id()));
+                            } else {
+                                push_panel(
+                                    &mut quads,
+                                    plain_panel_quad(style, fade, opacity, edge_fade, later),
+                                    self.scale,
+                                    self.split_shading,
+                                );
                             }
-                            // (A shader fill shades this item's quads: no insets over it.)
-                            if fill_shading.is_none() {
-                                quads.extend(inset_quads(style, bounds, opacity, edge_fade));
-                            }
-                            if ring && !later {
-                                quads.push(ring_quad(style, bounds, opacity, edge_fade));
-                            }
-                        } else if let Some((key, uv)) = (!style.has_border() || ring)
-                            .then(|| axis_gradient(style, bounds))
-                            .flatten()
-                        {
-                            // A gradient along one axis: a ramp texture
-                            // stretched over the box (its corners cut by the
-                            // quad shader), not a raster of the whole box.
-                            if let Some(old) = self.node_images.remove(&item.id) {
-                                self.images.remove(&old);
-                            }
-                            let ramp = match get_in::<MODE, _, _>(&mut self.ramps, &key) {
-                                Some(ramp) => ramp.clone(),
-                                None => {
-                                    let ramp = Arc::new(ramp_image(&key)?);
-                                    self.ramps.insert(key.clone(), ramp.clone());
-                                    ramp
-                                }
-                            };
-                            if !self.images.contains_key(&ramp.id()) {
-                                self.upload_image(&ramp)?;
-                                stats.image_uploads += 1;
-                            }
-                            insert_in::<MODE, _, _>(&mut self.node_ramps, item.id, key);
-                            canvas_image = Some(ramp.id());
-                            quads.push(Quad {
-                                rect: fade,
-                                uv,
-                                color: [1., 1., 1., opacity],
-                                fade,
-                                options: [edge_fade, 2., 0., 1.],
-                                shape: [0., 0., 0., 1.],
-                                border: decoration::shadow_corners(
-                                    style,
-                                    bounds.width,
-                                    bounds.height,
-                                    0.,
-                                ),
-                                mask: NO_MASK,
-                            });
-                            quads.extend(inset_quads(style, bounds, opacity, edge_fade));
-                            if ring && !later {
-                                quads.push(ring_quad(style, bounds, opacity, edge_fade));
-                            }
-                        } else if style.decoration.is_some()
-                            && bounds.width > 0.
-                            && bounds.height > 0.
-                        {
-                            // Its border left to the border pass, when it has one.
-                            let drawn = match later {
-                                true => std::borrow::Cow::Owned(zgx::scene::QuadStyle {
-                                    border_width: 0.,
-                                    decoration: style.decoration.as_deref().map(|detail| {
-                                        Arc::new(zgx::decoration::Decoration {
-                                            border_widths: None,
-                                            ..detail.clone()
-                                        })
-                                    }),
-                                    ..style.clone()
-                                }),
-                                false => std::borrow::Cow::Borrowed(style),
-                            };
-                            let before = self.canvases.rasterizations();
-                            let (width, height, scale) = (bounds.width, bounds.height, self.scale);
-                            let id = self.canvas_texture(item.id, &mut stats, |cache| {
-                                cache.get_decoration(item.id, &drawn, width, height, scale)
-                            })?;
-                            stats.canvas_rasterizations +=
-                                (self.canvases.rasterizations() - before) as usize;
-                            canvas_image = Some(id);
-                            quads.push(Quad {
-                                rect: fade,
-                                uv: [0., 0., 1., 1.],
-                                color: [1., 1., 1., opacity],
-                                fade,
-                                options: [edge_fade, 2., 0., 0.],
-                                shape: [0.; 4],
-                                border: [0.; 4],
-                                mask: NO_MASK,
-                            });
-                        } else {
-                            push_panel(
-                                &mut quads,
-                                plain_panel_quad(style, fade, opacity, edge_fade, later),
-                                self.scale,
-                                self.split_shading,
-                            );
                         }
                     }
-                }
-                NodeKind::Svg(svg) => {
-                    if svg.paint_bounds(bounds).width <= 0. || svg.paint_bounds(bounds).height <= 0.
-                    {
-                        continue;
-                    }
-                    let before = self.svgs.rasterizations();
-                    // An SVG that won't draw (bad markup, too large) shows
-                    // nothing; it is the content's fault, not the frame's.
-                    let image =
-                        match self
-                            .svgs
-                            .get(item.id, svg, bounds.width, bounds.height, self.scale)
+                    NodeKind::Svg(svg) => {
+                        if svg.paint_bounds(bounds).width <= 0.
+                            || svg.paint_bounds(bounds).height <= 0.
                         {
+                            continue;
+                        }
+                        let before = self.svgs.rasterizations();
+                        // An SVG that won't draw (bad markup, too large) shows
+                        // nothing; it is the content's fault, not the frame's.
+                        let image = match self.svgs.get(
+                            item.id,
+                            svg,
+                            bounds.width,
+                            bounds.height,
+                            self.scale,
+                        ) {
                             Ok(image) => image,
                             Err(error) => {
                                 if self.failed_svgs.insert(svg.source_id()) {
@@ -6718,15 +6816,16 @@ impl GpuRenderer {
                                 continue;
                             }
                         };
-                    stats.svg_rasterizations += (self.svgs.rasterizations() - before) as usize;
-                    // Nodes share SVG rasters: `prune` releases their textures
-                    // once no node shows them (a new source prunes).
-                    let transform = image.paint_transform(bounds);
-                    let transformed = image.transform() != zgx::affine::Affine::IDENTITY;
-                    // Icon-sized rasters live in the glyph atlas and batch with
-                    // text; larger ones keep a texture of their own.
-                    let uv =
-                        if image.width() <= ATLAS_IMAGE_MAX && image.height() <= ATLAS_IMAGE_MAX {
+                        stats.svg_rasterizations += (self.svgs.rasterizations() - before) as usize;
+                        // Nodes share SVG rasters: `prune` releases their textures
+                        // once no node shows them (a new source prunes).
+                        let transform = image.paint_transform(bounds);
+                        let transformed = image.transform() != zgx::affine::Affine::IDENTITY;
+                        // Icon-sized rasters live in the glyph atlas and batch with
+                        // text; larger ones keep a texture of their own.
+                        let uv = if image.width() <= ATLAS_IMAGE_MAX
+                            && image.height() <= ATLAS_IMAGE_MAX
+                        {
                             let (x, y) = match self.image_cells.get(&image.id()) {
                                 Some(cell) => *cell,
                                 None => {
@@ -6754,104 +6853,9 @@ impl GpuRenderer {
                             canvas_image = Some(image.id());
                             [0., 0., 1., 1.]
                         };
-                    quads.push(Quad {
-                        rect: fade,
-                        uv,
-                        color: [1., 1., 1., item.effects.opacity],
-                        fade,
-                        options: [
-                            item.effects.edge_fade,
-                            2.,
-                            if transformed { 1. } else { 0. },
-                            0.,
-                        ],
-                        shape: if transformed {
-                            [transform.a, transform.c, transform.b, transform.d]
-                        } else {
-                            [0.; 4]
-                        },
-                        border: if transformed {
-                            [transform.tx, transform.ty, 0., 0.]
-                        } else {
-                            [0.; 4]
-                        },
-                        mask: NO_MASK,
-                    });
-                }
-                #[cfg(target_os = "macos")]
-                NodeKind::NativeSurface(frame) => {
-                    // (Never kept, so never patched: `changes_unmarked`.)
-                    if MODE != PATCH && !self.images.contains_key(&frame.id()) {
-                        let bytes = frame.width() as usize
-                            * frame.height() as usize
-                            * if frame.format() == zgx::native_surface::SurfaceFormat::Bgra {
-                                4
-                            } else {
-                                6
-                            };
-                        if bytes + self.images.values().map(|e| e.1).sum::<usize>()
-                            > 64 * 1024 * 1024
-                        {
-                            return Err(GpuError(
-                                "visible image and native surface textures exceed 64 MiB".into(),
-                            ));
-                        }
-                        if self.native_surfaces.is_none() {
-                            self.native_surfaces = Some(native_surface::SurfaceCache::new(
-                                &self.device,
-                                &self.queue,
-                            )?);
-                        }
-                        let cache = self.native_surfaces.as_mut().unwrap();
-                        cache.import(frame.clone())?;
-                        stats.native_surface_imports += 1;
-                        stats.native_surface_conversions += usize::from(
-                            frame.format() == zgx::native_surface::SurfaceFormat::Nv12FullRange,
-                        );
-                        let view = cache.texture(frame.id()).create_view(&Default::default());
-                        let bytes = cache.bytes(frame.id());
-                        let bind = self.texture_bind(&view, "native CoreVideo frame");
-                        self.images.insert(frame.id(), (bind, bytes, None));
-                    }
-                    canvas_image = Some(frame.id());
-                    quads.push(Quad {
-                        rect: fade,
-                        uv: [0., 0., 1., 1.],
-                        color: [1., 1., 1., item.effects.opacity],
-                        fade,
-                        options: [item.effects.edge_fade, 2., 0., 0.],
-                        shape: [0.; 4],
-                        border: [0.; 4],
-                        mask: NO_MASK,
-                    });
-                }
-                NodeKind::Image(image) => {
-                    if image.paint_bounds(bounds).width <= 0.
-                        || image.paint_bounds(bounds).height <= 0.
-                    {
-                        continue;
-                    }
-                    if !self.images.contains_key(&image.id()) {
-                        self.upload_image(image)?;
-                        stats.image_uploads += 1;
-                    }
-                    let transform = image.paint_transform(bounds);
-                    let transformed = image.transform() != zgx::affine::Affine::IDENTITY;
-                    // An effect: its own quad, drawn with its own pipeline.
-                    if !matches!(image.effect(), zgx::image::ImageEffect::Plain) {
-                        let reveal = scene.shader_uniforms(item.id).params;
-                        let (opacity, edge) = (item.effects.opacity, item.effects.edge_fade);
-                        quads.push(image_effect_quad(
-                            image, transform, opacity, edge, fade, reveal,
-                        ));
-                        self.prepare_image_effects();
-                        fill_shading = Some(Shading::ImageEffect);
-                    } else {
-                        // Images have no procedural border/shape. Reuse those
-                        // attribute lanes rather than growing every glyph instance.
                         quads.push(Quad {
                             rect: fade,
-                            uv: [0., 0., 1., 1.],
+                            uv,
                             color: [1., 1., 1., item.effects.opacity],
                             fade,
                             options: [
@@ -6873,534 +6877,651 @@ impl GpuRenderer {
                             mask: NO_MASK,
                         });
                     }
-                }
-                kind @ (NodeKind::Text { .. } | NodeKind::RichText { .. }) => {
-                    let rich = match kind {
-                        NodeKind::RichText { text } => Some(text.clone()),
-                        _ => None,
-                    };
-                    let rich_content = rich.as_ref().map(|r| r.text_arc());
-                    let (text, color, font_size) = match kind {
-                        NodeKind::Text {
-                            text,
-                            color,
-                            font_size,
-                        } => (text, *color, *font_size),
-                        NodeKind::RichText { .. } => (
-                            rich_content.as_ref().unwrap(),
-                            zgx::scene::Color(255, 255, 255, 255),
-                            16.,
-                        ),
-                        _ => unreachable!(),
-                    };
-                    if !font_size.is_finite() || font_size <= 0. {
-                        return Err(GpuError("font size must be finite and positive".into()));
-                    }
-                    // One lookup for both: a colour-only rich change (fades,
-                    // highlights) keeps glyph positions, so the cached shape
-                    // is recoloured instead of re-shaped; then whether it is
-                    // stale.
-                    let stale = self.shapes.get_mut(&item.id).is_none_or(|shaped| {
-                        if let Some(new) = &rich
-                            && let Some(old) = &shaped.rich
-                            && !Arc::ptr_eq(old, new)
-                            && old.same_shape(new)
-                            && shaped.width == bounds.width
-                            && shaped.height == bounds.height
-                            && shaped.text_options == item.text_options
-                            && shaped.font == *item.font
-                        {
-                            for decoration in &mut shaped.decorations {
-                                decoration.color = decoration.color_in(new);
+                    #[cfg(target_os = "macos")]
+                    NodeKind::NativeSurface(frame) => {
+                        // (Never kept, so never patched: `changes_unmarked`.)
+                        if MODE != PATCH && !self.images.contains_key(&frame.id()) {
+                            let bytes = frame.width() as usize
+                                * frame.height() as usize
+                                * if frame.format() == zgx::native_surface::SurfaceFormat::Bgra {
+                                    4
+                                } else {
+                                    6
+                                };
+                            if bytes + self.images.values().map(|e| e.1).sum::<usize>()
+                                > 64 * 1024 * 1024
+                            {
+                                return Err(GpuError(
+                                    "visible image and native surface textures exceed 64 MiB"
+                                        .into(),
+                                ));
                             }
-                            shaped.rich = Some(new.clone());
-                            shaped.atlas_epoch = self.atlas_epoch.wrapping_sub(1);
-                        }
-                        shaped.rich != rich
-                            || shaped.text_options != item.text_options
-                            || shaped.text != *text
-                            || shaped.font != *item.font
-                            || shaped.size != font_size
-                            || shaped.width != bounds.width
-                            || shaped.height != bounds.height
-                            || shaped.scale != self.scale
-                    });
-                    // A shape made this frame, held here until placed: into
-                    // the map once, not in and out again to place it.
-                    let mut fresh = None;
-                    if stale {
-                        // The old shape's glyphs and quads hold the new one's:
-                        // a changed value is as many allocations fewer.
-                        let (mut spare_glyphs, mut spare_quads) = (Vec::new(), Vec::new());
-                        if let Some(old) = self.shapes.remove(&item.id) {
-                            self.shaped_bytes -= old.bytes();
-                            (spare_glyphs, spare_quads) = (old.glyphs, old.quads);
-                            spare_glyphs.clear();
-                            spare_quads.clear();
-                        }
-                        let mut fonts = self.fonts.borrow_mut();
-                        // Default-option rich text: the prepared lines layout
-                        // measured with, laid out at this width, no reshaping.
-                        let prepared = rich
-                            .as_ref()
-                            .filter(|rich| prepared::TextCache::handles(rich));
-                        let plain = rich.is_none()
-                            && item.text_options == Default::default()
-                            && prepared::TextCache::handles_plain(text, font_size);
-                        // Text the prepared cache doesn't lay out (with clamping
-                        // or an ellipsis): another node's shape of the same
-                        // inputs, copied rather than shaped again (a list moved
-                        // by a row shows in each what the next showed).
-                        let content = (!plain && prepared.is_none()).then(|| {
-                            use std::hash::{Hash, Hasher};
-                            let mut hasher = rustc_hash::FxHasher::default();
-                            text.hash(&mut hasher);
-                            font_size.to_bits().hash(&mut hasher);
-                            bounds.width.to_bits().hash(&mut hasher);
-                            bounds.height.to_bits().hash(&mut hasher);
-                            hasher.finish()
-                        });
-                        let twin = content
-                            .and_then(|content| self.shaped_like.get(&content))
-                            .and_then(|id| self.shapes.get(id))
-                            .filter(|twin| {
-                                twin.text == *text
-                                    && twin.size == font_size
-                                    && twin.width == bounds.width
-                                    && twin.height == bounds.height
-                                    && twin.scale == self.scale
-                                    && twin.text_options == item.text_options
-                                    && twin.font == *item.font
-                                    && twin.rich == rich
-                            })
-                            .map(|twin| {
-                                spare_glyphs.extend_from_slice(&twin.glyphs);
-                                let placed = twin.atlas_epoch == self.atlas_epoch;
-                                if placed {
-                                    spare_quads.extend_from_slice(&twin.quads);
-                                }
-                                (twin.decorations.clone(), placed.then_some(twin.atlas_epoch))
-                            });
-                        let b = if let Some((decorations, epoch)) = twin {
-                            Err((std::mem::take(&mut spare_glyphs), decorations, None, epoch))
-                        } else if plain {
-                            let mut cache = self.text_cache.borrow_mut();
-                            let laid = cache.layout_plain(
-                                &mut fonts,
-                                text,
-                                font_size,
-                                item.font,
-                                Some(bounds.width),
-                            );
-                            // Plain text has one run: no line starts to find it by.
-                            let glyphs = glyphs_of(
-                                std::mem::take(&mut spare_glyphs),
-                                laid.runs(Some(bounds.height)),
-                                &[],
-                                None,
-                                self.scale,
-                            );
-                            let underlines = item.font.underline.map_or_else(Vec::new, |line| {
-                                text::plain_underlines(
-                                    laid.runs(Some(bounds.height)),
-                                    font_size,
-                                    line,
-                                )
-                            });
-                            Err((glyphs, underlines, Some(laid.key()), None))
-                        } else if let Some(rich) = prepared {
-                            let mut cache = self.text_cache.borrow_mut();
-                            let laid = cache.layout(&mut fonts, rich, Some(bounds.width));
-                            let starts = laid.line_starts();
-                            let glyphs = glyphs_of(
-                                std::mem::take(&mut spare_glyphs),
-                                laid.runs(Some(bounds.height)),
-                                &starts,
-                                Some(rich),
-                                self.scale,
-                            );
-                            let decorations = text::rich_decorations_in(
-                                laid.runs(Some(bounds.height)),
-                                &starts,
-                                rich,
-                            );
-                            Err((glyphs, decorations, Some(laid.key()), None))
-                        } else if let Some(rich) = &rich {
-                            Ok(text::rich_buffer(
-                                &mut fonts,
-                                rich,
-                                Some(bounds.width),
-                                Some(bounds.height),
-                            ))
-                        } else if item.text_options != Default::default() {
-                            Ok(text::display_buffer(
-                                &mut fonts,
-                                text,
-                                item.font,
-                                font_size,
-                                Some(bounds.width),
-                                Some(bounds.height),
-                                item.text_options,
-                            ))
-                        } else {
-                            let mut b = Buffer::new_empty(Metrics::new(
-                                font_size.max(1.),
-                                item.font.line_height.resolve(font_size),
-                            ));
-                            b.set_size(text::wrap_width(Some(bounds.width)), Some(bounds.height));
-                            text::set_buffer_text(
-                                &mut fonts,
-                                &mut b,
-                                text,
-                                item.font,
-                                font_size.max(1.),
-                            );
-                            b.shape_until_scroll(&mut fonts, false);
-                            Ok(b)
-                        };
-                        let (glyphs, decorations, prepared, epoch) = match b {
-                            Err(made) => made,
-                            Ok(b) => (
-                                glyphs_of(
-                                    std::mem::take(&mut spare_glyphs),
-                                    b.layout_runs(),
-                                    &text::line_starts(&b),
-                                    rich.as_deref(),
-                                    self.scale,
-                                ),
-                                match (&rich, item.font.underline) {
-                                    (Some(rich), _) => text::rich_decorations(&b, rich),
-                                    (None, Some(line)) => {
-                                        text::plain_underlines(b.layout_runs(), font_size, line)
-                                    }
-                                    (None, None) => Vec::new(),
-                                },
-                                None,
-                                None,
-                            ),
-                        };
-                        let shaped = Shaped {
-                            decorations,
-                            rich: rich.clone(),
-                            text_options: item.text_options,
-                            font: item.font.clone(),
-                            text: text.clone(),
-                            size: font_size,
-                            width: bounds.width,
-                            height: bounds.height,
-                            scale: self.scale,
-                            glyphs,
-                            quads: spare_quads,
-                            atlas_epoch: epoch.unwrap_or(0),
-                            last_used: self.frame,
-                            prepared,
-                        };
-                        fresh = Some(shaped);
-                        stats.shaped_nodes += 1;
-                        if let Some(content) = content {
-                            if self.shaped_like.len() >= SHAPED_LIKE {
-                                self.shaped_like.clear();
+                            if self.native_surfaces.is_none() {
+                                self.native_surfaces = Some(native_surface::SurfaceCache::new(
+                                    &self.device,
+                                    &self.queue,
+                                )?);
                             }
-                            insert_in::<MODE, _, _>(&mut self.shaped_like, content, item.id);
+                            let cache = self.native_surfaces.as_mut().unwrap();
+                            cache.import(frame.clone())?;
+                            stats.native_surface_imports += 1;
+                            stats.native_surface_conversions += usize::from(
+                                frame.format() == zgx::native_surface::SurfaceFormat::Nv12FullRange,
+                            );
+                            let view = cache.texture(frame.id()).create_view(&Default::default());
+                            let bytes = cache.bytes(frame.id());
+                            let bind = self.texture_bind(&view, "native CoreVideo frame");
+                            self.images.insert(frame.id(), (bind, bytes, None));
                         }
-                    }
-                    let snap = |value: f32| (value * self.scale).round() / self.scale;
-                    let (x, y) = (snap(bounds.x), snap(bounds.y));
-                    // Partly outside its clip (a long document scrolled in a
-                    // view): its lines that reach the clip, as quads made this
-                    // frame (`visible_glyphs`), rather than every glyph's.
-                    // (Its box against its clip and the viewport, not their
-                    // intersection with it: an edge worked out again can be
-                    // a rounding off the box's.)
-                    let holds = |outer: Rect| {
-                        outer.x <= bounds.x
-                            && outer.y <= bounds.y
-                            && outer.x + outer.width >= bounds.x + bounds.width
-                            && outer.y + outer.height >= bounds.y + bounds.height
-                    };
-                    // Find's marks, under the selection: rounded a little,
-                    // as a browser's.
-                    let marks = scene.text_marks(item.id);
-                    quads.extend(marks.iter().map(|m| {
-                        let rect = [
-                            bounds.x + m.rect.x,
-                            bounds.y + m.rect.y,
-                            m.rect.width,
-                            m.rect.height,
-                        ];
-                        Quad {
-                            rect,
-                            uv: [0.; 4],
-                            color: rgba(m.color, item.effects.opacity),
-                            fade: rect,
-                            options: [item.effects.edge_fade, 0., 0., 0.],
-                            shape: [MARK_RADIUS, 0., 0., 1.],
+                        canvas_image = Some(frame.id());
+                        quads.push(Quad {
+                            rect: fade,
+                            uv: [0., 0., 1., 1.],
+                            color: [1., 1., 1., item.effects.opacity],
+                            fade,
+                            options: [item.effects.edge_fade, 2., 0., 0.],
+                            shape: [0.; 4],
                             border: [0.; 4],
                             mask: NO_MASK,
+                        });
+                    }
+                    NodeKind::Image(image) => {
+                        if image.paint_bounds(bounds).width <= 0.
+                            || image.paint_bounds(bounds).height <= 0.
+                        {
+                            continue;
                         }
-                    }));
-                    // A text selection, under the glyphs; rounded, its box
-                    // rides in `fade`, as a rounded run background's does.
-                    let highlight = scene.text_highlight(item.id);
-                    if let Some(highlight) = highlight {
-                        quads.extend(highlight.rects.iter().map(|r| {
-                            let rect = [bounds.x + r.x, bounds.y + r.y, r.width, r.height];
-                            let rounded = highlight.radius > 0.;
-                            Quad {
-                                rect,
-                                uv: [0.; 4],
-                                color: rgba(highlight.color, item.effects.opacity),
-                                fade: if rounded { rect } else { fade },
-                                options: [item.effects.edge_fade, 0., 0., 0.],
-                                shape: if rounded {
-                                    [highlight.radius, 0., 0., 1.]
+                        if !self.images.contains_key(&image.id()) {
+                            self.upload_image(image)?;
+                            stats.image_uploads += 1;
+                        }
+                        let transform = image.paint_transform(bounds);
+                        let transformed = image.transform() != zgx::affine::Affine::IDENTITY;
+                        // An effect: its own quad, drawn with its own pipeline.
+                        if !matches!(image.effect(), zgx::image::ImageEffect::Plain) {
+                            let reveal = scene.shader_uniforms(item.id).params;
+                            let (opacity, edge) = (item.effects.opacity, item.effects.edge_fade);
+                            quads.push(image_effect_quad(
+                                image, transform, opacity, edge, fade, reveal,
+                            ));
+                            self.prepare_image_effects();
+                            fill_shading = Some(Shading::ImageEffect);
+                        } else {
+                            // Images have no procedural border/shape. Reuse those
+                            // attribute lanes rather than growing every glyph instance.
+                            quads.push(Quad {
+                                rect: fade,
+                                uv: [0., 0., 1., 1.],
+                                color: [1., 1., 1., item.effects.opacity],
+                                fade,
+                                options: [
+                                    item.effects.edge_fade,
+                                    2.,
+                                    if transformed { 1. } else { 0. },
+                                    0.,
+                                ],
+                                shape: if transformed {
+                                    [transform.a, transform.c, transform.b, transform.d]
                                 } else {
                                     [0.; 4]
                                 },
+                                border: if transformed {
+                                    [transform.tx, transform.ty, 0., 0.]
+                                } else {
+                                    [0.; 4]
+                                },
+                                mask: NO_MASK,
+                            });
+                        }
+                    }
+                    kind @ (NodeKind::Text { .. } | NodeKind::RichText { .. }) => {
+                        let rich = match kind {
+                            NodeKind::RichText { text } => Some(text.clone()),
+                            _ => None,
+                        };
+                        let rich_content = rich.as_ref().map(|r| r.text_arc());
+                        let (text, color, font_size) = match kind {
+                            NodeKind::Text {
+                                text,
+                                color,
+                                font_size,
+                            } => (text, *color, *font_size),
+                            NodeKind::RichText { .. } => (
+                                rich_content.as_ref().unwrap(),
+                                zgx::scene::Color(255, 255, 255, 255),
+                                16.,
+                            ),
+                            _ => unreachable!(),
+                        };
+                        if !font_size.is_finite() || font_size <= 0. {
+                            return Err(GpuError("font size must be finite and positive".into()));
+                        }
+                        // One lookup for both: a colour-only rich change (fades,
+                        // highlights) keeps glyph positions, so the cached shape
+                        // is recoloured instead of re-shaped; then whether it is
+                        // stale.
+                        let stale = self.shapes.get_mut(&item.id).is_none_or(|shaped| {
+                            if let Some(new) = &rich
+                                && let Some(old) = &shaped.rich
+                                && !Arc::ptr_eq(old, new)
+                                && old.same_shape(new)
+                                && shaped.width == bounds.width
+                                && shaped.height == bounds.height
+                                && shaped.text_options == item.text_options
+                                && shaped.font == *item.font
+                            {
+                                for decoration in &mut shaped.decorations {
+                                    decoration.color = decoration.color_in(new);
+                                }
+                                shaped.rich = Some(new.clone());
+                                shaped.atlas_epoch = self.atlas_epoch.wrapping_sub(1);
+                            }
+                            shaped.rich != rich
+                                || shaped.text_options != item.text_options
+                                || shaped.text != *text
+                                || shaped.font != *item.font
+                                || shaped.size != font_size
+                                || shaped.width != bounds.width
+                                || shaped.height != bounds.height
+                                || shaped.scale != self.scale
+                        });
+                        // A shape made this frame, held here until placed: into
+                        // the map once, not in and out again to place it.
+                        let mut fresh = None;
+                        if stale {
+                            // The old shape's glyphs and quads hold the new one's:
+                            // a changed value is as many allocations fewer.
+                            let (mut spare_glyphs, mut spare_quads) = (Vec::new(), Vec::new());
+                            if let Some(old) = self.shapes.remove(&item.id) {
+                                self.shaped_bytes -= old.bytes();
+                                (spare_glyphs, spare_quads) = (old.glyphs, old.quads);
+                                spare_glyphs.clear();
+                                spare_quads.clear();
+                            }
+                            let mut fonts = self.fonts.borrow_mut();
+                            // Default-option rich text: the prepared lines layout
+                            // measured with, laid out at this width, no reshaping.
+                            let prepared = rich
+                                .as_ref()
+                                .filter(|rich| prepared::TextCache::handles(rich));
+                            let plain = rich.is_none()
+                                && item.text_options == Default::default()
+                                && prepared::TextCache::handles_plain(text, font_size);
+                            // Text the prepared cache doesn't lay out (with clamping
+                            // or an ellipsis): another node's shape of the same
+                            // inputs, copied rather than shaped again (a list moved
+                            // by a row shows in each what the next showed).
+                            let content = (!plain && prepared.is_none()).then(|| {
+                                use std::hash::{Hash, Hasher};
+                                let mut hasher = rustc_hash::FxHasher::default();
+                                text.hash(&mut hasher);
+                                font_size.to_bits().hash(&mut hasher);
+                                bounds.width.to_bits().hash(&mut hasher);
+                                bounds.height.to_bits().hash(&mut hasher);
+                                hasher.finish()
+                            });
+                            let twin = content
+                                .and_then(|content| self.shaped_like.get(&content))
+                                .and_then(|id| self.shapes.get(id))
+                                .filter(|twin| {
+                                    twin.text == *text
+                                        && twin.size == font_size
+                                        && twin.width == bounds.width
+                                        && twin.height == bounds.height
+                                        && twin.scale == self.scale
+                                        && twin.text_options == item.text_options
+                                        && twin.font == *item.font
+                                        && twin.rich == rich
+                                })
+                                .map(|twin| {
+                                    spare_glyphs.extend_from_slice(&twin.glyphs);
+                                    let placed = twin.atlas_epoch == self.atlas_epoch;
+                                    if placed {
+                                        spare_quads.extend_from_slice(&twin.quads);
+                                    }
+                                    (twin.decorations.clone(), placed.then_some(twin.atlas_epoch))
+                                });
+                            let b = if let Some((decorations, epoch)) = twin {
+                                Err((std::mem::take(&mut spare_glyphs), decorations, None, epoch))
+                            } else if plain {
+                                let mut cache = self.text_cache.borrow_mut();
+                                let laid = cache.layout_plain(
+                                    &mut fonts,
+                                    text,
+                                    font_size,
+                                    item.font,
+                                    Some(bounds.width),
+                                );
+                                // Plain text has one run: no line starts to find it by.
+                                let glyphs = glyphs_of(
+                                    std::mem::take(&mut spare_glyphs),
+                                    laid.runs(Some(bounds.height)),
+                                    &[],
+                                    None,
+                                    self.scale,
+                                );
+                                let underlines =
+                                    item.font.underline.map_or_else(Vec::new, |line| {
+                                        text::plain_underlines(
+                                            laid.runs(Some(bounds.height)),
+                                            font_size,
+                                            line,
+                                        )
+                                    });
+                                Err((glyphs, underlines, Some(laid.key()), None))
+                            } else if let Some(rich) = prepared {
+                                let mut cache = self.text_cache.borrow_mut();
+                                let laid = cache.layout(&mut fonts, rich, Some(bounds.width));
+                                let starts = laid.line_starts();
+                                let glyphs = glyphs_of(
+                                    std::mem::take(&mut spare_glyphs),
+                                    laid.runs(Some(bounds.height)),
+                                    &starts,
+                                    Some(rich),
+                                    self.scale,
+                                );
+                                let decorations = text::rich_decorations_in(
+                                    laid.runs(Some(bounds.height)),
+                                    &starts,
+                                    rich,
+                                );
+                                Err((glyphs, decorations, Some(laid.key()), None))
+                            } else if let Some(rich) = &rich {
+                                Ok(text::rich_buffer(
+                                    &mut fonts,
+                                    rich,
+                                    Some(bounds.width),
+                                    Some(bounds.height),
+                                ))
+                            } else if item.text_options != Default::default() {
+                                Ok(text::display_buffer(
+                                    &mut fonts,
+                                    text,
+                                    item.font,
+                                    font_size,
+                                    Some(bounds.width),
+                                    Some(bounds.height),
+                                    item.text_options,
+                                ))
+                            } else {
+                                let mut b = Buffer::new_empty(Metrics::new(
+                                    font_size.max(1.),
+                                    item.font.line_height.resolve(font_size),
+                                ));
+                                b.set_size(
+                                    text::wrap_width(Some(bounds.width)),
+                                    Some(bounds.height),
+                                );
+                                text::set_buffer_text(
+                                    &mut fonts,
+                                    &mut b,
+                                    text,
+                                    item.font,
+                                    font_size.max(1.),
+                                );
+                                b.shape_until_scroll(&mut fonts, false);
+                                Ok(b)
+                            };
+                            let (glyphs, decorations, prepared, epoch) = match b {
+                                Err(made) => made,
+                                Ok(b) => (
+                                    glyphs_of(
+                                        std::mem::take(&mut spare_glyphs),
+                                        b.layout_runs(),
+                                        &text::line_starts(&b),
+                                        rich.as_deref(),
+                                        self.scale,
+                                    ),
+                                    match (&rich, item.font.underline) {
+                                        (Some(rich), _) => text::rich_decorations(&b, rich),
+                                        (None, Some(line)) => {
+                                            text::plain_underlines(b.layout_runs(), font_size, line)
+                                        }
+                                        (None, None) => Vec::new(),
+                                    },
+                                    None,
+                                    None,
+                                ),
+                            };
+                            let shaped = Shaped {
+                                decorations,
+                                rich: rich.clone(),
+                                text_options: item.text_options,
+                                font: item.font.clone(),
+                                text: text.clone(),
+                                size: font_size,
+                                width: bounds.width,
+                                height: bounds.height,
+                                scale: self.scale,
+                                glyphs,
+                                quads: spare_quads,
+                                atlas_epoch: epoch.unwrap_or(0),
+                                last_used: self.frame,
+                                prepared,
+                            };
+                            fresh = Some(shaped);
+                            stats.shaped_nodes += 1;
+                            if let Some(content) = content {
+                                if self.shaped_like.len() >= SHAPED_LIKE {
+                                    self.shaped_like.clear();
+                                }
+                                insert_in::<MODE, _, _>(&mut self.shaped_like, content, item.id);
+                            }
+                        }
+                        let snap = |value: f32| (value * self.scale).round() / self.scale;
+                        let (x, y) = (snap(bounds.x), snap(bounds.y));
+                        // Partly outside its clip (a long document scrolled in a
+                        // view): its lines that reach the clip, as quads made this
+                        // frame (`visible_glyphs`), rather than every glyph's.
+                        // (Its box against its clip and the viewport, not their
+                        // intersection with it: an edge worked out again can be
+                        // a rounding off the box's.)
+                        let holds = |outer: Rect| {
+                            outer.x <= bounds.x
+                                && outer.y <= bounds.y
+                                && outer.x + outer.width >= bounds.x + bounds.width
+                                && outer.y + outer.height >= bounds.y + bounds.height
+                        };
+                        // Find's marks, under the selection: rounded a little,
+                        // as a browser's.
+                        let marks = scene.text_marks(item.id);
+                        quads.extend(marks.iter().map(|m| {
+                            let rect = [
+                                bounds.x + m.rect.x,
+                                bounds.y + m.rect.y,
+                                m.rect.width,
+                                m.rect.height,
+                            ];
+                            Quad {
+                                rect,
+                                uv: [0.; 4],
+                                color: rgba(m.color, item.effects.opacity),
+                                fade: rect,
+                                options: [item.effects.edge_fade, 0., 0., 0.],
+                                shape: [MARK_RADIUS, 0., 0., 1.],
                                 border: [0.; 4],
                                 mask: NO_MASK,
                             }
                         }));
-                    }
-                    // Its selected glyphs, in the selected-text colour.
-                    let selected = highlight.filter(|h| h.text_color.is_some());
-                    // On whole device pixels, as a browser draws text: an
-                    // atlas bitmap drawn a fraction off is sampled between
-                    // its texels, and a hinted one-pixel stroke (a minus
-                    // sign) turns into two rows at half strength.
-                    // Plain text's one colour, worked out once for its glyphs.
-                    let plain_color = rgba(color, item.effects.opacity);
-                    // Its quads from the shape's, placed and coloured.
-                    // (One extend, written straight into the room it makes: a
-                    // push a glyph would check that room each time.)
-                    let place = |quads: &mut Vec<Quad>, source: &[TextQuad]| {
-                        // Plain and unselected: one colour, chosen once.
-                        if selected.is_none() && rich.is_none() {
-                            place_text_quads(
-                                quads,
-                                source,
-                                x,
-                                y,
-                                fade,
-                                item.effects.edge_fade,
-                                |_| plain_color,
-                            );
-                        } else {
-                            place_text_quads(
-                                quads,
-                                source,
-                                x,
-                                y,
-                                fade,
-                                item.effects.edge_fade,
-                                |cached| {
-                                    let recolor =
-                                        selected.filter(|_| cached.paint[1] > 0.5).and_then(|h| {
-                                            h.glyph_color(
-                                                cached.rect[0] + cached.rect[2] * 0.5,
-                                                cached.rect[1] + cached.rect[3] * 0.5,
-                                            )
-                                        });
-                                    if let Some(color) = recolor {
-                                        rgba(color, item.effects.opacity)
-                                    } else if rich.is_some() {
-                                        [
-                                            cached.color[0],
-                                            cached.color[1],
-                                            cached.color[2],
-                                            cached.color[3] * item.effects.opacity,
-                                        ]
+                        // A text selection, under the glyphs; rounded, its box
+                        // rides in `fade`, as a rounded run background's does.
+                        let highlight = scene.text_highlight(item.id);
+                        if let Some(highlight) = highlight {
+                            quads.extend(highlight.rects.iter().map(|r| {
+                                let rect = [bounds.x + r.x, bounds.y + r.y, r.width, r.height];
+                                let rounded = highlight.radius > 0.;
+                                Quad {
+                                    rect,
+                                    uv: [0.; 4],
+                                    color: rgba(highlight.color, item.effects.opacity),
+                                    fade: if rounded { rect } else { fade },
+                                    options: [item.effects.edge_fade, 0., 0., 0.],
+                                    shape: if rounded {
+                                        [highlight.radius, 0., 0., 1.]
                                     } else {
-                                        plain_color
-                                    }
-                                },
-                            );
+                                        [0.; 4]
+                                    },
+                                    border: [0.; 4],
+                                    mask: NO_MASK,
+                                }
+                            }));
                         }
-                    };
-                    // Its shape as it was, inside its clip and with the atlas it
-                    // was placed in: its quads, borrowed where they are kept.
-                    let whole =
-                        !self.cull_glyphs || (holds(viewport) && item.clip.is_none_or(holds));
-                    if whole
-                        && let Some(mut shaped) =
-                            fresh.take_if(|shaped| shaped.atlas_epoch == self.atlas_epoch)
-                    {
-                        // (A twin's, placed in this atlas already.)
-                        place(&mut quads, &shaped.quads);
-                        glyphs_alone = marks.is_empty()
-                            && highlight.is_none()
-                            && shaped.decorations.is_empty();
-                        shaped.last_used = self.frame;
-                        self.shaped_bytes += shaped.bytes();
-                        self.shapes.insert(item.id, shaped);
-                    } else if whole
-                        && fresh.is_none()
-                        && let Some(shaped) = self.shapes.get_mut(&item.id)
-                        && shaped.atlas_epoch == self.atlas_epoch
-                    {
-                        place(&mut quads, &shaped.quads);
-                        glyphs_alone = marks.is_empty()
-                            && highlight.is_none()
-                            && shaped.decorations.is_empty();
-                        shaped.last_used = self.frame;
-                    } else {
-                        let mut shaped = match fresh {
-                            Some(shaped) => shaped,
-                            None => {
-                                let shaped = self.shapes.remove(&item.id).unwrap();
-                                self.shaped_bytes -= shaped.bytes();
-                                shaped
+                        // Its selected glyphs, in the selected-text colour.
+                        let selected = highlight.filter(|h| h.text_color.is_some());
+                        // On whole device pixels, as a browser draws text: an
+                        // atlas bitmap drawn a fraction off is sampled between
+                        // its texels, and a hinted one-pixel stroke (a minus
+                        // sign) turns into two rows at half strength.
+                        // Plain text's one colour, worked out once for its glyphs.
+                        let plain_color = rgba(color, item.effects.opacity);
+                        // Its quads from the shape's, placed and coloured.
+                        // (One extend, written straight into the room it makes: a
+                        // push a glyph would check that room each time.)
+                        let place = |quads: &mut Vec<Quad>, source: &[TextQuad]| {
+                            // Plain and unselected: one colour, chosen once.
+                            if selected.is_none() && rich.is_none() {
+                                place_text_quads(
+                                    quads,
+                                    source,
+                                    x,
+                                    y,
+                                    fade,
+                                    item.effects.edge_fade,
+                                    |_| plain_color,
+                                );
+                            } else {
+                                place_text_quads(
+                                    quads,
+                                    source,
+                                    x,
+                                    y,
+                                    fade,
+                                    item.effects.edge_fade,
+                                    |cached| {
+                                        let recolor = selected
+                                            .filter(|_| cached.paint[1] > 0.5)
+                                            .and_then(|h| {
+                                                h.glyph_color(
+                                                    cached.rect[0] + cached.rect[2] * 0.5,
+                                                    cached.rect[1] + cached.rect[3] * 0.5,
+                                                )
+                                            });
+                                        if let Some(color) = recolor {
+                                            rgba(color, item.effects.opacity)
+                                        } else if rich.is_some() {
+                                            [
+                                                cached.color[0],
+                                                cached.color[1],
+                                                cached.color[2],
+                                                cached.color[3] * item.effects.opacity,
+                                            ]
+                                        } else {
+                                            plain_color
+                                        }
+                                    },
+                                );
                             }
                         };
-                        let partial = self.cull_glyphs
-                            && !(holds(viewport) && item.clip.is_none_or(holds))
-                            && self.visible_lines(
-                                &shaped,
-                                clip.y - y,
-                                clip.height,
-                                font_size,
-                                &mut stats,
-                            )?;
-                        if !partial && shaped.atlas_epoch != self.atlas_epoch {
-                            shaped.quads.clear();
-                            shaped.quads.extend(
-                                shaped
-                                    .decorations
-                                    .iter()
-                                    .filter(|d| d.background)
-                                    .map(rich_decoration_quad),
-                            );
-                            shaped.quads.reserve(shaped.glyphs.len());
-                            for glyph in &shaped.glyphs {
-                                if let Some(a) = self.glyph::<MODE>(glyph.key, &mut stats)? {
-                                    shaped.quads.push(TextQuad {
-                                        rect: [
-                                            (glyph.x + a.left as f32) / self.scale,
-                                            (glyph.y - a.top as f32) / self.scale,
-                                            a.width as f32 / self.scale,
-                                            a.height as f32 / self.scale,
-                                        ],
-                                        uv: [
-                                            a.x as f32 / self.atlas_size as f32,
-                                            a.y as f32 / self.atlas_size as f32,
-                                            a.width as f32 / self.atlas_size as f32,
-                                            a.height as f32 / self.atlas_size as f32,
-                                        ],
-                                        color: shaped.rich.as_ref().map_or([0.; 4], |rich| {
-                                            rgba(rich.runs()[glyph.run].color, 1.)
-                                        }),
-                                        paint: [0., 1., 0., 0.],
-                                    });
-                                }
-                            }
-                            shaped.quads.extend(
-                                shaped
-                                    .decorations
-                                    .iter()
-                                    .filter(|d| !d.background)
-                                    .map(rich_decoration_quad),
-                            );
-                            shaped.atlas_epoch = self.atlas_epoch;
-                            stats.geometry_rebuilds += 1;
-                        }
-                        let visible = std::mem::take(&mut self.visible_glyphs);
-                        place(&mut quads, if partial { &visible } else { &shaped.quads });
-                        glyphs_alone = marks.is_empty()
-                            && highlight.is_none()
-                            && shaped.decorations.is_empty();
-                        self.visible_glyphs = visible;
-                        shaped.last_used = self.frame;
-                        let bytes = shaped.bytes();
-                        if bytes <= SHAPE_BUDGET {
-                            let mut used = self.shaped_bytes;
-                            while self.shapes.len() >= 1024 || used + bytes > SHAPE_BUDGET {
-                                let Some(id) = self
-                                    .shapes
-                                    .iter()
-                                    .min_by_key(|(_, s)| s.last_used)
-                                    .map(|(id, _)| *id)
-                                else {
-                                    break;
-                                };
-                                used -= self.shapes.remove(&id).unwrap().bytes();
-                            }
-                            self.shaped_bytes = used + bytes;
+                        // Its shape as it was, inside its clip and with the atlas it
+                        // was placed in: its quads, borrowed where they are kept.
+                        let whole =
+                            !self.cull_glyphs || (holds(viewport) && item.clip.is_none_or(holds));
+                        if whole
+                            && let Some(mut shaped) =
+                                fresh.take_if(|shaped| shaped.atlas_epoch == self.atlas_epoch)
+                        {
+                            // (A twin's, placed in this atlas already.)
+                            place(&mut quads, &shaped.quads);
+                            glyphs_alone = marks.is_empty()
+                                && highlight.is_none()
+                                && shaped.decorations.is_empty();
+                            shaped.last_used = self.frame;
+                            self.shaped_bytes += shaped.bytes();
                             self.shapes.insert(item.id, shaped);
+                        } else if whole
+                            && fresh.is_none()
+                            && let Some(shaped) = self.shapes.get_mut(&item.id)
+                            && shaped.atlas_epoch == self.atlas_epoch
+                        {
+                            place(&mut quads, &shaped.quads);
+                            glyphs_alone = marks.is_empty()
+                                && highlight.is_none()
+                                && shaped.decorations.is_empty();
+                            shaped.last_used = self.frame;
+                        } else {
+                            let mut shaped = match fresh {
+                                Some(shaped) => shaped,
+                                None => {
+                                    let shaped = self.shapes.remove(&item.id).unwrap();
+                                    self.shaped_bytes -= shaped.bytes();
+                                    shaped
+                                }
+                            };
+                            let partial = self.cull_glyphs
+                                && !(holds(viewport) && item.clip.is_none_or(holds))
+                                && self.visible_lines(
+                                    &shaped,
+                                    clip.y - y,
+                                    clip.height,
+                                    font_size,
+                                    &mut stats,
+                                )?;
+                            if !partial && shaped.atlas_epoch != self.atlas_epoch {
+                                shaped.quads.clear();
+                                shaped.quads.extend(
+                                    shaped
+                                        .decorations
+                                        .iter()
+                                        .filter(|d| d.background)
+                                        .map(rich_decoration_quad),
+                                );
+                                shaped.quads.reserve(shaped.glyphs.len());
+                                for glyph in &shaped.glyphs {
+                                    if let Some(a) = self.glyph::<MODE>(glyph.key, &mut stats)? {
+                                        shaped.quads.push(TextQuad {
+                                            rect: [
+                                                (glyph.x + a.left as f32) / self.scale,
+                                                (glyph.y - a.top as f32) / self.scale,
+                                                a.width as f32 / self.scale,
+                                                a.height as f32 / self.scale,
+                                            ],
+                                            uv: [
+                                                a.x as f32 / self.atlas_size as f32,
+                                                a.y as f32 / self.atlas_size as f32,
+                                                a.width as f32 / self.atlas_size as f32,
+                                                a.height as f32 / self.atlas_size as f32,
+                                            ],
+                                            color: shaped.rich.as_ref().map_or([0.; 4], |rich| {
+                                                rgba(rich.runs()[glyph.run].color, 1.)
+                                            }),
+                                            paint: [0., 1., 0., 0.],
+                                        });
+                                    }
+                                }
+                                shaped.quads.extend(
+                                    shaped
+                                        .decorations
+                                        .iter()
+                                        .filter(|d| !d.background)
+                                        .map(rich_decoration_quad),
+                                );
+                                shaped.atlas_epoch = self.atlas_epoch;
+                                stats.geometry_rebuilds += 1;
+                            }
+                            let visible = std::mem::take(&mut self.visible_glyphs);
+                            place(&mut quads, if partial { &visible } else { &shaped.quads });
+                            glyphs_alone = marks.is_empty()
+                                && highlight.is_none()
+                                && shaped.decorations.is_empty();
+                            self.visible_glyphs = visible;
+                            shaped.last_used = self.frame;
+                            let bytes = shaped.bytes();
+                            if bytes <= SHAPE_BUDGET {
+                                let mut used = self.shaped_bytes;
+                                while self.shapes.len() >= 1024 || used + bytes > SHAPE_BUDGET {
+                                    let Some(id) = self
+                                        .shapes
+                                        .iter()
+                                        .min_by_key(|(_, s)| s.last_used)
+                                        .map(|(id, _)| *id)
+                                    else {
+                                        break;
+                                    };
+                                    used -= self.shapes.remove(&id).unwrap().bytes();
+                                }
+                                self.shaped_bytes = used + bytes;
+                                self.shapes.insert(item.id, shaped);
+                            }
                         }
                     }
+                    NodeKind::Container(_) => {}
                 }
-                NodeKind::Container(_) => {}
-            }
-            // A canvas drawn as quads: clipped to its box.
-            let clip = match canvas_clip.map(|canvas: Rect| clip.intersection(canvas)) {
-                None => clip,
-                Some(Some(inside)) => inside,
-                Some(None) => {
-                    quads.truncate(start as usize);
-                    continue;
-                }
-            };
-            // Inside rounded clips or a `fade_edges` container: cut and faded
-            // in the shader (its quads' lane is set once they're culled).
-            let item_region = Region::of(&item);
-            let in_region = item_region.is_some();
-            let region = region_index(&mut clips, item_region);
-            // When the clip only culls whole quads, apply it on the CPU and
-            // draw under the viewport, so a change of clip never splits a
-            // batch: neighbouring text, icons and rows become one draw. Quads
-            // it would cut, transformed quads and filters keep the scissor.
-            // (The kept quads' bounds, when the clip culls on the CPU.)
-            let (draw_clip, culled_bounds) = match item.effects.blur_radius <= 0. {
-                true if glyphs_alone => {
-                    cull_glyphs(&mut quads, start as usize, clip, viewport, self.scale)
-                }
-                true => cull_on_cpu(&mut quads, start as usize, clip, viewport, self.scale),
-                false => (clip, None),
-            };
-            if quads.len() as u32 > start || item.effects.blur_radius > 0. {
-                let drawn = culled_bounds.unwrap_or_else(|| quad_bounds(&quads[start as usize..]));
-                if region > 0. {
-                    // Unless the item lies wholly where its region changes
-                    // nothing (a row well inside a rounded card): then drawn
-                    // without it, as the plain quads it is, its region's
-                    // index in `mask.w` for a box moved alone
-                    // (`patch_box_moved`). (Not in perspective, which
-                    // `quad_rect` bounds only in part, nor blurred.)
-                    let blurred = item.effects.blur_radius > 0.;
-                    let item_quads = &mut quads[start as usize..];
-                    let interiors = &mut self.region_interiors;
-                    mark_region(
-                        interiors, &clips, region, item_quads, drawn, blurred, self.scale,
+                // A canvas drawn as quads: clipped to its box.
+                let clip = match canvas_clip.map(|canvas: Rect| clip.intersection(canvas)) {
+                    None => clip,
+                    Some(Some(inside)) => inside,
+                    Some(None) => {
+                        quads.truncate(start as usize);
+                        continue;
+                    }
+                };
+                // Inside rounded clips or a `fade_edges` container: cut and faded
+                // in the shader (its quads' lane is set once they're culled).
+                let item_region = Region::of(&item);
+                let in_region = item_region.is_some();
+                let region = region_index(&mut clips, item_region);
+                // When the clip only culls whole quads, apply it on the CPU and
+                // draw under the viewport, so a change of clip never splits a
+                // batch: neighbouring text, icons and rows become one draw. Quads
+                // it would cut, transformed quads and filters keep the scissor.
+                // (The kept quads' bounds, when the clip culls on the CPU.)
+                let (draw_clip, culled_bounds) = match item.effects.blur_radius <= 0. {
+                    true if glyphs_alone => {
+                        cull_glyphs(&mut quads, start as usize, clip, viewport, self.scale)
+                    }
+                    true => cull_on_cpu(&mut quads, start as usize, clip, viewport, self.scale),
+                    false => (clip, None),
+                };
+                if quads.len() as u32 > start || item.effects.blur_radius > 0. {
+                    let drawn =
+                        culled_bounds.unwrap_or_else(|| quad_bounds(&quads[start as usize..]));
+                    if region > 0. {
+                        // Unless the item lies wholly where its region changes
+                        // nothing (a row well inside a rounded card): then drawn
+                        // without it, as the plain quads it is, its region's
+                        // index in `mask.w` for a box moved alone
+                        // (`patch_box_moved`). (Not in perspective, which
+                        // `quad_rect` bounds only in part, nor blurred.)
+                        let blurred = item.effects.blur_radius > 0.;
+                        let item_quads = &mut quads[start as usize..];
+                        let interiors = &mut self.region_interiors;
+                        mark_region(
+                            interiors, &clips, region, item_quads, drawn, blurred, self.scale,
+                        );
+                    }
+                    let draw = Draw {
+                        shading: fill_shading.unwrap_or(Shading::Full),
+                        blur: (item.effects.blur_radius > 0.).then(|| {
+                            Box::new((bounds, item.effects, blur_corners(item.kind, item.bounds)))
+                        }),
+                        start,
+                        end: quads.len() as u32,
+                        clip: draw_clip,
+                        bounds: drawn,
+                        source: if let Some(image) = canvas_image {
+                            TextureSource::Image(image)
+                        } else if let NodeKind::Image(image) = item.kind {
+                            TextureSource::Image(image.id())
+                        } else {
+                            TextureSource::Atlas
+                        },
+                    };
+                    let split = self.split_shading;
+                    // A glyph's quad (`glyph_quad`) is plain unless faded or in a
+                    // clip region, and textured: one shading for all of them.
+                    let glyphs =
+                        glyphs_alone.then_some(match item.effects.edge_fade != 0. || in_region {
+                            true => Shading::Full,
+                            false => Shading::Basic,
+                        });
+                    push_draw(
+                        &mut draws, &quads, draw, split, polylines, self.scale, glyphs,
                     );
                 }
-                let draw = Draw {
-                    shading: fill_shading.unwrap_or(Shading::Full),
-                    blur: (item.effects.blur_radius > 0.).then(|| {
-                        Box::new((bounds, item.effects, blur_corners(item.kind, item.bounds)))
-                    }),
-                    start,
-                    end: quads.len() as u32,
-                    clip: draw_clip,
-                    bounds: drawn,
-                    source: if let Some(image) = canvas_image {
-                        TextureSource::Image(image)
-                    } else if let NodeKind::Image(image) = item.kind {
-                        TextureSource::Image(image.id())
-                    } else {
-                        TextureSource::Atlas
-                    },
-                };
-                let split = self.split_shading;
-                // A glyph's quad (`glyph_quad`) is plain unless faded or in a
-                // clip region, and textured: one shading for all of them.
-                let glyphs =
-                    glyphs_alone.then_some(match item.effects.edge_fade != 0. || in_region {
-                        true => Shading::Full,
-                        false => Shading::Basic,
-                    });
-                push_draw(
-                    &mut draws, &quads, draw, split, polylines, self.scale, glyphs,
-                );
+            }
+            if phase == bands.len() {
+                break;
+            }
+            ends.push(draws.len());
+            phase += 1;
+        }
+        // The bands' draws apart from the frame's.
+        if let Some(&last) = ends.last() {
+            let frame = draws.split_off(last);
+            let mut banded = std::mem::replace(&mut draws, frame);
+            for index in (0..bands.len()).rev() {
+                let start = if index == 0 { 0 } else { ends[index - 1] };
+                bands[index].draws = banded.split_off(start);
             }
         }
         if MODE == PATCH {
@@ -7550,8 +7671,11 @@ impl GpuRenderer {
         }
         // Polyline strokes read their points (group 2, or Metal's `POINTS`).
         // Every stroke appends at least two points before making its quad.
-        let polylines =
-            !points.is_empty() && draws.iter().any(|draw| draw.shading == Shading::Polyline);
+        let polylines = !points.is_empty()
+            && draws
+                .iter()
+                .chain(bands.iter().flat_map(|band| &band.draws))
+                .any(|draw| draw.shading == Shading::Polyline);
         // `ZGX_D3D11`: every frame is drawn with Direct3D 11 (d3d11_frame.rs),
         // from the same data `render_direct` takes.
         #[cfg(d3d11)]
@@ -7587,7 +7711,10 @@ impl GpuRenderer {
             && (shown.is_some() || copies.is_empty())
             && (self.layer_present.is_some() || self.surface.is_none())
             && self.single_pass_format.is_none()
-            && draws.iter().all(|draw| match draw.source {
+            && draws
+                .iter()
+                .chain(bands.iter().flat_map(|band| &band.draws))
+                .all(|draw| match draw.source {
                 TextureSource::Atlas => true,
                 TextureSource::Layer(id) => self.layers.contains_key(&id),
                 TextureSource::Image(id) => {
@@ -7613,7 +7740,10 @@ impl GpuRenderer {
                 && self.filter_pipelines.is_empty()
                 && self.blend_pipelines.is_empty()
                 && self.image_effect_pipeline.get().is_none())
-                || draws.iter().all(|draw| match draw.shading {
+                || draws
+                    .iter()
+                    .chain(bands.iter().flat_map(|band| &band.draws))
+                    .all(|draw| match draw.shading {
                 Shading::Fill(id) => self.fill_shaders.get(&id).is_some_and(|shader| {
                     self.metal_frame
                         .get_or_init(|| metal_frame::MetalFrame::new(&self.device, &self.queue).ok())
@@ -7646,7 +7776,8 @@ impl GpuRenderer {
             let effects = (&effect_jobs[..], effect_first);
             let strokes = polylines.then_some(&points[..]);
             let stats = self.render_direct(
-                quads, draws, &regions, &batches, catch_up, shown, effects, &clips, strokes, stats,
+                quads, draws, &regions, &batches, catch_up, shown, effects, &clips, strokes,
+                &bands, stats,
             );
             self.frame_points = points;
             return Ok(stats);
@@ -7787,6 +7918,16 @@ impl GpuRenderer {
             effect_first,
             &mut stats,
         );
+        for band in &bands {
+            self.encode_band(
+                &mut encoder,
+                &vertices,
+                region_range,
+                points_bind.as_ref(),
+                band,
+                &mut stats,
+            );
+        }
         // The pass splits at each batch of backdrop filters (blurred between
         // passes) and at each blended layer a region reaches (the target
         // under it copied between passes, for it to read): `Some(batch)` or
@@ -7999,6 +8140,7 @@ impl GpuRenderer {
         (effect_jobs, effect_first): (&[effects::Job], u32),
         clips: &[Region],
         points: Option<&[[f32; 2]]>,
+        bands: &[bands::BandPhase<'_>],
         mut stats: GpuStats,
     ) -> GpuStats {
         let _span = zgx::profile::span(zgx::profile::Phase::Encode);
@@ -8075,6 +8217,7 @@ impl GpuRenderer {
                 .map(|scratch| scratch.atlas.each_ref().map(raw));
             // Effect slots drawn first, each pass of them into its atlas.
             let effect_passes = self.metal_effect_passes(effect_jobs, effect_first, &raw);
+            let band_targets: Vec<_> = bands.iter().map(|band| raw(&band.texture)).collect();
             for pass in &effect_passes {
                 stats.render_passes += 1;
                 stats.effect_passes += 1;
@@ -8088,7 +8231,57 @@ impl GpuRenderer {
                 // After the quads (as written above).
                 points.map(|points| (quads.len() * size_of::<Quad>(), size_of_val(points))),
                 &effect_passes,
+                bands.first().map(|band| {
+                    let size = band.viewport;
+                    (&*band_targets[0], [size.width, size.height, self.scale, 0.])
+                }),
             );
+            // A fade's bands first (bands.rs), each into its texture.
+            for (index, band) in bands.iter().enumerate() {
+                if index > 0 {
+                    let size = band.viewport;
+                    pass.switch(
+                        &band_targets[index],
+                        true,
+                        [size.width, size.height, self.scale, 0.],
+                    );
+                }
+                pass.texture(&atlas);
+                let mut sampled = TextureSource::Atlas;
+                for (region, region_scissor) in &band.regions {
+                    pass.scissor(*region_scissor);
+                    self.batches(*region, &band.draws, 0, |batch| {
+                        let Some(rect) = scissor(batch.rect, self.scale, self.width, self.height)
+                        else {
+                            return;
+                        };
+                        if batch.source != sampled {
+                            let texture = match batch.source {
+                                TextureSource::Image(image) => {
+                                    self.images.get(&image).and_then(|image| image.2.as_ref())
+                                }
+                                TextureSource::Layer(layer) => {
+                                    self.layers.get(&layer).map(|layer| &layer.texture)
+                                }
+                                TextureSource::Atlas => None,
+                            };
+                            match texture {
+                                Some(texture) => pass.texture(&raw(texture)),
+                                None => pass.texture(&atlas),
+                            }
+                            sampled = batch.source;
+                        }
+                        pass.scissor(rect);
+                        pass.quads(frame, batch.shading, false, batch.start..batch.end);
+                        stats.draw_calls += 1;
+                        stats.instances += (batch.end - batch.start) as usize;
+                    });
+                }
+                stats.render_passes += 1;
+            }
+            if !bands.is_empty() {
+                pass.switch(&target, false, self.viewport_values);
+            }
             let present = self.layer_present.as_ref();
             if let (Some(instances), Some(present), Some(shown)) = (catch_up, present, shown) {
                 pass.texture(&present.buffers[shown].0.metal);

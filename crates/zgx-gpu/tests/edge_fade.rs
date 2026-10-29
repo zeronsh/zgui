@@ -1,6 +1,8 @@
 //! `fade_edges` on all four sides: a clip fades its descendants out over
 //! independent bands at each edge (a horizontally scrolling row fading its
-//! right 28 px), on the wgpu path and with Metal directly.
+//! right 28 px), on the wgpu path and with Metal directly. A card crossing
+//! a band fades as one: what it holds over its paper, not the paper
+//! through it.
 use zgx::scene::*;
 use zgx_gpu::GpuRenderer;
 
@@ -104,5 +106,414 @@ fn all_four_edges_fade_independently() {
             alpha(&p, 160, 60)
         );
         assert_eq!(alpha(&p, 100, 60), 255, "direct {direct}");
+    }
+}
+
+/// A 160 × 80 card at `y` in the faded clip: light paper, rounded and
+/// clipping, with dark art over it.
+fn papered(y: f32) -> (Scene, NodeId) {
+    let mut scene = Scene::new(SIZE as f32, SIZE as f32);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let clip = scene.append(
+        scene.root(),
+        NodeKind::Container(Layout::Overlay),
+        Style {
+            width: Some(160.),
+            height: Some(160.),
+            clip: true,
+            fade_edges: [40., 0.],
+            ..Default::default()
+        },
+    );
+    scene.set_transform(clip, Transform { x: 20., y: 20. });
+    let card = scene.append(
+        clip,
+        NodeKind::Panel {
+            layout: Layout::Overlay,
+            quad: QuadStyle {
+                fill: Color(240, 238, 232, 255),
+                radius: 12.,
+                ..Default::default()
+            },
+        },
+        Style {
+            width: Some(160.),
+            height: Some(80.),
+            clip: true,
+            ..Default::default()
+        },
+    );
+    scene.set_transform(card, Transform { x: 0., y });
+    let art = zgx::image::ImageData::new(4, 4, [40u8, 40, 80, 255].repeat(16)).unwrap();
+    scene.append(
+        card,
+        NodeKind::Image(std::sync::Arc::new(art)),
+        Style {
+            width: Some(160.),
+            height: Some(80.),
+            ..Default::default()
+        },
+    );
+    (scene, card)
+}
+
+#[test]
+fn a_card_fades_as_one_across_a_band() {
+    let _gpu_fixture = gpu_fixture();
+    for direct in [true, false] {
+        let (mut scene, _) = papered(0.);
+        let p = render(direct, &mut scene);
+        // Its art fades toward transparent, its own colour all the way: the
+        // paper under it does not show through as a light veil.
+        for y in [25, 35, 45, 55] {
+            let at = ((y * SIZE + 100) * 4) as usize;
+            let [r, g, b, a] = p[at..at + 4].try_into().unwrap();
+            let expected = ramp(y as f32 - 20. + 0.5, 40.);
+            assert!(
+                a.abs_diff(expected) <= 2,
+                "direct {direct}, y {y}: alpha {a}"
+            );
+            // Premultiplied: the art's colour scaled by its alpha.
+            let of = |art: f32| (art * a as f32 / 255.).round() as u8;
+            assert!(
+                r.abs_diff(of(40.)) <= 2 && g.abs_diff(of(40.)) <= 2 && b.abs_diff(of(80.)) <= 2,
+                "direct {direct}, y {y}: {:?}",
+                [r, g, b, a]
+            );
+        }
+
+        // Out of the band it paints as it is drawn, the same.
+        let (mut scene, _) = papered(60.);
+        let p = render(direct, &mut scene);
+        let at = ((120 * SIZE + 100) * 4) as usize;
+        assert_eq!(p[at..at + 4], [40, 40, 80, 255], "direct {direct}");
+    }
+}
+
+#[test]
+fn a_card_scrolled_through_the_band_draws_as_a_frame_drawn_afresh() {
+    let _gpu_fixture = gpu_fixture();
+    for direct in [true, false] {
+        let (mut scene, card) = papered(0.);
+        let mut gpu = GpuRenderer::new(SIZE, SIZE).unwrap();
+        gpu.set_direct_metal(direct);
+        let damage = scene.flush().damage;
+        gpu.render(&scene, &damage).unwrap();
+        for y in [60., -10., 30.5, 0.] {
+            scene.set_transform(card, Transform { x: 0., y });
+            let damage = scene.flush().damage;
+            gpu.render(&scene, &damage).unwrap();
+            let (mut fresh, _) = papered(y);
+            assert_eq!(
+                gpu.readback().unwrap(),
+                render(direct, &mut fresh),
+                "direct {direct}, y {y}"
+            );
+        }
+    }
+}
+
+/// A clip at (20, 20), 160 × 160, its top 40 px fading (unless `fade` is
+/// false), holding what `fill` adds.
+fn holding(fade: bool, fill: impl FnOnce(&mut Scene, NodeId)) -> Scene {
+    let mut scene = Scene::new(SIZE as f32, SIZE as f32);
+    scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+    let clip = scene.append(
+        scene.root(),
+        NodeKind::Container(Layout::Column),
+        Style {
+            width: Some(160.),
+            height: Some(160.),
+            clip: true,
+            fade_edges: if fade { [40., 0.] } else { [0., 0.] },
+            ..Default::default()
+        },
+    );
+    scene.set_transform(clip, Transform { x: 20., y: 20. });
+    fill(&mut scene, clip);
+    scene
+}
+/// That every pixel is what CSS's `mask-image` makes: what the clip holds
+/// drawn unfaded, scaled once by the ramp at the pixel's centre.
+fn masked_once(fill: impl Fn(&mut Scene, NodeId)) {
+    let _gpu_fixture = gpu_fixture();
+    for direct in [true, false] {
+        let p = render(direct, &mut holding(true, &fill));
+        let flat = render(direct, &mut holding(false, &fill));
+        for y in 0..SIZE {
+            let m = match y {
+                20..60 => ramp(y as f32 - 20. + 0.5, 40.),
+                _ => 255,
+            };
+            for x in 0..SIZE {
+                let at = ((y * SIZE + x) * 4) as usize;
+                for c in 0..4 {
+                    let want = (flat[at + c] as f32 * m as f32 / 255.).round() as u8;
+                    assert!(
+                        p[at + c].abs_diff(want) <= 2,
+                        "direct {direct}, ({x}, {y}) channel {c}: {} for {want}",
+                        p[at + c]
+                    );
+                }
+            }
+        }
+    }
+}
+fn light() -> Color {
+    Color(240, 238, 232, 255)
+}
+fn dark() -> Color {
+    Color(40, 40, 80, 255)
+}
+
+#[test]
+fn an_overlay_over_a_filled_sibling_fades_as_one() {
+    masked_once(|scene, clip| {
+        let sized = |w: f32, h: f32| Style {
+            width: Some(w),
+            height: Some(h),
+            ..Default::default()
+        };
+        scene.append(clip, NodeKind::Rect(light()), sized(160., 80.));
+        let over = scene.append(
+            clip,
+            NodeKind::Rect(dark()),
+            Style {
+                absolute: true,
+                ..sized(120., 50.)
+            },
+        );
+        scene.set_transform(over, Transform { x: 20., y: 5. });
+    });
+}
+
+#[test]
+fn a_filled_column_holding_the_content_fades_as_one() {
+    masked_once(|scene, clip| {
+        let column = scene.append(
+            clip,
+            NodeKind::Panel {
+                layout: Layout::Column,
+                quad: QuadStyle {
+                    fill: light(),
+                    ..Default::default()
+                },
+            },
+            Style {
+                width: Some(160.),
+                height: Some(400.),
+                gap: 8.,
+                ..Default::default()
+            },
+        );
+        for _ in 0..6 {
+            let card = scene.append(
+                column,
+                NodeKind::Panel {
+                    layout: Layout::Overlay,
+                    quad: QuadStyle {
+                        fill: Color(255, 255, 255, 255),
+                        radius: 10.,
+                        ..Default::default()
+                    },
+                },
+                Style {
+                    width: Some(140.),
+                    height: Some(36.),
+                    clip: true,
+                    ..Default::default()
+                },
+            );
+            scene.append(
+                card,
+                NodeKind::Rect(dark()),
+                Style {
+                    width: Some(80.),
+                    height: Some(36.),
+                    ..Default::default()
+                },
+            );
+        }
+    });
+}
+
+#[test]
+fn a_tilted_card_in_a_band_fades_as_one() {
+    masked_once(|scene, clip| {
+        let card = scene.append(
+            clip,
+            NodeKind::Panel {
+                layout: Layout::Overlay,
+                quad: QuadStyle {
+                    fill: light(),
+                    radius: 8.,
+                    ..Default::default()
+                },
+            },
+            Style {
+                width: Some(120.),
+                height: Some(60.),
+                ..Default::default()
+            },
+        );
+        scene.set_transform(card, Transform { x: 20., y: 4. });
+        scene.set_local_transform(
+            card,
+            LocalTransform {
+                rotate: 0.2,
+                ..LocalTransform::IDENTITY
+            },
+        );
+        scene.append(
+            card,
+            NodeKind::Rect(dark()),
+            Style {
+                width: Some(60.),
+                height: Some(40.),
+                ..Default::default()
+            },
+        );
+    });
+}
+
+/// `scene` drawn with fade bands as one and item by item, at `scale`.
+fn both_ways(direct: bool, scale: f32, scene: impl Fn() -> Scene) -> (Vec<u8>, Vec<u8>) {
+    let draw = |bands: bool| {
+        let mut scene = scene();
+        let mut gpu = GpuRenderer::new(SIZE, SIZE).unwrap();
+        gpu.set_direct_metal(direct);
+        gpu.set_scale_factor(scale);
+        gpu.set_fade_bands(bands);
+        let damage = scene.flush().damage;
+        gpu.render(&scene, &damage).unwrap();
+        gpu.readback().unwrap()
+    };
+    (draw(true), draw(false))
+}
+
+#[test]
+fn one_item_fades_as_it_did_item_by_item_across_the_seams() {
+    // Where fading item by item was right (one opaque item), the same
+    // pixels exactly: across each band's edge with the interior, at a
+    // fractional scale and offset.
+    let _gpu_fixture = gpu_fixture();
+    for direct in [true, false] {
+        for scale in [1., 1.5] {
+            let (banded, by_item) = both_ways(direct, scale, || {
+                let size = SIZE as f32 / scale;
+                let mut scene = Scene::new(size, size);
+                scene.set_kind(scene.root(), NodeKind::Container(Layout::Overlay));
+                let clip = scene.append(
+                    scene.root(),
+                    NodeKind::Container(Layout::Overlay),
+                    Style {
+                        width: Some(100.3),
+                        height: Some(90.7),
+                        clip: true,
+                        fade_edges: [17.3, 21.6],
+                        fade_edges_x: [9.4, 13.1],
+                        ..Default::default()
+                    },
+                );
+                scene.set_transform(clip, Transform { x: 10.7, y: 12.35 });
+                let item = scene.append(
+                    clip,
+                    NodeKind::Rect(Color(200, 30, 60, 255)),
+                    Style {
+                        width: Some(100.3),
+                        height: Some(200.),
+                        ..Default::default()
+                    },
+                );
+                scene.set_transform(item, Transform { x: 0., y: -33.45 });
+                scene
+            });
+            assert!(banded == by_item, "direct {direct}, scale {scale}");
+        }
+    }
+}
+
+#[test]
+fn a_fade_within_a_band_composes_as_it_did() {
+    let _gpu_fixture = gpu_fixture();
+    for direct in [true, false] {
+        let (banded, by_item) = both_ways(direct, 1., || {
+            holding(true, |scene, clip| {
+                let inner = scene.append(
+                    clip,
+                    NodeKind::Container(Layout::Overlay),
+                    Style {
+                        width: Some(120.),
+                        height: Some(50.),
+                        clip: true,
+                        fade_edges: [0., 20.],
+                        ..Default::default()
+                    },
+                );
+                scene.append(
+                    inner,
+                    NodeKind::Rect(dark()),
+                    Style {
+                        width: Some(120.),
+                        height: Some(50.),
+                        ..Default::default()
+                    },
+                );
+                scene.append(
+                    clip,
+                    NodeKind::Rect(light()),
+                    Style {
+                        width: Some(160.),
+                        height: Some(60.),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+        assert!(banded == by_item, "direct {direct}");
+    }
+}
+
+#[test]
+fn rows_apart_in_a_band_fade_as_they_did_item_by_item() {
+    // Nothing in a band stacks: faded item by item, which is exact there,
+    // and drawn as it was.
+    let _gpu_fixture = gpu_fixture();
+    for direct in [true, false] {
+        let (banded, by_item) = both_ways(direct, 1., || {
+            holding(true, |scene, clip| {
+                for i in 0..6 {
+                    let row = scene.append(
+                        clip,
+                        NodeKind::Container(Layout::Row),
+                        Style {
+                            width: Some(160.),
+                            height: Some(24.),
+                            gap: 8.,
+                            ..Default::default()
+                        },
+                    );
+                    scene.append(
+                        row,
+                        NodeKind::Rect(dark()),
+                        Style {
+                            width: Some(16.),
+                            height: Some(16.),
+                            ..Default::default()
+                        },
+                    );
+                    scene.append(
+                        row,
+                        NodeKind::Rect(Color(200, 60, 40, 255 - i * 30)),
+                        Style {
+                            width: Some(100.),
+                            height: Some(10.),
+                            ..Default::default()
+                        },
+                    );
+                }
+            })
+        });
+        assert!(banded == by_item, "direct {direct}");
     }
 }

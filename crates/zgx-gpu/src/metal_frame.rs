@@ -336,6 +336,7 @@ impl MetalFrame {
         regions: &[u8],
         points: Option<(usize, usize)>,
         effects: &[EffectPass],
+        first: Option<(&ProtocolObject<dyn MTLTexture>, [f32; 4])>,
     ) -> Frame {
         let buffer = self.queue.commandBuffer().expect("a command buffer");
         for effect in effects {
@@ -370,7 +371,12 @@ impl MetalFrame {
             }
             encoder.endEncoding();
         }
-        let encoder = pass(&buffer, target, MTLLoadAction::Load);
+        // A pass into another texture first (a fade's bands, bands.rs),
+        // cleared, at its own viewport; `switch` goes on into the target.
+        let (encoder, viewport) = match first {
+            Some((texture, viewport)) => (cleared(&buffer, texture), viewport),
+            None => (pass(&buffer, target, MTLLoadAction::Load), viewport),
+        };
         // Small tables ride inline with each pass; larger ones in a buffer.
         let regions = match regions.len() {
             0 => Regions::Inline(vec![0; size_of::<crate::Region>()]),
@@ -443,6 +449,28 @@ enum Bound {
     CopyOffset,
 }
 
+/// A render pass of `buffer` into `target`, cleared to transparent: a
+/// fade's bands (bands.rs).
+fn cleared(
+    buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+    target: &ProtocolObject<dyn MTLTexture>,
+) -> Encoder {
+    let pass = MTLRenderPassDescriptor::new();
+    // SAFETY: Index 0 of a render pass descriptor's colour attachments.
+    let color = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
+    color.setTexture(Some(target));
+    color.setLoadAction(MTLLoadAction::Clear);
+    color.setClearColor(objc2_metal::MTLClearColor {
+        red: 0.,
+        green: 0.,
+        blue: 0.,
+        alpha: 0.,
+    });
+    color.setStoreAction(MTLStoreAction::Store);
+    buffer
+        .renderCommandEncoderWithDescriptor(&pass)
+        .expect("a render encoder")
+}
 /// A render pass of `buffer` into `target`, stored.
 fn pass(
     buffer: &ProtocolObject<dyn MTLCommandBuffer>,
@@ -601,6 +629,25 @@ impl Frame {
             }
         }
         self.current = None;
+    }
+    /// End this pass and open one into `target` (cleared if `clear`) at
+    /// `viewport`: from a fade's bands (bands.rs) to the next, or to the
+    /// frame's target.
+    pub(crate) fn switch(
+        &mut self,
+        target: &ProtocolObject<dyn MTLTexture>,
+        clear: bool,
+        viewport: [f32; 4],
+    ) {
+        self.encoder.endEncoding();
+        self.encoder = match clear {
+            true => cleared(&self.buffer, target),
+            false => pass(&self.buffer, target, MTLLoadAction::Load),
+        };
+        self.viewport = viewport;
+        self.current = None;
+        self.scissor = None;
+        self.quad_state();
     }
     /// Open the next pass into `target` after a batch's blur passes.
     pub(crate) fn resume(&mut self, target: &ProtocolObject<dyn MTLTexture>) {

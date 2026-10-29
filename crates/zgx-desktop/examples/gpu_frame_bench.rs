@@ -20,6 +20,15 @@
 //! a frame measured into one retained target skips that catch-up, and once
 //! made a change look 6% cheaper than windows found it. `PRESENT=headless`
 //! draws into one retained target, as elsewhere.
+//!
+//! `ZGX_MODE=fade`: a list scrolling under a fade (`fade_edges`, 48 px
+//! top and bottom) of `CARDS` filled, rounded, clipping cards (20 by
+//! default) with art over each, 1.37 px a frame; `FADE_BANDS=0` fades item
+//! by item instead of each band as one. `ROWS=1` has rows of an icon and
+//! a line of text on a transparent background in their place (nothing in
+//! a band overlaps: faded item by item either way). It reports the main thread's
+//! instructions a frame too (macOS): update, layout, damage and the
+//! renderer's encoding, not the wait for the GPU.
 use std::hash::{Hash, Hasher};
 use zgx::widgets::Ui;
 use zgx_gpu::GpuRenderer;
@@ -48,7 +57,8 @@ fn main() {
     let started = std::time::Instant::now();
     let scale: f32 = env("SCALE", 2.);
     let animate = zgx::env::var("ZGX_MODE").as_deref() == Ok("animate");
-    let (width, height) = if animate {
+    let fade = zgx::env::var("ZGX_MODE").as_deref() == Ok("fade");
+    let (width, height) = if animate || fade {
         (960., 720.)
     } else {
         (heavy::WIDTH, heavy::HEIGHT)
@@ -71,11 +81,14 @@ fn main() {
     #[cfg(not(target_os = "macos"))]
     let mut gpu = GpuRenderer::new(size.0, size.1).expect("GPU");
     gpu.set_scale_factor(scale);
+    gpu.set_fade_bands(env("FADE_BANDS", 1) != 0);
     headless_font::font().install(&mut gpu.text_system().borrow_mut());
     gpu.install_text(&mut ui.scene.borrow_mut());
     // Each tick's change: the dashboard's data, or the animation's clock a
     // 120 Hz refresh on (as `animation_headless`).
-    let (name, mut advance): (String, Advance) = if animate {
+    let (name, mut advance): (String, Advance) = if fade {
+        faded_cards(&ui, env("CARDS", 20), env("ROWS", 0) != 0)
+    } else if animate {
         let clock = ui.signal(0_f32);
         ui.mount(animation_view::animation(clock.clone()));
         let advance = move |_: &Ui, tick: usize| {
@@ -104,6 +117,7 @@ fn main() {
         (format!("{mode:?}"), Box::new(advance))
     };
     let mut times = Vec::new();
+    let mut instructions = 0_u64;
     let (mut damaged, mut draws, mut instances, mut passes) = (0_u64, 0_usize, 0_usize, 0_usize);
     // The scene's own damage: its exact union (on a grid of logical
     // points) and how many rectangles.
@@ -118,9 +132,13 @@ fn main() {
             let due = started + std::time::Duration::from_secs_f64(tick as f64 / pace);
             std::thread::sleep(due.saturating_duration_since(std::time::Instant::now()));
         }
+        let before = retired();
         ui.prepare_frame();
         let report = ui.scene.borrow_mut().flush();
         let stats = gpu.render(&ui.scene.borrow(), &report.damage).unwrap();
+        if tick >= 60 {
+            instructions += retired() - before;
+        }
         if layer {
             // Shown: the frame waited for, as a window waits before its
             // layer takes the surface; every 100 ticks, what it shows.
@@ -175,7 +193,8 @@ fn main() {
     let mean = times.iter().map(|t| t.as_secs_f64()).sum::<f64>() / times.len().max(1) as f64 * 1e3;
     println!(
         "{name}{}: GPU {:.3} ms p10, {:.3} median, {:.3} p90, {mean:.3} mean ({} frames timed); damaged {:.2} Mpx, \
-         {:.1} draws, {:.0} instances, {:.2} passes a frame; scene damage {:.2} Mpx in {:.1} rects; pixels {:016x}",
+         {:.1} draws, {:.0} instances, {:.2} passes a frame; scene damage {:.2} Mpx in {:.1} rects; \
+         {:.0} K instructions a frame; pixels {:016x}",
         if layer {
             " (through a layer)"
         } else {
@@ -191,6 +210,131 @@ fn main() {
         passes as f64 / measured,
         raw as f64 / measured / 1e6,
         rects as f64 / measured,
+        instructions as f64 / measured / 1e3,
         pixels.finish(),
     );
+}
+
+/// The calling thread's retired instructions so far (0 where not counted).
+fn retired() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            /// Kind 1 (THSC_CPI): instructions, then cycles.
+            fn thread_selfcounts(kind: i32, buffer: *mut u64, size: usize) -> i32;
+        }
+        let mut counts = [0u64; 2];
+        // SAFETY: Two u64s for THSC_CPI.
+        if unsafe { thread_selfcounts(1, counts.as_mut_ptr(), 16) } == 0 {
+            return counts[0];
+        }
+    }
+    0
+}
+
+/// `ZGX_MODE=fade`'s scene (see the top): its tick scrolls the list.
+fn faded_cards(ui: &Ui, cards: usize, rows: bool) -> (String, Advance) {
+    use zgx::scene::{Color, Layout, NodeKind, QuadStyle, Style, Transform};
+    let mut scene = ui.scene.borrow_mut();
+    let root = scene.root();
+    scene.set_kind(root, NodeKind::Container(Layout::Overlay));
+    let clip = scene.append(
+        root,
+        NodeKind::Container(Layout::Column),
+        Style {
+            width: Some(720.),
+            height: Some(560.),
+            clip: true,
+            fade_edges: [48., 48.],
+            ..Default::default()
+        },
+    );
+    scene.set_transform(clip, Transform { x: 120., y: 80. });
+    let list = scene.append(
+        clip,
+        NodeKind::Container(Layout::Column),
+        Style {
+            gap: 12.,
+            ..Default::default()
+        },
+    );
+    for i in (0..cards).filter(|_| rows) {
+        let row = scene.append(
+            list,
+            NodeKind::Container(Layout::Row),
+            Style {
+                width: Some(720.),
+                height: Some(96.),
+                gap: 16.,
+                ..Default::default()
+            },
+        );
+        let shade = (i * 37 % 120) as u8;
+        scene.append(
+            row,
+            NodeKind::Rect(Color(40 + shade / 2, 40, 80 + shade, 255)),
+            Style {
+                width: Some(48.),
+                height: Some(48.),
+                ..Default::default()
+            },
+        );
+        scene.append(
+            row,
+            NodeKind::Text {
+                text: format!("Row {i}: a line of text beside its icon").into(),
+                color: Color(30, 30, 40, 255),
+                font_size: 15.,
+            },
+            Style::default(),
+        );
+    }
+    for i in (0..cards).filter(|_| !rows) {
+        let card = scene.append(
+            list,
+            NodeKind::Panel {
+                layout: Layout::Row,
+                quad: QuadStyle {
+                    fill: Color(240, 238, 232, 255),
+                    radius: 12.,
+                    ..Default::default()
+                },
+            },
+            Style {
+                width: Some(720.),
+                height: Some(96.),
+                clip: true,
+                gap: 16.,
+                ..Default::default()
+            },
+        );
+        let shade = (i * 37 % 120) as u8;
+        scene.append(
+            card,
+            NodeKind::Rect(Color(40 + shade / 2, 40, 80 + shade, 255)),
+            Style {
+                width: Some(200.),
+                height: Some(96.),
+                ..Default::default()
+            },
+        );
+        scene.append(
+            card,
+            NodeKind::Rect(Color(90, 90, 110, 255)),
+            Style {
+                width: Some(360.),
+                height: Some(14.),
+                ..Default::default()
+            },
+        );
+    }
+    let extent = (cards as f32 * 108. - 560.).max(1.);
+    let advance = move |ui: &Ui, tick: usize| {
+        let y = (tick as f32 * 1.37) % extent;
+        ui.scene
+            .borrow_mut()
+            .set_transform(list, Transform { x: 0., y: -y });
+    };
+    let what = if rows { "rows" } else { "cards" };
+    (format!("Fade {cards} {what}"), Box::new(advance))
 }
