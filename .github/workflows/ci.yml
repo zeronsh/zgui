@@ -278,7 +278,19 @@ jobs:
           retention-days: 14
       - name: Callgrind probe
         continue-on-error: true
-        run: bash scripts/perf/probe_cg.sh
+        run: |
+          bash scripts/perf/probe_cg.sh
+          cp /usr/lib/x86_64-linux-gnu/libc.so.6 /tmp/zgx-perf/ || true
+      - name: Probe files
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-memcmp
+          path: |
+            /tmp/zgx-perf/cgi.*.out
+            /tmp/zgx-perf/libc.so.6
+          retention-days: 3
       - name: Comment
         if: github.event_name == 'pull_request' && hashFiles('perf.md') != ''
         continue-on-error: true

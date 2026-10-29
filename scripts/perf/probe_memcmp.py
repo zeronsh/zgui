@@ -6,9 +6,12 @@ def counts(path):
     """{function: Counter(address -> exclusive instructions)}, libc's path."""
     out = collections.defaultdict(collections.Counter)
     fn, obj, libc, skip = None, None, None, False
+    columns = 1
     for line in open(path, errors='replace'):
         line = line.rstrip('\n')
-        if line.startswith('ob='):
+        if line.startswith('positions:'):
+            columns = len(line.split()) - 1
+        elif line.startswith('ob='):
             obj = line[3:]
         elif line.startswith('fn='):
             fn = line[3:]
@@ -21,8 +24,8 @@ def counts(path):
                 skip = False
                 continue
             parts = line.split()
-            if len(parts) >= 2:
-                out[fn][int(parts[0], 16)] += int(parts[1])
+            if len(parts) > columns:
+                out[fn][int(parts[0], 16)] += int(parts[columns])
         elif line and line[0] in 'cj' and '=' in line[:6]:
             continue
     return out, libc
@@ -33,7 +36,7 @@ name = next(f for f in head if 'memcmp_avx2_movbe' in f)
 b, h = base[name], head[name]
 print(f'=== {name}: base {sum(b.values()):,} head {sum(h.values()):,}')
 # The load base: the runtime entry of memcmp's resolver against its file address.
-resolver = [f for f in head if re.search(r'(^|:)(memcmp|bcmp)$', f) and 'ifunc' in f]
+resolver = [f for f in head if f in ('memcmp', 'bcmp')]
 nm = subprocess.run(['nm', '-D', '--defined-only', libc], capture_output=True, text=True).stdout
 file_addr = {l.split()[2]: int(l.split()[0], 16) for l in nm.splitlines() if len(l.split()) == 3}
 load = None
