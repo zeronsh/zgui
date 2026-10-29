@@ -10,10 +10,10 @@ Add the crates, from crates.io:
 
 ```toml
 [dependencies]
-zgx = "0.1.5"
-zgx-desktop = "0.1.5"
+zgx = "0.1.6"
+zgx-desktop = "0.1.6"
 # The component library (a data grid, a tree, tabs, toasts…), if you use it.
-zgx-components = "0.1.5"
+zgx-components = "0.1.6"
 ```
 
 Or, for what is not released yet ([the changelog](../CHANGELOG.md) says what), from its repository:

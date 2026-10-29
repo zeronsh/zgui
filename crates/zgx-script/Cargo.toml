@@ -48,11 +48,11 @@ vulkan = ["zgx-gpu/vulkan"]
 inspect = ["zgx/trace", "dep:png"]
 
 [dependencies]
-zgx = { path = "../zgx", version = "0.1.5", default-features = false }
-zgx-components = { path = "../zgx-components", version = "0.1.5", optional = true }
-zgx-3d = { path = "../zgx-3d", version = "0.1.5", optional = true }
+zgx = { path = "../zgx", version = "0.1.6", default-features = false }
+zgx-components = { path = "../zgx-components", version = "0.1.6", optional = true }
+zgx-3d = { path = "../zgx-3d", version = "0.1.6", optional = true }
 # Image decoding for `ui.image` (PNG, JPEG).
-zgx-gpu = { path = "../zgx-gpu", version = "0.1.5", default-features = false }
+zgx-gpu = { path = "../zgx-gpu", version = "0.1.6", default-features = false }
 mlua = { package = "zgx-mlua", version = "0.12.5", path = "../../vendor/mlua", features = ["luau"] }
 memchr = "2.7"
 # `.luaurc` aliases for `require("@alias/...")`.

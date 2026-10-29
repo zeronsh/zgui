@@ -13,7 +13,7 @@ keywords = ["gui", "ui", "components", "accessibility", "widgets"]
 categories = ["gui"]
 
 [dependencies]
-zgx = { path = "../zgx", version = "0.1.5", default-features = false }
+zgx = { path = "../zgx", version = "0.1.6", default-features = false }
 
 [dev-dependencies]
 # The catalogue example's window.

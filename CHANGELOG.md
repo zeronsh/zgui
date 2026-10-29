@@ -2,7 +2,9 @@
 
 zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps, newest first.
 
-## Unreleased
+## 0.1.6 (2026-10-29)
+
+A patch: Rust and Luau code builds as before (every API change since 0.1.5 is an addition, and zgx-desktop and zgx-gpu 0.1.5 build against this zgx). zgx-gpu and zgx-desktop now need `zgx-cosmic-text` 0.19.3, published with it. One behaviour changes, below with what to check: Windows input methods go through the Text Services Framework by default.
 
 ### Changed: what to check in an existing app
 
@@ -45,6 +47,12 @@ zgx is on crates.io from 0.1.0 (`zgx = "0.1"`); this lists what changed for apps
 - **A popover or menu with no name is named by its trigger** (`aria-labelledby`), as the trigger reads now ([overlays](docs/reference/overlays.md)).
 - **macOS transparency checked in the process**: `WindowHandle::debug_composition()` reports what the window server composites of a window (its opacity and background, its layers, the pixels it shows), with no screen capture; the transparency example's `--composition` mode checks it on macOS CI ([validation](docs/validation.md)).
 - **An editor's own caret colour and width**: `View::caret_color` / `caret_color_when`, `View::caret_width`, `EditorHandle::set_caret_style`, and Luau's `caret_color` (a colour or `"$token"`) and `caret_width` on `ui.input` and `ui.textarea`. By default the caret still takes the text's colour and the app's width (`Ui::set_caret_width`).
+
+### Performance
+
+- **Scripts set up and run faster** (zgx-script): a script's VM makes only the `ui` modules, and `anime`, that it names (#956), so setting one up costs 1.53 M instructions, against 3.83 M in 0.1.5 (−60%). By exact instruction counts against 0.1.5 on Linux arm64 and x86, every script benchmark is faster, by 0.06% to 3.6%: mount −1.7 to −2.0%, the apps' interactions −0.08 to −3.13%, the Luau microbenchmarks −1.79 to −3.56%.
+- **The Rust benchmarks are within ±0.04% of 0.1.5 on arm64 and ±0.09% on x86**, the rest being where the C allocator places memory; zgx's own code is flat.
+- **A localized message costs about what its template twin does**: updating a text whose plural follows a count costs about 1–2% more than the same text as a Luau template string (`"{count} messages"`): +1.2% by default, +2.2% with zgx-script's `i18n` feature, which zgx-run turns on. #974 chooses the plural form by a lookup made as the message parses.
 
 ### Fixed
 

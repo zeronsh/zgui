@@ -1,6 +1,6 @@
 # Releasing
 
-zgx 0.1.5 is on crates.io (2026-10-28, tag `v0.1.5`; 0.1.0, the first, on 2026-10-25). This is how a release goes, and what it checks.
+zgx 0.1.6 is on crates.io (2026-10-29, tag `v0.1.6`; 0.1.0, the first, on 2026-10-25). This is how a release goes, and what it checks.
 
 ## Version scheme
 
@@ -19,7 +19,7 @@ And four forks, as zgx's own crates, published first:
 | Crate | Fork of | Why | Notes |
 | --- | --- | --- | --- |
 | `zgx-harfrust` | harfrust 0.5.2 | a variable font's glyph advances worked out once for its instance, not for every run shaped | `vendor/harfrust/ZGX_PATCH.md` |
-| `zgx-cosmic-text` | cosmic-text 0.19.0 | text shaping that streams without rebuilding every word's key; shapes with `zgx-harfrust` | `vendor/cosmic-text/ZGX_PATCH.md` |
+| `zgx-cosmic-text` | cosmic-text 0.19.0 | text shaping that streams without rebuilding every word's key; shapes with `zgx-harfrust`; a word cache that empties at once, for a font replaced while the app runs (0.19.3) | `vendor/cosmic-text/ZGX_PATCH.md` |
 | `zgx-taffy` | taffy 0.9.0 | auto margins that keep a flex line's gaps; a node whose display changes lays its children out afresh (0.9.1) | `vendor/taffy/ZGX_PATCH.md` |
 | `zgx-mlua` | mlua 0.12.2 | table walks and userdata without a copy per key; Luau 744's bytecode (version 13) loading, which mlua-sys 0.13 takes for text | `vendor/mlua/ZGX_PATCH.md` |
 

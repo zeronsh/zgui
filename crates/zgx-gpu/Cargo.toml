@@ -35,12 +35,12 @@ d3d11 = ["wgpu/noop", "windows/Win32_Graphics_Direct3D", "windows/Win32_Graphics
 
 [dependencies]
 smallvec = "1.16"
-zgx = { path = "../zgx", version = "0.1.5", default-features = false }
+zgx = { path = "../zgx", version = "0.1.6", default-features = false }
 # wgpu's defaults less WebGPU (the browser's), and Vulkan and GL, which only
 # Linux and its kind always build (below).
 wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "wgsl"] }
 winit = "0.30.13"
-cosmic-text = { package = "zgx-cosmic-text", version = "0.19.2", path = "../../vendor/cosmic-text", features = ["shape-run-cache"] }
+cosmic-text = { package = "zgx-cosmic-text", version = "0.19.3", path = "../../vendor/cosmic-text", features = ["shape-run-cache"] }
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 image = { version = "0.25.10", default-features = false }
