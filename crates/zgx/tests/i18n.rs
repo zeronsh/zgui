@@ -86,6 +86,10 @@ fn parse_errors_say_where() {
     let error = Pattern::parse("{n, bogus}").unwrap_err();
     assert_eq!(error.line, 1);
     assert!(Pattern::parse("a } b").is_err());
+    // A plural chooses among at most 255 cases.
+    let many: String = (0..256).map(|i| format!("={i} {{x}} ")).collect();
+    let error = Pattern::parse(&format!("{{n, plural, {many}other {{y}}}}")).unwrap_err();
+    assert!(error.message.contains("at most 255"), "{error:?}");
     assert!(Pattern::parse("{n").is_err());
 }
 

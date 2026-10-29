@@ -24,6 +24,11 @@ enum Part {
         ordinal: bool,
         offset: f64,
         cases: Vec<(Case, Pattern)>,
+        /// Each plural category's case in `cases` (`other`'s where it has
+        /// none), found as it parses: choosing compares no names.
+        by_category: [u8; CATEGORIES.len()],
+        /// Whether any case is exact (`=0`): else none is looked for.
+        exact: bool,
     },
     Select {
         name: Box<str>,
@@ -32,6 +37,13 @@ enum Part {
     /// `#` in a plural: its number less the offset.
     Hash,
 }
+
+/// The plural categories, as `Formatters::plural` numbers them.
+pub(crate) const CATEGORIES: [&str; 6] = ["zero", "one", "two", "few", "many", "other"];
+/// `other`'s number in `CATEGORIES`, the case every plural has.
+pub(crate) const OTHER: usize = 5;
+/// The most cases a plural has (`by_category` holds their places).
+const MAX_CASES: usize = u8::MAX as usize;
 
 #[derive(Debug, PartialEq)]
 enum Case {
@@ -207,6 +219,8 @@ impl Pattern {
                     ordinal,
                     offset,
                     cases,
+                    by_category,
+                    exact,
                 } => {
                     let n = match arg(name) {
                         Some(ArgValue::Number(n) | ArgValue::Date(n)) => n,
@@ -216,19 +230,17 @@ impl Pattern {
                             f64::NAN
                         }
                     };
-                    let exact = cases
-                        .iter()
-                        .find(|(case, _)| matches!(case, Case::Exact(e) if *e == n));
+                    let exact = exact
+                        .then(|| {
+                            cases
+                                .iter()
+                                .find(|(case, _)| matches!(case, Case::Exact(e) if *e == n))
+                        })
+                        .flatten();
                     let chosen = exact.or_else(|| {
-                        let category = locale.plural(n - offset, *ordinal);
-                        cases
-                            .iter()
-                            .find(|(case, _)| matches!(case, Case::Category(c) if **c == *category))
-                    });
-                    let chosen = chosen.or_else(|| {
-                        cases
-                            .iter()
-                            .find(|(case, _)| matches!(case, Case::Category(c) if &**c == "other"))
+                        cases.get(usize::from(
+                            by_category[locale.plural(n - offset, *ordinal)],
+                        ))
                     });
                     if let Some((_, pattern)) = chosen {
                         pattern.format(out, locale, arg, missing, Some(n - offset));
@@ -456,11 +468,28 @@ impl<'a> Parser<'a> {
                 {
                     return Err(self.error("a plural needs an 'other' case"));
                 }
+                if cases.len() > MAX_CASES {
+                    return Err(self.error("a plural has at most 255 cases"));
+                }
+                // Each category's first case, then `other`'s for those with none.
+                let mut by_category = [None; CATEGORIES.len()];
+                for (at, (case, _)) in cases.iter().enumerate() {
+                    if let Case::Category(name) = case
+                        && let Some(category) = CATEGORIES.iter().position(|c| *c == &**name)
+                    {
+                        by_category[category].get_or_insert(at as u8);
+                    }
+                }
+                let other = by_category[OTHER].unwrap_or_default();
+                let by_category = by_category.map(|at| at.unwrap_or(other));
+                let exact = cases.iter().any(|(case, _)| matches!(case, Case::Exact(_)));
                 Part::Plural {
                     name,
                     ordinal: kind == "selectordinal",
                     offset,
                     cases,
+                    by_category,
+                    exact,
                 }
             }
             "select" => {

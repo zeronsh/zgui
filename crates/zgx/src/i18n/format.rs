@@ -5,7 +5,7 @@
 //! every locale; without it, numbers show as Rust writes them and plurals
 //! follow English (`one` for 1, `other` otherwise). Dates need
 //! `i18n-dates`; without it they show as ISO 8601 (`2026-10-28`).
-use super::message::DateLength;
+use super::message::{DateLength, OTHER};
 #[cfg(feature = "i18n")]
 use std::cell::OnceCell;
 
@@ -62,9 +62,9 @@ impl Formatters {
             .unwrap_or(icu_locale_core::locale!("und"))
     }
 
-    /// `n`'s plural category here (`zero`, `one`, `two`, `few`, `many`,
-    /// `other`).
-    pub(crate) fn plural(&self, n: f64, ordinal: bool) -> &'static str {
+    /// `n`'s plural category here: its number in `message::CATEGORIES`
+    /// (`zero`, `one`, `two`, `few`, `many`, `other`).
+    pub(crate) fn plural(&self, n: f64, ordinal: bool) -> usize {
         #[cfg(feature = "i18n")]
         {
             let cell = if ordinal {
@@ -81,7 +81,7 @@ impl Formatters {
                 }
             });
             let Some(rules) = rules else {
-                return "other";
+                return OTHER;
             };
             // A count's category, as a list's rows ask it: once each.
             let small = (n.fract() == 0. && (0. ..SMALL as f64).contains(&n))
@@ -92,27 +92,31 @@ impl Formatters {
                     cache.resize(2 * SMALL, u8::MAX);
                 }
                 if cache[at] == u8::MAX {
-                    cache[at] = rules.category_for(n as u64) as u8;
+                    cache[at] = category_number(rules.category_for(n as u64)) as u8;
                 }
-                return CATEGORIES[cache[at] as usize];
+                return usize::from(cache[at]);
             }
             match to_decimal(n) {
-                Some(decimal) => category_name(rules.category_for(&decimal)),
-                None => "other",
+                Some(decimal) => category_number(rules.category_for(&decimal)),
+                None => OTHER,
             }
         }
         #[cfg(not(feature = "i18n"))]
         {
+            // English's, as `CATEGORIES` numbers them.
+            const ONE: usize = 1;
+            const TWO: usize = 2;
+            const FEW: usize = 3;
             if ordinal {
                 return match (n as i64 % 10, n as i64 % 100) {
-                    _ if n.fract() != 0. => "other",
-                    (1, r) if r != 11 => "one",
-                    (2, r) if r != 12 => "two",
-                    (3, r) if r != 13 => "few",
-                    _ => "other",
+                    _ if n.fract() != 0. => OTHER,
+                    (1, r) if r != 11 => ONE,
+                    (2, r) if r != 12 => TWO,
+                    (3, r) if r != 13 => FEW,
+                    _ => OTHER,
                 };
             }
-            if n == 1. { "one" } else { "other" }
+            if n == 1. { ONE } else { OTHER }
         }
     }
 
@@ -210,19 +214,19 @@ fn to_decimal(n: f64) -> Option<fixed_decimal::Decimal> {
 #[cfg(feature = "i18n")]
 const SMALL: usize = 1000;
 
-/// `PluralCategory`'s names, by its discriminant.
+/// `category`'s number in `message::CATEGORIES`.
 #[cfg(feature = "i18n")]
-const CATEGORIES: [&str; 6] = {
+fn category_number(category: icu_plurals::PluralCategory) -> usize {
     use icu_plurals::PluralCategory::*;
-    let mut names = ["other"; 6];
-    names[Zero as usize] = "zero";
-    names[One as usize] = "one";
-    names[Two as usize] = "two";
-    names[Few as usize] = "few";
-    names[Many as usize] = "many";
-    names[Other as usize] = "other";
-    names
-};
+    match category {
+        Zero => 0,
+        One => 1,
+        Two => 2,
+        Few => 3,
+        Many => 4,
+        Other => OTHER,
+    }
+}
 
 #[cfg(feature = "i18n")]
 fn category_name(category: icu_plurals::PluralCategory) -> &'static str {
