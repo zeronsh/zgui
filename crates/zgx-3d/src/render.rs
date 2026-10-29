@@ -52,9 +52,15 @@ struct FrameUniforms {
     shadow_texel: [f32; 4],
 }
 
+/// What the shadow map holds: the sun's view, each opaque mesh's geometry
+/// and place, and skinned ones' joint matrices.
+type Casting = (Mat4, Vec<(u64, Mat4)>, Vec<Mat4>);
+
 struct Buffers {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
+    /// A skinned geometry's joints and weights, a vertex's.
+    skin: Option<wgpu::Buffer>,
     count: u32,
     used: u64,
 }
@@ -63,8 +69,22 @@ struct Gpu {
     /// Opaque and translucent meshes', without textures: an untextured
     /// scene binds none (a bound texture costs Apple's driver 16 MB).
     plain: [wgpu::RenderPipeline; 2],
-    /// Textured meshes', made with the first textured frame.
-    textured: Option<[wgpu::RenderPipeline; 2]>,
+    /// Textured or skinned meshes' (by whether each), made with the first
+    /// frame drawing one.
+    variants: HashMap<(bool, bool), [wgpu::RenderPipeline; 2]>,
+    /// Skinned meshes' depth from the sun, made with the first skinned
+    /// shadow.
+    shadow_skinned: Option<wgpu::RenderPipeline>,
+    shadow_layout: wgpu::BindGroupLayout,
+    /// Group 1 of a skinned untextured pipeline: nothing.
+    empty_layout: wgpu::BindGroupLayout,
+    empty_bind: wgpu::BindGroup,
+    /// Skinned meshes' joint matrices, all of a frame's in one buffer.
+    palette_layout: wgpu::BindGroupLayout,
+    palettes: Option<(wgpu::Buffer, usize, wgpu::BindGroup)>,
+    /// Whether the device reads storage buffers in vertex shaders: without
+    /// (some GL), skinned meshes draw as bound.
+    skinning: bool,
     uniforms: wgpu::Buffer,
     layout: wgpu::BindGroupLayout,
     bind: wgpu::BindGroup,
@@ -78,7 +98,7 @@ struct Gpu {
     stand_in: wgpu::TextureView,
     /// What the shadow map holds: the sun's view and each opaque mesh's
     /// geometry and place. A frame where only the camera moved keeps it.
-    shadow_drawn: Option<(Mat4, Vec<(u64, Mat4)>)>,
+    shadow_drawn: Option<Casting>,
     /// Textures by id, with the frame that last drew each.
     texture_layout: wgpu::BindGroupLayout,
     texture_sampler: wgpu::Sampler,
@@ -207,7 +227,49 @@ impl Viewport for Renderer {
         let mut order: Vec<((u64, [u64; MAPS]), usize)> = all.iter().map(key).zip(0..).collect();
         order.sort_unstable();
         let drawn: Vec<&crate::world::Drawn> = order.iter().map(|&(_, i)| &all[i]).collect();
-        let instances: Vec<Instance> = drawn.iter().map(|d| instance(d)).collect();
+        // Skinned meshes' joint matrices, one after another; each mesh's
+        // instance says where its own start.
+        let skinning = gpu.skinning;
+        let skinned = |d: &crate::world::Drawn| skinning && d.palette.is_some();
+        let mut palette: Vec<[[f32; 4]; 4]> = Vec::new();
+        let instances: Vec<Instance> = drawn
+            .iter()
+            .map(|d| {
+                let base = palette.len() as u32;
+                if skinned(d) {
+                    palette.extend(d.palette.iter().flatten().map(|m| m.columns));
+                }
+                instance(d, base)
+            })
+            .collect();
+        if !palette.is_empty() {
+            let bytes: &[u8] = bytemuck::cast_slice(&palette);
+            if gpu
+                .palettes
+                .as_ref()
+                .is_none_or(|(_, capacity, _)| *capacity < bytes.len())
+            {
+                let capacity = bytes.len().next_power_of_two().max(4096);
+                let buffer = frame.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("3D joints"),
+                    size: capacity as u64,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let bind = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("3D joints"),
+                    layout: &gpu.palette_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                });
+                gpu.palettes = Some((buffer, capacity, bind));
+            }
+            frame
+                .queue
+                .write_buffer(&gpu.palettes.as_ref().unwrap().0, 0, bytes);
+        }
         if !instances.is_empty() {
             let bytes: &[u8] = bytemuck::cast_slice(&instances);
             if gpu
@@ -248,6 +310,15 @@ impl Viewport for Renderer {
                             contents: bytemuck::cast_slice(d.geometry.indices()),
                             usage: wgpu::BufferUsages::INDEX,
                         }),
+                    skin: d.geometry.skin().map(|skin| {
+                        frame
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("3D joints and weights"),
+                                contents: bytemuck::cast_slice(skin),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            })
+                    }),
                     count: d.geometry.indices().len() as u32,
                     used: 0,
                 }
@@ -316,8 +387,12 @@ impl Viewport for Renderer {
         let mut start = 0;
         while start < drawn.len() {
             let first = drawn[start];
-            let (geometry, glass, texture) =
-                (first.geometry.id(), translucent(first), texture_of(first));
+            let (geometry, glass, texture, bent) = (
+                first.geometry.id(),
+                translucent(first),
+                texture_of(first),
+                skinned(first),
+            );
             let end = start
                 + drawn[start..]
                     .iter()
@@ -325,9 +400,10 @@ impl Viewport for Renderer {
                         d.geometry.id() == geometry
                             && translucent(d) == glass
                             && texture_of(d) == texture
+                            && skinned(d) == bent
                     })
                     .count();
-            runs.push((geometry, glass, texture, start as u32..end as u32));
+            runs.push((geometry, glass, texture, bent, start as u32..end as u32));
             start = end;
         }
         // What the map would hold now; drawn only if it holds something else.
@@ -337,8 +413,34 @@ impl Viewport for Renderer {
                 .filter(|d| !translucent(d))
                 .map(|d| (d.geometry.id(), d.matrix))
                 .collect::<Vec<_>>();
-            (matrix, meshes)
+            let joints = drawn
+                .iter()
+                .filter(|d| !translucent(d))
+                .flat_map(|d| d.palette.iter().flatten().copied())
+                .collect::<Vec<_>>();
+            (matrix, meshes, joints)
         });
+        if casting.is_some()
+            && gpu.shadow_skinned.is_none()
+            && runs.iter().any(|(_, glass, _, bent, _)| *bent && !glass)
+        {
+            let shader = frame
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("3D skinned shadows"),
+                    source: wgpu::ShaderSource::Wgsl(shader_source(false, true).into()),
+                });
+            gpu.shadow_skinned = Some(shadow_pipeline(
+                frame.device,
+                &shader,
+                &[
+                    Some(&gpu.shadow_layout),
+                    Some(&gpu.empty_layout),
+                    Some(&gpu.palette_layout),
+                ],
+                true,
+            ));
+        }
         if casting.is_some()
             && casting != gpu.shadow_drawn
             && let (Some(map), Some((instances_buffer, _))) = (&gpu.shadow_map, &gpu.instances)
@@ -358,12 +460,20 @@ impl Viewport for Renderer {
                     }),
                     ..Default::default()
                 });
-            pass.set_pipeline(&gpu.shadow);
             pass.set_bind_group(0, &gpu.shadow_bind, &[]);
             pass.set_vertex_buffer(1, instances_buffer.slice(..));
             // Translucent meshes cast none.
-            for (geometry, _, _, instances) in runs.iter().filter(|(_, glass, ..)| !glass) {
+            for (geometry, _, _, bent, instances) in runs.iter().filter(|(_, glass, ..)| !glass) {
                 let buffers = &gpu.geometries[geometry];
+                match (bent, &gpu.shadow_skinned, &gpu.palettes, &buffers.skin) {
+                    (true, Some(pipeline), Some((_, _, joints)), Some(skin)) => {
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(1, &gpu.empty_bind, &[]);
+                        pass.set_bind_group(2, joints, &[]);
+                        pass.set_vertex_buffer(2, skin.slice(..));
+                    }
+                    _ => pass.set_pipeline(&gpu.shadow),
+                }
                 pass.set_vertex_buffer(0, buffers.vertices.slice(..));
                 pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..buffers.count, 0, instances.clone());
@@ -372,19 +482,36 @@ impl Viewport for Renderer {
             gpu.shadow_drawn = casting;
         }
 
-        if gpu.textured.is_none() && runs.iter().any(|(_, _, maps, _)| *maps != [0; MAPS]) {
+        for (_, _, maps, bent, _) in &runs {
+            let variant = (*maps != [0; MAPS], *bent);
+            if variant == (false, false) || gpu.variants.contains_key(&variant) {
+                continue;
+            }
             let shader = frame
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("3D textured"),
-                    source: wgpu::ShaderSource::Wgsl(shader_source(true).into()),
+                    label: Some("3D textured or skinned"),
+                    source: wgpu::ShaderSource::Wgsl(shader_source(variant.0, variant.1).into()),
                 });
-            gpu.textured = Some(main_pipelines(
+            let group1 = if variant.0 {
+                &gpu.texture_layout
+            } else {
+                &gpu.empty_layout
+            };
+            let layouts = [
+                Some(&gpu.layout),
+                Some(group1),
+                variant.1.then_some(&gpu.palette_layout),
+            ];
+            let count = if variant.1 { 3 } else { 2 };
+            let pipelines = main_pipelines(
                 frame.device,
                 gpu.format,
                 &shader,
-                &[Some(&gpu.layout), Some(&gpu.texture_layout)],
-            ));
+                &layouts[..count],
+                variant.1,
+            );
+            gpu.variants.insert(variant, pipelines);
         }
         let (_, colour, depth_view) = gpu.targets.as_ref().unwrap();
         let clear = world
@@ -423,14 +550,24 @@ impl Viewport for Renderer {
         };
         pass.set_bind_group(0, &gpu.bind, &[]);
         pass.set_vertex_buffer(1, instances_buffer.slice(..));
-        for (geometry, glass, texture, instances) in runs {
+        for (geometry, glass, texture, bent, instances) in runs {
             let buffers = &gpu.geometries[&geometry];
-            match (gpu.bindings.get(&texture), &gpu.textured) {
-                (Some((binding, _)), Some(textured)) => {
-                    pass.set_pipeline(&textured[usize::from(glass)]);
-                    pass.set_bind_group(1, binding, &[]);
+            let maps = gpu.bindings.get(&texture).map(|(binding, _)| binding);
+            let joints = gpu
+                .palettes
+                .as_ref()
+                .zip(buffers.skin.as_ref())
+                .filter(|_| bent);
+            match gpu.variants.get(&(maps.is_some(), joints.is_some())) {
+                Some(pipelines) => {
+                    pass.set_pipeline(&pipelines[usize::from(glass)]);
+                    pass.set_bind_group(1, maps.unwrap_or(&gpu.empty_bind), &[]);
+                    if let Some(((_, _, palette), skin)) = joints {
+                        pass.set_bind_group(2, palette, &[]);
+                        pass.set_vertex_buffer(2, skin.slice(..));
+                    }
                 }
-                _ => pass.set_pipeline(&gpu.plain[usize::from(glass)]),
+                None => pass.set_pipeline(&gpu.plain[usize::from(glass)]),
             }
             pass.set_vertex_buffer(0, buffers.vertices.slice(..));
             pass.set_index_buffer(buffers.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -442,7 +579,9 @@ impl Viewport for Renderer {
     }
 }
 
-fn instance(d: &crate::world::Drawn) -> Instance {
+/// `d`'s instance: its place, normals' matrix, material, and where its joint
+/// matrices start (`base`) if it is skinned.
+fn instance(d: &crate::world::Drawn, base: u32) -> Instance {
     let m = &d.matrix.columns;
     // The inverse transpose of the upper 3x3 (its cofactors, over the
     // determinant): normals stay square to surfaces under any scale.
@@ -474,7 +613,7 @@ fn instance(d: &crate::world::Drawn) -> Instance {
             material.emissive[0],
             material.emissive[1],
             material.emissive[2],
-            0.,
+            base as f32,
         ],
     }
 }
@@ -560,17 +699,24 @@ fn frame_uniforms(world: &Inner, view_projection: Mat4, encode: bool) -> FrameUn
 /// orthographic view holding them all, onto the shadow map, and how wide a
 /// map texel is in the scene. `None` with nothing to cast a shadow.
 fn sun_view(all: &[crate::world::Drawn], direction: Vec3) -> Option<(Mat4, f32)> {
-    let corners = |d: &crate::world::Drawn| {
+    // A skinned mesh's box placed by each of its joints: about where its
+    // pose can take it.
+    fn corners<'a>(d: &'a crate::world::Drawn) -> impl Iterator<Item = Vec3> + 'a {
         let (low, high) = d.geometry.bounds();
-        let matrix = d.matrix;
-        (0..8).map(move |i| {
-            matrix.project(crate::vec3(
-                if i & 1 == 0 { low.x } else { high.x },
-                if i & 2 == 0 { low.y } else { high.y },
-                if i & 4 == 0 { low.z } else { high.z },
-            ))
+        let matrices = d
+            .palette
+            .as_deref()
+            .unwrap_or(std::slice::from_ref(&d.matrix));
+        matrices.iter().flat_map(move |matrix| {
+            (0..8).map(move |i| {
+                matrix.project(crate::vec3(
+                    if i & 1 == 0 { low.x } else { high.x },
+                    if i & 2 == 0 { low.y } else { high.y },
+                    if i & 4 == 0 { low.z } else { high.z },
+                ))
+            })
         })
-    };
+    }
     let opaque = || all.iter().filter(|d| d.material.color[3] >= 1.);
     let (mut low, mut high) = (Vec3::from([f32::MAX; 3]), Vec3::from([f32::MIN; 3]));
     for p in opaque().flat_map(corners) {
@@ -623,7 +769,7 @@ impl Gpu {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("3D"),
-            source: wgpu::ShaderSource::Wgsl(shader_source(false).into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source(false, false).into()),
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("3D frame"),
@@ -705,7 +851,7 @@ impl Gpu {
             anisotropy_clamp: 8,
             ..Default::default()
         });
-        let plain = main_pipelines(device, format, &shader, &[Some(&layout)]);
+        let plain = main_pipelines(device, format, &shader, &[Some(&layout)], false);
         let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("3D shadow frame"),
             entries: &[uniform_entry],
@@ -718,57 +864,40 @@ impl Gpu {
                 resource: uniforms.as_entire_binding(),
             }],
         });
-        let (vertex_attributes, instance_attributes) = (VERTEX_ATTRIBUTES, INSTANCE_ATTRIBUTES);
-        let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("3D shadows"),
-            layout: Some(
-                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("3D shadows"),
-                    bind_group_layouts: &[Some(&shadow_layout)],
-                    immediate_size: 0,
-                }),
-            ),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("shadow_vertex"),
-                compilation_options: Default::default(),
-                buffers: &[
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<crate::geometry::Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &vertex_attributes,
-                    },
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Instance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &instance_attributes,
-                    },
-                ],
-            },
-            fragment: None,
-            // Both faces: a plane or an open mesh casts from either side.
-            primitive: Default::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
-                // Kept off the surfaces they're cast on (acne), more where
-                // they slope from the sun.
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.,
-                    clamp: 0.,
+        let shadow = shadow_pipeline(device, &shader, &[Some(&shadow_layout)], false);
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("3D nothing"),
+            entries: &[],
+        });
+        let empty_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("3D nothing"),
+            layout: &empty_layout,
+            entries: &[],
+        });
+        let palette_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("3D joints"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-            }),
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
+                count: None,
+            }],
         });
         Self {
             format,
             plain,
-            textured: None,
+            variants: HashMap::new(),
+            shadow_skinned: None,
+            shadow_layout,
+            empty_layout,
+            empty_bind,
+            palette_layout,
+            palettes: None,
+            skinning: device.limits().max_storage_buffers_per_shader_stage > 0,
             uniforms,
             layout,
             bind,
@@ -797,15 +926,88 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array!
     3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4,
     7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4
 ];
-/// The shader, sampling textures or not: its lines marked `//T ` are a
-/// textured pipeline's alone (its maps' bindings, samples and normal
-/// mapping), comments in an untextured one's.
-fn shader_source(textured: bool) -> String {
+const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![12 => Uint16x4, 13 => Float32x4];
+/// The shader, sampling textures or not, skinning or not: its lines marked
+/// `//T ` are a textured pipeline's alone (its maps' bindings, samples and
+/// normal mapping), `//S ` a skinned one's (its joints), comments in
+/// others'.
+fn shader_source(textured: bool, skinned: bool) -> String {
+    let mut source = SHADER.to_owned();
     if textured {
-        SHADER.replace("//T ", "")
-    } else {
-        SHADER.to_owned()
+        source = source.replace("//T ", "");
     }
+    if skinned {
+        source = source.replace("//S ", "");
+    }
+    source
+}
+/// The vertex buffers a pipeline reads: vertices, instances, and a skinned
+/// one's joints and weights.
+fn vertex_buffers(skinned: bool) -> Vec<wgpu::VertexBufferLayout<'static>> {
+    let mut buffers = vec![
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<crate::geometry::Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &VERTEX_ATTRIBUTES,
+        },
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Instance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &INSTANCE_ATTRIBUTES,
+        },
+    ];
+    if skinned {
+        buffers.push(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<crate::geometry::Influence>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &SKIN_ATTRIBUTES,
+        });
+    }
+    buffers
+}
+/// Depth from the sun with `shader`, bound as `layouts` say.
+fn shadow_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layouts: &[Option<&wgpu::BindGroupLayout>],
+    skinned: bool,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("3D shadows"),
+        layout: Some(
+            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("3D shadows"),
+                bind_group_layouts: layouts,
+                immediate_size: 0,
+            }),
+        ),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("shadow_vertex"),
+            compilation_options: Default::default(),
+            buffers: &vertex_buffers(skinned),
+        },
+        fragment: None,
+        // Both faces: a plane or an open mesh casts from either side.
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            // Kept off the surfaces they're cast on (acne), more where
+            // they slope from the sun.
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.,
+                clamp: 0.,
+            },
+        }),
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 /// The opaque and translucent meshes' pipelines with `shader`, bound as
 /// `layouts` say.
@@ -814,7 +1016,9 @@ fn main_pipelines(
     format: wgpu::TextureFormat,
     shader: &wgpu::ShaderModule,
     layouts: &[Option<&wgpu::BindGroupLayout>],
+    skinned: bool,
 ) -> [wgpu::RenderPipeline; 2] {
+    let buffers = vertex_buffers(skinned);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("3D"),
         bind_group_layouts: layouts,
@@ -832,18 +1036,7 @@ fn main_pipelines(
                 module: shader,
                 entry_point: Some("vertex"),
                 compilation_options: Default::default(),
-                buffers: &[
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<crate::geometry::Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &VERTEX_ATTRIBUTES,
-                    },
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Instance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &INSTANCE_ATTRIBUTES,
-                    },
-                ],
+                buffers: &buffers,
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
@@ -1003,6 +1196,12 @@ struct Frame {
 //T @group(1) @binding(3) var emission_texture: texture_2d<f32>;
 //T @group(1) @binding(4) var occlusion_texture: texture_2d<f32>;
 //T @group(1) @binding(5) var map_sampler: sampler;
+//S @group(2) @binding(0) var<storage, read> palette: array<mat4x4<f32>>;
+//S // A vertex's place from its joints' matrices (from `base`), weighted.
+//S fn skinned(base: u32, joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
+//S     return palette[base + joints.x] * weights.x + palette[base + joints.y] * weights.y
+//S         + palette[base + joints.z] * weights.z + palette[base + joints.w] * weights.w;
+//S }
 
 struct Out {
     @builtin(position) position: vec4<f32>,
@@ -1019,18 +1218,25 @@ struct Out {
     @location(3) m0: vec4<f32>, @location(4) m1: vec4<f32>, @location(5) m2: vec4<f32>, @location(6) m3: vec4<f32>,
     @location(7) n0: vec4<f32>, @location(8) n1: vec4<f32>, @location(9) n2: vec4<f32>,
     @location(10) color: vec4<f32>, @location(11) emissive: vec4<f32>,
+//S     @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
 ) -> Out {
-    let model = mat4x4(m0, m1, m2, m3);
+    var model = mat4x4(m0, m1, m2, m3);
+    var normals = mat3x3(n0.xyz, n1.xyz, n2.xyz);
+//S     model = skinned(u32(emissive.w), joints, weights);
+//S     normals = mat3x3(model[0].xyz, model[1].xyz, model[2].xyz);
     let world = model * vec4(position, 1.0);
-    let n = mat3x3(n0.xyz, n1.xyz, n2.xyz) * normal;
+    let n = normals * normal;
     return Out(frame.view_projection * world, world.xyz, n, color, emissive.xyz, vec3(n0.w, n1.w, n2.w), uv);
 }
 
 @vertex fn shadow_vertex(
     @location(0) position: vec3<f32>,
     @location(3) m0: vec4<f32>, @location(4) m1: vec4<f32>, @location(5) m2: vec4<f32>, @location(6) m3: vec4<f32>,
+//S     @location(11) emissive: vec4<f32>, @location(12) joints: vec4<u32>, @location(13) weights: vec4<f32>,
 ) -> @builtin(position) vec4<f32> {
-    return frame.shadow * mat4x4(m0, m1, m2, m3) * vec4(position, 1.0);
+    var model = mat4x4(m0, m1, m2, m3);
+//S     model = skinned(u32(emissive.w), joints, weights);
+    return frame.shadow * model * vec4(position, 1.0);
 }
 
 const PI: f32 = 3.14159265;
@@ -1185,17 +1391,24 @@ mod tests {
     use crate::{Camera, World, math::vec3};
 
     #[test]
-    fn an_untextured_shader_binds_no_texture() {
-        let (plain, textured) = (shader_source(false), shader_source(true));
-        // In the plain shader every line naming a map is a comment.
+    fn an_untextured_shader_binds_no_texture_and_an_unskinned_no_joints() {
+        let (plain, textured, skinned) = (
+            shader_source(false, false),
+            shader_source(true, false),
+            shader_source(false, true),
+        );
+        // In the plain shader every line naming a map or the joints is a
+        // comment.
         for line in plain
             .lines()
-            .filter(|l| l.contains("_texture") || l.contains("@group(1)"))
+            .filter(|l| l.contains("_texture") || l.contains("@group(1)") || l.contains("palette"))
         {
             assert!(line.trim_start().starts_with("//"), "{line}");
         }
         assert!(textured.contains("@group(1) @binding(2) var normal_texture"));
-        assert!(!textured.contains("//T"));
+        assert!(!textured.contains("//T") && textured.contains("//S"));
+        assert!(skinned.contains("var<storage, read> palette"));
+        assert!(!skinned.contains("//S") && skinned.contains("//T"));
     }
 
     #[test]

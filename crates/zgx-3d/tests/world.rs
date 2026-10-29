@@ -609,3 +609,49 @@ fn an_occlusion_map_dims_the_ambient_light_alone() {
         "open {open}, occluded {occluded}"
     );
 }
+
+#[test]
+fn a_skinned_mesh_follows_its_joint_drawn_and_picked() {
+    // A square bound wholly to one joint (a group); the joint moves right
+    // and the square with it, where it's drawn and where it's picked.
+    let square = facing_square()
+        .with_skin(vec![[0; 4]; 4], vec![[1., 0., 0., 0.]; 4])
+        .unwrap();
+    let mut white = Material::rgb(0xffffff);
+    white.unlit = true;
+    let (world, id) = one(square, white);
+    let joint = world.add(Object::group());
+    world.set_skin(
+        id,
+        Some(Skin::new(vec![joint], vec![Mat4::IDENTITY]).unwrap()),
+    );
+    // The square (x -1 to 1) then at 0.6 to 2.6, clear of the middle.
+    world.set_transform(joint, Transform::at([1.6, 0., 0.]));
+    let middle = (50., 50.);
+    let moved = seen_at(&world, vec3(1., 0., 0.));
+    let hit = world.pick((moved.0 as f32, moved.1 as f32), (SIZE, SIZE));
+    assert_eq!(hit.map(|h| h.object), Some(id), "picked where it's posed");
+    assert_eq!(
+        world.pick(middle, (SIZE, SIZE)),
+        None,
+        "not where it was bound"
+    );
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    assert_eq!(
+        window.pixel(50, 50),
+        [0, 128, 0, 255],
+        "gone from the middle"
+    );
+    let shown = window.pixel(moved.0, moved.1);
+    assert!(
+        shown[0] > 240 && shown[2] > 240,
+        "drawn where it's posed: {shown:?}"
+    );
+    // Its skin taken away, it is drawn as bound.
+    world.set_skin(id, None);
+    window.draw();
+    assert!(window.pixel(50, 50)[0] > 240);
+}

@@ -24,6 +24,9 @@ What a world takes beyond meshes and lights, each costing nothing until used:
   (`Model::clips`) move its nodes: `World::place_model` keeps them, and
   `Placed::pose(world, clip, seconds)` poses one at any time.
   `cargo run -p zgx-3d --features gltf --example model -- FILE`.
+- **Skins**: `Geometry::with_skin(joints, weights)` and
+  `World::set_skin(id, Some(skin))` bend a mesh by its joints on the GPU, its
+  shadow and picking following the pose; glTF models bring theirs.
 - **Picking**: `World::pick(point, size)` gives the mesh a point of the view
   shows, where on it and how far (`Hit`), from the meshes' triangles on the
   CPU.

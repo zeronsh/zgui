@@ -261,6 +261,9 @@ pub(crate) struct Inner {
     /// Objects' textures (`World::set_map`), by index and map, with the
     /// generation they were set for.
     textures: std::collections::HashMap<(u32, crate::Map), (u32, crate::Texture)>,
+    /// Skinned objects' skins (`World::set_skin`), by index, with the
+    /// generation they were set for.
+    skins: std::collections::HashMap<u32, (u32, Skin)>,
     /// Counts changes: a renderer redraws what changed since it last drew.
     pub(crate) revision: u64,
 }
@@ -270,6 +273,10 @@ pub(crate) struct Drawn<'a> {
     pub(crate) material: &'a Material,
     /// Its textures, by `Map::ALL`'s order.
     pub(crate) maps: [Option<&'a crate::Texture>; crate::texture::MAPS],
+    /// A skinned mesh's joints' matrices (each joint's place in the world
+    /// times its inverse bind): its vertices are placed by these, and its
+    /// `matrix` is the identity.
+    pub(crate) palette: Option<Vec<Mat4>>,
     pub(crate) matrix: Mat4,
 }
 impl Inner {
@@ -290,6 +297,7 @@ impl Inner {
                 && let Some(matrix) = world_matrix(self, index, &mut matrices, 0)
             {
                 let generation = self.objects[index].generation;
+                let palette = self.palette(index, generation, geometry, &mut matrices);
                 out.push(Drawn {
                     geometry,
                     material: &object.material,
@@ -299,11 +307,42 @@ impl Inner {
                             .filter(|(set_for, _)| *set_for == generation)
                             .map(|(_, texture)| texture)
                     }),
-                    matrix,
+                    matrix: if palette.is_some() {
+                        Mat4::IDENTITY
+                    } else {
+                        matrix
+                    },
+                    palette,
                 });
             }
         }
         out
+    }
+    /// Object `index`'s joints' matrices, if it is a skinned geometry with a
+    /// skin: a joint gone or hidden places its vertices where it was bound.
+    pub(crate) fn palette(
+        &self,
+        index: usize,
+        generation: u32,
+        geometry: &Geometry,
+        matrices: &mut [Option<Option<Mat4>>],
+    ) -> Option<Vec<Mat4>> {
+        geometry.skin()?;
+        let (_, skin) = self
+            .skins
+            .get(&(index as u32))
+            .filter(|(set_for, _)| *set_for == generation)?;
+        Some(
+            skin.joints
+                .iter()
+                .zip(&skin.inverse_binds)
+                .map(|(joint, inverse_bind)| {
+                    self.live(joint.index, joint.generation)
+                        .and_then(|at| world_matrix(self, at, matrices, 0))
+                        .map_or(Mat4::IDENTITY, |placed| placed * *inverse_bind)
+                })
+                .collect(),
+        )
     }
     /// The nearest visible mesh the world segment `from` to `to` meets, and
     /// where along it (0 to 1).
@@ -315,7 +354,12 @@ impl Inner {
             if let Some(object) = &slot.value
                 && let Some(geometry) = &object.geometry
                 && let Some(matrix) = world_matrix(self, index, &mut matrices, 0)
-                && let Some(t) = crate::pick::meet(geometry, matrix, from, to)
+                && let Some(t) = match self.palette(index, slot.generation, geometry, &mut matrices)
+                {
+                    // Posed as drawn.
+                    Some(palette) => crate::pick::meet_skinned(geometry, &palette, from, to),
+                    None => crate::pick::meet(geometry, matrix, from, to),
+                }
                 && nearest.is_none_or(|(_, n)| t < n)
             {
                 let id = ObjectId {
@@ -360,6 +404,30 @@ fn world_matrix(
     found
 }
 
+/// What moves a skinned mesh (`World::set_skin`): its joints, objects whose
+/// places in the world bend it, and for each the inverse of its place when
+/// the mesh was bound to it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Skin {
+    joints: Vec<ObjectId>,
+    inverse_binds: Vec<Mat4>,
+}
+/// The most joints a skin may have.
+pub const MAX_JOINTS: usize = 256;
+impl Skin {
+    /// `joints`, each with its inverse bind matrix. Fails unless there is
+    /// one of each, at most `MAX_JOINTS`.
+    pub fn new(joints: Vec<ObjectId>, inverse_binds: Vec<Mat4>) -> Result<Self, &'static str> {
+        if joints.len() != inverse_binds.len() || joints.len() > MAX_JOINTS {
+            return Err("a skin has an inverse bind matrix a joint, at most 256 joints");
+        }
+        Ok(Self {
+            joints,
+            inverse_binds,
+        })
+    }
+}
+
 /// A 3D scene shown by a GPU view (`view`): change it and the view draws a
 /// frame, before the window's next; leave it and it draws nothing. Clones
 /// share it.
@@ -396,6 +464,7 @@ impl World {
             background: None,
             shadows: false,
             textures: Default::default(),
+            skins: Default::default(),
             revision: 0,
         }));
         let view = zgx_gpu::viewport::view(crate::render::Renderer::new(Rc::downgrade(&inner)));
@@ -433,6 +502,7 @@ impl World {
                 slot.value = None;
                 slot.generation = slot.generation.wrapping_add(1);
                 inner.textures.retain(|(index, _), _| *index != id.index);
+                inner.skins.remove(&id.index);
                 true
             }
             _ => false,
@@ -465,6 +535,25 @@ impl World {
                     changed
                 }
                 None => inner.textures.remove(&key).is_some(),
+            }
+        });
+    }
+    /// Object `id`'s skin: what moves its skinned geometry
+    /// (`Geometry::with_skin`), each vertex placed by its joints (`None`:
+    /// as its own place says, in the pose it was bound in).
+    pub fn set_skin(&self, id: ObjectId, skin: Option<Skin>) {
+        self.change(|inner| {
+            if inner.live(id.index, id.generation).is_none() {
+                return false;
+            }
+            let before = inner.skins.get(&id.index).map(|(_, s)| s.clone());
+            match skin {
+                Some(skin) => {
+                    let changed = before.as_ref() != Some(&skin);
+                    inner.skins.insert(id.index, (id.generation, skin));
+                    changed
+                }
+                None => inner.skins.remove(&id.index).is_some(),
             }
         });
     }

@@ -58,6 +58,53 @@ pub(crate) fn meet(geometry: &Geometry, matrix: Mat4, from: Vec3, to: Vec3) -> O
     nearest
 }
 
+/// `meet` for a skinned geometry posed by `palette` (its joints' matrices):
+/// its vertices skinned here, as the renderer skins them, the segment met
+/// in the world.
+pub(crate) fn meet_skinned(
+    geometry: &Geometry,
+    palette: &[Mat4],
+    from: Vec3,
+    to: Vec3,
+) -> Option<f32> {
+    let skin = geometry.skin()?;
+    let along = to - from;
+    let posed: Vec<Vec3> = geometry
+        .vertices()
+        .iter()
+        .zip(skin)
+        .map(|(vertex, influence)| {
+            let p = Vec3::from(vertex.position);
+            influence
+                .joints
+                .iter()
+                .zip(influence.weights)
+                .filter(|(_, w)| *w > 0.)
+                .fold(Vec3::ZERO, |sum, (&joint, weight)| {
+                    let matrix = palette.get(usize::from(joint)).copied().unwrap_or_default();
+                    sum + matrix.project(p) * weight
+                })
+        })
+        .collect();
+    let (low, high) = posed.iter().fold(
+        (Vec3::from([f32::MAX; 3]), Vec3::from([f32::MIN; 3])),
+        |(low, high), &p| (low.min(p), high.max(p)),
+    );
+    if !through_box(from, along, low, high) {
+        return None;
+    }
+    let mut nearest: Option<f32> = None;
+    for &[a, b, c] in geometry.indices().as_chunks::<3>().0 {
+        let corner = |i: u32| posed[i as usize];
+        if let Some(t) = triangle_t(from, along, corner(a), corner(b), corner(c))
+            && nearest.is_none_or(|n| t < n)
+        {
+            nearest = Some(t);
+        }
+    }
+    nearest
+}
+
 /// Whether the segment meets the box `low` to `high` (slabs).
 fn through_box(start: Vec3, along: Vec3, low: Vec3, high: Vec3) -> bool {
     let (mut enter, mut leave) = (0_f32, 1_f32);

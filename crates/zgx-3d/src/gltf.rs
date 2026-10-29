@@ -11,8 +11,8 @@
 //! base colour, metal and roughness, normal, emission and occlusion
 //! textures (PNG or JPEG, in the file, inline or beside it), and its
 //! animations' translations, rotations and scales (`Model::clips`,
-//! `Placed::pose`). Not yet: skins, morph targets, sparse accessors,
-//! points and lines (skipped).
+//! `Placed::pose`), and skins moving its meshes by their joints. Not yet:
+//! morph targets, sparse accessors, points and lines (skipped).
 use crate::{
     Geometry, Material, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex, World, vec3,
 };
@@ -38,12 +38,21 @@ pub struct Model {
     nodes: Vec<Node>,
     roots: Vec<usize>,
     clips: Vec<crate::Clip>,
+    skins: Vec<ModelSkin>,
 }
 #[derive(Clone, Debug)]
 struct Node {
     transform: Transform,
     children: Vec<usize>,
     meshes: Vec<(Geometry, Material, Maps)>,
+    /// The skin moving its skinned meshes, by index.
+    skin: Option<usize>,
+}
+/// A skin: its joints (nodes) and each one's inverse bind matrix.
+#[derive(Clone, Debug)]
+struct ModelSkin {
+    joints: Vec<usize>,
+    inverse_binds: Vec<crate::Mat4>,
 }
 
 /// A mesh's textures, in `Map::ALL`'s order.
@@ -133,6 +142,7 @@ impl Model {
                     transform: transform(node),
                     children,
                     meshes,
+                    skin: node.get("skin").and_then(Value::as_u64).map(|s| s as usize),
                 })
             })
             .collect::<Result<Vec<_>, ModelError>>()?;
@@ -158,10 +168,39 @@ impl Model {
             .iter()
             .map(|animation| reader.clip(animation, nodes.len()))
             .collect::<Result<Vec<_>, _>>()?;
+        let skins = list(&doc, "skins")
+            .iter()
+            .map(|skin| {
+                let joints = indices(skin, "joints");
+                if joints.iter().any(|&j| j >= nodes.len()) || joints.len() > crate::MAX_JOINTS {
+                    return error("a skin's joints are nodes, at most 256");
+                }
+                let inverse_binds = match skin.get("inverseBindMatrices").and_then(Value::as_u64) {
+                    Some(at) => reader
+                        .floats(at as usize, 16)?
+                        .as_chunks::<16>()
+                        .0
+                        .iter()
+                        .map(|m| crate::Mat4 {
+                            columns: std::array::from_fn(|c| std::array::from_fn(|r| m[c * 4 + r])),
+                        })
+                        .collect(),
+                    None => vec![crate::Mat4::IDENTITY; joints.len()],
+                };
+                if inverse_binds.len() != joints.len() {
+                    return error("a skin's inverse bind matrices don't match its joints");
+                }
+                Ok(ModelSkin {
+                    joints,
+                    inverse_binds,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             nodes,
             roots,
             clips,
+            skins,
         })
     }
     /// Its animations (pose one with `Placed::pose`).
@@ -215,6 +254,8 @@ impl World {
     pub fn place_model(&self, model: &Model) -> crate::Placed {
         let root = self.add(Object::group());
         let mut nodes = vec![None; model.nodes.len()];
+        // Skinned meshes, given their skins once every joint is placed.
+        let mut skinned = Vec::new();
         let mut stack: Vec<(usize, ObjectId, usize)> =
             model.roots.iter().rev().map(|&r| (r, root, 0)).collect();
         while let Some((index, parent, depth)) = stack.pop() {
@@ -231,8 +272,20 @@ impl World {
                         self.set_map(mesh, map, texture.clone());
                     }
                 }
+                if let Some(skin) = node.skin.and_then(|s| model.skins.get(s)) {
+                    skinned.push((mesh, skin));
+                }
             }
             stack.extend(node.children.iter().rev().map(|&c| (c, id, depth + 1)));
+        }
+        for (mesh, skin) in skinned {
+            // A joint its scene doesn't show leaves the mesh as bound.
+            let joints: Option<Vec<ObjectId>> = skin.joints.iter().map(|&j| nodes[j]).collect();
+            if let Some(joints) = joints
+                && let Ok(skin) = crate::Skin::new(joints, skin.inverse_binds.clone())
+            {
+                self.set_skin(mesh, Some(skin));
+            }
         }
         crate::Placed { root, nodes }
     }
@@ -592,7 +645,26 @@ impl Reader<'_> {
                     };
                     (plain, Maps::default())
                 });
-            let geometry = Geometry::new(vertices, indices).map_err(|e| ModelError(e.into()))?;
+            let mut geometry =
+                Geometry::new(vertices, indices).map_err(|e| ModelError(e.into()))?;
+            // Skinned: each vertex's four joints and their weights.
+            if let (Some(joints), Some(weights)) = (attribute("JOINTS_0"), attribute("WEIGHTS_0")) {
+                let (joints, weights) = (self.floats(joints, 4)?, self.floats(weights, 4)?);
+                if joints.len() == count * 4 && weights.len() == count * 4 {
+                    let joints = joints
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|j| {
+                            std::array::from_fn(|i| j[i].clamp(0., f32::from(u16::MAX)) as u16)
+                        })
+                        .collect();
+                    let weights = weights.as_chunks::<4>().0.to_vec();
+                    geometry = geometry
+                        .with_skin(joints, weights)
+                        .map_err(|e| ModelError(e.into()))?;
+                }
+            }
             out.push((geometry, material, maps));
         }
         Ok(out)
@@ -1031,6 +1103,58 @@ mod tests {
             world.object(node).unwrap().transform.position,
             vec3(2., 0., 0.)
         );
+    }
+
+    #[test]
+    fn a_skinned_mesh_is_placed_by_its_joints() {
+        // The square's every vertex bound wholly to its skin's second joint,
+        // 5 along x: the mesh shows there, whatever its own node's place.
+        let (doc, mut bin) = square(
+            json!([
+                { "mesh": 0, "skin": 0, "translation": [0.0, 9.0, 0.0], "children": [1, 2] },
+                {},
+                { "translation": [5.0, 0.0, 0.0] },
+            ]),
+            |_| {},
+        );
+        let at = bin.len();
+        bin.extend([1_u8, 0, 0, 0].repeat(4));
+        bin.extend(bytemuck::cast_slice(&[[1_f32, 0., 0., 0.]; 4]));
+        let mut doc = doc;
+        doc["buffers"][0]["byteLength"] = json!(bin.len());
+        let views = doc["bufferViews"].as_array_mut().unwrap();
+        views.push(json!({ "buffer": 0, "byteOffset": at, "byteLength": 16 }));
+        views.push(json!({ "buffer": 0, "byteOffset": at + 16, "byteLength": 64 }));
+        let accessors = doc["accessors"].as_array_mut().unwrap();
+        accessors
+            .push(json!({ "bufferView": 2, "componentType": 5121, "count": 4, "type": "VEC4" }));
+        accessors
+            .push(json!({ "bufferView": 3, "componentType": 5126, "count": 4, "type": "VEC4" }));
+        let attributes = &mut doc["meshes"][0]["primitives"][0]["attributes"];
+        attributes["JOINTS_0"] = json!(2);
+        attributes["WEIGHTS_0"] = json!(3);
+        // Its joints moved with the node: placed by the node's 9 up too.
+        doc["skins"] = json!([{ "joints": [1, 2] }]);
+        let model = Model::from_bytes(&glb_of(&doc, &bin)).unwrap();
+        let world = World::new();
+        let placed = world.place_model(&model);
+        world.set_camera(crate::Camera::looking_at([5., 9., 3.], [5., 9., 0.]));
+        let hit = world
+            .pick((50., 50.), (100., 100.))
+            .expect("the square, at its joint");
+        assert!(
+            (hit.point - vec3(5., 9., 0.)).length() < 1e-3,
+            "{:?}",
+            hit.point
+        );
+        // The joint moved back: the mesh with it.
+        world.set_transform(placed.nodes[2].unwrap(), Transform::default());
+        assert_eq!(world.pick((50., 50.), (100., 100.)), None);
+        // A skin naming a node that isn't one is an error.
+        let (doc, bin) = square(json!([{ "mesh": 0, "skin": 0 }]), |doc| {
+            doc["skins"] = json!([{ "joints": [4] }]);
+        });
+        assert!(Model::from_bytes(&glb_of(&doc, &bin)).is_err());
     }
 
     #[test]

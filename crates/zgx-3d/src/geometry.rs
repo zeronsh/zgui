@@ -23,7 +23,19 @@ struct Data {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     bounds: (Vec3, Vec3),
+    /// Each vertex's joints and their weights, if it is skinned
+    /// (`with_skin`).
+    skin: Option<Arc<SkinWeights>>,
 }
+/// A skinned geometry's joints (indices into its object's `Skin`) and their
+/// weights, a vertex's four each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub(crate) struct Influence {
+    pub(crate) joints: [u16; 4],
+    pub(crate) weights: [f32; 4],
+}
+pub(crate) type SkinWeights = Vec<Influence>;
 
 /// Triangles to draw objects with: shared (clones are the same shape) and
 /// immutable, uploaded once per renderer.
@@ -70,7 +82,47 @@ impl Geometry {
             } else {
                 (Vec3::ZERO, Vec3::ZERO)
             },
+            skin: None,
         })))
+    }
+    /// It skinned: each vertex moved by up to four joints of its object's
+    /// skin (`World::set_skin`), `joints` their places in it and `weights`
+    /// how much each moves it (summing to 1; normalised if not). A new
+    /// geometry. Fails unless both have one entry a vertex.
+    pub fn with_skin(
+        self,
+        joints: Vec<[u16; 4]>,
+        weights: Vec<[f32; 4]>,
+    ) -> Result<Self, &'static str> {
+        let vertices = self.0.vertices.len();
+        if joints.len() != vertices || weights.len() != vertices {
+            return Err("a skin has joints and weights for every vertex");
+        }
+        let influences = joints
+            .into_iter()
+            .zip(weights)
+            .map(|(joints, weights)| {
+                let weights = weights.map(|w| if w.is_finite() { w.max(0.) } else { 0. });
+                let total: f32 = weights.iter().sum();
+                Influence {
+                    joints,
+                    weights: if total > 1e-6 {
+                        weights.map(|w| w / total)
+                    } else {
+                        [1., 0., 0., 0.]
+                    },
+                }
+            })
+            .collect();
+        let mut made = Self::new(self.0.vertices.clone(), self.0.indices.clone())?;
+        Arc::get_mut(&mut made.0)
+            .expect("a geometry just made")
+            .skin = Some(Arc::new(influences));
+        Ok(made)
+    }
+    /// Its vertices' joints and weights, if it is skinned.
+    pub(crate) fn skin(&self) -> Option<&[Influence]> {
+        self.0.skin.as_deref().map(Vec::as_slice)
     }
     /// Stable for its lifetime: renderers cache its buffers by it.
     pub fn id(&self) -> u64 {
