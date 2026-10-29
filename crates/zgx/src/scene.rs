@@ -5196,13 +5196,34 @@ impl Scene {
         } else if font.line_height != crate::text_layout::LineHeight::NORMAL
             || font.letter_spacing != crate::text_layout::LetterSpacing::ZERO
         {
-            // Legacy callbacks cannot receive font metrics. Use the same
-            // grapheme-cell fallback for measuring and editing explicit metrics.
-            Box::new(crate::text_layout::FallbackTextLayout::with_font(
-                text, size, width, font,
-            ))
+            self.shape_text_with_metrics(text, size, width, font)
         } else {
             self.shape_text(text, size, width)
+        }
+    }
+    /// `shape_text_with_font` with no font shaper and explicit metrics
+    /// (letter spacing, a line height): apart, so the common call stays as
+    /// small as it is.
+    #[inline(never)]
+    fn shape_text_with_metrics(
+        &self,
+        text: &str,
+        size: f32,
+        width: Option<f32>,
+        font: &crate::text_layout::FontStyle,
+    ) -> Box<dyn crate::text_layout::TextLayout> {
+        match self.text_shaper.as_deref() {
+            // A shaper taking no font: its advances, spaced as the GPU's.
+            Some(shaper) if font.letter_spacing != crate::text_layout::LetterSpacing::ZERO => {
+                Box::new(crate::text_layout::FallbackTextLayout::spaced(
+                    shaper, text, size, width, font,
+                ))
+            }
+            // Legacy callbacks cannot receive font metrics. Use the same
+            // grapheme-cell fallback for measuring and editing explicit metrics.
+            _ => Box::new(crate::text_layout::FallbackTextLayout::with_font(
+                text, size, width, font,
+            )),
         }
     }
     /// Lines of `font` at `size` shaped apart from the scene, as
@@ -5219,11 +5240,20 @@ impl Scene {
         } else if font.line_height != crate::text_layout::LineHeight::NORMAL
             || font.letter_spacing != crate::text_layout::LetterSpacing::ZERO
         {
-            std::rc::Rc::new(move |text, width| {
-                Box::new(crate::text_layout::FallbackTextLayout::with_font(
-                    text, size, width, &font,
-                ))
-            })
+            match self.text_shaper.clone() {
+                Some(shaper) if font.letter_spacing != crate::text_layout::LetterSpacing::ZERO => {
+                    std::rc::Rc::new(move |text, width| {
+                        Box::new(crate::text_layout::FallbackTextLayout::spaced(
+                            &*shaper, text, size, width, &font,
+                        ))
+                    })
+                }
+                _ => std::rc::Rc::new(move |text, width| {
+                    Box::new(crate::text_layout::FallbackTextLayout::with_font(
+                        text, size, width, &font,
+                    ))
+                }),
+            }
         } else if let Some(shaper) = self.text_shaper.clone() {
             std::rc::Rc::new(move |text, width| shaper.shape(text, size, width))
         } else {
@@ -5260,9 +5290,30 @@ impl Scene {
         } else if font.line_height != crate::text_layout::LineHeight::NORMAL
             || font.letter_spacing != crate::text_layout::LetterSpacing::ZERO
         {
-            crate::text_layout::FallbackTextLayout::measure_with_font(text, size, width, font)
+            self.measure_text_with_metrics(text, size, width, font)
         } else {
             self.measure_text(text, size, width)
+        }
+    }
+    /// `measure_text_with_font` with no font shaper and explicit metrics,
+    /// apart as `shape_text_with_metrics` is.
+    #[inline(never)]
+    fn measure_text_with_metrics(
+        &self,
+        text: &str,
+        size: f32,
+        width: Option<f32>,
+        font: &crate::text_layout::FontStyle,
+    ) -> (f32, f32) {
+        match self.text_shaper.as_deref() {
+            Some(shaper) if font.letter_spacing != crate::text_layout::LetterSpacing::ZERO => {
+                crate::text_layout::TextLayout::size(
+                    &crate::text_layout::FallbackTextLayout::spaced(
+                        shaper, text, size, width, font,
+                    ),
+                )
+            }
+            _ => crate::text_layout::FallbackTextLayout::measure_with_font(text, size, width, font),
         }
     }
     /// Change what `id` is or paints, invalidating only what the change
@@ -11867,20 +11918,42 @@ mod percentage_layout_tests {
 mod letter_spacing_fallback_tests {
     use super::*;
     use crate::text_layout::{FontStyle, LetterSpacing, TextLayout};
+    /// A shaper taking no font gives its own advances, spaced after each
+    /// character (as the GPU shaper spaces each glyph) and wrapped with
+    /// them; shaping, measuring and the editor's lines agree.
     #[test]
-    fn explicit_spacing_bypasses_legacy_callbacks_without_losing_metrics() {
+    fn explicit_spacing_spaces_a_legacy_shapers_advances() {
         let mut scene = Scene::new(200., 100.);
-        scene.set_text_shaper(|_: &str, _, _| -> Box<dyn TextLayout> {
-            panic!("legacy callback cannot receive nonzero letter spacing")
+        // Cells of 6 at size 10, and lines 20 apart (`FallbackTextLayout`).
+        scene.set_text_shaper(|text: &str, size, width| -> Box<dyn TextLayout> {
+            Box::new(crate::text_layout::FallbackTextLayout::new(
+                text, size, width,
+            ))
         });
         let font = FontStyle {
             letter_spacing: LetterSpacing::px(4.),
             ..FontStyle::default()
         };
-        let measured = scene.measure_text_with_font("abc", 10., Some(20.), &font);
-        let shaped = scene.shape_text_with_font("abc", 10., Some(20.), &font);
-        assert_eq!(measured, (20., 28.));
-        assert_eq!(measured, shaped.size());
+        let line = scene.shape_text("a", 10., None).size().1;
+        let one = scene.shape_text_with_font("abc", 10., None, &font);
+        assert_eq!(one.size(), (30., line));
+        assert_eq!(one.caret(2).x, 20.);
+        // "ab cd" at 25: the space hangs past "ab"; "cd" starts a line.
+        let wrapped = scene.shape_text_with_font("ab cd", 10., Some(25.), &font);
+        assert_eq!(wrapped.size(), (20., line * 2.));
+        assert_eq!((wrapped.caret(3).x, wrapped.caret(3).y), (0., line));
+        assert_eq!(
+            scene.measure_text_with_font("ab cd", 10., Some(25.), &font),
+            wrapped.size()
+        );
+        let lines = scene.line_shaper(10., &font);
+        assert_eq!(lines("ab cd", Some(25.)).size(), wrapped.size());
+        // Without spacing, the shaper's own layout.
+        let plain = FontStyle::default();
+        assert_eq!(
+            scene.shape_text_with_font("abc", 10., None, &plain).size(),
+            (18., line)
+        );
     }
 }
 

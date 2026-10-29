@@ -551,6 +551,149 @@ impl FallbackTextLayout {
         layout.align(max_width, font.align);
         layout
     }
+    /// `text` as `shaper` lays it out, with `font`'s letter spacing: the
+    /// shaper's own advances, the spacing added after each character as the
+    /// GPU shaper adds it after each glyph (the last one too), wrapped at
+    /// `max_width` by word (UAX #14, trailing spaces hanging), a word wider
+    /// than a line by grapheme, as it wraps. For a scene whose shaper takes
+    /// no font (`Scene::set_text_shaper`). Right-to-left text, whose carets
+    /// run the other way, keeps the grapheme cells of `with_font`.
+    pub fn spaced(
+        shaper: &dyn TextShaper,
+        text: &str,
+        size: f32,
+        max_width: Option<f32>,
+        font: &FontStyle,
+    ) -> Self {
+        let spacing = font.letter_spacing.pixels();
+        let normal = font.line_height == LineHeight::NORMAL;
+        // Each paragraph's newline, line height, and graphemes with their
+        // spaced advances, unwrapped.
+        type Paragraph = (Range<usize>, f32, Vec<(Range<usize>, f32)>);
+        let mut paragraphs: Vec<Paragraph> = Vec::new();
+        let mut start = 0;
+        for line in text
+            .split_inclusive('\n')
+            .chain((text.is_empty() || text.ends_with('\n')).then_some(""))
+        {
+            let body = line.trim_end_matches(['\n', '\r']);
+            let base = shaper.shape(body, size, None);
+            let height = if normal {
+                base.caret(0).height
+            } else {
+                font.line_height.resolve(size)
+            };
+            let mut cells = Vec::new();
+            let mut x = base.caret(0).x;
+            for (index, grapheme) in body.grapheme_indices(true) {
+                let next = base.caret(index + grapheme.len()).x;
+                if next < x {
+                    return Self::with_font(text, size, max_width, font);
+                }
+                let chars = grapheme.chars().count() as f32;
+                cells.push((
+                    start + index..start + index + grapheme.len(),
+                    (next - x + spacing * chars).max(0.),
+                ));
+                x = next;
+            }
+            paragraphs.push((start + body.len()..start + line.len(), height, cells));
+            start += line.len();
+        }
+        let wrap = max_width.filter(|w| w.is_finite() && *w > 0.);
+        let mut out: Vec<(Range<usize>, Rect)> = Vec::new();
+        let (mut y, mut width, mut end) = (0_f32, 0_f32, Rect::new(0., 0., 1., 0.));
+        for (paragraph, (newline, height, cells)) in paragraphs.iter().enumerate() {
+            let newline = newline.clone();
+            let mut x = 0_f32;
+            // Where the line's ink ends: of the spaces after it, a wrap
+            // counts only some in the line's width (below).
+            let mut ink_x = 0_f32;
+            let place = |out: &mut Vec<(Range<usize>, Rect)>,
+                         range: Range<usize>,
+                         advance: f32,
+                         x: &mut f32,
+                         y: f32| {
+                out.push((range, Rect::new(*x, y, advance, *height)));
+                *x = (*x + advance).min(f32::MAX);
+            };
+            // Words: up to each break opportunity, their trailing spaces
+            // apart (they hang past the edge).
+            let body_start = cells.first().map_or(newline.start, |c| c.0.start);
+            let body = &text[body_start..newline.start];
+            let mut at = 0;
+            for word_end in break_opportunities(body).map(|e| e + body_start) {
+                let word: Vec<_> = cells[at..]
+                    .iter()
+                    .take_while(|(r, _)| r.end <= word_end)
+                    .cloned()
+                    .collect();
+                at += word.len();
+                let ink = word
+                    .iter()
+                    .rposition(|(r, _)| !text[r.clone()].chars().all(char::is_whitespace))
+                    .map_or(0, |i| i + 1);
+                let ink_width: f32 = word[..ink].iter().map(|c| c.1).sum();
+                if let Some(w) = wrap
+                    && x > 0.
+                    && x + ink_width > w
+                {
+                    // The spaces ending the line, as the GPU shaper
+                    // wraps them: each one is kept while it starts by
+                    // the edge; one starting past it wraps the line and
+                    // takes the last kept with it; a word that fits a
+                    // line of its own drops the last; one broken by
+                    // grapheme keeps them all.
+                    let mut blanks: Vec<f32> = out
+                        .iter()
+                        .rev()
+                        .take_while(|(_, r)| r.y == y && r.x >= ink_x)
+                        .map(|(_, r)| r.x)
+                        .collect();
+                    blanks.reverse();
+                    let kept = blanks.iter().take_while(|s| **s <= w).count();
+                    let line = if kept < blanks.len() || ink_width <= w {
+                        kept.checked_sub(1).map_or(ink_x, |last| blanks[last])
+                    } else {
+                        x
+                    };
+                    width = width.max(line);
+                    x = 0.;
+                    y = (y + height).min(f32::MAX);
+                }
+                for (i, (range, advance)) in word.into_iter().enumerate() {
+                    // A word wider than the line breaks between graphemes.
+                    if let Some(w) = wrap
+                        && i < ink
+                        && x > 0.
+                        && x + advance > w
+                    {
+                        width = width.max(ink_x);
+                        x = 0.;
+                        y = (y + height).min(f32::MAX);
+                    }
+                    place(&mut out, range, advance, &mut x, y);
+                    if i < ink {
+                        ink_x = x;
+                    }
+                }
+            }
+            width = width.max(x);
+            end = Rect::new(x, y, 1., *height);
+            if paragraph + 1 < paragraphs.len() {
+                out.push((newline, Rect::new(x, y, 0., *height)));
+                y = (y + height).min(f32::MAX);
+            }
+        }
+        let size = (width, (y + end.height).min(f32::MAX));
+        let mut layout = Self {
+            cells: out,
+            end,
+            size,
+        };
+        layout.align(max_width, font.align);
+        layout
+    }
     fn align(&mut self, width: Option<f32>, alignment: TextAlign) {
         let Some(width) = width.filter(|w| w.is_finite() && *w > 0.) else {
             return;

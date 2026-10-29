@@ -234,9 +234,14 @@ while updating their positions.
 
 The native shaper applies tracking per shaped glyph, including the final advance;
 ligatures and combining sequences therefore follow its glyph clustering rather
-than a per-character CSS spacing algorithm. Core-only fallback measurement uses
-approximate grapheme cells and clamps their advances at zero for very tight
-spacing. Negative native advances can overlap glyphs; selection rectangles retain
+than a per-character CSS spacing algorithm. A scene whose text shaper takes no
+font (`Scene::set_text_shaper`) spaces that shaper's own advances after each
+character and wraps them as the native shaper wraps (a word that fits a line
+moves to the next, one wider breaks by glyph, spaces at a wrap hang): its
+sizes and carets match the native shaper's wherever a character is one glyph
+(`zgx-gpu/tests/letter_spacing_fallback.rs`), and right-to-left text keeps
+grapheme cells. With no shaper at all, measurement uses approximate grapheme
+cells and clamps their advances at zero for very tight spacing. Negative native advances can overlap glyphs; selection rectangles retain
 ordered edges, and text ink still clips to its allocated bounds.
 
 Zero and negative zero are equivalent; non-finite values normalize to zero.

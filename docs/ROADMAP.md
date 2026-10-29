@@ -244,8 +244,9 @@ Inherited letter spacing now flows through component typography, font-aware
 measurement, editors, GPU text and the software renderer. Normalized style keys
 preserve equal-write suppression; native logical-pixel tracking converts to
 shaper em units. Tests cover Unicode geometry, signed tracking, bounded extreme
-values, selections, cache invalidation and bitmap reuse. The core-only fallback
-remains approximate. Rich-text spans take it too (`TextSpan::letter_spacing`).
+values, selections, cache invalidation and bitmap reuse. A scene whose shaper
+takes no font spaces its advances exactly as the native shaper does (sizes and
+carets, wrapped or not); only a scene with no shaper at all estimates cells. Rich-text spans take it too (`TextSpan::letter_spacing`).
 
 
 A lifecycle audit added regression coverage for repeated keyed/provider/slot
