@@ -1795,7 +1795,7 @@ fn nested_sparse_children_keep_order_and_first_error() {
         local ok, err = pcall(function()
             return ui.row { [30] = true, [7] = { [100] = true, [5] = 27 } }
         end)
-        assert(not ok and string.find(tostring(err), "a child must be a ui node, string or function, not integer", 1, true), tostring(err))
+        assert(not ok and string.find(tostring(err), "a child must be a ui node, string, function or message, not integer", 1, true), tostring(err))
         return ui.row(root)"#,
     );
     assert_eq!(h.texts(), ["a", "b", "c", "d"]);

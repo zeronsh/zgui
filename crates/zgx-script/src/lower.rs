@@ -8,8 +8,8 @@ use crate::{
     anime::{Key as Property, target::Target, value::V},
     element::{Element, ElementUd},
     node::{
-        Action, Handler, Kind, LayoutAnim, Lit, Node, NodeUd, Prop, Pseudo, Scope, Segment, Source,
-        Span, Text, Ty, lit,
+        Action, Computed, Handler, Kind, LayoutAnim, Lit, Node, NodeUd, Prop, Pseudo, Scope,
+        Segment, Source, Span, Text, Ty, lit,
     },
     value::Value,
 };
@@ -439,7 +439,7 @@ fn filtered_text(
             other => Value::Str(other.to_string().into()),
         }
     })
-    .map(Text::Computed)
+    .map(|f| Text::Computed(Computed::Script(f)))
 }
 /// `node` lowered with its props passed through plugins' filters
 /// (`ui.filter`), in the order the scripts filter them: a copy of it, the
@@ -4504,14 +4504,21 @@ fn render_text(text: &Text, vm: &Vm) -> String {
             }
             out
         }
-        Text::Computed(f) => match vm.call::<ComputedText>(f, ()) {
+        Text::Computed(Computed::Script(f)) => match vm.call::<ComputedText>(f, ()) {
             Ok(v) => v.into_string(),
             Err(error) => {
                 vm.report(error);
                 "⚠".into()
             }
         },
+        Text::Computed(Computed::Message(message)) => message_text(message),
     }
+}
+/// A message's text now: kept out of `render_text`, whose script texts
+/// re-render on every change.
+#[inline(never)]
+fn message_text(message: &zgx::i18n::Message) -> String {
+    message.get()
 }
 /// `text`, owned: what a closure that renders it keeps.
 fn copy_text(text: &Text) -> Text {
@@ -4526,7 +4533,7 @@ fn copy_text(text: &Text) -> Text {
                 })
                 .collect(),
         ),
-        Text::Computed(f) => Text::Computed(f.clone()),
+        Text::Computed(computed) => Text::Computed(computed.clone()),
     }
 }
 fn lower_text(text: &Text, vm: &Rc<Vm>) -> View {
@@ -4544,10 +4551,11 @@ fn lower_text(text: &Text, vm: &Rc<Vm>) -> View {
             let vm = vm.clone();
             text_signal(move || render_text(&template, &vm))
         }
-        Text::Computed(f) => {
-            let (f, vm) = (Text::Computed(f.clone()), vm.clone());
+        Text::Computed(Computed::Script(f)) => {
+            let (f, vm) = (Text::Computed(Computed::Script(f.clone())), vm.clone());
             text_signal(move || render_text(&f, &vm))
         }
+        Text::Computed(Computed::Message(message)) => zgx::compose::text_message(message.clone()),
     }
 }
 /// What an image's `src` shows now: a picture to load by its path, or a
@@ -5449,7 +5457,7 @@ fn lower_rich(spans: &[Span], vm: &Rc<Vm>, low: &Rc<Lowering>) -> View {
                         })
                         .collect(),
                 ),
-                Text::Computed(f) => Text::Computed(f.clone()),
+                Text::Computed(computed) => Text::Computed(computed.clone()),
             },
             style: SpanStyle {
                 color: s.color,

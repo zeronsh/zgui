@@ -18,6 +18,13 @@ use crate::check::{CheckError, DEFINITIONS, scripts};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// `MessageKey` in `zgx.d.luau`, which an app's keys replace.
+const MESSAGE_KEY_PLACEHOLDER: &str = "export type MessageKey = string";
+/// The most keys `MessageKey` names: a longer union is past what luau-lsp
+/// takes ("Exceeded allowed type length" by 2,000); a larger catalog keeps
+/// `string`, and the `i18n-key` lint still names a key it lacks.
+const MESSAGE_KEYS: usize = 1000;
+
 /// Where the types go in an app's directory.
 pub fn types_file(dir: &Path) -> PathBuf {
     dir.join(".zgx").join("types.d.luau")
@@ -183,6 +190,18 @@ pub fn definitions(sources: &[(PathBuf, String)]) -> String {
         "zgx.d.luau's `Tokens` follows the schema"
     );
     let mut text = DEFINITIONS.replacen(&standard, &ours, 1);
+    // The keys `ui.t` takes: the source locale's, when the app has a
+    // catalog luau-lsp can take as one union.
+    if let Some(keys) = crate::lint::source_keys(&files)
+        .filter(|keys| !keys.is_empty() && keys.len() <= MESSAGE_KEYS)
+    {
+        let union: Vec<String> = keys.iter().map(|key| format!("{key:?}")).collect();
+        text = text.replacen(
+            MESSAGE_KEY_PLACEHOLDER,
+            &format!("export type MessageKey = {}", union.join(" | ")),
+            1,
+        );
+    }
     if !names.is_empty() {
         let app: Vec<String> = names.iter().map(|name| format!("\"{name}\"")).collect();
         text = text.replacen(
@@ -232,6 +251,32 @@ mod tests {
 
     fn app(source: &str) -> String {
         definitions(&[(PathBuf::from("app.luau"), source.into())])
+    }
+
+    #[test]
+    fn zgxs_definitions_have_the_message_key_placeholder() {
+        assert!(DEFINITIONS.contains(MESSAGE_KEY_PLACEHOLDER));
+    }
+
+    #[test]
+    fn an_apps_message_keys_are_its_source_locales() {
+        let dir = std::env::temp_dir().join(format!("zgx-message-keys-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("lang")).unwrap();
+        std::fs::write(
+            dir.join("lang/de.json"),
+            r#"{ "inbox": { "count": "{n} Nachrichten" }, "save": "Sichern" }"#,
+        )
+        .unwrap();
+        let types = definitions(&[(
+            dir.join("app.luau"),
+            "ui.i18n { dir = \"lang\", source = \"de\" }".into(),
+        )]);
+        assert!(
+            types.contains("export type MessageKey = \"inbox.count\" | \"save\""),
+            "{types}"
+        );
+        // An app with no catalog keeps `string`.
+        assert!(app("return ui.text 'x'").contains(MESSAGE_KEY_PLACEHOLDER));
     }
 
     #[test]

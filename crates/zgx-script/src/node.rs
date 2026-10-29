@@ -514,6 +514,12 @@ impl Node {
         }
     }
     /// How the layout inspector names it: its kind, `#id` and `.class`es.
+    /// Whether it says which way it runs (`dir`, `direction`).
+    pub fn sets_direction(&self) -> bool {
+        self.props
+            .iter()
+            .any(|(prop, _)| matches!(prop, Prop::Dir | Prop::Direction))
+    }
     pub fn label(&self) -> String {
         let mut label = self.tag().to_string();
         if let Some(id) = &self.id {
@@ -1034,8 +1040,17 @@ pub(crate) enum Text {
     Literal(String),
     /// `"Count: {count}"`: interpolated in Rust, no script call per update.
     Template(Vec<Segment>),
-    /// A script function, rerun when the state it reads changes.
-    Computed(Function),
+    /// Followed: rerun when what it reads changes.
+    Computed(Computed),
+}
+/// A followed text: a script function, or a localized message (`ui.t`),
+/// formatted in Rust as its locale, file or arguments change. One variant
+/// of `Text` for both, so the texts most scripts show (literals and
+/// templates) take no arm for messages as they are dropped or lowered.
+#[derive(Clone)]
+pub(crate) enum Computed {
+    Script(Function),
+    Message(zgx::i18n::Message),
 }
 #[derive(Clone)]
 pub(crate) enum Segment {
@@ -1565,7 +1580,7 @@ fn location(lua: &Lua) -> Option<Rc<str>> {
     })
     .flatten()
 }
-fn state_of(value: &mlua::Value) -> Option<Signal<Value>> {
+pub(crate) fn state_of(value: &mlua::Value) -> Option<Signal<Value>> {
     match value {
         mlua::Value::UserData(ud) => ud.borrow::<State>().ok().map(|s| s.0.clone()),
         _ => None,
@@ -1922,6 +1937,13 @@ fn source_linted(
     }
     match value {
         mlua::Value::Function(f) => Ok(Source::Computed(f)),
+        // A message (`ui.t`) where text is taken: its text, followed.
+        mlua::Value::UserData(ud) if ty == Ty::Str && ud.is::<crate::i18n::MessageUd>() => {
+            let message = ud.borrow::<crate::i18n::MessageUd>()?.0.clone();
+            Ok(Source::Computed(
+                lua.create_function(move |_, ()| Ok(message.get()))?,
+            ))
+        }
         mlua::Value::UserData(ud) if ud.is::<AnimUd>() => {
             Ok(Source::Anim(ud.borrow::<AnimUd>()?.0.clone()))
         }
@@ -2107,7 +2129,10 @@ fn text_of(lua: &Lua, value: mlua::Value, what: &str, literal: bool) -> mlua::Re
     Ok(match value {
         mlua::Value::String(s) if literal => Text::Literal(lossy(&s, str::to_owned)),
         mlua::Value::String(s) => lossy(&s, |text| template(lua, text))?,
-        mlua::Value::Function(f) => Text::Computed(f),
+        mlua::Value::Function(f) => Text::Computed(Computed::Script(f)),
+        mlua::Value::UserData(ref ud) if ud.is::<crate::i18n::MessageUd>() => Text::Computed(
+            Computed::Message(ud.borrow::<crate::i18n::MessageUd>()?.0.clone()),
+        ),
         mlua::Value::Number(n) => Text::Literal(Value::Num(n).to_string()),
         mlua::Value::Integer(n) => Text::Literal(n.to_string()),
         mlua::Value::Nil => Text::Literal(String::new()),
@@ -2120,6 +2145,23 @@ fn text_of(lua: &Lua, value: mlua::Value, what: &str, literal: bool) -> mlua::Re
     })
 }
 
+/// A child that isn't a node, string, function or list: a message
+/// (`ui.t`), shown as its text, or an error. Out of line, off the path
+/// most children take.
+#[cold]
+#[inline(never)]
+fn uncommon_child(owner: &Weak<Vm>, value: mlua::Value) -> mlua::Result<Node> {
+    match crate::i18n::message_of(&value) {
+        Some(message) => Ok(Node::new(
+            owner.clone(),
+            Kind::Text(Text::Computed(Computed::Message(message))),
+        )),
+        None => Err(mlua::Error::runtime(format!(
+            "a child must be a ui node, string, function or message, not {}",
+            value.type_name()
+        ))),
+    }
+}
 /// A table's array entries in order, skipping holes: `cond and node or
 /// nil` in a child list leaves a nil, which must not end the list (Lua's
 /// length and `ipairs` both stop at the first hole).
@@ -2204,16 +2246,11 @@ fn children(
             ))),
             mlua::Value::Function(f) => out.push(Rc::new(Node::new(
                 owner.clone(),
-                Kind::Text(Text::Computed(f)),
+                Kind::Text(Text::Computed(Computed::Script(f))),
             ))),
             mlua::Value::Table(nested) => children(lua, owner, child_items(&nested)?, out)?,
             mlua::Value::Nil | mlua::Value::Boolean(false) => {}
-            other => {
-                return Err(mlua::Error::runtime(format!(
-                    "a child must be a ui node, string or function, not {}",
-                    other.type_name()
-                )));
-            }
+            other => out.push(Rc::new(uncommon_child(owner, other)?)),
         }
     }
     Ok(())
@@ -3331,7 +3368,19 @@ fn owner_and_lint(lua: &Lua) -> mlua::Result<(Weak<Vm>, crate::DesignLint)> {
     Ok((env.vm.clone(), env.warnings.borrow().design))
 }
 pub(crate) fn label(table: &Table) -> mlua::Result<String> {
-    Ok(table.get::<Option<String>>("label")?.unwrap_or_default())
+    // A message (`ui.t`) names it in the locale shown as it mounts.
+    // Read once: most labels are strings, or none.
+    match table.get::<mlua::Value>("label")? {
+        mlua::Value::String(s) => Ok(s.to_str()?.to_owned()),
+        mlua::Value::Nil => Ok(String::new()),
+        value @ mlua::Value::UserData(_) if crate::i18n::message_of(&value).is_some() => {
+            Ok(crate::i18n::message_of(&value)
+                .map(|m| m.get())
+                .unwrap_or_default())
+        }
+        // A number, say: converted as a string label always was.
+        _ => Ok(table.get::<Option<String>>("label")?.unwrap_or_default()),
+    }
 }
 
 /// `ui.span { "text", bold = true, color = "#f80", on_click = fn }`;

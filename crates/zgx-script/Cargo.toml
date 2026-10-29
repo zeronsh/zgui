@@ -26,6 +26,12 @@ components = ["dep:zgx-components"]
 # which a headless host (tests, tools, a server) would not otherwise.
 # zgx-run turns it on, so apps it runs have it.
 scene3d = ["dep:zgx-3d"]
+# Localized messages' plural rules and numbers for every locale (zgx's
+# `i18n`, ICU4X's data: about 90 KB). Off by default: `ui.t` reaches the
+# formatters, so a host would carry them whether or not its scripts call
+# it. Without it `ui.i18n` and `ui.t` work, with English's plural rules
+# (`one`, `other`) and numbers as Rust writes them. zgx-run turns it on.
+i18n = ["zgx/i18n"]
 svg = ["zgx-gpu/svg"]
 png = ["zgx-gpu/png"]
 jpeg = ["zgx-gpu/jpeg"]

@@ -119,6 +119,24 @@ pub const RULES: &[(&str, &str)] = &[
         "unknown-token",
         "a \"$…\" token nothing declares, or of the wrong kind for its field",
     ),
+    ("i18n-parse", "a locale file or message that doesn't parse"),
+    (
+        "i18n-missing",
+        "a key the source locale has and this locale lacks",
+    ),
+    (
+        "i18n-extra",
+        "a key a locale has and the source locale lacks",
+    ),
+    (
+        "i18n-args",
+        "a message naming other arguments than the source locale's",
+    ),
+    (
+        "i18n-plural",
+        "a plural lacking a category the locale's numbers need",
+    ),
+    ("i18n-key", "ui.t with a key the source locale lacks"),
 ];
 
 /// `ui.*` calls that do not build interface (`ui.state`, `ui.set`,
@@ -179,6 +197,8 @@ const NOT_ELEMENTS: &[&str] = &[
     "save_file",
     "read_file",
     "write_file",
+    "i18n",
+    "t",
 ];
 
 /// Lint every `.luau` script at `paths` (files, or directories searched).
@@ -223,6 +243,13 @@ pub fn lint_app(sources: &[(PathBuf, String)]) -> Vec<Diagnostic> {
     });
     tokens.sort_by_key(|d| (d.line, d.column));
     found.extend(tokens);
+    let mut locales = lint_locales(&files);
+    locales.retain(|d| {
+        read.iter()
+            .find(|(file, _)| **file == d.file)
+            .is_none_or(|(_, (_, comments))| !allowed(comments, d.line, &d.code))
+    });
+    found.extend(locales);
     found
 }
 
@@ -237,6 +264,241 @@ fn allowed(comments: &[(u32, String)], line: u32, rule: &str) -> bool {
                 .and_then(|rest| rest.split_once(')'))
                 .is_some_and(|(names, _)| names.split(',').any(|name| name.trim() == rule))
     })
+}
+
+/// What the scripts ask of `ui.i18n` and `ui.t`: each catalog (its
+/// directory and source locale), and each literal key with where it is.
+#[derive(Default)]
+struct Asked {
+    catalogs: Vec<(PathBuf, String)>,
+    keys: Vec<(PathBuf, u32, u32, String)>,
+}
+fn asked(file: &Path, tokens: &[Token], into: &mut Asked) {
+    let base = file.parent().unwrap_or(Path::new("."));
+    let call = |at: usize, name: &str| {
+        tokens.get(at).is_some_and(|t| t.is("ui"))
+            && tokens.get(at + 1).is_some_and(|t| t.is("."))
+            && tokens.get(at + 2).is_some_and(|t| t.is(name))
+    };
+    for at in 0..tokens.len() {
+        if call(at, "i18n") {
+            // `ui.i18n { dir = "…", source = "…" }`, or `({ … })`.
+            let (mut dir, mut locale) = ("locales".to_owned(), "en".to_owned());
+            let mut i = at + 3;
+            let mut depth = 0;
+            while let Some(t) = tokens.get(i) {
+                if t.is("{") || t.is("(") {
+                    depth += 1;
+                } else if t.is("}") || t.is(")") {
+                    depth -= 1;
+                    if depth <= 0 {
+                        break;
+                    }
+                } else if depth == 1
+                    && (t.is("dir") || t.is("source"))
+                    && tokens.get(i + 1).is_some_and(|t| t.is("="))
+                    && let Some(value) = tokens.get(i + 2).filter(|v| v.kind == Kind::Str)
+                {
+                    let target = if t.is("dir") { &mut dir } else { &mut locale };
+                    *target = unquote(&value.text).to_owned();
+                }
+                i += 1;
+            }
+            into.catalogs
+                .push((crate::normalize(&base.join(dir)), locale));
+        } else if call(at, "t")
+            && tokens.get(at + 3).is_some_and(|t| t.is("("))
+            && let Some(key) = tokens.get(at + 4).filter(|t| t.kind == Kind::Str)
+        {
+            into.keys.push((
+                file.to_path_buf(),
+                key.line,
+                key.column,
+                unquote(&key.text).to_owned(),
+            ));
+        }
+    }
+}
+
+/// The `i18n` rules: each catalog's locale files against its source
+/// locale, and `ui.t`'s literal keys against the source.
+/// The keys of the first catalog `files` load (`ui.i18n`), in its source
+/// locale, sorted: what `zgx types` writes as `MessageKey`.
+pub(crate) fn source_keys(files: &[crate::token_lint::File]) -> Option<Vec<String>> {
+    let mut asked_for = Asked::default();
+    for file in files {
+        asked(file.path, file.tokens, &mut asked_for);
+    }
+    let (dir, source) = asked_for.catalogs.first()?;
+    let text = std::fs::read_to_string(dir.join(format!("{source}.json"))).ok()?;
+    let (catalog, _) = zgx::i18n::Catalog::parse(source, &text);
+    let mut keys: Vec<String> = catalog.keys().map(|(key, _)| key.to_owned()).collect();
+    keys.sort();
+    Some(keys)
+}
+fn lint_locales(files: &[crate::token_lint::File]) -> Vec<Diagnostic> {
+    use zgx::i18n::{ArgumentKind, Catalog, plural_categories};
+    let mut asked_for = Asked::default();
+    for file in files {
+        asked(file.path, file.tokens, &mut asked_for);
+    }
+    asked_for.catalogs.sort();
+    asked_for.catalogs.dedup();
+    let mut found = Vec::new();
+    let mut report =
+        |file: &Path, (line, column): (u32, u32), severity, code: &str, message: String| {
+            found.push(Diagnostic {
+                file: file.to_path_buf(),
+                line,
+                column,
+                severity,
+                code: code.into(),
+                message,
+            })
+        };
+    for (dir, source_locale) in &asked_for.catalogs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "json"))
+            .collect();
+        files.sort();
+        let mut locales = Vec::new();
+        for path in files {
+            let Some(locale) = path.file_stem().and_then(|s| s.to_str()).map(str::to_owned) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let (catalog, errors) = Catalog::parse(&locale, &text);
+            for error in errors {
+                let at = match error.key.as_str() {
+                    "" => (error.line.max(1) as u32, error.column.max(1) as u32),
+                    key => key_position(&text, key),
+                };
+                report(&path, at, Severity::Error, "i18n-parse", error.to_string());
+            }
+            let keys: std::collections::BTreeMap<String, Vec<zgx::i18n::Argument>> = catalog
+                .keys()
+                .map(|(key, args)| (key.to_owned(), args))
+                .collect();
+            locales.push((locale, path, text, keys));
+        }
+        let Some(source) = locales.iter().position(|(l, ..)| l == source_locale) else {
+            continue;
+        };
+        let source_keys = locales[source].3.clone();
+        let names = |args: &[zgx::i18n::Argument]| {
+            let mut names: Vec<String> = args.iter().map(|a| a.name.clone()).collect();
+            names.sort();
+            names.dedup();
+            names
+        };
+        for (locale, path, text, keys) in &locales {
+            for (key, args) in keys {
+                let Some(source_args) = source_keys.get(key) else {
+                    report(
+                        path,
+                        key_position(text, key),
+                        Severity::Warning,
+                        "i18n-extra",
+                        format!("{key} isn't in {source_locale}.json, the source locale"),
+                    );
+                    continue;
+                };
+                if names(args) != names(source_args) {
+                    report(
+                        path,
+                        key_position(text, key),
+                        Severity::Warning,
+                        "i18n-args",
+                        format!(
+                            "{key} names {{{}}}, where {source_locale} names {{{}}}",
+                            names(args).join("}, {"),
+                            names(source_args).join("}, {")
+                        ),
+                    );
+                }
+                for arg in args {
+                    let (cases, ordinal) = match &arg.kind {
+                        ArgumentKind::Plural(cases) => (cases, false),
+                        ArgumentKind::Ordinal(cases) => (cases, true),
+                        _ => continue,
+                    };
+                    let lacking: Vec<&str> = plural_categories(locale, ordinal)
+                        .into_iter()
+                        .filter(|c| !cases.iter().any(|have| have == c))
+                        .collect();
+                    if !lacking.is_empty() {
+                        report(
+                            path,
+                            key_position(text, key),
+                            Severity::Warning,
+                            "i18n-plural",
+                            format!(
+                                "{key}'s {{{}}} needs {} in {locale}",
+                                arg.name,
+                                lacking.join(", ")
+                            ),
+                        );
+                    }
+                }
+            }
+            if locale != source_locale {
+                for key in source_keys.keys().filter(|k| !keys.contains_key(*k)) {
+                    report(
+                        path,
+                        (1, 1),
+                        Severity::Warning,
+                        "i18n-missing",
+                        format!("{locale} lacks {key} (it shows {source_locale}'s)"),
+                    );
+                }
+            }
+        }
+        for (file, line, column, key) in &asked_for.keys {
+            if file.starts_with(dir.parent().unwrap_or(dir)) && !source_keys.contains_key(key) {
+                report(
+                    file,
+                    (*line, *column),
+                    Severity::Warning,
+                    "i18n-key",
+                    format!("ui.t(\"{key}\"): {source_locale}.json has no such key"),
+                );
+            }
+        }
+    }
+    found
+}
+/// A string literal's text without its quotes (`"x"`, `'x'`, `` `x` ``).
+fn unquote(literal: &str) -> &str {
+    let quoted = literal.len() >= 2
+        && ['"', '\'', '`']
+            .iter()
+            .any(|q| literal.starts_with(*q) && literal.ends_with(*q));
+    if quoted {
+        &literal[1..literal.len() - 1]
+    } else {
+        literal
+    }
+}
+/// Where in a locale file `key` (dotted, `inbox.count`) is: its last part's
+/// name, quoted, the first time it is a key; else the file's start.
+fn key_position(text: &str, key: &str) -> (u32, u32) {
+    let last = key.rsplit('.').next().unwrap_or(key);
+    let quoted = format!("\"{last}\"");
+    for (n, line) in text.lines().enumerate() {
+        if let Some(at) = line.find(&quoted)
+            && line[at + quoted.len()..].trim_start().starts_with(':')
+        {
+            return (n as u32 + 1, at as u32 + 1);
+        }
+    }
+    (1, 1)
 }
 
 /// Lint one script's source on its own; `file` names it in the findings.

@@ -632,6 +632,27 @@ export type Readable<T> = { read get: (self: never) -> T }
 -- What `ui` element functions return; children and arguments of others.
 declare extern type Node with
 end
+-- `ui.t(key, args)`: a localized message. Accepted wherever text is
+-- (children, `ui.text`, `placeholder`), it follows its locale, its locale
+-- file and the states its arguments read.
+declare extern type Message with
+	-- Its text now (tracked: a computed reading it follows it).
+	function get(self): string
+	function key(self): string
+end
+-- A message's key (`ui.t`): any string here; `zgx types` writes the app's
+-- source locale's keys in its place, so an editor completes them and a
+-- typo is a type error (up to 1,000 keys: luau-lsp takes no longer union).
+export type MessageKey = string
+-- `ui.locale`: the locale asked for (nil follows the system's preferred
+-- languages), and the one shown.
+declare extern type Locale with
+	-- The locale shown: the one asked for, or preferred, as the app has it.
+	read current: string
+	function get(self): string?
+	function peek(self): string?
+	function set(self, locale: string?): ()
+end
 -- `ui.span { … }`: a run of rich text, used once.
 declare extern type Span with
 end
@@ -1132,10 +1153,10 @@ export type Reactive<T> = T | Readable<T> | (() -> T) | Binding
 export type TextValue = (string | number | boolean)?
 -- Text: a string (`"{name}"` shows the state named `name`), a number, or
 -- a function of state.
-export type Text = string | number | (() -> TextValue)
+export type Text = string | number | (() -> TextValue) | Message
 -- Children: nodes, strings (text), functions (computed text) and lists of
 -- them, which flatten; `false` and `nil` are skipped.
-export type Child = Node | string | (() -> TextValue) | { read [number]: Child } | false | nil
+export type Child = Node | string | (() -> TextValue) | Message | { read [number]: Child } | false | nil
 
 -- Event handlers: a function, or an action Rust runs.
 export type Handler = () -> ...unknown
@@ -6108,7 +6129,7 @@ export type InputProps = {
 	multiline: boolean?,
 	-- Shown while the value is empty (never part of it), in the input's
 	-- typography and `placeholder_color`.
-	placeholder: Reactive<string>?,
+	placeholder: (Reactive<string> | Message)?,
 	placeholder_color: Reactive<Color>?,
 	-- Focusing it selects all its text (an address bar).
 	select_on_focus: boolean?,
@@ -16288,6 +16309,13 @@ declare ui: {
 	-- JSON: `encode(value, { pretty = true })` writes what state could hold
 	-- (lists as arrays, tables as objects, `ui.null` as null); `decode(text)`
 	-- gives tables the script may change, and fails saying where.
+	-- Localized messages: `i18n { dir, source }` loads `dir/<locale>.json`
+	-- (ICU MessageFormat; "locales" and "en" by default), read again as they
+	-- change; `t(key, args)` is a message, its arguments numbers, strings,
+	-- states or functions; `locale` asks for a locale.
+	i18n: (opts: { dir: string?, source: string? }?) -> (),
+	t: (key: MessageKey, args: { [string]: number | string | boolean | Readable<any> | (() -> any) }?) -> Message,
+	locale: Locale,
 	json: {
 		encode: (value: any, opts: { pretty: boolean? }?) -> string,
 		decode: (text: string) -> any,

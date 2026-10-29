@@ -11,6 +11,8 @@ mod container_queries;
 mod driver;
 #[path = "../failures.rs"]
 mod failures;
+#[path = "../i18n_script.rs"]
+mod i18n_script;
 #[path = "../layout_gaps.rs"]
 mod layout_gaps;
 #[path = "../layout_motion.rs"]

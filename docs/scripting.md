@@ -438,6 +438,10 @@ let host = ScriptHost::bundled(&cx.ui.runtime, &UI, "app.luau");
 
 Errors are for the developer: `error_banner(true)` shows each over the interface with where it happened, and is the default in debug builds. In release builds the banner is off: a failed load or a handler's error leaves the last good interface running, and `host.on_error(|message| ...)` hears it, for the app's log or crash reports. The terminal example builds either way: with `--features terminal-bundle` it runs from its bundle (`ZGX_SCRIPTS=source` reads the source tree instead), without it from the source tree, reloading as it is edited; `scripts/zterm-app.sh` packages the bundled build.
 
+### Localized text
+
+`ui.i18n { dir = "locales" }` loads locale files of ICU MessageFormat messages, `ui.t(key, args)` shows one wherever text goes (following its locale, its file and its arguments' states, formatted in Rust), and `ui.locale` asks for a locale or follows the system's. See [Text: localized messages](reference/text.md#localized-messages).
+
 ### Warnings
 
 Some mistakes are not errors but are probably wrong; each is reported once per call site, with its file and line, to stderr and to `ScriptHost::warnings()`. Durations are milliseconds everywhere (`ui.tween`, `ui.loop`, `layout_duration`, `anime`): a fractional duration under 10 (`duration = 0.16`, likely meant as seconds) and a non-looping one over a minute both warn. `ui.every` under 16 ms warns too: it calls the script more often than a display refreshes. A `ui.each` over more than 1,000 items warns: it builds every row, where `ui.list` builds only those in view. An `anime.animate` line that replaces its own unfinished animation again and again warns as well (what drives it changes faster than it plays).

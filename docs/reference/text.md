@@ -177,6 +177,39 @@ Text is not selectable unless asked, as in native apps. `selectable = true` on a
 
 On macOS a selection, or an input's, also answers the system's text services: the context menu offers Look Up “…” (⌃⌘D looks up without it), the Services menu takes it as plain text, and a service returning text replaces an editable selection. Selected text drags into inputs, where it moves (Option copies), and into other apps as plain text; a password's never leaves its field ([Rust: dragging text](../drag-drop.md#dragging-text)).
 
+## Localized messages
+
+`ui.i18n { dir = "locales", source = "en" }` loads the script's locale files: `locales/en.json`, `locales/ar.json`, …, each named by its locale (`pt-BR.json` is `pt-BR`). Nested keys are flattened to dotted names, and messages are ICU MessageFormat: `{name}`, `{n, plural, one {# message} other {# messages}}` (`#` and `=0`), `{n, selectordinal, …}`, `{x, select, …}` and `{n, number}`. The source locale (`en` unless `source` says otherwise) has every key.
+
+```json file=locales/en.json
+{
+  "inbox": { "count": "{n, plural, one {# message} other {# messages}}" },
+  "search": "Search",
+  "actions": { "save": "Save" }
+}
+```
+
+```lua
+-- file: app.luau
+ui.i18n { dir = "locales" }
+local count = ui.state("count", 3)
+local query = ui.state("query", "")
+return ui.column {
+    ui.text { ui.t("inbox.count", { n = count }) }, -- "3 messages"
+    ui.input { value = query, placeholder = ui.t("search") },
+    ui.button { ui.t("actions.save"), on_click = function() count:add(1) end },
+}
+```
+
+- Call `ui.i18n` before `ui.t`: a message needs its catalog (`ui.t` before it is an error saying so).
+- `ui.t(key, args)` is a message: accepted wherever text is (a child, `ui.text`, `placeholder`), it is formatted in Rust when its locale, its file or a state its arguments read changes, never per frame, and only the texts showing a changed message update. Arguments are numbers, strings, states or functions (called, tracked, when it formats). `msg:get()` gives its text now, in a handler or a computed (which follows it); `msg:key()` its key.
+- `ui.locale:set("ar")` asks for a locale; `ui.locale:set(nil)` follows the system's preferred languages again. `ui.locale.current` is the one shown (tracked): the one asked for, or preferred, as the app has it, through its parents (`pt-BR`, then `pt`) and then the source.
+- A key the locale lacks falls back through its parents to the source locale, then shows the key itself; an argument the message names but wasn't given shows as `{name}`. Each is told once, to stderr and `ScriptHost::warnings()`, as are messages that don't parse (with their file, line and column: the rest of the file loads).
+- The script runs the way its locale does: an Arabic or Hebrew locale lays the script's root out right to left, unless the root says which way (`dir`).
+- Edited locale files show at once, as theme files do, without running the script again; `zgx bundle` ships them.
+- A widget's `label` (a tab strip's, a modal's) takes a message too, read as the widget mounts: it shows the locale of that moment.
+- Plural rules and number formatting for every locale come from ICU4X with zgx-script's `i18n` feature (about 90 KB; `zgx run` has it). A host built without it still loads and shows messages, with English's plural rules (`one`, `other`) for every locale and numbers as Rust writes them: turn it on (`zgx-script = { …, features = ["i18n"] }`) to ship translations.
+
 ## Gotchas
 
 - Text from data is a template too: a commit message with `{id}` in it looks for state named `id` (an error if there is none), and `{{` shows as `{`. Pass `literal = true` (on `ui.text`, `ui.rich` or a span) for text the script didn't write.

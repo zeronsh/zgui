@@ -636,6 +636,27 @@ export type Readable<T> = { read get: (self: never) -> T }
 -- What `ui` element functions return; children and arguments of others.
 declare extern type Node with
 end
+-- `ui.t(key, args)`: a localized message. Accepted wherever text is
+-- (children, `ui.text`, `placeholder`), it follows its locale, its locale
+-- file and the states its arguments read.
+declare extern type Message with
+	-- Its text now (tracked: a computed reading it follows it).
+	function get(self): string
+	function key(self): string
+end
+-- A message's key (`ui.t`): any string here; `zgx types` writes the app's
+-- source locale's keys in its place, so an editor completes them and a
+-- typo is a type error (up to 1,000 keys: luau-lsp takes no longer union).
+export type MessageKey = string
+-- `ui.locale`: the locale asked for (nil follows the system's preferred
+-- languages), and the one shown.
+declare extern type Locale with
+	-- The locale shown: the one asked for, or preferred, as the app has it.
+	read current: string
+	function get(self): string?
+	function peek(self): string?
+	function set(self, locale: string?): ()
+end
 -- `ui.span { … }`: a run of rich text, used once.
 declare extern type Span with
 end
@@ -1136,10 +1157,10 @@ export type Reactive<T> = T | Readable<T> | (() -> T) | Binding
 export type TextValue = (string | number | boolean)?
 -- Text: a string (`"{name}"` shows the state named `name`), a number, or
 -- a function of state.
-export type Text = string | number | (() -> TextValue)
+export type Text = string | number | (() -> TextValue) | Message
 -- Children: nodes, strings (text), functions (computed text) and lists of
 -- them, which flatten; `false` and `nil` are skipped.
-export type Child = Node | string | (() -> TextValue) | { read [number]: Child } | false | nil
+export type Child = Node | string | (() -> TextValue) | Message | { read [number]: Child } | false | nil
 
 -- Event handlers: a function, or an action Rust runs.
 export type Handler = () -> ...unknown
@@ -4701,7 +4722,14 @@ export type Material3D = {
 	opacity: Reactive<number>?,
 	unlit: boolean?,
 }
+-- Where a click landed on a mesh, in the scene's frame, and how far that is
+-- from the camera.
+export type Hit3D = { x: number, y: number, z: number, distance: number }
 export type MeshProps = Object3DProps & {
+	-- A click on it (a press let go where it began; a drag clicks nothing),
+	-- and the pointer coming over it (`true`) and leaving (`false`).
+	on_click: ((hit: Hit3D) -> ())?,
+	on_hover: ((over: boolean) -> ())?,
 	-- Its shape (default "box"), sized by `size` (box: {x, y, z}; plane:
 	-- {x, _, z}), `radius`, `height`, `tube` (torus) and `segments`.
 	geometry: ("box" | "sphere" | "plane" | "cylinder" | "cone" | "torus")?,
@@ -4724,6 +4752,9 @@ export type LightProps = Object3DProps & {
 	range: number?,
 }
 export type GroupProps = {
+	-- As a mesh's: a group hears its meshes' (unless a mesh hears it itself).
+	on_click: ((hit: Hit3D) -> ())?,
+	on_hover: ((over: boolean) -> ())?,
 	position: Vec3?,
 	rotation: Vec3?,
 	scale: (Reactive<number> | Vec3)?,
@@ -5070,6 +5101,8 @@ export type Scene3DProps = {
 	orbit: (boolean | Orbit3D)?,
 	-- Behind the scene; nil: transparent (the box's own `bg` shows).
 	background: Reactive<Color>?,
+	-- The sun (the first directional light) casts shadows from opaque meshes.
+	shadows: boolean?,
 	[number]: Object3D,
 }
 export type CanvasProps = {
@@ -6100,7 +6133,7 @@ export type InputProps = {
 	multiline: boolean?,
 	-- Shown while the value is empty (never part of it), in the input's
 	-- typography and `placeholder_color`.
-	placeholder: Reactive<string>?,
+	placeholder: (Reactive<string> | Message)?,
 	placeholder_color: Reactive<Color>?,
 	-- Focusing it selects all its text (an address bar).
 	select_on_focus: boolean?,
@@ -15257,6 +15290,14 @@ export type SlotProps = {
 -- A plugin's node at an element of the app's, by `target` (`"#save"`,
 -- `"hook:toolbar.save"`, `'role:button "Save"'`): before it, after it, or in
 -- its place (replacing takes `Capability::Override`).
+-- `ui.override`'s table.
+export type ModuleOverride = {
+	-- The app's module: "@app/components/card".
+	module: string,
+	-- The plugin's replacement, relative to the plugin: "./card".
+	with: string,
+}
+
 export type HookContribution = {
 	target: string,
 	before: Node?,
@@ -16114,6 +16155,11 @@ declare ui: {
 	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
 	-- A plugin's filter over an element of the app's (`HookFilter`).
 	filter: (HookFilter) -> (),
+	-- From a plugin: one of the app's `@app/…` modules replaced by the
+	-- plugin's (`with`, one of its own files), which runs as the app's own
+	-- code. Needs `Capability::Override(module)` or `("*")`: a trust grant.
+	-- The replacement reaches the original as `@app-original/…`.
+	override: (ModuleOverride) -> (),
 	-- The script's (or module's) state for `key`, kept across reloads.
 	state: <T>(key: string, initial: T) -> State<T>,
 	-- State shared with Rust and every script.
@@ -16267,6 +16313,13 @@ declare ui: {
 	-- JSON: `encode(value, { pretty = true })` writes what state could hold
 	-- (lists as arrays, tables as objects, `ui.null` as null); `decode(text)`
 	-- gives tables the script may change, and fails saying where.
+	-- Localized messages: `i18n { dir, source }` loads `dir/<locale>.json`
+	-- (ICU MessageFormat; "locales" and "en" by default), read again as they
+	-- change; `t(key, args)` is a message, its arguments numbers, strings,
+	-- states or functions; `locale` asks for a locale.
+	i18n: (opts: { dir: string?, source: string? }?) -> (),
+	t: (key: MessageKey, args: { [string]: number | string | boolean | Readable<any> | (() -> any) }?) -> Message,
+	locale: Locale,
 	json: {
 		encode: (value: any, opts: { pretty: boolean? }?) -> string,
 		decode: (text: string) -> any,

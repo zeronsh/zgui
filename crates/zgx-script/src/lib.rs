@@ -45,6 +45,7 @@ mod file_events;
 #[path = "file_events_linux.rs"]
 mod file_events;
 mod form;
+mod i18n;
 #[cfg(feature = "inspect")]
 pub mod inspect;
 pub mod inspect_client;
@@ -977,6 +978,8 @@ struct Inner {
     elements: Rc<element::Elements>,
     engine: Rc<anime::Engine>,
     assets: Rc<lower::Assets>,
+    /// The scripts' catalog of messages (`ui.i18n`), kept across reloads.
+    locales: Rc<i18n::Locales>,
     actions: Actions,
     functions: Functions,
     current: RefCell<Option<Rc<Loaded>>>,
@@ -1125,6 +1128,7 @@ impl ScriptHost {
                 engine
             },
             assets: Rc::default(),
+            locales: Rc::default(),
             shared: Rc::new(Store::new(runtime)),
             chrome: RefCell::default(),
             zoom: RefCell::default(),
@@ -1878,7 +1882,8 @@ impl ScriptHost {
     /// changed are read again without reloading the scripts: what their new
     /// values change restyles in place.
     pub fn reload_if_changed(&self) -> bool {
-        let themes = self.reload_themes();
+        // Locale files, as theme files: what changed shows in place.
+        let themes = self.0.locales.reload_if_changed(self.0.files) | self.reload_themes();
         // `changed` forgets edited images, so the reload reads them again.
         let assets = self.0.assets.changed();
         if self.stamps() == *self.0.stamps.borrow() && !assets {
@@ -2016,7 +2021,18 @@ impl ScriptHost {
                 let current = host.current.borrow().clone();
                 // Its root's `on_key` hears what nothing focused takes.
                 current.map_or_else(div, |loaded| {
-                    let view = lower::lower(&loaded.root, &loaded.lowering).takes_unfocused_keys();
+                    let mut view =
+                        lower::lower(&loaded.root, &loaded.lowering).takes_unfocused_keys();
+                    // With a catalog, the script runs the way its locale
+                    // does, unless its root says which way (`dir`).
+                    if host.locales.handle().is_some() && !loaded.root.sets_direction() {
+                        let (locales, runtime) = (host.locales.clone(), host.runtime.clone());
+                        view = view.on_mount(move |root| {
+                            if let Some(scene) = root.scene() {
+                                locales.follow(&runtime, scene, root.node());
+                            }
+                        });
+                    }
                     if loaded.mounted.is_empty() {
                         return view;
                     }
@@ -2565,6 +2581,7 @@ impl ScriptHost {
         term::install(&lua, &ui, self.0.terms.clone()).map_err(fail)?;
         node::install_web(&lua, &ui, self.0.webs.clone()).map_err(fail)?;
         command::install(&lua, &ui, self.0.commands.clone()).map_err(fail)?;
+        i18n::install(&lua, &ui, self.0.locales.clone(), self.0.files).map_err(fail)?;
         windows::install(&lua, &ui, self.0.windows.clone(), &self.0.shared).map_err(fail)?;
         let may = |capability: Capability| grants.allows(&capability);
         let fetch = may(Capability::Fetch).then(|| self.0.fetcher.clone());
