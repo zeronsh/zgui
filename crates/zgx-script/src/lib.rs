@@ -66,6 +66,7 @@ mod node;
 mod opens;
 mod persist;
 mod reorder;
+mod router;
 #[cfg(feature = "scene3d")]
 mod scene3d;
 mod sorted;
@@ -2672,6 +2673,7 @@ impl ScriptHost {
             theme::install(lua, ui, dir, packages)
         });
         lazy.ui(&["form"], form::install);
+        lazy.ui(&["router"], router::install);
         lazy.ui(&["async", "optimistic"], handlers::install);
         lazy.ui(&["contribute", "filter", "override"], node::install_plugins);
         // `ui.selector(text)`: a plugin's target by role or name

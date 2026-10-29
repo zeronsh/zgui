@@ -1594,6 +1594,16 @@ fn location(lua: &Lua) -> Option<Rc<str>> {
     })
     .flatten()
 }
+/// An overlay's `open` (a modal's, a popover's, a menu's): a state, written
+/// back as it closes; or, controlled, a function saying whether it shows,
+/// its closing (Escape, the backdrop, a choice) going to `on_close` (a
+/// modal route: open while the route says so, closing goes back).
+pub(crate) fn open_of(lua: &Lua, table: &Table) -> mlua::Result<Signal<Value>> {
+    match table.get::<mlua::Value>("open")? {
+        mlua::Value::Function(show) => controlled(lua, show, table.get("on_close")?),
+        open => expect_state(&open, "`open`"),
+    }
+}
 /// A control's `value` (a checkbox's, a slider's, a segmented control's):
 /// a state, both ways; or, controlled as React's are, a function it shows,
 /// a change it makes going to `on_change` instead, the control showing the
@@ -4379,15 +4389,14 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set(
         "modal",
         lua.create_function(|lua, table: Table| {
-            let open_value = table.get::<mlua::Value>("open")?;
-            let open = expect_state(&open_value, "`open`")?;
+            let open = open_of(lua, &table)?;
             let mut node = fill(
                 lua,
                 Node::new(
                     owner(lua)?,
                     Kind::Modal {
                         label: label(&table)?,
-                        open,
+                        open: open.clone(),
                         placement: modal_placement_of(table.get("placement")?)?,
                         autofocus: table.get::<Option<bool>>("autofocus")?.unwrap_or(true),
                         layer: false,
@@ -4397,7 +4406,8 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(&table),
             )?;
             if let Some(build) = table.get::<Option<Function>>("build")? {
-                node.children.push(built_on_open(lua, open_value, build)?);
+                let open = mlua::Value::UserData(lua.create_userdata(State::new(open))?);
+                node.children.push(built_on_open(lua, open, build)?);
             }
             node_ud(lua, node)
         })?,
@@ -4434,7 +4444,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
         ui.set(
             name,
             lua.create_function(move |lua, table: Table| {
-                let open = expect_state(&table.get("open")?, "`open`")?;
+                let open = open_of(lua, &table)?;
                 let anchor = expect_node(table.get("anchor")?, "`anchor`")?;
                 let label = label(&table)?;
                 let placement = placement_of(table.get("placement")?)?;
@@ -4520,7 +4530,7 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     ui.set(
         "submenu",
         lua.create_function(|lua, table: Table| {
-            let open = expect_state(&table.get("open")?, "`open`")?;
+            let open = open_of(lua, &table)?;
             node_ud(
                 lua,
                 fill(

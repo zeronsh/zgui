@@ -789,6 +789,35 @@ export type Promise<T = unknown> = {
 -- `ui.form`'s spec: each field's first value, its checks (a message, or
 -- nil while it is fine; `values.other` reads another field), and what
 -- submitting does (in a task: it may await, and raises what went wrong).
+-- `ui.router`'s spec: each route's name and path (`"/thread/:id"`), the
+-- path it starts at ("/" by default), and the scheme of the deep links it
+-- follows (`"mail"` for `mail://thread/42`).
+export type RouterSpec = {
+	routes: { [string]: string },
+	initial: string?,
+	scheme: string?,
+}
+-- Where the router is: the route's name, its path and its params.
+export type Route = { name: string, path: string, params: { [string]: string } }
+export type Router = {
+	route: State<Route>,
+	can_back: State<boolean>,
+	can_forward: State<boolean>,
+	-- Go to a route by its name and params.
+	navigate: (to: string, params: { [string]: any }?) -> (),
+	-- The same, in place of the route now (nothing added behind).
+	replace: (to: string, params: { [string]: any }?) -> (),
+	-- Go to the route a path matches ("/thread/42"), as a deep link does;
+	-- `{ replace = true }` in place of the route now.
+	open: (path: string, opts: { replace: boolean? }?) -> (),
+	back: () -> (),
+	forward: () -> (),
+	-- Whether the route is `name` now (tracked).
+	is: (name: string) -> boolean,
+	-- What each route shows: a node or a function of its params; the mouse's
+	-- back and forward buttons over it go back and forward.
+	view: (cases: { [string]: Node | (params: { [string]: string }) -> Node }, props: ContainerProps?) -> Node,
+}
 export type FormSpec = {
 	fields: { [string]: any },
 	-- What fills the fields (a loaded record): followed, a field taking the
@@ -13348,7 +13377,10 @@ export type ModalProps = {
 	-- accent), "ghost" (no background until hovered), "danger", "default".
 	-- Other containers don't take it.
 	variant: ("primary" | "ghost" | "danger" | "default")?,
-	open: State<boolean>,
+	-- A state, written back as it closes; or, controlled, a function saying
+	-- whether it shows, its closing going to `on_close` (a modal route).
+	open: State<boolean> | () -> boolean,
+	on_close: (() -> ...unknown)?,
 	-- Its content, built each time it opens (a form starting from what it
 	-- edits, its state new), and kept while it closes.
 	build: (() -> Node)?,
@@ -13693,7 +13725,10 @@ export type PopoverProps = {
 	-- accent), "ghost" (no background until hovered), "danger", "default".
 	-- Other containers don't take it.
 	variant: ("primary" | "ghost" | "danger" | "default")?,
-	open: State<boolean>,
+	-- A state, written back as it closes; or, controlled, a function saying
+	-- whether it shows, its closing going to `on_close` (a modal route).
+	open: State<boolean> | () -> boolean,
+	on_close: (() -> ...unknown)?,
 	-- Its content, built each time it opens, and kept while it closes.
 	build: (() -> Node)?,
 	-- The trigger, shown where the popover is written.
@@ -14372,7 +14407,10 @@ export type SubmenuProps = {
 	-- accent), "ghost" (no background until hovered), "danger", "default".
 	-- Other containers don't take it.
 	variant: ("primary" | "ghost" | "danger" | "default")?,
-	open: State<boolean>,
+	-- A state, written back as it closes; or, controlled, a function saying
+	-- whether it shows, its closing going to `on_close` (a modal route).
+	open: State<boolean> | () -> boolean,
+	on_close: (() -> ...unknown)?,
 	label: Label?,
 	-- Its trigger row, drawn by the app (a `ui.menu_item` with an icon, the
 	-- label, a value, a chevron); the label and a "›" otherwise. It opens
@@ -16348,6 +16386,10 @@ declare ui: {
 	-- click, a toast's Undo): it may await, its tasks are cancelled as what
 	-- made it goes, and what it raises uncaught is reported once.
 	async: <A...>(f: (A...) -> ()) -> (A...) -> (),
+	-- Where the app is, as React Router keeps it: named routes with
+	-- `:params`, history, the platform's back and forward input, and deep
+	-- links by `scheme`.
+	router: (spec: RouterSpec) -> Router,
 	-- Inside a task (a `ui.async` handler's): write `next` to `state` now
 	-- and run `save`, which may await. Kept if it succeeds; if it raises,
 	-- the state goes back to what this write replaced (never over a newer

@@ -443,6 +443,43 @@ A module's `ui.state` and `ui.persist` keys are its own: `ui.state("open", false
 
 A text template's `{name}` (in `ui.text`, a child string, a span) looks for the state with the key `name` where the template is written: the module's own `ui.state` or `ui.persist` of that key first, then the script's, its persisted state, and shared state. It is an error when there is none. Templates find keyed state only: a computed, a `use_state` or a local's name is not a key; show those with a function (`function() return tostring(n:get()) end`). `{{` and `}}` are literal braces; anything else in braces that is not a name is literal text.
 
+## Routing
+
+`ui.router { routes, initial?, scheme? }` keeps where an app is, as React Router does: named routes with `:params`, the history behind and ahead, the platform's back and forward input, and deep links.
+
+```lua
+local router = ui.router {
+	routes = { list = "/", thread = "/thread/:id", settings = "/settings" },
+	scheme = "mail", -- mail://thread/42 opens that thread
+}
+return ui.column {
+	ui.button { "Back", disabled = function() return not router.can_back:get() end, on_click = router.back },
+	router.view({
+		list = ui.text { "All mail" },
+		thread = function(params)
+			return ui.text { `Thread {params.id}` }
+		end,
+	}),
+	ui.modal {
+		open = function() return router.is("settings") end,
+		on_close = router.back,
+		ui.text { "Settings" },
+	},
+}
+```
+
+| | |
+| --- | --- |
+| `route` | a state: `{ name, path, params }`, params as text |
+| `navigate(name, params?)` | to a route by its name and params (`navigate("thread", { id = 7 })`): an app's route names and params are typed, so a misspelling is a type error; a name with no such route, or a missing param, is an error as it runs |
+| `replace(name, params?)` | the same, in place of the route now |
+| `open(path, { replace? }?)` | to the route a path matches (`open("/thread/7")`), as a deep link goes; a path no route matches is an error |
+| `back()`, `forward()`, `can_back`, `can_forward` | the history, and whether there is any behind or ahead |
+| `is(name)` | whether the route is `name` now, tracked |
+| `view(cases, props?)` | what each route shows: a node, or a function of its params made again as they change. It takes the mouse's back and forward buttons (`grow = 1` unless sized) |
+
+Back and forward come from the platform's own input as well: the mouse's back and forward buttons over the view, and the commands `router.back` and `router.forward`, which the desktop host binds to Alt+← and Alt+→ (⌘[ and ⌘] on macOS). With a `scheme`, a link the system opens the app with (`mail://thread/42`) navigates to the route its path matches; a link that matches none is reported once. A route-driven modal reads the route in a controlled `open` and goes back in `on_close` ([overlays](overlays.md)).
+
 ## Plugins and slots
 
 A host's plugins (`ScriptHost::plugins(dir)`) are scripts in their own sandboxed VMs. A plugin returns nothing; it adds nodes to the application's slots with `ui.contribute(name, node)`. `ui.slot(name, props)` is a column holding every contribution to `name`, in plugin order; `props` style it. Plugins see the `ui.shared` state the host exposes (`expose_shared`, or `expose_shared_read` to read and follow only: a plugin's write is an error), never the application's `ui.state`.

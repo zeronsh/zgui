@@ -27,6 +27,8 @@ mod plugin_hooks;
 mod plugin_shared;
 #[path = "../plugins.rs"]
 mod plugins;
+#[path = "../router.rs"]
+mod router;
 #[path = "../script.rs"]
 mod script;
 #[path = "../state.rs"]
