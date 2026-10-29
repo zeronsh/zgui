@@ -11,6 +11,8 @@ mod calls;
 mod io;
 #[path = "../large_data.rs"]
 mod large_data;
+#[path = "../plugin_filters.rs"]
+mod plugin_filters;
 #[path = "../plugin_hooks.rs"]
 mod plugin_hooks;
 #[path = "../plugins.rs"]

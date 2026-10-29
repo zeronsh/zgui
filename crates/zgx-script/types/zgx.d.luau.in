@@ -2428,6 +2428,19 @@ export type HookContribution = {
 	after: Node?,
 	replace: Node?,
 }
+-- A plugin's functions over an element of the app's, by `target`: each
+-- takes the prop's value as it is and returns it changed, run again when
+-- what it reads changes (it takes `Capability::Override`). A tooltip's text
+-- passes through as the element is built.
+export type HookFilter = {
+	target: string,
+	text: ((text: string) -> string)?,
+	label: ((label: string?) -> string?)?,
+	hidden: ((hidden: boolean) -> boolean)?,
+	disabled: ((disabled: boolean) -> boolean)?,
+	tooltip: ((tooltip: string) -> string)?,
+	items: ((items: { any }) -> { any })?,
+}
 -- How `ui.each` rows slide when the list moves them: `true` (a spring,
 -- bounce .1 over 400 ms), an ease, `{ duration, ease }`, `{ bounce,
 -- duration }` or `{ spring = anime.spring {...} }`.
@@ -2619,6 +2632,8 @@ declare ui: {
 	-- an instance per slot: a panel per pane).
 	slot: (name: string, props: SlotProps?) -> Node,
 	contribute: ((name: string, node: Node) -> ()) & ((HookContribution) -> ()),
+	-- A plugin's filter over an element of the app's (`HookFilter`).
+	filter: (HookFilter) -> (),
 	-- The script's (or module's) state for `key`, kept across reloads.
 	state: <T>(key: string, initial: T) -> State<T>,
 	-- State shared with Rust and every script.

@@ -1276,7 +1276,15 @@ mod tests {
     /// Functions of `ui` that return no `Node` yet whose arguments are read
     /// while the interface is built: a window's options, a contribution, a
     /// document parsed into blocks, a 3D scene's objects.
-    const BUILDS: &[&str] = &["window", "contribute", "markdown", "mesh", "light", "group"];
+    const BUILDS: &[&str] = &[
+        "window",
+        "contribute",
+        "filter",
+        "markdown",
+        "mesh",
+        "light",
+        "group",
+    ];
 
     /// A function added to `ui` is either an element or listed in
     /// `NOT_ELEMENTS`, so `untracked-get` neither flags a file written in a

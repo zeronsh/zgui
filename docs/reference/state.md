@@ -453,6 +453,29 @@ With the app above, a plugin adds a button before its Save; nothing reaches the 
 ui.contribute { target = "#save", before = ui.button { label = "Preview" } }
 ```
 
+`ui.filter { target, text | label | hidden | disabled | tooltip | items = fn }` passes an element's prop through a function of the plugin's, which takes the value as it is and returns it changed. It runs in the plugin's script, again whenever what it reads changes (the app's state the value follows, the plugin's own), never per frame. It needs `Capability::Override`, as replacing does.
+
+- `text` is the element's text, or a button's or item's (its first child's); `label` its accessible name.
+- `hidden` and `disabled` take and return a boolean.
+- `tooltip` is a written tooltip's text, passed through as the element is built.
+- `items` is what a `ui.each` shows: a list in, a list out.
+- Nothing else is filtered: its handlers, styles and state stay the app's. A filter that fails is reported as the plugin's error, and the value shows as it was.
+
+```luau
+-- file: plugins/shout.luau (granted Capability::Override("#title"))
+ui.filter { target = "#title", text = function(text) return string.upper(text) end }
+ui.filter {
+	target = "#tasks",
+	items = function(items)
+		local open = {}
+		for _, task in items do
+			if not task.done then table.insert(open, task) end
+		end
+		return open
+	end,
+}
+```
+
 A plugin targeting an `id` that is not a declared `hook` reaches the app's internals: the app's next version may move or drop it ([design](../design/plugin-hooks.md)).
 
 ## Gotchas

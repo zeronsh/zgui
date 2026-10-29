@@ -19,6 +19,7 @@ use zgx::{
 use zgx_components::*;
 
 /// A component of the library, as a node of the interface.
+#[derive(Clone)]
 pub(crate) enum Library {
     /// `ui.tabs { items = state, value = state, panel = fn(id), … }`.
     Tabs {
@@ -1376,6 +1377,7 @@ fn toast(lua: &Lua, table: Table) -> mlua::Result<u64> {
 }
 
 /// What a disclosure's summary shows: text, or a node of the app's.
+#[derive(Clone)]
 pub(crate) enum Summary {
     Text(String),
     Node(Rc<Node>),

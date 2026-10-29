@@ -28,6 +28,7 @@ use zgx::{
 /// Plain styles for a pseudo-state such as `hover`.
 pub(crate) type Styles = Rc<[(Prop, Lit)]>;
 
+#[derive(Clone)]
 pub(crate) struct Node {
     /// The script that built this node. Lowered closures hold it strongly;
     /// the Lua heap does not, so a replaced script can be dropped.
@@ -92,6 +93,7 @@ pub(crate) struct Node {
 }
 /// What `theme = …` gives a subtree: fixed, or a state or function that
 /// computes it (the scope follows).
+#[derive(Clone)]
 pub(crate) enum ThemeSpec {
     Fixed(zgx::theme::ThemeOverride),
     State(Signal<Value>),
@@ -115,6 +117,7 @@ pub(crate) struct Sweep {
     pub rate: f64,
 }
 /// A web view's page, controller and handlers.
+#[derive(Clone)]
 pub(crate) struct WebSpec {
     /// Shared with `ui.web()` when given, so the page outlives this node.
     pub web: zgx::web_view::WebView,
@@ -617,7 +620,7 @@ impl Node {
 }
 
 /// Script handlers for input and lifecycle events.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Events {
     pub click: Option<Handler>,
     /// Primary pointer-down: for what must start before release, such as
@@ -757,6 +760,7 @@ impl Events {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum Kind {
     Column,
     Row,
@@ -1025,6 +1029,7 @@ impl Kind {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum Text {
     Literal(String),
     /// `"Count: {count}"`: interpolated in Rust, no script call per update.
@@ -1032,6 +1037,7 @@ pub(crate) enum Text {
     /// A script function, rerun when the state it reads changes.
     Computed(Function),
 }
+#[derive(Clone)]
 pub(crate) enum Segment {
     Literal(String),
     /// A state, or a field of it (`"{user.name}"`: the path after its key).
@@ -1039,6 +1045,7 @@ pub(crate) enum Segment {
 }
 
 /// A rich text run.
+#[derive(Clone)]
 pub(crate) struct Span {
     pub text: Text,
     pub color: Option<Themed<Color>>,
@@ -1075,7 +1082,7 @@ pub(crate) struct SpanIcon {
 }
 
 /// A node's tooltip (`tooltip`, `tooltip_placement`).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Tooltip {
     pub content: Option<TooltipContent>,
     pub placement: Option<zgx::compose::Placement>,
@@ -1085,6 +1092,7 @@ pub(crate) struct Tooltip {
     /// `tooltip_delay`: how long the pointer rests before it shows.
     pub delay: Option<std::time::Duration>,
 }
+#[derive(Clone)]
 pub(crate) enum TooltipContent {
     /// Drawn in the theme's tooltip look.
     Text(String),
@@ -1159,6 +1167,7 @@ fn grid_spec(lua: &Lua, grid: &Table) -> mlua::Result<GridSpec> {
 }
 /// A canvas's `view` (its drawing's pan and zoom, followed) and `bg_grid`
 /// (a grid under it, following the view).
+#[derive(Clone)]
 pub(crate) struct CanvasOptions {
     pub view: Option<Readable>,
     pub grid: Option<GridSpec>,
@@ -1167,6 +1176,7 @@ pub(crate) struct CanvasOptions {
     pub each: Option<(Signal<Value>, Function)>,
 }
 /// `bg_grid = { step, min_step, dot | lines, color }`.
+#[derive(Clone)]
 pub(crate) struct GridSpec {
     pub step: f32,
     pub min_step: f32,
@@ -1179,6 +1189,7 @@ pub(crate) enum Readable {
     State(Signal<Value>),
     Function(Function),
 }
+#[derive(Clone)]
 pub(crate) enum Source {
     Lit(Lit),
     State(Signal<Value>),
@@ -1411,14 +1422,52 @@ pub(crate) enum Place {
     After,
     Replace,
 }
-/// What a script adds at an element of the app's (`ui.contribute { target,
-/// before | after | replace }`).
+/// What a script adds at an element of the app's: a node (`ui.contribute
+/// { target, before | after | replace }`) or filters (`ui.filter`).
 pub(crate) struct HookContribution {
     pub target: crate::driver::Static,
-    pub place: Place,
+    pub adds: Adds,
     /// Who added it.
     pub owner: Rc<str>,
-    pub node: Rc<Node>,
+    /// Its script, which runs the filters.
+    pub vm: Weak<Vm>,
+}
+pub(crate) enum Adds {
+    Node(Place, Rc<Node>),
+    /// What each filtered prop is passed through, in the order written.
+    Filters(Vec<(Filtered, Function)>),
+}
+impl HookContribution {
+    /// Its node, if it adds one `place`.
+    pub(crate) fn placed(&self, place: Place) -> Option<&Rc<Node>> {
+        match &self.adds {
+            Adds::Node(at, node) if *at == place => Some(node),
+            _ => None,
+        }
+    }
+}
+/// What a plugin's `ui.filter` may pass through a function of its own: the
+/// element's text and name, whether it is hidden or disabled, its tooltip's
+/// text and the items a `ui.each` shows. Nothing else of the element's: its
+/// handlers, styles and state stay the app's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Filtered {
+    Text,
+    Label,
+    Hidden,
+    Disabled,
+    Tooltip,
+    Items,
+}
+impl Filtered {
+    pub(crate) const ALL: [(&'static str, Filtered); 6] = [
+        ("text", Filtered::Text),
+        ("label", Filtered::Label),
+        ("hidden", Filtered::Hidden),
+        ("disabled", Filtered::Disabled),
+        ("tooltip", Filtered::Tooltip),
+        ("items", Filtered::Items),
+    ];
 }
 /// Each slot's contributions, by slot, with who added each.
 pub(crate) type Slots = std::collections::HashMap<String, Vec<(Rc<str>, Rc<Node>)>>;
@@ -1546,11 +1595,7 @@ fn hook_contribution(env: &Env, table: &Table, owner: Rc<str>) -> mlua::Result<H
         ))
     })?;
     let needs = match place {
-        Place::Replace => {
-            let own = crate::Capability::Override(written.clone());
-            let any = crate::Capability::Override("*".into());
-            (!env.grants.allows(&own) && !env.grants.allows(&any)).then_some(own)
-        }
+        Place::Replace => overrides(env, &written),
         Place::Before | Place::After => env
             .exposed_hooks
             .borrow()
@@ -1566,9 +1611,64 @@ fn hook_contribution(env: &Env, table: &Table, owner: Rc<str>) -> mlua::Result<H
     }
     Ok(HookContribution {
         target,
-        place,
+        adds: Adds::Node(place, node),
         owner,
-        node,
+        vm: env.vm.clone(),
+    })
+}
+/// The capability replacing or filtering `written` takes, if the script
+/// lacks it: `Override` of the target as written, or of `"*"`.
+fn overrides(env: &Env, written: &str) -> Option<crate::Capability> {
+    let own = crate::Capability::Override(written.into());
+    let any = crate::Capability::Override("*".into());
+    (!env.grants.allows(&own) && !env.grants.allows(&any)).then_some(own)
+}
+/// `ui.filter { target, text = fn, … }`: the target read, the props it
+/// passes through functions (`Filtered`), and the capability it takes,
+/// `Override`'s as replacing does.
+fn hook_filter(env: &Env, table: &Table, owner: Rc<str>) -> mlua::Result<HookContribution> {
+    let written: String = table
+        .get::<Option<String>>("target")?
+        .ok_or_else(|| mlua::Error::runtime("ui.filter: `target` names the element"))?;
+    let target = crate::driver::Static::parse(&written).map_err(mlua::Error::runtime)?;
+    for pair in table.pairs::<String, mlua::Value>() {
+        let (key, _) = pair?;
+        if key != "target" && !Filtered::ALL.iter().any(|(name, _)| *name == key) {
+            return Err(mlua::Error::runtime(format!(
+                "ui.filter {{ target = \"{written}\" }}: `{key}` is not filtered; \
+                 one of text, label, hidden, disabled, tooltip or items"
+            )));
+        }
+    }
+    let mut filters = Vec::new();
+    for (key, filtered) in Filtered::ALL {
+        match table.get::<mlua::Value>(key)? {
+            mlua::Value::Nil => {}
+            mlua::Value::Function(f) => filters.push((filtered, f)),
+            other => {
+                return Err(mlua::Error::runtime(format!(
+                    "ui.filter {{ target = \"{written}\" }}: `{key}` takes a function of its \
+                     value, not {}",
+                    other.type_name()
+                )));
+            }
+        }
+    }
+    if filters.is_empty() {
+        return Err(mlua::Error::runtime(format!(
+            "ui.filter {{ target = \"{written}\" }}: name what it filters (text = function(text) … end)"
+        )));
+    }
+    if let Some(needed) = overrides(env, &written) {
+        return Err(mlua::Error::runtime(format!(
+            "ui.filter {{ target = \"{written}\" }}: {owner} needs {needed:?}"
+        )));
+    }
+    Ok(HookContribution {
+        target,
+        adds: Adds::Filters(filters),
+        owner,
+        vm: env.vm.clone(),
     })
 }
 
@@ -2041,7 +2141,7 @@ fn children(
 }
 
 /// A node's accessibility beyond its name (`Node::a11y`).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct A11y {
     pub role: Option<zgx::semantics::Role>,
     /// A heading's level, 1 to 6 (a byte: the box's size class is kept).
@@ -2172,7 +2272,7 @@ const LONG_EACH: usize = 1000;
 /// A menu item's options: whether it leaves its menu open when chosen
 /// (`keep_open`), whether it is checked (`checked`, a radio's with
 /// `radio`), and the keys it shows (`shortcut`).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct MenuItemOptions {
     pub keep_open: bool,
     pub checked: Option<Source>,
@@ -2183,6 +2283,7 @@ pub(crate) struct MenuItemOptions {
 /// What an input edits: a state, both ways, or (controlled, as React's
 /// inputs are) what a function shows, edits going out by `on_change` and
 /// `on_commit`; focused, the input keeps what is being typed.
+#[derive(Clone)]
 pub(crate) enum InputValue {
     State(Signal<Value>),
     /// What it shows, and its `on_change(text)` (each edit) and
@@ -4509,6 +4610,15 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                     ));
                 }
             }
+            Ok(())
+        })?,
+    )?;
+    ui.set(
+        "filter",
+        lua.create_function(|lua, table: Table| {
+            let env = env(lua)?;
+            let hook = hook_filter(&env, &table, env.owner.clone())?;
+            env.hooks.borrow_mut().push(hook);
             Ok(())
         })?,
     )?;

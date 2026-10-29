@@ -272,11 +272,10 @@ fn static_name(node: &Node) -> Option<&str> {
 /// told apart as the plugin's, so a contributed "Confirm" beside the app's
 /// is traced to it (assistive technology hears whose it is; the layout
 /// inspector shows the plugin's line that made it).
-fn contributed(hook: &crate::node::HookContribution, low: &Rc<Lowering>) -> View {
-    let view = lower(&hook.node, low);
+fn contributed(hook: &crate::node::HookContribution, node: &Rc<Node>, low: &Rc<Lowering>) -> View {
+    let view = lower(node, low);
     let from = format!("from the plugin {}", hook.owner);
-    let described = match hook
-        .node
+    let described = match node
         .a11y
         .as_ref()
         .and_then(|a11y| a11y.description.as_deref())
@@ -333,15 +332,246 @@ fn hooked_children(
     for child in &node.children {
         let names_parent = parent.is_some_and(|name| static_name(child) == Some(name));
         let at = hooks.at(child, !names_parent, low);
-        let place = |place| at.iter().filter(move |hook| hook.place == place);
-        children.extend(place(crate::node::Place::Before).map(|hook| contributed(hook, low)));
+        let place = |place| {
+            at.iter()
+                .filter_map(move |hook| Some((*hook, hook.placed(place)?)))
+        };
+        children.extend(
+            place(crate::node::Place::Before).map(|(hook, node)| contributed(hook, node, low)),
+        );
+        let filters: Vec<_> = at
+            .iter()
+            .filter_map(|hook| match &hook.adds {
+                crate::node::Adds::Filters(filters) => Some((*hook, filters)),
+                crate::node::Adds::Node(..) => None,
+            })
+            .flat_map(|(hook, filters)| filters.iter().map(move |(what, f)| (hook, *what, f)))
+            .collect();
         children.push(match place(crate::node::Place::Replace).next_back() {
-            Some(hook) => contributed(hook, low),
-            None => lowered(child),
+            Some((hook, node)) => contributed(hook, node, low),
+            None if filters.is_empty() => lowered(child),
+            None => filtered(child, &filters, low, flow),
         });
-        children.extend(place(crate::node::Place::After).map(|hook| contributed(hook, low)));
+        children.extend(
+            place(crate::node::Place::After).map(|(hook, node)| contributed(hook, node, low)),
+        );
     }
     view.children(children)
+}
+
+/// A value passed through a plugin's filter, by its script: what it
+/// returns, or (when it fails, reported as its error) the value as it was.
+fn passed(plugin: &std::rc::Weak<Vm>, f: &mlua::Function, value: Value) -> Value {
+    let Some(vm) = plugin.upgrade() else {
+        return value;
+    };
+    match vm.call::<Value>(f, value.clone()) {
+        Ok(returned) => returned,
+        Err(error) => {
+            vm.report(error);
+            value
+        }
+    }
+}
+/// A function of the app's script returning what `value` returns now: a
+/// computed source of its, followed as any is (what `value` reads, the
+/// app's state and the plugin's, makes it run again).
+fn computed_fn(app: &Vm, value: impl Fn() -> Value + 'static) -> Option<mlua::Function> {
+    app.lua
+        .create_function(move |_, ()| Ok(value()))
+        .map_err(|e| app.report(e))
+        .ok()
+}
+/// `source`'s value now, as a script reads it: a string or a boolean.
+fn value_now(source: &Owned, ty: Ty, app: &Vm) -> Value {
+    match resolve(source, ty, None, app) {
+        Some(Lit::Str(text)) => Value::Str(text),
+        Some(Lit::Bool(b)) => Value::Bool(b),
+        _ => Value::Nil,
+    }
+}
+/// `source` (or, without one, `default`) passed through `f`, as a
+/// computed source of the app's script.
+fn filtered_source(
+    source: Option<&Source>,
+    default: Value,
+    ty: Ty,
+    plugin: &std::rc::Weak<Vm>,
+    f: &mlua::Function,
+    app: &Rc<Vm>,
+) -> Option<Source> {
+    let (source, plugin, f, vm) = (
+        source.map(resolve_owned),
+        plugin.clone(),
+        f.clone(),
+        Rc::downgrade(app),
+    );
+    computed_fn(app, move || {
+        let now = match (&source, vm.upgrade()) {
+            (Some(source), Some(vm)) => value_now(source, ty, &vm),
+            _ => default.clone(),
+        };
+        passed(&plugin, &f, now)
+    })
+    .map(Source::Computed)
+}
+/// `text` passed through `f`, as text the app's script computes.
+fn filtered_text(
+    text: &Text,
+    plugin: &std::rc::Weak<Vm>,
+    f: &mlua::Function,
+    app: &Rc<Vm>,
+) -> Option<Text> {
+    let (text, plugin, f, vm) = (
+        copy_text(text),
+        plugin.clone(),
+        f.clone(),
+        Rc::downgrade(app),
+    );
+    computed_fn(app, move || {
+        let now = vm
+            .upgrade()
+            .map(|vm| render_text(&text, &vm))
+            .unwrap_or_default();
+        match passed(&plugin, &f, Value::Str(now.into())) {
+            Value::Str(text) => Value::Str(text),
+            Value::Nil => Value::Str("".into()),
+            other => Value::Str(other.to_string().into()),
+        }
+    })
+    .map(Text::Computed)
+}
+/// `node` lowered with its props passed through plugins' filters
+/// (`ui.filter`), in the order the scripts filter them: a copy of it, the
+/// app's own node left as it is. Its text is its own or (a button's, an
+/// item's) its first child's.
+#[cold]
+#[inline(never)]
+fn filtered(
+    node: &Rc<Node>,
+    filters: &[(
+        &crate::node::HookContribution,
+        crate::node::Filtered,
+        &mlua::Function,
+    )],
+    low: &Rc<Lowering>,
+    flow: Option<&[(Prop, Lit)]>,
+) -> View {
+    use crate::node::{Filtered, TooltipContent};
+    let flow: Option<Vec<(Prop, Lit)>> = flow.filter(|_| node.kind.flows()).map(<[_]>::to_vec);
+    let lowered = move |node: &Rc<Node>, low: &Rc<Lowering>| {
+        let view = lower(node, low);
+        match &flow {
+            Some(flow) => apply_all(view, flow),
+            None => view,
+        }
+    };
+    let Some(app) = node.owner.upgrade() else {
+        return lowered(node, low);
+    };
+    let mut copy = (**node).clone();
+    let mut items = Vec::new();
+    for &(hook, what, f) in filters {
+        let plugin = &hook.vm;
+        match what {
+            Filtered::Text => match &copy.kind {
+                Kind::Text(text) => {
+                    if let Some(text) = filtered_text(text, plugin, f, &app) {
+                        copy.kind = Kind::Text(text);
+                    }
+                }
+                _ => {
+                    if let Some(first) = copy.children.first()
+                        && let Kind::Text(text) = &first.kind
+                        && let Some(text) = filtered_text(text, plugin, f, &app)
+                    {
+                        let mut child = (**first).clone();
+                        child.kind = Kind::Text(text);
+                        copy.children[0] = Rc::new(child);
+                    }
+                }
+            },
+            Filtered::Label => {
+                let written = copy.label.take().map(|label| Source::Lit(Lit::Str(label)));
+                let a11y = copy.a11y.get_or_insert_default();
+                let source = a11y.label.take().or(written);
+                a11y.label = filtered_source(source.as_ref(), Value::Nil, Ty::Str, plugin, f, &app);
+            }
+            Filtered::Disabled => {
+                copy.disabled = filtered_source(
+                    copy.disabled.as_ref(),
+                    Value::Bool(false),
+                    Ty::Bool,
+                    plugin,
+                    f,
+                    &app,
+                );
+            }
+            Filtered::Hidden => {
+                let at = copy
+                    .props
+                    .iter()
+                    .position(|(prop, _)| *prop == Prop::Hidden);
+                let source = at.map(|at| &copy.props[at].1);
+                if let Some(source) =
+                    filtered_source(source, Value::Bool(false), Ty::Bool, plugin, f, &app)
+                {
+                    match at {
+                        Some(at) => copy.props[at].1 = source,
+                        None => copy.props.push((Prop::Hidden, source)),
+                    }
+                }
+            }
+            // A tooltip's text is written once: passed through as the
+            // element is built.
+            Filtered::Tooltip => {
+                if let Some(tooltip) = &mut copy.tooltip
+                    && let Some(TooltipContent::Text(text)) = &mut tooltip.content
+                {
+                    let value = passed(plugin, f, Value::Str(text.as_str().into()));
+                    *text = match value {
+                        Value::Str(passed) => passed.to_string(),
+                        Value::Nil => String::new(),
+                        other => other.to_string(),
+                    };
+                }
+            }
+            Filtered::Items => {
+                if let Kind::Each { .. } = copy.kind {
+                    items.push((plugin.clone(), f.clone()));
+                }
+            }
+        }
+    }
+    if items.is_empty() {
+        return lowered(&Rc::new(copy), low);
+    }
+    // What a `ui.each` shows passed through: a state of the app's, kept
+    // current as long as the element is there.
+    let (low, runtime) = (low.clone(), app.runtime.clone());
+    component(move |cx| {
+        let Kind::Each {
+            items: original, ..
+        } = &copy.kind
+        else {
+            unreachable!("items filter a ui.each")
+        };
+        let (original, shown) = (original.clone(), runtime.signal(Value::Nil));
+        let out = shown.clone();
+        let effect = runtime.effect_now(move || {
+            let mut value = original.get();
+            for (plugin, f) in &items {
+                value = passed(plugin, f, value);
+            }
+            out.set(value);
+        });
+        cx.retain(effect);
+        let mut copy = copy;
+        if let Kind::Each { items, .. } = &mut copy.kind {
+            *items = shown;
+        }
+        lowered(&Rc::new(copy), &low)
+    })
 }
 
 pub(crate) struct Lowering {

@@ -2,7 +2,7 @@
 
 Plugins add to an app at places the app did not prepare for, as WordPress plugins hook into a theme: next to the app's Save button, in place of its empty state, with a filter on a list's items. Slots (`ui.slot` and `ui.contribute(name, node)`) stay as they are, for the places an app does prepare.
 
-Status: (a) is built (hook points, before/after/replace, the capabilities); (b) to (e) are planned, in that order.
+Status: (a) is built (hook points, before/after/replace, the capabilities), and (b) (filters); (c) to (e) are planned, in that order.
 
 ## Targets
 
@@ -37,6 +37,15 @@ ui.contribute { target = "#empty-state", replace = ui.text { "Nothing here yet" 
 
 What a plugin adds is told apart as its own: its accessible description says "From the plugin `<name>`" (after the element's own description, if it has one), so a contributed "Confirm" can be traced by a screen reader user, the inspector and an agent.
 
+## Filtering
+
+```lua
+ui.filter { target = "#title", text = function(text) return string.upper(text) end }
+ui.filter { target = "#save", disabled = function(disabled) return disabled or not signed_in:get() end }
+```
+
+A filter passes one of an element's props through a function of the plugin's: `text` (its own, or a button's first child's), `label`, `hidden`, `disabled`, `tooltip` (its written text) and `items` (a `ui.each`'s). The function takes the value as it is and returns it changed; each is a computed source of the app's script that calls the plugin's function, so it runs in the plugin's VM again when what either reads changes, never per frame. Several apply in plugin order. It needs `Override`, as replacing does. The element is lowered as a copy with those props changed; its handlers, styles and state are the app's. A filter that fails is reported as the plugin's error and the value shows unchanged. `ui.list`'s data and a container's child order are not filtered yet.
+
 ## Matching and reactivity
 
 Targets are matched as the interface is lowered, once per element built, never per frame. An element built again (a `ui.show` turning back on, a row of `ui.each` coming in) is matched again. So a match that goes takes its contributions with it, and one that appears gets them; nothing is re-run while the element stays. A plugin's reload, or a change to which plugins load, reloads the app, which lowers it again.
@@ -54,7 +63,7 @@ With no plugin contributing to a target, lowering checks one `Option` per childr
 ## Plan
 
 - **(a)** Hook points, before/after/replace, `Capability::Override`, `expose_hook`, private elements, the plugin's accessible description.
-- **(b)** Filters: `ui.filter { target, prop, fn }` over a per-kind whitelist (text and label, hidden, disabled, tooltip, order, items and data), checked against the element's props, run as computeds in the plugin's VM: when what they read changes, never per frame. Needs `Override`.
+- **(b)** Filters: `ui.filter { target, text = fn, … }` over text, label, hidden, disabled, tooltip and a `ui.each`'s items, run as computeds in the plugin's VM: when what they read changes, never per frame. Needs `Override`. Still to come: `ui.list` data and child order.
 - **(c)** Overrides and packages: an `@app/…` module (only `@app` requires; a relative require stays private) replaced by a plugin's module with `Override`, with `@app-original/…` reachable only from inside the override, never from plugins. Packages: `ScriptHost::package`, `zgx.json`-listed `.luaurc` aliases outside the app's directory, an allowed-roots read-only sandbox in place of `within(root)`; `zgx bundle` includes them.
 - **(d)** Types: `zgx types` emits `HookName`, each hook's context type and typed `ui.contribute` overloads.
 - **(e)** Docs and a worked example.
