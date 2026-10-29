@@ -3543,3 +3543,37 @@ fn a_zoomable_element_takes_the_control_wheel_and_its_state_follows() {
     assert_eq!(h.ui.scene.borrow().transformed_bounds(doc).width, 110.);
     assert_eq!(h.text("level"), "1.10");
 }
+
+/// A settled spring or tween between values far apart (±1e36, whose
+/// difference times the spring's stiffness passes f32's range) settles,
+/// as nearer values do: nothing keeps asking for frames.
+fn retargeted_far_settles(curve: &str, amplitude: f64) -> bool {
+    let h = Harness::inline(&format!(
+        r#"local x = ui.state("x", 0)
+        return ui.div {{ id = "dot", w = 20, h = 20, opacity = ui.{curve}(x) }}"#
+    ));
+    h.host
+        .set_state("x", zgx_script::Value::Num(amplitude))
+        .unwrap();
+    h.settle();
+    h.frames(600);
+    assert!(
+        !h.clock.wants_frame(),
+        "{curve} {amplitude} settles the first time"
+    );
+    h.host
+        .set_state("x", zgx_script::Value::Num(-amplitude))
+        .unwrap();
+    h.settle();
+    h.frames(1200);
+    !h.clock.wants_frame()
+}
+
+#[test]
+fn a_spring_or_tween_between_far_values_settles() {
+    for curve in ["spring", "tween"] {
+        assert!(retargeted_far_settles(curve, 1e30), "{curve} 1e30");
+        assert!(retargeted_far_settles(curve, 1e36), "{curve} 1e36");
+        assert!(retargeted_far_settles(curve, 3e38), "{curve} 3e38");
+    }
+}

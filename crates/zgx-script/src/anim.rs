@@ -96,7 +96,8 @@ pub(crate) fn drive(cx: &mut Context, anim: &Anim) -> Signal<f32> {
     cx.tasks().spawn(async move {
         loop {
             notify.wait().await;
-            let mut velocity = 0_f32;
+            // In f64: a spring between ±1e36 accelerates past f32's range.
+            let mut velocity = 0_f64;
             let mut start: Option<(Instant, f32, f32)> = None;
             loop {
                 let goal = target.get();
@@ -116,18 +117,26 @@ pub(crate) fn drive(cx: &mut Context, anim: &Anim) -> Signal<f32> {
                         value.set(if t >= 1. {
                             to
                         } else {
-                            from + (to - from) * ease.at(t as f64, None) as f32
+                            // In f64: `to - from` may pass f32's range.
+                            let at = f64::from(from)
+                                + (f64::from(to) - f64::from(from)) * ease.at(t as f64, None);
+                            at as f32
                         });
                     }
                     Curve::Spring { stiffness, damping } => {
-                        let dt = frame.interval.as_secs_f32().min(1. / 30.);
+                        let dt = frame.interval.as_secs_f64().min(1. / 30.);
                         let goal = target.get();
-                        let x = value.with_untracked(|v| *v);
-                        velocity += (-*stiffness * (x - goal) - *damping * velocity) * dt;
+                        let (x, to) = (f64::from(value.with_untracked(|v| *v)), f64::from(goal));
+                        velocity += (-f64::from(*stiffness) * (x - to)
+                            - f64::from(*damping) * velocity)
+                            * dt;
                         let x = x + velocity * dt;
-                        let settle = 1e-3 * goal.abs().max(1.);
-                        let settled = (x - goal).abs() < settle && velocity.abs() < settle * 10.;
-                        value.set(if settled { goal } else { x });
+                        let settle = 1e-3 * to.abs().max(1.);
+                        // A value past f32's range (or none) lands on its
+                        // goal: it can't be shown, and would never settle.
+                        let settled = !((x as f32).is_finite() && velocity.is_finite())
+                            || (x - to).abs() < settle && velocity.abs() < settle * 10.;
+                        value.set(if settled { goal } else { x as f32 });
                         if settled {
                             velocity = 0.;
                         }
