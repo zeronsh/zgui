@@ -25,6 +25,11 @@ pub fn run(composite: bool) -> Result<(), Box<dyn std::error::Error>> {
     // composites it), for scripts/viewport_probe.swift to find any frame
     // that shows neither.
     let switching = mode == "switch";
+    // Resizing: the window steps through sizes every 100 ms, over magenta.
+    let resizing = mode == "resize";
+    // Covered: a box of the window's over a corner of the view, which then
+    // composites (it cannot be a layer of its own).
+    let covered = mode == "covered";
     bench_font::application()?
         .window(WindowOptions {
             title: "zgx GPU view".into(),
@@ -45,7 +50,7 @@ pub fn run(composite: bool) -> Result<(), Box<dyn std::error::Error>> {
                 div()
                     .w_full()
                     .h_full()
-                    .bg(if switching {
+                    .bg(if switching || resizing {
                         rgb(0xff00ff)
                     } else {
                         rgb(0x000000)
@@ -57,8 +62,28 @@ pub fn run(composite: bool) -> Result<(), Box<dyn std::error::Error>> {
                             .reactive_style(move || {
                                 Styles::new().opacity(if fade.get() { 0.999 } else { 1. })
                             }),
-                    ),
+                    )
+                    .children(covered.then(|| {
+                        div()
+                            .absolute()
+                            .top(20.)
+                            .left(20.)
+                            .w(120.)
+                            .h(40.)
+                            .bg(rgb(0x2060ff))
+                    })),
             );
+            if resizing {
+                let window = cx.window.clone();
+                cx.tasks.spawn(async move {
+                    let sizes = [(960., 720.), (900., 660.), (820., 600.), (900., 700.)];
+                    for step in 0.. {
+                        zgx::timer::sleep(Duration::from_millis(100)).await;
+                        let (width, height) = sizes[step % sizes.len()];
+                        window.set_inner_size(width, height);
+                    }
+                });
+            }
             if switching {
                 let frames = cx.frames.clone();
                 cx.tasks.spawn(async move {
