@@ -7,10 +7,11 @@
 //! normals, made smooth where a mesh has none, and texture coordinates, of
 //! any of glTF's component types), and their metallic-roughness materials'
 //! factors: colour, metal, roughness, emission, blending (`BLEND`) and
-//! `KHR_materials_unlit`, and their base colour, metal and roughness, and
-//! normal textures (PNG or JPEG, in the file, inline or beside it). Not
-//! yet: emission and occlusion textures, skins, morph targets, animations,
-//! sparse accessors, points and lines (skipped).
+//! `KHR_materials_unlit` and `KHR_materials_emissive_strength`, and their
+//! base colour, metal and roughness, normal, emission and occlusion
+//! textures (PNG or JPEG, in the file, inline or beside it). Not yet:
+//! skins, morph targets, animations, sparse accessors, points and lines
+//! (skipped).
 use crate::{
     Geometry, Material, Object, ObjectId, Quat, Texture, Transform, Vec3, Vertex, World, vec3,
 };
@@ -44,7 +45,7 @@ struct Node {
 }
 
 /// A mesh's textures, in `Map::ALL`'s order.
-type Maps = [Option<Texture>; 3];
+type Maps = [Option<Texture>; crate::texture::MAPS];
 
 /// Deeper than this, a node tree is taken for a cycle.
 const MAX_DEPTH: usize = 256;
@@ -335,10 +336,8 @@ fn rotation_of(x: Vec3, y: Vec3, z: Vec3) -> Quat {
     q.normalized()
 }
 
-/// A material's factors (glTF's are in linear light, as zgx-3d's). Where
-/// a texture not read yet would scale a factor, its factor alone would
-/// mislead (a textured helmet's emission of 1 makes it glow): a textured
-/// emission is none.
+/// A material's factors (glTF's are in linear light, as zgx-3d's), its
+/// emission scaled by `KHR_materials_emissive_strength`.
 fn material(value: &Value) -> Material {
     let pbr = value.get("pbrMetallicRoughness");
     let number = |key: &str, default: f32| {
@@ -354,10 +353,17 @@ fn material(value: &Value) -> Material {
         color,
         metallic: number("metallicFactor", 1.).clamp(0., 1.),
         roughness: number("roughnessFactor", 1.).clamp(0., 1.),
-        emissive: if value.get("emissiveTexture").is_some() {
-            [0.; 3]
-        } else {
-            floats::<3>(value.get("emissiveFactor")).unwrap_or([0.; 3])
+        emissive: {
+            let strength = value
+                .get("extensions")
+                .and_then(|e| e.get("KHR_materials_emissive_strength"))
+                .and_then(|e| e.get("emissiveStrength"))
+                .and_then(Value::as_f64)
+                .filter(|s| s.is_finite() && *s >= 0.)
+                .unwrap_or(1.) as f32;
+            floats::<3>(value.get("emissiveFactor"))
+                .unwrap_or([0.; 3])
+                .map(|c| c * strength)
         },
         unlit: value
             .get("extensions")
@@ -366,10 +372,12 @@ fn material(value: &Value) -> Material {
 }
 
 /// Where a material names each of its maps' textures (`Map::ALL`'s order).
-const MAP_TEXTURES: [&[&str]; 3] = [
+const MAP_TEXTURES: [&[&str]; crate::texture::MAPS] = [
     &["pbrMetallicRoughness", "baseColorTexture"],
     &["pbrMetallicRoughness", "metallicRoughnessTexture"],
     &["normalTexture"],
+    &["emissiveTexture"],
+    &["occlusionTexture"],
 ];
 /// The image of the texture `material` names at `path`, if it has one.
 fn material_image(doc: &Value, material: &Value, path: &[&str]) -> Option<usize> {

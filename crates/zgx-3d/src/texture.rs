@@ -51,13 +51,27 @@ pub enum Map {
     /// Which way each point faces, in the surface's own frame (red right,
     /// green up the texture, blue out; glTF's and OpenGL's convention).
     Normal,
+    /// The light it gives off, multiplying the material's emission (sRGB).
+    Emission,
+    /// How much of its surroundings' light reaches each point (red: 1 all,
+    /// 0 none), dimming the hemisphere's ambient light, not the sun's or a
+    /// bulb's (glTF's occlusion).
+    Occlusion,
 }
+/// How many maps a mesh may have.
+pub(crate) const MAPS: usize = 5;
 impl Map {
     /// Every map, in the order a frame binds them.
-    pub(crate) const ALL: [Map; 3] = [Map::BaseColour, Map::MetalRoughness, Map::Normal];
+    pub(crate) const ALL: [Map; MAPS] = [
+        Map::BaseColour,
+        Map::MetalRoughness,
+        Map::Normal,
+        Map::Emission,
+        Map::Occlusion,
+    ];
     /// Whether its texels are colours (sRGB) rather than data.
     pub(crate) fn srgb(self) -> bool {
-        matches!(self, Map::BaseColour)
+        matches!(self, Map::BaseColour | Map::Emission)
     }
 }
 

@@ -544,3 +544,68 @@ fn a_decoded_texture_uploads_again_on_another_device() {
         );
     }
 }
+
+/// A square facing the camera, u across to the right, v down.
+fn facing_square() -> Geometry {
+    let vertex = |x: f32, y: f32, u: f32, v: f32| Vertex {
+        position: [x, y, 0.],
+        normal: [0., 0., 1.],
+        uv: [u, v],
+    };
+    Geometry::new(
+        vec![
+            vertex(-1., -1., 0., 1.),
+            vertex(1., -1., 1., 1.),
+            vertex(1., 1., 1., 0.),
+            vertex(-1., 1., 0., 0.),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .unwrap()
+}
+
+#[test]
+fn an_emission_map_colours_the_light_a_mesh_gives_off() {
+    // A black square, unlit by anything, glowing as its emission map says.
+    let mut black = Material::rgb(0x000000);
+    black.emissive = [1., 1., 1.];
+    let (world, id) = one(facing_square(), black);
+    let map = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    world.set_map(id, Map::Emission, Some(map));
+    let Some(mut window) = Window::new(&world) else {
+        return;
+    };
+    window.draw();
+    let (left, right) = (window.pixel(30, 50), window.pixel(70, 50));
+    // (A full glow is desaturated a little by the tone mapping.)
+    assert!(left[0] > left[2] + 150, "red glow on the left: {left:?}");
+    assert!(
+        right[2] > right[0] + 150,
+        "blue glow on the right: {right:?}"
+    );
+}
+
+#[test]
+fn an_occlusion_map_dims_the_ambient_light_alone() {
+    // Lit by the hemisphere alone: where the map says no light reaches, dark.
+    let level = |occlusion: u8| -> Option<u8> {
+        let (world, id) = one(facing_square(), Material::rgb(0xffffff).with(0., 1.));
+        world.add_light(Light::Hemisphere {
+            sky: [1., 1., 1.],
+            ground: [1., 1., 1.],
+            intensity: 1.,
+        });
+        let map = Texture::from_rgba8(1, 1, vec![occlusion, 0, 0, 255]).unwrap();
+        world.set_map(id, Map::Occlusion, Some(map));
+        let mut window = Window::new(&world)?;
+        window.draw();
+        Some(window.pixel(50, 50)[0])
+    };
+    let (Some(open), Some(occluded)) = (level(255), level(0)) else {
+        return;
+    };
+    assert!(
+        open > 100 && occluded < 10,
+        "open {open}, occluded {occluded}"
+    );
+}

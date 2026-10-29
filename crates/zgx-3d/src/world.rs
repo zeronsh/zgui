@@ -269,7 +269,7 @@ pub(crate) struct Drawn<'a> {
     pub(crate) geometry: &'a Geometry,
     pub(crate) material: &'a Material,
     /// Its textures, by `Map::ALL`'s order.
-    pub(crate) maps: [Option<&'a crate::Texture>; 3],
+    pub(crate) maps: [Option<&'a crate::Texture>; crate::texture::MAPS],
     pub(crate) matrix: Mat4,
 }
 impl Inner {
