@@ -40,6 +40,43 @@ use objc2_quartz_core::{
 };
 use std::{cell::Cell, ffi::c_void, ptr::null, rc::Rc};
 
+/// A surface of `width` by `height` pixels, BGRA, tagged sRGB.
+fn new_surface(width: u32, height: u32) -> Result<CFRetained<IOSurfaceRef>, GpuError> {
+    // 'BGRA': four bytes a pixel, as `FORMAT` (Bgra8Unorm) stores them.
+    let number = |value: i32| CFNumber::new_i32(value);
+    let (w, h, bytes, format) = (
+        number(width as i32),
+        number(height as i32),
+        number(4),
+        number(i32::from_be_bytes(*b"BGRA")),
+    );
+    // SAFETY: The keys are IOSurface's own constant CFStrings.
+    let keys: [&CFString; 4] = unsafe {
+        [
+            kIOSurfaceWidth,
+            kIOSurfaceHeight,
+            kIOSurfaceBytesPerElement,
+            kIOSurfacePixelFormat,
+        ]
+    };
+    let values: [&CFType; 4] = [&w, &h, &bytes, &format];
+    let properties = CFDictionary::from_slices(&keys, &values);
+    // SAFETY: The dictionary holds IOSurface creation properties, each a
+    // CFNumber as IOSurface documents for these keys.
+    let surface = unsafe { IOSurfaceRef::new(properties.as_opaque()) }
+        .ok_or_else(|| GpuError("IOSurface creation failed".into()))?;
+    // sRGB, as a `CAMetalLayer` without a colour space shows its drawables:
+    // untagged layer contents would be taken as the display's space.
+    // SAFETY: CoreGraphics' constant CFString, read only.
+    if let Some(list) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
+        .and_then(|space| CGColorSpace::property_list(&space))
+    {
+        // SAFETY: IOSurface's colour-space key and a colour space's
+        // property list form, as it documents.
+        unsafe { surface.set_value(kIOSurfaceColorSpace, &list) };
+    }
+    Ok(surface)
+}
 /// A surface the renderer draws into and a layer shows.
 pub(crate) struct Buffer {
     pub surface: CFRetained<IOSurfaceRef>,
@@ -66,39 +103,7 @@ impl Buffer {
             .as_ref()
     }
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Result<Self, GpuError> {
-        // 'BGRA': four bytes a pixel, as `FORMAT` (Bgra8Unorm) stores them.
-        let number = |value: i32| CFNumber::new_i32(value);
-        let (w, h, bytes, format) = (
-            number(width as i32),
-            number(height as i32),
-            number(4),
-            number(i32::from_be_bytes(*b"BGRA")),
-        );
-        // SAFETY: The keys are IOSurface's own constant CFStrings.
-        let keys: [&CFString; 4] = unsafe {
-            [
-                kIOSurfaceWidth,
-                kIOSurfaceHeight,
-                kIOSurfaceBytesPerElement,
-                kIOSurfacePixelFormat,
-            ]
-        };
-        let values: [&CFType; 4] = [&w, &h, &bytes, &format];
-        let properties = CFDictionary::from_slices(&keys, &values);
-        // SAFETY: The dictionary holds IOSurface creation properties, each a
-        // CFNumber as IOSurface documents for these keys.
-        let surface = unsafe { IOSurfaceRef::new(properties.as_opaque()) }
-            .ok_or_else(|| GpuError("IOSurface creation failed".into()))?;
-        // sRGB, as a `CAMetalLayer` without a colour space shows its drawables:
-        // untagged layer contents would be taken as the display's space.
-        // SAFETY: CoreGraphics' constant CFString, read only.
-        if let Some(list) = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
-            .and_then(|space| CGColorSpace::property_list(&space))
-        {
-            // SAFETY: IOSurface's colour-space key and a colour space's
-            // property list form, as it documents.
-            unsafe { surface.set_value(kIOSurfaceColorSpace, &list) };
-        }
+        let surface = new_surface(width, height)?;
         // SAFETY: The raw device only makes a texture; nothing destroys it, and
         // the guard is dropped before wgpu is called again.
         let hal = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }
@@ -410,6 +415,8 @@ pub(crate) struct Layer {
     /// GPU views shown on layers of their own (`viewport`), by view and box:
     /// above the frames, under the caret. Empty without such a view.
     planes: Vec<Plane>,
+    /// GPU views shown on rings of their own (`ZGX_PLANE_TILES`).
+    rings: Vec<Ring>,
 }
 /// A GPU view's own layer: its painter draws into the layer's drawables,
 /// the window server composites them as it does any Metal layer.
@@ -435,17 +442,147 @@ const PLANE_POOL: usize = 3;
 /// A GPU view plane's drawable to draw a frame into, and how to present it.
 pub(crate) struct PlaneFrame {
     pub key: (u64, u64),
-    pub drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>,
+    target: PlaneTarget,
     /// Its box (the host's points from the top left).
     rect: (f64, f64, f64, f64),
     /// Its box moved or showed this frame: presented in the frame's
     /// transaction, with the layer's new geometry, not by Metal on its own.
     pub moved: bool,
 }
+enum PlaneTarget {
+    Drawable(Retained<ProtocolObject<dyn CAMetalDrawable>>),
+    Ring(RingFrame),
+}
 impl PlaneFrame {
     /// Its box (the host's points from the top left).
     pub fn rect(&self) -> (f64, f64, f64, f64) {
         self.rect
+    }
+    /// Whether it is a ring's (`Ring`).
+    pub fn ring(&self) -> bool {
+        matches!(self.target, PlaneTarget::Ring(_))
+    }
+    /// The texture to draw it into (`BGRA8Unorm_sRGB`).
+    pub fn texture(&self) -> Retained<ProtocolObject<dyn MTLTexture>> {
+        match &self.target {
+            PlaneTarget::Drawable(drawable) => drawable.texture(),
+            PlaneTarget::Ring(frame) => frame.texture.clone(),
+        }
+    }
+}
+/// A GPU view's plane as a ring of surfaces of its own, as the window's
+/// tiles are (`ZGX_PLANE_TILES=1`, a trial): a sublayer a surface, its
+/// contents set once, a frame shown by flipping which is hidden when its
+/// painter's work completes, with no `CAMetalLayer` and no thread.
+struct Ring {
+    key: (u64, u64),
+    layer: Retained<CALayer>,
+    rect: Option<(f64, f64, f64, f64)>,
+    size: (u32, u32),
+    slots: Vec<Slot>,
+    state: std::sync::Arc<RingState>,
+    wake: Option<crate::PlaneWaker>,
+    feedback: std::sync::Arc<Feedback>,
+    frames: u64,
+    logged: Option<(std::time::Instant, u64)>,
+}
+struct Slot {
+    surface: CFRetained<IOSurfaceRef>,
+    texture: Retained<ProtocolObject<dyn MTLTexture>>,
+    layer: Retained<CALayer>,
+}
+/// A ring's state, shared with its completion handlers.
+#[derive(Default)]
+struct RingState {
+    /// Bit `i`: slot `i` drawn or being drawn, not yet shown.
+    pending: std::sync::atomic::AtomicU32,
+    /// Bit `i`: slot `i`'s frame committed, its flip not yet made.
+    inflight: std::sync::atomic::AtomicU32,
+    /// The slot shown, plus one (0: none).
+    shown: std::sync::atomic::AtomicUsize,
+    /// A frame owed for want of a slot: the next completion wakes the host.
+    wanted: std::sync::atomic::AtomicBool,
+}
+/// A ring's slot to draw a frame into; dropped unshown, the slot is free.
+struct RingFrame {
+    state: std::sync::Arc<RingState>,
+    slot: usize,
+    texture: Retained<ProtocolObject<dyn MTLTexture>>,
+    handed: bool,
+    /// When its frame began (host seconds), for the present log.
+    started: Option<f64>,
+}
+impl Drop for RingFrame {
+    fn drop(&mut self) {
+        if !self.handed {
+            use std::sync::atomic::Ordering;
+            self.state
+                .pending
+                .fetch_and(!(1 << self.slot), Ordering::AcqRel);
+        }
+    }
+}
+/// Moved to a completion handler's thread.
+struct Sendable<T>(T);
+// SAFETY: Core Animation layers may be changed from any thread inside an
+// explicit transaction; the handler only flips `hidden` on its ring's slots,
+// which the main thread changes only once their work is shown
+// (`Ring::settle`).
+unsafe impl<T> Send for Sendable<T> {}
+fn ring_tiles() -> bool {
+    static TILES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TILES.get_or_init(|| std::env::var_os("ZGX_PLANE_TILES").is_some_and(|v| v == "1"))
+}
+fn ring_slots() -> usize {
+    static SLOTS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *SLOTS.get_or_init(|| {
+        std::env::var("ZGX_PLANE_RING")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3usize)
+            .clamp(2, 6)
+    })
+}
+impl RingState {
+    fn shown(&self) -> Option<usize> {
+        self.shown
+            .load(std::sync::atomic::Ordering::Acquire)
+            .checked_sub(1)
+    }
+}
+impl Ring {
+    /// A slot not shown and not on its way: one the window server no longer
+    /// uses first (the tiles' rule), else any (it holds a hidden one a
+    /// while, as the tiles find).
+    fn free(&self) -> Option<usize> {
+        use std::sync::atomic::Ordering;
+        let pending = self.state.pending.load(Ordering::Acquire);
+        let shown = self.state.shown();
+        let open = |i: &usize| Some(*i) != shown && pending & (1 << i) == 0;
+        (0..self.slots.len())
+            .filter(open)
+            .find(|&i| self.slots[i].surface.use_count() <= 1)
+            .or_else(|| (0..self.slots.len()).find(open))
+            .or_else(|| (self.slots.len() < ring_slots()).then_some(self.slots.len()))
+    }
+    /// Wait until every frame on its way has shown: the main thread then
+    /// flips its slots itself, in order.
+    fn settle(&self) {
+        use std::sync::atomic::Ordering;
+        let mine = |state: &RingState| state.inflight.load(Ordering::Acquire);
+        let started = std::time::Instant::now();
+        while mine(&self.state) != 0 && started.elapsed() < std::time::Duration::from_millis(50) {
+            std::thread::yield_now();
+        }
+    }
+    /// Show slot `slot` and hide the rest, in the caller's transaction.
+    fn flip(layers: &[Retained<CALayer>], slot: usize) {
+        for (i, layer) in layers.iter().enumerate() {
+            let hidden = i != slot;
+            if layer.isHidden() != hidden {
+                layer.setHidden(hidden);
+            }
+        }
     }
 }
 /// A caret drawn by Core Animation over the window's frames
@@ -1037,6 +1174,7 @@ impl Layer {
             drawables: None,
             probe: None,
             planes: Vec::new(),
+            rings: Vec::new(),
         }
     }
     /// The next drawable of GPU view plane `key`, `size` pixels, its box
@@ -1053,6 +1191,9 @@ impl Layer {
         started: Option<f64>,
         wake: Option<&crate::PlaneWaker>,
     ) -> Option<PlaneFrame> {
+        if ring_tiles() {
+            return self.ring_frame(key, device, size, rect, started, wake);
+        }
         let host = &self.host;
         let at = match self.planes.iter().position(|plane| plane.key == key) {
             Some(at) => at,
@@ -1136,7 +1277,120 @@ impl Layer {
         }
         Some(PlaneFrame {
             key,
-            drawable,
+            target: PlaneTarget::Drawable(drawable),
+            rect,
+            moved,
+        })
+    }
+    /// `plane_frame` on a ring (`Ring`).
+    fn ring_frame(
+        &mut self,
+        key: (u64, u64),
+        device: &ProtocolObject<dyn objc2_metal::MTLDevice>,
+        size: (u32, u32),
+        rect: (f64, f64, f64, f64),
+        started: Option<f64>,
+        wake: Option<&crate::PlaneWaker>,
+    ) -> Option<PlaneFrame> {
+        use std::sync::atomic::Ordering;
+        let host = &self.host;
+        let at = match self.rings.iter().position(|ring| ring.key == key) {
+            Some(at) => at,
+            None => {
+                let layer = CALayer::new();
+                fill(&layer, host, true);
+                layer.setAutoresizingMask(CAAutoresizingMask::empty());
+                layer.setHidden(true);
+                layer.setZPosition(0.5);
+                host.addSublayer(&layer);
+                crate::present_log::log(|| format!("ring-start {key:?} slots={}", ring_slots()));
+                self.rings.push(Ring {
+                    key,
+                    layer,
+                    rect: None,
+                    size,
+                    slots: Vec::new(),
+                    state: Default::default(),
+                    wake: wake.cloned(),
+                    feedback: Default::default(),
+                    frames: 0,
+                    logged: None,
+                });
+                self.rings.len() - 1
+            }
+        };
+        let ring = &mut self.rings[at];
+        if ring.size != size {
+            // A new size: new surfaces (this frame moves, shown with the
+            // window's).
+            ring.settle();
+            for slot in ring.slots.drain(..) {
+                slot.layer.removeFromSuperlayer();
+            }
+            ring.state.pending.store(0, Ordering::Release);
+            ring.state.shown.store(0, Ordering::Release);
+            ring.size = size;
+        }
+        let moved = ring.rect != Some(rect);
+        let slot = ring.free()?;
+        if slot == ring.slots.len() {
+            let surface = new_surface(size.0, size.1).ok()?;
+            // SAFETY: A plain 2D texture descriptor for a surface this size.
+            let descriptor = unsafe {
+                MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                    MTLPixelFormat::BGRA8Unorm_sRGB,
+                    size.0 as usize,
+                    size.1 as usize,
+                    false,
+                )
+            };
+            descriptor.setUsage(MTLTextureUsage::RenderTarget);
+            descriptor.setStorageMode(MTLStorageMode::Shared);
+            let texture =
+                device.newTextureWithDescriptor_iosurface_plane(&descriptor, &surface, 0)?;
+            let layer = CALayer::new();
+            fill(&layer, &ring.layer, true);
+            layer.setHidden(true);
+            let contents = &*surface as *const IOSurfaceRef as *const AnyObject;
+            // SAFETY: `contents` points to the slot's live IOSurface, an
+            // object (bridged to `IOSurface`) and a layer's valid contents,
+            // which the layer retains.
+            unsafe { layer.setContents(Some(&*contents)) };
+            ring.layer.addSublayer(&layer);
+            ring.slots.push(Slot {
+                surface,
+                texture,
+                layer,
+            });
+            crate::present_log::log(|| format!("ring-slot {key:?} {slot} {size:?}"));
+        }
+        ring.state.pending.fetch_or(1 << slot, Ordering::AcqRel);
+        if crate::present_log::enabled() {
+            ring.frames += 1;
+            if ring.frames.is_multiple_of(240) {
+                let (shown, skipped, median, p99, late) = ring.feedback.summary();
+                let now = std::time::Instant::now();
+                let rate = ring.logged.map_or(0., |(at, before)| {
+                    shown.saturating_sub(before) as f64 / now.duration_since(at).as_secs_f64()
+                });
+                ring.logged = Some((now, shown));
+                let (latency, latency_p99) = ring.feedback.latency().unwrap_or_default();
+                crate::present_log::log(|| {
+                    format!(
+                        "ring {key:?} flipped={shown} flipped_fps={rate:.1} skipped={skipped} gap_p50={median:.2}ms gap_p99={p99:.2}ms late={late} start_to_flip_p50={latency:.2}ms p99={latency_p99:.2}ms"
+                    )
+                });
+            }
+        }
+        Some(PlaneFrame {
+            key,
+            target: PlaneTarget::Ring(RingFrame {
+                state: ring.state.clone(),
+                slot,
+                texture: ring.slots[slot].texture.clone(),
+                handed: false,
+                started,
+            }),
             rect,
             moved,
         })
@@ -1148,6 +1402,57 @@ impl Layer {
         frame: PlaneFrame,
         queue: &ProtocolObject<dyn MTLCommandQueue>,
     ) {
+        let drawable = match frame.target {
+            PlaneTarget::Drawable(drawable) => drawable,
+            PlaneTarget::Ring(mut target) => {
+                let Some(ring) = self.rings.iter().find(|ring| ring.key == frame.key) else {
+                    return;
+                };
+                let Some(buffer) = queue.commandBuffer() else {
+                    return;
+                };
+                use std::sync::atomic::Ordering;
+                let (slot, bit) = (target.slot, 1u32 << target.slot);
+                target.handed = true;
+                ring.state.inflight.fetch_or(bit, Ordering::AcqRel);
+                let layers = Sendable(
+                    ring.slots
+                        .iter()
+                        .map(|slot| slot.layer.clone())
+                        .collect::<Vec<_>>(),
+                );
+                let (state, wake, feedback, started) = (
+                    ring.state.clone(),
+                    ring.wake.clone(),
+                    ring.feedback.clone(),
+                    target.started,
+                );
+                let handler = block2::RcBlock::new(
+                    move |_: std::ptr::NonNull<ProtocolObject<dyn MTLCommandBuffer>>| {
+                        let layers = &layers;
+                        transaction(|| Ring::flip(&layers.0, slot));
+                        state.shown.store(slot + 1, Ordering::Release);
+                        state.pending.fetch_and(!bit, Ordering::AcqRel);
+                        state.inflight.fetch_and(!bit, Ordering::AcqRel);
+                        let now = crate::present_log::now_ns() as f64 / 1e9;
+                        feedback.record(now);
+                        if let Some(started) = started {
+                            feedback.record_latency(started, now);
+                        }
+                        if state.wanted.swap(false, Ordering::AcqRel)
+                            && let Some(wake) = &wake
+                        {
+                            wake();
+                        }
+                    },
+                );
+                // SAFETY: A live block taking the command buffer, as the
+                // handler's type declares; Metal copies it.
+                unsafe { buffer.addCompletedHandler(block2::RcBlock::as_ptr(&handler)) };
+                buffer.commit();
+                return;
+            }
+        };
         let Some(plane) = self.planes.iter().find(|plane| plane.key == frame.key) else {
             return;
         };
@@ -1157,9 +1462,7 @@ impl Layer {
         if plane.layer.presentsWithTransaction() {
             plane.layer.setPresentsWithTransaction(false);
         }
-        buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(
-            &*frame.drawable,
-        ));
+        buffer.presentDrawable(ProtocolObject::<dyn MTLDrawable>::from_ref(&*drawable));
         buffer.commit();
     }
     /// Whether plane `key`'s next frame waits for a drawable: its thread
@@ -1167,6 +1470,20 @@ impl Layer {
     /// frame meanwhile, and the host is woken to draw it when it comes, so
     /// the main thread never waits for one.
     pub fn plane_defers(&mut self, key: (u64, u64)) -> bool {
+        if let Some(ring) = self.rings.iter().find(|ring| ring.key == key) {
+            use std::sync::atomic::Ordering;
+            if ring.free().is_some() {
+                return false;
+            }
+            // The next flip wakes the host; one made meanwhile freed a slot.
+            ring.state.wanted.store(true, Ordering::Release);
+            if ring.free().is_some() {
+                ring.state.wanted.store(false, Ordering::Release);
+                return false;
+            }
+            crate::present_log::log(|| format!("ring-full {key:?}"));
+            return true;
+        }
         let Some(plane) = self.planes.iter_mut().find(|plane| plane.key == key) else {
             return false;
         };
@@ -1179,21 +1496,70 @@ impl Layer {
         self.planes
             .iter()
             .any(|plane| plane.rect.is_some() && plane.drawables.ready())
+            || self
+                .rings
+                .iter()
+                .any(|ring| ring.rect.is_some() && ring.free().is_some())
     }
     /// Before the frame's transaction: the work on `queue` (the painters' of
     /// planes moving with it, and the frame's own) committed and scheduled,
     /// so presents in the transaction wait for nothing there (the window's
     /// commit keeps its time).
-    pub fn schedule_plane(queue: &ProtocolObject<dyn MTLCommandQueue>) {
+    pub fn schedule_plane(queue: &ProtocolObject<dyn MTLCommandQueue>, complete: bool) {
         if let Some(buffer) = queue.commandBuffer() {
             buffer.commit();
-            buffer.waitUntilScheduled();
+            if complete {
+                buffer.waitUntilCompleted();
+            } else {
+                buffer.waitUntilScheduled();
+            }
         }
     }
     /// In the frame's transaction: `frame`'s box placed and shown, and its
     /// drawable presented with it (`schedule_plane` first).
     pub fn show_plane(&mut self, frame: PlaneFrame) {
         let host = &self.host;
+        if let PlaneTarget::Ring(mut target) = frame.target {
+            let Some(ring) = self.rings.iter_mut().find(|ring| ring.key == frame.key) else {
+                return;
+            };
+            // Shown by the main thread after the frames before it.
+            ring.settle();
+            if ring.rect != Some(frame.rect) {
+                let (x, y, width, height) = frame.rect;
+                let y = if host.isGeometryFlipped() || host.contentsAreFlipped() {
+                    y
+                } else {
+                    host.bounds().size.height - y - height
+                };
+                ring.layer.setFrame(objc2_core_foundation::CGRect::new(
+                    objc2_core_foundation::CGPoint::new(x, y),
+                    CGSize::new(width, height),
+                ));
+                let bounds = ring.layer.bounds();
+                for slot in &ring.slots {
+                    if slot.layer.frame() != bounds {
+                        slot.layer.setFrame(bounds);
+                    }
+                }
+                ring.rect = Some(frame.rect);
+            }
+            if ring.layer.isHidden() {
+                ring.layer.setHidden(false);
+            }
+            use std::sync::atomic::Ordering;
+            let layers: Vec<_> = ring.slots.iter().map(|slot| slot.layer.clone()).collect();
+            Ring::flip(&layers, target.slot);
+            target.handed = true;
+            ring.state.shown.store(target.slot + 1, Ordering::Release);
+            ring.state
+                .pending
+                .fetch_and(!(1 << target.slot), Ordering::AcqRel);
+            return;
+        }
+        let PlaneTarget::Drawable(drawable) = frame.target else {
+            return;
+        };
         let Some(plane) = self.planes.iter_mut().find(|plane| plane.key == frame.key) else {
             return;
         };
@@ -1216,11 +1582,24 @@ impl Layer {
         if !plane.layer.presentsWithTransaction() {
             plane.layer.setPresentsWithTransaction(true);
         }
-        frame.drawable.present();
+        drawable.present();
     }
     /// Hide plane `key` (its view draws into the window again), in the
     /// caller's transaction.
     pub fn hide_plane(&mut self, key: (u64, u64)) {
+        if let Some(ring) = self.rings.iter_mut().find(|ring| ring.key == key)
+            && ring.rect.take().is_some()
+        {
+            ring.settle();
+            ring.layer.setHidden(true);
+            for slot in &ring.slots {
+                slot.layer.setHidden(true);
+            }
+            ring.state
+                .shown
+                .store(0, std::sync::atomic::Ordering::Release);
+            crate::present_log::log(|| format!("ring-hide {key:?}"));
+        }
         if let Some(plane) = self.planes.iter_mut().find(|plane| plane.key == key)
             && plane.rect.take().is_some()
         {
@@ -1240,6 +1619,14 @@ impl Layer {
             let kept = keep(plane.key);
             if !kept {
                 plane.layer.removeFromSuperlayer();
+            }
+            kept
+        });
+        self.rings.retain(|ring| {
+            let kept = keep(ring.key);
+            if !kept {
+                ring.settle();
+                ring.layer.removeFromSuperlayer();
             }
             kept
         });

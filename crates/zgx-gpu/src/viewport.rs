@@ -477,8 +477,7 @@ impl GpuRenderer {
         };
         // The drawable's texture as wgpu's, made once per texture of the pool.
         use objc2_metal::MTLTexture;
-        use objc2_quartz_core::CAMetalDrawable;
-        let texture = plane.drawable.texture();
+        let texture = plane.texture();
         let address = &*texture as *const _ as *const u8 as usize;
         let views = self.views.get_or_insert_with(Default::default);
         let planed = views.planes.entry(key).or_insert_with(|| Planed {
@@ -544,7 +543,7 @@ impl GpuRenderer {
                 };
                 let view = wrapped.create_view(&Default::default());
                 // A new size or pool: the old textures are gone with it.
-                if planed.targets.len() >= 3 {
+                if planed.targets.len() >= 6 {
                     planed.targets.remove(0);
                 }
                 planed.targets.push((address, wrapped, view.clone()));
@@ -710,7 +709,9 @@ pub(crate) fn schedule_planes(
     if !views.moved.is_empty()
         && let Some(queue) = queue
     {
-        crate::layer_present::Layer::schedule_plane(queue);
+        // A ring's frame shows as its surface: its work done first.
+        let complete = views.moved.iter().any(|plane| plane.ring());
+        crate::layer_present::Layer::schedule_plane(queue, complete);
     }
 }
 
