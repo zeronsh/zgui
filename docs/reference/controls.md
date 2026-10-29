@@ -175,7 +175,7 @@ A button showing the chosen option that opens a menu of them over itself, the ch
 | Option | Type | Default | |
 | --- | --- | --- | --- |
 | `value` | `State<any>`, or `() -> any` | required | the chosen option's value, both ways; a function controls it, a choice going to `on_change` |
-| `options` | `{ string \| number \| { label, value, disabled } }` | required | a bare string or number is its own value; a disabled option shows but can't be chosen |
+| `options` | `{ string \| number \| { label, value, disabled } }`, or a state of `{ label, value, disabled }` | required | a bare string or number is its own value; a disabled option shows but can't be chosen. A state's options follow it: relabelled in place (a new locale), added and removed by their value |
 | `placeholder` | `string` | `""` | shown while no option is chosen |
 | `label` | `string` | `""` | its accessible name |
 

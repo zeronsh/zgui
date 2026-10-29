@@ -475,7 +475,7 @@ ui.contribute(
 
 ### Hooks
 
-`ui.contribute { target, before | after | replace = node }` adds at an element of the app's without a slot. `target` is one part of the inspector's syntax: `#id`, `hook:name` (an element declaring `hook = "name"`), `role:button "Save"` or a name, matched against what the app's source writes (its `role` or its kind's, its `label` or literal text). `>>`, `@n`, `row` and `[n]` are refused: they are known only once the interface shows.
+`ui.contribute { target, before | after | replace = node }` adds at an element of the app's without a slot. `target` is one part of the inspector's syntax: `#id`, `hook:name` (an element declaring `hook = "name"`), `role:button "Save"` or a name, matched against what the app's source writes (its `role` or its kind's, its `label` or literal text). `>>`, `@n`, `row` and `[n]` are refused: they are known only once the interface shows. Under strict types a `target` is one of the app's ids or declared hooks (`HookTarget`, which `zgx types` writes from its source), so a typo is an error; a role or a name goes through `ui.selector('role:button "Save"')`, which marks it as the app's internals.
 
 - `before` and `after` add beside the element, in plugin order, wherever it is built; the host can make a target ask a capability with `expose_hook(target, Some(capability))`.
 - `replace` takes the element's place (an element in a container's children: not the app's root, nor a split's panes) and needs `Capability::Override(target)` or `Capability::Override("*")`; the last plugin's wins.
