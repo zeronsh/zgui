@@ -230,7 +230,8 @@ local popover_open = ui.state("popover_open", false)
 local dialog_open = ui.state("dialog_open", false)
 
 local menu_button = ui.button { id = "view-menu", "View ▾" }
-local popover_button = ui.button { id = "filters", "Filters" }
+-- A menu opens from a bare button; a popover from what the button does.
+local popover_button = ui.button { id = "filters", "Filters", on_click = ui.toggle(popover_open) }
 
 local function size_item(id: string, label: string): Node
 	return ui.menu_item {
@@ -264,6 +265,7 @@ local overlays = section(
 		size_item("large", "Large"),
 	},
 	ui.popover {
+		label = "Filters",
 		open = popover_open,
 		anchor = popover_button,
 		arrow = 8,
@@ -305,6 +307,9 @@ local overlays = section(
 	ui.div {
 		id = "file",
 		focusable = true,
+		-- What takes focus is a control a reader can name.
+		role = "button",
+		label = "Report.pdf",
 		p = 8,
 		rounded = "$radius.md",
 		border = 1,

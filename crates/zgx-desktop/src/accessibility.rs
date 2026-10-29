@@ -1,4 +1,5 @@
 //! Native accessibility tree translation. Stable IDs survive incremental updates.
+pub mod audit;
 use accesskit::{Action, Node, NodeId as AccessibleId, Tree, TreeId, TreeUpdate};
 use std::collections::{HashMap, HashSet};
 use unicode_segmentation::UnicodeSegmentation;
@@ -284,14 +285,27 @@ impl AccessibilityTree {
             })
             .collect();
         // What is hidden from assistive technology (`aria-hidden`) goes with
-        // its subtree; only a tree that hides something looks.
-        let hidden: Vec<_> = ordered
-            .iter()
-            .filter(|(_, s)| s.hidden)
-            .map(|(id, _)| *id)
-            .collect();
+        // its subtree, and a control's unnamed images are its own (ARIA's
+        // presentational children: its name says what it is, and a reader
+        // hears no bare "image" inside a button). Only a tree with either
+        // looks.
+        let mut hidden = Vec::new();
+        let mut bare_image = false;
+        for (id, s) in &ordered {
+            if s.hidden {
+                hidden.push(*id);
+            }
+            bare_image |= s.role == Role::Image && s.label.is_empty();
+        }
         if !hidden.is_empty() {
             ordered.retain(|(id, _)| !hidden.iter().any(|h| scene.is_within(*id, *h)));
+        }
+        if bare_image {
+            ordered.retain(|(id, s)| {
+                !(s.role == Role::Image
+                    && s.label.is_empty()
+                    && within_control(scene, semantics, *id))
+            });
         }
         let visible: HashSet<_> = ordered
             .iter()
@@ -505,11 +519,14 @@ impl AccessibilityTree {
             if let Some(selected) = semantic.selected {
                 n.set_selected(selected);
             }
-            // A status is politely live unless it says otherwise, as ARIA's is.
-            match semantic
-                .live
-                .or((semantic.role == Role::Status).then_some(Live::Polite))
-            {
+            // A status is politely live unless it says otherwise, and an
+            // alert assertively, as ARIA's are.
+            let implicit = match semantic.role {
+                Role::Status => Some(Live::Polite),
+                Role::Alert => Some(Live::Assertive),
+                _ => None,
+            };
+            match semantic.live.or(implicit) {
                 Some(Live::Polite) => n.set_live(accesskit::Live::Polite),
                 Some(Live::Assertive) => n.set_live(accesskit::Live::Assertive),
                 None => {}
@@ -1120,6 +1137,30 @@ fn place(
     })
 }
 
+/// Whether `id` is inside a control whose children are presentational.
+fn within_control(scene: &Scene, semantics: &Semantics, id: NodeId) -> bool {
+    let mut parent = scene.parent(id);
+    while let Some(p) = parent {
+        if semantics.get(p).is_some_and(|s| {
+            matches!(
+                s.role,
+                Role::Button
+                    | Role::CheckBox
+                    | Role::Switch
+                    | Role::RadioButton
+                    | Role::Tab
+                    | Role::MenuItem
+                    | Role::ListBoxOption
+                    | Role::Slider
+                    | Role::Progress
+            )
+        }) {
+            return true;
+        }
+        parent = scene.parent(p);
+    }
+    false
+}
 fn semantic_role(semantic: &zgx::semantics::SemanticNode) -> accesskit::Role {
     if semantic.role == Role::MenuItem && semantic.checked.is_some() && semantic.radio {
         accesskit::Role::MenuItemRadio

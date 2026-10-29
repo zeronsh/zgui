@@ -113,3 +113,28 @@ fn right_to_left_the_first_pane_is_at_the_right() {
     drag(&mut ui, 397., 347.);
     assert_eq!(size.get(), 250.);
 }
+
+/// The divider takes the keys that move it, and no others: Tab moves focus
+/// on past it (it held focus, a trap in every split view).
+#[test]
+fn tab_moves_focus_past_the_divider() {
+    let mut ui = Ui::new(600., 200.);
+    let size = ui.signal(200.);
+    let view = ui.mount(div().w(600.).h(200.).child(split(
+        size,
+        SplitOptions::default(),
+        button().id("before").w(80.).h(30.).child(text("Before")),
+        button().id("after").w(80.).h(30.).child(text("After")),
+    )));
+    ui.prepare_frame();
+    let before = view.find("before").unwrap();
+    ui.input.focus(&ui.scene, Some(before));
+    key(&mut ui, Key::Tab);
+    let divider = ui.input.focused().unwrap();
+    assert_eq!(
+        ui.semantics.borrow().get(divider).map(|s| s.role),
+        Some(zgx::semantics::Role::Splitter)
+    );
+    key(&mut ui, Key::Tab);
+    assert_eq!(ui.input.focused(), view.find("after"));
+}

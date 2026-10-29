@@ -681,6 +681,29 @@ Linux native rendering uses llvmpipe; native macOS and hardware GPU evidence
 remain outstanding.
 
 
+## Automated accessibility audit
+
+`zgx-desktop`'s `accessibility_audit` test projects the widget gallery and 11
+Luau examples (catalog, dashboard, mail, chat, team, sketch, code editor,
+notes, popups, selectable, composer states) into the AccessKit tree the
+platform adapters receive, with labels made from state, and checks every
+node: controls, images and dialogs named; controls pressable, focusable and
+settable; check boxes, switches, radios and tabs saying their state, and
+sliders and progress their value and range; alerts and statuses live, and
+invalid fields saying why. It walks Tab from nothing focused: every
+focusable node outside an arrow-key group must be reached, and focus must
+come round (Control-Tab leaves a code field, Escape a modal scope). The
+catalogue is audited again with each of its toasts, menu, popover and dialog
+open, and the form fixture with its errors. Linux and macOS CI run it; any
+finding fails.
+
+It found and fixed: split dividers keeping every key, Tab included (a trap
+in every split view); alerts not live unless they said so; unnamed icons
+inside buttons read as bare images; and in the examples a focusable item
+with no role, an icon-only button with no name and a popover its button
+never opened. It needs no window and no permission, so it is no VoiceOver
+usability audit: what a person hears and how it flows remains a manual check.
+
 ## Native X11 transparent-window composition
 
 The transparent-window fixture uses the public component/fluent-style API and

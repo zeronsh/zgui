@@ -453,6 +453,8 @@ local function icon_view(inst)
 			local side = n.width or 16
 			return ui.svg {
 				code = svg(name),
+				-- An icon says nothing a reader needs: its control names it.
+				aria_hidden = true,
 				w = z(side),
 				h = z(n.height or side),
 				tint = function()
@@ -855,6 +857,8 @@ local function frame_view(inst)
 		end
 	end
 	if clickable(inst) then
+		-- A pressable frame is a button, named as the design names it.
+		props.label = n.name
 		props.cursor = "pointer"
 		props.on_click = function()
 			click(inst)

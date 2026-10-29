@@ -237,7 +237,9 @@ pub fn split(size: Signal<f32>, options: SplitOptions, first: View, second: View
                             k if k == more => Some(now + step),
                             Key::Home => Some(min),
                             Key::End => Some(f32::INFINITY),
-                            _ => None,
+                            // Tab and the rest are not the divider's: they
+                            // move focus on, or reach a shortcut.
+                            _ => return,
                         }
                     }
                     InputEvent::Increment => Some(now + STEP),

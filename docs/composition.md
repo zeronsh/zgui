@@ -970,10 +970,14 @@ means, as ARIA's attributes do in HTML; a view that sets none pays nothing:
 - `.selected_when(|| …)`: whether an option, tab or item is chosen
   (`aria-selected`), followed.
 - `.live(Live::Polite)` or `Live::Assertive`: announce changes to the text in
-  it (`aria-live`). `Role::Status` is polite by default.
+  it (`aria-live`). `Role::Status` is polite by default and `Role::Alert`
+  assertive, as ARIA's are.
 - `.accessible_description(text)`: read after the name (`aria-description`).
 - `.accessible_hidden()`: left out with its subtree (`aria-hidden`), for
   decoration.
+  An unnamed image inside a button, check box, switch, radio button, tab,
+  menu item, option, slider or progress bar is left out without asking: the
+  control's name says what it is (ARIA's presentational children).
 - `.focus_group(FocusGroup::Vertical)` (or `Horizontal`, `Both`): one Tab stop
   for the focusable views inside, as ARIA's composite widgets are. Tab lands on
   the one last focused there (else the selected one, else the first), and the
@@ -997,6 +1001,17 @@ means, as ARIA's attributes do in HTML; a view that sets none pays nothing:
   which a screen reader would announce.
 - Escape in a text field (with no composition to cancel) goes on to the dialog
   or menu around it, which closes and gives focus back.
+
+`zgx_desktop::accessibility::audit::audit(&mut ui)` checks what a reader
+gets of a mounted interface, headless, and walks Tab through it (Control-Tab
+out of a field that indents, Escape out of a dialog or popover).
+`Report::to_json()` is one line, each finding a `rule` (`no-role`, `no-name`,
+`no-action`, `no-state`, `focus-unreachable`, `focus-trap`,
+`not-announced`), the node (`@number`, as `zgx inspect` names it), its role,
+name and what is missing. It turns assistive technology on for that `Ui`; an
+app no reader reads runs none of it. `tests/accessibility_audit.rs` audits
+the gallery and the Luau examples (with their toasts, menus, popovers,
+dialogs and field errors open) and fails on any finding.
 
 ```rust
 use zgx::{compose::prelude::*, semantics::Role};
